@@ -4,6 +4,8 @@ from laddu import generation
 
 def test_generation_module_exports_event_generator() -> None:
     assert generation.EventGenerator is ld.EventGenerator
+    assert generation.GeneratedBatch is ld.GeneratedBatch
+    assert generation.GeneratedEventLayout is ld.GeneratedEventLayout
     assert generation.GeneratedReaction is ld.GeneratedReaction
 
 
@@ -47,11 +49,16 @@ def test_generation_smoke() -> None:
         generation.MandelstamTDistribution.exponential(0.1),
     )
     generator = generation.EventGenerator(reaction, seed=12345)
-    dataset = generator.generate_dataset(4)
+    batch = generator.generate_batch(4)
+    dataset = batch.dataset
 
     assert dataset.n_events == 4
     assert dataset.p4_names == ['beam', 'target', 'kk', 'kshort1', 'kshort2', 'recoil']
+    assert batch.layout.p4_labels == dataset.p4_names
+    assert batch.layout.aux_labels == []
+    assert batch.reaction.p4_labels() == dataset.p4_names
     assert reaction.reconstructed_reaction().decay('kk').daughters() == [
         'kshort1',
         'kshort2',
     ]
+    assert generator.generate_dataset(4).n_events == 4

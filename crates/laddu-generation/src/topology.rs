@@ -562,6 +562,76 @@ impl GeneratedReaction {
     }
 }
 
+/// Metadata describing the columns in a generated event batch.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GeneratedEventLayout {
+    p4_labels: Vec<String>,
+    aux_labels: Vec<String>,
+}
+
+impl GeneratedEventLayout {
+    /// Construct generated event layout metadata from p4 and auxiliary labels.
+    pub fn new(p4_labels: Vec<String>, aux_labels: Vec<String>) -> Self {
+        Self {
+            p4_labels,
+            aux_labels,
+        }
+    }
+
+    /// Return generated p4 column labels in dataset order.
+    pub fn p4_labels(&self) -> &[String] {
+        &self.p4_labels
+    }
+
+    /// Return generated auxiliary column labels in dataset order.
+    pub fn aux_labels(&self) -> &[String] {
+        &self.aux_labels
+    }
+}
+
+/// A generated dataset batch plus the metadata needed to interpret it.
+#[derive(Clone, Debug)]
+pub struct GeneratedBatch {
+    dataset: Dataset,
+    reaction: GeneratedReaction,
+    layout: GeneratedEventLayout,
+}
+
+impl GeneratedBatch {
+    /// Construct a generated batch.
+    pub fn new(
+        dataset: Dataset,
+        reaction: GeneratedReaction,
+        layout: GeneratedEventLayout,
+    ) -> Self {
+        Self {
+            dataset,
+            reaction,
+            layout,
+        }
+    }
+
+    /// Borrow the generated dataset.
+    pub fn dataset(&self) -> &Dataset {
+        &self.dataset
+    }
+
+    /// Consume this batch and return the generated dataset.
+    pub fn into_dataset(self) -> Dataset {
+        self.dataset
+    }
+
+    /// Borrow the generated reaction metadata.
+    pub fn reaction(&self) -> &GeneratedReaction {
+        &self.reaction
+    }
+
+    /// Borrow the generated event layout metadata.
+    pub fn layout(&self) -> &GeneratedEventLayout {
+        &self.layout
+    }
+}
+
 /// Event generator for generated reactions.
 #[derive(Clone, Debug)]
 pub struct EventGenerator {
@@ -584,22 +654,24 @@ impl EventGenerator {
         }
     }
 
-    /// Generate a dataset.
-    pub fn generate_dataset(&self, n_events: usize) -> LadduResult<Dataset> {
+    /// Generate one dataset batch with generated layout metadata.
+    pub fn generate_batch(&self, n_events: usize) -> LadduResult<GeneratedBatch> {
         let p4_labels = self.reaction.p4_labels();
+        let mut aux_entries = self.aux_generators.iter().collect::<Vec<_>>();
+        aux_entries.sort_by_key(|(label, _)| *label);
+        let aux_labels = aux_entries
+            .iter()
+            .map(|(label, _)| (*label).clone())
+            .collect::<Vec<_>>();
         let mut p4_data: HashMap<String, Vec<Vec4>> = p4_labels
             .iter()
             .map(|label| (label.clone(), Vec::with_capacity(n_events)))
             .collect();
-        let metadata = DatasetMetadata::new(
-            p4_labels.clone(),
-            self.aux_generators.keys().cloned().collect(),
-        )?;
+        let metadata = DatasetMetadata::new(p4_labels.clone(), aux_labels.clone())?;
         let mut rng = Rng::with_seed(self.seed);
-        let aux: Vec<Vec<f64>> = self
-            .aux_generators
-            .values()
-            .map(|d| (0..n_events).map(|_| d.sample(&mut rng)).collect())
+        let aux: Vec<Vec<f64>> = aux_entries
+            .iter()
+            .map(|(_, d)| (0..n_events).map(|_| d.sample(&mut rng)).collect())
             .collect();
         let weights = vec![1.0; n_events];
         self.reaction.generate(&mut rng, &mut p4_data, n_events);
@@ -607,7 +679,17 @@ impl EventGenerator {
             .iter()
             .filter_map(|label| p4_data.remove(label))
             .collect();
-        Dataset::from_columns(metadata, p4, aux, weights)
+        let dataset = Dataset::from_columns(metadata, p4, aux, weights)?;
+        Ok(GeneratedBatch::new(
+            dataset,
+            self.reaction.clone(),
+            GeneratedEventLayout::new(p4_labels, aux_labels),
+        ))
+    }
+
+    /// Generate a dataset.
+    pub fn generate_dataset(&self, n_events: usize) -> LadduResult<Dataset> {
+        Ok(self.generate_batch(n_events)?.into_dataset())
     }
 }
 
@@ -717,6 +799,30 @@ mod tests {
             "CosTheta(parent=kk, daughter=kshort1, frame=Helicity)"
         );
         assert_eq!(mandelstam.len(), 4);
+    }
+
+    #[test]
+    fn test_generated_batch_metadata() {
+        let generated = demo_reaction();
+        let generator = EventGenerator::new(
+            generated,
+            HashMap::from([("pol_angle".to_string(), Distribution::Fixed(0.25))]),
+            Some(12345),
+        );
+        let batch = generator.generate_batch(4).unwrap();
+
+        assert_eq!(batch.dataset().n_events(), 4);
+        assert_eq!(
+            batch.layout().p4_labels(),
+            &["beam", "target", "kk", "kshort1", "kshort2", "recoil"]
+        );
+        assert_eq!(batch.layout().aux_labels(), &["pol_angle"]);
+        assert_eq!(
+            batch.reaction().p4_labels(),
+            vec!["beam", "target", "kk", "kshort1", "kshort2", "recoil"]
+        );
+        assert_eq!(batch.dataset().p4_names(), batch.layout().p4_labels());
+        assert_eq!(batch.dataset().aux_names(), batch.layout().aux_labels());
     }
 
     #[test]
