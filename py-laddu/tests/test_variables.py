@@ -36,12 +36,12 @@ def make_test_dataset() -> Dataset:
 
 
 def reaction_context() -> tuple[Reaction, Particle, Particle, Particle, Particle]:
-    beam = Particle.measured('beam', 'beam')
+    beam = Particle.stored('beam')
     target = Particle.missing('target')
-    kshort1 = Particle.measured('K_S1', 'kshort1')
-    kshort2 = Particle.measured('K_S2', 'kshort2')
-    kk = Particle.composite('KK', [kshort1, kshort2])
-    proton = Particle.measured('proton', 'proton')
+    kshort1 = Particle.stored('kshort1')
+    kshort2 = Particle.stored('kshort2')
+    kk = Particle.composite('kk', [kshort1, kshort2])
+    proton = Particle.stored('proton')
     return Reaction.two_to_two(beam, target, kk, proton), kk, kshort1, kshort2, proton
 
 
@@ -59,36 +59,36 @@ def test_mass_multiple_particles() -> None:
 
 def test_costheta_helicity() -> None:
     event = make_test_event()
-    reaction, kk, kshort1, _, _ = reaction_context()
-    costheta = reaction.decay(kk).costheta(kshort1, 'Helicity')
+    reaction, _, _, _, _ = reaction_context()
+    costheta = reaction.decay('kk').costheta('kshort1', 'Helicity')
     assert pytest.approx(costheta.value(event)) == -0.4611175068834238
 
 
 def test_phi_helicity() -> None:
     event = make_test_event()
-    reaction, kk, kshort1, _, _ = reaction_context()
-    phi = reaction.decay(kk).phi(kshort1, 'Helicity')
+    reaction, _, _, _, _ = reaction_context()
+    phi = reaction.decay('kk').phi('kshort1', 'Helicity')
     assert pytest.approx(phi.value(event)) == -2.657462587335066
 
 
 def test_costheta_gottfried_jackson() -> None:
     event = make_test_event()
-    reaction, kk, kshort1, _, _ = reaction_context()
-    costheta = reaction.decay(kk).costheta(kshort1, 'Gottfried-Jackson')
+    reaction, _, _, _, _ = reaction_context()
+    costheta = reaction.decay('kk').costheta('kshort1', 'Gottfried-Jackson')
     assert pytest.approx(costheta.value(event)) == 0.09198832278031577
 
 
 def test_phi_gottfried_jackson() -> None:
     event = make_test_event()
-    reaction, kk, kshort1, _, _ = reaction_context()
-    phi = reaction.decay(kk).phi(kshort1, 'Gottfried-Jackson')
+    reaction, _, _, _, _ = reaction_context()
+    phi = reaction.decay('kk').phi('kshort1', 'Gottfried-Jackson')
     assert pytest.approx(phi.value(event)) == -2.713913199133907
 
 
 def test_angles() -> None:
     event = make_test_event()
-    reaction, kk, kshort1, _, _ = reaction_context()
-    angles = reaction.decay(kk).angles(kshort1, 'Helicity')
+    reaction, _, _, _, _ = reaction_context()
+    angles = reaction.decay('kk').angles('kshort1', 'Helicity')
     assert pytest.approx(angles.costheta.value(event)) == -0.4611175068834238
     assert pytest.approx(angles.phi.value(event)) == -2.657462587335066
 

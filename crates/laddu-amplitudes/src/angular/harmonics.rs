@@ -268,17 +268,17 @@ mod tests {
     use super::*;
 
     fn reaction_context() -> (Reaction, Angles) {
-        let beam = Particle::measured("beam", "beam");
+        let beam = Particle::stored("beam");
         let target = Particle::missing("target");
-        let kshort1 = Particle::measured("K_S1", "kshort1");
-        let kshort2 = Particle::measured("K_S2", "kshort2");
-        let kk = Particle::composite("KK", [&kshort1, &kshort2]).unwrap();
-        let proton = Particle::measured("proton", "proton");
+        let kshort1 = Particle::stored("kshort1");
+        let kshort2 = Particle::stored("kshort2");
+        let kk = Particle::composite("kk", (&kshort1, &kshort2)).unwrap();
+        let proton = Particle::stored("proton");
         let reaction = Reaction::two_to_two(&beam, &target, &kk, &proton).unwrap();
         let angles = reaction
-            .decay(&kk)
+            .decay("kk")
             .unwrap()
-            .angles(&kshort1, Frame::Helicity)
+            .angles("kshort1", Frame::Helicity)
             .unwrap();
         (reaction, angles)
     }

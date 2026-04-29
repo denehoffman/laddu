@@ -39,12 +39,12 @@ def make_test_dataset() -> Dataset:
 
 
 def reaction_context() -> tuple[Reaction, Particle, Particle]:
-    beam = Particle.measured('beam', 'beam')
+    beam = Particle.stored('beam')
     target = Particle.missing('target')
-    kshort1 = Particle.measured('K_S1', 'kshort1')
-    kshort2 = Particle.measured('K_S2', 'kshort2')
-    kk = Particle.composite('KK', [kshort1, kshort2])
-    proton = Particle.measured('proton', 'proton')
+    kshort1 = Particle.stored('kshort1')
+    kshort2 = Particle.stored('kshort2')
+    kk = Particle.composite('kk', [kshort1, kshort2])
+    proton = Particle.stored('proton')
     return Reaction.two_to_two(beam, target, kk, proton), kk, proton
 
 
@@ -205,11 +205,11 @@ def test_voigt_gradient() -> None:
 
 
 def test_phase_space_factor_evaluation() -> None:
-    reaction, kk, proton = reaction_context()
-    decay = reaction.decay(kk)
+    reaction, _, _ = reaction_context()
+    decay = reaction.decay('kk')
     amp = PhaseSpaceFactor(
         'kappa',
-        reaction.mass(proton),
+        reaction.mass('proton'),
         decay.daughter_1_mass(),
         decay.daughter_2_mass(),
         decay.parent_mass(),
@@ -221,11 +221,11 @@ def test_phase_space_factor_evaluation() -> None:
 
 
 def test_phase_space_factor_gradient() -> None:
-    reaction, kk, proton = reaction_context()
-    decay = reaction.decay(kk)
+    reaction, _, _ = reaction_context()
+    decay = reaction.decay('kk')
     amp = PhaseSpaceFactor(
         'kappa',
-        reaction.mass(proton),
+        reaction.mass('proton'),
         decay.daughter_1_mass(),
         decay.daughter_2_mass(),
         decay.parent_mass(),

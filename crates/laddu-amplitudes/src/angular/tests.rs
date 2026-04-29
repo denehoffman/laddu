@@ -19,12 +19,12 @@ use super::{
 use crate::scalar::Scalar;
 
 fn reaction_context() -> (Reaction, Particle, Particle) {
-    let beam = Particle::measured("beam", "beam");
+    let beam = Particle::stored("beam");
     let target = Particle::missing("target");
-    let kshort1 = Particle::measured("K_S1", "kshort1");
-    let kshort2 = Particle::measured("K_S2", "kshort2");
-    let kk = Particle::composite("KK", [&kshort1, &kshort2]).unwrap();
-    let proton = Particle::measured("proton", "proton");
+    let kshort1 = Particle::stored("kshort1");
+    let kshort2 = Particle::stored("kshort2");
+    let kk = Particle::composite("kk", (&kshort1, &kshort2)).unwrap();
+    let proton = Particle::stored("proton");
     (
         Reaction::two_to_two(&beam, &target, &kk, &proton).unwrap(),
         kk,
@@ -35,9 +35,9 @@ fn reaction_context() -> (Reaction, Particle, Particle) {
 #[test]
 fn wigner_d_matches_core_function() {
     let dataset = Arc::new(test_dataset());
-    let (reaction, kk, kshort1) = reaction_context();
-    let decay = reaction.decay(&kk).unwrap();
-    let angles = decay.angles(&kshort1, Frame::Helicity).unwrap();
+    let (reaction, _, _) = reaction_context();
+    let decay = reaction.decay("kk").unwrap();
+    let angles = decay.angles("kshort1", Frame::Helicity).unwrap();
     let expr = WignerD::new(
         "d",
         laddu_core::AngularMomentum::from_twice(2),
@@ -112,14 +112,14 @@ fn photon_sdme_unpolarized_is_diagonal() {
 
 #[test]
 fn blatt_weisskopf_accepts_reaction_decay_context() {
-    let beam = laddu_core::Particle::measured("beam", "beam");
-    let target = laddu_core::Particle::measured("target", "target");
-    let k1 = laddu_core::Particle::measured("k1", "kshort1");
-    let k2 = laddu_core::Particle::measured("k2", "kshort2");
-    let x = laddu_core::Particle::composite("x", [&k1, &k2]).unwrap();
-    let recoil = laddu_core::Particle::measured("recoil", "proton");
+    let beam = laddu_core::Particle::stored("beam");
+    let target = laddu_core::Particle::stored("target");
+    let k1 = laddu_core::Particle::stored("kshort1");
+    let k2 = laddu_core::Particle::stored("kshort2");
+    let x = laddu_core::Particle::composite("x", (&k1, &k2)).unwrap();
+    let recoil = laddu_core::Particle::stored("proton");
     let reaction = laddu_core::Reaction::two_to_two(&beam, &target, &x, &recoil).unwrap();
-    let decay = reaction.decay(&x).unwrap();
+    let decay = reaction.decay("x").unwrap();
     let expr = BlattWeisskopf::new(
         "b",
         &decay,
@@ -158,20 +158,20 @@ fn blatt_weisskopf_accepts_reaction_decay_context() {
 #[test]
 fn helicity_factor_matches_conjugated_wigner_d() {
     let dataset = Arc::new(test_dataset());
-    let (reaction, kk, kshort1) = reaction_context();
-    let decay = reaction.decay(&kk).unwrap();
+    let (reaction, _, _) = reaction_context();
+    let decay = reaction.decay("kk").unwrap();
     let factor = DecayAmplitudeExt::helicity_factor(
         &decay,
         "h",
         laddu_core::AngularMomentum::integer(2),
         laddu_core::AngularMomentumProjection::integer(1),
-        &kshort1,
+        "kshort1",
         laddu_core::AngularMomentumProjection::integer(1),
         laddu_core::AngularMomentumProjection::integer(0),
         Frame::Helicity,
     )
     .unwrap();
-    let angles = decay.angles(&kshort1, Frame::Helicity).unwrap();
+    let angles = decay.angles("kshort1", Frame::Helicity).unwrap();
     let explicit = WignerD::new(
         "d",
         laddu_core::AngularMomentum::integer(2),
@@ -192,8 +192,8 @@ fn helicity_factor_matches_conjugated_wigner_d() {
 #[test]
 fn canonical_factor_matches_explicit_product() {
     let dataset = Arc::new(test_dataset());
-    let (reaction, kk, kshort1) = reaction_context();
-    let decay = reaction.decay(&kk).unwrap();
+    let (reaction, _, _) = reaction_context();
+    let decay = reaction.decay("kk").unwrap();
     let factor = DecayAmplitudeExt::canonical_factor(
         &decay,
         "c",
@@ -201,7 +201,7 @@ fn canonical_factor_matches_explicit_product() {
         laddu_core::AngularMomentumProjection::integer(0),
         laddu_core::OrbitalAngularMomentum::integer(2),
         laddu_core::AngularMomentum::integer(0),
-        &kshort1,
+        "kshort1",
         laddu_core::AngularMomentum::integer(0),
         laddu_core::AngularMomentum::integer(0),
         laddu_core::AngularMomentumProjection::integer(0),
@@ -235,7 +235,7 @@ fn canonical_factor_matches_explicit_product() {
             "d",
             laddu_core::AngularMomentum::integer(2),
             laddu_core::AngularMomentumProjection::integer(0),
-            &kshort1,
+            "kshort1",
             laddu_core::AngularMomentumProjection::integer(0),
             laddu_core::AngularMomentumProjection::integer(0),
             Frame::Helicity,
@@ -252,8 +252,8 @@ fn canonical_factor_matches_explicit_product() {
 #[test]
 fn decay_factors_with_matching_names_deduplicate() {
     let dataset = Arc::new(test_dataset());
-    let (reaction, kk, kshort1) = reaction_context();
-    let decay = reaction.decay(&kk).unwrap();
+    let (reaction, _, _) = reaction_context();
+    let decay = reaction.decay("kk").unwrap();
     let factor_1 = DecayAmplitudeExt::canonical_factor(
         &decay,
         "rho.factor",
@@ -261,7 +261,7 @@ fn decay_factors_with_matching_names_deduplicate() {
         laddu_core::AngularMomentumProjection::integer(0),
         laddu_core::OrbitalAngularMomentum::integer(1),
         laddu_core::AngularMomentum::integer(0),
-        &kshort1,
+        "kshort1",
         laddu_core::AngularMomentum::integer(0),
         laddu_core::AngularMomentum::integer(0),
         laddu_core::AngularMomentumProjection::integer(0),
@@ -276,7 +276,7 @@ fn decay_factors_with_matching_names_deduplicate() {
         laddu_core::AngularMomentumProjection::integer(0),
         laddu_core::OrbitalAngularMomentum::integer(1),
         laddu_core::AngularMomentum::integer(0),
-        &kshort1,
+        "kshort1",
         laddu_core::AngularMomentum::integer(0),
         laddu_core::AngularMomentum::integer(0),
         laddu_core::AngularMomentumProjection::integer(0),

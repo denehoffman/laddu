@@ -83,15 +83,15 @@ Let's further assume that there are only two resonances present in our data, an 
    res_mass = ld.Mass(['kshort1', 'kshort2'])
 
    # the decay angles in the helicity frame
-   beam = ld.Particle.measured('beam', 'beam')
+   beam = ld.Particle.stored('beam')
    target = ld.Particle.missing('target')
-   kshort1 = ld.Particle.measured('K_S1', 'kshort1')
-   kshort2 = ld.Particle.measured('K_S2', 'kshort2')
-   kk = ld.Particle.composite('KK', [kshort1, kshort2])
-   proton = ld.Particle.measured('proton', 'proton')
+   kshort1 = ld.Particle.stored('kshort1')
+   kshort2 = ld.Particle.stored('kshort2')
+   kk = ld.Particle.composite('kk', [kshort1, kshort2])
+   proton = ld.Particle.stored('proton')
    reaction = ld.Reaction.two_to_two(beam, target, kk, proton)
-   decay = reaction.decay(kk)
-   angles = decay.angles(kshort1)
+   decay = reaction.decay('kk')
+   angles = decay.angles('kshort1')
 
 So far, these angles just represent particles in a generic dataset by index and provide an appropriate method to calculate the corresponding observable. Before we fit anything, we might want to just see what the dataset looks like:
 

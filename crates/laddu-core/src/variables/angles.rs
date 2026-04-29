@@ -6,15 +6,15 @@ use super::Variable;
 use crate::{
     data::{DatasetMetadata, NamedEventView},
     quantum::Frame,
-    reaction::{Particle, Reaction},
+    reaction::Reaction,
     LadduResult,
 };
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct AngleSource {
     reaction: Box<Reaction>,
-    parent: Particle,
-    daughter: Particle,
+    parent: String,
+    daughter: String,
 }
 
 impl AngleSource {
@@ -59,15 +59,15 @@ impl CosTheta {
     /// Construct an angle for a reaction daughter in the specified parent frame.
     pub fn from_reaction(
         reaction: Reaction,
-        parent: Particle,
-        daughter: Particle,
+        parent: impl Into<String>,
+        daughter: impl Into<String>,
         frame: Frame,
     ) -> Self {
         Self {
             source: AngleSource {
                 reaction: Box::new(reaction),
-                parent,
-                daughter,
+                parent: parent.into(),
+                daughter: daughter.into(),
             },
             frame,
         }
@@ -106,15 +106,15 @@ impl Phi {
     /// Construct an angle for a reaction daughter in the specified parent frame.
     pub fn from_reaction(
         reaction: Reaction,
-        parent: Particle,
-        daughter: Particle,
+        parent: impl Into<String>,
+        daughter: impl Into<String>,
         frame: Frame,
     ) -> Self {
         Self {
             source: AngleSource {
                 reaction: Box::new(reaction),
-                parent,
-                daughter,
+                parent: parent.into(),
+                daughter: daughter.into(),
             },
             frame,
         }
@@ -165,10 +165,12 @@ impl Angles {
     /// Construct reaction-derived angle variables for a daughter in its parent frame.
     pub fn from_reaction(
         reaction: Reaction,
-        parent: Particle,
-        daughter: Particle,
+        parent: impl Into<String>,
+        daughter: impl Into<String>,
         frame: Frame,
     ) -> Self {
+        let parent = parent.into();
+        let daughter = daughter.into();
         let costheta =
             CosTheta::from_reaction(reaction.clone(), parent.clone(), daughter.clone(), frame);
         let phi = Phi::from_reaction(reaction, parent, daughter, frame);

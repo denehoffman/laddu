@@ -27,14 +27,14 @@ def make_test_dataset() -> Dataset:
 
 
 def reaction_context() -> tuple[Reaction, Angles]:
-    beam = Particle.measured('beam', 'beam')
+    beam = Particle.stored('beam')
     target = Particle.missing('target')
-    kshort1 = Particle.measured('K_S1', 'kshort1')
-    kshort2 = Particle.measured('K_S2', 'kshort2')
-    kk = Particle.composite('KK', [kshort1, kshort2])
-    proton = Particle.measured('proton', 'proton')
+    kshort1 = Particle.stored('kshort1')
+    kshort2 = Particle.stored('kshort2')
+    kk = Particle.composite('kk', [kshort1, kshort2])
+    proton = Particle.stored('proton')
     reaction = Reaction.two_to_two(beam, target, kk, proton)
-    return reaction, reaction.decay(kk).angles(kshort1, 'Helicity')
+    return reaction, reaction.decay('kk').angles('kshort1', 'Helicity')
 
 
 def test_ylm_evaluation() -> None:

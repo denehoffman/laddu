@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use serde::{Deserialize, Serialize};
 
 use super::{
@@ -35,6 +37,7 @@ impl Reaction {
         p3: &Particle,
         p4: &Particle,
     ) -> LadduResult<Self> {
+        validate_unique_particles([p1, p2, p3, p4])?;
         Ok(Self {
             topology: ReactionTopology::TwoToTwo(TwoToTwoReaction::new(p1, p2, p3, p4)?),
         })
@@ -46,7 +49,8 @@ impl Reaction {
     }
 
     /// Resolve a particle p4 from an event.
-    pub fn p4(&self, event: &NamedEventView<'_>, particle: &Particle) -> LadduResult<Vec4> {
+    pub fn p4(&self, event: &NamedEventView<'_>, particle: &str) -> LadduResult<Vec4> {
+        let particle = self.particle(particle)?;
         match &self.topology {
             ReactionTopology::TwoToTwo(topology) => {
                 if let Some(index) = topology.missing_index() {
@@ -78,14 +82,15 @@ impl Reaction {
     }
 
     /// Construct a mass variable for a particle.
-    pub fn mass(&self, particle: &Particle) -> Mass {
-        Mass::from_reaction(self.clone(), particle.clone())
+    pub fn mass(&self, particle: &str) -> Mass {
+        Mass::from_reaction(self.clone(), particle)
     }
 
     /// Construct an isobar decay view from a composite parent.
-    pub fn decay(&self, parent: &Particle) -> LadduResult<Decay> {
+    pub fn decay(&self, parent: &str) -> LadduResult<Decay> {
+        let parent_particle = self.particle(parent)?;
         self.root_particle_for(parent)?;
-        let daughters = parent.daughters();
+        let daughters = parent_particle.daughters();
         if daughters.len() != 2 {
             return Err(LadduError::Custom(
                 "isobar decays must contain exactly two ordered daughters".to_string(),
@@ -93,9 +98,9 @@ impl Reaction {
         }
         Ok(Decay {
             reaction: self.clone(),
-            parent: parent.clone(),
-            daughter_1: daughters[0].clone(),
-            daughter_2: daughters[1].clone(),
+            parent: parent.to_string(),
+            daughter_1: daughters[0].label().to_string(),
+            daughter_2: daughters[1].label().to_string(),
         })
     }
 
@@ -125,11 +130,12 @@ impl Reaction {
     pub fn axes(
         &self,
         event: &NamedEventView<'_>,
-        particle: &Particle,
+        particle: &str,
         frame: Frame,
     ) -> LadduResult<FrameAxes> {
         let (root_index, root) = self.root_particle_for(particle)?;
-        if particle == root {
+        let particle_ref = self.particle(particle)?;
+        if particle_ref == root {
             let resolved = self.resolve_two_to_two(event)?;
             let (parent, spectator) = match root_index {
                 2 => (resolved.p3, resolved.p4),
@@ -151,7 +157,7 @@ impl Reaction {
         let parent = self.parent_of(particle).ok_or_else(|| {
             LadduError::Custom(format!(
                 "particle '{}' is not connected to the reaction root",
-                particle.label()
+                particle
             ))
         })?;
         let parent_axes = self.axes(event, &parent, frame)?;
@@ -162,14 +168,15 @@ impl Reaction {
     pub fn angles_value(
         &self,
         event: &NamedEventView<'_>,
-        parent: &Particle,
-        daughter: &Particle,
+        parent: &str,
+        daughter: &str,
         frame: Frame,
     ) -> LadduResult<DecayAngles> {
-        if !parent
+        let parent_particle = self.particle(parent)?;
+        if !parent_particle
             .daughters()
             .iter()
-            .any(|candidate| candidate == daughter)
+            .any(|candidate| candidate.label() == daughter)
         {
             return Err(LadduError::Custom(
                 "daughter is not an immediate child of parent".to_string(),
@@ -179,11 +186,35 @@ impl Reaction {
         axes.angles(self.p4_in_rest_frame_of(event, parent, daughter)?.vec3())
     }
 
-    fn root_particle_for(&self, particle: &Particle) -> LadduResult<(usize, &Particle)> {
+    /// Return the particle with the given identifier.
+    pub fn particle(&self, particle: &str) -> LadduResult<&Particle> {
+        self.find_particle(particle)
+            .ok_or_else(|| LadduError::Custom(format!("unknown reaction particle '{particle}'")))
+    }
+
+    /// Return whether the reaction contains a particle with the given identifier.
+    pub fn contains(&self, particle: &str) -> bool {
+        self.find_particle(particle).is_some()
+    }
+
+    /// Return all particle definitions in this reaction.
+    pub fn particles(&self) -> Vec<&Particle> {
+        let mut particles = Vec::new();
+        match &self.topology {
+            ReactionTopology::TwoToTwo(topology) => {
+                for root in [topology.p1(), topology.p2(), topology.p3(), topology.p4()] {
+                    collect_particles(root, &mut particles);
+                }
+            }
+        }
+        particles
+    }
+
+    fn root_particle_for(&self, particle: &str) -> LadduResult<(usize, &Particle)> {
         match &self.topology {
             ReactionTopology::TwoToTwo(topology) => {
                 for (index, root) in [(2, topology.p3()), (3, topology.p4())] {
-                    if root.contains(particle) {
+                    if root.contains_id(particle) {
                         return Ok((index, root));
                     }
                 }
@@ -194,25 +225,28 @@ impl Reaction {
         ))
     }
 
-    fn parent_of(&self, child: &Particle) -> Option<Particle> {
+    fn parent_of(&self, child: &str) -> Option<String> {
         match &self.topology {
-            ReactionTopology::TwoToTwo(topology) => [topology.p3(), topology.p4()]
-                .into_iter()
-                .find_map(|root| root.parent_of(child).cloned()),
+            ReactionTopology::TwoToTwo(topology) => {
+                [topology.p3(), topology.p4()].into_iter().find_map(|root| {
+                    root.parent_of_id(child)
+                        .map(|particle| particle.label().to_string())
+                })
+            }
         }
     }
 
     fn p4_in_rest_frame_of(
         &self,
         event: &NamedEventView<'_>,
-        frame_particle: &Particle,
-        target: &Particle,
+        frame_particle: &str,
+        target: &str,
     ) -> LadduResult<Vec4> {
         let (_, root) = self.root_particle_for(frame_particle)?;
-        if frame_particle == root {
+        if frame_particle == root.label() {
             let resolved = self.resolve_two_to_two(event)?;
             let com_boost = resolved.com_boost();
-            let root_rest = RestFrame::new(self.p4(event, root)?.boost(&com_boost))?;
+            let root_rest = RestFrame::new(self.p4(event, root.label())?.boost(&com_boost))?;
             return Ok(root_rest.transform(self.p4(event, target)?.boost(&com_boost)));
         }
         let parent = self.parent_of(frame_particle).ok_or_else(|| {
@@ -222,4 +256,55 @@ impl Reaction {
         let target_in_parent = self.p4_in_rest_frame_of(event, &parent, target)?;
         Ok(RestFrame::new(frame_particle_in_parent)?.transform(target_in_parent))
     }
+
+    fn find_particle(&self, particle: &str) -> Option<&Particle> {
+        match &self.topology {
+            ReactionTopology::TwoToTwo(topology) => {
+                [topology.p1(), topology.p2(), topology.p3(), topology.p4()]
+                    .into_iter()
+                    .find_map(|root| find_particle(root, particle))
+            }
+        }
+    }
+}
+
+fn validate_unique_particles<'a>(roots: impl IntoIterator<Item = &'a Particle>) -> LadduResult<()> {
+    let mut seen = HashSet::new();
+    for root in roots {
+        validate_unique_particle(root, &mut seen)?;
+    }
+    Ok(())
+}
+
+fn validate_unique_particle<'a>(
+    particle: &'a Particle,
+    seen: &mut HashSet<&'a str>,
+) -> LadduResult<()> {
+    if !seen.insert(particle.label()) {
+        return Err(LadduError::Custom(format!(
+            "duplicate reaction particle identifier '{}'",
+            particle.label()
+        )));
+    }
+    for daughter in particle.daughters() {
+        validate_unique_particle(daughter, seen)?;
+    }
+    Ok(())
+}
+
+fn collect_particles<'a>(particle: &'a Particle, particles: &mut Vec<&'a Particle>) {
+    particles.push(particle);
+    for daughter in particle.daughters() {
+        collect_particles(daughter, particles);
+    }
+}
+
+fn find_particle<'a>(particle: &'a Particle, id: &str) -> Option<&'a Particle> {
+    if particle.label() == id {
+        return Some(particle);
+    }
+    particle
+        .daughters()
+        .iter()
+        .find_map(|daughter| find_particle(daughter, id))
 }

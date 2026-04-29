@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use super::{format_names, IntoP4Selection, P4Selection, Variable};
 use crate::{
     data::{DatasetMetadata, NamedEventView},
-    reaction::{Particle, Reaction},
+    reaction::Reaction,
     vectors::Vec4,
     LadduResult,
 };
@@ -16,7 +16,7 @@ enum MassSource {
     Selection(P4Selection),
     Reaction {
         reaction: Box<Reaction>,
-        particle: Particle,
+        particle: String,
     },
 }
 
@@ -39,11 +39,11 @@ impl Mass {
     }
 
     /// Create a new [`Mass`] for a particle resolved through a [`Reaction`].
-    pub fn from_reaction(reaction: Reaction, particle: Particle) -> Self {
+    pub fn from_reaction(reaction: Reaction, particle: impl Into<String>) -> Self {
         Self {
             source: MassSource::Reaction {
                 reaction: Box::new(reaction),
-                particle,
+                particle: particle.into(),
             },
         }
     }

@@ -12,15 +12,15 @@ use laddu_core::{
 use super::{BreitWigner, BreitWignerNonRelativistic, Flatte, PhaseSpaceFactor, Voigt};
 
 fn test_phase_space_expression(name: &str, channel: Channel) -> laddu_core::Expression {
-    let beam = Particle::measured("beam", "beam");
+    let beam = Particle::stored("beam");
     let target = Particle::missing("target");
-    let kshort1 = Particle::measured("K_S1", "kshort1");
-    let kshort2 = Particle::measured("K_S2", "kshort2");
-    let kk = Particle::composite("KK", [&kshort1, &kshort2]).unwrap();
-    let proton = Particle::measured("proton", "proton");
+    let kshort1 = Particle::stored("kshort1");
+    let kshort2 = Particle::stored("kshort2");
+    let kk = Particle::composite("kk", (&kshort1, &kshort2)).unwrap();
+    let proton = Particle::stored("proton");
     let reaction = Reaction::two_to_two(&beam, &target, &kk, &proton).unwrap();
-    let decay = reaction.decay(&kk).unwrap();
-    let recoil_mass = reaction.mass(&proton);
+    let decay = reaction.decay("kk").unwrap();
+    let recoil_mass = reaction.mass("proton");
     let daughter_1_mass = decay.daughter_1_mass();
     let daughter_2_mass = decay.daughter_2_mass();
     let resonance_mass = decay.parent_mass();

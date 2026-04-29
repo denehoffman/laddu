@@ -40,14 +40,14 @@ def make_test_dataset() -> Dataset:
 
 
 def make_reaction_mass() -> Mass:
-    beam = Particle.measured('beam', 'beam')
+    beam = Particle.stored('beam')
     target = Particle.missing('target')
-    recoil = Particle.measured('recoil', 'proton')
-    ks1 = Particle.measured('K_S1', 'kshort1')
-    ks2 = Particle.measured('K_S2', 'kshort2')
-    x = Particle.composite('X', [ks1, ks2])
+    recoil = Particle.stored('proton')
+    ks1 = Particle.stored('kshort1')
+    ks2 = Particle.stored('kshort2')
+    x = Particle.composite('x', [ks1, ks2])
     reaction = Reaction.two_to_two(beam, target, x, recoil)
-    return reaction.mass(x)
+    return reaction.mass('x')
 
 
 def test_f0_evaluation() -> None:
