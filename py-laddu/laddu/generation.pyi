@@ -77,6 +77,15 @@ class GeneratedReaction:
     def p4_labels(self) -> list[str]: ...
     def reconstructed_reaction(self) -> Reaction: ...
 
+class GeneratedEventLayout:
+    p4_labels: list[str]
+    aux_labels: list[str]
+
+class GeneratedBatch:
+    dataset: Dataset
+    reaction: GeneratedReaction
+    layout: GeneratedEventLayout
+
 class EventGenerator:
     def __init__(
         self,
@@ -84,4 +93,5 @@ class EventGenerator:
         aux_generators: Mapping[str, Distribution] | None = None,
         seed: int | None = None,
     ) -> None: ...
+    def generate_batch(self, n_events: int) -> GeneratedBatch: ...
     def generate_dataset(self, n_events: int) -> Dataset: ...

@@ -1,8 +1,9 @@
 use std::{collections::HashMap, sync::Arc};
 
 use laddu_generation::{
-    CompositeGenerator, Distribution, EventGenerator, GeneratedParticle, GeneratedReaction,
-    InitialGenerator, MandelstamTDistribution, Reconstruction, StableGenerator,
+    CompositeGenerator, Distribution, EventGenerator, GeneratedBatch, GeneratedEventLayout,
+    GeneratedParticle, GeneratedReaction, InitialGenerator, MandelstamTDistribution,
+    Reconstruction, StableGenerator,
 };
 use pyo3::{exceptions::PyValueError, prelude::*, types::PyTuple};
 
@@ -289,6 +290,60 @@ impl PyGeneratedReaction {
     }
 }
 
+/// Metadata describing the columns in a generated event batch.
+#[pyclass(name = "GeneratedEventLayout", module = "laddu", from_py_object)]
+#[derive(Clone, Debug)]
+pub struct PyGeneratedEventLayout(pub GeneratedEventLayout);
+
+#[pymethods]
+impl PyGeneratedEventLayout {
+    /// Generated p4 column labels in dataset order.
+    #[getter]
+    fn p4_labels(&self) -> Vec<String> {
+        self.0.p4_labels().to_vec()
+    }
+
+    /// Generated auxiliary column labels in dataset order.
+    #[getter]
+    fn aux_labels(&self) -> Vec<String> {
+        self.0.aux_labels().to_vec()
+    }
+
+    fn __repr__(&self) -> String {
+        format!("{:?}", self.0)
+    }
+}
+
+/// A generated dataset batch plus generated reaction and layout metadata.
+#[pyclass(name = "GeneratedBatch", module = "laddu", from_py_object)]
+#[derive(Clone, Debug)]
+pub struct PyGeneratedBatch(pub GeneratedBatch);
+
+#[pymethods]
+impl PyGeneratedBatch {
+    /// The generated dataset for this batch.
+    #[getter]
+    fn dataset(&self) -> PyDataset {
+        PyDataset(Arc::new(self.0.dataset().clone()))
+    }
+
+    /// The generated reaction metadata for this batch.
+    #[getter]
+    fn reaction(&self) -> PyGeneratedReaction {
+        PyGeneratedReaction(self.0.reaction().clone())
+    }
+
+    /// The generated event layout metadata for this batch.
+    #[getter]
+    fn layout(&self) -> PyGeneratedEventLayout {
+        PyGeneratedEventLayout(self.0.layout().clone())
+    }
+
+    fn __repr__(&self) -> String {
+        format!("{:?}", self.0)
+    }
+}
+
 /// Event generator for generated reaction layouts.
 #[pyclass(name = "EventGenerator", module = "laddu", from_py_object)]
 #[derive(Clone, Debug)]
@@ -313,6 +368,11 @@ impl PyEventGenerator {
                 .collect(),
             seed,
         ))
+    }
+
+    /// Generate one dataset batch with generated layout metadata.
+    fn generate_batch(&self, n_events: usize) -> PyResult<PyGeneratedBatch> {
+        Ok(PyGeneratedBatch(self.0.generate_batch(n_events)?))
     }
 
     /// Generate a dataset.

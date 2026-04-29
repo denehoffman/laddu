@@ -5,7 +5,7 @@ pub use distributions::{
     Distribution, HistogramSampler, LadduGenRngExt, MandelstamTDistribution, SimpleDistribution,
 };
 pub use topology::{
-    CompositeGenerator, EventGenerator, GeneratedParticle, GeneratedReaction,
-    GeneratedReactionTopology, GeneratedTwoToTwoReaction, InitialGenerator, Reconstruction,
-    StableGenerator,
+    CompositeGenerator, EventGenerator, GeneratedBatch, GeneratedEventLayout, GeneratedParticle,
+    GeneratedReaction, GeneratedReactionTopology, GeneratedTwoToTwoReaction, InitialGenerator,
+    Reconstruction, StableGenerator,
 };
