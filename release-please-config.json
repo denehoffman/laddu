@@ -32,6 +32,11 @@
         {
           "type": "toml",
           "path": "Cargo.toml",
+          "jsonpath": "$.workspace.dependencies['laddu-generation'].version"
+        },
+        {
+          "type": "toml",
+          "path": "Cargo.toml",
           "jsonpath": "$.workspace.dependencies['laddu-python'].version"
         },
         {
@@ -52,6 +57,11 @@
         {
           "type": "toml",
           "path": "crates/laddu-extensions/Cargo.toml",
+          "jsonpath": "$.package.version"
+        },
+        {
+          "type": "toml",
+          "path": "crates/laddu-generation/Cargo.toml",
           "jsonpath": "$.package.version"
         },
         {

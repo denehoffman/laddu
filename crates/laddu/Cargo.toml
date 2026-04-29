@@ -17,6 +17,7 @@ rust-version.workspace = true
 laddu-core = { workspace = true }
 laddu-amplitudes = { workspace = true }
 laddu-extensions = { workspace = true }
+laddu-generation = { workspace = true }
 mpi = { workspace = true, optional = true }
 num = { workspace = true }
 fastrand = { workspace = true }

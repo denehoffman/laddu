@@ -1,0 +1,20 @@
+[package]
+name = "laddu-generation"
+version = "0.18.0"
+description = "Monte Carlo event generation tools for laddu"
+documentation = "https://docs.rs/laddu-generation"
+edition.workspace = true
+authors.workspace = true
+homepage.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+fastrand = { workspace = true }
+fastrand-contrib = { workspace = true }
+laddu-core = { workspace = true }
+
+[dev-dependencies]
+approx = { workspace = true }
+laddu = { workspace = true }

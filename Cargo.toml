@@ -53,6 +53,7 @@ laddu = { version = "0.18.0", path = "crates/laddu" }
 laddu-core = { version = "0.18.0", path = "crates/laddu-core" }
 laddu-amplitudes = { version = "0.18.0", path = "crates/laddu-amplitudes" }
 laddu-extensions = { version = "0.18.0", path = "crates/laddu-extensions" }
+laddu-generation = { version = "0.18.0", path = "crates/laddu-generation" }
 laddu-python = { version = "0.18.0", path = "crates/laddu-python" }
 
 [profile.release]
