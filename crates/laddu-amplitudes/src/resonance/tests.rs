@@ -24,7 +24,7 @@ fn test_phase_space_expression(name: &str, channel: Channel) -> laddu_core::Expr
     let daughter_1_mass = decay.daughter_1_mass();
     let daughter_2_mass = decay.daughter_2_mass();
     let resonance_mass = decay.parent_mass();
-    let mandelstam_s = reaction.mandelstam(channel);
+    let mandelstam_s = reaction.mandelstam(channel).unwrap();
     PhaseSpaceFactor::new(
         name,
         &recoil_mass,

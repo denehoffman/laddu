@@ -320,7 +320,28 @@ fn reaction_mandelstam_variables_match_resolved_values() {
     let event = dataset.event_view(0);
     let resolved = reaction.resolve_two_to_two(&event).unwrap();
 
-    assert_relative_eq!(reaction.mandelstam(Channel::S).value(&event), resolved.s());
-    assert_relative_eq!(reaction.mandelstam(Channel::T).value(&event), resolved.t());
-    assert_relative_eq!(reaction.mandelstam(Channel::U).value(&event), resolved.u());
+    assert!(reaction.topology().supports_mandelstam());
+    assert!(reaction.topology().require_mandelstam().is_ok());
+    assert_relative_eq!(
+        reaction.mandelstam(Channel::S).unwrap().value(&event),
+        resolved.s()
+    );
+    assert_relative_eq!(
+        reaction.mandelstam(Channel::T).unwrap().value(&event),
+        resolved.t()
+    );
+    assert_relative_eq!(
+        reaction.mandelstam(Channel::U).unwrap().value(&event),
+        resolved.u()
+    );
+}
+
+#[test]
+fn production_frame_axes_support_known_frames() {
+    let (dataset, reaction, _, _, _) = pion_cascade_dataset();
+    let event = dataset.event_view(0);
+
+    assert!(reaction.axes(&event, "x", Frame::Helicity).is_ok());
+    assert!(reaction.axes(&event, "x", Frame::GottfriedJackson).is_ok());
+    assert!(reaction.axes(&event, "x", Frame::Adair).is_err());
 }

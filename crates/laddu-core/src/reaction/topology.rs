@@ -130,8 +130,9 @@ impl Reaction {
     }
 
     /// Construct a Mandelstam variable for this reaction.
-    pub fn mandelstam(&self, channel: Channel) -> Mandelstam {
-        Mandelstam::new(self.clone(), channel)
+    pub fn mandelstam(&self, channel: Channel) -> LadduResult<Mandelstam> {
+        self.topology.require_mandelstam()?;
+        Ok(Mandelstam::new(self.clone(), channel))
     }
 
     /// Construct a polarization-angle variable for this reaction.
@@ -279,6 +280,22 @@ impl Reaction {
 }
 
 impl ReactionTopology {
+    /// Return whether this topology supports Mandelstam variables.
+    pub const fn supports_mandelstam(&self) -> bool {
+        matches!(self, ReactionTopology::TwoToTwo(_))
+    }
+
+    /// Require this topology to support Mandelstam variables.
+    pub fn require_mandelstam(&self) -> LadduResult<()> {
+        if self.supports_mandelstam() {
+            Ok(())
+        } else {
+            Err(LadduError::Custom(
+                "Mandelstam variables require a supported production topology".to_string(),
+            ))
+        }
+    }
+
     /// Validate topology roles against a particle graph.
     pub fn validate(&self, graph: &ParticleGraph) -> LadduResult<()> {
         match self {
