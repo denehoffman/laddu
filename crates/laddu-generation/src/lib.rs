@@ -7,7 +7,7 @@ pub use distributions::{
 pub use topology::{
     BatchIntensity, CompositeGenerator, EventGenerator, GeneratedBatch, GeneratedEventLayout,
     GeneratedParticle, GeneratedParticleLayout, GeneratedReaction, GeneratedReactionTopology,
-    GeneratedTwoToTwoReaction, GeneratedVertexKind, GeneratedVertexLayout, InitialGenerator,
-    Reconstruction, RejectionEnvelope, RejectionSampleIter, RejectionSampler,
+    GeneratedStorage, GeneratedTwoToTwoReaction, GeneratedVertexKind, GeneratedVertexLayout,
+    InitialGenerator, Reconstruction, RejectionEnvelope, RejectionSampleIter, RejectionSampler,
     RejectionSamplingDiagnostics, RejectionSamplingOptions, StableGenerator,
 };

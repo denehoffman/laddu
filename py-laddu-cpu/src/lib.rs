@@ -41,8 +41,9 @@ mod laddu {
         generation::{
             PyCompositeGenerator, PyDistribution, PyEventGenerator, PyGeneratedBatch,
             PyGeneratedBatchIter, PyGeneratedEventLayout, PyGeneratedParticle,
-            PyGeneratedParticleLayout, PyGeneratedReaction, PyGeneratedVertexLayout,
-            PyInitialGenerator, PyMandelstamTDistribution, PyReconstruction, PyStableGenerator,
+            PyGeneratedParticleLayout, PyGeneratedReaction, PyGeneratedStorage,
+            PyGeneratedVertexLayout, PyInitialGenerator, PyMandelstamTDistribution,
+            PyReconstruction, PyStableGenerator,
         },
         get_threads,
         mpi::{finalize_mpi, get_rank, get_size, is_mpi_available, is_root, use_mpi, using_mpi},

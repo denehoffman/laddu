@@ -2,9 +2,9 @@ use std::{collections::HashMap, sync::Arc};
 
 use laddu_generation::{
     CompositeGenerator, Distribution, EventGenerator, GeneratedBatch, GeneratedEventLayout,
-    GeneratedParticle, GeneratedParticleLayout, GeneratedReaction, GeneratedVertexKind,
-    GeneratedVertexLayout, InitialGenerator, MandelstamTDistribution, Reconstruction,
-    StableGenerator,
+    GeneratedParticle, GeneratedParticleLayout, GeneratedReaction, GeneratedStorage,
+    GeneratedVertexKind, GeneratedVertexLayout, InitialGenerator, MandelstamTDistribution,
+    Reconstruction, StableGenerator,
 };
 use pyo3::{exceptions::PyValueError, prelude::*, types::PyTuple};
 
@@ -300,6 +300,30 @@ impl PyGeneratedReaction {
     }
 }
 
+/// Selects which generated particle p4s are written into generated datasets.
+#[pyclass(name = "GeneratedStorage", module = "laddu", from_py_object)]
+#[derive(Clone, Debug)]
+pub struct PyGeneratedStorage(pub GeneratedStorage);
+
+#[pymethods]
+impl PyGeneratedStorage {
+    /// Store every generated particle p4.
+    #[staticmethod]
+    fn all() -> Self {
+        Self(GeneratedStorage::all())
+    }
+
+    /// Store only the listed generated particle IDs.
+    #[staticmethod]
+    fn only(ids: Vec<String>) -> Self {
+        Self(GeneratedStorage::only(ids))
+    }
+
+    fn __repr__(&self) -> String {
+        format!("{:?}", self.0)
+    }
+}
+
 /// Metadata for one generated particle in a generated event layout.
 #[pyclass(name = "GeneratedParticleLayout", module = "laddu", from_py_object)]
 #[derive(Clone, Debug)]
@@ -498,13 +522,14 @@ pub struct PyEventGenerator(pub EventGenerator);
 impl PyEventGenerator {
     /// Construct an event generator.
     #[new]
-    #[pyo3(signature = (reaction, aux_generators=None, seed=None))]
+    #[pyo3(signature = (reaction, aux_generators=None, seed=None, storage=None))]
     fn new(
         reaction: &PyGeneratedReaction,
         aux_generators: Option<HashMap<String, PyDistribution>>,
         seed: Option<u64>,
-    ) -> Self {
-        Self(EventGenerator::new(
+        storage: Option<&PyGeneratedStorage>,
+    ) -> PyResult<Self> {
+        let generator = EventGenerator::new(
             reaction.0.clone(),
             aux_generators
                 .unwrap_or_default()
@@ -512,7 +537,13 @@ impl PyEventGenerator {
                 .map(|(name, distribution)| (name, distribution.0))
                 .collect(),
             seed,
-        ))
+        );
+        let generator = if let Some(storage) = storage {
+            generator.with_storage(storage.0.clone())?
+        } else {
+            generator
+        };
+        Ok(Self(generator))
     }
 
     /// Generate one dataset batch with generated layout metadata.

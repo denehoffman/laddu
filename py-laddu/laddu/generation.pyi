@@ -78,6 +78,12 @@ class GeneratedReaction:
     def particle_layouts(self) -> list[GeneratedParticleLayout]: ...
     def reconstructed_reaction(self) -> Reaction: ...
 
+class GeneratedStorage:
+    @staticmethod
+    def all() -> GeneratedStorage: ...
+    @staticmethod
+    def only(ids: list[str] | tuple[str, ...]) -> GeneratedStorage: ...
+
 class GeneratedParticleLayout:
     id: str
     product_id: int
@@ -113,6 +119,7 @@ class EventGenerator:
         reaction: GeneratedReaction,
         aux_generators: Mapping[str, Distribution] | None = None,
         seed: int | None = None,
+        storage: GeneratedStorage | None = None,
     ) -> None: ...
     def generate_batch(self, n_events: int) -> GeneratedBatch: ...
     def generate_batches(
