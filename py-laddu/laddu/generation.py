@@ -1,27 +1,25 @@
 """Monte Carlo event-generation APIs."""
 
 from laddu.laddu import (
+    CompositeGenerator,
     Distribution,
     EventGenerator,
-    FinalStateParticle,
-    GenComposite,
-    GenFinalState,
-    GenInitialState,
-    GenReaction,
-    InitialStateParticle,
+    GeneratedParticle,
+    GeneratedReaction,
+    InitialGenerator,
     MandelstamTDistribution,
     Reconstruction,
+    StableGenerator,
 )
 
 __all__ = [
+    'CompositeGenerator',
     'Distribution',
     'EventGenerator',
-    'FinalStateParticle',
-    'GenComposite',
-    'GenFinalState',
-    'GenInitialState',
-    'GenReaction',
-    'InitialStateParticle',
+    'GeneratedParticle',
+    'GeneratedReaction',
+    'InitialGenerator',
     'MandelstamTDistribution',
     'Reconstruction',
+    'StableGenerator',
 ]

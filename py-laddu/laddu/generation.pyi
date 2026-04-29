@@ -1,6 +1,7 @@
 from collections.abc import Mapping
 
 from laddu.data import Dataset
+from laddu.reaction import Reaction
 from laddu.vectors import Vec4
 
 class Distribution:
@@ -17,65 +18,69 @@ class MandelstamTDistribution:
     @staticmethod
     def exponential(slope: float) -> MandelstamTDistribution: ...
 
-class GenInitialState:
+class InitialGenerator:
     @staticmethod
-    def beam_with_fixed_energy(mass: float, energy: float) -> GenInitialState: ...
+    def beam_with_fixed_energy(mass: float, energy: float) -> InitialGenerator: ...
     @staticmethod
-    def beam(mass: float, min_energy: float, max_energy: float) -> GenInitialState: ...
+    def beam(mass: float, min_energy: float, max_energy: float) -> InitialGenerator: ...
     @staticmethod
-    def target(mass: float) -> GenInitialState: ...
+    def target(mass: float) -> InitialGenerator: ...
 
-class GenComposite:
+class CompositeGenerator:
     def __init__(self, min_mass: float, max_mass: float) -> None: ...
 
-class GenFinalState:
+class StableGenerator:
     def __init__(self, mass: float) -> None: ...
 
 class Reconstruction:
     @staticmethod
-    def reconstructed(p4_names: list[str]) -> Reconstruction: ...
+    def stored() -> Reconstruction: ...
     @staticmethod
     def fixed(p4: Vec4) -> Reconstruction: ...
     @staticmethod
     def missing() -> Reconstruction: ...
+    @staticmethod
+    def composite() -> Reconstruction: ...
 
-class InitialStateParticle:
-    def __init__(
-        self,
-        label: str,
-        generator: GenInitialState,
-        reconstruction: Reconstruction,
-    ) -> None: ...
+class GeneratedParticle:
+    id: str
 
-class FinalStateParticle:
-    def __init__(
-        self,
-        label: str,
-        generator: GenFinalState,
+    @staticmethod
+    def initial(
+        id: str,
+        generator: InitialGenerator,
         reconstruction: Reconstruction,
-    ) -> None: ...
+    ) -> GeneratedParticle: ...
+    @staticmethod
+    def stable(
+        id: str,
+        generator: StableGenerator,
+        reconstruction: Reconstruction,
+    ) -> GeneratedParticle: ...
     @staticmethod
     def composite(
-        label: str,
-        generator: GenComposite,
-        daughters: tuple[FinalStateParticle, FinalStateParticle],
-    ) -> FinalStateParticle: ...
+        id: str,
+        generator: CompositeGenerator,
+        daughters: tuple[GeneratedParticle, GeneratedParticle],
+        reconstruction: Reconstruction,
+    ) -> GeneratedParticle: ...
 
-class GenReaction:
+class GeneratedReaction:
     @staticmethod
     def two_to_two(
-        p1: InitialStateParticle,
-        p2: InitialStateParticle,
-        p3: FinalStateParticle,
-        p4: FinalStateParticle,
+        p1: GeneratedParticle,
+        p2: GeneratedParticle,
+        p3: GeneratedParticle,
+        p4: GeneratedParticle,
         tdist: MandelstamTDistribution,
-    ) -> GenReaction: ...
+    ) -> GeneratedReaction: ...
     def p4_labels(self) -> list[str]: ...
+    def reconstructed_reaction(self) -> Reaction: ...
 
 class EventGenerator:
     def __init__(
         self,
-        reaction: GenReaction,
+        reaction: GeneratedReaction,
         aux_generators: Mapping[str, Distribution] | None = None,
         seed: int | None = None,
     ) -> None: ...

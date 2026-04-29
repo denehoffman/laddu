@@ -2,66 +2,57 @@ use std::{collections::HashMap, sync::Arc};
 
 use fastrand::Rng;
 use laddu::{parameter, BreitWigner, LadduResult};
-use laddu_core::{traits::Variable, Particle, Reaction};
+use laddu_core::traits::Variable;
 use laddu_generation::{
     distributions::{LadduGenRngExt, MandelstamTDistribution},
     topology::{
-        EventGenerator, FinalStateParticle, GenComposite, GenFinalState, GenInitialState,
-        GenReaction, InitialStateParticle, Reconstruction,
+        CompositeGenerator, EventGenerator, GeneratedParticle, GeneratedReaction, InitialGenerator,
+        Reconstruction, StableGenerator,
     },
 };
 
-fn demo_gen_reaction() -> GenReaction {
-    let beam = InitialStateParticle::new(
+fn demo_gen_reaction() -> LadduResult<GeneratedReaction> {
+    let beam = GeneratedParticle::initial(
         "beam",
-        GenInitialState::beam_with_fixed_energy(0.0, 8.0),
-        Reconstruction::Reconstructed {
-            p4_names: vec!["beam".to_string()],
-        },
+        InitialGenerator::beam_with_fixed_energy(0.0, 8.0),
+        Reconstruction::Stored,
     );
-    let target = InitialStateParticle::new(
+    let target = GeneratedParticle::initial(
         "target",
-        GenInitialState::target(0.938272),
+        InitialGenerator::target(0.938272),
         Reconstruction::Missing,
     );
-    let ks1 = FinalStateParticle::new(
+    let ks1 = GeneratedParticle::stable(
         "kshort1",
-        GenFinalState::new(0.497611),
-        Reconstruction::Reconstructed {
-            p4_names: vec!["kshort1".to_string()],
-        },
+        StableGenerator::new(0.497611),
+        Reconstruction::Stored,
     );
-    let ks2 = FinalStateParticle::new(
+    let ks2 = GeneratedParticle::stable(
         "kshort2",
-        GenFinalState::new(0.497611),
-        Reconstruction::Reconstructed {
-            p4_names: vec!["kshort2".to_string()],
-        },
+        StableGenerator::new(0.497611),
+        Reconstruction::Stored,
     );
-    let kk = FinalStateParticle::composite("kk", GenComposite::new(1.1, 1.6), (&ks1, &ks2));
-    let recoil = FinalStateParticle::new(
+    let kk = GeneratedParticle::composite(
+        "kk",
+        CompositeGenerator::new(1.1, 1.6),
+        (&ks1, &ks2),
+        Reconstruction::Composite,
+    );
+    let recoil = GeneratedParticle::stable(
         "recoil",
-        GenFinalState::new(0.938272),
-        Reconstruction::Reconstructed {
-            p4_names: vec!["recoil".to_string()],
-        },
+        StableGenerator::new(0.938272),
+        Reconstruction::Stored,
     );
     let tdist = MandelstamTDistribution::Exponential { slope: 0.1 };
-    GenReaction::two_to_two(beam, target, kk, recoil, tdist)
+    GeneratedReaction::two_to_two(beam, target, kk, recoil, tdist)
 }
 
 fn main() -> LadduResult<()> {
-    let gen_reaction = demo_gen_reaction();
+    let gen_reaction = demo_gen_reaction()?;
+    let reaction = gen_reaction.reconstructed_reaction()?;
     let generator = EventGenerator::new(gen_reaction, HashMap::new(), Some(12345));
     let n_events = 1_000_000;
     let dataset = Arc::new(generator.generate_dataset(n_events)?);
-    let beam = Particle::stored("beam");
-    let target = Particle::missing("target");
-    let ks1 = Particle::stored("kshort1");
-    let ks2 = Particle::stored("kshort2");
-    let kk = Particle::composite("kk", (&ks1, &ks2))?;
-    let recoil = Particle::stored("recoil");
-    let reaction = Reaction::two_to_two(&beam, &target, &kk, &recoil)?;
 
     let bw = BreitWigner::new(
         "f0_1500",
