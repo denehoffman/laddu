@@ -259,6 +259,7 @@ impl FinalStateParticle {
     }
 }
 
+#[derive(Clone, Debug)]
 pub struct GenTwoToTwoReaction {
     p1: InitialStateParticle,
     p2: InitialStateParticle,
@@ -354,6 +355,7 @@ impl GenTwoToTwoReaction {
     }
 }
 
+#[derive(Clone, Debug)]
 pub enum GenReactionTopology {
     TwoToTwo(GenTwoToTwoReaction),
 }
@@ -370,6 +372,7 @@ impl GenReactionTopology {
     }
 }
 
+#[derive(Clone, Debug)]
 pub struct GenReaction {
     topology: GenReactionTopology,
 }
@@ -403,6 +406,7 @@ impl GenReaction {
     }
 }
 
+#[derive(Clone, Debug)]
 pub struct EventGenerator {
     reaction: GenReaction,
     aux_generators: HashMap<String, Distribution>,

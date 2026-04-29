@@ -99,6 +99,7 @@ impl MandelstamTDistribution {
     }
 }
 
+#[derive(Clone, Debug)]
 pub enum Distribution {
     Fixed(f64),
     Uniform { min: f64, max: f64 },
