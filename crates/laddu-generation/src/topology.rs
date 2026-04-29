@@ -236,6 +236,24 @@ impl GeneratedParticle {
         labels
     }
 
+    fn append_layout(
+        &self,
+        parent_id: Option<usize>,
+        particles: &mut Vec<GeneratedParticleLayout>,
+    ) {
+        let product_id = particles.len();
+        particles.push(GeneratedParticleLayout {
+            id: self.id().to_string(),
+            product_id,
+            parent_id,
+            p4_label: Some(self.id().to_string()),
+        });
+        if let Self::Composite { daughters, .. } = self {
+            daughters.0.append_layout(Some(product_id), particles);
+            daughters.1.append_layout(Some(product_id), particles);
+        }
+    }
+
     fn sample_mass(&self, rng: &mut Rng) -> f64 {
         match self {
             Self::Initial { generator, .. } => generator.mass,
@@ -391,6 +409,14 @@ impl GeneratedTwoToTwoReaction {
         labels
     }
 
+    fn particle_layouts(&self) -> Vec<GeneratedParticleLayout> {
+        let mut particles = Vec::new();
+        for particle in [&self.p1, &self.p2, &self.p3, &self.p4] {
+            particle.append_layout(None, &mut particles);
+        }
+        particles
+    }
+
     fn reconstructed_reaction(&self) -> LadduResult<Reaction> {
         Reaction::two_to_two(
             &self.p1.generated_particle()?,
@@ -505,6 +531,12 @@ impl GeneratedReactionTopology {
         }
     }
 
+    fn particle_layouts(&self) -> Vec<GeneratedParticleLayout> {
+        match self {
+            Self::TwoToTwo(reaction) => reaction.particle_layouts(),
+        }
+    }
+
     fn reconstructed_reaction(&self) -> LadduResult<Reaction> {
         match self {
             Self::TwoToTwo(reaction) => reaction.reconstructed_reaction(),
@@ -545,6 +577,11 @@ impl GeneratedReaction {
         self.topology.p4_labels()
     }
 
+    /// Return generated particle layout entries in stable product-ID order.
+    pub fn particle_layouts(&self) -> Vec<GeneratedParticleLayout> {
+        self.topology.particle_layouts()
+    }
+
     /// Build the reconstructed reaction corresponding to this generated layout.
     pub fn reconstructed_reaction(&self) -> LadduResult<Reaction> {
         self.topology.reconstructed_reaction()
@@ -562,19 +599,56 @@ impl GeneratedReaction {
     }
 }
 
-/// Metadata describing the columns in a generated event batch.
+/// Metadata for one generated particle in a generated event layout.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GeneratedParticleLayout {
+    id: String,
+    product_id: usize,
+    parent_id: Option<usize>,
+    p4_label: Option<String>,
+}
+
+impl GeneratedParticleLayout {
+    /// Return the generated particle identifier.
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+
+    /// Return the zero-based stable product ID in generated-layout order.
+    pub fn product_id(&self) -> usize {
+        self.product_id
+    }
+
+    /// Return the decay-parent product ID, if this particle is a decay daughter.
+    pub fn parent_id(&self) -> Option<usize> {
+        self.parent_id
+    }
+
+    /// Return the dataset p4 label associated with this particle, if stored in the batch.
+    pub fn p4_label(&self) -> Option<&str> {
+        self.p4_label.as_deref()
+    }
+}
+
+/// Metadata describing the columns and generated particles in a generated event batch.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GeneratedEventLayout {
     p4_labels: Vec<String>,
     aux_labels: Vec<String>,
+    particles: Vec<GeneratedParticleLayout>,
 }
 
 impl GeneratedEventLayout {
     /// Construct generated event layout metadata from p4 and auxiliary labels.
-    pub fn new(p4_labels: Vec<String>, aux_labels: Vec<String>) -> Self {
+    pub fn new(
+        p4_labels: Vec<String>,
+        aux_labels: Vec<String>,
+        particles: Vec<GeneratedParticleLayout>,
+    ) -> Self {
         Self {
             p4_labels,
             aux_labels,
+            particles,
         }
     }
 
@@ -586,6 +660,11 @@ impl GeneratedEventLayout {
     /// Return generated auxiliary column labels in dataset order.
     pub fn aux_labels(&self) -> &[String] {
         &self.aux_labels
+    }
+
+    /// Return generated particle layout entries in stable product-ID order.
+    pub fn particles(&self) -> &[GeneratedParticleLayout] {
+        &self.particles
     }
 }
 
@@ -683,7 +762,7 @@ impl EventGenerator {
         Ok(GeneratedBatch::new(
             dataset,
             self.reaction.clone(),
-            GeneratedEventLayout::new(p4_labels, aux_labels),
+            GeneratedEventLayout::new(p4_labels, aux_labels, self.reaction.particle_layouts()),
         ))
     }
 
@@ -823,6 +902,25 @@ mod tests {
         );
         assert_eq!(batch.dataset().p4_names(), batch.layout().p4_labels());
         assert_eq!(batch.dataset().aux_names(), batch.layout().aux_labels());
+        let particles = batch.layout().particles();
+        assert_eq!(particles.len(), 6);
+        assert_eq!(particles[0].id(), "beam");
+        assert_eq!(particles[0].product_id(), 0);
+        assert_eq!(particles[0].parent_id(), None);
+        assert_eq!(particles[1].id(), "target");
+        assert_eq!(particles[1].parent_id(), None);
+        assert_eq!(particles[2].id(), "kk");
+        assert_eq!(particles[2].product_id(), 2);
+        assert_eq!(particles[2].parent_id(), None);
+        assert_eq!(particles[3].id(), "kshort1");
+        assert_eq!(particles[3].parent_id(), Some(2));
+        assert_eq!(particles[4].id(), "kshort2");
+        assert_eq!(particles[4].parent_id(), Some(2));
+        assert_eq!(particles[5].id(), "recoil");
+        assert_eq!(particles[5].parent_id(), None);
+        for particle in particles {
+            assert_eq!(particle.p4_label(), Some(particle.id()));
+        }
     }
 
     #[test]

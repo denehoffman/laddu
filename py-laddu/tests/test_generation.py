@@ -57,6 +57,24 @@ def test_generation_smoke() -> None:
     assert batch.layout.p4_labels == dataset.p4_names
     assert batch.layout.aux_labels == []
     assert batch.reaction.p4_labels() == dataset.p4_names
+    assert [particle.id for particle in batch.layout.particles] == [
+        'beam',
+        'target',
+        'kk',
+        'kshort1',
+        'kshort2',
+        'recoil',
+    ]
+    assert [particle.product_id for particle in batch.layout.particles] == list(range(6))
+    assert [particle.parent_id for particle in batch.layout.particles] == [
+        None,
+        None,
+        None,
+        2,
+        2,
+        None,
+    ]
+    assert [particle.p4_label for particle in batch.layout.particles] == dataset.p4_names
     assert reaction.reconstructed_reaction().decay('kk').daughters() == [
         'kshort1',
         'kshort2',

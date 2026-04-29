@@ -75,11 +75,19 @@ class GeneratedReaction:
         tdist: MandelstamTDistribution,
     ) -> GeneratedReaction: ...
     def p4_labels(self) -> list[str]: ...
+    def particle_layouts(self) -> list[GeneratedParticleLayout]: ...
     def reconstructed_reaction(self) -> Reaction: ...
+
+class GeneratedParticleLayout:
+    id: str
+    product_id: int
+    parent_id: int | None
+    p4_label: str | None
 
 class GeneratedEventLayout:
     p4_labels: list[str]
     aux_labels: list[str]
+    particles: list[GeneratedParticleLayout]
 
 class GeneratedBatch:
     dataset: Dataset
