@@ -2,8 +2,8 @@ use std::{collections::HashMap, sync::Arc};
 
 use laddu_generation::{
     CompositeGenerator, Distribution, EventGenerator, GeneratedBatch, GeneratedEventLayout,
-    GeneratedParticle, GeneratedReaction, InitialGenerator, MandelstamTDistribution,
-    Reconstruction, StableGenerator,
+    GeneratedParticle, GeneratedParticleLayout, GeneratedReaction, InitialGenerator,
+    MandelstamTDistribution, Reconstruction, StableGenerator,
 };
 use pyo3::{exceptions::PyValueError, prelude::*, types::PyTuple};
 
@@ -280,9 +280,54 @@ impl PyGeneratedReaction {
         self.0.p4_labels()
     }
 
+    /// Return generated particle layout entries in stable product-ID order.
+    fn particle_layouts(&self) -> Vec<PyGeneratedParticleLayout> {
+        self.0
+            .particle_layouts()
+            .into_iter()
+            .map(PyGeneratedParticleLayout)
+            .collect()
+    }
+
     /// Build the reconstructed reaction corresponding to this generated layout.
     fn reconstructed_reaction(&self) -> PyResult<PyReaction> {
         Ok(PyReaction(self.0.reconstructed_reaction()?))
+    }
+
+    fn __repr__(&self) -> String {
+        format!("{:?}", self.0)
+    }
+}
+
+/// Metadata for one generated particle in a generated event layout.
+#[pyclass(name = "GeneratedParticleLayout", module = "laddu", from_py_object)]
+#[derive(Clone, Debug)]
+pub struct PyGeneratedParticleLayout(pub GeneratedParticleLayout);
+
+#[pymethods]
+impl PyGeneratedParticleLayout {
+    /// The generated particle identifier.
+    #[getter]
+    fn id(&self) -> String {
+        self.0.id().to_string()
+    }
+
+    /// The zero-based stable product ID in generated-layout order.
+    #[getter]
+    fn product_id(&self) -> usize {
+        self.0.product_id()
+    }
+
+    /// The decay-parent product ID, or None if this particle has no decay parent.
+    #[getter]
+    fn parent_id(&self) -> Option<usize> {
+        self.0.parent_id()
+    }
+
+    /// The dataset p4 label associated with this particle, if stored in the batch.
+    #[getter]
+    fn p4_label(&self) -> Option<String> {
+        self.0.p4_label().map(str::to_string)
     }
 
     fn __repr__(&self) -> String {
@@ -307,6 +352,17 @@ impl PyGeneratedEventLayout {
     #[getter]
     fn aux_labels(&self) -> Vec<String> {
         self.0.aux_labels().to_vec()
+    }
+
+    /// Generated particle layout entries in stable product-ID order.
+    #[getter]
+    fn particles(&self) -> Vec<PyGeneratedParticleLayout> {
+        self.0
+            .particles()
+            .iter()
+            .cloned()
+            .map(PyGeneratedParticleLayout)
+            .collect()
     }
 
     fn __repr__(&self) -> String {
