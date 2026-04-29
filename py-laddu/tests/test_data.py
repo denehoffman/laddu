@@ -296,6 +296,45 @@ def test_dataset_conversion() -> None:
     assert ds_from_polars[2].p4s['proton'].e == 100.0
 
 
+def test_dataset_empty_push_event() -> None:
+    dataset = Dataset.empty(p4_names=['beam', 'recoil'], aux_names=['pol_angle'])
+    beam = Vec3(0.0, 0.0, 8.0).with_mass(0.0)
+    recoil = Vec3(0.1, 0.2, 0.3).with_mass(0.938)
+
+    dataset.push_event(
+        p4={'recoil': recoil, 'beam': beam},
+        aux={'pol_angle': 0.25},
+        weight=2.0,
+    )
+
+    assert dataset.n_events == 1
+    assert pytest.approx(dataset[0].p4('beam').e) == beam.e
+    assert pytest.approx(dataset[0].p4('recoil').px) == recoil.px
+    assert pytest.approx(dataset[0].aux['pol_angle']) == 0.25
+    assert pytest.approx(dataset[0].weight) == 2.0
+
+
+def test_dataset_push_event_validation() -> None:
+    dataset = Dataset.empty(p4_names=['beam', 'recoil'], aux_names=['pol_angle'])
+    beam = Vec3(0.0, 0.0, 8.0).with_mass(0.0)
+    recoil = Vec3(0.1, 0.2, 0.3).with_mass(0.938)
+
+    with pytest.raises(RuntimeError, match='Missing p4'):
+        dataset.push_event(p4={'beam': beam}, aux={'pol_angle': 0.25})
+    with pytest.raises(KeyError, match='unknown'):
+        dataset.push_event(
+            p4={'beam': beam, 'unknown': recoil},
+            aux={'pol_angle': 0.25},
+        )
+    with pytest.raises(RuntimeError, match='Missing aux'):
+        dataset.push_event(p4={'beam': beam, 'recoil': recoil})
+    with pytest.raises(KeyError, match='unknown'):
+        dataset.push_event(
+            p4={'beam': beam, 'recoil': recoil},
+            aux={'unknown': 0.25},
+        )
+
+
 def test_table_entrypoints_io_compatibility(tmp_path: Path) -> None:
     data = {
         'beam_px': [1.0, 2.0, 3.0, 4.0],

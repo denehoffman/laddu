@@ -495,6 +495,89 @@ fn test_dataset_weights() {
 }
 
 #[test]
+fn test_dataset_empty_push_event_named_matches_columns() {
+    let metadata = DatasetMetadata::new(vec!["beam", "recoil"], vec!["pol_angle"])
+        .expect("metadata should be valid");
+    let beam = Vec3::new(0.0, 0.0, 8.0).with_mass(0.0);
+    let recoil = Vec3::new(0.1, 0.2, 0.3).with_mass(0.938);
+    let mut row_dataset = Dataset::empty(metadata.clone());
+    row_dataset
+        .push_event_named(
+            [("recoil", recoil), ("beam", beam)],
+            [("pol_angle", 0.25)],
+            2.0,
+        )
+        .expect("named push should succeed");
+
+    let column_dataset = Dataset::from_columns(
+        metadata,
+        vec![vec![beam], vec![recoil]],
+        vec![vec![0.25]],
+        vec![2.0],
+    )
+    .expect("column construction should succeed");
+
+    let row_dataset = Arc::new(row_dataset);
+    let column_dataset = Arc::new(column_dataset);
+    assert_datasets_close(
+        &row_dataset,
+        &column_dataset,
+        &["beam", "recoil"],
+        &["pol_angle"],
+    );
+}
+
+#[test]
+fn test_dataset_push_event_validation() {
+    let metadata = DatasetMetadata::new(vec!["beam", "recoil"], vec!["pol_angle"])
+        .expect("metadata should be valid");
+    let beam = Vec3::new(0.0, 0.0, 8.0).with_mass(0.0);
+    let recoil = Vec3::new(0.1, 0.2, 0.3).with_mass(0.938);
+    let mut dataset = Dataset::empty(metadata);
+
+    assert!(dataset.push_event([beam], [0.25], 1.0).is_err());
+    assert!(dataset.push_event([beam, recoil], [], 1.0).is_err());
+    assert!(dataset
+        .push_event_named([("beam", beam)], [("pol_angle", 0.25)], 1.0)
+        .is_err());
+    assert!(dataset
+        .push_event_named(
+            [("beam", beam), ("beam", recoil)],
+            [("pol_angle", 0.25)],
+            1.0
+        )
+        .is_err());
+    assert!(dataset
+        .push_event_named(
+            [("beam", beam), ("unknown", recoil)],
+            [("pol_angle", 0.25)],
+            1.0
+        )
+        .is_err());
+    assert!(dataset
+        .push_event_named(
+            [("beam", beam), ("recoil", recoil)],
+            [("unknown", 0.25)],
+            1.0
+        )
+        .is_err());
+}
+
+#[test]
+fn test_dataset_views_local_evaluate_without_event_clone() {
+    let dataset = test_dataset();
+    let mut mass = Mass::new(["proton"]);
+    mass.bind(dataset.metadata()).unwrap();
+    let values = dataset
+        .views_local()
+        .map(|event| event.evaluate(&mass))
+        .collect::<Vec<_>>();
+    assert_eq!(values.len(), dataset.n_events_local());
+    assert_relative_eq!(values[0], 1.007);
+    assert!(dataset.view_local(dataset.n_events_local()).is_err());
+}
+
+#[test]
 #[should_panic(
     expected = "Dataset requires rectangular p4/aux columns for canonical columnar storage"
 )]
