@@ -27,15 +27,15 @@ const WARMUP_ITERS: usize = 64;
 const DEFAULT_ITERS: usize = 4096;
 
 fn reaction_variables() -> (laddu::Angles, laddu::Polarization, Mass, Mass, Mass) {
-    let beam = laddu::Particle::measured("beam", "beam");
+    let beam = laddu::Particle::stored("beam");
     let target = laddu::Particle::missing("target");
-    let kshort1 = laddu::Particle::measured("K_S1", "kshort1");
-    let kshort2 = laddu::Particle::measured("K_S2", "kshort2");
-    let kk = laddu::Particle::composite("KK", [&kshort1, &kshort2]).unwrap();
-    let proton = laddu::Particle::measured("proton", "proton");
+    let kshort1 = laddu::Particle::stored("kshort1");
+    let kshort2 = laddu::Particle::stored("kshort2");
+    let kk = laddu::Particle::composite("kk", (&kshort1, &kshort2)).unwrap();
+    let proton = laddu::Particle::stored("proton");
     let reaction = laddu::Reaction::two_to_two(&beam, &target, &kk, &proton).unwrap();
-    let decay = reaction.decay(&kk).unwrap();
-    let angles = decay.angles(&kshort1, Frame::Helicity).unwrap();
+    let decay = reaction.decay("kk").unwrap();
+    let angles = decay.angles("kshort1", Frame::Helicity).unwrap();
     let polarization = reaction.polarization("pol_magnitude", "pol_angle");
     let resonance_mass = decay.parent_mass();
     let daughter_1_mass = decay.daughter_1_mass();

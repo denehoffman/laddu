@@ -8,12 +8,12 @@ use crate::{
 };
 
 fn reaction() -> (Reaction, Particle, Particle, Particle) {
-    let beam = Particle::measured("beam", "beam");
+    let beam = Particle::stored("beam");
     let target = Particle::missing("target");
-    let kshort1 = Particle::measured("K_S1", "kshort1");
-    let kshort2 = Particle::measured("K_S2", "kshort2");
-    let kk = Particle::composite("KK", [&kshort1, &kshort2]).unwrap();
-    let proton = Particle::measured("proton", "proton");
+    let kshort1 = Particle::stored("kshort1");
+    let kshort2 = Particle::stored("kshort2");
+    let kk = Particle::composite("kk", (&kshort1, &kshort2)).unwrap();
+    let proton = Particle::stored("proton");
     (
         Reaction::two_to_two(&beam, &target, &kk, &proton).unwrap(),
         kk,
@@ -49,9 +49,9 @@ fn test_mass_display() {
 #[test]
 fn test_costheta_helicity() {
     let dataset = test_dataset();
-    let (reaction, kk, kshort1, _) = reaction();
-    let decay = reaction.decay(&kk).unwrap();
-    let mut costheta = decay.costheta(&kshort1, Frame::Helicity).unwrap();
+    let (reaction, _, _, _) = reaction();
+    let decay = reaction.decay("kk").unwrap();
+    let mut costheta = decay.costheta("kshort1", Frame::Helicity).unwrap();
     costheta.bind(dataset.metadata()).unwrap();
     let event = dataset.event_view(0);
     assert_relative_eq!(costheta.value(&event), -0.4611175068834202);
@@ -59,21 +59,21 @@ fn test_costheta_helicity() {
 
 #[test]
 fn test_costheta_display() {
-    let (reaction, kk, kshort1, _) = reaction();
-    let decay = reaction.decay(&kk).unwrap();
-    let costheta = decay.costheta(&kshort1, Frame::Helicity).unwrap();
+    let (reaction, _, _, _) = reaction();
+    let decay = reaction.decay("kk").unwrap();
+    let costheta = decay.costheta("kshort1", Frame::Helicity).unwrap();
     assert_eq!(
         costheta.to_string(),
-        "CosTheta(parent=KK, daughter=K_S1, frame=Helicity)"
+        "CosTheta(parent=kk, daughter=kshort1, frame=Helicity)"
     );
 }
 
 #[test]
 fn test_phi_helicity() {
     let dataset = test_dataset();
-    let (reaction, kk, kshort1, _) = reaction();
-    let decay = reaction.decay(&kk).unwrap();
-    let mut phi = decay.phi(&kshort1, Frame::Helicity).unwrap();
+    let (reaction, _, _, _) = reaction();
+    let decay = reaction.decay("kk").unwrap();
+    let mut phi = decay.phi("kshort1", Frame::Helicity).unwrap();
     phi.bind(dataset.metadata()).unwrap();
     let event = dataset.event_view(0);
     assert_relative_eq!(phi.value(&event), -2.657462587335066);
@@ -81,21 +81,21 @@ fn test_phi_helicity() {
 
 #[test]
 fn test_phi_display() {
-    let (reaction, kk, kshort1, _) = reaction();
-    let decay = reaction.decay(&kk).unwrap();
-    let phi = decay.phi(&kshort1, Frame::Helicity).unwrap();
+    let (reaction, _, _, _) = reaction();
+    let decay = reaction.decay("kk").unwrap();
+    let phi = decay.phi("kshort1", Frame::Helicity).unwrap();
     assert_eq!(
         phi.to_string(),
-        "Phi(parent=KK, daughter=K_S1, frame=Helicity)"
+        "Phi(parent=kk, daughter=kshort1, frame=Helicity)"
     );
 }
 
 #[test]
 fn test_costheta_gottfried_jackson() {
     let dataset = test_dataset();
-    let (reaction, kk, kshort1, _) = reaction();
-    let decay = reaction.decay(&kk).unwrap();
-    let mut costheta = decay.costheta(&kshort1, Frame::GottfriedJackson).unwrap();
+    let (reaction, _, _, _) = reaction();
+    let decay = reaction.decay("kk").unwrap();
+    let mut costheta = decay.costheta("kshort1", Frame::GottfriedJackson).unwrap();
     costheta.bind(dataset.metadata()).unwrap();
     let event = dataset.event_view(0);
     assert_relative_eq!(costheta.value(&event), 0.09198832278032032);
@@ -104,9 +104,9 @@ fn test_costheta_gottfried_jackson() {
 #[test]
 fn test_phi_gottfried_jackson() {
     let dataset = test_dataset();
-    let (reaction, kk, kshort1, _) = reaction();
-    let decay = reaction.decay(&kk).unwrap();
-    let mut phi = decay.phi(&kshort1, Frame::GottfriedJackson).unwrap();
+    let (reaction, _, _, _) = reaction();
+    let decay = reaction.decay("kk").unwrap();
+    let mut phi = decay.phi("kshort1", Frame::GottfriedJackson).unwrap();
     phi.bind(dataset.metadata()).unwrap();
     let event = dataset.event_view(0);
     assert_relative_eq!(phi.value(&event), -2.7139131991339056);
@@ -115,9 +115,9 @@ fn test_phi_gottfried_jackson() {
 #[test]
 fn test_angles() {
     let dataset = test_dataset();
-    let (reaction, kk, kshort1, _) = reaction();
-    let decay = reaction.decay(&kk).unwrap();
-    let mut angles = decay.angles(&kshort1, Frame::Helicity).unwrap();
+    let (reaction, _, _, _) = reaction();
+    let decay = reaction.decay("kk").unwrap();
+    let mut angles = decay.angles("kshort1", Frame::Helicity).unwrap();
     angles.costheta.bind(dataset.metadata()).unwrap();
     angles.phi.bind(dataset.metadata()).unwrap();
     let event = dataset.event_view(0);
@@ -127,12 +127,12 @@ fn test_angles() {
 
 #[test]
 fn test_angles_display() {
-    let (reaction, kk, kshort1, _) = reaction();
-    let decay = reaction.decay(&kk).unwrap();
-    let angles = decay.angles(&kshort1, Frame::Helicity).unwrap();
+    let (reaction, _, _, _) = reaction();
+    let decay = reaction.decay("kk").unwrap();
+    let angles = decay.angles("kshort1", Frame::Helicity).unwrap();
     assert_eq!(
         angles.to_string(),
-        "Angles(parent=KK, daughter=K_S1, frame=Helicity)"
+        "Angles(parent=kk, daughter=kshort1, frame=Helicity)"
     );
 }
 

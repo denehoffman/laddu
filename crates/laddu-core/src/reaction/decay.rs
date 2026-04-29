@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use super::{Particle, Reaction};
+use super::Reaction;
 use crate::{
     quantum::Frame,
     variables::{Angles, CosTheta, Mass, Phi},
@@ -11,9 +11,9 @@ use crate::{
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Decay {
     pub(super) reaction: Reaction,
-    pub(super) parent: Particle,
-    pub(super) daughter_1: Particle,
-    pub(super) daughter_2: Particle,
+    pub(super) parent: String,
+    pub(super) daughter_1: String,
+    pub(super) daughter_2: String,
 }
 
 impl Decay {
@@ -22,23 +22,23 @@ impl Decay {
         &self.reaction
     }
 
-    /// Return the parent particle.
-    pub const fn parent(&self) -> &Particle {
+    /// Return the parent particle identifier.
+    pub fn parent(&self) -> &str {
         &self.parent
     }
 
-    /// Return the first daughter particle.
-    pub const fn daughter_1(&self) -> &Particle {
+    /// Return the first daughter particle identifier.
+    pub fn daughter_1(&self) -> &str {
         &self.daughter_1
     }
 
-    /// Return the second daughter particle.
-    pub const fn daughter_2(&self) -> &Particle {
+    /// Return the second daughter particle identifier.
+    pub fn daughter_2(&self) -> &str {
         &self.daughter_2
     }
 
-    /// Return the ordered daughter particles.
-    pub fn daughters(&self) -> [&Particle; 2] {
+    /// Return the ordered daughter particle identifiers.
+    pub fn daughters(&self) -> [&str; 2] {
         [&self.daughter_1, &self.daughter_2]
     }
 
@@ -63,52 +63,51 @@ impl Decay {
     }
 
     /// Return the mass variable for one of the ordered daughters.
-    pub fn daughter_mass(&self, daughter: &Particle) -> LadduResult<Mass> {
+    pub fn daughter_mass(&self, daughter: &str) -> LadduResult<Mass> {
         self.validate_daughter(daughter)?;
         Ok(self.reaction.mass(daughter))
     }
 
     /// Return the decay costheta variable.
-    pub fn costheta(&self, daughter: &Particle, frame: Frame) -> LadduResult<CosTheta> {
+    pub fn costheta(&self, daughter: &str, frame: Frame) -> LadduResult<CosTheta> {
         self.validate_daughter(daughter)?;
         Ok(CosTheta::from_reaction(
             self.reaction.clone(),
             self.parent.clone(),
-            daughter.clone(),
+            daughter,
             frame,
         ))
     }
 
     /// Return the decay phi variable.
-    pub fn phi(&self, daughter: &Particle, frame: Frame) -> LadduResult<Phi> {
+    pub fn phi(&self, daughter: &str, frame: Frame) -> LadduResult<Phi> {
         self.validate_daughter(daughter)?;
         Ok(Phi::from_reaction(
             self.reaction.clone(),
             self.parent.clone(),
-            daughter.clone(),
+            daughter,
             frame,
         ))
     }
 
     /// Return both decay angle variables.
-    pub fn angles(&self, daughter: &Particle, frame: Frame) -> LadduResult<Angles> {
+    pub fn angles(&self, daughter: &str, frame: Frame) -> LadduResult<Angles> {
         self.validate_daughter(daughter)?;
         Ok(Angles::from_reaction(
             self.reaction.clone(),
             self.parent.clone(),
-            daughter.clone(),
+            daughter,
             frame,
         ))
     }
 
-    fn validate_daughter(&self, daughter: &Particle) -> LadduResult<()> {
-        if daughter == &self.daughter_1 || daughter == &self.daughter_2 {
+    fn validate_daughter(&self, daughter: &str) -> LadduResult<()> {
+        if daughter == self.daughter_1 || daughter == self.daughter_2 {
             Ok(())
         } else {
             Err(LadduError::Custom(format!(
                 "particle '{}' is not an immediate daughter of '{}'",
-                daughter.label(),
-                self.parent.label()
+                daughter, self.parent
             )))
         }
     }

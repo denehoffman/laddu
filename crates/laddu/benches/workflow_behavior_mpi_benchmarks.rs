@@ -34,20 +34,20 @@ mod mpi_benches {
     const KMATRIX_DATASET_SEED: u64 = 71;
 
     fn reaction_variables() -> (laddu::Angles, laddu::Polarization, Mass) {
-        let beam = laddu::Particle::measured("beam", "beam");
+        let beam = laddu::Particle::stored("beam");
         let target = laddu::Particle::missing("target");
-        let kshort1 = laddu::Particle::measured("K_S1", "kshort1");
-        let kshort2 = laddu::Particle::measured("K_S2", "kshort2");
-        let kk = laddu::Particle::composite("KK", [&kshort1, &kshort2]).unwrap();
-        let proton = laddu::Particle::measured("proton", "proton");
+        let kshort1 = laddu::Particle::stored("kshort1");
+        let kshort2 = laddu::Particle::stored("kshort2");
+        let kk = laddu::Particle::composite("kk", (&kshort1, &kshort2)).unwrap();
+        let proton = laddu::Particle::stored("proton");
         let reaction = laddu::Reaction::two_to_two(&beam, &target, &kk, &proton).unwrap();
         let angles = reaction
-            .decay(&kk)
+            .decay("kk")
             .unwrap()
-            .angles(&kshort1, Frame::Helicity)
+            .angles("kshort1", Frame::Helicity)
             .unwrap();
         let polarization = reaction.polarization("pol_magnitude", "pol_angle");
-        let resonance_mass = reaction.mass(&kk);
+        let resonance_mass = reaction.mass("kk");
         (angles, polarization, resonance_mass)
     }
 

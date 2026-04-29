@@ -55,12 +55,12 @@ fn main() -> LadduResult<()> {
     let generator = EventGenerator::new(gen_reaction, HashMap::new(), Some(12345));
     let n_events = 1_000_000;
     let dataset = Arc::new(generator.generate_dataset(n_events)?);
-    let beam = Particle::measured("beam", "beam");
+    let beam = Particle::stored("beam");
     let target = Particle::missing("target");
-    let ks1 = Particle::measured("kshort1", "kshort1");
-    let ks2 = Particle::measured("kshort2", "kshort2");
-    let kk = Particle::composite("kk", vec![&ks1, &ks2])?;
-    let recoil = Particle::measured("recoil", "recoil");
+    let ks1 = Particle::stored("kshort1");
+    let ks2 = Particle::stored("kshort2");
+    let kk = Particle::composite("kk", (&ks1, &ks2))?;
+    let recoil = Particle::stored("recoil");
     let reaction = Reaction::two_to_two(&beam, &target, &kk, &recoil)?;
 
     let bw = BreitWigner::new(
@@ -68,9 +68,9 @@ fn main() -> LadduResult<()> {
         parameter!("mass", 1.5),
         parameter!("width", 0.15),
         0,
-        &reaction.mass(&ks1),
-        &reaction.mass(&ks2),
-        &reaction.mass(&kk),
+        &reaction.mass("kshort1"),
+        &reaction.mass("kshort2"),
+        &reaction.mass("kk"),
     )?;
 
     let model = bw.norm_sqr();
@@ -83,7 +83,7 @@ fn main() -> LadduResult<()> {
     println!(
         "{{\"values\": [{}], \"bins\": 40, \"min\": 0.9, \"max\": 2.0}}",
         reaction
-            .mass(&kk)
+            .mass("kk")
             .value_on(&dataset)
             .unwrap()
             .iter()

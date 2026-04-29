@@ -135,10 +135,10 @@ pub struct PyParticle(pub Particle);
 
 #[pymethods]
 impl PyParticle {
-    /// Construct a measured particle from one or more p4 column names.
+    /// Construct a stored particle from a dataset p4 column name.
     #[staticmethod]
-    fn measured(label: &str, p4: PyP4SelectionInput) -> Self {
-        Self(Particle::measured(label, p4.into_selection()))
+    fn stored(id: &str) -> Self {
+        Self(Particle::stored(id))
     }
 
     /// Construct a particle with fixed event-independent four-momentum.
@@ -156,9 +156,12 @@ impl PyParticle {
     /// Construct a composite particle from daughter particles.
     #[staticmethod]
     fn composite(label: &str, daughters: Vec<PyParticle>) -> PyResult<Self> {
+        let [daughter_1, daughter_2]: [PyParticle; 2] = daughters.try_into().map_err(|_| {
+            PyValueError::new_err("composite particles require exactly two ordered daughters")
+        })?;
         Ok(Self(Particle::composite(
             label,
-            daughters.iter().map(|daughter| &daughter.0),
+            (&daughter_1.0, &daughter_2.0),
         )?))
     }
 
@@ -196,13 +199,13 @@ impl PyReaction {
     }
 
     /// Construct a particle mass variable.
-    fn mass(&self, particle: &PyParticle) -> PyMass {
-        PyMass(self.0.mass(&particle.0))
+    fn mass(&self, particle: &str) -> PyMass {
+        PyMass(self.0.mass(particle))
     }
 
     /// Construct an isobar decay view.
-    fn decay(&self, parent: &PyParticle) -> PyResult<PyDecay> {
-        Ok(PyDecay(self.0.decay(&parent.0)?))
+    fn decay(&self, parent: &str) -> PyResult<PyDecay> {
+        Ok(PyDecay(self.0.decay(parent)?))
     }
 
     /// Construct a Mandelstam variable.
@@ -247,29 +250,25 @@ impl PyDecay {
 
     /// The parent particle.
     #[getter]
-    fn parent(&self) -> PyParticle {
-        PyParticle(self.0.parent().clone())
+    fn parent(&self) -> String {
+        self.0.parent().to_string()
     }
 
-    /// The first daughter particle.
+    /// The first daughter particle identifier.
     #[getter]
-    fn daughter_1(&self) -> PyParticle {
-        PyParticle(self.0.daughter_1().clone())
+    fn daughter_1(&self) -> String {
+        self.0.daughter_1().to_string()
     }
 
-    /// The second daughter particle.
+    /// The second daughter particle identifier.
     #[getter]
-    fn daughter_2(&self) -> PyParticle {
-        PyParticle(self.0.daughter_2().clone())
+    fn daughter_2(&self) -> String {
+        self.0.daughter_2().to_string()
     }
 
-    /// Ordered daughter particles.
-    fn daughters(&self) -> Vec<PyParticle> {
-        self.0
-            .daughters()
-            .into_iter()
-            .map(|daughter| PyParticle(daughter.clone()))
-            .collect()
+    /// Ordered daughter particle identifiers.
+    fn daughters(&self) -> Vec<String> {
+        self.0.daughters().into_iter().map(str::to_string).collect()
     }
 
     /// Parent mass variable.
@@ -293,26 +292,26 @@ impl PyDecay {
     }
 
     /// Mass variable for a selected daughter.
-    fn daughter_mass(&self, daughter: &PyParticle) -> PyResult<PyMass> {
-        Ok(PyMass(self.0.daughter_mass(&daughter.0)?))
+    fn daughter_mass(&self, daughter: &str) -> PyResult<PyMass> {
+        Ok(PyMass(self.0.daughter_mass(daughter)?))
     }
 
     /// Decay costheta variable for the selected frame.
     #[pyo3(signature=(daughter, frame="Helicity"))]
-    fn costheta(&self, daughter: &PyParticle, frame: &str) -> PyResult<PyCosTheta> {
-        Ok(PyCosTheta(self.0.costheta(&daughter.0, frame.parse()?)?))
+    fn costheta(&self, daughter: &str, frame: &str) -> PyResult<PyCosTheta> {
+        Ok(PyCosTheta(self.0.costheta(daughter, frame.parse()?)?))
     }
 
     /// Decay phi variable for the selected frame.
     #[pyo3(signature=(daughter, frame="Helicity"))]
-    fn phi(&self, daughter: &PyParticle, frame: &str) -> PyResult<PyPhi> {
-        Ok(PyPhi(self.0.phi(&daughter.0, frame.parse()?)?))
+    fn phi(&self, daughter: &str, frame: &str) -> PyResult<PyPhi> {
+        Ok(PyPhi(self.0.phi(daughter, frame.parse()?)?))
     }
 
     /// Decay angle variables for the selected frame.
     #[pyo3(signature=(daughter, frame="Helicity"))]
-    fn angles(&self, daughter: &PyParticle, frame: &str) -> PyResult<PyAngles> {
-        Ok(PyAngles(self.0.angles(&daughter.0, frame.parse()?)?))
+    fn angles(&self, daughter: &str, frame: &str) -> PyResult<PyAngles> {
+        Ok(PyAngles(self.0.angles(daughter, frame.parse()?)?))
     }
 
     /// Construct the helicity-basis angular factor for one explicit helicity term.
@@ -323,7 +322,7 @@ impl PyDecay {
         name: &str,
         spin: &Bound<'_, PyAny>,
         projection: &Bound<'_, PyAny>,
-        daughter: &PyParticle,
+        daughter: &str,
         lambda_1: &Bound<'_, PyAny>,
         lambda_2: &Bound<'_, PyAny>,
         frame: &str,
@@ -332,7 +331,7 @@ impl PyDecay {
             name,
             parse_angular_momentum(spin)?,
             parse_projection(projection)?,
-            &daughter.0,
+            daughter,
             parse_projection(lambda_1)?,
             parse_projection(lambda_2)?,
             frame.parse()?,
@@ -349,7 +348,7 @@ impl PyDecay {
         projection: &Bound<'_, PyAny>,
         orbital_l: &Bound<'_, PyAny>,
         coupled_spin: &Bound<'_, PyAny>,
-        daughter: &PyParticle,
+        daughter: &str,
         daughter_1_spin: &Bound<'_, PyAny>,
         daughter_2_spin: &Bound<'_, PyAny>,
         lambda_1: &Bound<'_, PyAny>,
@@ -362,7 +361,7 @@ impl PyDecay {
             parse_projection(projection)?,
             parse_orbital_angular_momentum(orbital_l)?,
             parse_angular_momentum(coupled_spin)?,
-            &daughter.0,
+            daughter,
             parse_angular_momentum(daughter_1_spin)?,
             parse_angular_momentum(daughter_2_spin)?,
             parse_projection(lambda_1)?,

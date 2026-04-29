@@ -78,24 +78,24 @@ fn pion_cascade_dataset() -> (Dataset, Reaction, Particle, Particle, Particle) {
         })],
         metadata,
     );
-    let pi_plus = Particle::measured("pi+", "pi_plus");
-    let pi_minus = Particle::measured("pi-", "pi_minus");
-    let pi0 = Particle::measured("pi0", "pi0");
-    let rho = Particle::composite("rho", [&pi_plus, &pi_minus]).unwrap();
-    let x = Particle::composite("x", [&rho, &pi0]).unwrap();
-    let beam = Particle::measured("beam", "beam");
-    let target = Particle::measured("target", "target");
-    let recoil = Particle::measured("recoil", "recoil");
+    let pi_plus = Particle::stored("pi_plus");
+    let pi_minus = Particle::stored("pi_minus");
+    let pi0 = Particle::stored("pi0");
+    let rho = Particle::composite("rho", (&pi_plus, &pi_minus)).unwrap();
+    let x = Particle::composite("x", (&rho, &pi0)).unwrap();
+    let beam = Particle::stored("beam");
+    let target = Particle::stored("target");
+    let recoil = Particle::stored("recoil");
     let reaction = Reaction::two_to_two(&beam, &target, &x, &recoil).unwrap();
     (dataset, reaction, rho, pi_plus, x)
 }
 
 #[test]
 fn reaction_reconstructs_composites_from_lab_final_state() {
-    let (dataset, reaction, rho, _, x) = pion_cascade_dataset();
+    let (dataset, reaction, _, _, _) = pion_cascade_dataset();
     let event = dataset.event_view(0);
-    let rho_p4 = reaction.p4(&event, &rho).unwrap();
-    let x_p4 = reaction.p4(&event, &x).unwrap();
+    let rho_p4 = reaction.p4(&event, "rho").unwrap();
+    let x_p4 = reaction.p4(&event, "x").unwrap();
 
     assert_relative_eq!(rho_p4.m(), 0.775260000000000);
     assert!(x_p4.m() > rho_p4.m());
@@ -103,14 +103,43 @@ fn reaction_reconstructs_composites_from_lab_final_state() {
 
 #[test]
 fn reaction_angle_variables_use_particles_not_paths() {
-    let (dataset, reaction, rho, pi_plus, _) = pion_cascade_dataset();
+    let (dataset, reaction, _, _, _) = pion_cascade_dataset();
     let event = dataset.event_view(0);
-    let decay = reaction.decay(&rho);
+    let decay = reaction.decay("rho");
     assert!(decay.is_ok());
-    let angles = decay.unwrap().angles(&pi_plus, Frame::Helicity).unwrap();
+    let angles = decay.unwrap().angles("pi_plus", Frame::Helicity).unwrap();
 
     assert_relative_eq!(angles.costheta.value(&event), 0.500000000000000);
     assert_relative_eq!(angles.phi.value(&event), 0.700000000000000);
+}
+
+#[test]
+fn reaction_particles_are_queryable_by_identifier() {
+    let (_, reaction, _, _, _) = pion_cascade_dataset();
+    let labels = reaction
+        .particles()
+        .into_iter()
+        .map(|particle| particle.label().to_string())
+        .collect::<Vec<_>>();
+
+    assert!(reaction.contains("rho"));
+    assert_eq!(reaction.particle("pi_plus").unwrap().label(), "pi_plus");
+    assert_eq!(
+        labels,
+        vec!["beam", "target", "x", "rho", "pi_plus", "pi_minus", "pi0", "recoil"]
+    );
+}
+
+#[test]
+fn reaction_rejects_duplicate_particle_identifiers() {
+    let beam = Particle::stored("beam");
+    let target = Particle::stored("target");
+    let daughter_1 = Particle::stored("pi");
+    let daughter_2 = Particle::stored("pi");
+    let x = Particle::composite("x", (&daughter_1, &daughter_2)).unwrap();
+    let recoil = Particle::stored("recoil");
+
+    assert!(Reaction::two_to_two(&beam, &target, &x, &recoil).is_err());
 }
 
 #[test]
@@ -118,9 +147,9 @@ fn two_to_two_reaction_solves_missing_particle() {
     let (dataset, reaction, _, _, x) = pion_cascade_dataset();
     let event = dataset.event_view(0);
     let full = reaction.resolve_two_to_two(&event).unwrap();
-    let beam = Particle::measured("beam", "beam");
+    let beam = Particle::stored("beam");
     let target = Particle::missing("target");
-    let recoil = Particle::measured("recoil", "recoil");
+    let recoil = Particle::stored("recoil");
     let missing_reaction = Reaction::two_to_two(&beam, &target, &x, &recoil).unwrap();
     let resolved = missing_reaction.resolve_two_to_two(&event).unwrap();
 
@@ -134,9 +163,9 @@ fn two_to_two_reaction_solves_missing_particle() {
 fn fixed_particle_can_define_a_reaction_role() {
     let (dataset, _, _, _, x) = pion_cascade_dataset();
     let event = dataset.event_view(0);
-    let beam = Particle::measured("beam", "beam");
+    let beam = Particle::stored("beam");
     let fixed_target = Particle::fixed("target", event.p4("target").unwrap());
-    let recoil = Particle::measured("recoil", "recoil");
+    let recoil = Particle::stored("recoil");
     let reaction = Reaction::two_to_two(&beam, &fixed_target, &x, &recoil).unwrap();
     let resolved = reaction.resolve_two_to_two(&event).unwrap();
 

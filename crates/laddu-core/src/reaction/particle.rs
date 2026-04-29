@@ -1,10 +1,8 @@
-use std::{borrow::Borrow, fmt::Display};
+use std::fmt::Display;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    data::NamedEventView, variables::IntoP4Selection, vectors::Vec4, LadduError, LadduResult,
-};
+use crate::{data::NamedEventView, vectors::Vec4, LadduError, LadduResult};
 
 /// A kinematic particle or composite system used to define a reaction.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -16,10 +14,10 @@ pub struct Particle {
 /// Source of a particle four-momentum.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum ParticleSource {
-    /// The four-momentum is read from one or more dataset p4 columns.
-    Measured {
-        /// Dataset p4 column names whose momenta are summed.
-        p4_names: Vec<String>,
+    /// The four-momentum is read from a dataset p4 column with the same identifier.
+    Stored {
+        /// Dataset p4 column name.
+        p4_name: String,
     },
     /// The four-momentum is fixed for every event.
     Fixed {
@@ -28,24 +26,20 @@ pub enum ParticleSource {
     },
     /// The four-momentum is solved from reaction-level four-momentum conservation.
     Missing,
-    /// The four-momentum is the sum of daughter particles.
+    /// The four-momentum is the sum of two ordered daughter particles.
     Composite {
         /// Daughter particles whose momenta are summed.
-        daughters: Vec<Particle>,
+        daughters: Box<[Particle; 2]>,
     },
 }
 
 impl Particle {
-    /// Construct a measured particle backed by one or more p4 column names.
-    pub fn measured<S>(label: impl Into<String>, p4: S) -> Self
-    where
-        S: IntoP4Selection,
-    {
+    /// Construct a stored particle backed by a dataset p4 column with the same identifier.
+    pub fn stored(id: impl Into<String>) -> Self {
+        let id = id.into();
         Self {
-            label: label.into(),
-            source: ParticleSource::Measured {
-                p4_names: p4.into_selection().names().to_vec(),
-            },
+            label: id.clone(),
+            source: ParticleSource::Stored { p4_name: id },
         }
     }
 
@@ -65,21 +59,12 @@ impl Particle {
         }
     }
 
-    /// Construct a composite particle from daughter particles.
-    pub fn composite<I, P>(label: impl Into<String>, daughters: I) -> LadduResult<Self>
-    where
-        I: IntoIterator<Item = P>,
-        P: Borrow<Particle>,
-    {
-        let daughters = daughters
-            .into_iter()
-            .map(|daughter| daughter.borrow().clone())
-            .collect::<Vec<_>>();
-        if daughters.is_empty() {
-            return Err(LadduError::Custom(
-                "composite particle must contain at least one daughter".to_string(),
-            ));
-        }
+    /// Construct a composite particle from exactly two ordered daughter particles.
+    pub fn composite(
+        label: impl Into<String>,
+        daughters: (&Particle, &Particle),
+    ) -> LadduResult<Self> {
+        let daughters = [daughters.0.clone(), daughters.1.clone()];
         if daughters.iter().any(Self::contains_missing) {
             return Err(LadduError::Custom(
                 "missing particles cannot be used as composite daughters".to_string(),
@@ -87,7 +72,9 @@ impl Particle {
         }
         Ok(Self {
             label: label.into(),
-            source: ParticleSource::Composite { daughters },
+            source: ParticleSource::Composite {
+                daughters: Box::new(daughters),
+            },
         })
     }
 
@@ -113,27 +100,31 @@ impl Particle {
     /// Return the daughters if this particle is composite.
     pub fn daughters(&self) -> &[Particle] {
         match &self.source {
-            ParticleSource::Composite { daughters } => daughters,
+            ParticleSource::Composite { daughters } => daughters.as_slice(),
             _ => &[],
         }
     }
 
-    pub(super) fn contains(&self, particle: &Particle) -> bool {
-        if self == particle {
+    pub(super) fn contains_id(&self, particle: &str) -> bool {
+        if self.label() == particle {
             return true;
         }
         self.daughters()
             .iter()
-            .any(|daughter| daughter.contains(particle))
+            .any(|daughter| daughter.contains_id(particle))
     }
 
-    pub(super) fn parent_of(&self, child: &Particle) -> Option<&Particle> {
-        if self.daughters().iter().any(|daughter| daughter == child) {
+    pub(super) fn parent_of_id(&self, child: &str) -> Option<&Particle> {
+        if self
+            .daughters()
+            .iter()
+            .any(|daughter| daughter.label() == child)
+        {
             return Some(self);
         }
         self.daughters()
             .iter()
-            .find_map(|daughter| daughter.parent_of(child))
+            .find_map(|daughter| daughter.parent_of_id(child))
     }
 }
 
@@ -148,19 +139,10 @@ pub(super) fn resolve_particle_direct(
     particle: &Particle,
 ) -> LadduResult<Option<Vec4>> {
     match particle.source() {
-        ParticleSource::Measured { p4_names } => {
-            if p4_names.is_empty() {
-                return Err(LadduError::Custom(
-                    "measured particle must contain at least one p4 name".to_string(),
-                ));
-            }
-            event
-                .get_p4_sum(p4_names.iter().map(String::as_str))
-                .ok_or_else(|| {
-                    LadduError::Custom(format!("unknown p4 selection '{}'", p4_names.join(", ")))
-                })
-                .map(Some)
-        }
+        ParticleSource::Stored { p4_name } => event
+            .p4(p4_name)
+            .ok_or_else(|| LadduError::Custom(format!("unknown p4 column '{p4_name}'")))
+            .map(Some),
         ParticleSource::Fixed { p4 } => Ok(Some(*p4)),
         ParticleSource::Missing => Ok(None),
         ParticleSource::Composite { daughters } => daughters

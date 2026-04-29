@@ -17,18 +17,18 @@ def test_domain_modules_export_expected_core_types() -> None:
 
 
 def test_decay_exposes_enclosing_reaction() -> None:
-    beam = ld.Particle.measured('beam', 'beam')
+    beam = ld.Particle.stored('beam')
     target = ld.Particle.missing('target')
-    recoil = ld.Particle.measured('recoil', 'recoil')
-    daughter_1 = ld.Particle.measured('d1', 'd1')
-    daughter_2 = ld.Particle.measured('d2', 'd2')
+    recoil = ld.Particle.stored('recoil')
+    daughter_1 = ld.Particle.stored('d1')
+    daughter_2 = ld.Particle.stored('d2')
     parent = ld.Particle.composite('x', [daughter_1, daughter_2])
     reaction = ld.Reaction.two_to_two(beam, target, parent, recoil)
 
-    decay = reaction.decay(parent)
+    decay = reaction.decay('x')
 
     assert isinstance(decay.reaction, ld.Reaction)
-    assert isinstance(decay.reaction.mass(parent), ld.Mass)
+    assert isinstance(decay.reaction.mass('x'), ld.Mass)
 
 
 def test_domain_modules_export_expected_analysis_types() -> None:

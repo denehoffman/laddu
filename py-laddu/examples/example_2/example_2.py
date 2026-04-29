@@ -34,14 +34,14 @@ if TYPE_CHECKING:
 
 
 def reaction_variables() -> tuple[ld.Angles, ld.Polarization]:
-    beam = ld.Particle.measured('beam', 'beam')
+    beam = ld.Particle.stored('beam')
     target = ld.Particle.missing('target')
-    kshort1 = ld.Particle.measured('K_S1', 'kshort1')
-    kshort2 = ld.Particle.measured('K_S2', 'kshort2')
-    kk = ld.Particle.composite('KK', [kshort1, kshort2])
-    proton = ld.Particle.measured('proton', 'proton')
+    kshort1 = ld.Particle.stored('kshort1')
+    kshort2 = ld.Particle.stored('kshort2')
+    kk = ld.Particle.composite('kk', [kshort1, kshort2])
+    proton = ld.Particle.stored('proton')
     reaction = ld.Reaction.two_to_two(beam, target, kk, proton)
-    angles = reaction.decay(kk).angles(kshort1)
+    angles = reaction.decay('kk').angles('kshort1')
     polarization = reaction.polarization('pol_magnitude', 'pol_angle')
     return angles, polarization
 
