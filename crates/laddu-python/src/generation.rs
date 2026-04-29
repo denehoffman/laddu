@@ -2,8 +2,9 @@ use std::{collections::HashMap, sync::Arc};
 
 use laddu_generation::{
     CompositeGenerator, Distribution, EventGenerator, GeneratedBatch, GeneratedEventLayout,
-    GeneratedParticle, GeneratedParticleLayout, GeneratedReaction, InitialGenerator,
-    MandelstamTDistribution, Reconstruction, StableGenerator,
+    GeneratedParticle, GeneratedParticleLayout, GeneratedReaction, GeneratedVertexKind,
+    GeneratedVertexLayout, InitialGenerator, MandelstamTDistribution, Reconstruction,
+    StableGenerator,
 };
 use pyo3::{exceptions::PyValueError, prelude::*, types::PyTuple};
 
@@ -330,6 +331,57 @@ impl PyGeneratedParticleLayout {
         self.0.p4_label().map(str::to_string)
     }
 
+    /// The vertex ID where this particle was produced, if any.
+    #[getter]
+    fn produced_vertex_id(&self) -> Option<usize> {
+        self.0.produced_vertex_id()
+    }
+
+    /// The vertex ID where this particle decays, if it is a generated parent.
+    #[getter]
+    fn decay_vertex_id(&self) -> Option<usize> {
+        self.0.decay_vertex_id()
+    }
+
+    fn __repr__(&self) -> String {
+        format!("{:?}", self.0)
+    }
+}
+
+/// Metadata for one generated vertex in a generated event layout.
+#[pyclass(name = "GeneratedVertexLayout", module = "laddu", from_py_object)]
+#[derive(Clone, Debug)]
+pub struct PyGeneratedVertexLayout(pub GeneratedVertexLayout);
+
+#[pymethods]
+impl PyGeneratedVertexLayout {
+    /// The zero-based stable vertex ID in generated-layout order.
+    #[getter]
+    fn vertex_id(&self) -> usize {
+        self.0.vertex_id()
+    }
+
+    /// The semantic vertex kind.
+    #[getter]
+    fn kind(&self) -> &'static str {
+        match self.0.kind() {
+            GeneratedVertexKind::Production => "Production",
+            GeneratedVertexKind::Decay => "Decay",
+        }
+    }
+
+    /// Product IDs entering this vertex.
+    #[getter]
+    fn incoming_product_ids(&self) -> Vec<usize> {
+        self.0.incoming_product_ids().to_vec()
+    }
+
+    /// Product IDs leaving this vertex.
+    #[getter]
+    fn outgoing_product_ids(&self) -> Vec<usize> {
+        self.0.outgoing_product_ids().to_vec()
+    }
+
     fn __repr__(&self) -> String {
         format!("{:?}", self.0)
     }
@@ -362,6 +414,17 @@ impl PyGeneratedEventLayout {
             .iter()
             .cloned()
             .map(PyGeneratedParticleLayout)
+            .collect()
+    }
+
+    /// Generated vertex layout entries in stable vertex-ID order.
+    #[getter]
+    fn vertices(&self) -> Vec<PyGeneratedVertexLayout> {
+        self.0
+            .vertices()
+            .iter()
+            .cloned()
+            .map(PyGeneratedVertexLayout)
             .collect()
     }
 

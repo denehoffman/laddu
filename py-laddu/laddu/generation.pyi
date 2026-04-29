@@ -83,11 +83,20 @@ class GeneratedParticleLayout:
     product_id: int
     parent_id: int | None
     p4_label: str | None
+    produced_vertex_id: int | None
+    decay_vertex_id: int | None
+
+class GeneratedVertexLayout:
+    vertex_id: int
+    kind: str
+    incoming_product_ids: list[int]
+    outgoing_product_ids: list[int]
 
 class GeneratedEventLayout:
     p4_labels: list[str]
     aux_labels: list[str]
     particles: list[GeneratedParticleLayout]
+    vertices: list[GeneratedVertexLayout]
 
 class GeneratedBatch:
     dataset: Dataset

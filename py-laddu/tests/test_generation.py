@@ -74,7 +74,33 @@ def test_generation_smoke() -> None:
         2,
         None,
     ]
+    assert [particle.produced_vertex_id for particle in batch.layout.particles] == [
+        None,
+        None,
+        0,
+        1,
+        1,
+        0,
+    ]
+    assert [particle.decay_vertex_id for particle in batch.layout.particles] == [
+        None,
+        None,
+        1,
+        None,
+        None,
+        None,
+    ]
     assert [particle.p4_label for particle in batch.layout.particles] == dataset.p4_names
+    assert [vertex.vertex_id for vertex in batch.layout.vertices] == [0, 1]
+    assert [vertex.kind for vertex in batch.layout.vertices] == ['Production', 'Decay']
+    assert [vertex.incoming_product_ids for vertex in batch.layout.vertices] == [
+        [0, 1],
+        [2],
+    ]
+    assert [vertex.outgoing_product_ids for vertex in batch.layout.vertices] == [
+        [2, 5],
+        [3, 4],
+    ]
     assert reaction.reconstructed_reaction().decay('kk').daughters() == [
         'kshort1',
         'kshort2',
