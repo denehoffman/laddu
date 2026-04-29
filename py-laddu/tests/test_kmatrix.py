@@ -45,7 +45,7 @@ def make_reaction_mass() -> Mass:
     recoil = Particle.stored('proton')
     ks1 = Particle.stored('kshort1')
     ks2 = Particle.stored('kshort2')
-    x = Particle.composite('x', [ks1, ks2])
+    x = Particle.composite('x', (ks1, ks2))
     reaction = Reaction.two_to_two(beam, target, x, recoil)
     return reaction.mass('x')
 

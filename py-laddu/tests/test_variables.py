@@ -40,7 +40,7 @@ def reaction_context() -> tuple[Reaction, Particle, Particle, Particle, Particle
     target = Particle.missing('target')
     kshort1 = Particle.stored('kshort1')
     kshort2 = Particle.stored('kshort2')
-    kk = Particle.composite('kk', [kshort1, kshort2])
+    kk = Particle.composite('kk', (kshort1, kshort2))
     proton = Particle.stored('proton')
     return Reaction.two_to_two(beam, target, kk, proton), kk, kshort1, kshort2, proton
 

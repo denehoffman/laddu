@@ -38,7 +38,7 @@ def reaction_variables() -> tuple[ld.Angles, ld.Polarization]:
     target = ld.Particle.missing('target')
     kshort1 = ld.Particle.stored('kshort1')
     kshort2 = ld.Particle.stored('kshort2')
-    kk = ld.Particle.composite('kk', [kshort1, kshort2])
+    kk = ld.Particle.composite('kk', (kshort1, kshort2))
     proton = ld.Particle.stored('proton')
     reaction = ld.Reaction.two_to_two(beam, target, kk, proton)
     angles = reaction.decay('kk').angles('kshort1')

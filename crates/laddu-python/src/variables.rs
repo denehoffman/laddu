@@ -12,7 +12,7 @@ use laddu_core::{
     LadduResult,
 };
 use numpy::PyArray1;
-use pyo3::{exceptions::PyValueError, prelude::*};
+use pyo3::{exceptions::PyValueError, prelude::*, types::PyTuple};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -155,10 +155,14 @@ impl PyParticle {
 
     /// Construct a composite particle from daughter particles.
     #[staticmethod]
-    fn composite(label: &str, daughters: Vec<PyParticle>) -> PyResult<Self> {
-        let [daughter_1, daughter_2]: [PyParticle; 2] = daughters.try_into().map_err(|_| {
-            PyValueError::new_err("composite particles require exactly two ordered daughters")
-        })?;
+    fn composite(label: &str, daughters: &Bound<'_, PyTuple>) -> PyResult<Self> {
+        if daughters.len() != 2 {
+            return Err(PyValueError::new_err(
+                "composite particles require exactly two ordered daughters",
+            ));
+        }
+        let daughter_1 = daughters.get_item(0)?.extract::<PyParticle>()?;
+        let daughter_2 = daughters.get_item(1)?.extract::<PyParticle>()?;
         Ok(Self(Particle::composite(
             label,
             (&daughter_1.0, &daughter_2.0),
