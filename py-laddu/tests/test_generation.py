@@ -8,6 +8,7 @@ def test_generation_module_exports_event_generator() -> None:
     assert generation.GeneratedBatchIter is ld.GeneratedBatchIter
     assert generation.GeneratedEventLayout is ld.GeneratedEventLayout
     assert generation.GeneratedReaction is ld.GeneratedReaction
+    assert generation.GeneratedStorage is ld.GeneratedStorage
 
 
 def test_generation_smoke() -> None:
@@ -125,3 +126,41 @@ def test_generation_smoke() -> None:
 
     with pytest.raises(RuntimeError, match='batch_size'):
         list(generator.generate_batches(1, 0))
+
+    projected = generation.EventGenerator(
+        reaction,
+        seed=12345,
+        storage=generation.GeneratedStorage.only(
+            ('beam', 'target', 'kshort1', 'kshort2', 'recoil')
+        ),
+    ).generate_batch(2)
+    assert projected.dataset.p4_names == [
+        'beam',
+        'target',
+        'kshort1',
+        'kshort2',
+        'recoil',
+    ]
+    assert projected.layout.p4_labels == projected.dataset.p4_names
+    assert projected.reaction.p4_labels() == [
+        'beam',
+        'target',
+        'kk',
+        'kshort1',
+        'kshort2',
+        'recoil',
+    ]
+    assert [particle.p4_label for particle in projected.layout.particles] == [
+        'beam',
+        'target',
+        None,
+        'kshort1',
+        'kshort2',
+        'recoil',
+    ]
+
+    with pytest.raises(RuntimeError, match='unknown particle ID'):
+        generation.EventGenerator(
+            reaction,
+            storage=generation.GeneratedStorage.only(('beam', 'does_not_exist')),
+        )

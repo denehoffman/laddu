@@ -10,6 +10,75 @@ use crate::distributions::{
     Distribution, HistogramSampler, LadduGenRngExt, MandelstamTDistribution, SimpleDistribution,
 };
 
+/// Selects which generated particle four-momenta are written into generated datasets.
+///
+/// The generated reaction layout always retains the full generated graph. This policy only controls
+/// which generated particle IDs become p4 columns in generated [`Dataset`] values and which
+/// particles have a p4 label in [`GeneratedEventLayout`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum GeneratedStorage {
+    /// Store every generated particle p4.
+    All,
+    /// Store only the listed generated particle IDs, preserving reaction p4-label order.
+    Only(Vec<String>),
+}
+
+impl GeneratedStorage {
+    /// Store every generated particle p4.
+    pub fn all() -> Self {
+        Self::All
+    }
+
+    /// Store only the listed generated particle IDs.
+    pub fn only<I, S>(ids: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        Self::Only(ids.into_iter().map(Into::into).collect())
+    }
+
+    /// Return true if `id` is selected for dataset storage.
+    pub fn stores(&self, id: &str) -> bool {
+        match self {
+            Self::All => true,
+            Self::Only(ids) => ids.iter().any(|stored_id| stored_id == id),
+        }
+    }
+
+    fn validate(&self, available_ids: &[String]) -> LadduResult<()> {
+        let available = available_ids
+            .iter()
+            .map(String::as_str)
+            .collect::<HashSet<_>>();
+        let Self::Only(ids) = self else {
+            return Ok(());
+        };
+        let mut seen = HashSet::new();
+        for id in ids {
+            if !seen.insert(id.as_str()) {
+                return Err(LadduError::Custom(format!(
+                    "generated storage contains duplicate particle ID '{id}'"
+                )));
+            }
+            if !available.contains(id.as_str()) {
+                return Err(LadduError::Custom(format!(
+                    "generated storage references unknown particle ID '{id}'"
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    fn stored_labels(&self, all_labels: &[String]) -> Vec<String> {
+        all_labels
+            .iter()
+            .filter(|label| self.stores(label))
+            .cloned()
+            .collect()
+    }
+}
+
 fn basis(z: Vec3) -> (Vec3, Vec3, Vec3) {
     let z = z.unit();
     let ref_axis = if z.z.abs() < 0.9 {
@@ -240,6 +309,7 @@ impl GeneratedParticle {
         &self,
         parent_id: Option<usize>,
         produced_vertex_id: Option<usize>,
+        storage: &GeneratedStorage,
         particles: &mut Vec<GeneratedParticleLayout>,
         vertices: &mut Vec<GeneratedVertexLayout>,
     ) -> usize {
@@ -248,7 +318,7 @@ impl GeneratedParticle {
             id: self.id().to_string(),
             product_id,
             parent_id,
-            p4_label: Some(self.id().to_string()),
+            p4_label: storage.stores(self.id()).then(|| self.id().to_string()),
             produced_vertex_id,
             decay_vertex_id: None,
         });
@@ -264,12 +334,14 @@ impl GeneratedParticle {
             let daughter_1_id = daughters.0.append_decay_layout(
                 Some(product_id),
                 Some(vertex_id),
+                storage,
                 particles,
                 vertices,
             );
             let daughter_2_id = daughters.1.append_decay_layout(
                 Some(product_id),
                 Some(vertex_id),
+                storage,
                 particles,
                 vertices,
             );
@@ -433,7 +505,10 @@ impl GeneratedTwoToTwoReaction {
         labels
     }
 
-    fn layout_components(&self) -> (Vec<GeneratedParticleLayout>, Vec<GeneratedVertexLayout>) {
+    fn layout_components(
+        &self,
+        storage: &GeneratedStorage,
+    ) -> (Vec<GeneratedParticleLayout>, Vec<GeneratedVertexLayout>) {
         let mut particles = Vec::new();
         let mut vertices = vec![GeneratedVertexLayout {
             vertex_id: 0,
@@ -443,27 +518,34 @@ impl GeneratedTwoToTwoReaction {
         }];
         let p1_id = self
             .p1
-            .append_decay_layout(None, None, &mut particles, &mut vertices);
+            .append_decay_layout(None, None, storage, &mut particles, &mut vertices);
         let p2_id = self
             .p2
-            .append_decay_layout(None, None, &mut particles, &mut vertices);
-        let p3_id = self
-            .p3
-            .append_decay_layout(None, Some(0), &mut particles, &mut vertices);
-        let p4_id = self
-            .p4
-            .append_decay_layout(None, Some(0), &mut particles, &mut vertices);
+            .append_decay_layout(None, None, storage, &mut particles, &mut vertices);
+        let p3_id =
+            self.p3
+                .append_decay_layout(None, Some(0), storage, &mut particles, &mut vertices);
+        let p4_id =
+            self.p4
+                .append_decay_layout(None, Some(0), storage, &mut particles, &mut vertices);
         vertices[0].incoming_product_ids = vec![p1_id, p2_id];
         vertices[0].outgoing_product_ids = vec![p3_id, p4_id];
         (particles, vertices)
     }
 
     fn particle_layouts(&self) -> Vec<GeneratedParticleLayout> {
-        self.layout_components().0
+        self.particle_layouts_with_storage(&GeneratedStorage::All)
+    }
+
+    fn particle_layouts_with_storage(
+        &self,
+        storage: &GeneratedStorage,
+    ) -> Vec<GeneratedParticleLayout> {
+        self.layout_components(storage).0
     }
 
     fn vertex_layouts(&self) -> Vec<GeneratedVertexLayout> {
-        self.layout_components().1
+        self.layout_components(&GeneratedStorage::All).1
     }
 
     fn reconstructed_reaction(&self) -> LadduResult<Reaction> {
@@ -586,6 +668,15 @@ impl GeneratedReactionTopology {
         }
     }
 
+    fn particle_layouts_with_storage(
+        &self,
+        storage: &GeneratedStorage,
+    ) -> Vec<GeneratedParticleLayout> {
+        match self {
+            Self::TwoToTwo(reaction) => reaction.particle_layouts_with_storage(storage),
+        }
+    }
+
     fn vertex_layouts(&self) -> Vec<GeneratedVertexLayout> {
         match self {
             Self::TwoToTwo(reaction) => reaction.vertex_layouts(),
@@ -635,6 +726,14 @@ impl GeneratedReaction {
     /// Return generated particle layout entries in stable product-ID order.
     pub fn particle_layouts(&self) -> Vec<GeneratedParticleLayout> {
         self.topology.particle_layouts()
+    }
+
+    /// Return generated particle layout entries for a dataset storage policy.
+    pub fn particle_layouts_with_storage(
+        &self,
+        storage: &GeneratedStorage,
+    ) -> Vec<GeneratedParticleLayout> {
+        self.topology.particle_layouts_with_storage(storage)
     }
 
     /// Return generated vertex layout entries in stable vertex-ID order.
@@ -836,6 +935,7 @@ impl GeneratedBatch {
 pub struct EventGenerator {
     reaction: GeneratedReaction,
     aux_generators: HashMap<String, Distribution>,
+    storage: GeneratedStorage,
     seed: u64,
 }
 
@@ -1142,8 +1242,21 @@ impl EventGenerator {
         Self {
             reaction,
             aux_generators,
+            storage: GeneratedStorage::All,
             seed: seed.unwrap_or_else(|| fastrand::u64(..)),
         }
+    }
+
+    /// Return the generated p4 storage policy.
+    pub fn storage(&self) -> &GeneratedStorage {
+        &self.storage
+    }
+
+    /// Return a copy of this generator with a generated p4 storage policy.
+    pub fn with_storage(mut self, storage: GeneratedStorage) -> LadduResult<Self> {
+        storage.validate(&self.reaction.p4_labels())?;
+        self.storage = storage;
+        Ok(self)
     }
 
     fn aux_entries(&self) -> Vec<(&String, &Distribution)> {
@@ -1157,7 +1270,9 @@ impl EventGenerator {
         n_events: usize,
         rng: &mut Rng,
     ) -> LadduResult<GeneratedBatch> {
-        let p4_labels = self.reaction.p4_labels();
+        let all_p4_labels = self.reaction.p4_labels();
+        self.storage.validate(&all_p4_labels)?;
+        let p4_labels = self.storage.stored_labels(&all_p4_labels);
         let aux_entries = self.aux_entries();
         let aux_labels = aux_entries
             .iter()
@@ -1190,7 +1305,7 @@ impl EventGenerator {
             GeneratedEventLayout::new(
                 p4_labels,
                 aux_labels,
-                self.reaction.particle_layouts(),
+                self.reaction.particle_layouts_with_storage(&self.storage),
                 self.reaction.vertex_layouts(),
             ),
         ))
@@ -1401,6 +1516,60 @@ mod tests {
         assert_eq!(vertices[1].kind(), GeneratedVertexKind::Decay);
         assert_eq!(vertices[1].incoming_product_ids(), &[2]);
         assert_eq!(vertices[1].outgoing_product_ids(), &[3, 4]);
+    }
+
+    #[test]
+    fn generated_storage_only_projects_dataset_columns() {
+        let generated = demo_reaction();
+        let generator = EventGenerator::new(generated, HashMap::new(), Some(12345))
+            .with_storage(GeneratedStorage::only([
+                "beam", "target", "kshort1", "kshort2", "recoil",
+            ]))
+            .unwrap();
+        let batch = generator.generate_batch(4).unwrap();
+
+        assert_eq!(
+            batch.reaction().p4_labels(),
+            vec!["beam", "target", "kk", "kshort1", "kshort2", "recoil"]
+        );
+        assert_eq!(
+            batch.layout().p4_labels(),
+            &["beam", "target", "kshort1", "kshort2", "recoil"]
+        );
+        assert_eq!(batch.dataset().p4_names(), batch.layout().p4_labels());
+        assert!(batch.dataset().metadata().p4_index("kk").is_none());
+
+        let particles = batch.layout().particles();
+        assert_eq!(particles.len(), 6);
+        assert_eq!(particles[2].id(), "kk");
+        assert_eq!(particles[2].p4_label(), None);
+        assert_eq!(particles[3].p4_label(), Some("kshort1"));
+        assert_eq!(particles[4].p4_label(), Some("kshort2"));
+
+        for index in 0..batch.dataset().n_events() {
+            let event = batch.dataset().event(index).unwrap();
+            assert_relative_eq!(
+                event.p4("beam").unwrap() + event.p4("target").unwrap(),
+                event.p4("kshort1").unwrap()
+                    + event.p4("kshort2").unwrap()
+                    + event.p4("recoil").unwrap(),
+                epsilon = 1e-10
+            );
+        }
+    }
+
+    #[test]
+    fn generated_storage_rejects_unknown_and_duplicate_ids() {
+        assert!(
+            EventGenerator::new(demo_reaction(), HashMap::new(), Some(12345))
+                .with_storage(GeneratedStorage::only(["beam", "does_not_exist"]))
+                .is_err()
+        );
+        assert!(
+            EventGenerator::new(demo_reaction(), HashMap::new(), Some(12345))
+                .with_storage(GeneratedStorage::only(["beam", "beam"]))
+                .is_err()
+        );
     }
 
     #[test]
