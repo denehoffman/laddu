@@ -358,6 +358,10 @@ pub mod io {
 pub mod extensions {
     pub use laddu_extensions::*;
 }
+/// Monte Carlo event generation tools.
+pub mod generation {
+    pub use laddu_generation::*;
+}
 /// Structures for manipulating the cache and free parameters.
 pub mod resources {
     pub use laddu_core::resources::*;
@@ -449,6 +453,7 @@ pub use laddu_core::{
     LadduError, LadduResult, PI,
 };
 pub use laddu_extensions::*;
+pub use laddu_generation::*;
 pub use serde::{Deserialize, Serialize};
 pub use typetag;
 
