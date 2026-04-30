@@ -131,23 +131,23 @@ impl InitialGenerator {
     }
 
     /// Construct a beam with histogram-sampled energy.
-    pub fn beam_with_energy_histogram(mass: f64, energy: Histogram) -> Self {
+    pub fn beam_with_energy_histogram(mass: f64, energy: Histogram) -> LadduResult<Self> {
         debug_assert!(
             mass >= 0.0,
             "Mass must be positive and greater than zero!\nMass: {}",
             mass
         );
-        let sampler = HistogramSampler::new(energy);
+        let sampler = HistogramSampler::new(energy)?;
         debug_assert!(
-            sampler.hist.bin_edges[0] >= mass,
+            sampler.hist.bin_edges()[0] >= mass,
             "Mass cannot be greater than the minimum allowed energy!\nMass: {}\nMinimum Energy: {}",
             mass,
-            sampler.hist.bin_edges[0]
+            sampler.hist.bin_edges()[0]
         );
-        Self {
+        Ok(Self {
             mass,
             energy_distribution: SimpleDistribution::Histogram(sampler),
-        }
+        })
     }
 
     /// Construct a target at rest.

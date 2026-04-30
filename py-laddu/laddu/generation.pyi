@@ -1,6 +1,7 @@
 from collections.abc import Mapping
 
 from laddu.data import Dataset
+from laddu.math import Histogram
 from laddu.reaction import Reaction
 from laddu.vectors import Vec4
 
@@ -13,16 +14,24 @@ class Distribution:
     def normal(mu: float, sigma: float) -> Distribution: ...
     @staticmethod
     def exponential(slope: float) -> Distribution: ...
+    @staticmethod
+    def histogram(histogram: Histogram) -> Distribution: ...
 
 class MandelstamTDistribution:
     @staticmethod
     def exponential(slope: float) -> MandelstamTDistribution: ...
+    @staticmethod
+    def histogram(histogram: Histogram) -> MandelstamTDistribution: ...
 
 class InitialGenerator:
     @staticmethod
     def beam_with_fixed_energy(mass: float, energy: float) -> InitialGenerator: ...
     @staticmethod
     def beam(mass: float, min_energy: float, max_energy: float) -> InitialGenerator: ...
+    @staticmethod
+    def beam_with_energy_histogram(
+        mass: float, energy: Histogram
+    ) -> InitialGenerator: ...
     @staticmethod
     def target(mass: float) -> InitialGenerator: ...
 

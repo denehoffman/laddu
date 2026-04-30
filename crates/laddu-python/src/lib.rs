@@ -42,6 +42,8 @@ pub mod data;
 #[cfg_attr(coverage_nightly, coverage(off))]
 pub mod generation;
 #[cfg_attr(coverage_nightly, coverage(off))]
+pub mod math;
+#[cfg_attr(coverage_nightly, coverage(off))]
 pub mod quantum;
 #[cfg_attr(coverage_nightly, coverage(off))]
 pub mod variables;
