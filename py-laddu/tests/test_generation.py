@@ -106,6 +106,34 @@ def test_generation_smoke() -> None:
         [2, 5],
         [3, 4],
     ]
+    kk_layout = batch.layout.particle('kk')
+    assert kk_layout is not None
+    assert kk_layout.product_id == 2
+    assert batch.layout.particle('missing_id') is None
+    recoil_layout = batch.layout.product(5)
+    assert recoil_layout is not None
+    assert recoil_layout.id == 'recoil'
+    assert batch.layout.product(6) is None
+    decay_vertex = batch.layout.vertex(1)
+    assert decay_vertex is not None
+    assert decay_vertex.kind == 'Decay'
+    assert batch.layout.vertex(2) is None
+    production_vertex = batch.layout.production_vertex()
+    assert production_vertex is not None
+    assert production_vertex.vertex_id == 0
+    assert [particle.id for particle in batch.layout.production_incoming()] == [
+        'beam',
+        'target',
+    ]
+    assert [particle.id for particle in batch.layout.production_outgoing()] == [
+        'kk',
+        'recoil',
+    ]
+    assert [particle.id for particle in batch.layout.decay_products(2)] == [
+        'kshort1',
+        'kshort2',
+    ]
+    assert batch.layout.decay_products(5) == []
     assert reaction.reconstructed_reaction().decay('kk').daughters() == [
         'kshort1',
         'kshort2',

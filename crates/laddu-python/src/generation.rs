@@ -540,6 +540,19 @@ impl PyGeneratedEventLayout {
             .collect()
     }
 
+    /// Return the generated particle layout for a generated particle ID.
+    fn particle(&self, id: &str) -> Option<PyGeneratedParticleLayout> {
+        self.0.particle(id).cloned().map(PyGeneratedParticleLayout)
+    }
+
+    /// Return the generated particle layout for a stable product ID.
+    fn product(&self, product_id: usize) -> Option<PyGeneratedParticleLayout> {
+        self.0
+            .product(product_id)
+            .cloned()
+            .map(PyGeneratedParticleLayout)
+    }
+
     /// Generated vertex layout entries in stable vertex-ID order.
     #[getter]
     fn vertices(&self) -> Vec<PyGeneratedVertexLayout> {
@@ -548,6 +561,52 @@ impl PyGeneratedEventLayout {
             .iter()
             .cloned()
             .map(PyGeneratedVertexLayout)
+            .collect()
+    }
+
+    /// Return the generated vertex layout for a stable vertex ID.
+    fn vertex(&self, vertex_id: usize) -> Option<PyGeneratedVertexLayout> {
+        self.0
+            .vertex(vertex_id)
+            .cloned()
+            .map(PyGeneratedVertexLayout)
+    }
+
+    /// Return the production vertex layout, if the generated layout has one.
+    fn production_vertex(&self) -> Option<PyGeneratedVertexLayout> {
+        self.0
+            .production_vertex()
+            .cloned()
+            .map(PyGeneratedVertexLayout)
+    }
+
+    /// Return the generated decay daughters of a parent product ID.
+    fn decay_products(&self, parent_product_id: usize) -> Vec<PyGeneratedParticleLayout> {
+        self.0
+            .decay_products(parent_product_id)
+            .into_iter()
+            .cloned()
+            .map(PyGeneratedParticleLayout)
+            .collect()
+    }
+
+    /// Return production-level incoming particle layouts.
+    fn production_incoming(&self) -> Vec<PyGeneratedParticleLayout> {
+        self.0
+            .production_incoming()
+            .into_iter()
+            .cloned()
+            .map(PyGeneratedParticleLayout)
+            .collect()
+    }
+
+    /// Return production-level outgoing particle layouts.
+    fn production_outgoing(&self) -> Vec<PyGeneratedParticleLayout> {
+        self.0
+            .production_outgoing()
+            .into_iter()
+            .cloned()
+            .map(PyGeneratedParticleLayout)
             .collect()
     }
 
