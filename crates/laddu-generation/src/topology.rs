@@ -964,9 +964,67 @@ impl GeneratedEventLayout {
         &self.particles
     }
 
+    /// Return the generated particle layout for a generated particle ID.
+    pub fn particle(&self, id: &str) -> Option<&GeneratedParticleLayout> {
+        self.particles.iter().find(|particle| particle.id() == id)
+    }
+
+    /// Return the generated particle layout for a stable product ID.
+    pub fn product(&self, product_id: usize) -> Option<&GeneratedParticleLayout> {
+        self.particles
+            .iter()
+            .find(|particle| particle.product_id() == product_id)
+    }
+
     /// Return generated vertex layout entries in stable vertex-ID order.
     pub fn vertices(&self) -> &[GeneratedVertexLayout] {
         &self.vertices
+    }
+
+    /// Return the generated vertex layout for a stable vertex ID.
+    pub fn vertex(&self, vertex_id: usize) -> Option<&GeneratedVertexLayout> {
+        self.vertices
+            .iter()
+            .find(|vertex| vertex.vertex_id() == vertex_id)
+    }
+
+    /// Return the production vertex layout, if the generated layout has one.
+    pub fn production_vertex(&self) -> Option<&GeneratedVertexLayout> {
+        self.vertices
+            .iter()
+            .find(|vertex| vertex.kind() == GeneratedVertexKind::Production)
+    }
+
+    /// Return the generated decay daughters of a parent product ID.
+    pub fn decay_products(&self, parent_product_id: usize) -> Vec<&GeneratedParticleLayout> {
+        self.particles
+            .iter()
+            .filter(|particle| particle.parent_id() == Some(parent_product_id))
+            .collect()
+    }
+
+    /// Return production-level incoming particle layouts.
+    pub fn production_incoming(&self) -> Vec<&GeneratedParticleLayout> {
+        self.production_vertex_products(GeneratedVertexLayout::incoming_product_ids)
+    }
+
+    /// Return production-level outgoing particle layouts.
+    pub fn production_outgoing(&self) -> Vec<&GeneratedParticleLayout> {
+        self.production_vertex_products(GeneratedVertexLayout::outgoing_product_ids)
+    }
+
+    fn production_vertex_products(
+        &self,
+        ids: impl FnOnce(&GeneratedVertexLayout) -> &[usize],
+    ) -> Vec<&GeneratedParticleLayout> {
+        self.production_vertex()
+            .map(|vertex| {
+                ids(vertex)
+                    .iter()
+                    .filter_map(|product_id| self.product(*product_id))
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 }
 
@@ -1599,6 +1657,42 @@ mod tests {
         assert_eq!(vertices[1].kind(), GeneratedVertexKind::Decay);
         assert_eq!(vertices[1].incoming_product_ids(), &[2]);
         assert_eq!(vertices[1].outgoing_product_ids(), &[3, 4]);
+
+        assert_eq!(batch.layout().particle("kk"), Some(&particles[2]));
+        assert_eq!(batch.layout().particle("missing_id"), None);
+        assert_eq!(batch.layout().product(5), Some(&particles[5]));
+        assert_eq!(batch.layout().product(6), None);
+        assert_eq!(batch.layout().vertex(1), Some(&vertices[1]));
+        assert_eq!(batch.layout().vertex(2), None);
+        assert_eq!(batch.layout().production_vertex(), Some(&vertices[0]));
+        assert_eq!(
+            batch
+                .layout()
+                .production_incoming()
+                .iter()
+                .map(|particle| particle.id())
+                .collect::<Vec<_>>(),
+            vec!["beam", "target"]
+        );
+        assert_eq!(
+            batch
+                .layout()
+                .production_outgoing()
+                .iter()
+                .map(|particle| particle.id())
+                .collect::<Vec<_>>(),
+            vec!["kk", "recoil"]
+        );
+        assert_eq!(
+            batch
+                .layout()
+                .decay_products(2)
+                .iter()
+                .map(|particle| particle.id())
+                .collect::<Vec<_>>(),
+            vec!["kshort1", "kshort2"]
+        );
+        assert!(batch.layout().decay_products(5).is_empty());
     }
 
     #[test]
