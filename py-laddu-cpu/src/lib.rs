@@ -43,7 +43,7 @@ mod laddu {
             PyGeneratedBatchIter, PyGeneratedEventLayout, PyGeneratedParticle,
             PyGeneratedParticleLayout, PyGeneratedReaction, PyGeneratedStorage,
             PyGeneratedVertexLayout, PyInitialGenerator, PyMandelstamTDistribution,
-            PyReconstruction, PyStableGenerator,
+            PyParticleSpecies, PyReconstruction, PyStableGenerator,
         },
         get_threads,
         math::PyHistogram,

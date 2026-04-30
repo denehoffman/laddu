@@ -4,7 +4,7 @@ use laddu_generation::{
     CompositeGenerator, Distribution, EventGenerator, GeneratedBatch, GeneratedEventLayout,
     GeneratedParticle, GeneratedParticleLayout, GeneratedReaction, GeneratedStorage,
     GeneratedVertexKind, GeneratedVertexLayout, HistogramSampler, InitialGenerator,
-    MandelstamTDistribution, Reconstruction, StableGenerator,
+    MandelstamTDistribution, ParticleSpecies, Reconstruction, StableGenerator,
 };
 use pyo3::{exceptions::PyValueError, prelude::*, types::PyTuple};
 
@@ -211,6 +211,63 @@ impl PyReconstruction {
     }
 }
 
+/// Experiment-neutral metadata describing a generated particle species.
+#[pyclass(name = "ParticleSpecies", module = "laddu", from_py_object)]
+#[derive(Clone, Debug)]
+pub struct PyParticleSpecies(pub ParticleSpecies);
+
+#[pymethods]
+impl PyParticleSpecies {
+    /// Construct a species from a numeric code with no namespace.
+    #[staticmethod]
+    fn code(id: i64) -> Self {
+        Self(ParticleSpecies::code(id))
+    }
+
+    /// Construct a species from a numeric code in an explicit namespace.
+    #[staticmethod]
+    fn with_namespace(namespace: &str, id: i64) -> Self {
+        Self(ParticleSpecies::with_namespace(namespace, id))
+    }
+
+    /// Construct a species from a free-form label.
+    #[staticmethod]
+    fn label(label: &str) -> Self {
+        Self(ParticleSpecies::label(label))
+    }
+
+    /// The numeric species code, if this is a code-based species.
+    #[getter]
+    fn id(&self) -> Option<i64> {
+        match &self.0 {
+            ParticleSpecies::Code { id, .. } => Some(*id),
+            ParticleSpecies::Label(_) => None,
+        }
+    }
+
+    /// The numeric species namespace, if this is a namespaced code-based species.
+    #[getter]
+    fn namespace(&self) -> Option<String> {
+        match &self.0 {
+            ParticleSpecies::Code { namespace, .. } => namespace.clone(),
+            ParticleSpecies::Label(_) => None,
+        }
+    }
+
+    /// The species label, if this is a label-based species.
+    #[getter]
+    fn label_value(&self) -> Option<String> {
+        match &self.0 {
+            ParticleSpecies::Code { .. } => None,
+            ParticleSpecies::Label(label) => Some(label.clone()),
+        }
+    }
+
+    fn __repr__(&self) -> String {
+        format!("{:?}", self.0)
+    }
+}
+
 /// A generated particle with generation and reconstruction metadata.
 #[pyclass(name = "GeneratedParticle", module = "laddu", from_py_object)]
 #[derive(Clone, Debug)]
@@ -265,10 +322,21 @@ impl PyGeneratedParticle {
         )))
     }
 
+    /// Return a copy of this generated particle with species metadata attached.
+    fn with_species(&self, species: &PyParticleSpecies) -> Self {
+        Self(self.0.clone().with_species(species.0.clone()))
+    }
+
     /// The generated particle ID.
     #[getter]
     fn id(&self) -> String {
         self.0.id().to_string()
+    }
+
+    /// Optional species metadata for this generated particle.
+    #[getter]
+    fn species(&self) -> Option<PyParticleSpecies> {
+        self.0.species().cloned().map(PyParticleSpecies)
     }
 
     fn __repr__(&self) -> String {
@@ -372,6 +440,12 @@ impl PyGeneratedParticleLayout {
     #[getter]
     fn parent_id(&self) -> Option<usize> {
         self.0.parent_id()
+    }
+
+    /// Optional species metadata associated with this generated particle.
+    #[getter]
+    fn species(&self) -> Option<PyParticleSpecies> {
+        self.0.species().cloned().map(PyParticleSpecies)
     }
 
     /// The dataset p4 label associated with this particle, if stored in the batch.

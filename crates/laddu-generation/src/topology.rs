@@ -5,6 +5,7 @@ use laddu_core::{
     math::{q_m, Histogram, Sheet},
     Dataset, DatasetMetadata, LadduError, LadduResult, Particle, Reaction, Vec3, Vec4, PI,
 };
+use serde::{Deserialize, Serialize};
 
 use crate::distributions::{
     Distribution, HistogramSampler, LadduGenRngExt, MandelstamTDistribution, SimpleDistribution,
@@ -76,6 +77,47 @@ impl GeneratedStorage {
             .filter(|label| self.stores(label))
             .cloned()
             .collect()
+    }
+}
+
+/// Experiment-neutral metadata describing a generated particle species.
+///
+/// Species metadata is intentionally separate from generated particle IDs and reconstructed
+/// reaction particles. It is meant for generator/export layers that need an external particle code
+/// or label without forcing laddu to adopt an experiment-specific particle table.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum ParticleSpecies {
+    /// A numeric species code with an optional namespace.
+    Code {
+        /// Numeric species identifier.
+        id: i64,
+        /// Optional namespace, such as `"pdg"`.
+        namespace: Option<String>,
+    },
+    /// A free-form species label.
+    Label(String),
+}
+
+impl ParticleSpecies {
+    /// Construct a species from a numeric code with no namespace.
+    pub fn code(id: i64) -> Self {
+        Self::Code {
+            id,
+            namespace: None,
+        }
+    }
+
+    /// Construct a species from a numeric code in an explicit namespace.
+    pub fn with_namespace(namespace: impl Into<String>, id: i64) -> Self {
+        Self::Code {
+            id,
+            namespace: Some(namespace.into()),
+        }
+    }
+
+    /// Construct a species from a free-form label.
+    pub fn label(label: impl Into<String>) -> Self {
+        Self::Label(label.into())
     }
 }
 
@@ -222,12 +264,14 @@ pub enum GeneratedParticle {
         id: String,
         generator: InitialGenerator,
         reconstruction: Reconstruction,
+        species: Option<ParticleSpecies>,
     },
     /// A stable generated particle.
     Stable {
         id: String,
         generator: StableGenerator,
         reconstruction: Reconstruction,
+        species: Option<ParticleSpecies>,
     },
     /// A generated composite particle with exactly two generated daughters.
     Composite {
@@ -235,6 +279,7 @@ pub enum GeneratedParticle {
         generator: CompositeGenerator,
         daughters: (Box<GeneratedParticle>, Box<GeneratedParticle>),
         reconstruction: Reconstruction,
+        species: Option<ParticleSpecies>,
     },
 }
 
@@ -249,6 +294,7 @@ impl GeneratedParticle {
             id: id.into(),
             generator,
             reconstruction,
+            species: None,
         }
     }
 
@@ -262,6 +308,7 @@ impl GeneratedParticle {
             id: id.into(),
             generator,
             reconstruction,
+            species: None,
         }
     }
 
@@ -277,13 +324,42 @@ impl GeneratedParticle {
             generator,
             daughters: (Box::new(daughters.0.clone()), Box::new(daughters.1.clone())),
             reconstruction,
+            species: None,
         }
+    }
+
+    /// Return a copy of this generated particle with species metadata attached.
+    pub fn with_species(mut self, species: ParticleSpecies) -> Self {
+        match &mut self {
+            Self::Initial {
+                species: particle_species,
+                ..
+            }
+            | Self::Stable {
+                species: particle_species,
+                ..
+            }
+            | Self::Composite {
+                species: particle_species,
+                ..
+            } => *particle_species = Some(species),
+        }
+        self
     }
 
     /// Return the generated particle ID.
     pub fn id(&self) -> &str {
         match self {
             Self::Initial { id, .. } | Self::Stable { id, .. } | Self::Composite { id, .. } => id,
+        }
+    }
+
+    /// Return optional species metadata for this generated particle.
+    pub fn species(&self) -> Option<&ParticleSpecies> {
+        match self {
+            Self::Initial { species, .. }
+            | Self::Stable { species, .. }
+            | Self::Composite { species, .. } => species.as_ref(),
         }
     }
 
@@ -318,6 +394,7 @@ impl GeneratedParticle {
             id: self.id().to_string(),
             product_id,
             parent_id,
+            species: self.species().cloned(),
             p4_label: storage.stores(self.id()).then(|| self.id().to_string()),
             produced_vertex_id,
             decay_vertex_id: None,
@@ -764,6 +841,7 @@ pub struct GeneratedParticleLayout {
     id: String,
     product_id: usize,
     parent_id: Option<usize>,
+    species: Option<ParticleSpecies>,
     p4_label: Option<String>,
     produced_vertex_id: Option<usize>,
     decay_vertex_id: Option<usize>,
@@ -783,6 +861,11 @@ impl GeneratedParticleLayout {
     /// Return the decay-parent product ID, if this particle is a decay daughter.
     pub fn parent_id(&self) -> Option<usize> {
         self.parent_id
+    }
+
+    /// Return optional species metadata associated with this generated particle.
+    pub fn species(&self) -> Option<&ParticleSpecies> {
+        self.species.as_ref()
     }
 
     /// Return the dataset p4 label associated with this particle, if stored in the batch.
@@ -1570,6 +1653,72 @@ mod tests {
                 .with_storage(GeneratedStorage::only(["beam", "beam"]))
                 .is_err()
         );
+    }
+
+    #[test]
+    fn generated_species_metadata_propagates_to_layout() {
+        let beam = GeneratedParticle::initial(
+            "beam",
+            InitialGenerator::beam_with_fixed_energy(0.0, 8.0),
+            Reconstruction::Stored,
+        )
+        .with_species(ParticleSpecies::code(22));
+        let target = GeneratedParticle::initial(
+            "target",
+            InitialGenerator::target(0.938272),
+            Reconstruction::Missing,
+        )
+        .with_species(ParticleSpecies::with_namespace("pdg", 2212));
+        let kshort1 = GeneratedParticle::stable(
+            "kshort1",
+            StableGenerator::new(0.497611),
+            Reconstruction::Stored,
+        )
+        .with_species(ParticleSpecies::label("KShort"));
+        let kshort2 = GeneratedParticle::stable(
+            "kshort2",
+            StableGenerator::new(0.497611),
+            Reconstruction::Stored,
+        )
+        .with_species(ParticleSpecies::label("KShort"));
+        let kk = GeneratedParticle::composite(
+            "kk",
+            CompositeGenerator::new(1.1, 1.6),
+            (&kshort1, &kshort2),
+            Reconstruction::Composite,
+        )
+        .with_species(ParticleSpecies::label("KK"));
+        let recoil = GeneratedParticle::stable(
+            "recoil",
+            StableGenerator::new(0.938272),
+            Reconstruction::Stored,
+        )
+        .with_species(ParticleSpecies::code(2212));
+        let reaction = GeneratedReaction::two_to_two(
+            beam,
+            target,
+            kk,
+            recoil,
+            MandelstamTDistribution::Exponential { slope: 0.1 },
+        )
+        .unwrap();
+        let particles = reaction.particle_layouts();
+
+        assert_eq!(particles[0].species(), Some(&ParticleSpecies::code(22)));
+        assert_eq!(
+            particles[1].species(),
+            Some(&ParticleSpecies::with_namespace("pdg", 2212))
+        );
+        assert_eq!(particles[2].species(), Some(&ParticleSpecies::label("KK")));
+        assert_eq!(
+            particles[3].species(),
+            Some(&ParticleSpecies::label("KShort"))
+        );
+        assert_eq!(
+            particles[4].species(),
+            Some(&ParticleSpecies::label("KShort"))
+        );
+        assert_eq!(particles[5].species(), Some(&ParticleSpecies::code(2212)));
     }
 
     #[test]

@@ -81,6 +81,7 @@ from .generation import (
     GeneratedVertexLayout,
     InitialGenerator,
     MandelstamTDistribution,
+    ParticleSpecies,
     Reconstruction,
     StableGenerator,
 )
@@ -218,6 +219,7 @@ __all__ = [
     'One',
     'Parameter',
     'Particle',
+    'ParticleSpecies',
     'PhaseSpaceFactor',
     'Phi',
     'PhotonSDME',

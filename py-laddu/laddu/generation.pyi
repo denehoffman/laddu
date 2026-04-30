@@ -51,8 +51,21 @@ class Reconstruction:
     @staticmethod
     def composite() -> Reconstruction: ...
 
+class ParticleSpecies:
+    id: int | None
+    namespace: str | None
+    label_value: str | None
+
+    @staticmethod
+    def code(id: int) -> ParticleSpecies: ...
+    @staticmethod
+    def with_namespace(namespace: str, id: int) -> ParticleSpecies: ...
+    @staticmethod
+    def label(label: str) -> ParticleSpecies: ...
+
 class GeneratedParticle:
     id: str
+    species: ParticleSpecies | None
 
     @staticmethod
     def initial(
@@ -73,6 +86,7 @@ class GeneratedParticle:
         daughters: tuple[GeneratedParticle, GeneratedParticle],
         reconstruction: Reconstruction,
     ) -> GeneratedParticle: ...
+    def with_species(self, species: ParticleSpecies) -> GeneratedParticle: ...
 
 class GeneratedReaction:
     @staticmethod
@@ -97,6 +111,7 @@ class GeneratedParticleLayout:
     id: str
     product_id: int
     parent_id: int | None
+    species: ParticleSpecies | None
     p4_label: str | None
     produced_vertex_id: int | None
     decay_vertex_id: int | None
