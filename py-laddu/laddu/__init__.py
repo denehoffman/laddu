@@ -14,6 +14,7 @@ from . import (
     generation,
     io,
     likelihood,
+    math,
     mpi,
     optimize,
     quantum,
@@ -93,6 +94,7 @@ from .likelihood import (
     likelihood_product,
     likelihood_sum,
 )
+from .math import Histogram
 from .optimize import (
     ControlFlow,
     EnsembleStatus,
@@ -185,6 +187,7 @@ __all__ = [
     'GeneratedVertexLayout',
     'GradientFreeStatus',
     'GradientStatus',
+    'Histogram',
     'InitialGenerator',
     'KopfKMatrixA0',
     'KopfKMatrixA0Channel',
@@ -254,6 +257,7 @@ __all__ = [
     'likelihood',
     'likelihood_product',
     'likelihood_sum',
+    'math',
     'mpi',
     'optimize',
     'parameter',

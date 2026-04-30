@@ -3,12 +3,12 @@ use std::{collections::HashMap, sync::Arc};
 use laddu_generation::{
     CompositeGenerator, Distribution, EventGenerator, GeneratedBatch, GeneratedEventLayout,
     GeneratedParticle, GeneratedParticleLayout, GeneratedReaction, GeneratedStorage,
-    GeneratedVertexKind, GeneratedVertexLayout, InitialGenerator, MandelstamTDistribution,
-    Reconstruction, StableGenerator,
+    GeneratedVertexKind, GeneratedVertexLayout, HistogramSampler, InitialGenerator,
+    MandelstamTDistribution, Reconstruction, StableGenerator,
 };
 use pyo3::{exceptions::PyValueError, prelude::*, types::PyTuple};
 
-use crate::{data::PyDataset, variables::PyReaction, vectors::PyVec4};
+use crate::{data::PyDataset, math::PyHistogram, variables::PyReaction, vectors::PyVec4};
 
 /// A scalar distribution used by generated auxiliary columns.
 #[pyclass(name = "Distribution", module = "laddu", from_py_object)]
@@ -56,6 +56,14 @@ impl PyDistribution {
         Ok(Self(Distribution::Exponential { slope }))
     }
 
+    /// Construct a histogram-sampled scalar distribution.
+    #[staticmethod]
+    fn histogram(histogram: &PyHistogram) -> PyResult<Self> {
+        Ok(Self(Distribution::Histogram(HistogramSampler::new(
+            histogram.0.clone(),
+        )?)))
+    }
+
     fn __repr__(&self) -> String {
         format!("{:?}", self.0)
     }
@@ -77,6 +85,14 @@ impl PyMandelstamTDistribution {
             ));
         }
         Ok(Self(MandelstamTDistribution::Exponential { slope }))
+    }
+
+    /// Construct a histogram-sampled Mandelstam-t distribution.
+    #[staticmethod]
+    fn histogram(histogram: &PyHistogram) -> PyResult<Self> {
+        Ok(Self(MandelstamTDistribution::Histogram(
+            HistogramSampler::new(histogram.0.clone())?,
+        )))
     }
 
     fn __repr__(&self) -> String {
@@ -101,6 +117,15 @@ impl PyInitialGenerator {
     #[staticmethod]
     fn beam(mass: f64, min_energy: f64, max_energy: f64) -> Self {
         Self(InitialGenerator::beam(mass, min_energy, max_energy))
+    }
+
+    /// Construct a beam with histogram-sampled energy.
+    #[staticmethod]
+    fn beam_with_energy_histogram(mass: f64, energy: &PyHistogram) -> PyResult<Self> {
+        Ok(Self(InitialGenerator::beam_with_energy_histogram(
+            mass,
+            energy.0.clone(),
+        )?))
     }
 
     /// Construct a target at rest.

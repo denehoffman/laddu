@@ -46,6 +46,7 @@ mod laddu {
             PyReconstruction, PyStableGenerator,
         },
         get_threads,
+        math::PyHistogram,
         mpi::{finalize_mpi, get_rank, get_size, is_mpi_available, is_root, use_mpi, using_mpi},
         quantum::angular_momentum::{py_allowed_projections, py_helicity_combinations},
         set_threads,

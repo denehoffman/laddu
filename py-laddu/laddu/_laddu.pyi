@@ -89,6 +89,7 @@ from laddu.likelihood import (
     likelihood_product,
     likelihood_sum,
 )
+from laddu.math import Histogram
 from laddu.optimize import (
     ControlFlow,
     EnsembleStatus,
@@ -148,6 +149,7 @@ __all__ = [
     'GeneratedVertexLayout',
     'GradientFreeStatus',
     'GradientStatus',
+    'Histogram',
     'InitialGenerator',
     'KopfKMatrixA0',
     'KopfKMatrixA0Channel',

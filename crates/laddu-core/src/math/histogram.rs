@@ -41,12 +41,97 @@ pub fn get_bin_index(value: f64, bins: usize, range: (f64, f64)) -> Option<usize
     }
 }
 
-/// A simple struct which represents a histogram
+use serde::{Deserialize, Serialize};
+
+use crate::{LadduError, LadduResult};
+
+/// A simple weighted histogram with explicit bin edges.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Histogram {
     /// The number of counts in each bin (can be [`f64`]s since these might be weighted counts)
     pub counts: Vec<f64>,
     /// The edges of each bin (length is one greater than `counts`)
     pub bin_edges: Vec<f64>,
+}
+
+impl Histogram {
+    /// Construct and validate a histogram from bin edges and weighted bin counts.
+    pub fn new(bin_edges: Vec<f64>, counts: Vec<f64>) -> LadduResult<Self> {
+        let histogram = Self { counts, bin_edges };
+        histogram.validate()?;
+        Ok(histogram)
+    }
+
+    /// Return the number of weighted counts in each bin.
+    pub fn counts(&self) -> &[f64] {
+        &self.counts
+    }
+
+    /// Return the bin edges.
+    pub fn bin_edges(&self) -> &[f64] {
+        &self.bin_edges
+    }
+
+    /// Return the total histogram weight.
+    pub fn total_weight(&self) -> f64 {
+        self.counts.iter().sum()
+    }
+
+    /// Validate histogram asserting each bin has nonnegative counts.
+    pub fn validate_positive_counts(&self) -> LadduResult<()> {
+        for (index, count) in self.counts.iter().enumerate() {
+            if *count < 0.0 {
+                return Err(LadduError::Custom(format!(
+                    "histogram count {index} must be nonnegative, got {count}"
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    /// Validate histogram shape, finite values, and positive integral.
+    pub fn validate(&self) -> LadduResult<()> {
+        if self.bin_edges.len() < 2 {
+            return Err(LadduError::Custom(
+                "histogram requires at least two bin edges".to_string(),
+            ));
+        }
+        if self.counts.len() + 1 != self.bin_edges.len() {
+            return Err(LadduError::Custom(format!(
+                "histogram requires counts.len() + 1 == bin_edges.len(), got {} counts and {} edges",
+                self.counts.len(),
+                self.bin_edges.len()
+            )));
+        }
+        for (index, edge) in self.bin_edges.iter().enumerate() {
+            if !edge.is_finite() {
+                return Err(LadduError::Custom(format!(
+                    "histogram bin edge {index} must be finite, got {edge}"
+                )));
+            }
+        }
+        for (index, edges) in self.bin_edges.windows(2).enumerate() {
+            if edges[1] <= edges[0] {
+                return Err(LadduError::Custom(format!(
+                    "histogram bin edges must be strictly increasing at edge pair {index}"
+                )));
+            }
+        }
+        for (index, count) in self.counts.iter().enumerate() {
+            if !count.is_finite() {
+                return Err(LadduError::Custom(format!(
+                    "histogram count {index} must be finite, got {count}"
+                )));
+            }
+        }
+        let total_weight = self.total_weight();
+        if total_weight <= 0.0 {
+            return Err(LadduError::Custom(format!(
+                "histogram total weight must be positive, got {total_weight}"
+            )));
+        }
+        Ok(())
+    }
 }
 
 /// A method which creates a histogram from some data by binning it with evenly spaced `bins`
@@ -87,17 +172,15 @@ pub fn histogram<T: AsRef<[f64]>>(
             counts[bin_index] += weight;
         }
     }
-    Histogram {
-        counts,
-        bin_edges: get_bin_edges(bins, range),
-    }
+    Histogram::new(get_bin_edges(bins, range), counts)
+        .expect("histogram helper should construct a valid histogram")
 }
 
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
 
-    use super::{get_bin_index, histogram};
+    use super::{get_bin_index, histogram, Histogram};
     use crate::{data::test_dataset, traits::Variable, Mass};
 
     #[test]
@@ -122,5 +205,25 @@ mod tests {
         let histogram = histogram(&values, 3, (0.0, 1.0), Some(&weights));
         assert_eq!(histogram.counts, vec![0.0, 0.48, 0.0]);
         assert_eq!(histogram.bin_edges, vec![0.0, 1.0 / 3.0, 2.0 / 3.0, 1.0])
+    }
+
+    #[test]
+    fn histogram_new_validates_shape_and_values() {
+        assert!(Histogram::new(vec![0.0, 1.0], vec![1.0]).is_ok());
+        assert!(Histogram::new(vec![0.0], vec![]).is_err());
+        assert!(Histogram::new(vec![0.0, 1.0], vec![1.0, 2.0]).is_err());
+        assert!(Histogram::new(vec![0.0, 0.0], vec![1.0]).is_err());
+        assert!(Histogram::new(vec![0.0, f64::NAN], vec![1.0]).is_err());
+        assert!(Histogram::new(vec![0.0, 1.0], vec![-1.0]).is_err());
+        assert!(Histogram::new(vec![0.0, 1.0], vec![0.0]).is_err());
+    }
+
+    #[test]
+    fn histogram_serializes() {
+        let histogram = Histogram::new(vec![0.0, 1.0, 2.0], vec![1.0, 2.0]).unwrap();
+        let serialized = serde_pickle::to_vec(&histogram, serde_pickle::SerOptions::new()).unwrap();
+        let restored: Histogram =
+            serde_pickle::from_slice(&serialized, serde_pickle::DeOptions::new()).unwrap();
+        assert_eq!(restored, histogram);
     }
 }
