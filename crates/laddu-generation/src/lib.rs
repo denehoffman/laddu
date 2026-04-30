@@ -8,6 +8,6 @@ pub use topology::{
     BatchIntensity, CompositeGenerator, EventGenerator, GeneratedBatch, GeneratedEventLayout,
     GeneratedParticle, GeneratedParticleLayout, GeneratedReaction, GeneratedReactionTopology,
     GeneratedStorage, GeneratedTwoToTwoReaction, GeneratedVertexKind, GeneratedVertexLayout,
-    InitialGenerator, Reconstruction, RejectionEnvelope, RejectionSampleIter, RejectionSampler,
-    RejectionSamplingDiagnostics, RejectionSamplingOptions, StableGenerator,
+    InitialGenerator, ParticleSpecies, Reconstruction, RejectionEnvelope, RejectionSampleIter,
+    RejectionSampler, RejectionSamplingDiagnostics, RejectionSamplingOptions, StableGenerator,
 };

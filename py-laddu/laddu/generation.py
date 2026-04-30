@@ -14,6 +14,7 @@ from laddu.laddu import (
     GeneratedVertexLayout,
     InitialGenerator,
     MandelstamTDistribution,
+    ParticleSpecies,
     Reconstruction,
     StableGenerator,
 )
@@ -32,6 +33,7 @@ __all__ = [
     'GeneratedVertexLayout',
     'InitialGenerator',
     'MandelstamTDistribution',
+    'ParticleSpecies',
     'Reconstruction',
     'StableGenerator',
 ]
