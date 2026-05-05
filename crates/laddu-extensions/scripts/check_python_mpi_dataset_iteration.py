@@ -26,22 +26,20 @@ def check_manual_dataset() -> None:
     events = [make_event(float(index + 1)) for index in range(size)]
     dataset = Dataset(events, p4_names=P4_NAMES, aux_names=[])
 
-    default_weights = [event.weight for event in dataset]
-    local_weights = [event.weight for event in dataset.iter_local()]
-    global_weights = [event.weight for event in dataset.iter_global()]
-    stored_weights = [event.weight for event in dataset.events]
+    local_weights = [event.weight for event in dataset.events_local]
+    global_weights = [event.weight for event in dataset.events_global]
+    stored_weights = global_weights
     stored_local_weights = [event.weight for event in dataset.events_local]
 
     assert dataset.n_events == size
     assert dataset.n_events_local == 1
     assert dataset.n_events_weighted == sum(float(index + 1) for index in range(size))
     assert dataset.n_events_weighted_local == float(rank + 1)
-    assert sorted(default_weights) == [float(index + 1) for index in range(size)]
     assert local_weights == [float(rank + 1)]
     assert sorted(global_weights) == [float(index + 1) for index in range(size)]
     assert sorted(stored_weights) == [float(index + 1) for index in range(size)]
     assert stored_local_weights == [float(rank + 1)]
-    assert list(dataset.weights) == default_weights
+    assert list(dataset.weights) == global_weights
     assert list(dataset.weights_local) == local_weights
     assert isinstance(dataset.event_global(rank), Event)
     assert isinstance(dataset.events_global, list)
@@ -55,22 +53,20 @@ def check_parquet_dataset() -> None:
     data_path = repo_root / 'py-laddu' / 'tests' / 'data_files' / 'data_f32.parquet'
     dataset = ld.io.read_parquet(data_path, p4s=PARQUET_P4_NAMES)
 
-    default_weights = [event.weight for event in dataset]
-    local_weights = [event.weight for event in dataset.iter_local()]
-    global_weights = [event.weight for event in dataset.iter_global()]
-    stored_weights = [event.weight for event in dataset.events]
+    local_weights = [event.weight for event in dataset.events_local]
+    global_weights = [event.weight for event in dataset.events_global]
+    stored_weights = global_weights
     stored_local_weights = [event.weight for event in dataset.events_local]
 
-    assert default_weights == global_weights
-    assert default_weights == stored_weights
+    assert global_weights == stored_weights
     assert len(global_weights) == dataset.n_events
-    assert len(default_weights) == len(stored_weights)
+    assert len(global_weights) == len(stored_weights)
     assert len(local_weights) == dataset.n_events_local
     assert len(stored_local_weights) == dataset.n_events_local
     assert len(local_weights) <= len(global_weights)
-    assert list(dataset.weights) == default_weights
+    assert list(dataset.weights) == global_weights
     assert list(dataset.weights_local) == local_weights
-    assert dataset.n_events_weighted == sum(default_weights)
+    assert dataset.n_events_weighted == sum(global_weights)
     assert dataset.n_events_weighted_local == sum(local_weights)
     assert isinstance(dataset.event_global(0), Event)
     assert isinstance(dataset.events_global, list)

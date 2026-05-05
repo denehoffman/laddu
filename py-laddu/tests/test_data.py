@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import tempfile
 from pathlib import Path
+from typing import Any, cast
 
 import laddu.io as ldio
 import numpy as np
@@ -74,8 +75,12 @@ def _assert_datasets_close(dataset_left: Dataset, dataset_right: Dataset) -> Non
 def _materialize_chunked(chunks: list[Dataset], reference: Dataset) -> Dataset:
     events: list[Event] = []
     for chunk in chunks:
-        events.extend(list(chunk))
-    return Dataset(events, p4_names=reference.p4_names, aux_names=reference.aux_names)
+        events.extend(chunk.events_global)
+    return Dataset.from_events_global(
+        events,
+        p4_names=reference.p4_names,
+        aux_names=reference.aux_names,
+    )
 
 
 def make_test_event() -> Event:
@@ -297,11 +302,11 @@ def test_dataset_conversion() -> None:
 
 
 def test_dataset_empty_push_event() -> None:
-    dataset = Dataset.empty(p4_names=['beam', 'recoil'], aux_names=['pol_angle'])
+    dataset = Dataset.empty_local(p4_names=['beam', 'recoil'], aux_names=['pol_angle'])
     beam = Vec3(0.0, 0.0, 8.0).with_mass(0.0)
     recoil = Vec3(0.1, 0.2, 0.3).with_mass(0.938)
 
-    dataset.push_event(
+    dataset.push_event_local(
         p4={'recoil': recoil, 'beam': beam},
         aux={'pol_angle': 0.25},
         weight=2.0,
@@ -314,22 +319,35 @@ def test_dataset_empty_push_event() -> None:
     assert pytest.approx(dataset[0].weight) == 2.0
 
 
+def test_dataset_from_events_explicit_constructors() -> None:
+    events = [make_test_event()]
+    local = Dataset.from_events_local(events, p4_names=P4_NAMES, aux_names=AUX_NAMES)
+    global_dataset = Dataset.from_events_global(
+        events, p4_names=P4_NAMES, aux_names=AUX_NAMES
+    )
+
+    assert local.n_events_local == 1
+    assert global_dataset.n_events == 1
+    _assert_events_close(local.events_local[0], events[0], P4_NAMES, AUX_NAMES)
+    _assert_events_close(global_dataset.events_global[0], events[0], P4_NAMES, AUX_NAMES)
+
+
 def test_dataset_push_event_validation() -> None:
-    dataset = Dataset.empty(p4_names=['beam', 'recoil'], aux_names=['pol_angle'])
+    dataset = Dataset.empty_local(p4_names=['beam', 'recoil'], aux_names=['pol_angle'])
     beam = Vec3(0.0, 0.0, 8.0).with_mass(0.0)
     recoil = Vec3(0.1, 0.2, 0.3).with_mass(0.938)
 
     with pytest.raises(RuntimeError, match='Missing p4'):
-        dataset.push_event(p4={'beam': beam}, aux={'pol_angle': 0.25})
+        dataset.push_event_local(p4={'beam': beam}, aux={'pol_angle': 0.25})
     with pytest.raises(KeyError, match='unknown'):
-        dataset.push_event(
+        dataset.push_event_local(
             p4={'beam': beam, 'unknown': recoil},
             aux={'pol_angle': 0.25},
         )
     with pytest.raises(RuntimeError, match='Missing aux'):
-        dataset.push_event(p4={'beam': beam, 'recoil': recoil})
+        dataset.push_event_local(p4={'beam': beam, 'recoil': recoil})
     with pytest.raises(KeyError, match='unknown'):
-        dataset.push_event(
+        dataset.push_event_local(
             p4={'beam': beam, 'recoil': recoil},
             aux={'unknown': 0.25},
         )
@@ -788,7 +806,7 @@ def test_dataset_bootstrap() -> None:
 
 def test_dataset_iteration() -> None:
     dataset = make_test_dataset()
-    events = list(dataset)
+    events = dataset.events_global
     assert len(events) == dataset.n_events
     assert all(isinstance(event, Event) for event in events)
     proton_vec_from_events = events[0].p4s['proton']
@@ -796,6 +814,8 @@ def test_dataset_iteration() -> None:
     proton_vec_from_dataset = dataset[0].p4s['proton']
     assert isinstance(proton_vec_from_dataset, Vec4)
     assert pytest.approx(proton_vec_from_events.e) == proton_vec_from_dataset.e
+    with pytest.raises(TypeError, match=r'events_local or dataset\.events_global'):
+        list(cast(Any, dataset))
 
 
 def test_dataset_iteration_modes() -> None:
@@ -814,10 +834,9 @@ def test_dataset_iteration_modes() -> None:
         aux_names=AUX_NAMES,
     )
 
-    default_events = list(dataset)
-    local_events = list(dataset.iter_local())
-    global_events = list(dataset.iter_global())
-    stored_events = dataset.events
+    local_events = dataset.events_local
+    global_events = dataset.events_global
+    default_events = global_events
     stored_local_events = dataset.events_local
 
     assert len(default_events) == dataset.n_events
@@ -825,7 +844,6 @@ def test_dataset_iteration_modes() -> None:
     assert dataset.n_events_weighted_local == dataset.n_events_weighted
     assert len(local_events) == dataset.n_events
     assert len(global_events) == dataset.n_events
-    assert len(stored_events) == dataset.n_events
     assert len(stored_local_events) == dataset.n_events_local
     assert np.allclose(dataset.weights_local, dataset.weights)
 
@@ -839,7 +857,6 @@ def test_dataset_iteration_modes() -> None:
     for actual in (
         local_events,
         global_events,
-        stored_events,
         stored_local_events,
     ):
         for expected_event, actual_event in zip(default_events, actual, strict=True):

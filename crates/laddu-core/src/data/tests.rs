@@ -500,16 +500,16 @@ fn test_dataset_empty_push_event_named_matches_columns() {
         .expect("metadata should be valid");
     let beam = Vec3::new(0.0, 0.0, 8.0).with_mass(0.0);
     let recoil = Vec3::new(0.1, 0.2, 0.3).with_mass(0.938);
-    let mut row_dataset = Dataset::empty(metadata.clone());
+    let mut row_dataset = Dataset::empty_local(metadata.clone());
     row_dataset
-        .push_event_named(
+        .push_event_named_local(
             [("recoil", recoil), ("beam", beam)],
             [("pol_angle", 0.25)],
             2.0,
         )
         .expect("named push should succeed");
 
-    let column_dataset = Dataset::from_columns(
+    let column_dataset = Dataset::from_columns_local(
         metadata,
         vec![vec![beam], vec![recoil]],
         vec![vec![0.25]],
@@ -533,34 +533,91 @@ fn test_dataset_push_event_validation() {
         .expect("metadata should be valid");
     let beam = Vec3::new(0.0, 0.0, 8.0).with_mass(0.0);
     let recoil = Vec3::new(0.1, 0.2, 0.3).with_mass(0.938);
-    let mut dataset = Dataset::empty(metadata);
+    let mut dataset = Dataset::empty_local(metadata);
 
-    assert!(dataset.push_event([beam], [0.25], 1.0).is_err());
-    assert!(dataset.push_event([beam, recoil], [], 1.0).is_err());
+    assert!(dataset.push_event_local([beam], [0.25], 1.0).is_err());
+    assert!(dataset.push_event_local([beam, recoil], [], 1.0).is_err());
     assert!(dataset
-        .push_event_named([("beam", beam)], [("pol_angle", 0.25)], 1.0)
+        .push_event_named_local([("beam", beam)], [("pol_angle", 0.25)], 1.0)
         .is_err());
     assert!(dataset
-        .push_event_named(
+        .push_event_named_local(
             [("beam", beam), ("beam", recoil)],
             [("pol_angle", 0.25)],
             1.0
         )
         .is_err());
     assert!(dataset
-        .push_event_named(
+        .push_event_named_local(
             [("beam", beam), ("unknown", recoil)],
             [("pol_angle", 0.25)],
             1.0
         )
         .is_err());
     assert!(dataset
-        .push_event_named(
+        .push_event_named_local(
             [("beam", beam), ("recoil", recoil)],
             [("unknown", 0.25)],
             1.0
         )
         .is_err());
+}
+
+#[test]
+fn test_dataset_explicit_local_global_push_non_mpi() {
+    let metadata = DatasetMetadata::new(vec!["beam"], vec!["pol_angle"]).unwrap();
+    let mut dataset = Dataset::empty_local(metadata);
+    let beam = Vec3::new(0.0, 0.0, 8.0).with_mass(0.0);
+
+    dataset
+        .push_event_named_local([("beam", beam)], [("pol_angle", 0.25)], 2.0)
+        .unwrap();
+    dataset
+        .push_event_named_global([("beam", beam)], [("pol_angle", 0.50)], 3.0)
+        .unwrap();
+
+    assert_eq!(dataset.n_events_local(), 2);
+    assert_eq!(dataset.n_events(), 2);
+    assert_relative_eq!(dataset.event_global(0).unwrap().weight(), 2.0);
+    assert_relative_eq!(dataset.event_global(1).unwrap().weight(), 3.0);
+}
+
+#[cfg(feature = "mpi")]
+#[mpi_test(np = [2])]
+fn test_dataset_push_event_global_round_robin_mpi() {
+    use_mpi(true);
+    let world = get_world().expect("MPI world should be initialized");
+    let metadata = DatasetMetadata::new(vec!["beam"], vec!["pol_angle"]).unwrap();
+    let mut dataset = Dataset::empty_local(metadata);
+
+    for index in 0..4 {
+        let pz = index as f64 + 1.0;
+        let beam = Vec3::new(0.0, 0.0, pz).with_mass(0.0);
+        dataset
+            .push_event_named_global([("beam", beam)], [("pol_angle", pz)], pz)
+            .unwrap();
+    }
+
+    assert_eq!(dataset.n_events(), 4);
+    assert_eq!(dataset.n_events_local(), 2);
+    let expected_local_weights = if world.rank() == 0 {
+        vec![1.0, 3.0]
+    } else {
+        vec![2.0, 4.0]
+    };
+    let local_weights = dataset
+        .events_local()
+        .iter()
+        .map(Event::weight)
+        .collect::<Vec<_>>();
+    assert_eq!(local_weights, expected_local_weights);
+    let global_weights = dataset
+        .events_global()
+        .into_iter()
+        .map(|event| event.weight())
+        .collect::<Vec<_>>();
+    assert_eq!(global_weights, vec![1.0, 2.0, 3.0, 4.0]);
+    finalize_mpi();
 }
 
 #[test]
@@ -846,7 +903,7 @@ fn test_weight_cache_recomputed_for_dataset_transforms() {
 fn test_dataset_iteration_returns_events() {
     let dataset = test_dataset();
     let mut weights = Vec::new();
-    for event in dataset.iter() {
+    for event in dataset.events_global() {
         weights.push(event.weight());
     }
     assert_eq!(weights.len(), dataset.n_events());
@@ -857,9 +914,13 @@ fn test_dataset_iteration_returns_events() {
 }
 
 #[test]
-fn test_dataset_into_iter_returns_events() {
+fn test_dataset_events_global_returns_events() {
     let dataset = test_dataset();
-    let weights: Vec<f64> = dataset.into_iter().map(|event| event.weight()).collect();
+    let weights: Vec<f64> = dataset
+        .events_global()
+        .into_iter()
+        .map(|event| event.weight())
+        .collect();
     assert_eq!(weights.len(), 1);
     assert_relative_eq!(weights[0], test_event().weight);
 }
@@ -1020,10 +1081,18 @@ fn test_dataset_iter_stress_mpi_repeated_passes() {
         }));
     }
     let dataset = Dataset::new_with_metadata(events, metadata);
-    let baseline: Vec<f64> = dataset.iter().map(|event| event.weight()).collect();
+    let baseline: Vec<f64> = dataset
+        .events_global()
+        .into_iter()
+        .map(|event| event.weight())
+        .collect();
 
     for _ in 0..80 {
-        let current: Vec<f64> = dataset.iter().map(|event| event.weight()).collect();
+        let current: Vec<f64> = dataset
+            .events_global()
+            .into_iter()
+            .map(|event| event.weight())
+            .collect();
         assert_eq!(current.len(), baseline.len());
         for (current_weight, expected_weight) in current.iter().zip(baseline.iter()) {
             assert_relative_eq!(*current_weight, *expected_weight);
@@ -1068,13 +1137,13 @@ fn test_dataset_iteration_long_running_mpi_repeated_passes() {
     assert!(get_world().is_some(), "MPI world should be initialized");
 
     let dataset = Arc::new(mpi_chunk_test_dataset(8_192));
-    let baseline_iter = event_iteration_signature(dataset.iter());
+    let baseline_iter = event_iteration_signature(dataset.events_global().into_iter());
     let baseline_shared = event_iteration_signature(dataset.shared_iter());
     assert_eq!(baseline_iter, baseline_shared);
     let mut post_warmup_rss_kb = Vec::new();
 
     for pass_index in 0..48 {
-        let current_iter = event_iteration_signature(dataset.iter());
+        let current_iter = event_iteration_signature(dataset.events_global().into_iter());
         let current_shared = event_iteration_signature(dataset.shared_iter());
         assert_eq!(current_iter, baseline_iter);
         assert_eq!(current_shared, baseline_shared);
@@ -1125,7 +1194,14 @@ fn test_fetch_event_chunk_mpi_matches_single_event_fetches() {
     let world = get_world().expect("MPI world should be initialized");
 
     let dataset = mpi_chunk_test_dataset(8);
-    let chunk = fetch_event_chunk_mpi(&dataset, 1, 5, &world, dataset.n_events());
+    let chunk = fetch_event_chunk_mpi(
+        &dataset,
+        1,
+        5,
+        &world,
+        dataset.n_events(),
+        MpiDatasetLayout::Canonical,
+    );
 
     assert_eq!(chunk.len(), 5);
     for (offset, event) in chunk.iter().enumerate() {
@@ -1135,10 +1211,15 @@ fn test_fetch_event_chunk_mpi_matches_single_event_fetches() {
         assert_events_close(event, &baseline, TEST_P4_NAMES, TEST_AUX_NAMES);
     }
 
-    assert!(
-        fetch_event_chunk_mpi(&dataset, dataset.n_events(), 4, &world, dataset.n_events())
-            .is_empty()
-    );
+    assert!(fetch_event_chunk_mpi(
+        &dataset,
+        dataset.n_events(),
+        4,
+        &world,
+        dataset.n_events(),
+        MpiDatasetLayout::Canonical,
+    )
+    .is_empty());
     finalize_mpi();
 }
 
@@ -1149,7 +1230,14 @@ fn test_fetch_event_chunk_mpi_truncates_at_dataset_end() {
     let world = get_world().expect("MPI world should be initialized");
 
     let dataset = mpi_chunk_test_dataset(8);
-    let chunk = fetch_event_chunk_mpi(&dataset, 6, 10, &world, dataset.n_events());
+    let chunk = fetch_event_chunk_mpi(
+        &dataset,
+        6,
+        10,
+        &world,
+        dataset.n_events(),
+        MpiDatasetLayout::Canonical,
+    );
 
     assert_eq!(chunk.len(), 2);
     for (offset, event) in chunk.iter().enumerate() {
@@ -1169,24 +1257,23 @@ fn test_mpi_event_chunk_cursor_reuses_cached_chunk_for_dataset_and_events() {
 
     let dataset = mpi_chunk_test_dataset(9);
     let total = dataset.n_events();
-    let metadata = dataset.metadata_arc();
 
     let mut dataset_cursor = MpiEventChunkCursor::new(3);
     for index in 0..total {
         let actual = dataset_cursor
-            .event_for_dataset(&dataset, index, &world, total)
+            .event_for_dataset(&dataset, index, &world, total, MpiDatasetLayout::Canonical)
             .expect("dataset cursor event should exist");
         let expected = dataset.event(index).expect("baseline event should exist");
         assert_events_close(&actual, &expected, TEST_P4_NAMES, TEST_AUX_NAMES);
     }
     assert!(dataset_cursor
-        .event_for_dataset(&dataset, total, &world, total)
+        .event_for_dataset(&dataset, total, &world, total, MpiDatasetLayout::Canonical)
         .is_none());
 
     let mut events_cursor = MpiEventChunkCursor::new(4);
     for index in 0..total {
         let actual = events_cursor
-            .event_for_events(dataset.events_local(), &metadata, index, &world, total)
+            .event_for_dataset(&dataset, index, &world, total, MpiDatasetLayout::Canonical)
             .expect("events cursor event should exist");
         let expected = dataset.event(index).expect("baseline event should exist");
         assert_events_close(&actual, &expected, TEST_P4_NAMES, TEST_AUX_NAMES);
@@ -1219,7 +1306,7 @@ fn probe_mpi_iteration_chunk_size() {
             let mut cursor = MpiEventChunkCursor::new(chunk_size);
             for index in 0..total {
                 let event = cursor
-                    .event_for_dataset(&dataset, index, &world, total)
+                    .event_for_dataset(&dataset, index, &world, total, MpiDatasetLayout::Canonical)
                     .expect("cursor event should exist");
                 checksum += event.weight() + event.p4("beam").expect("beam should exist").e();
             }
