@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{AuxSelection, Variable};
 use crate::{
-    data::{DatasetMetadata, NamedEventView},
+    data::{DatasetMetadata, Event},
     reaction::Reaction,
     vectors::Vec3,
     LadduResult,
@@ -50,7 +50,7 @@ impl Variable for PolAngle {
         Ok(())
     }
 
-    fn value(&self, event: &NamedEventView<'_>) -> f64 {
+    fn value(&self, event: &Event<'_>) -> f64 {
         let resolved = self
             .reaction
             .resolve_two_to_two(event)
@@ -98,7 +98,7 @@ impl Variable for PolMagnitude {
         self.magnitude_aux.bind(metadata)
     }
 
-    fn value(&self, event: &NamedEventView<'_>) -> f64 {
+    fn value(&self, event: &Event<'_>) -> f64 {
         event.aux_at(self.magnitude_aux.index())
     }
 }

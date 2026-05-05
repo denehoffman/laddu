@@ -5,7 +5,7 @@ use laddu_core::{
         debug_key, display_key, parameter_array_key, seed_key, Amplitude, AmplitudeID,
         AmplitudeSemanticKey, Parameter,
     },
-    data::{DatasetMetadata, NamedEventView},
+    data::{DatasetMetadata, Event},
     resources::{Cache, ComplexVectorID, MatrixID, ParameterID, Parameters, Resources},
     traits::Variable,
     variables::Mass,
@@ -181,7 +181,7 @@ impl Amplitude for KopfKMatrixF2 {
         Ok(())
     }
 
-    fn precompute(&self, event: &NamedEventView<'_>, cache: &mut Cache) {
+    fn precompute(&self, event: &Event<'_>, cache: &mut Cache) {
         let s = self.mass.value(event).powi(2);
         cache.store_complex_vector(
             self.ikc_cache_index,

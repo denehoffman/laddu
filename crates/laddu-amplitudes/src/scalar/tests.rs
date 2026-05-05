@@ -41,7 +41,7 @@ fn test_variable_scalar_evaluation() {
     let dataset = Arc::new(test_dataset());
     let mut variable = Mass::new(["kshort1", "kshort2"]);
     variable.bind(dataset.metadata()).unwrap();
-    let expected = variable.value(&dataset.event_view(0));
+    let expected = variable.value(&dataset.event_local(0).unwrap());
 
     let expr = VariableScalar::new("mass", &variable).unwrap();
     let evaluator = expr.load(&dataset).unwrap();
@@ -68,7 +68,7 @@ fn test_variable_as_expression() {
     let dataset = Arc::new(test_dataset());
     let mut variable = Mass::new(["kshort1", "kshort2"]);
     variable.bind(dataset.metadata()).unwrap();
-    let expected = variable.value(&dataset.event_view(0));
+    let expected = variable.value(&dataset.event_local(0).unwrap());
 
     let expr = variable.as_expression("mass").unwrap();
     let evaluator = expr.load(&dataset).unwrap();

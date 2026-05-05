@@ -3,7 +3,7 @@ use laddu_core::{
         debug_key, display_key, parameter_key, Amplitude, AmplitudeID, AmplitudeSemanticKey,
         Expression, Parameter,
     },
-    data::{DatasetMetadata, NamedEventView},
+    data::{DatasetMetadata, Event},
     math::{rho_m, Sheet},
     resources::{Cache, ParameterID, Parameters, Resources},
     traits::Variable,
@@ -126,7 +126,7 @@ impl Amplitude for Flatte {
         Ok(())
     }
 
-    fn precompute(&self, event: &NamedEventView<'_>, cache: &mut Cache) {
+    fn precompute(&self, event: &Event<'_>, cache: &mut Cache) {
         cache.store_scalar(
             self.observed_channel_mass_ids.0,
             event.evaluate(&self.observed_channel_daughter_masses.0),

@@ -1042,7 +1042,7 @@ impl Dataset {
 
         #[cfg(feature = "mpi")]
         {
-            return write_root_with_type_mpi::<T>(
+            write_root_with_type_mpi::<T>(
                 dataset,
                 world.expect("MPI world should exist for distributed ROOT writing"),
                 is_root,
@@ -1050,7 +1050,7 @@ impl Dataset {
                 tree_name,
                 total_events,
                 fetch_chunk_size,
-            );
+            )
         }
 
         #[cfg(not(feature = "mpi"))]

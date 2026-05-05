@@ -2,7 +2,7 @@ use std::fmt::Display;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{data::NamedEventView, vectors::Vec4, LadduError, LadduResult};
+use crate::{data::Event, vectors::Vec4, LadduError, LadduResult};
 
 /// A kinematic particle or composite system used to define a reaction.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -135,7 +135,7 @@ impl Display for Particle {
 }
 
 pub(super) fn resolve_particle_direct(
-    event: &NamedEventView<'_>,
+    event: &Event<'_>,
     particle: &Particle,
 ) -> LadduResult<Option<Vec4>> {
     match particle.source() {

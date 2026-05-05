@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use super::Variable;
 use crate::{
-    data::{DatasetMetadata, NamedEventView},
+    data::{DatasetMetadata, Event},
     quantum::Channel,
     reaction::Reaction,
     LadduResult,
@@ -37,7 +37,7 @@ impl Variable for Mandelstam {
         Ok(())
     }
 
-    fn value(&self, event: &NamedEventView<'_>) -> f64 {
+    fn value(&self, event: &Event<'_>) -> f64 {
         let resolved = self
             .reaction
             .resolve_two_to_two(event)

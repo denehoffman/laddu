@@ -1,6 +1,6 @@
 use laddu_core::{
     amplitudes::{debug_key, f64_key, Amplitude, AmplitudeID, AmplitudeSemanticKey, Expression},
-    data::{DatasetMetadata, NamedEventView},
+    data::{DatasetMetadata, Event},
     math::{blatt_weisskopf_m, BarrierKind, Sheet},
     resources::{Cache, ComplexScalarID, Parameters, Resources, ScalarID},
     traits::Variable,
@@ -97,7 +97,7 @@ impl Amplitude for BlattWeisskopf {
         self.daughter_2_mass.bind(metadata)
     }
 
-    fn precompute(&self, event: &NamedEventView<'_>, cache: &mut Cache) {
+    fn precompute(&self, event: &Event<'_>, cache: &mut Cache) {
         let parent_mass = self.parent_mass.value(event);
         let daughter_1_mass = self.daughter_1_mass.value(event);
         let daughter_2_mass = self.daughter_2_mass.value(event);

@@ -146,7 +146,7 @@ fn sample_dataset(dataset: &Arc<Dataset>, seed: u64, max_events: usize) -> Arc<D
     let events = (0..n_take)
         .map(|index| {
             dataset
-                .event(index)
+                .event_global(index)
                 .expect("subset index should be valid")
                 .data_arc()
         })

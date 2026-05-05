@@ -94,7 +94,7 @@ fn pion_cascade_dataset() -> (Dataset, Reaction, Particle, Particle, Particle) {
 #[test]
 fn reaction_reconstructs_composites_from_lab_final_state() {
     let (dataset, reaction, _, _, _) = pion_cascade_dataset();
-    let event = dataset.event_view(0);
+    let event = dataset.event_local(0).unwrap();
     let rho_p4 = reaction.p4(&event, "rho").unwrap();
     let x_p4 = reaction.p4(&event, "x").unwrap();
 
@@ -105,7 +105,7 @@ fn reaction_reconstructs_composites_from_lab_final_state() {
 #[test]
 fn reaction_angle_variables_use_particles_not_paths() {
     let (dataset, reaction, _, _, _) = pion_cascade_dataset();
-    let event = dataset.event_view(0);
+    let event = dataset.event_local(0).unwrap();
     let decay = reaction.decay("rho");
     assert!(decay.is_ok());
     let angles = decay.unwrap().angles("pi_plus", Frame::Helicity).unwrap();
@@ -203,7 +203,7 @@ fn reaction_rejects_duplicate_particle_identifiers() {
 #[test]
 fn reaction_reports_unknown_identifiers() {
     let (dataset, reaction, _, _, _) = pion_cascade_dataset();
-    let event = dataset.event_view(0);
+    let event = dataset.event_local(0).unwrap();
 
     assert!(reaction.particle("unknown").is_err());
     assert!(reaction.p4(&event, "unknown").is_err());
@@ -236,7 +236,7 @@ fn two_to_two_reaction_rejects_multiple_missing_particles() {
 #[test]
 fn two_to_two_reaction_solves_missing_particle() {
     let (dataset, reaction, _, _, x) = pion_cascade_dataset();
-    let event = dataset.event_view(0);
+    let event = dataset.event_local(0).unwrap();
     let full = reaction.resolve_two_to_two(&event).unwrap();
     let beam = Particle::stored("beam");
     let target = Particle::missing("target");
@@ -253,7 +253,7 @@ fn two_to_two_reaction_solves_missing_particle() {
 #[test]
 fn two_to_two_reaction_solves_each_missing_slot() {
     let (dataset, reaction, _, _, x) = pion_cascade_dataset();
-    let event = dataset.event_view(0);
+    let event = dataset.event_local(0).unwrap();
     let full = reaction.resolve_two_to_two(&event).unwrap();
     let beam = Particle::stored("beam");
     let target = Particle::stored("target");
@@ -304,7 +304,7 @@ fn two_to_two_reaction_solves_each_missing_slot() {
 #[test]
 fn fixed_particle_can_define_a_reaction_role() {
     let (dataset, _, _, _, x) = pion_cascade_dataset();
-    let event = dataset.event_view(0);
+    let event = dataset.event_local(0).unwrap();
     let beam = Particle::stored("beam");
     let fixed_target = Particle::fixed("target", event.p4("target").unwrap());
     let recoil = Particle::stored("recoil");
@@ -317,7 +317,7 @@ fn fixed_particle_can_define_a_reaction_role() {
 #[test]
 fn reaction_mandelstam_variables_match_resolved_values() {
     let (dataset, reaction, _, _, _) = pion_cascade_dataset();
-    let event = dataset.event_view(0);
+    let event = dataset.event_local(0).unwrap();
     let resolved = reaction.resolve_two_to_two(&event).unwrap();
 
     assert!(reaction.topology().supports_mandelstam());
@@ -339,7 +339,7 @@ fn reaction_mandelstam_variables_match_resolved_values() {
 #[test]
 fn production_frame_axes_support_known_frames() {
     let (dataset, reaction, _, _, _) = pion_cascade_dataset();
-    let event = dataset.event_view(0);
+    let event = dataset.event_local(0).unwrap();
 
     assert!(reaction.axes(&event, "x", Frame::Helicity).is_ok());
     assert!(reaction.axes(&event, "x", Frame::GottfriedJackson).is_ok());

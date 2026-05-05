@@ -78,7 +78,7 @@ where
         Ok(resources
             .caches
             .par_iter()
-            .zip(evaluator.dataset.events_local().par_iter())
+            .zip(evaluator.dataset.weights_local().par_iter())
             .map_init(
                 || {
                     (
@@ -96,7 +96,7 @@ where
                         amplitude_values,
                         expr_slots,
                     );
-                    event.weight * value_map(l)
+                    *event * value_map(l)
                 },
             )
             .parallel_sum_with_accumulator::<Klein<f64>>())
@@ -108,7 +108,7 @@ where
         Ok(resources
             .caches
             .iter()
-            .zip(evaluator.dataset.events_local().iter())
+            .zip(evaluator.dataset.weights_local().iter())
             .map(|(cache, event)| {
                 for &amp_idx in &active_indices {
                     amplitude_values[amp_idx] =
@@ -119,7 +119,7 @@ where
                     &amplitude_values,
                     &mut expr_slots,
                 );
-                event.weight * value_map(l)
+                *event * value_map(l)
             })
             .sum_with_accumulator::<Klein<f64>>())
     }
@@ -141,7 +141,7 @@ pub(crate) fn project_weights_local_from_evaluator(
         Ok(resources
             .caches
             .par_iter()
-            .zip(evaluator.dataset.events_local().par_iter())
+            .zip(evaluator.dataset.weights_local().par_iter())
             .map_init(
                 || {
                     (
@@ -159,7 +159,7 @@ pub(crate) fn project_weights_local_from_evaluator(
                         amplitude_values,
                         expr_slots,
                     );
-                    event.weight * value.re / n_mc
+                    *event * value.re / n_mc
                 },
             )
             .collect())
@@ -171,7 +171,7 @@ pub(crate) fn project_weights_local_from_evaluator(
         Ok(resources
             .caches
             .iter()
-            .zip(evaluator.dataset.events_local().iter())
+            .zip(evaluator.dataset.weights_local().iter())
             .map(|(cache, event)| {
                 for &amp_idx in &active_indices {
                     amplitude_values[amp_idx] =
@@ -182,7 +182,7 @@ pub(crate) fn project_weights_local_from_evaluator(
                     &amplitude_values,
                     &mut expr_slots,
                 );
-                event.weight * value.re / n_mc
+                *event * value.re / n_mc
             })
             .collect())
     }
@@ -210,7 +210,7 @@ pub(crate) fn project_weights_local_from_resolved_mask(
         Ok(resources
             .caches
             .par_iter()
-            .zip(evaluator.dataset.events_local().par_iter())
+            .zip(evaluator.dataset.weights_local().par_iter())
             .map_init(
                 || {
                     (
@@ -228,7 +228,7 @@ pub(crate) fn project_weights_local_from_resolved_mask(
                         amplitude_values,
                         expr_slots,
                     );
-                    event.weight * value.re / n_mc
+                    *event * value.re / n_mc
                 },
             )
             .collect())
@@ -240,7 +240,7 @@ pub(crate) fn project_weights_local_from_resolved_mask(
         Ok(resources
             .caches
             .iter()
-            .zip(evaluator.dataset.events_local().iter())
+            .zip(evaluator.dataset.weights_local().iter())
             .map(|(cache, event)| {
                 for &amp_idx in &active_indices {
                     amplitude_values[amp_idx] =
@@ -251,7 +251,7 @@ pub(crate) fn project_weights_local_from_resolved_mask(
                     &amplitude_values,
                     &mut expr_slots,
                 );
-                event.weight * value.re / n_mc
+                *event * value.re / n_mc
             })
             .collect())
     }
@@ -275,7 +275,7 @@ pub(crate) fn project_weights_and_gradients_local_from_evaluator(
         let weighted = resources
             .caches
             .par_iter()
-            .zip(evaluator.dataset.events_local().par_iter())
+            .zip(evaluator.dataset.weights_local().par_iter())
             .map_init(
                 || {
                     (
@@ -303,8 +303,8 @@ pub(crate) fn project_weights_and_gradients_local_from_evaluator(
                             gradient_slots,
                         );
                     (
-                        event.weight * value.re / n_mc,
-                        gradient.map(|g| g.re).scale(event.weight / n_mc),
+                        *event * value.re / n_mc,
+                        gradient.map(|g| g.re).scale(*event / n_mc),
                     )
                 },
             )
@@ -320,7 +320,7 @@ pub(crate) fn project_weights_and_gradients_local_from_evaluator(
         Ok(resources
             .caches
             .iter()
-            .zip(evaluator.dataset.events_local().iter())
+            .zip(evaluator.dataset.weights_local().iter())
             .map(|(cache, event)| {
                 evaluator.fill_amplitude_values_and_gradients_public(
                     &mut amplitude_values,
@@ -337,8 +337,8 @@ pub(crate) fn project_weights_and_gradients_local_from_evaluator(
                     &mut gradient_slots,
                 );
                 (
-                    event.weight * value.re / n_mc,
-                    gradient.map(|g| g.re).scale(event.weight / n_mc),
+                    *event * value.re / n_mc,
+                    gradient.map(|g| g.re).scale(*event / n_mc),
                 )
             })
             .unzip())
@@ -1259,13 +1259,13 @@ impl NLL {
             (
                 result
                     .par_iter()
-                    .zip(mc_dataset.events_local().par_iter())
-                    .map(|((l, _), e)| e.weight * l.re / self.n_mc)
+                    .zip(mc_dataset.weights_local().par_iter())
+                    .map(|((l, _), e)| e * l.re / self.n_mc)
                     .collect(),
                 result
                     .par_iter()
-                    .zip(mc_dataset.events_local().par_iter())
-                    .map(|((_, grad_l), e)| grad_l.map(|g| g.re).scale(e.weight / self.n_mc))
+                    .zip(mc_dataset.weights_local().par_iter())
+                    .map(|((_, grad_l), e)| grad_l.map(|g| g.re).scale(e / self.n_mc))
                     .collect(),
             )
         };
@@ -1274,13 +1274,13 @@ impl NLL {
             (
                 result
                     .iter()
-                    .zip(mc_dataset.events_local().iter())
-                    .map(|((l, _), e)| e.weight * l.re / self.n_mc)
+                    .zip(mc_dataset.weights_local().iter())
+                    .map(|((l, _), e)| e * l.re / self.n_mc)
                     .collect(),
                 result
                     .iter()
-                    .zip(mc_dataset.events_local().iter())
-                    .map(|((_, grad_l), e)| grad_l.map(|g| g.re).scale(e.weight / self.n_mc))
+                    .zip(mc_dataset.weights_local().iter())
+                    .map(|((_, grad_l), e)| grad_l.map(|g| g.re).scale(e / self.n_mc))
                     .collect(),
             )
         };
@@ -1541,7 +1541,7 @@ impl NLL {
         let data_term: DVector<f64> = sum_dvectors_parallel(
             self.data_evaluator
                 .dataset
-                .events_local()
+                .weights_local()
                 .par_iter()
                 .zip(data_resources.caches.par_iter())
                 .map_init(
@@ -1568,7 +1568,7 @@ impl NLL {
                                 &mut workspace.value_slots,
                                 &mut workspace.gradient_slots,
                             );
-                        (event.weight, value, gradient)
+                        (*event, value, gradient)
                     },
                 )
                 .map(|(w, l, g)| g.map(|gi| gi.re * w / l.re)),
@@ -1585,7 +1585,7 @@ impl NLL {
                 vec![DVector::zeros(parameters.len()); self.data_evaluator.expression_slot_count()];
             self.data_evaluator
                 .dataset
-                .events_local()
+                .weights_local()
                 .iter()
                 .zip(data_resources.caches.iter())
                 .map(|(event, cache)| {
@@ -1607,7 +1607,7 @@ impl NLL {
                             &mut value_slots,
                             &mut gradient_slots,
                         );
-                    (event.weight, value, gradient)
+                    (*event, value, gradient)
                 })
                 .map(|(w, l, g)| g.map(|gi| gi.re * w / l.re))
                 .sum()
@@ -1714,12 +1714,12 @@ impl LikelihoodTerm for StochasticNLL {
         #[cfg(feature = "rayon")]
         let n_data_batch_local = indices
             .par_iter()
-            .map(|&i| self.nll.data_evaluator.dataset.events_local()[i].weight)
+            .map(|&i| self.nll.data_evaluator.dataset.weights_local()[i])
             .parallel_sum_with_accumulator::<Klein<f64>>();
         #[cfg(not(feature = "rayon"))]
         let n_data_batch_local = indices
             .iter()
-            .map(|&i| self.nll.data_evaluator.dataset.events_local()[i].weight)
+            .map(|&i| self.nll.data_evaluator.dataset.weights_local()[i])
             .sum_with_accumulator::<Klein<f64>>();
         self.evaluate_local(parameters, &indices, n_data_batch_local)
     }
@@ -1735,12 +1735,12 @@ impl LikelihoodTerm for StochasticNLL {
         #[cfg(feature = "rayon")]
         let n_data_batch_local = indices
             .par_iter()
-            .map(|&i| self.nll.data_evaluator.dataset.events_local()[i].weight)
+            .map(|&i| self.nll.data_evaluator.dataset.weights_local()[i])
             .parallel_sum_with_accumulator::<Klein<f64>>();
         #[cfg(not(feature = "rayon"))]
         let n_data_batch_local = indices
             .iter()
-            .map(|&i| self.nll.data_evaluator.dataset.events_local()[i].weight)
+            .map(|&i| self.nll.data_evaluator.dataset.weights_local()[i])
             .sum_with_accumulator::<Klein<f64>>();
         self.evaluate_gradient_local(parameters, &indices, n_data_batch_local)
     }
@@ -1835,12 +1835,12 @@ impl StochasticNLL {
         #[cfg(feature = "rayon")]
         return indices
             .par_iter()
-            .map(|&i| self.nll.data_evaluator.dataset.events_local()[i].weight)
+            .map(|&i| self.nll.data_evaluator.dataset.weights_local()[i])
             .parallel_sum_with_accumulator::<Klein<f64>>();
         #[cfg(not(feature = "rayon"))]
         return indices
             .iter()
-            .map(|&i| self.nll.data_evaluator.dataset.events_local()[i].weight)
+            .map(|&i| self.nll.data_evaluator.dataset.weights_local()[i])
             .sum_with_accumulator::<Klein<f64>>();
     }
 
@@ -1855,8 +1855,8 @@ impl StochasticNLL {
                 .par_iter()
                 .zip(data_result.par_iter())
                 .map(|(&i, &l)| {
-                    let e = &self.nll.data_evaluator.dataset.events_local()[i];
-                    e.weight * l.re.ln()
+                    let e = &self.nll.data_evaluator.dataset.weights_local()[i];
+                    e * l.re.ln()
                 })
                 .parallel_sum_with_accumulator::<Klein<f64>>())
         }
@@ -1866,8 +1866,8 @@ impl StochasticNLL {
                 .iter()
                 .zip(data_result.iter())
                 .map(|(&i, &l)| {
-                    let e = &self.nll.data_evaluator.dataset.events_local()[i];
-                    e.weight * l.re.ln()
+                    let e = &self.nll.data_evaluator.dataset.weights_local()[i];
+                    e * l.re.ln()
                 })
                 .sum_with_accumulator::<Klein<f64>>())
         }
@@ -1934,7 +1934,7 @@ impl StochasticNLL {
                         let workspace = scratch.workspace_mut();
                         let amp_vals = &mut workspace.amplitude_values;
                         let grad_vals = &mut workspace.gradient_values;
-                        let event = &self.nll.data_evaluator.dataset.events_local()[idx];
+                        let event = &self.nll.data_evaluator.dataset.weights_local()[idx];
                         let cache = &data_resources.caches[idx];
                         for (amp_idx, amp) in self.nll.data_evaluator.amplitudes.iter().enumerate()
                         {
@@ -1960,7 +1960,7 @@ impl StochasticNLL {
                                 &mut workspace.value_slots,
                                 &mut workspace.gradient_slots,
                             );
-                        (event.weight, value, gradient)
+                        (*event, value, gradient)
                     },
                 )
                 .map(|(w, l, g)| g.map(|gi| gi.re * w / l.re)),
@@ -1980,7 +1980,7 @@ impl StochasticNLL {
             indices
                 .iter()
                 .map(|&idx| {
-                    let event = &self.nll.data_evaluator.dataset.events_local()[idx];
+                    let event = &self.nll.data_evaluator.dataset.weights_local()[idx];
                     let cache = &data_resources.caches[idx];
                     for (amp_idx, amp) in self.nll.data_evaluator.amplitudes.iter().enumerate() {
                         if data_resources.active[amp_idx] {
@@ -2001,7 +2001,7 @@ impl StochasticNLL {
                             &mut value_slots,
                             &mut gradient_slots,
                         );
-                    (event.weight, value, gradient)
+                    (*event, value, gradient)
                 })
                 .map(|(w, l, g)| g.map(|gi| gi.re * w / l.re))
                 .sum()

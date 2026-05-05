@@ -27,7 +27,7 @@ fn test_mass_single_particle() {
     let dataset = test_dataset();
     let mut mass = Mass::new("proton");
     mass.bind(dataset.metadata()).unwrap();
-    let event = dataset.event_view(0);
+    let event = dataset.event_local(0).unwrap();
     assert_relative_eq!(mass.value(&event), 1.007);
 }
 
@@ -36,7 +36,7 @@ fn test_mass_multiple_particles() {
     let dataset = test_dataset();
     let mut mass = Mass::new(["kshort1", "kshort2"]);
     mass.bind(dataset.metadata()).unwrap();
-    let event = dataset.event_view(0);
+    let event = dataset.event_local(0).unwrap();
     assert_relative_eq!(mass.value(&event), 1.3743786309153077);
 }
 
@@ -53,7 +53,7 @@ fn test_costheta_helicity() {
     let decay = reaction.decay("kk").unwrap();
     let mut costheta = decay.costheta("kshort1", Frame::Helicity).unwrap();
     costheta.bind(dataset.metadata()).unwrap();
-    let event = dataset.event_view(0);
+    let event = dataset.event_local(0).unwrap();
     assert_relative_eq!(costheta.value(&event), -0.4611175068834202);
 }
 
@@ -75,7 +75,7 @@ fn test_phi_helicity() {
     let decay = reaction.decay("kk").unwrap();
     let mut phi = decay.phi("kshort1", Frame::Helicity).unwrap();
     phi.bind(dataset.metadata()).unwrap();
-    let event = dataset.event_view(0);
+    let event = dataset.event_local(0).unwrap();
     assert_relative_eq!(phi.value(&event), -2.657462587335066);
 }
 
@@ -97,7 +97,7 @@ fn test_costheta_gottfried_jackson() {
     let decay = reaction.decay("kk").unwrap();
     let mut costheta = decay.costheta("kshort1", Frame::GottfriedJackson).unwrap();
     costheta.bind(dataset.metadata()).unwrap();
-    let event = dataset.event_view(0);
+    let event = dataset.event_local(0).unwrap();
     assert_relative_eq!(costheta.value(&event), 0.09198832278032032);
 }
 
@@ -108,7 +108,7 @@ fn test_phi_gottfried_jackson() {
     let decay = reaction.decay("kk").unwrap();
     let mut phi = decay.phi("kshort1", Frame::GottfriedJackson).unwrap();
     phi.bind(dataset.metadata()).unwrap();
-    let event = dataset.event_view(0);
+    let event = dataset.event_local(0).unwrap();
     assert_relative_eq!(phi.value(&event), -2.7139131991339056);
 }
 
@@ -120,7 +120,7 @@ fn test_angles() {
     let mut angles = decay.angles("kshort1", Frame::Helicity).unwrap();
     angles.costheta.bind(dataset.metadata()).unwrap();
     angles.phi.bind(dataset.metadata()).unwrap();
-    let event = dataset.event_view(0);
+    let event = dataset.event_local(0).unwrap();
     assert_relative_eq!(angles.costheta.value(&event), -0.4611175068834202);
     assert_relative_eq!(angles.phi.value(&event), -2.657462587335066);
 }
@@ -142,7 +142,7 @@ fn test_pol_angle() {
     let (reaction, _, _, _) = reaction();
     let mut pol_angle = reaction.pol_angle("pol_angle");
     pol_angle.bind(dataset.metadata()).unwrap();
-    let event = dataset.event_view(0);
+    let event = dataset.event_local(0).unwrap();
     assert_relative_eq!(pol_angle.value(&event), 1.935929887818673);
 }
 
@@ -151,7 +151,7 @@ fn test_pol_magnitude() {
     let dataset = test_dataset();
     let mut pol_magnitude = PolMagnitude::new("pol_magnitude");
     pol_magnitude.bind(dataset.metadata()).unwrap();
-    let event = dataset.event_view(0);
+    let event = dataset.event_local(0).unwrap();
     assert_relative_eq!(pol_magnitude.value(&event), 0.38562805);
 }
 
@@ -171,7 +171,7 @@ fn test_polarization() {
     let mut polarization = reaction.polarization("pol_magnitude", "pol_angle");
     polarization.pol_angle.bind(dataset.metadata()).unwrap();
     polarization.pol_magnitude.bind(dataset.metadata()).unwrap();
-    let event = dataset.event_view(0);
+    let event = dataset.event_local(0).unwrap();
     assert_relative_eq!(polarization.pol_angle.value(&event), 1.935929887818673);
     assert_relative_eq!(polarization.pol_magnitude.value(&event), 0.38562805);
 }
@@ -187,7 +187,7 @@ fn test_mandelstam() {
     for variable in [&mut s, &mut t, &mut u] {
         variable.bind(metadata).unwrap();
     }
-    let event = dataset.event_view(0);
+    let event = dataset.event_local(0).unwrap();
     let resolved = reaction.resolve_two_to_two(&event).unwrap();
     assert_relative_eq!(s.value(&event), resolved.s());
     assert_relative_eq!(t.value(&event), resolved.t());

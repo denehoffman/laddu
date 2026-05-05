@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use laddu_core::{
     amplitudes::{Amplitude, AmplitudeID, ExpressionDependence, Parameter, TestAmplitude},
-    data::{DatasetMetadata, EventData, NamedEventView},
+    data::{DatasetMetadata, Event, EventData},
     parameter,
     resources::{Cache, ParameterID, Parameters, Resources, ScalarID},
     vectors::Vec4,
@@ -68,7 +68,7 @@ impl Amplitude for CacheOnlyScalar {
         ExpressionDependence::CacheOnly
     }
 
-    fn precompute(&self, event: &NamedEventView<'_>, cache: &mut Cache) {
+    fn precompute(&self, event: &Event<'_>, cache: &mut Cache) {
         cache.store_scalar(self.beam_energy, event.p4_at(0).e());
     }
 

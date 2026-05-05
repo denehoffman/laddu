@@ -2,7 +2,7 @@ use std::fmt::{Debug, Display};
 
 use laddu_amplitudes::DecayAmplitudeExt;
 use laddu_core::{
-    data::{Dataset, DatasetMetadata, Event, NamedEventView},
+    data::{Dataset, DatasetMetadata, Event, OwnedEvent},
     reaction::{Decay, Particle, Reaction},
     traits::Variable,
     variables::{
@@ -85,10 +85,8 @@ impl PyVariable {
         Ok(cloned)
     }
 
-    pub(crate) fn evaluate_event(&self, event: &Event) -> PyResult<f64> {
-        let dataset = Dataset::new_with_metadata(vec![event.data_arc()], event.metadata_arc());
-        let event_view = dataset.event_view(0);
-        Ok(self.value(&event_view))
+    pub(crate) fn evaluate_event(&self, event: &OwnedEvent) -> PyResult<f64> {
+        Ok(self.value(&event.as_event()))
     }
 }
 
@@ -423,10 +421,7 @@ impl PyMass {
             ))?;
         let mut variable = self.0.clone();
         variable.bind(metadata).map_err(PyErr::from)?;
-        let dataset =
-            Dataset::new_with_metadata(vec![event.event.data_arc()], event.event.metadata_arc());
-        let event_view = dataset.event_view(0);
-        Ok(variable.value(&event_view))
+        Ok(variable.value(&event.event.as_event()))
     }
     /// All values of this Variable on the given Dataset
     ///
@@ -535,10 +530,7 @@ impl PyCosTheta {
             ))?;
         let mut variable = self.0.clone();
         variable.bind(metadata).map_err(PyErr::from)?;
-        let dataset =
-            Dataset::new_with_metadata(vec![event.event.data_arc()], event.event.metadata_arc());
-        let event_view = dataset.event_view(0);
-        Ok(variable.value(&event_view))
+        Ok(variable.value(&event.event.as_event()))
     }
     /// All values of this Variable on the given Dataset
     ///
@@ -648,10 +640,7 @@ impl PyPhi {
             ))?;
         let mut variable = self.0.clone();
         variable.bind(metadata).map_err(PyErr::from)?;
-        let dataset =
-            Dataset::new_with_metadata(vec![event.event.data_arc()], event.event.metadata_arc());
-        let event_view = dataset.event_view(0);
-        Ok(variable.value(&event_view))
+        Ok(variable.value(&event.event.as_event()))
     }
     /// All values of this Variable on the given Dataset
     ///
@@ -796,10 +785,7 @@ impl PyPolAngle {
             ))?;
         let mut variable = self.0.clone();
         variable.bind(metadata).map_err(PyErr::from)?;
-        let dataset =
-            Dataset::new_with_metadata(vec![event.event.data_arc()], event.event.metadata_arc());
-        let event_view = dataset.event_view(0);
-        Ok(variable.value(&event_view))
+        Ok(variable.value(&event.event.as_event()))
     }
     /// All values of this Variable on the given Dataset
     ///
@@ -888,10 +874,7 @@ impl PyPolMagnitude {
             ))?;
         let mut variable = self.0.clone();
         variable.bind(metadata).map_err(PyErr::from)?;
-        let dataset =
-            Dataset::new_with_metadata(vec![event.event.data_arc()], event.event.metadata_arc());
-        let event_view = dataset.event_view(0);
-        Ok(variable.value(&event_view))
+        Ok(variable.value(&event.event.as_event()))
     }
     /// All values of this Variable on the given Dataset
     ///
@@ -1057,10 +1040,7 @@ impl PyMandelstam {
             ))?;
         let mut variable = self.0.clone();
         variable.bind(metadata).map_err(PyErr::from)?;
-        let dataset =
-            Dataset::new_with_metadata(vec![event.event.data_arc()], event.event.metadata_arc());
-        let event_view = dataset.event_view(0);
-        Ok(variable.value(&event_view))
+        Ok(variable.value(&event.event.as_event()))
     }
     /// All values of this Variable on the given Dataset
     ///
@@ -1129,7 +1109,7 @@ impl Variable for PyVariable {
         }
     }
 
-    fn value(&self, event: &NamedEventView<'_>) -> f64 {
+    fn value(&self, event: &Event<'_>) -> f64 {
         match self {
             PyVariable::Mass(mass) => mass.0.value(event),
             PyVariable::CosTheta(cos_theta) => cos_theta.0.value(event),

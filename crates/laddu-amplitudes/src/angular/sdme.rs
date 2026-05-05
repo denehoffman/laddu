@@ -1,6 +1,6 @@
 use laddu_core::{
     amplitudes::{debug_key, Amplitude, AmplitudeID, AmplitudeSemanticKey, Expression},
-    data::{DatasetMetadata, NamedEventView},
+    data::{DatasetMetadata, Event},
     resources::{Cache, ComplexScalarID, Parameters, Resources},
     traits::Variable,
     LadduError, LadduResult, Polarization,
@@ -95,7 +95,7 @@ impl Amplitude for PhotonSDME {
         }
     }
 
-    fn precompute(&self, event: &NamedEventView<'_>, cache: &mut Cache) {
+    fn precompute(&self, event: &Event<'_>, cache: &mut Cache) {
         let value = match &self.polarization {
             PhotonPolarization::Unpolarized => {
                 if self.lambda == self.lambda_prime {
