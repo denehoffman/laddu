@@ -59,8 +59,8 @@ fn test_variable_scalar_has_no_parameters() {
     let evaluator = expr.load(&dataset).unwrap();
 
     assert!(evaluator.parameters().is_empty());
-    assert!(evaluator.free_parameters().is_empty());
-    assert!(evaluator.fixed_parameters().is_empty());
+    assert!(evaluator.parameters().free().names().is_empty());
+    assert!(evaluator.parameters().fixed().names().is_empty());
 }
 
 #[test]
@@ -203,11 +203,23 @@ fn test_polar_complex_scalar_gradient() {
 #[test]
 fn test_auto_naming() {
     let scalar = Scalar::new_auto("test").unwrap();
-    assert_eq!(scalar.free_parameters()[0], "test".to_string());
+    assert_eq!(scalar.parameters().free().names()[0], "test".to_string());
     let cscalar = ComplexScalar::new_auto("test").unwrap();
-    assert_eq!(cscalar.free_parameters()[0], "test (real)".to_string());
-    assert_eq!(cscalar.free_parameters()[1], "test (imag)".to_string());
+    assert_eq!(
+        cscalar.parameters().free().names()[0],
+        "test (real)".to_string()
+    );
+    assert_eq!(
+        cscalar.parameters().free().names()[1],
+        "test (imag)".to_string()
+    );
     let pcscalar = PolarComplexScalar::new_auto("test").unwrap();
-    assert_eq!(pcscalar.free_parameters()[0], "test (mag)".to_string());
-    assert_eq!(pcscalar.free_parameters()[1], "test (phase)".to_string());
+    assert_eq!(
+        pcscalar.parameters().free().names()[0],
+        "test (mag)".to_string()
+    );
+    assert_eq!(
+        pcscalar.parameters().free().names()[1],
+        "test (phase)".to_string()
+    );
 }

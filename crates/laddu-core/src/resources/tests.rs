@@ -131,6 +131,15 @@ fn test_resources_parameter_registration() {
         ParameterID::Constant(idx) => assert_eq!(idx, 1),
         _ => panic!("Expected Constant variant"),
     }
+
+    let parameter_map = resources.parameters();
+    assert_eq!(parameter_map.names(), vec!["param1", "const1"]);
+    assert_eq!(parameter_map.free().names(), vec!["param1"]);
+    assert_eq!(parameter_map.fixed().names(), vec!["const1"]);
+    let display = parameter_map.to_string();
+    assert!(display.contains("free:"));
+    assert!(display.contains("param1"));
+    assert!(display.contains("const1 = 1"));
 }
 
 #[test]

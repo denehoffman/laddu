@@ -543,19 +543,9 @@ impl NLL {
         self.projection_active_mask_cache.lock().clear();
     }
 
-    /// The parameter names for this NLL.
-    pub fn parameters(&self) -> Vec<String> {
+    /// The parameters for this NLL.
+    pub fn parameters(&self) -> ParameterMap {
         self.data_evaluator.parameters()
-    }
-
-    /// The free parameter names for this NLL.
-    pub fn free_parameters(&self) -> Vec<String> {
-        self.data_evaluator.free_parameters()
-    }
-
-    /// The fixed parameter names for this NLL.
-    pub fn fixed_parameters(&self) -> Vec<String> {
-        self.data_evaluator.fixed_parameters()
     }
 
     /// Number of free parameters.
@@ -1789,19 +1779,9 @@ impl StochasticNLL {
         *self.batch_indices.lock() = rng.subset(self.batch_size, self.n);
     }
 
-    /// The parameter names for this stochastic NLL.
-    pub fn parameters(&self) -> Vec<String> {
+    /// The parameters for this stochastic NLL.
+    pub fn parameters(&self) -> ParameterMap {
         self.nll.parameters()
-    }
-
-    /// The free parameter names for this stochastic NLL.
-    pub fn free_parameters(&self) -> Vec<String> {
-        self.nll.free_parameters()
-    }
-
-    /// The fixed parameter names for this stochastic NLL.
-    pub fn fixed_parameters(&self) -> Vec<String> {
-        self.nll.fixed_parameters()
     }
 
     /// Number of free parameters.

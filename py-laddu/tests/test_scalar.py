@@ -104,10 +104,10 @@ def test_polar_complex_scalar_gradient() -> None:
 
 def test_auto_naming() -> None:
     scalar = Scalar('test')
-    assert scalar.free_parameters[0] == 'test'
+    assert scalar.parameters.free.names[0] == 'test'
     cscalar = ComplexScalar('test')
-    assert cscalar.free_parameters[0] == 'test (real)'
-    assert cscalar.free_parameters[1] == 'test (imag)'
+    assert cscalar.parameters.free.names[0] == 'test (real)'
+    assert cscalar.parameters.free.names[1] == 'test (imag)'
     pcscalar = PolarComplexScalar('test')
-    assert pcscalar.free_parameters[0] == 'test (mag)'
-    assert pcscalar.free_parameters[1] == 'test (phase)'
+    assert pcscalar.parameters.free.names[0] == 'test (mag)'
+    assert pcscalar.parameters.free.names[1] == 'test (phase)'

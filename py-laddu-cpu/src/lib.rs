@@ -34,7 +34,7 @@ mod laddu {
             py_test_amplitude, py_variable_scalar, py_voigt, py_wigner_3j, py_wigner_d, py_ylm,
             py_zlm, PyCompiledExpression, PyEvaluator, PyExpression, PyKopfKMatrixA0Channel,
             PyKopfKMatrixA2Channel, PyKopfKMatrixF0Channel, PyKopfKMatrixF2Channel,
-            PyKopfKMatrixPi1Channel, PyKopfKMatrixRhoChannel, PyParameter,
+            PyKopfKMatrixPi1Channel, PyKopfKMatrixRhoChannel, PyParameter, PyParameterMap,
         },
         available_parallelism,
         data::{PyBinnedDataset, PyDataset, PyEvent, PyParquetChunkIter},

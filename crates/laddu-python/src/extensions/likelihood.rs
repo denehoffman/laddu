@@ -10,12 +10,12 @@ use numpy::{PyArray1, PyArray2, PyArray3};
 use pyo3::{
     exceptions::{PyTypeError, PyValueError},
     prelude::*,
-    types::{PyAny, PyList, PyTuple},
+    types::{PyAny, PyList},
     IntoPyObjectExt,
 };
 
 use crate::{
-    amplitudes::{PyCompiledExpression, PyEvaluator, PyExpression},
+    amplitudes::{PyCompiledExpression, PyEvaluator, PyExpression, PyParameterMap},
     data::PyDataset,
     extensions::{
         install_laddu_with_threads,
@@ -232,22 +232,10 @@ pub fn py_likelihood_one() -> PyLikelihoodExpression {
 #[cfg_attr(coverage_nightly, coverage(off))]
 #[pymethods]
 impl PyLikelihoodExpression {
-    /// All parameter names referenced by the expression.
+    /// Parameters referenced by the expression.
     #[getter]
-    fn parameters<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
-        PyTuple::new(py, self.0.parameters())
-    }
-
-    /// The free parameter names (those requiring optimization inputs).
-    #[getter]
-    fn free_parameters<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
-        PyTuple::new(py, self.0.free_parameters())
-    }
-
-    /// The names of parameters fixed to constant values.
-    #[getter]
-    fn fixed_parameters<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
-        PyTuple::new(py, self.0.fixed_parameters())
+    fn parameters(&self) -> PyParameterMap {
+        PyParameterMap(self.0.parameters())
     }
 
     /// Fix a parameter to a constant value.
@@ -518,7 +506,7 @@ impl PyLikelihoodExpression {
         terminators: Option<Bound<'_, PyAny>>,
         threads: usize,
     ) -> PyResult<Bound<'py, PyAny>> {
-        let parameter_names = self.0.free_parameters();
+        let parameter_names = self.0.parameters().free().names();
         minimize_from_python(
             &self.0,
             &p0,
@@ -617,7 +605,7 @@ impl PyLikelihoodExpression {
         terminators: Option<Bound<'_, PyAny>>,
         threads: usize,
     ) -> PyResult<Bound<'py, PyAny>> {
-        let parameter_names = self.0.free_parameters();
+        let parameter_names = self.0.parameters().free().names();
         mcmc_from_python(
             &self.0,
             &p0,
@@ -698,18 +686,8 @@ impl PyNLL {
     }
 
     #[getter]
-    fn parameters<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
-        PyTuple::new(py, self.0.parameters())
-    }
-
-    #[getter]
-    fn free_parameters<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
-        PyTuple::new(py, self.0.free_parameters())
-    }
-
-    #[getter]
-    fn fixed_parameters<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
-        PyTuple::new(py, self.0.fixed_parameters())
+    fn parameters(&self) -> PyParameterMap {
+        PyParameterMap(self.0.parameters())
     }
 
     #[getter]
@@ -1057,7 +1035,7 @@ impl PyNLL {
         terminators: Option<Bound<'_, PyAny>>,
         threads: usize,
     ) -> PyResult<Bound<'py, PyAny>> {
-        let parameter_names = self.0.free_parameters();
+        let parameter_names = self.0.parameters().free().names();
         minimize_from_python(
             self.0.as_ref(),
             &p0,
@@ -1086,7 +1064,7 @@ impl PyNLL {
         terminators: Option<Bound<'_, PyAny>>,
         threads: usize,
     ) -> PyResult<Bound<'py, PyAny>> {
-        let parameter_names = self.0.free_parameters();
+        let parameter_names = self.0.parameters().free().names();
         mcmc_from_python(
             self.0.as_ref(),
             &p0,
@@ -1139,7 +1117,7 @@ impl PyStochasticNLL {
         terminators: Option<Bound<'_, PyAny>>,
         threads: usize,
     ) -> PyResult<Bound<'py, PyAny>> {
-        let parameter_names = self.0.free_parameters();
+        let parameter_names = self.0.parameters().free().names();
         minimize_from_python(
             &self.0,
             &p0,
@@ -1168,7 +1146,7 @@ impl PyStochasticNLL {
         terminators: Option<Bound<'_, PyAny>>,
         threads: usize,
     ) -> PyResult<Bound<'py, PyAny>> {
-        let parameter_names = self.0.free_parameters();
+        let parameter_names = self.0.parameters().free().names();
         mcmc_from_python(
             &self.0,
             &p0,
