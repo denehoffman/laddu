@@ -151,6 +151,10 @@ fn parse_aux_mapping(aux: Option<Bound<'_, PyDict>>) -> PyResult<Vec<(String, f6
         .collect()
 }
 
+fn parse_p4_column(values: Vec<PyVec4>) -> Vec<Vec4> {
+    values.into_iter().map(|value| value.0).collect()
+}
+
 fn dataset_from_py_events(
     events: Vec<PyEvent>,
     p4_names: Option<Vec<String>>,
@@ -627,6 +631,46 @@ impl PyDataset {
         let aux = parse_aux_mapping(aux)?;
         Arc::make_mut(&mut self.0)
             .push_event_named_global(p4, aux, weight)
+            .map_err(PyErr::from)
+    }
+
+    /// Add a four-momentum column to the local Dataset partition.
+    #[pyo3(signature = (name, values))]
+    fn add_p4_column_local(&mut self, name: String, values: Vec<PyVec4>) -> PyResult<()> {
+        Arc::make_mut(&mut self.0)
+            .add_p4_column_local(name, parse_p4_column(values))
+            .map_err(PyErr::from)
+    }
+
+    /// Add an auxiliary scalar column to the local Dataset partition.
+    #[pyo3(signature = (name, values))]
+    fn add_aux_column_local(&mut self, name: String, values: Bound<'_, PyAny>) -> PyResult<()> {
+        let values = extract_numeric_column(values, &name)?;
+        Arc::make_mut(&mut self.0)
+            .add_aux_column_local(name, values)
+            .map_err(PyErr::from)
+    }
+
+    /// Add a four-momentum column collectively across all MPI ranks.
+    ///
+    /// Under MPI, all ranks must call this method in the same order with the
+    /// same column name. Each rank supplies values for its locally stored events.
+    #[pyo3(signature = (name, values))]
+    fn add_p4_column_global(&mut self, name: String, values: Vec<PyVec4>) -> PyResult<()> {
+        Arc::make_mut(&mut self.0)
+            .add_p4_column_global(name, parse_p4_column(values))
+            .map_err(PyErr::from)
+    }
+
+    /// Add an auxiliary scalar column collectively across all MPI ranks.
+    ///
+    /// Under MPI, all ranks must call this method in the same order with the
+    /// same column name. Each rank supplies values for its locally stored events.
+    #[pyo3(signature = (name, values))]
+    fn add_aux_column_global(&mut self, name: String, values: Bound<'_, PyAny>) -> PyResult<()> {
+        let values = extract_numeric_column(values, &name)?;
+        Arc::make_mut(&mut self.0)
+            .add_aux_column_global(name, values)
             .map_err(PyErr::from)
     }
 
