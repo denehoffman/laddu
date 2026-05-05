@@ -779,6 +779,71 @@ fn test_dataset_lookup_by_name() {
 }
 
 #[test]
+fn test_add_aux_column_local() {
+    let mut dataset = test_dataset();
+    dataset
+        .add_aux_column_local("new_aux", [1.25])
+        .expect("aux column should be added");
+
+    assert_eq!(dataset.aux_names().last().expect("new aux name"), "new_aux");
+    assert_relative_eq!(
+        dataset
+            .event_local(0)
+            .expect("event should exist")
+            .aux("new_aux")
+            .expect("new aux value"),
+        1.25
+    );
+}
+
+#[test]
+fn test_add_p4_column_local() {
+    let mut dataset = test_dataset();
+    let extra = Vec3::new(0.1, 0.2, 0.3).with_mass(0.4);
+    dataset
+        .add_p4_column_local("extra", [extra])
+        .expect("p4 column should be added");
+
+    assert_eq!(dataset.p4_names().last().expect("new p4 name"), "extra");
+    let actual = dataset
+        .event_local(0)
+        .expect("event should exist")
+        .p4("extra")
+        .expect("new p4 value");
+    assert_relative_eq!(actual.px(), extra.px());
+    assert_relative_eq!(actual.py(), extra.py());
+    assert_relative_eq!(actual.pz(), extra.pz());
+    assert_relative_eq!(actual.e(), extra.e());
+}
+
+#[test]
+fn test_add_column_local_rejects_duplicates_and_wrong_lengths() {
+    let mut dataset = test_dataset();
+    assert!(matches!(
+        dataset.add_aux_column_local("pol_angle", [1.0]),
+        Err(LadduError::DuplicateName { category, .. }) if category == "aux"
+    ));
+    assert!(matches!(
+        dataset.add_p4_column_local("beam", [Vec3::new(0.0, 0.0, 1.0).with_mass(0.0)]),
+        Err(LadduError::DuplicateName { category, .. }) if category == "p4"
+    ));
+    assert!(matches!(
+        dataset.add_aux_column_local("too_long", [1.0, 2.0]),
+        Err(LadduError::LengthMismatch { .. })
+    ));
+    assert!(matches!(
+        dataset.add_p4_column_local(
+            "too_long_p4",
+            [
+                Vec3::new(0.0, 0.0, 1.0).with_mass(0.0),
+                Vec3::new(0.0, 0.0, 2.0).with_mass(0.0)
+            ]
+        ),
+        Err(LadduError::LengthMismatch { .. })
+    ));
+}
+
+#[test]
 fn test_binned_dataset() {
     let dataset = Dataset::new(vec![
         Arc::new(EventData {
@@ -1208,6 +1273,123 @@ fn test_dataset_iteration_long_running_mpi_repeated_passes() {
         );
     }
 
+    finalize_mpi();
+}
+
+#[cfg(feature = "mpi")]
+#[mpi_test(np = [2])]
+fn test_add_columns_global_mpi_canonical_dataset() {
+    use_mpi(true);
+    let world = get_world().expect("MPI world should be initialized");
+
+    let mut dataset = mpi_chunk_test_dataset(8);
+    let aux_values = (0..dataset.n_events_local())
+        .map(|local_index| world.rank() as f64 + local_index as f64 * 0.25)
+        .collect::<Vec<_>>();
+    let p4_values = (0..dataset.n_events_local())
+        .map(|local_index| Vec3::new(world.rank() as f64, local_index as f64, 1.0).with_mass(0.0))
+        .collect::<Vec<_>>();
+
+    dataset
+        .add_aux_column_global("rank_aux", aux_values.clone())
+        .expect("global aux column should be added");
+    dataset
+        .add_p4_column_global("rank_p4", p4_values.clone())
+        .expect("global p4 column should be added");
+
+    assert!(dataset.aux_names().contains(&"rank_aux".to_string()));
+    assert!(dataset.p4_names().contains(&"rank_p4".to_string()));
+    for local_index in 0..dataset.n_events_local() {
+        let event = dataset
+            .event_local(local_index)
+            .expect("local event should exist");
+        assert_relative_eq!(
+            event.aux("rank_aux").expect("rank aux value"),
+            aux_values[local_index]
+        );
+        let actual = event.p4("rank_p4").expect("rank p4 value");
+        assert_relative_eq!(actual.px(), p4_values[local_index].px());
+        assert_relative_eq!(actual.py(), p4_values[local_index].py());
+        assert_relative_eq!(actual.pz(), p4_values[local_index].pz());
+        assert_relative_eq!(actual.e(), p4_values[local_index].e());
+    }
+    finalize_mpi();
+}
+
+#[cfg(feature = "mpi")]
+#[mpi_test(np = [2])]
+fn test_add_aux_column_global_mpi_round_robin_dataset() {
+    use_mpi(true);
+    let world = get_world().expect("MPI world should be initialized");
+
+    let metadata =
+        DatasetMetadata::new(vec!["beam"], Vec::<String>::new()).expect("metadata should be valid");
+    let mut dataset = Dataset::empty_local(metadata);
+    for global_index in 0..5 {
+        dataset
+            .push_event_global(
+                [Vec3::new(0.0, 0.0, global_index as f64).with_mass(0.0)],
+                [],
+                1.0,
+            )
+            .expect("global event should be pushed");
+    }
+    assert_eq!(dataset.n_events(), 5);
+    let local_values = (0..dataset.n_events_local())
+        .map(|local_index| world.rank() as f64 + local_index as f64)
+        .collect::<Vec<_>>();
+    dataset
+        .add_aux_column_global("local_rank_value", local_values.clone())
+        .expect("global aux column should be added");
+
+    for local_index in 0..dataset.n_events_local() {
+        let event = dataset
+            .event_local(local_index)
+            .expect("local event should exist");
+        assert_relative_eq!(
+            event.aux("local_rank_value").expect("new aux value"),
+            local_values[local_index]
+        );
+    }
+    finalize_mpi();
+}
+
+#[cfg(feature = "mpi")]
+#[mpi_test(np = [2])]
+fn test_add_column_global_mpi_rejects_mismatched_name() {
+    use_mpi(true);
+    let world = get_world().expect("MPI world should be initialized");
+
+    let mut dataset = mpi_chunk_test_dataset(4);
+    let name = if world.rank() == 0 {
+        "rank_zero"
+    } else {
+        "rank_one"
+    };
+    let values = vec![1.0; dataset.n_events_local()];
+    let err = dataset
+        .add_aux_column_global(name, values)
+        .expect_err("mismatched collective column names should fail");
+    assert!(matches!(err, LadduError::Custom(message) if message.contains("mismatch")));
+    finalize_mpi();
+}
+
+#[cfg(feature = "mpi")]
+#[mpi_test(np = [2])]
+fn test_add_column_local_rejects_mpi_dataset() {
+    use_mpi(true);
+    let mut dataset = mpi_chunk_test_dataset(4);
+    assert!(matches!(
+        dataset.add_aux_column_local("rank_aux", vec![1.0; dataset.n_events_local()]),
+        Err(LadduError::Custom(message)) if message.contains("add_aux_column_global")
+    ));
+    assert!(matches!(
+        dataset.add_p4_column_local(
+            "rank_p4",
+            vec![Vec3::new(0.0, 0.0, 1.0).with_mass(0.0); dataset.n_events_local()]
+        ),
+        Err(LadduError::Custom(message)) if message.contains("add_p4_column_global")
+    ));
     finalize_mpi();
 }
 

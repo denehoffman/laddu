@@ -319,6 +319,49 @@ def test_dataset_empty_push_event() -> None:
     assert pytest.approx(dataset[0].weight) == 2.0
 
 
+def test_dataset_add_columns_local() -> None:
+    dataset = Dataset.empty_local(p4_names=['beam'], aux_names=[])
+    beam_a = Vec3(0.0, 0.0, 8.0).with_mass(0.0)
+    beam_b = Vec3(0.0, 0.0, 9.0).with_mass(0.0)
+    dataset.push_event_local(p4={'beam': beam_a})
+    dataset.push_event_local(p4={'beam': beam_b})
+
+    recoil_a = Vec3(0.1, 0.0, 0.0).with_mass(0.938)
+    recoil_b = Vec3(0.2, 0.0, 0.0).with_mass(0.938)
+    dataset.add_p4_column_local('recoil', [recoil_a, recoil_b])
+    dataset.add_aux_column_local('pol_angle', np.array([0.25, 0.5], dtype=np.float32))
+
+    assert dataset.p4_names == ['beam', 'recoil']
+    assert dataset.aux_names == ['pol_angle']
+    assert pytest.approx(dataset[0].p4('recoil').px) == recoil_a.px
+    assert pytest.approx(dataset[1].p4('recoil').px) == recoil_b.px
+    assert pytest.approx(dataset[0].aux['pol_angle']) == 0.25
+    assert pytest.approx(dataset[1].aux['pol_angle']) == 0.5
+
+
+def test_dataset_add_columns_global_without_mpi() -> None:
+    dataset = Dataset.empty_local(p4_names=['beam'], aux_names=[])
+    beam = Vec3(0.0, 0.0, 8.0).with_mass(0.0)
+    dataset.push_event_local(p4={'beam': beam})
+
+    recoil = Vec3(0.1, 0.0, 0.0).with_mass(0.938)
+    dataset.add_p4_column_global('recoil', [recoil])
+    dataset.add_aux_column_global('pol_angle', [0.25])
+
+    assert pytest.approx(dataset[0].p4('recoil').e) == recoil.e
+    assert pytest.approx(dataset[0].aux['pol_angle']) == 0.25
+
+
+def test_dataset_add_column_validation() -> None:
+    dataset = make_test_dataset()
+    with pytest.raises(ValueError, match='Duplicate aux'):
+        dataset.add_aux_column_local('pol_angle', [0.1])
+    with pytest.raises(ValueError, match='Duplicate p4'):
+        dataset.add_p4_column_local('beam', [Vec3(0.0, 0.0, 1.0).with_mass(0.0)])
+    with pytest.raises(ValueError, match='length mismatch'):
+        dataset.add_aux_column_local('too_long', [0.1, 0.2])
+
+
 def test_dataset_from_events_explicit_constructors() -> None:
     events = [make_test_event()]
     local = Dataset.from_events_local(events, p4_names=P4_NAMES, aux_names=AUX_NAMES)

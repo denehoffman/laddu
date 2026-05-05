@@ -190,6 +190,23 @@ impl DatasetStorage {
         }
         self.weights.push(event.weight);
     }
+
+    pub(crate) fn set_metadata(&mut self, metadata: Arc<DatasetMetadata>) {
+        self.metadata = metadata;
+    }
+
+    pub(crate) fn push_p4_column(&mut self, values: Vec<Vec4>) {
+        let mut column = ColumnarP4Column::with_capacity(values.len());
+        for value in values {
+            column.push(value);
+        }
+        self.p4.push(column);
+    }
+
+    pub(crate) fn push_aux_column(&mut self, values: Vec<f64>) {
+        self.aux.push(values);
+    }
+
     /// Convert this columnar dataset back to a row-event dataset.
     pub fn to_dataset(&self) -> Dataset {
         let events = (0..self.n_events())

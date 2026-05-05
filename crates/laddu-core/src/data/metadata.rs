@@ -95,6 +95,54 @@ impl DatasetMetadata {
         &self.aux_names
     }
 
+    pub(crate) fn ensure_new_p4_name(&self, name: &str) -> LadduResult<()> {
+        if self.p4_selections.contains_key(name) {
+            return Err(LadduError::DuplicateName {
+                category: "p4",
+                name: name.to_string(),
+            });
+        }
+        Ok(())
+    }
+
+    pub(crate) fn ensure_new_aux_name(&self, name: &str) -> LadduResult<()> {
+        if self.aux_lookup.contains_key(name) {
+            return Err(LadduError::DuplicateName {
+                category: "aux",
+                name: name.to_string(),
+            });
+        }
+        Ok(())
+    }
+
+    pub(crate) fn add_p4_name<N>(&mut self, name: N) -> LadduResult<()>
+    where
+        N: Into<String>,
+    {
+        let name = name.into();
+        self.ensure_new_p4_name(&name)?;
+        let index = self.p4_names.len();
+        self.p4_lookup.insert(name.clone(), index);
+        self.p4_selections.insert(
+            name.clone(),
+            P4Selection::with_indices(vec![name.clone()], vec![index]),
+        );
+        self.p4_names.push(name);
+        Ok(())
+    }
+
+    pub(crate) fn add_aux_name<N>(&mut self, name: N) -> LadduResult<()>
+    where
+        N: Into<String>,
+    {
+        let name = name.into();
+        self.ensure_new_aux_name(&name)?;
+        let index = self.aux_names.len();
+        self.aux_lookup.insert(name.clone(), index);
+        self.aux_names.push(name);
+        Ok(())
+    }
+
     /// Look up a resolved four-momentum selection by name (canonical or alias).
     pub fn p4_selection(&self, name: &str) -> Option<&P4Selection> {
         self.p4_selections.get(name)

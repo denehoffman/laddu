@@ -450,6 +450,22 @@ pub(crate) fn resolve_mpi_event_fetch_chunk_size(total: usize) -> usize {
 }
 
 #[cfg(feature = "mpi")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+enum ColumnMutationKind {
+    P4,
+    Aux,
+}
+
+#[cfg(feature = "mpi")]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct ColumnMutationStatus {
+    kind: ColumnMutationKind,
+    name: String,
+    len_ok: bool,
+    duplicate: bool,
+}
+
+#[cfg(feature = "mpi")]
 impl MpiEventChunkCursor {
     pub(crate) fn for_iteration(total: usize) -> Self {
         Self::new(resolve_mpi_event_fetch_chunk_size(total))
@@ -525,6 +541,75 @@ impl Iterator for DatasetArcMpiIter {
 }
 
 impl Dataset {
+    #[cfg(feature = "mpi")]
+    fn validate_global_column_add(
+        &self,
+        kind: ColumnMutationKind,
+        name: &str,
+        len_ok: bool,
+    ) -> LadduResult<()> {
+        let Some(world) = crate::mpi::get_world() else {
+            return Ok(());
+        };
+        let duplicate = match kind {
+            ColumnMutationKind::P4 => self.metadata.ensure_new_p4_name(name).is_err(),
+            ColumnMutationKind::Aux => self.metadata.ensure_new_aux_name(name).is_err(),
+        };
+        let local_status = ColumnMutationStatus {
+            kind,
+            name: name.to_string(),
+            len_ok,
+            duplicate,
+        };
+        let serialized = bitcode::serialize(&local_status).unwrap();
+        let local_byte_count = serialized.len() as i32;
+        let mut byte_counts = vec![0_i32; world.size() as usize];
+        world.all_gather_into(&local_byte_count, &mut byte_counts);
+        let mut byte_displs = vec![0_i32; byte_counts.len()];
+        for index in 1..byte_displs.len() {
+            byte_displs[index] = byte_displs[index - 1] + byte_counts[index - 1];
+        }
+        let gathered_bytes = world.all_gather_with_counts(&serialized, &byte_counts, &byte_displs);
+        let mut statuses = Vec::with_capacity(world.size() as usize);
+        for rank in 0..world.size() as usize {
+            let start = byte_displs[rank] as usize;
+            let end = start + byte_counts[rank] as usize;
+            statuses.push(bitcode::deserialize::<ColumnMutationStatus>(
+                &gathered_bytes[start..end],
+            )?);
+        }
+        for (rank, status) in statuses.iter().enumerate() {
+            if status.kind != kind {
+                return Err(LadduError::Custom(format!(
+                    "Collective dataset column add mismatch: rank {rank} used {:?}, expected {:?}",
+                    status.kind, kind
+                )));
+            }
+            if status.name != name {
+                return Err(LadduError::Custom(format!(
+                    "Collective dataset column add mismatch: rank {rank} used name '{}', expected '{name}'",
+                    status.name
+                )));
+            }
+            if !status.len_ok {
+                return Err(LadduError::Custom(format!(
+                    "Collective dataset column add mismatch: rank {rank} provided a column with the wrong local length"
+                )));
+            }
+            if status.duplicate {
+                let category = match kind {
+                    ColumnMutationKind::P4 => "p4",
+                    ColumnMutationKind::Aux => "aux",
+                };
+                return Err(LadduError::DuplicateName {
+                    category,
+                    name: name.to_string(),
+                });
+            }
+        }
+        Ok(())
+    }
+
     #[cfg(feature = "mpi")]
     fn fetch_event_mpi(
         &self,
@@ -914,6 +999,156 @@ impl Dataset {
     fn push_event_data_local(&mut self, event_data: Arc<EventData>) {
         self.columnar.push_event_data(&event_data);
         self.refresh_local_weight_cache();
+    }
+
+    fn replace_metadata(&mut self, metadata: DatasetMetadata) {
+        let metadata = Arc::new(metadata);
+        self.metadata = metadata.clone();
+        self.columnar.set_metadata(metadata);
+    }
+
+    fn validate_p4_column_len(&self, name: &str, len: usize) -> LadduResult<()> {
+        if len != self.n_events_local() {
+            return Err(LadduError::LengthMismatch {
+                context: format!("P4 column '{name}'"),
+                expected: self.n_events_local(),
+                actual: len,
+            });
+        }
+        Ok(())
+    }
+
+    fn validate_aux_column_len(&self, name: &str, len: usize) -> LadduResult<()> {
+        if len != self.n_events_local() {
+            return Err(LadduError::LengthMismatch {
+                context: format!("Aux column '{name}'"),
+                expected: self.n_events_local(),
+                actual: len,
+            });
+        }
+        Ok(())
+    }
+
+    fn add_p4_column_unchecked(&mut self, name: String, values: Vec<Vec4>) -> LadduResult<()> {
+        let mut metadata = (*self.metadata).clone();
+        metadata.add_p4_name(name)?;
+        self.columnar.push_p4_column(values);
+        self.replace_metadata(metadata);
+        Ok(())
+    }
+
+    fn add_aux_column_unchecked(&mut self, name: String, values: Vec<f64>) -> LadduResult<()> {
+        let mut metadata = (*self.metadata).clone();
+        metadata.add_aux_name(name)?;
+        self.columnar.push_aux_column(values);
+        self.replace_metadata(metadata);
+        Ok(())
+    }
+
+    /// Add a four-momentum column to the current rank only.
+    ///
+    /// This method is non-collective. Under MPI it is only valid for datasets
+    /// without an MPI layout; use [`Dataset::add_p4_column_global`] for shared
+    /// MPI datasets.
+    pub fn add_p4_column_local<N, V>(&mut self, name: N, values: V) -> LadduResult<()>
+    where
+        N: Into<String>,
+        V: IntoIterator<Item = Vec4>,
+    {
+        #[cfg(feature = "mpi")]
+        {
+            if self.mpi_layout.is_some() {
+                return Err(LadduError::Custom(
+                    "Cannot add a local p4 column to an MPI dataset; use add_p4_column_global"
+                        .to_string(),
+                ));
+            }
+        }
+        let name = name.into();
+        let values = values.into_iter().collect::<Vec<_>>();
+        self.metadata.ensure_new_p4_name(&name)?;
+        self.validate_p4_column_len(&name, values.len())?;
+        self.add_p4_column_unchecked(name, values)
+    }
+
+    /// Add an auxiliary scalar column to the current rank only.
+    ///
+    /// This method is non-collective. Under MPI it is only valid for datasets
+    /// without an MPI layout; use [`Dataset::add_aux_column_global`] for shared
+    /// MPI datasets.
+    pub fn add_aux_column_local<N, V>(&mut self, name: N, values: V) -> LadduResult<()>
+    where
+        N: Into<String>,
+        V: IntoIterator<Item = f64>,
+    {
+        #[cfg(feature = "mpi")]
+        {
+            if self.mpi_layout.is_some() {
+                return Err(LadduError::Custom(
+                    "Cannot add a local aux column to an MPI dataset; use add_aux_column_global"
+                        .to_string(),
+                ));
+            }
+        }
+        let name = name.into();
+        let values = values.into_iter().collect::<Vec<_>>();
+        self.metadata.ensure_new_aux_name(&name)?;
+        self.validate_aux_column_len(&name, values.len())?;
+        self.add_aux_column_unchecked(name, values)
+    }
+
+    /// Add a four-momentum column collectively across all MPI ranks.
+    ///
+    /// Under MPI, every rank must call this method in the same order with the
+    /// same column name. Each rank supplies values for its local events only.
+    pub fn add_p4_column_global<N, V>(&mut self, name: N, values: V) -> LadduResult<()>
+    where
+        N: Into<String>,
+        V: IntoIterator<Item = Vec4>,
+    {
+        let name = name.into();
+        let values = values.into_iter().collect::<Vec<_>>();
+        #[cfg(feature = "mpi")]
+        {
+            if crate::mpi::get_world().is_some() {
+                self.validate_global_column_add(
+                    ColumnMutationKind::P4,
+                    &name,
+                    values.len() == self.n_events_local(),
+                )?;
+                self.metadata.ensure_new_p4_name(&name)?;
+                self.validate_p4_column_len(&name, values.len())?;
+                return self.add_p4_column_unchecked(name, values);
+            }
+        }
+        self.add_p4_column_local(name, values)
+    }
+
+    /// Add an auxiliary scalar column collectively across all MPI ranks.
+    ///
+    /// Under MPI, every rank must call this method in the same order with the
+    /// same column name. Each rank supplies values for its local events only.
+    pub fn add_aux_column_global<N, V>(&mut self, name: N, values: V) -> LadduResult<()>
+    where
+        N: Into<String>,
+        V: IntoIterator<Item = f64>,
+    {
+        let name = name.into();
+        let values = values.into_iter().collect::<Vec<_>>();
+        #[cfg(feature = "mpi")]
+        {
+            if crate::mpi::get_world().is_some() {
+                self.validate_global_column_add(
+                    ColumnMutationKind::Aux,
+                    &name,
+                    values.len() == self.n_events_local(),
+                )?;
+                self.metadata.ensure_new_aux_name(&name)?;
+                self.validate_aux_column_len(&name, values.len())?;
+                return self.add_aux_column_unchecked(name, values);
+            }
+        }
+        self.add_aux_column_local(name, values)
     }
 
     /// Append one ordered event row to the current rank.
