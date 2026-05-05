@@ -15,7 +15,7 @@ use laddu_amplitudes::{
     scalar::{ComplexScalar, PolarComplexScalar, Scalar, VariableScalar},
 };
 use laddu_core::{
-    amplitudes::{Evaluator, Expression, Parameter, TestAmplitude},
+    amplitudes::{Evaluator, Expression, Parameter, ParameterMap, TestAmplitude},
     math::{BarrierKind, Sheet, QR_DEFAULT},
     traits::Variable,
     CompiledExpression, LadduError, LadduResult, ThreadPoolManager,
@@ -729,25 +729,15 @@ pub fn py_kopf_kmatrix_rho(
 
 #[pymethods]
 impl PyExpression {
-    /// The free parameters used by the Expression
+    /// The parameters used by the Expression.
     ///
     /// Returns
     /// -------
-    /// parameters : tuple of str
-    ///     The tuple of parameter names
+    /// parameters : ParameterMap
+    ///     The parameter map.
     #[getter]
-    fn parameters<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
-        PyTuple::new(py, self.0.parameters())
-    }
-    /// The free parameters used by the Expression
-    #[getter]
-    fn free_parameters<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
-        PyTuple::new(py, self.0.free_parameters())
-    }
-    /// The fixed parameters used by the Expression
-    #[getter]
-    fn fixed_parameters<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
-        PyTuple::new(py, self.0.fixed_parameters())
+    fn parameters(&self) -> PyParameterMap {
+        PyParameterMap(self.0.parameters())
     }
     /// Number of free parameters
     #[getter]
@@ -957,22 +947,12 @@ impl PyEvaluator {
     ///
     /// Returns
     /// -------
-    /// parameters : tuple of str
-    ///     The tuple of parameter names
+    /// parameters : ParameterMap
+    ///     The parameter map.
     ///
     #[getter]
-    fn parameters<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
-        PyTuple::new(py, self.0.parameters())
-    }
-    /// The free parameters used by the Evaluator
-    #[getter]
-    fn free_parameters<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
-        PyTuple::new(py, self.0.free_parameters())
-    }
-    /// The fixed parameters used by the Evaluator
-    #[getter]
-    fn fixed_parameters<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
-        PyTuple::new(py, self.0.fixed_parameters())
+    fn parameters(&self) -> PyParameterMap {
+        PyParameterMap(self.0.parameters())
     }
     /// Number of free parameters
     #[getter]
@@ -1322,6 +1302,76 @@ impl PyCompiledExpression {
     fn __str__(&self) -> String {
         format!("{}", self.0)
     }
+    fn __repr__(&self) -> String {
+        format!("{:?}", self.0)
+    }
+}
+
+#[pyclass(name = "ParameterMap", module = "laddu", from_py_object)]
+#[derive(Clone)]
+pub struct PyParameterMap(pub ParameterMap);
+
+#[pymethods]
+impl PyParameterMap {
+    #[getter]
+    fn names<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
+        PyTuple::new(py, self.0.names())
+    }
+
+    #[getter]
+    fn free(&self) -> PyParameterMap {
+        PyParameterMap(self.0.free())
+    }
+
+    #[getter]
+    fn fixed(&self) -> PyParameterMap {
+        PyParameterMap(self.0.fixed())
+    }
+
+    fn contains(&self, name: &str) -> bool {
+        self.0.contains_key(name)
+    }
+
+    fn __contains__(&self, name: &str) -> bool {
+        self.contains(name)
+    }
+
+    fn __len__(&self) -> usize {
+        self.0.len()
+    }
+
+    fn __bool__(&self) -> bool {
+        !self.0.is_empty()
+    }
+
+    fn __getitem__(&self, index: &Bound<'_, PyAny>) -> PyResult<PyParameter> {
+        if let Ok(name) = index.extract::<String>() {
+            return self
+                .0
+                .get(&name)
+                .cloned()
+                .map(PyParameter)
+                .ok_or_else(|| pyo3::exceptions::PyKeyError::new_err(name));
+        }
+        if let Ok(index) = index.extract::<isize>() {
+            let len = self.0.len() as isize;
+            let normalized = if index < 0 { len + index } else { index };
+            if normalized < 0 || normalized >= len {
+                return Err(pyo3::exceptions::PyIndexError::new_err(format!(
+                    "parameter index out of range: {index}"
+                )));
+            }
+            return Ok(PyParameter(self.0[normalized as usize].clone()));
+        }
+        Err(pyo3::exceptions::PyTypeError::new_err(
+            "ParameterMap indices must be str or int",
+        ))
+    }
+
+    fn __str__(&self) -> String {
+        self.0.to_string()
+    }
+
     fn __repr__(&self) -> String {
         format!("{:?}", self.0)
     }

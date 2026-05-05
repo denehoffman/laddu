@@ -1,4 +1,5 @@
 from collections.abc import Mapping, Sequence
+from typing import overload
 
 import numpy as np
 import numpy.typing as npt
@@ -14,10 +15,22 @@ class Parameter:
     latex: str | None
     description: str | None
 
+class ParameterMap:
+    names: tuple[str, ...]
+    free: ParameterMap
+    fixed: ParameterMap
+
+    def contains(self, name: str) -> bool: ...
+    def __contains__(self, name: str) -> bool: ...
+    def __len__(self) -> int: ...
+    def __bool__(self) -> bool: ...
+    @overload
+    def __getitem__(self, index: int) -> Parameter: ...
+    @overload
+    def __getitem__(self, name: str) -> Parameter: ...
+
 class Expression:
-    parameters: tuple[str, ...]
-    free_parameters: tuple[str, ...]
-    fixed_parameters: tuple[str, ...]
+    parameters: ParameterMap
     n_free: int
     n_fixed: int
     n_parameters: int
@@ -67,9 +80,7 @@ def parameter(
 class CompiledExpression: ...
 
 class Evaluator:
-    parameters: tuple[str, ...]
-    free_parameters: tuple[str, ...]
-    fixed_parameters: tuple[str, ...]
+    parameters: ParameterMap
     n_free: int
     n_fixed: int
     n_parameters: int

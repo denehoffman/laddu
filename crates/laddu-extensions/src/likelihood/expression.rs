@@ -169,19 +169,9 @@ impl LikelihoodExpression {
             .write_tree(f, parent_prefix, immediate_prefix, parent_suffix)
     }
 
-    /// The parameter names referenced across all terms in this expression.
-    pub fn parameters(&self) -> Vec<String> {
-        self.registry.parameter_map.read().names()
-    }
-
-    /// The free parameter names which require user-provided values.
-    pub fn free_parameters(&self) -> Vec<String> {
-        self.registry.parameter_map.read().free().names()
-    }
-
-    /// The names of parameters with constant (fixed) values.
-    pub fn fixed_parameters(&self) -> Vec<String> {
-        self.registry.parameter_map.read().fixed().names()
+    /// The parameters referenced across all terms in this expression.
+    pub fn parameters(&self) -> ParameterMap {
+        self.registry.parameter_map.read().clone()
     }
 
     /// Number of free parameters.
@@ -1096,7 +1086,7 @@ mod tests {
         let alpha = LikelihoodScalar::new("alpha").unwrap();
         let beta = LikelihoodScalar::new("beta").unwrap();
         let expr = &alpha + &beta;
-        assert_eq!(expr.parameters(), vec!["alpha", "beta"]);
+        assert_eq!(expr.parameters().names(), vec!["alpha", "beta"]);
         let params = vec![2.0, 3.0];
         assert_relative_eq!(expr.evaluate(&params).unwrap(), 5.0);
         let grad = expr.evaluate_gradient(&params).unwrap();
@@ -1122,9 +1112,9 @@ mod tests {
         let beta = LikelihoodScalar::new("beta").unwrap();
         let expr = &alpha + &beta;
         expr.fix_parameter("alpha", 1.5).unwrap();
-        assert_eq!(expr.parameters(), vec!["alpha", "beta"]);
-        assert_eq!(expr.free_parameters(), vec!["beta"]);
-        assert_eq!(expr.fixed_parameters(), vec!["alpha"]);
+        assert_eq!(expr.parameters().names(), vec!["alpha", "beta"]);
+        assert_eq!(expr.parameters().free().names(), vec!["beta"]);
+        assert_eq!(expr.parameters().fixed().names(), vec!["alpha"]);
         let params_free = vec![2.0];
         assert_relative_eq!(expr.evaluate(&params_free).unwrap(), 3.5);
         let grad_free = expr.evaluate_gradient(&params_free).unwrap();
@@ -1138,9 +1128,9 @@ mod tests {
         alpha.fix_parameter("alpha", 1.5).unwrap();
         let beta = LikelihoodScalar::new("beta").unwrap();
         let expr = &alpha + &beta;
-        assert_eq!(expr.parameters(), vec!["alpha", "beta"]);
-        assert_eq!(expr.free_parameters(), vec!["beta"]);
-        assert_eq!(expr.fixed_parameters(), vec!["alpha"]);
+        assert_eq!(expr.parameters().names(), vec!["alpha", "beta"]);
+        assert_eq!(expr.parameters().free().names(), vec!["beta"]);
+        assert_eq!(expr.parameters().fixed().names(), vec!["alpha"]);
 
         let params_free = vec![2.0];
         assert_relative_eq!(expr.evaluate(&params_free).unwrap(), 3.5);
@@ -1155,9 +1145,9 @@ mod tests {
         alpha.fix_parameter("alpha", 1.5).unwrap();
         let beta = LikelihoodScalar::new("beta").unwrap();
         let expr = &alpha * &beta;
-        assert_eq!(expr.parameters(), vec!["alpha", "beta"]);
-        assert_eq!(expr.free_parameters(), vec!["beta"]);
-        assert_eq!(expr.fixed_parameters(), vec!["alpha"]);
+        assert_eq!(expr.parameters().names(), vec!["alpha", "beta"]);
+        assert_eq!(expr.parameters().free().names(), vec!["beta"]);
+        assert_eq!(expr.parameters().fixed().names(), vec!["alpha"]);
 
         let params_free = vec![2.0];
         assert_relative_eq!(expr.evaluate(&params_free).unwrap(), 3.0);
@@ -1260,7 +1250,7 @@ mod tests {
         );
         let nll = NLL::new(&expr, &data, &mc, None).unwrap();
         let params = vec![0.6, 1.1];
-        assert_eq!(nll.free_parameters(), vec!["alpha", "beta"]);
+        assert_eq!(nll.parameters().free().names(), vec!["alpha", "beta"]);
 
         let value = nll.evaluate(&params).unwrap();
         assert_relative_eq!(value, 12.242296380697244, epsilon = 1e-12);

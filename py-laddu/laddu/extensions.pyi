@@ -7,7 +7,7 @@ import ganesh
 import numpy as np
 import numpy.typing as npt
 
-from laddu.amplitude import CompiledExpression, Evaluator, Expression
+from laddu.amplitude import CompiledExpression, Evaluator, Expression, ParameterMap
 from laddu.data import Dataset
 
 def likelihood_sum(
@@ -25,9 +25,7 @@ def integrated_autocorrelation_times(
 ) -> npt.NDArray[np.float64]: ...
 
 class LikelihoodExpression:
-    parameters: tuple[str, ...]
-    free_parameters: tuple[str, ...]
-    fixed_parameters: tuple[str, ...]
+    parameters: ParameterMap
     n_free: int
     n_fixed: int
     n_parameters: int
@@ -189,9 +187,7 @@ class StochasticNLL:
     ) -> ganesh.MCMCSummary: ...
 
 class NLL:
-    parameters: tuple[str, ...]
-    free_parameters: tuple[str, ...]
-    fixed_parameters: tuple[str, ...]
+    parameters: ParameterMap
     n_free: int
     n_fixed: int
     n_parameters: int

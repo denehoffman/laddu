@@ -1454,7 +1454,9 @@ fn test_weighted_sums_match_hardcoded_reference_values() {
         .evaluate_weighted_gradient_sum_local(&params)
         .expect("evaluation should succeed");
     let free_parameters = evaluator
-        .free_parameters()
+        .parameters()
+        .free()
+        .names()
         .into_iter()
         .map(|name| name.to_string())
         .collect::<Vec<_>>();
@@ -2796,7 +2798,7 @@ fn test_parameter_registration() {
         parameter!("fixed_two", 2.0),
     )
     .unwrap();
-    let parameters = expr.free_parameters();
+    let parameters = expr.parameters().free().names();
     assert_eq!(parameters.len(), 1);
     assert_eq!(parameters[0], "test_param_re");
 }

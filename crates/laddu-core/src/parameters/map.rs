@@ -1,4 +1,4 @@
-use std::{collections::HashMap, ops::Index};
+use std::{collections::HashMap, fmt::Display, ops::Index};
 
 use serde::{Deserialize, Serialize};
 
@@ -388,5 +388,44 @@ impl ParameterMap {
                 reason: "parameter not found".to_string(),
             })
         }
+    }
+}
+
+impl Display for ParameterMap {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "ParameterMap:")?;
+        if self.parameters.is_empty() {
+            writeln!(f, "  <empty>")?;
+            return Ok(());
+        }
+        writeln!(f, "  free:")?;
+        let mut wrote_free = false;
+        for parameter in self
+            .parameters
+            .iter()
+            .filter(|parameter| parameter.is_free())
+        {
+            wrote_free = true;
+            writeln!(f, "    {}", parameter.name())?;
+        }
+        if !wrote_free {
+            writeln!(f, "    <none>")?;
+        }
+        writeln!(f, "  fixed:")?;
+        let mut wrote_fixed = false;
+        for parameter in self
+            .parameters
+            .iter()
+            .filter(|parameter| parameter.is_fixed())
+        {
+            wrote_fixed = true;
+            if let Some(value) = parameter.fixed() {
+                writeln!(f, "    {} = {}", parameter.name(), value)?;
+            }
+        }
+        if !wrote_fixed {
+            writeln!(f, "    <none>")?;
+        }
+        Ok(())
     }
 }

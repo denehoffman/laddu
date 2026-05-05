@@ -100,6 +100,11 @@ impl Resources {
             .collect()
     }
 
+    /// The registered parameters.
+    pub fn parameters(&self) -> ParameterMap {
+        self.parameter_map.clone()
+    }
+
     /// Number of free parameters.
     pub fn n_free_parameters(&self) -> usize {
         self.parameter_map.free().len()

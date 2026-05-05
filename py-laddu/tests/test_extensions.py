@@ -452,7 +452,7 @@ def test_ganesh_sampler_defaults_construct_and_run() -> None:
 def test_regularizer_l1_matches_rust_implementation() -> None:
     expr = Regularizer(['alpha', 'beta'], 2.0, weights=[1.0, 0.5])
     expression = likelihood_sum([expr])
-    assert expression.parameters == ('alpha', 'beta')
+    assert expression.parameters.names == ('alpha', 'beta')
     params = [1.5, -2.0]
     assert expression.evaluate(params) == pytest.approx(7.0)
     grad = expression.evaluate_gradient(params).tolist()
@@ -915,18 +915,18 @@ def test_nll_parameter_fix_free_and_rename() -> None:
 
     reference = nll.evaluate([1.7])
     nll.fix_parameter('scale', 1.7)
-    assert nll.parameters == ('scale',)
-    assert nll.free_parameters == ()
-    assert nll.fixed_parameters == ('scale',)
+    assert nll.parameters.names == ('scale',)
+    assert nll.parameters.free.names == ()
+    assert nll.parameters.fixed.names == ('scale',)
     assert nll.n_free == 0
     assert pytest.approx(nll.evaluate([])) == reference
 
     nll.rename_parameter('scale', 'beta')
-    assert nll.parameters == ('beta',)
+    assert nll.parameters.names == ('beta',)
     assert pytest.approx(nll.evaluate([])) == reference
 
     nll.rename_parameters({'beta': 'gamma'})
-    assert nll.parameters == ('gamma',)
+    assert nll.parameters.names == ('gamma',)
 
 
 def test_nll_free_from_fixed_parameter() -> None:
@@ -936,12 +936,12 @@ def test_nll_free_from_fixed_parameter() -> None:
     mc = _dataset_from_weights([1.0])
     nll = NLL(expr, data, mc)
     assert nll.n_free == 0
-    assert nll.fixed_parameters == ('scale',)
+    assert nll.parameters.fixed.names == ('scale',)
 
     nll.free_parameter('scale')
     assert nll.n_free == 1
-    assert nll.free_parameters == ('scale',)
-    assert nll.fixed_parameters == ()
+    assert nll.parameters.free.names == ('scale',)
+    assert nll.parameters.fixed.names == ()
 
     reference = NLL(Scalar('scale', parameter('scale')).norm_sqr(), data, mc)
     assert pytest.approx(nll.evaluate([2.5])) == reference.evaluate([2.5])
@@ -950,9 +950,9 @@ def test_nll_free_from_fixed_parameter() -> None:
 def test_evaluator_parameters_include_fixed_entries() -> None:
     expr = likelihood_sum([LikelihoodScalar('alpha'), LikelihoodScalar('beta')])
     expr.fix_parameter('alpha', 1.5)
-    assert expr.parameters == ('alpha', 'beta')
-    assert expr.free_parameters == ('beta',)
-    assert expr.fixed_parameters == ('alpha',)
+    assert expr.parameters.names == ('alpha', 'beta')
+    assert expr.parameters.free.names == ('beta',)
+    assert expr.parameters.fixed.names == ('alpha',)
     assert expr.evaluate([2.0]) == pytest.approx(3.5)
     with pytest.raises(
         ValueError, match='free parameter vector length mismatch: expected 1, received 2'
@@ -967,9 +967,9 @@ def test_evaluator_parameters_include_fixed_entries() -> None:
         expr.evaluate_gradient([10.0, 2.0]).tolist()
 
     expr.fix_parameter('beta', 2.0)
-    assert expr.parameters == ('alpha', 'beta')
-    assert expr.free_parameters == ()
-    assert expr.fixed_parameters == ('alpha', 'beta')
+    assert expr.parameters.names == ('alpha', 'beta')
+    assert expr.parameters.free.names == ()
+    assert expr.parameters.fixed.names == ('alpha', 'beta')
     assert expr.evaluate([]) == pytest.approx(3.5)
     assert expr.evaluate_gradient([]).tolist() == pytest.approx([])
 

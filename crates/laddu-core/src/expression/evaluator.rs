@@ -202,6 +202,7 @@ use crate::ExecutionContext;
 use crate::ThreadPolicy;
 use crate::{
     data::{Dataset, DatasetMetadata, Event},
+    parameters::ParameterMap,
     resources::{Cache, Parameters, Resources},
     LadduError, LadduResult,
 };
@@ -1424,19 +1425,9 @@ impl Expression {
         }
     }
 
-    /// Get the list of parameter names in the order they appear in the underlying resources.
-    pub fn parameters(&self) -> Vec<String> {
-        self.registry.resources.parameter_names()
-    }
-
-    /// Get the list of free parameter names.
-    pub fn free_parameters(&self) -> Vec<String> {
-        self.registry.resources.free_parameter_names()
-    }
-
-    /// Get the list of fixed parameter names.
-    pub fn fixed_parameters(&self) -> Vec<String> {
-        self.registry.resources.fixed_parameter_names()
+    /// Get the parameters used by this expression.
+    pub fn parameters(&self) -> ParameterMap {
+        self.registry.resources.parameters()
     }
 
     /// Number of free parameters.
@@ -3627,20 +3618,9 @@ impl Evaluator {
         self.evaluate_expression_runtime_gradient(amplitude_values, gradient_values)
     }
 
-    /// Get the list of parameter names in the order they appear in the [`Evaluator::evaluate`]
-    /// method.
-    pub fn parameters(&self) -> Vec<String> {
-        self.resources.read().parameter_names()
-    }
-
-    /// Get the list of free parameter names.
-    pub fn free_parameters(&self) -> Vec<String> {
-        self.resources.read().free_parameter_names()
-    }
-
-    /// Get the list of fixed parameter names.
-    pub fn fixed_parameters(&self) -> Vec<String> {
-        self.resources.read().fixed_parameter_names()
+    /// Get the parameters used by this evaluator.
+    pub fn parameters(&self) -> ParameterMap {
+        self.resources.read().parameters()
     }
 
     /// Number of free parameters.
