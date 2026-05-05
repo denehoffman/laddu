@@ -134,7 +134,7 @@ impl Amplitude for CacheOnlyScalar {
         true
     }
 
-    fn precompute(&self, event: &NamedEventView<'_>, cache: &mut Cache) {
+    fn precompute(&self, event: &Event<'_>, cache: &mut Cache) {
         cache.store_scalar(self.beam_energy, event.p4_at(0).e());
     }
 
@@ -236,19 +236,17 @@ fn assert_weighted_sum_matches_eventwise_baseline(fixture: &DeterministicFixture
         .evaluate_local(&fixture.parameters)
         .expect("evaluation should succeed")
         .iter()
-        .zip(fixture.dataset.events_local().iter())
-        .fold(0.0, |accum, (value, event)| {
-            accum + event.weight() * value.re
-        });
+        .zip(fixture.dataset.weights_local().iter())
+        .fold(0.0, |accum, (value, event)| accum + *event * value.re);
     let expected_gradient = evaluator
         .evaluate_gradient_local(&fixture.parameters)
         .expect("evaluation should succeed")
         .iter()
-        .zip(fixture.dataset.events_local().iter())
+        .zip(fixture.dataset.weights_local().iter())
         .fold(
             DVector::zeros(fixture.parameters.len()),
             |mut accum, (gradient, event)| {
-                accum += gradient.map(|value| value.re).scale(event.weight());
+                accum += gradient.map(|value| value.re).scale(*event);
                 accum
             },
         );
@@ -1035,9 +1033,9 @@ fn test_expression_ir_precomputed_cached_integrals_at_load() {
         .expect("evaluation should succeed");
     let expected_weighted_sum = cache_values
         .iter()
-        .zip(dataset.events_local().iter())
+        .zip(dataset.weights_local().iter())
         .fold(Complex64::ZERO, |acc, (value, event)| {
-            acc + (*value * event.weight())
+            acc + (*value * *event)
         });
     assert_relative_eq!(
         precomputed[0].weighted_cache_sum.re,
@@ -1366,11 +1364,11 @@ fn test_evaluate_weighted_gradient_sum_local_matches_eventwise_baseline() {
         .evaluate_gradient_local(&params)
         .expect("evaluation should succeed")
         .iter()
-        .zip(dataset.events_local().iter())
+        .zip(dataset.weights_local().iter())
         .fold(
             DVector::zeros(params.len()),
             |mut accum, (gradient, event)| {
-                accum += gradient.map(|value| value.re).scale(event.weight());
+                accum += gradient.map(|value| value.re).scale(*event);
                 accum
             },
         );
@@ -1405,10 +1403,8 @@ fn test_evaluate_weighted_value_sum_local_matches_eventwise_baseline() {
         .evaluate_local(&params)
         .expect("evaluation should succeed")
         .iter()
-        .zip(dataset.events_local().iter())
-        .fold(0.0, |accum, (value, event)| {
-            accum + event.weight() * value.re
-        });
+        .zip(dataset.weights_local().iter())
+        .fold(0.0, |accum, (value, event)| accum + *event * value.re);
     let actual = evaluator
         .evaluate_weighted_value_sum_local(&params)
         .expect("evaluation should succeed");
@@ -1495,11 +1491,11 @@ fn test_evaluate_weighted_gradient_sum_local_respects_signed_cached_terms() {
         .evaluate_gradient_local(&params)
         .expect("evaluation should succeed")
         .iter()
-        .zip(dataset.events_local().iter())
+        .zip(dataset.weights_local().iter())
         .fold(
             DVector::zeros(params.len()),
             |mut accum, (gradient, event)| {
-                accum += gradient.map(|value| value.re).scale(event.weight());
+                accum += gradient.map(|value| value.re).scale(*event);
                 accum
             },
         );
@@ -1536,10 +1532,8 @@ fn test_evaluate_weighted_value_sum_local_respects_signed_cached_terms() {
         .evaluate_local(&params)
         .expect("evaluation should succeed")
         .iter()
-        .zip(dataset.events_local().iter())
-        .fold(0.0, |accum, (value, event)| {
-            accum + event.weight() * value.re
-        });
+        .zip(dataset.weights_local().iter())
+        .fold(0.0, |accum, (value, event)| accum + *event * value.re);
     let actual = evaluator
         .evaluate_weighted_value_sum_local(&params)
         .expect("evaluation should succeed");
@@ -1688,10 +1682,8 @@ fn test_weighted_sums_match_baseline_after_activation_changes() {
         .evaluate_local(&params)
         .expect("evaluation should succeed")
         .iter()
-        .zip(dataset.events_local().iter())
-        .fold(0.0, |accum, (value, event)| {
-            accum + event.weight() * value.re
-        });
+        .zip(dataset.weights_local().iter())
+        .fold(0.0, |accum, (value, event)| accum + *event * value.re);
     assert_relative_eq!(
         evaluator
             .evaluate_weighted_value_sum_local(&params)
@@ -1959,9 +1951,15 @@ fn test_expression_ir_cached_integrals_are_rank_local_in_mpi() {
         .expect("integrals should exist");
     assert_eq!(cached_integrals.len(), 1);
 
-    let local_expected = dataset.events_local().iter().fold(0.0, |acc, event| {
-        acc + event.weight() * event.data().p4s[0].e()
-    });
+    let local_expected =
+        dataset
+            .weights_local()
+            .iter()
+            .enumerate()
+            .fold(0.0, |acc, (index, weight)| {
+                let event = dataset.event_local(index).expect("event should exist");
+                acc + *weight * event.p4_at(0).e()
+            });
     let cached_local = cached_integrals[0].weighted_cache_sum;
     assert_relative_eq!(cached_local.re, local_expected, epsilon = 1e-12);
     assert_relative_eq!(cached_local.im, 0.0, epsilon = 1e-12);
@@ -2056,10 +2054,8 @@ fn test_expression_ir_weighted_sum_mpi_matches_global_eventwise_baseline() {
         .evaluate_local(&params)
         .expect("evaluate should succeed")
         .iter()
-        .zip(dataset.events_local().iter())
-        .fold(0.0, |accum, (value, event)| {
-            accum + event.weight() * value.re
-        });
+        .zip(dataset.weights_local().iter())
+        .fold(0.0, |accum, (value, event)| accum + *event * value.re);
     let mut global_expected_value = 0.0;
     world.all_reduce_into(
         &local_expected_value,
@@ -2075,11 +2071,11 @@ fn test_expression_ir_weighted_sum_mpi_matches_global_eventwise_baseline() {
         .evaluate_gradient_local(&params)
         .expect("evaluate should succeed")
         .iter()
-        .zip(dataset.events_local().iter())
+        .zip(dataset.weights_local().iter())
         .fold(
             DVector::zeros(params.len()),
             |mut accum, (gradient, event)| {
-                accum += gradient.map(|value| value.re).scale(event.weight());
+                accum += gradient.map(|value| value.re).scale(*event);
                 accum
             },
         );

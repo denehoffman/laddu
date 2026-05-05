@@ -14,14 +14,15 @@ use fastrand;
 use mpi::traits::*;
 #[cfg(feature = "mpi")]
 use mpi_test::mpi_test;
-#[cfg(feature = "rayon")]
-use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use super::*;
 #[cfg(feature = "mpi")]
 use crate::mpi::{finalize_mpi, get_world, use_mpi, LadduMPI};
 use crate::{traits::Variable, vectors::Vec3, LadduError, LadduResult, Mass, Vec4};
+
+const TEST_P4_NAMES: &[&str] = &["beam", "proton", "kshort1", "kshort2"];
+const TEST_AUX_NAMES: &[&str] = &["pol_magnitude", "pol_angle"];
 
 fn test_data_path(file: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -69,7 +70,12 @@ fn mpi_chunk_test_dataset(n_events: usize) -> Dataset {
     Dataset::new_with_metadata(events, metadata)
 }
 
-fn assert_events_close(left: &Event, right: &Event, p4_names: &[&str], aux_names: &[&str]) {
+fn assert_events_close(
+    left: &OwnedEvent,
+    right: &OwnedEvent,
+    p4_names: &[&str],
+    aux_names: &[&str],
+) {
     for name in p4_names {
         let lp4 = left
             .p4(name)
@@ -106,10 +112,10 @@ fn assert_datasets_close(
 ) {
     assert_eq!(left.n_events(), right.n_events());
     for idx in 0..left.n_events() {
-        let Ok(levent) = left.event(idx) else {
+        let Ok(levent) = left.event_global(idx) else {
             panic!("left dataset missing event at index {idx}");
         };
-        let Ok(revent) = right.event(idx) else {
+        let Ok(revent) = right.event_global(idx) else {
             panic!("right dataset missing event at index {idx}");
         };
         assert_events_close(&levent, &revent, p4_names, aux_names);
@@ -167,7 +173,7 @@ fn test_from_parquet_with_aliases() {
         "data_f32.parquet",
         DatasetReadOptions::new().alias("resonance", ["kshort1", "kshort2"]),
     );
-    let event = dataset.named_event(0).expect("event should exist");
+    let event = dataset.event_global(0).expect("event should exist");
     let alias_vec = event.p4("resonance").expect("alias vector");
     let expected = event.get_p4_sum(["kshort1", "kshort2"]);
     assert_relative_eq!(alias_vec.px(), expected.px(), epsilon = 1e-9);
@@ -193,10 +199,10 @@ fn test_from_parquet_alias_resolution_parity_auto_vs_explicit() {
     assert_datasets_close(&auto, &explicit, TEST_P4_NAMES, TEST_AUX_NAMES);
     for event_index in 0..auto.n_events() {
         let auto_event = auto
-            .named_event(event_index)
+            .event_global(event_index)
             .expect("auto parquet event should exist");
         let explicit_event = explicit
-            .named_event(event_index)
+            .event_global(event_index)
             .expect("explicit parquet event should exist");
 
         let auto_alias = auto_event
@@ -361,10 +367,10 @@ fn test_from_root_alias_resolution_matches_non_mpi_under_mpi() {
     assert_eq!(local_explicit.n_events_local(), local_range.len());
 
     for (local_index, global_index) in local_range.enumerate() {
-        let local_auto_event = local_auto.event_view(local_index);
-        let local_explicit_event = local_explicit.event_view(local_index);
-        let reference_event = reference_auto.event_view(global_index);
-        let reference_explicit_event = reference_explicit.event_view(global_index);
+        let local_auto_event = local_auto.event_local(local_index).unwrap();
+        let local_explicit_event = local_explicit.event_local(local_index).unwrap();
+        let reference_event = reference_auto.event_local(global_index).unwrap();
+        let reference_explicit_event = reference_explicit.event_local(global_index).unwrap();
 
         let local_auto_value = local_auto_event
             .p4("resonance")
@@ -438,9 +444,9 @@ fn test_event_boost() {
 }
 
 #[test]
-fn test_named_event_view_evaluate() {
+fn test_event_view_evaluate() {
     let dataset = test_dataset();
-    let event = dataset.event_view(0);
+    let event = dataset.event_local(0).unwrap();
     let mut mass = Mass::new(["proton"]);
     mass.bind(dataset.metadata()).unwrap();
     assert_relative_eq!(event.evaluate(&mass), 1.007);
@@ -468,12 +474,18 @@ fn test_dataset_sum() {
     );
     let dataset_sum = &dataset + &dataset2;
     assert_eq!(
-        dataset_sum.event(0).expect("event should exist").weight,
-        dataset.event(0).expect("event should exist").weight
+        dataset_sum
+            .event_global(0)
+            .expect("event should exist")
+            .weight,
+        dataset.event_global(0).expect("event should exist").weight
     );
     assert_eq!(
-        dataset_sum.event(1).expect("event should exist").weight,
-        dataset2.event(0).expect("event should exist").weight
+        dataset_sum
+            .event_global(1)
+            .expect("event should exist")
+            .weight,
+        dataset2.event_global(0).expect("event should exist").weight
     );
 }
 
@@ -605,11 +617,7 @@ fn test_dataset_push_event_global_round_robin_mpi() {
     } else {
         vec![2.0, 4.0]
     };
-    let local_weights = dataset
-        .events_local()
-        .iter()
-        .map(Event::weight)
-        .collect::<Vec<_>>();
+    let local_weights = dataset.weights_local();
     assert_eq!(local_weights, expected_local_weights);
     let global_weights = dataset
         .events_global()
@@ -621,17 +629,17 @@ fn test_dataset_push_event_global_round_robin_mpi() {
 }
 
 #[test]
-fn test_dataset_views_local_evaluate_without_event_clone() {
+fn test_dataset_events_local_evaluate_without_event_clone() {
     let dataset = test_dataset();
     let mut mass = Mass::new(["proton"]);
     mass.bind(dataset.metadata()).unwrap();
     let values = dataset
-        .views_local()
+        .events_local()
         .map(|event| event.evaluate(&mass))
         .collect::<Vec<_>>();
     assert_eq!(values.len(), dataset.n_events_local());
     assert_relative_eq!(values[0], 1.007);
-    assert!(dataset.view_local(dataset.n_events_local()).is_err());
+    assert!(dataset.event_local(dataset.n_events_local()).is_err());
 }
 
 #[test]
@@ -686,7 +694,7 @@ fn test_dataset_filtering() {
 
     let filtered = dataset.filter(&expression).unwrap();
     assert_eq!(filtered.n_events(), 1);
-    assert_relative_eq!(mass.value(&filtered.event_view(0)), 0.5);
+    assert_relative_eq!(mass.value(&filtered.event_local(0).unwrap()), 0.5);
 }
 
 #[test]
@@ -694,7 +702,7 @@ fn test_dataset_boost() {
     let dataset = test_dataset();
     let dataset_boosted = dataset.boost_to_rest_frame_of(&["proton", "kshort1", "kshort2"]);
     let p4_sum = dataset_boosted
-        .event(0)
+        .event_global(0)
         .expect("event should exist")
         .get_p4_sum(["proton", "kshort1", "kshort2"]);
     assert_relative_eq!(p4_sum.px(), 0.0);
@@ -703,10 +711,10 @@ fn test_dataset_boost() {
 }
 
 #[test]
-fn test_named_event_view() {
+fn test_event_view() {
     let dataset = test_dataset();
-    let view = dataset.named_event(0).expect("event should exist");
-    let dataset_event = dataset.event(0).expect("event should exist");
+    let view = dataset.event_global(0).expect("event should exist");
+    let dataset_event = dataset.event_global(0).expect("event should exist");
     assert_relative_eq!(view.weight(), dataset_event.weight);
     let beam = view.p4("beam").expect("beam p4");
     assert_relative_eq!(beam.px(), dataset_event.p4s[0].px());
@@ -723,7 +731,7 @@ fn test_named_event_view() {
 
     let metadata = dataset.metadata_arc();
     let boosted = view.boost_to_rest_frame_of(["proton", "kshort1", "kshort2"]);
-    let boosted_event = Event::new(Arc::new(boosted), metadata);
+    let boosted_event = OwnedEvent::new(Arc::new(boosted), metadata);
     let boosted_sum = boosted_event.get_p4_sum(["proton", "kshort1", "kshort2"]);
     assert_relative_eq!(boosted_sum.px(), 0.0);
 }
@@ -759,11 +767,14 @@ fn test_dataset_lookup_by_name() {
     let proton_idx = dataset.metadata().p4_index("proton").unwrap();
     assert_relative_eq!(
         proton.e(),
-        dataset.event(0).expect("event should exist").p4s[proton_idx].e()
+        dataset.event_global(0).expect("event should exist").p4s[proton_idx].e()
     );
     assert!(dataset.p4_by_name(0, "unknown").is_none());
     let angle = dataset.aux_by_name(0, "pol_angle").expect("pol_angle");
-    assert_relative_eq!(angle, dataset.event(0).expect("event should exist").aux[1]);
+    assert_relative_eq!(
+        angle,
+        dataset.event_global(0).expect("event should exist").aux[1]
+    );
     assert!(dataset.aux_by_name(0, "missing").is_none());
 }
 
@@ -791,7 +802,7 @@ fn test_binned_dataset() {
     }
     #[typetag::serde]
     impl Variable for BeamEnergy {
-        fn value(&self, event: &NamedEventView<'_>) -> f64 {
+        fn value(&self, event: &Event<'_>) -> f64 {
             event.p4_at(0).e()
         }
     }
@@ -825,15 +836,21 @@ fn test_dataset_bootstrap() {
         metadata,
     );
     assert_relative_ne!(
-        dataset.event(0).expect("event should exist").weight,
-        dataset.event(1).expect("event should exist").weight
+        dataset.event_global(0).expect("event should exist").weight,
+        dataset.event_global(1).expect("event should exist").weight
     );
 
     let bootstrapped = dataset.bootstrap(43);
     assert_eq!(bootstrapped.n_events(), dataset.n_events());
     assert_relative_eq!(
-        bootstrapped.event(0).expect("event should exist").weight,
-        bootstrapped.event(1).expect("event should exist").weight
+        bootstrapped
+            .event_global(0)
+            .expect("event should exist")
+            .weight,
+        bootstrapped
+            .event_global(1)
+            .expect("event should exist")
+            .weight
     );
 
     // Test empty dataset bootstrap
@@ -843,17 +860,10 @@ fn test_dataset_bootstrap() {
 }
 
 fn assert_weight_cache_matches_local_events(dataset: &Dataset) {
-    #[cfg(feature = "rayon")]
     let expected = dataset
-        .events_local()
-        .par_iter()
-        .map(|event| event.weight)
-        .parallel_sum_with_accumulator::<Klein<f64>>();
-    #[cfg(not(feature = "rayon"))]
-    let expected = dataset
-        .events_local()
+        .weights_local()
         .iter()
-        .map(|event| event.weight)
+        .copied()
         .sum_with_accumulator::<Klein<f64>>();
     assert_relative_eq!(dataset.cached_local_weighted_sum, expected);
     assert_relative_eq!(dataset.n_events_weighted_local(), expected);
@@ -909,7 +919,7 @@ fn test_dataset_iteration_returns_events() {
     assert_eq!(weights.len(), dataset.n_events());
     assert_relative_eq!(
         weights[0],
-        dataset.event(0).expect("event should exist").weight
+        dataset.event_global(0).expect("event should exist").weight
     );
 }
 
@@ -934,24 +944,28 @@ fn test_dataset_arc_into_iter_returns_events() {
 }
 
 #[test]
-fn test_dataset_get_event_local_reuses_underlying_data() {
+fn test_dataset_event_global_materializes_owned_event() {
     let dataset = test_dataset();
-    let first = dataset.get_event(0).expect("event should exist");
-    let second = dataset.get_event(0).expect("event should exist");
-    assert!(Arc::ptr_eq(&first.data_arc(), &second.data_arc()));
+    let first = dataset.event_global(0).expect("event should exist");
+    let second = dataset.event_global(0).expect("event should exist");
+    assert_relative_eq!(first.weight(), second.weight());
+    assert_relative_eq!(
+        first.p4("beam").unwrap().e(),
+        second.p4("beam").unwrap().e()
+    );
 }
 
 #[test]
 fn test_dataset_event_out_of_bounds_is_error() {
     let dataset = test_dataset();
-    assert!(dataset.event(99).is_err());
-    assert!(dataset.get_event(99).is_none());
+    assert!(dataset.event_global(99).is_err());
+    assert!(dataset.event_global(99).is_err());
 }
 
 #[cfg(feature = "mpi")]
 fn event_iteration_signature<I>(iter: I) -> (usize, f64, f64, f64)
 where
-    I: IntoIterator<Item = Event>,
+    I: IntoIterator<Item = OwnedEvent>,
 {
     let mut count = 0usize;
     let mut weight_signature = 0.0;
@@ -1007,12 +1021,17 @@ fn test_dataset_event_stress_local_repeated_access() {
     }
     let dataset = Dataset::new_with_metadata(events, metadata);
     let baseline: Vec<f64> = (0..dataset.n_events())
-        .map(|index| dataset.event(index).expect("event should exist").weight())
+        .map(|index| {
+            dataset
+                .event_global(index)
+                .expect("event should exist")
+                .weight()
+        })
         .collect();
 
     for _ in 0..250 {
         for (index, expected_weight) in baseline.iter().enumerate() {
-            let event = dataset.event(index).expect("event should exist");
+            let event = dataset.event_global(index).expect("event should exist");
             assert_relative_eq!(event.weight(), *expected_weight);
         }
     }
@@ -1026,8 +1045,8 @@ fn test_dataset_event_mpi_repeated_access_is_stable() {
 
     let dataset = test_dataset();
     for _ in 0..32 {
-        let first = dataset.event(0).expect("event should exist");
-        let second = dataset.event(0).expect("event should exist");
+        let first = dataset.event_global(0).expect("event should exist");
+        let second = dataset.event_global(0).expect("event should exist");
         assert_relative_eq!(first.weight(), second.weight());
     }
     finalize_mpi();
@@ -1052,12 +1071,17 @@ fn test_dataset_event_stress_mpi_repeated_access() {
     let dataset = Dataset::new_with_metadata(events, metadata);
 
     let baseline: Vec<f64> = (0..dataset.n_events())
-        .map(|index| dataset.event(index).expect("event should exist").weight())
+        .map(|index| {
+            dataset
+                .event_global(index)
+                .expect("event should exist")
+                .weight()
+        })
         .collect();
 
     for _ in 0..120 {
         for (index, expected_weight) in baseline.iter().enumerate() {
-            let event = dataset.event(index).expect("event should exist");
+            let event = dataset.event_global(index).expect("event should exist");
             assert_relative_eq!(event.weight(), *expected_weight);
         }
     }
@@ -1194,8 +1218,7 @@ fn test_fetch_event_chunk_mpi_matches_single_event_fetches() {
     let world = get_world().expect("MPI world should be initialized");
 
     let dataset = mpi_chunk_test_dataset(8);
-    let chunk = fetch_event_chunk_mpi(
-        &dataset,
+    let chunk = dataset.fetch_event_chunk_mpi(
         1,
         5,
         &world,
@@ -1206,20 +1229,20 @@ fn test_fetch_event_chunk_mpi_matches_single_event_fetches() {
     assert_eq!(chunk.len(), 5);
     for (offset, event) in chunk.iter().enumerate() {
         let baseline = dataset
-            .event(1 + offset)
+            .event_global(1 + offset)
             .expect("chunk baseline event should exist");
         assert_events_close(event, &baseline, TEST_P4_NAMES, TEST_AUX_NAMES);
     }
 
-    assert!(fetch_event_chunk_mpi(
-        &dataset,
-        dataset.n_events(),
-        4,
-        &world,
-        dataset.n_events(),
-        MpiDatasetLayout::Canonical,
-    )
-    .is_empty());
+    assert!(dataset
+        .fetch_event_chunk_mpi(
+            dataset.n_events(),
+            4,
+            &world,
+            dataset.n_events(),
+            MpiDatasetLayout::Canonical,
+        )
+        .is_empty());
     finalize_mpi();
 }
 
@@ -1230,8 +1253,7 @@ fn test_fetch_event_chunk_mpi_truncates_at_dataset_end() {
     let world = get_world().expect("MPI world should be initialized");
 
     let dataset = mpi_chunk_test_dataset(8);
-    let chunk = fetch_event_chunk_mpi(
-        &dataset,
+    let chunk = dataset.fetch_event_chunk_mpi(
         6,
         10,
         &world,
@@ -1242,7 +1264,7 @@ fn test_fetch_event_chunk_mpi_truncates_at_dataset_end() {
     assert_eq!(chunk.len(), 2);
     for (offset, event) in chunk.iter().enumerate() {
         let baseline = dataset
-            .event(6 + offset)
+            .event_global(6 + offset)
             .expect("truncated chunk baseline event should exist");
         assert_events_close(event, &baseline, TEST_P4_NAMES, TEST_AUX_NAMES);
     }
@@ -1263,7 +1285,9 @@ fn test_mpi_event_chunk_cursor_reuses_cached_chunk_for_dataset_and_events() {
         let actual = dataset_cursor
             .event_for_dataset(&dataset, index, &world, total, MpiDatasetLayout::Canonical)
             .expect("dataset cursor event should exist");
-        let expected = dataset.event(index).expect("baseline event should exist");
+        let expected = dataset
+            .event_global(index)
+            .expect("baseline event should exist");
         assert_events_close(&actual, &expected, TEST_P4_NAMES, TEST_AUX_NAMES);
     }
     assert!(dataset_cursor
@@ -1275,7 +1299,9 @@ fn test_mpi_event_chunk_cursor_reuses_cached_chunk_for_dataset_and_events() {
         let actual = events_cursor
             .event_for_dataset(&dataset, index, &world, total, MpiDatasetLayout::Canonical)
             .expect("events cursor event should exist");
-        let expected = dataset.event(index).expect("baseline event should exist");
+        let expected = dataset
+            .event_global(index)
+            .expect("baseline event should exist");
         assert_events_close(&actual, &expected, TEST_P4_NAMES, TEST_AUX_NAMES);
     }
     finalize_mpi();
@@ -1380,6 +1406,29 @@ fn test_event_display() {
 }
 
 #[test]
+fn test_owned_event_display_uses_metadata_names() {
+    let dataset = test_dataset();
+    let event = dataset.event_global(0).expect("event should exist");
+    let display_string = format!("{}", event);
+    assert!(display_string.contains("Event:"));
+    assert!(display_string.contains("beam:"));
+    assert!(display_string.contains("proton:"));
+    assert!(display_string.contains("pol_magnitude: 0.38562805"));
+    assert!(display_string.contains("pol_angle: 0.05708078"));
+    assert!(display_string.contains("weight:"));
+}
+
+#[test]
+fn test_borrowed_event_display_uses_metadata_names() {
+    let dataset = test_dataset();
+    let event = dataset.event_local(0).expect("event should exist");
+    let display_string = format!("{}", event);
+    assert!(display_string.contains("beam:"));
+    assert!(display_string.contains("kshort1:"));
+    assert!(display_string.contains("pol_angle: 0.05708078"));
+}
+
+#[test]
 fn test_name_based_access() {
     let metadata =
         Arc::new(DatasetMetadata::new(vec!["beam", "target"], vec!["pol_angle"]).unwrap());
@@ -1453,13 +1502,13 @@ fn test_parquet_read_order_is_deterministic_across_repeated_reads() {
     assert_eq!(first.n_events(), dataset.n_events());
     for event_index in 0..dataset.n_events() {
         let source = dataset
-            .event(event_index)
+            .event_global(event_index)
             .expect("source event should exist");
         let first_event = first
-            .event(event_index)
+            .event_global(event_index)
             .expect("first read event should exist");
         let second_event = second
-            .event(event_index)
+            .event_global(event_index)
             .expect("second read event should exist");
         assert_events_close(&source, &first_event, TEST_P4_NAMES, TEST_AUX_NAMES);
         assert_events_close(&source, &second_event, TEST_P4_NAMES, TEST_AUX_NAMES);
@@ -1789,10 +1838,10 @@ fn test_parquet_chunk_iterator_matches_full_read() {
         let chunk = chunk.expect("chunk read should succeed");
         for local_idx in 0..chunk.n_events_local() {
             let left = full
-                .event(global_idx)
+                .event_global(global_idx)
                 .expect("full dataset event should exist");
             let right = chunk
-                .event(local_idx)
+                .event_global(local_idx)
                 .expect("chunk dataset event should exist");
             assert_events_close(&left, &right, TEST_P4_NAMES, TEST_AUX_NAMES);
             global_idx += 1;
@@ -1822,9 +1871,11 @@ fn test_parquet_chunk_iterator_respects_mpi_partition() {
         assert!(chunk.n_events_local() <= 17);
         for chunk_idx in 0..chunk.n_events_local() {
             let expected = reference
-                .event(local_range.start + local_idx)
+                .event_global(local_range.start + local_idx)
                 .expect("reference event should exist");
-            let actual = chunk.event(chunk_idx).expect("chunk event should exist");
+            let actual = chunk
+                .event_global(chunk_idx)
+                .expect("chunk event should exist");
             assert_events_close(&expected, &actual, TEST_P4_NAMES, TEST_AUX_NAMES);
             local_idx += 1;
         }

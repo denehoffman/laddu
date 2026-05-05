@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{format_names, IntoP4Selection, P4Selection, Variable};
 use crate::{
-    data::{DatasetMetadata, NamedEventView},
+    data::{DatasetMetadata, Event},
     reaction::Reaction,
     vectors::Vec4,
     LadduResult,
@@ -73,7 +73,7 @@ impl Variable for Mass {
         }
     }
 
-    fn value(&self, event: &NamedEventView<'_>) -> f64 {
+    fn value(&self, event: &Event<'_>) -> f64 {
         match &self.source {
             MassSource::Selection(constituents) => constituents
                 .indices()

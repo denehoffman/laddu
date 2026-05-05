@@ -59,7 +59,7 @@
 //!    AmplitudeID, Cache, DatasetMetadata, Expression, LadduResult, Mass,
 //!    ParameterID, Parameter, Parameters, Resources,
 //! };
-//! use laddu::NamedEventView;
+//! use laddu::Event;
 //! use laddu::resources::ScalarID;
 //! use laddu::traits::*;
 //! use laddu::math::{BarrierKind, QR_DEFAULT, Sheet, blatt_weisskopf_m, q_m};
@@ -130,7 +130,7 @@
 //!         Ok(())
 //!     }
 //!
-//!     fn precompute(&self, event: &NamedEventView<'_>, cache: &mut Cache) {
+//!     fn precompute(&self, event: &Event<'_>, cache: &mut Cache) {
 //!         cache.store_scalar(self.daughter_1_mass_id, event.evaluate(&self.daughter_1_mass));
 //!         cache.store_scalar(self.daughter_2_mass_id, event.evaluate(&self.daughter_2_mass));
 //!         cache.store_scalar(self.resonance_mass_id, event.evaluate(&self.resonance_mass));
@@ -165,7 +165,7 @@
 //! #    AmplitudeID, Cache, DatasetMetadata, Expression, LadduResult,
 //! #    ParameterID, Parameter, Parameters, Resources,
 //! # };
-//! # use laddu::NamedEventView;
+//! # use laddu::Event;
 //! # use laddu::resources::ScalarID;
 //! # use laddu::traits::*;
 //! # use laddu::math::{BarrierKind, QR_DEFAULT, Sheet, blatt_weisskopf_m, q_m};
@@ -236,7 +236,7 @@
 //! #         Ok(())
 //! #     }
 //! #
-//! #     fn precompute(&self, event: &NamedEventView<'_>, cache: &mut Cache) {
+//! #     fn precompute(&self, event: &Event<'_>, cache: &mut Cache) {
 //! #         cache.store_scalar(self.daughter_1_mass_id, event.evaluate(&self.daughter_1_mass));
 //! #         cache.store_scalar(self.daughter_2_mass_id, event.evaluate(&self.daughter_2_mass));
 //! #         cache.store_scalar(self.resonance_mass_id, event.evaluate(&self.resonance_mass));
@@ -436,7 +436,7 @@ pub use laddu_core::{
     },
     data::{
         BinnedDataset, Dataset, DatasetMetadata, DatasetReadOptions, DatasetWriteOptions, Event,
-        EventData, NamedEventView,
+        EventData, OwnedEvent,
     },
     parameter,
     parameters::{ParameterID, Parameters},

@@ -3,7 +3,7 @@ use laddu_core::{
         debug_key, display_key, Amplitude, AmplitudeID, AmplitudeSemanticKey, Expression,
         ExpressionDependence,
     },
-    data::{DatasetMetadata, NamedEventView},
+    data::{DatasetMetadata, Event},
     resources::{Cache, Parameters, Resources},
     traits::Variable,
     LadduResult, ScalarID,
@@ -72,7 +72,7 @@ impl Amplitude for VariableScalar {
         self.variable.bind(metadata)
     }
 
-    fn precompute(&self, event: &NamedEventView<'_>, cache: &mut Cache) {
+    fn precompute(&self, event: &Event<'_>, cache: &mut Cache) {
         cache.store_scalar(self.value_id, self.variable.value(event));
     }
 

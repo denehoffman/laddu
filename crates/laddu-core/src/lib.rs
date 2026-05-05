@@ -566,7 +566,9 @@ pub use amplitudes::{Amplitude, AmplitudeID, AmplitudeSemanticField, AmplitudeSe
 #[cfg(feature = "execution-context-prototype")]
 pub use crate::execution::{ExecutionContext, ScratchAllocator, ThreadPolicy};
 pub use crate::{
-    data::{BinnedDataset, Dataset, DatasetMetadata, DatasetReadOptions, Event, EventData},
+    data::{
+        BinnedDataset, Dataset, DatasetMetadata, DatasetReadOptions, Event, EventData, OwnedEvent,
+    },
     execution::ThreadPoolManager,
     expression::{CompiledExpression, CompiledExpressionNode, Evaluator, Expression},
     kinematics::{DecayAngles, FrameAxes, RestFrame},

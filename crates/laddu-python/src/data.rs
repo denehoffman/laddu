@@ -10,7 +10,7 @@ use laddu_core::{
         read_parquet_chunks_with_options as core_read_parquet_chunks_with_options,
         read_root as core_read_root, write_parquet as core_write_parquet,
         write_root as core_write_root, BinnedDataset, Dataset, DatasetMetadata,
-        DatasetWriteOptions, Event, EventData, FloatPrecision, SharedDatasetIterExt,
+        DatasetWriteOptions, EventData, FloatPrecision, OwnedEvent, SharedDatasetIterExt,
     },
     variables::IntoP4Selection,
     DatasetReadOptions, Vec4,
@@ -252,7 +252,7 @@ fn dataset_from_py_events(
 #[pyclass(name = "Event", module = "laddu", from_py_object)]
 #[derive(Clone)]
 pub struct PyEvent {
-    pub event: Event,
+    pub event: OwnedEvent,
     has_metadata: bool,
 }
 
@@ -304,14 +304,17 @@ impl PyEvent {
         } else {
             Arc::new(DatasetMetadata::empty())
         };
-        let event = Event::new(Arc::new(event), metadata);
+        let event = OwnedEvent::new(Arc::new(event), metadata);
         Ok(Self {
             event,
             has_metadata: metadata_provided,
         })
     }
     fn __str__(&self) -> String {
-        self.event.data().to_string()
+        self.event.to_string()
+    }
+    fn __repr__(&self) -> String {
+        self.__str__()
     }
     /// The list of 4-momenta for each particle in the event
     ///
@@ -375,7 +378,7 @@ impl PyEvent {
         let indices = self.resolve_p4_indices(&names)?;
         let boosted = self.event.data().boost_to_rest_frame_of(indices);
         Ok(Self {
-            event: Event::new(Arc::new(boosted), self.event.metadata_arc()),
+            event: OwnedEvent::new(Arc::new(boosted), self.event.metadata_arc()),
             has_metadata: self.has_metadata,
         })
     }
@@ -791,12 +794,17 @@ impl PyDataset {
     /// This is the explicit rank-local counterpart to ``events_global``.
     #[getter]
     fn events_local(&self) -> Vec<PyEvent> {
-        self.0
-            .events_local()
-            .iter()
-            .map(|rust_event| PyEvent {
-                event: rust_event.clone(),
-                has_metadata: true,
+        (0..self.0.n_events_local())
+            .map(|index| {
+                let event = self
+                    .0
+                    .event_local(index)
+                    .expect("local event index should exist")
+                    .to_event_data();
+                PyEvent {
+                    event: OwnedEvent::new(Arc::new(event), self.0.metadata_arc()),
+                    has_metadata: true,
+                }
             })
             .collect()
     }
@@ -821,8 +829,8 @@ impl PyDataset {
     fn event_global(&self, index: usize) -> PyResult<PyEvent> {
         let event = self
             .0
-            .get_event_global(index)
-            .ok_or_else(|| PyIndexError::new_err("index out of range"))?;
+            .event_global(index)
+            .map_err(|_| PyIndexError::new_err("index out of range"))?;
         Ok(PyEvent {
             event,
             has_metadata: true,
@@ -838,8 +846,8 @@ impl PyDataset {
         } else if let Ok(index) = index.extract::<usize>() {
             let event = self
                 .0
-                .get_event(index)
-                .ok_or_else(|| PyIndexError::new_err("index out of range"))?;
+                .event_global(index)
+                .map_err(|_| PyIndexError::new_err("index out of range"))?;
             PyEvent {
                 event,
                 has_metadata: true,

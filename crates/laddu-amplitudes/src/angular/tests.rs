@@ -47,7 +47,7 @@ fn wigner_d_matches_core_function() {
     )
     .unwrap();
     let evaluator = expr.load(&dataset).unwrap();
-    let event = dataset.event_view(0);
+    let event = dataset.event_local(0).unwrap();
     let mut costheta = angles.costheta.clone();
     let mut phi = angles.phi.clone();
     costheta.bind(dataset.metadata()).unwrap();
@@ -131,7 +131,7 @@ fn blatt_weisskopf_accepts_reaction_decay_context() {
     )
     .unwrap();
     let dataset = Arc::new(test_dataset());
-    let event = dataset.event_view(0);
+    let event = dataset.event_local(0).unwrap();
     let value = expr.load(&dataset).unwrap().evaluate(&[]).unwrap()[0];
     let expected = laddu_core::math::blatt_weisskopf_m(
         event.get_p4_sum(["kshort1", "kshort2"]).unwrap().m(),

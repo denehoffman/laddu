@@ -879,9 +879,25 @@ def test_event_display() -> None:
     assert 'Event:' in display_string
     assert 'p4s:' in display_string
     assert 'aux:' in display_string
-    assert 'aux[0]: 0.38562805' in display_string
-    assert 'aux[1]: 0.05708078' in display_string
+    assert 'pol_magnitude: 0.38562805' in display_string
+    assert 'pol_angle: 0.05708078' in display_string
     assert 'weight:' in display_string
+    assert repr(event) == display_string
+
+
+def test_unnamed_event_display_uses_indices() -> None:
+    event = Event(
+        [
+            Vec3(0.0, 0.0, 8.747).with_mass(0.0),
+            Vec3(0.119, 0.374, 0.222).with_mass(1.007),
+        ],
+        [0.38562805],
+        0.48,
+    )
+    display_string = str(event)
+    assert 'p4[0]:' in display_string
+    assert 'p4[1]:' in display_string
+    assert 'aux[0]: 0.38562805' in display_string
 
 
 def test_dataset_from_parquet_auto_vs_named() -> None:

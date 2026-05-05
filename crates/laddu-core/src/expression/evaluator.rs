@@ -99,9 +99,9 @@ pub struct PrecomputedCachedIntegralGradientTerm {
 struct CachedIntegralCacheKey {
     active_mask: Vec<bool>,
     n_events_local: usize,
-    events_local_len: usize,
+    weights_local_len: usize,
     weighted_sum_bits: u64,
-    events_ptr: usize,
+    weights_ptr: usize,
 }
 #[derive(Clone, Debug)]
 struct CachedIntegralCacheState {
@@ -201,7 +201,7 @@ use crate::ExecutionContext;
 #[cfg(all(feature = "execution-context-prototype", feature = "rayon"))]
 use crate::ThreadPolicy;
 use crate::{
-    data::{Dataset, DatasetMetadata, NamedEventView},
+    data::{Dataset, DatasetMetadata, Event},
     resources::{Cache, Parameters, Resources},
     LadduError, LadduResult,
 };
@@ -260,7 +260,7 @@ pub trait Amplitude: DynClone + Send + Sync {
     /// not on any free parameters in the fit. This method is opt-in since it is
     /// not required to make a functioning [`Amplitude`].
     #[allow(unused_variables)]
-    fn precompute(&self, event: &NamedEventView<'_>, cache: &mut Cache) {}
+    fn precompute(&self, event: &Event<'_>, cache: &mut Cache) {}
 
     /// Evaluate [`Amplitude::precompute`] over columnar event views in a [`Dataset`].
     #[cfg(feature = "rayon")]
@@ -278,7 +278,7 @@ pub trait Amplitude: DynClone + Send + Sync {
     /// Evaluate [`Amplitude::precompute`] over columnar event views in a [`Dataset`].
     #[cfg(not(feature = "rayon"))]
     fn precompute_all(&self, dataset: &Dataset, resources: &mut Resources) {
-        dataset.for_each_named_event_local(|event_index, event| {
+        dataset.for_each_event_local(|event_index, event| {
             let cache = &mut resources.caches[event_index];
             self.precompute(&event, cache);
         });
@@ -2464,9 +2464,9 @@ impl Evaluator {
         CachedIntegralCacheKey {
             active_mask,
             n_events_local: dataset.n_events_local(),
-            events_local_len: dataset.events_local().len(),
+            weights_local_len: dataset.columnar.weights.len(),
             weighted_sum_bits: dataset.n_events_weighted_local().to_bits(),
-            events_ptr: dataset.events_local().as_ptr() as usize,
+            weights_ptr: dataset.columnar.weights.as_ptr() as usize,
         }
     }
     fn precompute_cached_integrals_at_load(
@@ -2493,13 +2493,13 @@ impl Evaluator {
             .filter(|index| active_set.binary_search(index).is_ok())
             .collect::<Vec<_>>();
         let mut weighted_cache_sums = vec![Complex64::ZERO; descriptors.len()];
-        for (cache, event) in resources.caches.iter().zip(dataset.events_local().iter()) {
+        for (cache, event) in resources.caches.iter().zip(dataset.weights_local().iter()) {
             amplitude_values.fill(Complex64::ZERO);
             for &amp_idx in &cache_active_indices {
                 amplitude_values[amp_idx] = amplitudes[amp_idx].compute(&parameters, cache);
             }
             expression_ir.evaluate_into(&amplitude_values, &mut value_slots);
-            let weight = event.weight();
+            let weight = *event;
             for (descriptor_index, descriptor) in descriptors.iter().enumerate() {
                 weighted_cache_sums[descriptor_index] +=
                     value_slots[descriptor.cache_node_index] * weight;
@@ -3246,7 +3246,7 @@ impl Evaluator {
             resources
                 .caches
                 .par_iter()
-                .zip(self.dataset.events_local().par_iter())
+                .zip(self.dataset.weights_local().par_iter())
                 .map_init(
                     || {
                         (
@@ -3273,7 +3273,7 @@ impl Evaluator {
                                 .unwrap_or_else(|| {
                                     self.evaluate_residual_value_ir(&state, amplitude_values)
                                 });
-                            event.weight * value.re
+                            *event * value.re
                         }
                     },
                 )
@@ -3287,7 +3287,7 @@ impl Evaluator {
             resources
                 .caches
                 .iter()
-                .zip(self.dataset.events_local().iter())
+                .zip(self.dataset.weights_local().iter())
                 .map(|(cache, event)| {
                     self.fill_amplitude_values(
                         &mut amplitude_values,
@@ -3307,7 +3307,7 @@ impl Evaluator {
                             .unwrap_or_else(|| {
                                 self.evaluate_residual_value_ir(&state, &amplitude_values)
                             });
-                        event.weight * value.re
+                        *event * value.re
                     }
                 })
                 .sum()
@@ -3441,7 +3441,7 @@ impl Evaluator {
             resources
                 .caches
                 .par_iter()
-                .zip(self.dataset.events_local().par_iter())
+                .zip(self.dataset.weights_local().par_iter())
                 .map_init(
                     || {
                         (
@@ -3480,7 +3480,7 @@ impl Evaluator {
                                     grad_dim,
                                 )
                             });
-                        gradient.map(|value| value.re).scale(event.weight)
+                        gradient.map(|value| value.re).scale(*event)
                     },
                 )
                 .reduce(
@@ -3501,7 +3501,7 @@ impl Evaluator {
             resources
                 .caches
                 .iter()
-                .zip(self.dataset.events_local().iter())
+                .zip(self.dataset.weights_local().iter())
                 .map(|(cache, event)| {
                     self.fill_amplitude_values_and_gradients(
                         &mut amplitude_values,
@@ -3530,7 +3530,7 @@ impl Evaluator {
                                 grad_dim,
                             )
                         });
-                    gradient.map(|value| value.re).scale(event.weight)
+                    gradient.map(|value| value.re).scale(*event)
                 })
                 .sum()
         };

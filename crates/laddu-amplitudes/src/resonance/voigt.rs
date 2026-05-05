@@ -6,7 +6,7 @@ use laddu_core::{
         debug_key, display_key, parameter_key, Amplitude, AmplitudeID, AmplitudeSemanticKey,
         Expression, Parameter,
     },
-    data::{DatasetMetadata, NamedEventView},
+    data::{DatasetMetadata, Event},
     resources::{Cache, ParameterID, Parameters, Resources},
     traits::Variable,
     variables::Mass,
@@ -95,7 +95,7 @@ impl Amplitude for Voigt {
         Ok(())
     }
 
-    fn precompute(&self, event: &NamedEventView<'_>, cache: &mut Cache) {
+    fn precompute(&self, event: &Event<'_>, cache: &mut Cache) {
         cache.store_scalar(self.resonance_mass_id, event.evaluate(&self.resonance_mass));
     }
 

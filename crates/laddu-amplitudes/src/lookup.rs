@@ -5,7 +5,7 @@ use laddu_core::{
         debug_key, parameter_pair_slice_key, parameter_slice_key, Amplitude, AmplitudeID,
         AmplitudeSemanticKey, Expression, ExpressionDependence, Parameter,
     },
-    data::{DatasetMetadata, NamedEventView},
+    data::{DatasetMetadata, Event},
     resources::{Cache, ParameterID, Parameters, Resources},
     traits::Variable,
     LadduError, LadduResult, ScalarID,
@@ -478,7 +478,7 @@ impl LookupTable {
         .into_expression()
     }
 
-    fn weighted_indices(&self, event: &NamedEventView<'_>) -> Option<Vec<(usize, f64)>> {
+    fn weighted_indices(&self, event: &Event<'_>) -> Option<Vec<(usize, f64)>> {
         match self.interpolation {
             LookupInterpolation::Nearest => {
                 self.nearest_index(event).map(|index| vec![(index, 1.0)])
@@ -487,7 +487,7 @@ impl LookupTable {
         }
     }
 
-    fn nearest_index(&self, event: &NamedEventView<'_>) -> Option<usize> {
+    fn nearest_index(&self, event: &Event<'_>) -> Option<usize> {
         let mut flat_index = 0usize;
         for (variable, axis) in self.variables.iter().zip(&self.axis_coordinates) {
             let bin_index = axis.bin_index(variable.value(event), self.boundary_mode)?;
@@ -496,7 +496,7 @@ impl LookupTable {
         Some(flat_index)
     }
 
-    fn linear_indices(&self, event: &NamedEventView<'_>) -> Option<Vec<(usize, f64)>> {
+    fn linear_indices(&self, event: &Event<'_>) -> Option<Vec<(usize, f64)>> {
         let mut cells = Vec::with_capacity(self.axis_coordinates.len());
         for (variable, axis) in self.variables.iter().zip(&self.axis_coordinates) {
             cells.push(axis.linear_cell(variable.value(event), self.boundary_mode)?);
@@ -570,7 +570,7 @@ impl Amplitude for LookupTable {
         Ok(())
     }
 
-    fn precompute(&self, event: &NamedEventView<'_>, cache: &mut Cache) {
+    fn precompute(&self, event: &Event<'_>, cache: &mut Cache) {
         let weighted_indices = self.weighted_indices(event);
         for (slot, (vertex_id, weight_id)) in
             self.vertex_ids.iter().zip(&self.weight_ids).enumerate()

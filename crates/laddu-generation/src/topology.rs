@@ -1342,7 +1342,7 @@ where
 
             let accepted = self.rejection_rng.f64() * envelope_max < weight;
             if accepted {
-                let event = match source.dataset().event(self.current_index) {
+                let event = match source.dataset().event_global(self.current_index) {
                     Ok(event) => event,
                     Err(err) => return Some(Err(err)),
                 };
@@ -1724,7 +1724,7 @@ mod tests {
         assert_eq!(particles[4].p4_label(), Some("kshort2"));
 
         for index in 0..batch.dataset().n_events() {
-            let event = batch.dataset().event(index).unwrap();
+            let event = batch.dataset().event_global(index).unwrap();
             assert_relative_eq!(
                 event.p4("beam").unwrap() + event.p4("target").unwrap(),
                 event.p4("kshort1").unwrap()
@@ -1841,8 +1841,8 @@ mod tests {
         let mut offset = 0;
         for batch in batches {
             for local_index in 0..batch.dataset().n_events() {
-                let expected = one_shot.event(offset + local_index).unwrap();
-                let actual = batch.dataset().event(local_index).unwrap();
+                let expected = one_shot.event_global(offset + local_index).unwrap();
+                let actual = batch.dataset().event_global(local_index).unwrap();
                 for name in one_shot.p4_names() {
                     assert_relative_eq!(
                         actual.p4(name).unwrap(),

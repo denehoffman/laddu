@@ -27,11 +27,6 @@ pub fn test_event() -> EventData {
     }
 }
 
-/// Particle names used by [`crate::data::test_dataset`].
-pub const TEST_P4_NAMES: &[&str] = &["beam", "proton", "kshort1", "kshort2"];
-/// Auxiliary scalar names used by [`crate::data::test_dataset`].
-pub const TEST_AUX_NAMES: &[&str] = &["pol_magnitude", "pol_angle"];
-
 /// Raw event data in a [`Dataset`] containing all particle and auxiliary information.
 ///
 /// An [`EventData`] instance owns the list of four-momenta (`p4s`), auxiliary scalars (`aux`),
@@ -263,30 +258,29 @@ impl DatasetStorage {
     }
 
     #[allow(dead_code)]
-    pub(crate) fn for_each_named_event_local<F>(&self, mut op: F)
+    pub(crate) fn for_each_event_local<F>(&self, mut op: F)
     where
-        F: FnMut(usize, NamedEventView<'_>),
+        F: FnMut(usize, Event<'_>),
     {
         for event_index in 0..self.n_events() {
             let row = self.row_view(event_index);
-            let view = NamedEventView {
-                row,
+            let view = Event {
+                row: EventRow::Columnar(row),
                 metadata: &self.metadata,
             };
             op(event_index, view);
         }
     }
 
-    pub(crate) fn event_view(&self, event_index: usize) -> NamedEventView<'_> {
+    pub(crate) fn event_view(&self, event_index: usize) -> Event<'_> {
         let row = self.row_view(event_index);
-        NamedEventView {
-            row,
+        Event {
+            row: EventRow::Columnar(row),
             metadata: self.metadata(),
         }
     }
 }
 
-#[allow(dead_code)]
 #[derive(Debug)]
 struct ColumnarEventView<'a> {
     storage: &'a DatasetStorage,
@@ -308,14 +302,57 @@ impl ColumnarEventView<'_> {
     }
 }
 
-/// A name-aware columnar event view over a single row in a dataset.
 #[derive(Debug)]
-pub struct NamedEventView<'a> {
-    row: ColumnarEventView<'a>,
+enum EventRow<'a> {
+    Columnar(ColumnarEventView<'a>),
+    Owned(&'a EventData),
+}
+
+impl EventRow<'_> {
+    fn p4(&self, p4_index: usize) -> Vec4 {
+        match self {
+            Self::Columnar(row) => row.p4(p4_index),
+            Self::Owned(event) => event.p4s[p4_index],
+        }
+    }
+
+    fn aux(&self, aux_index: usize) -> f64 {
+        match self {
+            Self::Columnar(row) => row.aux(aux_index),
+            Self::Owned(event) => event.aux[aux_index],
+        }
+    }
+
+    fn weight(&self) -> f64 {
+        match self {
+            Self::Columnar(row) => row.weight(),
+            Self::Owned(event) => event.weight,
+        }
+    }
+
+    fn n_p4(&self) -> usize {
+        match self {
+            Self::Columnar(row) => row.storage.p4.len(),
+            Self::Owned(event) => event.p4s.len(),
+        }
+    }
+
+    fn n_aux(&self) -> usize {
+        match self {
+            Self::Columnar(row) => row.storage.aux.len(),
+            Self::Owned(event) => event.aux.len(),
+        }
+    }
+}
+
+/// Borrowed, metadata-aware event access for variable and amplitude evaluation.
+#[derive(Debug)]
+pub struct Event<'a> {
+    row: EventRow<'a>,
     metadata: &'a DatasetMetadata,
 }
 
-impl NamedEventView<'_> {
+impl Event<'_> {
     /// Retrieve a four-momentum by positional index.
     pub fn p4_at(&self, p4_index: usize) -> Vec4 {
         self.row.p4(p4_index)
@@ -328,12 +365,12 @@ impl NamedEventView<'_> {
 
     /// Number of four-momenta in this event.
     pub fn n_p4(&self) -> usize {
-        self.row.storage.p4.len()
+        self.row.n_p4()
     }
 
     /// Number of auxiliary values in this event.
     pub fn n_aux(&self) -> usize {
-        self.row.storage.aux.len()
+        self.row.n_aux()
     }
 
     /// Retrieve a four-momentum by metadata name.
@@ -359,6 +396,15 @@ impl NamedEventView<'_> {
         self.row.weight()
     }
 
+    /// Copy this borrowed event into owned raw event data.
+    pub fn to_event_data(&self) -> EventData {
+        EventData {
+            p4s: (0..self.n_p4()).map(|index| self.p4_at(index)).collect(),
+            aux: (0..self.n_aux()).map(|index| self.aux_at(index)).collect(),
+            weight: self.weight(),
+        }
+    }
+
     /// Retrieve the sum of multiple four-momenta selected by name.
     pub fn get_p4_sum<N>(&self, names: N) -> Option<Vec4>
     where
@@ -378,14 +424,45 @@ impl NamedEventView<'_> {
     }
 }
 
-/// Metadata-aware view of an [`EventData`] with name-based helpers.
+impl Display for Event<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "Event:")?;
+        writeln!(f, "  p4s:")?;
+        for index in 0..self.n_p4() {
+            let label = self
+                .metadata
+                .p4_names()
+                .get(index)
+                .map_or_else(|| format!("p4[{index}]"), Clone::clone);
+            writeln!(f, "    {label}: {}", self.p4_at(index).to_p4_string())?;
+        }
+        writeln!(f, "  aux:")?;
+        for index in 0..self.n_aux() {
+            let label = self
+                .metadata
+                .aux_names()
+                .get(index)
+                .map_or_else(|| format!("aux[{index}]"), Clone::clone);
+            writeln!(f, "    {label}: {}", self.aux_at(index))?;
+        }
+        writeln!(f, "  weight:")?;
+        writeln!(f, "    {}", self.weight())?;
+        Ok(())
+    }
+}
+
+/// Owned metadata-aware event data.
+///
+/// This is useful for detached events, MPI fetches, and Python-owned event objects. Use
+/// [`OwnedEvent::as_event`] to evaluate variables and amplitudes through the standard borrowed
+/// [`Event`] interface.
 #[derive(Clone, Debug)]
-pub struct Event {
+pub struct OwnedEvent {
     event: Arc<EventData>,
     metadata: Arc<DatasetMetadata>,
 }
 
-impl Event {
+impl OwnedEvent {
     /// Create a new metadata-aware event from raw data and dataset metadata.
     pub fn new(event: Arc<EventData>, metadata: Arc<DatasetMetadata>) -> Self {
         Self { event, metadata }
@@ -399,6 +476,14 @@ impl Event {
     /// Obtain a clone of the underlying [`EventData`] handle.
     pub fn data_arc(&self) -> Arc<EventData> {
         self.event.clone()
+    }
+
+    /// Borrow this owned row as an [`Event`] suitable for variable and amplitude evaluation.
+    pub fn as_event(&self) -> Event<'_> {
+        Event {
+            row: EventRow::Owned(&self.event),
+            metadata: &self.metadata,
+        }
     }
 
     /// Return the four-momenta stored in this event keyed by their registered names.
@@ -483,7 +568,13 @@ impl Event {
     }
 }
 
-impl Deref for Event {
+impl Display for OwnedEvent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.as_event().fmt(f)
+    }
+}
+
+impl Deref for OwnedEvent {
     type Target = EventData;
 
     fn deref(&self) -> &Self::Target {
@@ -491,7 +582,7 @@ impl Deref for Event {
     }
 }
 
-impl AsRef<EventData> for Event {
+impl AsRef<EventData> for OwnedEvent {
     fn as_ref(&self) -> &EventData {
         self.data()
     }

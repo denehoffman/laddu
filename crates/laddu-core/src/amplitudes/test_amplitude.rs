@@ -3,7 +3,7 @@ use num::complex::Complex64;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    data::NamedEventView,
+    data::Event,
     expression::{Amplitude, AmplitudeID, Expression},
     parameters::Parameter,
     resources::{Cache, Parameters, Resources},
@@ -46,7 +46,7 @@ impl Amplitude for TestAmplitude {
         resources.register_amplitude(&self.name)
     }
 
-    fn precompute(&self, event: &NamedEventView<'_>, cache: &mut Cache) {
+    fn precompute(&self, event: &Event<'_>, cache: &mut Cache) {
         let beam = event.p4_at(0);
         cache.store_scalar(self.beam_energy, beam.e());
     }

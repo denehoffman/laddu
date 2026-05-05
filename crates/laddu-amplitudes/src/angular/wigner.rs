@@ -1,6 +1,6 @@
 use laddu_core::{
     amplitudes::{debug_key, Amplitude, AmplitudeID, AmplitudeSemanticKey, Expression},
-    data::{DatasetMetadata, NamedEventView},
+    data::{DatasetMetadata, Event},
     math::WignerDMatrix,
     resources::{Cache, ComplexScalarID, Parameters, Resources},
     traits::Variable,
@@ -179,7 +179,7 @@ impl Amplitude for WignerD {
         self.phi.bind(metadata)
     }
 
-    fn precompute(&self, event: &NamedEventView<'_>, cache: &mut Cache) {
+    fn precompute(&self, event: &Event<'_>, cache: &mut Cache) {
         let costheta = self.costheta.value(event).clamp(-1.0, 1.0);
         let theta = costheta.acos();
         let phi = self.phi.value(event);

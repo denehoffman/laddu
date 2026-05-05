@@ -2,7 +2,7 @@ use laddu_core::{
     amplitudes::{
         debug_key, display_key, Amplitude, AmplitudeID, AmplitudeSemanticKey, Expression,
     },
-    data::{DatasetMetadata, NamedEventView},
+    data::{DatasetMetadata, Event},
     math::spherical_harmonic,
     resources::{Cache, ComplexScalarID, Parameters, Resources},
     traits::Variable,
@@ -65,7 +65,7 @@ impl Amplitude for Ylm {
         Ok(())
     }
 
-    fn precompute(&self, event: &NamedEventView<'_>, cache: &mut Cache) {
+    fn precompute(&self, event: &Event<'_>, cache: &mut Cache) {
         cache.store_complex_scalar(
             self.csid,
             spherical_harmonic(
@@ -154,7 +154,7 @@ impl Amplitude for Zlm {
         Ok(())
     }
 
-    fn precompute(&self, event: &NamedEventView<'_>, cache: &mut Cache) {
+    fn precompute(&self, event: &Event<'_>, cache: &mut Cache) {
         let ylm = spherical_harmonic(
             self.l,
             self.m,
@@ -234,7 +234,7 @@ impl Amplitude for PolPhase {
         Ok(())
     }
 
-    fn precompute(&self, event: &NamedEventView<'_>, cache: &mut Cache) {
+    fn precompute(&self, event: &Event<'_>, cache: &mut Cache) {
         let pol_angle = event.evaluate(&self.polarization.pol_angle);
         let pgamma = event.evaluate(&self.polarization.pol_magnitude);
         let phase = Complex64::new(f64::cos(2.0 * pol_angle), f64::sin(2.0 * pol_angle));

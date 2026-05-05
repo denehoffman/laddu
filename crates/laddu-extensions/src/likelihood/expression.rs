@@ -546,7 +546,7 @@ mod tests {
             ExpressionDependence::Mixed
         }
 
-        fn precompute(&self, event: &laddu_core::data::NamedEventView<'_>, cache: &mut Cache) {
+        fn precompute(&self, event: &laddu_core::data::Event<'_>, cache: &mut Cache) {
             cache.store_scalar(self.sid, event.p4_at(self.p4_index).e());
         }
 
@@ -596,7 +596,7 @@ mod tests {
             ExpressionDependence::CacheOnly
         }
 
-        fn precompute(&self, event: &laddu_core::data::NamedEventView<'_>, cache: &mut Cache) {
+        fn precompute(&self, event: &laddu_core::data::Event<'_>, cache: &mut Cache) {
             cache.store_scalar(self.sid, event.p4_at(self.p4_index).e());
         }
 
@@ -1236,16 +1236,8 @@ mod tests {
         let params = vec![1.125];
 
         let intensity: f64 = params[0] * params[0];
-        let data_weight_sum = data
-            .events_local()
-            .iter()
-            .map(|event| event.weight)
-            .sum::<f64>();
-        let mc_weight_sum = mc
-            .events_local()
-            .iter()
-            .map(|event| event.weight)
-            .sum::<f64>();
+        let data_weight_sum = data.weights_local().iter().copied().sum::<f64>();
+        let mc_weight_sum = mc.weights_local().iter().copied().sum::<f64>();
         let n_mc = mc.n_events_weighted();
         let expected = -2.0 * (data_weight_sum * intensity.ln() - mc_weight_sum * intensity / n_mc);
 
@@ -1684,13 +1676,13 @@ mod tests {
             .expect("evaluate should succeed");
         let data_term_local: f64 = data_local
             .iter()
-            .zip(nll.data_evaluator.dataset.events_local().iter())
-            .map(|(value, event)| event.weight * value.re.ln())
+            .zip(nll.data_evaluator.dataset.weights_local().iter())
+            .map(|(value, event)| *event * value.re.ln())
             .sum();
         let mc_term_local: f64 = mc_local
             .iter()
-            .zip(nll.accmc_evaluator.dataset.events_local().iter())
-            .map(|(value, event)| event.weight * value.re)
+            .zip(nll.accmc_evaluator.dataset.weights_local().iter())
+            .map(|(value, event)| *event * value.re)
             .sum();
         let data_term = crate::likelihood::nll::reduce_scalar(&world, data_term_local);
         let mc_term = crate::likelihood::nll::reduce_scalar(&world, mc_term_local);

@@ -2,7 +2,7 @@ use laddu_core::{
     amplitudes::{
         debug_key, display_key, Amplitude, AmplitudeID, AmplitudeSemanticKey, Expression,
     },
-    data::{DatasetMetadata, NamedEventView},
+    data::{DatasetMetadata, Event},
     math::{rho_m, Sheet},
     resources::{Cache, Parameters, Resources},
     traits::Variable,
@@ -76,7 +76,7 @@ impl Amplitude for PhaseSpaceFactor {
         Ok(())
     }
 
-    fn precompute(&self, event: &NamedEventView<'_>, cache: &mut Cache) {
+    fn precompute(&self, event: &Event<'_>, cache: &mut Cache) {
         let m_recoil = event.evaluate(&self.recoil_mass);
         let m_1 = event.evaluate(&self.daughter_1_mass);
         let m_2 = event.evaluate(&self.daughter_2_mass);

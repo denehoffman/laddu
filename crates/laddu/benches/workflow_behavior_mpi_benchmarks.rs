@@ -77,7 +77,7 @@ mod mpi_benches {
             .into_iter()
             .map(|index| {
                 dataset
-                    .event(index)
+                    .event_global(index)
                     .expect("subset index should be valid")
                     .data_arc()
             })
