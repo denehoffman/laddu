@@ -1,4 +1,4 @@
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from typing import Any, Literal, overload
 
 import numpy as np
@@ -37,8 +37,7 @@ class Event:
         self, variable: Mass | CosTheta | Phi | PolAngle | PolMagnitude | Mandelstam
     ) -> float: ...
 
-class Dataset(Sequence[Event]):
-    events: list[Event]
+class Dataset:
     events_global: list[Event]
     events_local: list[Event]
     n_events: int
@@ -62,14 +61,29 @@ class Dataset(Sequence[Event]):
         aliases: Mapping[str, str | Sequence[str]] | None = None,
     ) -> None: ...
     @staticmethod
-    def empty(
+    def from_events_local(
+        events: Sequence[Event],
+        *,
+        p4_names: Sequence[str] | None = None,
+        aux_names: Sequence[str] | None = None,
+        aliases: Mapping[str, str | Sequence[str]] | None = None,
+    ) -> Dataset: ...
+    @staticmethod
+    def from_events_global(
+        events: Sequence[Event],
+        *,
+        p4_names: Sequence[str] | None = None,
+        aux_names: Sequence[str] | None = None,
+        aliases: Mapping[str, str | Sequence[str]] | None = None,
+    ) -> Dataset: ...
+    @staticmethod
+    def empty_local(
         *,
         p4_names: Sequence[str],
         aux_names: Sequence[str] | None = None,
         aliases: Mapping[str, str | Sequence[str]] | None = None,
     ) -> Dataset: ...
     def __len__(self) -> int: ...
-    def __iter__(self) -> Iterator[Event]: ...
     def __add__(self, other: Dataset | int) -> Dataset: ...
     def __radd__(self, other: Dataset | int) -> Dataset: ...
     @overload
@@ -92,10 +106,15 @@ class Dataset(Sequence[Event]):
     ) -> BinnedDataset: ...
     def filter(self, expression: VariableExpression) -> Dataset: ...
     def bootstrap(self, seed: int) -> Dataset: ...
-    def iter_local(self) -> Iterator[Event]: ...
-    def iter_global(self) -> Iterator[Event]: ...
     def event_global(self, index: int) -> Event: ...
-    def push_event(
+    def push_event_local(
+        self,
+        *,
+        p4: Mapping[str, Vec4],
+        aux: Mapping[str, float] | None = None,
+        weight: float = 1.0,
+    ) -> None: ...
+    def push_event_global(
         self,
         *,
         p4: Mapping[str, Vec4],

@@ -1285,7 +1285,7 @@ where
 
     fn empty_output_batch(source: &GeneratedBatch) -> GeneratedBatch {
         GeneratedBatch::new(
-            Dataset::empty(source.dataset().metadata().clone()),
+            Dataset::empty_local(source.dataset().metadata().clone()),
             source.reaction().clone(),
             source.layout().clone(),
         )
@@ -1346,7 +1346,7 @@ where
                     Ok(event) => event,
                     Err(err) => return Some(Err(err)),
                 };
-                if let Err(err) = output.as_mut().unwrap().dataset.push_event(
+                if let Err(err) = output.as_mut().unwrap().dataset.push_event_local(
                     event.p4s.clone(),
                     event.aux.clone(),
                     event.weight,
@@ -1439,7 +1439,7 @@ impl EventGenerator {
             .iter()
             .filter_map(|label| p4_data.remove(label))
             .collect();
-        let dataset = Dataset::from_columns(metadata, p4, aux, weights)?;
+        let dataset = Dataset::from_columns_local(metadata, p4, aux, weights)?;
         Ok(GeneratedBatch::new(
             dataset,
             self.reaction.clone(),
@@ -1544,7 +1544,7 @@ mod tests {
         assert!(metadata.p4_index("kshort2").is_some());
         assert!(metadata.p4_index("recoil").is_some());
 
-        for event in dataset {
+        for event in dataset.events_global() {
             let beam_p4 = event.p4("beam").unwrap();
             let target_p4 = event.p4("target").unwrap();
             let kk_p4 = event.p4("kk").unwrap();

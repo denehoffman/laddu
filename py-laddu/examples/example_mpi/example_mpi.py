@@ -102,9 +102,9 @@ def report(summary: Summary) -> None:
             'per-rank event counts change while the global metrics stay stable.'
         )
         print(
-            'Default dataset indexing and iteration stay global under MPI. '
-            'Use `dataset.iter_local()`, `dataset.events_local`, or '
-            '`dataset.weights_local` only when a rank-local code path is '
+            'Dataset indexing stays global under MPI. Use '
+            '`dataset.events_global` for explicit global event access, or '
+            '`dataset.events_local`/`dataset.weights_local` only when a rank-local code path is '
             'actually desired.'
         )
     else:

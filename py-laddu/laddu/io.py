@@ -801,7 +801,7 @@ def _iter_numpy_batches(
     buffers = _empty_numpy_buffers(p4_names, aux_names)
     count = 0
 
-    for event in dataset:
+    for event in dataset.events_global:
         p4_map = event.p4s
         for name in p4_names:
             vec = p4_map[name]
