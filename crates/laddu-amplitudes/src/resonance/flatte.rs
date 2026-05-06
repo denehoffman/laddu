@@ -1,7 +1,7 @@
 use laddu_core::{
     amplitudes::{
-        debug_key, display_key, parameter_key, Amplitude, AmplitudeID, AmplitudeSemanticKey,
-        Expression, Parameter,
+        display_key, parameter_key, Amplitude, AmplitudeID, AmplitudeSemanticKey, Expression,
+        IntoTags, Parameter, Tags,
     },
     data::{DatasetMetadata, Event},
     math::{rho_m, Sheet},
@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 /// A Flatte [`Amplitude`].
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Flatte {
-    name: String,
+    tags: Tags,
     mass: Parameter,
     observed_channel_coupling: Parameter,
     alternate_channel_coupling: Parameter,
@@ -34,7 +34,7 @@ pub struct Flatte {
 impl Flatte {
     /// Construct a [`Flatte`] with the given mass, couplings, and channel daughter masses.
     pub fn new(
-        name: &str,
+        tags: impl IntoTags,
         mass: Parameter,
         observed_channel_coupling: Parameter,
         alternate_channel_coupling: Parameter,
@@ -43,7 +43,7 @@ impl Flatte {
         resonance_mass: &Mass,
     ) -> LadduResult<Expression> {
         Self {
-            name: name.to_string(),
+            tags: tags.into_tags(),
             mass,
             observed_channel_coupling,
             alternate_channel_coupling,
@@ -72,24 +72,16 @@ impl Amplitude for Flatte {
         self.pid_alternate_channel_coupling =
             resources.register_parameter(&self.alternate_channel_coupling)?;
         self.observed_channel_mass_ids = (
-            resources.register_scalar(Some(&format!(
-                "{}.observed_channel.daughter_1_mass",
-                self.name
-            ))),
-            resources.register_scalar(Some(&format!(
-                "{}.observed_channel.daughter_2_mass",
-                self.name
-            ))),
+            resources.register_scalar(None),
+            resources.register_scalar(None),
         );
-        self.resonance_mass_id =
-            resources.register_scalar(Some(&format!("{}.resonance_mass", self.name)));
-        resources.register_amplitude(&self.name)
+        self.resonance_mass_id = resources.register_scalar(None);
+        resources.register_amplitude(self.tags.clone())
     }
 
     fn semantic_key(&self) -> Option<AmplitudeSemanticKey> {
         Some(
             AmplitudeSemanticKey::new("Flatte")
-                .with_field("name", debug_key(&self.name))
                 .with_field("mass", parameter_key(&self.mass))
                 .with_field(
                     "observed_channel_coupling",

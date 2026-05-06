@@ -1,7 +1,7 @@
 use laddu_core::{
     amplitudes::{
-        debug_key, display_key, Amplitude, AmplitudeID, AmplitudeSemanticKey, Expression,
-        ExpressionDependence,
+        display_key, Amplitude, AmplitudeID, AmplitudeSemanticKey, Expression,
+        ExpressionDependence, IntoTags, Tags,
     },
     data::{DatasetMetadata, Event},
     resources::{Cache, Parameters, Resources},
@@ -15,16 +15,19 @@ use serde::{Deserialize, Serialize};
 /// A real-valued [`Amplitude`] which evaluates an event [`Variable`].
 #[derive(Clone, Serialize, Deserialize)]
 pub struct VariableScalar {
-    name: String,
+    tags: Tags,
     variable: Box<dyn Variable>,
     value_id: ScalarID,
 }
 
 impl VariableScalar {
     /// Create a new [`VariableScalar`] that evaluates `variable` on each event.
-    pub fn new<V: Variable + 'static>(name: &str, variable: &V) -> LadduResult<Expression> {
+    pub fn new<V: Variable + 'static>(
+        tags: impl IntoTags,
+        variable: &V,
+    ) -> LadduResult<Expression> {
         Self {
-            name: name.to_string(),
+            tags: tags.into_tags(),
             variable: dyn_clone::clone_box(variable),
             value_id: ScalarID::default(),
         }
@@ -35,11 +38,11 @@ impl VariableScalar {
 /// Extension methods for building expressions from event [`Variable`]s.
 pub trait VariableExpressionExt: Variable + 'static {
     /// Convert this variable into a real-valued [`Expression`].
-    fn as_expression(&self, name: &str) -> LadduResult<Expression>
+    fn as_expression(&self, tags: impl IntoTags) -> LadduResult<Expression>
     where
         Self: Sized,
     {
-        VariableScalar::new(name, self)
+        VariableScalar::new(tags, self)
     }
 }
 
@@ -48,14 +51,13 @@ impl<T: Variable + 'static> VariableExpressionExt for T {}
 #[typetag::serde]
 impl Amplitude for VariableScalar {
     fn register(&mut self, resources: &mut Resources) -> LadduResult<AmplitudeID> {
-        self.value_id = resources.register_scalar(Some(&format!("{}.value", self.name)));
-        resources.register_amplitude(&self.name)
+        self.value_id = resources.register_scalar(None);
+        resources.register_amplitude(self.tags.clone())
     }
 
     fn semantic_key(&self) -> Option<AmplitudeSemanticKey> {
         Some(
             AmplitudeSemanticKey::new("VariableScalar")
-                .with_field("name", debug_key(&self.name))
                 .with_field("variable", display_key(&self.variable)),
         )
     }

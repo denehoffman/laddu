@@ -8,7 +8,7 @@ from laddu.amplitude import Expression, Parameter
 from laddu.variables import CosTheta, Mandelstam, Mass, Phi, PolAngle, PolMagnitude
 
 def LookupTable(
-    name: str,
+    *tags: str,
     variables: Sequence[Mass | CosTheta | Phi | PolAngle | PolMagnitude | Mandelstam],
     axis_coordinates: Sequence[Sequence[float]] | npt.NDArray[np.float64],
     values: Sequence[complex] | npt.NDArray[np.complex128],
@@ -16,7 +16,7 @@ def LookupTable(
     boundary_mode: Literal['zero', 'zero_outside', 'zero-outside', 'clamp'] = 'zero',
 ) -> Expression: ...
 def LookupTableScalar(
-    name: str,
+    *tags: str,
     variables: Sequence[Mass | CosTheta | Phi | PolAngle | PolMagnitude | Mandelstam],
     axis_coordinates: Sequence[Sequence[float]] | npt.NDArray[np.float64],
     values: Sequence[Parameter],
@@ -24,7 +24,7 @@ def LookupTableScalar(
     boundary_mode: Literal['zero', 'zero_outside', 'zero-outside', 'clamp'] = 'zero',
 ) -> Expression: ...
 def LookupTableComplex(
-    name: str,
+    *tags: str,
     variables: Sequence[Mass | CosTheta | Phi | PolAngle | PolMagnitude | Mandelstam],
     axis_coordinates: Sequence[Sequence[float]] | npt.NDArray[np.float64],
     values: Sequence[tuple[Parameter, Parameter]],
@@ -32,7 +32,7 @@ def LookupTableComplex(
     boundary_mode: Literal['zero', 'zero_outside', 'zero-outside', 'clamp'] = 'zero',
 ) -> Expression: ...
 def LookupTablePolar(
-    name: str,
+    *tags: str,
     variables: Sequence[Mass | CosTheta | Phi | PolAngle | PolMagnitude | Mandelstam],
     axis_coordinates: Sequence[Sequence[float]] | npt.NDArray[np.float64],
     values: Sequence[tuple[Parameter, Parameter]],

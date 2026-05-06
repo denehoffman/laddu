@@ -1836,7 +1836,7 @@ fn test_precompute_all_columnar_populates_cache() {
         Arc::new(DatasetMetadata::default()),
     );
     let mut amplitude = TestAmplitude {
-        name: "test".to_string(),
+        tags: Tags::new(["test"]),
         re: parameter!("real"),
         pid_re: ParameterID::default(),
         im: parameter!("imag"),
@@ -2804,8 +2804,7 @@ fn test_parameter_registration() {
 }
 
 #[test]
-#[should_panic(expected = "refers to different underlying amplitudes")]
-fn test_duplicate_amplitude_registration() {
+fn test_duplicate_amplitude_tag_registration_is_allowed() {
     let amp1 = ComplexScalar::new(
         "same_name",
         parameter!("dup_re1", 1.0),
@@ -2818,7 +2817,11 @@ fn test_duplicate_amplitude_registration() {
         parameter!("dup_im2", 0.0),
     )
     .unwrap();
-    let _expr = amp1 + amp2;
+    let expr = amp1 + amp2;
+    assert_eq!(
+        expr.parameters().fixed().names(),
+        vec!["dup_re1", "dup_im1", "dup_re2", "dup_im2"]
+    );
 }
 
 #[test]

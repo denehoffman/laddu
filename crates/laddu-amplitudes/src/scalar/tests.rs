@@ -142,9 +142,9 @@ fn test_semantic_key_deduplicates_matching_complex_scalar() {
 }
 
 #[test]
-#[should_panic(expected = "re differs")]
-fn test_semantic_key_reports_mismatched_complex_scalar_field() {
-    let _expr = ComplexScalar::new(
+fn test_semantic_key_keeps_mismatched_complex_scalar_fields_separate() {
+    let dataset = Arc::new(test_dataset());
+    let expr = ComplexScalar::new(
         "same_complex",
         parameter!("re_param"),
         parameter!("im_param"),
@@ -156,6 +156,9 @@ fn test_semantic_key_reports_mismatched_complex_scalar_field() {
             parameter!("im_param"),
         )
         .unwrap();
+    let evaluator = expr.load(&dataset).unwrap();
+
+    assert_eq!(evaluator.amplitudes.len(), 2);
 }
 
 #[test]
@@ -198,28 +201,4 @@ fn test_polar_complex_scalar_gradient() {
     assert_relative_eq!(gradient[0][0].im, f64::sin(theta));
     assert_relative_eq!(gradient[0][1].re, -r * f64::sin(theta));
     assert_relative_eq!(gradient[0][1].im, r * f64::cos(theta));
-}
-
-#[test]
-fn test_auto_naming() {
-    let scalar = Scalar::new_auto("test").unwrap();
-    assert_eq!(scalar.parameters().free().names()[0], "test".to_string());
-    let cscalar = ComplexScalar::new_auto("test").unwrap();
-    assert_eq!(
-        cscalar.parameters().free().names()[0],
-        "test (real)".to_string()
-    );
-    assert_eq!(
-        cscalar.parameters().free().names()[1],
-        "test (imag)".to_string()
-    );
-    let pcscalar = PolarComplexScalar::new_auto("test").unwrap();
-    assert_eq!(
-        pcscalar.parameters().free().names()[0],
-        "test (mag)".to_string()
-    );
-    assert_eq!(
-        pcscalar.parameters().free().names()[1],
-        "test (phase)".to_string()
-    );
 }

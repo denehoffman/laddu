@@ -51,12 +51,12 @@ def reaction_context() -> tuple[Reaction, Particle, Particle]:
 def test_bw_evaluation() -> None:
     amp = BreitWigner(
         'bw',
-        parameter('mass'),
-        parameter('width'),
-        2,
-        Mass(['kshort1']),
-        Mass(['kshort2']),
-        Mass(['kshort1', 'kshort2']),
+        mass=parameter('mass'),
+        width=parameter('width'),
+        l=2,
+        daughter_1_mass=Mass(['kshort1']),
+        daughter_2_mass=Mass(['kshort2']),
+        resonance_mass=Mass(['kshort1', 'kshort2']),
     )
     result = amp.load(make_test_dataset()).evaluate([1.5, 0.3])
     assert pytest.approx(result[0].real) == 1.4308791652435884
@@ -66,12 +66,12 @@ def test_bw_evaluation() -> None:
 def test_bw_gradient() -> None:
     amp = BreitWigner(
         'bw',
-        parameter('mass'),
-        parameter('width'),
-        2,
-        Mass(['kshort1']),
-        Mass(['kshort2']),
-        Mass(['kshort1', 'kshort2']),
+        mass=parameter('mass'),
+        width=parameter('width'),
+        l=2,
+        daughter_1_mass=Mass(['kshort1']),
+        daughter_2_mass=Mass(['kshort2']),
+        resonance_mass=Mass(['kshort1', 'kshort2']),
     )
     result = amp.load(make_test_dataset()).evaluate_gradient([1.7, 0.3])
     assert pytest.approx(result[0][0].real) == -2.4885111876269255
@@ -83,12 +83,12 @@ def test_bw_gradient() -> None:
 def test_bw_no_bwbf_evaluation() -> None:
     amp = BreitWigner(
         'bw',
-        parameter('mass'),
-        parameter('width'),
-        2,
-        Mass(['kshort1']),
-        Mass(['kshort2']),
-        Mass(['kshort1', 'kshort2']),
+        mass=parameter('mass'),
+        width=parameter('width'),
+        l=2,
+        daughter_1_mass=Mass(['kshort1']),
+        daughter_2_mass=Mass(['kshort2']),
+        resonance_mass=Mass(['kshort1', 'kshort2']),
         barrier_factors=False,
     )
     result = amp.load(make_test_dataset()).evaluate([1.5, 0.3])
@@ -99,12 +99,12 @@ def test_bw_no_bwbf_evaluation() -> None:
 def test_bw_no_bwbf_gradient() -> None:
     amp = BreitWigner(
         'bw',
-        parameter('mass'),
-        parameter('width'),
-        2,
-        Mass(['kshort1']),
-        Mass(['kshort2']),
-        Mass(['kshort1', 'kshort2']),
+        mass=parameter('mass'),
+        width=parameter('width'),
+        l=2,
+        daughter_1_mass=Mass(['kshort1']),
+        daughter_2_mass=Mass(['kshort2']),
+        resonance_mass=Mass(['kshort1', 'kshort2']),
         barrier_factors=False,
     )
     result = amp.load(make_test_dataset()).evaluate_gradient([1.7, 0.3])
@@ -117,9 +117,9 @@ def test_bw_no_bwbf_gradient() -> None:
 def test_bw_nonrel_evaluation() -> None:
     amp = BreitWignerNonRelativistic(
         'bw',
-        parameter('mass'),
-        parameter('width'),
-        Mass(['kshort1', 'kshort2']),
+        mass=parameter('mass'),
+        width=parameter('width'),
+        resonance_mass=Mass(['kshort1', 'kshort2']),
     )
     result = amp.load(make_test_dataset()).evaluate([1.5, 0.3])
     assert pytest.approx(result[0].real) == 1.084721431628924
@@ -129,9 +129,9 @@ def test_bw_nonrel_evaluation() -> None:
 def test_bw_nonrel_gradient() -> None:
     amp = BreitWignerNonRelativistic(
         'bw',
-        parameter('mass'),
-        parameter('width'),
-        Mass(['kshort1', 'kshort2']),
+        mass=parameter('mass'),
+        width=parameter('width'),
+        resonance_mass=Mass(['kshort1', 'kshort2']),
     )
     result = amp.load(make_test_dataset()).evaluate_gradient([1.7, 0.3])
     assert pytest.approx(result[0][0].real) == -1.7757650016553739
@@ -143,12 +143,12 @@ def test_bw_nonrel_gradient() -> None:
 def test_flatte_evaluation() -> None:
     amp = Flatte(
         'flatte',
-        parameter('mass'),
-        parameter('g_obs'),
-        parameter('g_alt'),
-        (Mass(['kshort1']), Mass(['kshort2'])),
-        (0.1349768, 0.547862),
-        Mass(['kshort1', 'kshort2']),
+        mass=parameter('mass'),
+        observed_channel_coupling=parameter('g_obs'),
+        alternate_channel_coupling=parameter('g_alt'),
+        observed_channel_daughter_masses=(Mass(['kshort1']), Mass(['kshort2'])),
+        alternate_channel_daughter_masses=(0.1349768, 0.547862),
+        resonance_mass=Mass(['kshort1', 'kshort2']),
     )
     result = amp.load(make_test_dataset()).evaluate([0.98, 0.7, 0.2])
     assert pytest.approx(result[0].real) == -0.7338320342780681
@@ -158,12 +158,12 @@ def test_flatte_evaluation() -> None:
 def test_flatte_gradient() -> None:
     amp = Flatte(
         'flatte',
-        parameter('mass'),
-        parameter('g_obs'),
-        parameter('g_alt'),
-        (Mass(['kshort1']), Mass(['kshort2'])),
-        (0.1349768, 0.547862),
-        Mass(['kshort1', 'kshort2']),
+        mass=parameter('mass'),
+        observed_channel_coupling=parameter('g_obs'),
+        alternate_channel_coupling=parameter('g_alt'),
+        observed_channel_daughter_masses=(Mass(['kshort1']), Mass(['kshort2'])),
+        alternate_channel_daughter_masses=(0.1349768, 0.547862),
+        resonance_mass=Mass(['kshort1', 'kshort2']),
     )
     result = amp.load(make_test_dataset()).evaluate_gradient([0.98, 0.7, 0.2])
     assert pytest.approx(result[0][0].real) == -0.08473788905152731
@@ -177,10 +177,10 @@ def test_flatte_gradient() -> None:
 def test_voigt_evaluation() -> None:
     amp = Voigt(
         'voigt',
-        parameter('mass'),
-        parameter('width'),
-        parameter('sigma'),
-        Mass(['kshort1', 'kshort2']),
+        mass=parameter('mass'),
+        width=parameter('width'),
+        sigma=parameter('sigma'),
+        resonance_mass=Mass(['kshort1', 'kshort2']),
     )
     result = amp.load(make_test_dataset()).evaluate([0.98, 0.08, 0.02])
     assert pytest.approx(result[0].real) == 0.2857389147779551
@@ -190,10 +190,10 @@ def test_voigt_evaluation() -> None:
 def test_voigt_gradient() -> None:
     amp = Voigt(
         'voigt',
-        parameter('mass'),
-        parameter('width'),
-        parameter('sigma'),
-        Mass(['kshort1', 'kshort2']),
+        mass=parameter('mass'),
+        width=parameter('width'),
+        sigma=parameter('sigma'),
+        resonance_mass=Mass(['kshort1', 'kshort2']),
     )
     result = amp.load(make_test_dataset()).evaluate_gradient([0.98, 0.08, 0.02])
     assert pytest.approx(result[0][0].real) == 0.7225730704295464
@@ -209,11 +209,11 @@ def test_phase_space_factor_evaluation() -> None:
     decay = reaction.decay('kk')
     amp = PhaseSpaceFactor(
         'kappa',
-        reaction.mass('proton'),
-        decay.daughter_1_mass(),
-        decay.daughter_2_mass(),
-        decay.parent_mass(),
-        reaction.mandelstam('s'),
+        recoil_mass=reaction.mass('proton'),
+        daughter_1_mass=decay.daughter_1_mass(),
+        daughter_2_mass=decay.daughter_2_mass(),
+        resonance_mass=decay.parent_mass(),
+        mandelstam_s=reaction.mandelstam('s'),
     )
     result = amp.load(make_test_dataset()).evaluate([])
     assert pytest.approx(result[0].real) == 7.028417575882146e-05
@@ -225,11 +225,11 @@ def test_phase_space_factor_gradient() -> None:
     decay = reaction.decay('kk')
     amp = PhaseSpaceFactor(
         'kappa',
-        reaction.mass('proton'),
-        decay.daughter_1_mass(),
-        decay.daughter_2_mass(),
-        decay.parent_mass(),
-        reaction.mandelstam('s'),
+        recoil_mass=reaction.mass('proton'),
+        daughter_1_mass=decay.daughter_1_mass(),
+        daughter_2_mass=decay.daughter_2_mass(),
+        resonance_mass=decay.parent_mass(),
+        mandelstam_s=reaction.mandelstam('s'),
     )
     result = amp.load(make_test_dataset()).evaluate_gradient([])
     assert len(result[0]) == 0

@@ -60,7 +60,7 @@ To implement this in code, we could imagine a function like
        proton = ld.Particle.stored('proton')
        reaction = ld.Reaction.two_to_two(beam, target, kk, proton)
        angles = reaction.decay('kk').angles('kshort1')
-       ylm = ld.Ylm('ylm', l, m, angles)
+       ylm = ld.Ylm('ylm', l=l, m=m, angles=angles)
        model = ylm.conj() # take the conjugate
        evaluator = model.load(data)
        values = evaluator.evaluate([]) # no free parameters
@@ -137,8 +137,8 @@ Again, we can write this in code in a rather simple way:
        proton = ld.Particle.stored('proton')
        reaction = ld.Reaction.two_to_two(beam, target, kk, proton)
        angles = reaction.decay('kk').angles('kshort1')
-       ylm = ld.Ylm('ylm', l, m, angles)
-       ylm_prime = ld.Ylm('ylm_prime', l_prime, m_prime, angles)
+       ylm = ld.Ylm('ylm', l=l, m=m, angles=angles)
+       ylm_prime = ld.Ylm('ylm_prime', l=l_prime, m=m_prime, angles=angles)
        model = ylm.conj() * ylm_prime.real()
        evaluator = model.load(accmc)
        values = evaluator.evaluate([]) # no free parameters

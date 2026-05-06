@@ -223,7 +223,7 @@ fn build_large_gradient_case(dataset: &Arc<Dataset>, n_terms: usize) -> LargeGra
     .norm_sqr();
     for index in 1..n_terms {
         let amplitude = TestAmplitude::new(
-            &format!("large_grad_amp_{index}"),
+            format!("large_grad_amp_{index}"),
             parameter!(&format!("large_grad_re_{index}")),
             parameter!(&format!("large_grad_im_{index}")),
         )

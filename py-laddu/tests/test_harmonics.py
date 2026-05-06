@@ -39,14 +39,18 @@ def reaction_context() -> tuple[Reaction, Angles]:
 
 def test_ylm_evaluation() -> None:
     _, angles = reaction_context()
-    result = Ylm('ylm', 1, 1, angles).load(make_test_dataset()).evaluate([])
+    result = Ylm('ylm', l=1, m=1, angles=angles).load(make_test_dataset()).evaluate([])
     assert pytest.approx(result[0].real) == 0.2713394403451028
     assert pytest.approx(result[0].imag) == 0.1426897184196572
 
 
 def test_ylm_gradient() -> None:
     _, angles = reaction_context()
-    result = Ylm('ylm', 1, 1, angles).load(make_test_dataset()).evaluate_gradient([])
+    result = (
+        Ylm('ylm', l=1, m=1, angles=angles)
+        .load(make_test_dataset())
+        .evaluate_gradient([])
+    )
     assert len(result[0]) == 0
 
 
@@ -56,7 +60,9 @@ def test_zlm_evaluation() -> None:
         reaction, pol_magnitude='pol_magnitude', pol_angle='pol_angle'
     )
     result = (
-        Zlm('zlm', 1, 1, '+', angles, polarization).load(make_test_dataset()).evaluate([])
+        Zlm('zlm', l=1, m=1, r='+', angles=angles, polarization=polarization)
+        .load(make_test_dataset())
+        .evaluate([])
     )
     assert pytest.approx(result[0].real) == 0.042841277026400094
     assert pytest.approx(result[0].imag) == -0.23859639145706923
@@ -68,7 +74,7 @@ def test_zlm_gradient() -> None:
         reaction, pol_magnitude='pol_magnitude', pol_angle='pol_angle'
     )
     result = (
-        Zlm('zlm', 1, 1, '+', angles, polarization)
+        Zlm('zlm', l=1, m=1, r='+', angles=angles, polarization=polarization)
         .load(make_test_dataset())
         .evaluate_gradient([])
     )
@@ -80,7 +86,11 @@ def test_polphase_evaluation() -> None:
     polarization = Polarization(
         reaction, pol_magnitude='pol_magnitude', pol_angle='pol_angle'
     )
-    result = PolPhase('polphase', polarization).load(make_test_dataset()).evaluate([])
+    result = (
+        PolPhase('polphase', polarization=polarization)
+        .load(make_test_dataset())
+        .evaluate([])
+    )
     assert pytest.approx(result[0].real) == -0.28729144623530045
     assert pytest.approx(result[0].imag) == -0.2572403892603803
 
@@ -91,6 +101,8 @@ def test_polphase_gradient() -> None:
         reaction, pol_magnitude='pol_magnitude', pol_angle='pol_angle'
     )
     result = (
-        PolPhase('polphase', polarization).load(make_test_dataset()).evaluate_gradient([])
+        PolPhase('polphase', polarization=polarization)
+        .load(make_test_dataset())
+        .evaluate_gradient([])
     )
     assert len(result[0]) == 0

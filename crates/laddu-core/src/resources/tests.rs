@@ -109,6 +109,33 @@ fn test_resources_non_strict_zero_match_glob_is_noop() {
     resources.isolate("missing*");
     assert!(resources.active[signal.1]);
     assert!(resources.active[background.1]);
+
+    resources.isolate_many(&["missing*"]);
+    assert!(!resources.active[signal.1]);
+    assert!(!resources.active[background.1]);
+}
+
+#[test]
+fn test_untagged_amplitudes_remain_active_without_selectors() {
+    let mut resources = Resources::default();
+
+    let untagged = resources.register_amplitude([""]).unwrap();
+    let tagged = resources.register_amplitude("tagged").unwrap();
+
+    assert!(resources.active[untagged.1]);
+    assert!(resources.active[tagged.1]);
+
+    resources.deactivate_all();
+    assert!(resources.active[untagged.1]);
+    assert!(!resources.active[tagged.1]);
+
+    resources.activate_all();
+    resources.isolate_strict("tagged").unwrap();
+    assert!(resources.active[untagged.1]);
+    assert!(resources.active[tagged.1]);
+
+    assert!(resources.deactivate_strict("").is_err());
+    assert!(resources.apply_active_mask(&[false, true]).is_err());
 }
 
 #[test]
@@ -288,8 +315,13 @@ fn test_uninit_parameter_registration() {
 }
 
 #[test]
-fn test_duplicate_named_amplitude_registration_error() {
+fn test_duplicate_tag_registration_controls_all_use_sites() {
     let mut resources = Resources::default();
-    assert!(resources.register_amplitude("test_amp").is_ok());
-    assert!(resources.register_amplitude("test_amp").is_err());
+    let amp1 = resources.register_amplitude("test_amp").unwrap();
+    let amp2 = resources.register_amplitude("test_amp").unwrap();
+    assert_ne!(amp1.1, amp2.1);
+
+    resources.deactivate_strict("test_amp").unwrap();
+    assert!(!resources.active[amp1.1]);
+    assert!(!resources.active[amp2.1]);
 }

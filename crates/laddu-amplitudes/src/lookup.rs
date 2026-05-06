@@ -3,7 +3,7 @@ use std::str::FromStr;
 use laddu_core::{
     amplitudes::{
         debug_key, parameter_pair_slice_key, parameter_slice_key, Amplitude, AmplitudeID,
-        AmplitudeSemanticKey, Expression, ExpressionDependence, Parameter,
+        AmplitudeSemanticKey, Expression, ExpressionDependence, IntoTags, Parameter, Tags,
     },
     data::{DatasetMetadata, Event},
     resources::{Cache, ParameterID, Parameters, Resources},
@@ -348,7 +348,7 @@ impl LookupValues {
 /// A lookup table over one or more event [`Variable`]s.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct LookupTable {
-    name: String,
+    tags: Tags,
     variables: Vec<Box<dyn Variable>>,
     axis_coordinates: Vec<LookupAxis>,
     values: LookupValues,
@@ -361,7 +361,7 @@ pub struct LookupTable {
 impl LookupTable {
     /// Create a fixed complex lookup table.
     pub fn new(
-        name: &str,
+        tags: impl IntoTags,
         variables: Vec<Box<dyn Variable>>,
         axis_coordinates: Vec<LookupAxis>,
         values: Vec<Complex64>,
@@ -369,7 +369,7 @@ impl LookupTable {
         boundary_mode: LookupBoundaryMode,
     ) -> LadduResult<Expression> {
         Self::with_values(
-            name,
+            tags,
             variables,
             axis_coordinates,
             LookupValues::fixed_complex(values),
@@ -380,7 +380,7 @@ impl LookupTable {
 
     /// Create a parameterized scalar lookup table.
     pub fn new_scalar(
-        name: &str,
+        tags: impl IntoTags,
         variables: Vec<Box<dyn Variable>>,
         axis_coordinates: Vec<LookupAxis>,
         values: Vec<Parameter>,
@@ -388,7 +388,7 @@ impl LookupTable {
         boundary_mode: LookupBoundaryMode,
     ) -> LadduResult<Expression> {
         Self::with_values(
-            name,
+            tags,
             variables,
             axis_coordinates,
             LookupValues::scalar(values),
@@ -399,7 +399,7 @@ impl LookupTable {
 
     /// Create a parameterized cartesian complex lookup table.
     pub fn new_cartesian_complex(
-        name: &str,
+        tags: impl IntoTags,
         variables: Vec<Box<dyn Variable>>,
         axis_coordinates: Vec<LookupAxis>,
         values: Vec<(Parameter, Parameter)>,
@@ -407,7 +407,7 @@ impl LookupTable {
         boundary_mode: LookupBoundaryMode,
     ) -> LadduResult<Expression> {
         Self::with_values(
-            name,
+            tags,
             variables,
             axis_coordinates,
             LookupValues::cartesian_complex(values),
@@ -418,7 +418,7 @@ impl LookupTable {
 
     /// Create a parameterized polar complex lookup table.
     pub fn new_polar_complex(
-        name: &str,
+        tags: impl IntoTags,
         variables: Vec<Box<dyn Variable>>,
         axis_coordinates: Vec<LookupAxis>,
         values: Vec<(Parameter, Parameter)>,
@@ -426,7 +426,7 @@ impl LookupTable {
         boundary_mode: LookupBoundaryMode,
     ) -> LadduResult<Expression> {
         Self::with_values(
-            name,
+            tags,
             variables,
             axis_coordinates,
             LookupValues::polar_complex(values),
@@ -436,7 +436,7 @@ impl LookupTable {
     }
 
     fn with_values(
-        name: &str,
+        tags: impl IntoTags,
         variables: Vec<Box<dyn Variable>>,
         axis_coordinates: Vec<LookupAxis>,
         values: LookupValues,
@@ -466,7 +466,7 @@ impl LookupTable {
             });
         }
         Self {
-            name: name.to_string(),
+            tags: tags.into_tags(),
             variables,
             axis_coordinates,
             values,
@@ -535,18 +535,17 @@ impl Amplitude for LookupTable {
             .interpolation
             .vertex_count(self.axis_coordinates.len())?;
         self.vertex_ids = (0..vertex_count)
-            .map(|index| resources.register_scalar(Some(&format!("{}.vertex_{index}", self.name))))
+            .map(|_| resources.register_scalar(None))
             .collect();
         self.weight_ids = (0..vertex_count)
-            .map(|index| resources.register_scalar(Some(&format!("{}.weight_{index}", self.name))))
+            .map(|_| resources.register_scalar(None))
             .collect();
-        resources.register_amplitude(&self.name)
+        resources.register_amplitude(self.tags.clone())
     }
 
     fn semantic_key(&self) -> Option<AmplitudeSemanticKey> {
         Some(
             AmplitudeSemanticKey::new("LookupTable")
-                .with_field("name", debug_key(&self.name))
                 .with_field("variables", debug_key(&self.variables))
                 .with_field("axis_coordinates", debug_key(&self.axis_coordinates))
                 .with_field("values", self.values.semantic_key())
@@ -620,8 +619,8 @@ impl Amplitude for LookupTable {
 ///
 /// Parameters
 /// ----------
-/// name : str
-///     The Amplitude name.
+/// tags : str
+///     Activation tag(s) for the amplitude.
 /// variables : list of laddu variables
 ///     The event variables that define the lookup coordinates.
 /// axis_coordinates : list of list of float
@@ -643,8 +642,8 @@ impl Amplitude for LookupTable {
 ///
 /// Parameters
 /// ----------
-/// name : str
-///     The Amplitude name.
+/// tags : str
+///     Activation tag(s) for the amplitude.
 /// variables : list of laddu variables
 ///     The event variables that define the lookup coordinates.
 /// axis_coordinates : list of list of float
@@ -666,8 +665,8 @@ impl Amplitude for LookupTable {
 ///
 /// Parameters
 /// ----------
-/// name : str
-///     The Amplitude name.
+/// tags : str
+///     Activation tag(s) for the amplitude.
 /// variables : list of laddu variables
 ///     The event variables that define the lookup coordinates.
 /// axis_coordinates : list of list of float
@@ -689,8 +688,8 @@ impl Amplitude for LookupTable {
 ///
 /// Parameters
 /// ----------
-/// name : str
-///     The Amplitude name.
+/// tags : str
+///     Activation tag(s) for the amplitude.
 /// variables : list of laddu variables
 ///     The event variables that define the lookup coordinates.
 /// axis_coordinates : list of list of float

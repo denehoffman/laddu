@@ -35,7 +35,7 @@ def make_test_dataset() -> Dataset:
 
 
 def test_scalar_creation_and_evaluation() -> None:
-    amp = Scalar('test_scalar', parameter('test_param'))
+    amp = Scalar('test_scalar', value=parameter('test_param'))
     dataset = make_test_dataset()
     evaluator = amp.load(dataset)
     result = evaluator.evaluate([2.5])
@@ -44,7 +44,7 @@ def test_scalar_creation_and_evaluation() -> None:
 
 
 def test_scalar_gradient() -> None:
-    amp = Scalar('test_scalar', parameter('test_param'))
+    amp = Scalar('test_scalar', value=parameter('test_param'))
     dataset = make_test_dataset()
     expr = amp.norm_sqr()
     evaluator = expr.load(dataset)
@@ -54,7 +54,9 @@ def test_scalar_gradient() -> None:
 
 
 def test_complex_scalar_creation_and_evaluation() -> None:
-    amp = ComplexScalar('test_complex', (parameter('re_param'), parameter('im_param')))
+    amp = ComplexScalar(
+        'test_complex', re=parameter('re_param'), im=parameter('im_param')
+    )
     dataset = make_test_dataset()
     evaluator = amp.load(dataset)
     result = evaluator.evaluate([1.5, 2.5])
@@ -63,7 +65,9 @@ def test_complex_scalar_creation_and_evaluation() -> None:
 
 
 def test_complex_scalar_gradient() -> None:
-    amp = ComplexScalar('test_complex', (parameter('re_param'), parameter('im_param')))
+    amp = ComplexScalar(
+        'test_complex', re=parameter('re_param'), im=parameter('im_param')
+    )
     dataset = make_test_dataset()
     expr = amp.norm_sqr()
     evaluator = expr.load(dataset)
@@ -76,7 +80,7 @@ def test_complex_scalar_gradient() -> None:
 
 def test_polar_complex_scalar_creation_and_evaluation() -> None:
     amp = PolarComplexScalar(
-        'test_polar', (parameter('r_param'), parameter('theta_param'))
+        'test_polar', r=parameter('r_param'), theta=parameter('theta_param')
     )
     dataset = make_test_dataset()
     evaluator = amp.load(dataset)
@@ -89,7 +93,7 @@ def test_polar_complex_scalar_creation_and_evaluation() -> None:
 
 def test_polar_complex_scalar_gradient() -> None:
     amp = PolarComplexScalar(
-        'test_polar', (parameter('r_param'), parameter('theta_param'))
+        'test_polar', r=parameter('r_param'), theta=parameter('theta_param')
     )
     dataset = make_test_dataset()
     evaluator = amp.load(dataset)
@@ -102,12 +106,16 @@ def test_polar_complex_scalar_gradient() -> None:
     assert pytest.approx(gradient[0][1].imag) == r * np.cos(theta)
 
 
-def test_auto_naming() -> None:
-    scalar = Scalar('test')
-    assert scalar.parameters.free.names[0] == 'test'
-    cscalar = ComplexScalar('test')
-    assert cscalar.parameters.free.names[0] == 'test (real)'
-    assert cscalar.parameters.free.names[1] == 'test (imag)'
-    pcscalar = PolarComplexScalar('test')
-    assert pcscalar.parameters.free.names[0] == 'test (mag)'
-    assert pcscalar.parameters.free.names[1] == 'test (phase)'
+def test_tags_do_not_auto_name_parameters() -> None:
+    scalar = Scalar('test', value=parameter('explicit'))
+    assert scalar.parameters.free.names[0] == 'explicit'
+    cscalar = ComplexScalar(
+        'test', re=parameter('explicit re'), im=parameter('explicit im')
+    )
+    assert cscalar.parameters.free.names[0] == 'explicit re'
+    assert cscalar.parameters.free.names[1] == 'explicit im'
+    pcscalar = PolarComplexScalar(
+        'test', r=parameter('explicit r'), theta=parameter('explicit theta')
+    )
+    assert pcscalar.parameters.free.names[0] == 'explicit r'
+    assert pcscalar.parameters.free.names[1] == 'explicit theta'

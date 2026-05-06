@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     data::Event,
-    expression::{Amplitude, AmplitudeID, Expression},
+    expression::{Amplitude, AmplitudeID, Expression, IntoTags, Tags},
     parameters::Parameter,
     resources::{Cache, Parameters, Resources},
     LadduResult, ParameterID, ScalarID,
@@ -13,7 +13,7 @@ use crate::{
 /// A testing [`Amplitude`].
 #[derive(Clone, Serialize, Deserialize)]
 pub struct TestAmplitude {
-    pub(crate) name: String,
+    pub(crate) tags: Tags,
     pub(crate) re: Parameter,
     pub(crate) pid_re: ParameterID,
     pub(crate) im: Parameter,
@@ -24,9 +24,9 @@ pub struct TestAmplitude {
 impl TestAmplitude {
     /// Create a new testing [`Amplitude`].
     #[allow(clippy::new_ret_no_self)]
-    pub fn new(name: &str, re: Parameter, im: Parameter) -> LadduResult<Expression> {
+    pub fn new(tags: impl IntoTags, re: Parameter, im: Parameter) -> LadduResult<Expression> {
         Self {
-            name: name.to_string(),
+            tags: tags.into_tags(),
             re,
             pid_re: Default::default(),
             im,
@@ -42,8 +42,8 @@ impl Amplitude for TestAmplitude {
     fn register(&mut self, resources: &mut Resources) -> LadduResult<AmplitudeID> {
         self.pid_re = resources.register_parameter(&self.re)?;
         self.pid_im = resources.register_parameter(&self.im)?;
-        self.beam_energy = resources.register_scalar(Some(&format!("{}.beam_energy", self.name)));
-        resources.register_amplitude(&self.name)
+        self.beam_energy = resources.register_scalar(None);
+        resources.register_amplitude(self.tags.clone())
     }
 
     fn precompute(&self, event: &Event<'_>, cache: &mut Cache) {

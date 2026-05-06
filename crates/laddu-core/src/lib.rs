@@ -619,8 +619,8 @@ pub enum LadduError {
         /// Name of amplitude which is already registered
         name: String,
     },
-    /// An error which occurs when the user tries to use an unregistered amplitude.
-    #[error("No registered amplitude with name \"{name}\"!")]
+    /// An error which occurs when the user tries to select an unregistered amplitude tag.
+    #[error("No registered amplitude with tag \"{name}\"!")]
     AmplitudeNotFoundError {
         /// Name of amplitude which failed lookup
         name: String,

@@ -1,5 +1,7 @@
 use laddu_core::{
-    amplitudes::{debug_key, Amplitude, AmplitudeID, AmplitudeSemanticKey, Expression},
+    amplitudes::{
+        debug_key, Amplitude, AmplitudeID, AmplitudeSemanticKey, Expression, IntoTags, Tags,
+    },
     data::{DatasetMetadata, Event},
     math::WignerDMatrix,
     resources::{Cache, ComplexScalarID, Parameters, Resources},
@@ -17,7 +19,7 @@ use crate::angular::ClebschGordan;
 /// An amplitude evaluating a Wigner-D matrix element from decay angles.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct WignerD {
-    name: String,
+    tags: Tags,
     spin: AngularMomentum,
     row_projection: AngularMomentumProjection,
     column_projection: AngularMomentumProjection,
@@ -33,7 +35,7 @@ impl WignerD {
     /// The returned expression evaluates
     /// `D^j_{m' m}(phi, theta, 0)`, with `theta = acos(costheta)`.
     pub fn new(
-        name: &str,
+        tags: impl IntoTags,
         spin: AngularMomentum,
         row_projection: AngularMomentumProjection,
         column_projection: AngularMomentumProjection,
@@ -42,7 +44,7 @@ impl WignerD {
         SpinState::new(spin, row_projection)?;
         SpinState::new(spin, column_projection)?;
         Self {
-            name: name.to_string(),
+            tags: tags.into_tags(),
             spin,
             row_projection,
             column_projection,
@@ -61,7 +63,7 @@ pub trait DecayAmplitudeExt {
     #[allow(clippy::too_many_arguments)]
     fn helicity_factor(
         &self,
-        name: &str,
+        tags: impl IntoTags,
         spin: AngularMomentum,
         projection: AngularMomentumProjection,
         daughter: &str,
@@ -74,7 +76,7 @@ pub trait DecayAmplitudeExt {
     #[allow(clippy::too_many_arguments)]
     fn canonical_factor(
         &self,
-        name: &str,
+        tags: impl IntoTags,
         spin: AngularMomentum,
         projection: AngularMomentumProjection,
         orbital_l: OrbitalAngularMomentum,
@@ -91,7 +93,7 @@ pub trait DecayAmplitudeExt {
 impl DecayAmplitudeExt for Decay {
     fn helicity_factor(
         &self,
-        name: &str,
+        tags: impl IntoTags,
         spin: AngularMomentum,
         projection: AngularMomentumProjection,
         daughter: &str,
@@ -101,12 +103,12 @@ impl DecayAmplitudeExt for Decay {
     ) -> LadduResult<Expression> {
         let lambda = AngularMomentumProjection::from_twice(lambda_1.value() - lambda_2.value());
         let angles = self.angles(daughter, frame)?;
-        Ok(WignerD::new(name, spin, projection, lambda, &angles)?.conj())
+        Ok(WignerD::new(tags, spin, projection, lambda, &angles)?.conj())
     }
 
     fn canonical_factor(
         &self,
-        name: &str,
+        tags: impl IntoTags,
         spin: AngularMomentum,
         projection: AngularMomentumProjection,
         orbital_l: OrbitalAngularMomentum,
@@ -123,7 +125,7 @@ impl DecayAmplitudeExt for Decay {
         Ok(
             Expression::from(f64::from(2 * orbital_l.value() + 1).sqrt())
                 * ClebschGordan::new(
-                    &format!("{name}.orbital_spin_cg"),
+                    (),
                     orbital_l.angular_momentum(),
                     AngularMomentumProjection::integer(0),
                     coupled_spin,
@@ -132,7 +134,7 @@ impl DecayAmplitudeExt for Decay {
                     lambda,
                 )?
                 * ClebschGordan::new(
-                    &format!("{name}.daughter_spin_cg"),
+                    (),
                     daughter_1_spin,
                     lambda_1,
                     daughter_2_spin,
@@ -140,15 +142,8 @@ impl DecayAmplitudeExt for Decay {
                     coupled_spin,
                     lambda,
                 )?
-                * self.helicity_factor(
-                    &format!("{name}.wigner_d"),
-                    spin,
-                    projection,
-                    daughter,
-                    lambda_1,
-                    lambda_2,
-                    frame,
-                )?,
+                * self
+                    .helicity_factor(tags, spin, projection, daughter, lambda_1, lambda_2, frame)?,
         )
     }
 }
@@ -157,13 +152,12 @@ impl DecayAmplitudeExt for Decay {
 impl Amplitude for WignerD {
     fn register(&mut self, resources: &mut Resources) -> LadduResult<AmplitudeID> {
         self.value_id = resources.register_complex_scalar(None);
-        resources.register_amplitude(&self.name)
+        resources.register_amplitude(self.tags.clone())
     }
 
     fn semantic_key(&self) -> Option<AmplitudeSemanticKey> {
         Some(
             AmplitudeSemanticKey::new("WignerD")
-                .with_field("name", debug_key(&self.name))
                 .with_field("spin", self.spin.value().to_string())
                 .with_field("row_projection", self.row_projection.value().to_string())
                 .with_field(

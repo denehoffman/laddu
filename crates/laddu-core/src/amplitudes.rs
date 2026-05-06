@@ -14,9 +14,9 @@ pub use crate::{
         Amplitude, AmplitudeID, AmplitudeSemanticField, AmplitudeSemanticKey, CompiledExpression,
         CompiledExpressionNode, Evaluator, Expression, ExpressionCompileMetrics,
         ExpressionDependence, ExpressionRuntimeDiagnostics, ExpressionSpecializationMetrics,
-        ExpressionSpecializationOrigin, ExpressionSpecializationStatus,
+        ExpressionSpecializationOrigin, ExpressionSpecializationStatus, IntoTags,
         NormalizationExecutionSetsExplain, NormalizationPlanExplain, PrecomputedCachedIntegral,
-        PrecomputedCachedIntegralGradientTerm,
+        PrecomputedCachedIntegralGradientTerm, Tags,
     },
     parameters::{Parameter, ParameterMap},
 };

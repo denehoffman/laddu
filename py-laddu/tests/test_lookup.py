@@ -37,9 +37,9 @@ def make_test_dataset() -> Dataset:
 def test_lookup_table_1d_nearest() -> None:
     amp = LookupTable(
         'lookup',
-        [Mass(['kshort1'])],
-        [[0.0, 0.25, 0.75, 1.0]],
-        [1.0 + 0.0j, 2.0 + 3.0j, 4.0 + 0.0j],
+        variables=[Mass(['kshort1'])],
+        axis_coordinates=[[0.0, 0.25, 0.75, 1.0]],
+        values=[1.0 + 0.0j, 2.0 + 3.0j, 4.0 + 0.0j],
     )
 
     result = amp.load(make_test_dataset()).evaluate([])
@@ -51,9 +51,9 @@ def test_lookup_table_1d_nearest() -> None:
 def test_lookup_table_2d_row_major() -> None:
     amp = LookupTable(
         'lookup',
-        [Mass(['kshort1']), Mass(['kshort1', 'kshort2'])],
-        [[0.0, 1.0, 2.0], [0.0, 1.0, 2.0]],
-        [1.0 + 0.0j, 2.0 + 0.0j, 3.0 + 0.0j, 4.0 + 0.0j],
+        variables=[Mass(['kshort1']), Mass(['kshort1', 'kshort2'])],
+        axis_coordinates=[[0.0, 1.0, 2.0], [0.0, 1.0, 2.0]],
+        values=[1.0 + 0.0j, 2.0 + 0.0j, 3.0 + 0.0j, 4.0 + 0.0j],
     )
 
     result = amp.load(make_test_dataset()).evaluate([])
@@ -65,9 +65,9 @@ def test_lookup_table_2d_row_major() -> None:
 def test_lookup_table_zero_boundary() -> None:
     amp = LookupTable(
         'lookup',
-        [Mass(['kshort1', 'kshort2'])],
-        [[0.0, 0.5, 1.0]],
-        [1.0 + 0.0j, 2.0 + 0.0j],
+        variables=[Mass(['kshort1', 'kshort2'])],
+        axis_coordinates=[[0.0, 0.5, 1.0]],
+        values=[1.0 + 0.0j, 2.0 + 0.0j],
     )
 
     result = amp.load(make_test_dataset()).evaluate([])
@@ -79,9 +79,9 @@ def test_lookup_table_zero_boundary() -> None:
 def test_lookup_table_clamp_boundary() -> None:
     amp = LookupTable(
         'lookup',
-        [Mass(['kshort1', 'kshort2'])],
-        [[0.0, 0.5, 1.0]],
-        [1.0 + 0.0j, 2.0 + 0.0j],
+        variables=[Mass(['kshort1', 'kshort2'])],
+        axis_coordinates=[[0.0, 0.5, 1.0]],
+        values=[1.0 + 0.0j, 2.0 + 0.0j],
         boundary_mode='clamp',
     )
 
@@ -109,7 +109,7 @@ def test_lookup_table_1d_linear() -> None:
 def test_lookup_table_accepts_numpy_arrays() -> None:
     amp = LookupTable(
         'lookup',
-        [Mass(['kshort1'])],
+        variables=[Mass(['kshort1'])],
         axis_coordinates=np.array([[0.0, 1.0]], dtype=np.float64),
         values=np.array([1.0 + 0.0j, 3.0 + 0.0j], dtype=np.complex128),
         interpolation='linear',
@@ -124,9 +124,9 @@ def test_lookup_table_accepts_numpy_arrays() -> None:
 def test_lookup_table_2d_linear_row_major() -> None:
     amp = LookupTable(
         'lookup',
-        [Mass(['kshort1']), Mass(['proton'])],
-        [[0.0, 1.0], [1.0, 2.0]],
-        [1.0 + 0.0j, 4.0 + 0.0j, 3.0 + 0.0j, 6.0 + 0.0j],
+        variables=[Mass(['kshort1']), Mass(['proton'])],
+        axis_coordinates=[[0.0, 1.0], [1.0, 2.0]],
+        values=[1.0 + 0.0j, 4.0 + 0.0j, 3.0 + 0.0j, 6.0 + 0.0j],
         interpolation='linear',
     )
 
@@ -139,16 +139,16 @@ def test_lookup_table_2d_linear_row_major() -> None:
 def test_lookup_table_linear_boundaries() -> None:
     zero = LookupTable(
         'lookup_zero',
-        [Mass(['kshort1', 'kshort2'])],
-        [[0.0, 1.0]],
-        [1.0 + 0.0j, 3.0 + 0.0j],
+        variables=[Mass(['kshort1', 'kshort2'])],
+        axis_coordinates=[[0.0, 1.0]],
+        values=[1.0 + 0.0j, 3.0 + 0.0j],
         interpolation='linear',
     )
     clamp = LookupTable(
         'lookup_clamp',
-        [Mass(['kshort1', 'kshort2'])],
-        [[0.0, 1.0]],
-        [1.0 + 0.0j, 3.0 + 0.0j],
+        variables=[Mass(['kshort1', 'kshort2'])],
+        axis_coordinates=[[0.0, 1.0]],
+        values=[1.0 + 0.0j, 3.0 + 0.0j],
         interpolation='linear',
         boundary_mode='clamp',
     )
@@ -166,9 +166,9 @@ def test_lookup_table_linear_boundaries() -> None:
 def test_lookup_table_scalar_parameters_and_gradient() -> None:
     amp = LookupTableScalar(
         'lookup',
-        [Mass(['kshort1'])],
-        [[0.0, 0.25, 0.75, 1.0]],
-        [parameter('p0'), parameter('p1'), parameter('p2')],
+        variables=[Mass(['kshort1'])],
+        axis_coordinates=[[0.0, 0.25, 0.75, 1.0]],
+        values=[parameter('p0'), parameter('p1'), parameter('p2')],
     ).norm_sqr()
 
     gradient = amp.load(make_test_dataset()).evaluate_gradient([1.0, 2.0, 3.0])
@@ -184,9 +184,9 @@ def test_lookup_table_scalar_parameters_and_gradient() -> None:
 def test_lookup_table_linear_scalar_parameters_and_gradient() -> None:
     amp = LookupTableScalar(
         'lookup',
-        [Mass(['kshort1'])],
-        [[0.0, 1.0]],
-        [parameter('p0'), parameter('p1')],
+        variables=[Mass(['kshort1'])],
+        axis_coordinates=[[0.0, 1.0]],
+        values=[parameter('p0'), parameter('p1')],
         interpolation='linear',
     ).norm_sqr()
 
@@ -202,9 +202,9 @@ def test_lookup_table_linear_scalar_parameters_and_gradient() -> None:
 def test_lookup_table_linear_complex_parameters_and_gradient() -> None:
     amp = LookupTableComplex(
         'lookup',
-        [Mass(['kshort1'])],
-        [[0.0, 1.0]],
-        [
+        variables=[Mass(['kshort1'])],
+        axis_coordinates=[[0.0, 1.0]],
+        values=[
             (parameter('re0'), parameter('im0')),
             (parameter('re1'), parameter('im1')),
         ],
@@ -240,9 +240,9 @@ def test_lookup_table_linear_complex_parameters_and_gradient() -> None:
 def test_lookup_table_complex_parameters() -> None:
     amp = LookupTableComplex(
         'lookup',
-        [Mass(['kshort1'])],
-        [[0.0, 0.25, 0.75, 1.0]],
-        [
+        variables=[Mass(['kshort1'])],
+        axis_coordinates=[[0.0, 0.25, 0.75, 1.0]],
+        values=[
             (parameter('re0'), parameter('im0')),
             (parameter('re1'), parameter('im1')),
             (parameter('re2'), parameter('im2')),
@@ -258,9 +258,9 @@ def test_lookup_table_complex_parameters() -> None:
 def test_lookup_table_polar_parameters() -> None:
     amp = LookupTablePolar(
         'lookup',
-        [Mass(['kshort1'])],
-        [[0.0, 0.25, 0.75, 1.0]],
-        [
+        variables=[Mass(['kshort1'])],
+        axis_coordinates=[[0.0, 0.25, 0.75, 1.0]],
+        values=[
             (parameter('r0'), parameter('theta0')),
             (parameter('r1'), parameter('theta1')),
             (parameter('r2'), parameter('theta2')),
@@ -277,7 +277,7 @@ def test_lookup_table_rejects_shape_mismatch() -> None:
     with pytest.raises(ValueError, match='lookup-table values'):
         LookupTable(
             'lookup',
-            [Mass(['kshort1'])],
-            [[0.0, 0.5, 1.0]],
-            [1.0 + 0.0j],
+            variables=[Mass(['kshort1'])],
+            axis_coordinates=[[0.0, 0.5, 1.0]],
+            values=[1.0 + 0.0j],
         )

@@ -582,26 +582,26 @@ impl NLL {
     ) -> LadduResult<StochasticNLL> {
         StochasticNLL::new(self.clone(), batch_size, seed)
     }
-    /// Activate an [`Amplitude`](`laddu_core::amplitudes::Amplitude`) by name, skipping missing entries.
+    /// Activate an [`Amplitude`](`laddu_core::amplitudes::Amplitude`) by tag, skipping missing entries.
     pub fn activate<T: AsRef<str>>(&self, name: T) {
         self.invalidate_projection_mask_cache();
         self.data_evaluator.activate(&name);
         self.accmc_evaluator.activate(name);
     }
-    /// Activate an [`Amplitude`](`laddu_core::amplitudes::Amplitude`) by name and return an error if it is missing.
+    /// Activate an [`Amplitude`](`laddu_core::amplitudes::Amplitude`) by tag and return an error if it is missing.
     pub fn activate_strict<T: AsRef<str>>(&self, name: T) -> LadduResult<()> {
         self.invalidate_projection_mask_cache();
         self.data_evaluator.activate_strict(&name)?;
         self.accmc_evaluator.activate_strict(name)?;
         Ok(())
     }
-    /// Activate several [`Amplitude`](`laddu_core::amplitudes::Amplitude`)s by name, skipping missing entries.
+    /// Activate several [`Amplitude`](`laddu_core::amplitudes::Amplitude`)s by tag, skipping missing entries.
     pub fn activate_many<T: AsRef<str>>(&self, names: &[T]) {
         self.invalidate_projection_mask_cache();
         self.data_evaluator.activate_many(names);
         self.accmc_evaluator.activate_many(names);
     }
-    /// Activate several [`Amplitude`](`laddu_core::amplitudes::Amplitude`)s by name and return an error if any are missing.
+    /// Activate several [`Amplitude`](`laddu_core::amplitudes::Amplitude`)s by tag and return an error if any are missing.
     pub fn activate_many_strict<T: AsRef<str>>(&self, names: &[T]) -> LadduResult<()> {
         self.invalidate_projection_mask_cache();
         self.data_evaluator.activate_many_strict(names)?;
@@ -614,26 +614,26 @@ impl NLL {
         self.data_evaluator.activate_all();
         self.accmc_evaluator.activate_all();
     }
-    /// Dectivate an [`Amplitude`](`laddu_core::amplitudes::Amplitude`) by name, skipping missing entries.
+    /// Deactivate an [`Amplitude`](`laddu_core::amplitudes::Amplitude`) by tag, skipping missing entries.
     pub fn deactivate<T: AsRef<str>>(&self, name: T) {
         self.invalidate_projection_mask_cache();
         self.data_evaluator.deactivate(&name);
         self.accmc_evaluator.deactivate(name);
     }
-    /// Dectivate an [`Amplitude`](`laddu_core::amplitudes::Amplitude`) by name and return an error if it is missing.
+    /// Deactivate an [`Amplitude`](`laddu_core::amplitudes::Amplitude`) by tag and return an error if it is missing.
     pub fn deactivate_strict<T: AsRef<str>>(&self, name: T) -> LadduResult<()> {
         self.invalidate_projection_mask_cache();
         self.data_evaluator.deactivate_strict(&name)?;
         self.accmc_evaluator.deactivate_strict(name)?;
         Ok(())
     }
-    /// Deactivate several [`Amplitude`](`laddu_core::amplitudes::Amplitude`)s by name, skipping missing entries.
+    /// Deactivate several [`Amplitude`](`laddu_core::amplitudes::Amplitude`)s by tag, skipping missing entries.
     pub fn deactivate_many<T: AsRef<str>>(&self, names: &[T]) {
         self.invalidate_projection_mask_cache();
         self.data_evaluator.deactivate_many(names);
         self.accmc_evaluator.deactivate_many(names);
     }
-    /// Deactivate several [`Amplitude`](`laddu_core::amplitudes::Amplitude`)s by name and return an error if any are missing.
+    /// Deactivate several [`Amplitude`](`laddu_core::amplitudes::Amplitude`)s by tag and return an error if any are missing.
     pub fn deactivate_many_strict<T: AsRef<str>>(&self, names: &[T]) -> LadduResult<()> {
         self.invalidate_projection_mask_cache();
         self.data_evaluator.deactivate_many_strict(names)?;
@@ -646,26 +646,26 @@ impl NLL {
         self.data_evaluator.deactivate_all();
         self.accmc_evaluator.deactivate_all();
     }
-    /// Isolate an [`Amplitude`](`laddu_core::amplitudes::Amplitude`) by name (deactivate the rest), skipping missing entries.
+    /// Isolate an [`Amplitude`](`laddu_core::amplitudes::Amplitude`) by tag (deactivate the rest), skipping missing entries.
     pub fn isolate<T: AsRef<str>>(&self, name: T) {
         self.invalidate_projection_mask_cache();
         self.data_evaluator.isolate(&name);
         self.accmc_evaluator.isolate(name);
     }
-    /// Isolate an [`Amplitude`](`laddu_core::amplitudes::Amplitude`) by name (deactivate the rest) and return an error if it is missing.
+    /// Isolate an [`Amplitude`](`laddu_core::amplitudes::Amplitude`) by tag (deactivate the rest) and return an error if it is missing.
     pub fn isolate_strict<T: AsRef<str>>(&self, name: T) -> LadduResult<()> {
         self.invalidate_projection_mask_cache();
         self.data_evaluator.isolate_strict(&name)?;
         self.accmc_evaluator.isolate_strict(name)?;
         Ok(())
     }
-    /// Isolate several [`Amplitude`](`laddu_core::amplitudes::Amplitude`)s by name (deactivate the rest), skipping missing entries.
+    /// Isolate several [`Amplitude`](`laddu_core::amplitudes::Amplitude`)s by tag (deactivate the rest), skipping missing entries.
     pub fn isolate_many<T: AsRef<str>>(&self, names: &[T]) {
         self.invalidate_projection_mask_cache();
         self.data_evaluator.isolate_many(names);
         self.accmc_evaluator.isolate_many(names);
     }
-    /// Isolate several [`Amplitude`](`laddu_core::amplitudes::Amplitude`)s by name (deactivate the rest) and return an error if any are missing.
+    /// Isolate several [`Amplitude`](`laddu_core::amplitudes::Amplitude`)s by tag (deactivate the rest) and return an error if any are missing.
     pub fn isolate_many_strict<T: AsRef<str>>(&self, names: &[T]) -> LadduResult<()> {
         self.invalidate_projection_mask_cache();
         self.data_evaluator.isolate_many_strict(names)?;
@@ -857,7 +857,7 @@ impl NLL {
     /// Project the stored [`Expression`] over the events in the [`Dataset`] stored by the
     /// [`Evaluator`] with the given values for free parameters to obtain weights for each Monte-Carlo event. This method differs from the standard
     /// [`NLL::project_weights`] in that it first isolates the selected [`Amplitude`](`laddu_core::amplitudes::Amplitude`)s
-    /// by name, but returns the [`NLL`] to its prior state after calculation (non-MPI version).
+    /// by tag, but returns the [`NLL`] to its prior state after calculation (non-MPI version).
     ///
     /// # Notes
     ///
@@ -892,7 +892,7 @@ impl NLL {
     }
 
     /// Project the model over one isolated amplitude subset in local execution, skipping
-    /// missing amplitude names.
+    /// missing amplitude tags.
     pub fn project_weights_subset_local<T: AsRef<str>>(
         &self,
         parameters: &[f64],
@@ -903,7 +903,7 @@ impl NLL {
     }
 
     /// Project the model over one isolated amplitude subset in local execution and return
-    /// an error if any requested amplitude name is missing.
+    /// an error if any requested amplitude tag is missing.
     pub fn project_weights_subset_local_strict<T: AsRef<str>>(
         &self,
         parameters: &[f64],
@@ -916,7 +916,7 @@ impl NLL {
     /// Project the stored [`Expression`] over the events in the [`Dataset`] stored by the
     /// [`Evaluator`] with the given values for free parameters to obtain weights for each Monte-Carlo event. This method differs from the standard
     /// [`NLL::project_weights`] in that it first isolates the selected [`Amplitude`](`laddu_core::amplitudes::Amplitude`)s
-    /// by name, but returns the [`NLL`] to its prior state after calculation (MPI-compatible version).
+    /// by tag, but returns the [`NLL`] to its prior state after calculation (MPI-compatible version).
     ///
     /// # Notes
     ///
@@ -950,7 +950,7 @@ impl NLL {
 
     #[cfg(feature = "mpi")]
     /// Project the model over one isolated amplitude subset in MPI execution, skipping
-    /// missing amplitude names.
+    /// missing amplitude tags.
     pub fn project_weights_subset_mpi<T: AsRef<str>>(
         &self,
         parameters: &[f64],
@@ -963,7 +963,7 @@ impl NLL {
 
     #[cfg(feature = "mpi")]
     /// Project the model over one isolated amplitude subset in MPI execution and return
-    /// an error if any requested amplitude name is missing.
+    /// an error if any requested amplitude tag is missing.
     pub fn project_weights_subset_mpi_strict<T: AsRef<str>>(
         &self,
         parameters: &[f64],
@@ -977,7 +977,7 @@ impl NLL {
     /// Project the stored [`Expression`] over the events in the [`Dataset`] stored by the
     /// [`Evaluator`] with the given values for free parameters to obtain weights for each Monte-Carlo event. This method differs from the standard
     /// [`NLL::project_weights`] in that it first isolates the selected [`Amplitude`](`laddu_core::amplitudes::Amplitude`)s
-    /// by name, but returns the [`NLL`] to its prior state after calculation.
+    /// by tag, but returns the [`NLL`] to its prior state after calculation.
     ///
     /// This method takes the real part of the given expression (discarding
     /// the imaginary part entirely, which does not matter if expressions are coherent sums
@@ -1024,7 +1024,7 @@ impl NLL {
     }
 
     /// Project the model over one isolated amplitude subset and return an error if any
-    /// requested amplitude name is missing.
+    /// requested amplitude tag is missing.
     pub fn project_weights_subset_strict<T: AsRef<str>>(
         &self,
         parameters: &[f64],
@@ -1084,7 +1084,7 @@ impl NLL {
     }
 
     /// Project the model over multiple isolated amplitude subsets in local execution,
-    /// skipping missing amplitude names within each subset.
+    /// skipping missing amplitude tags within each subset.
     pub fn project_weights_subsets_local<T: AsRef<str>>(
         &self,
         parameters: &[f64],
@@ -1095,7 +1095,7 @@ impl NLL {
     }
 
     /// Project the model over multiple isolated amplitude subsets in local execution and
-    /// return an error if any requested amplitude name is missing.
+    /// return an error if any requested amplitude tag is missing.
     pub fn project_weights_subsets_local_strict<T: AsRef<str>>(
         &self,
         parameters: &[f64],
@@ -1142,7 +1142,7 @@ impl NLL {
 
     #[cfg(feature = "mpi")]
     /// Project the model over multiple isolated amplitude subsets in MPI execution,
-    /// skipping missing amplitude names within each subset.
+    /// skipping missing amplitude tags within each subset.
     pub fn project_weights_subsets_mpi<T: AsRef<str>>(
         &self,
         parameters: &[f64],
@@ -1161,7 +1161,7 @@ impl NLL {
 
     #[cfg(feature = "mpi")]
     /// Project the model over multiple isolated amplitude subsets in MPI execution and
-    /// return an error if any requested amplitude name is missing.
+    /// return an error if any requested amplitude tag is missing.
     pub fn project_weights_subsets_mpi_strict<T: AsRef<str>>(
         &self,
         parameters: &[f64],
@@ -1196,7 +1196,7 @@ impl NLL {
     }
 
     /// Project the model over multiple isolated amplitude subsets, skipping missing
-    /// amplitude names within each subset.
+    /// amplitude tags within each subset.
     pub fn project_weights_subsets<T: AsRef<str>>(
         &self,
         parameters: &[f64],
@@ -1207,7 +1207,7 @@ impl NLL {
     }
 
     /// Project the model over multiple isolated amplitude subsets and return an error if
-    /// any requested amplitude name is missing.
+    /// any requested amplitude tag is missing.
     pub fn project_weights_subsets_strict<T: AsRef<str>>(
         &self,
         parameters: &[f64],
@@ -1221,7 +1221,7 @@ impl NLL {
     /// [`Evaluator`] with the given values for free parameters to obtain weights and gradients of
     /// those weights for each Monte-Carlo event. This method differs from the standard
     /// [`NLL::project_weights_and_gradients`] in that it first isolates the selected [`Amplitude`](`laddu_core::amplitudes::Amplitude`)s
-    /// by name, but returns the [`NLL`] to its prior state after calculation (non-MPI version).
+    /// by tag, but returns the [`NLL`] to its prior state after calculation (non-MPI version).
     ///
     /// # Notes
     ///
@@ -1278,7 +1278,7 @@ impl NLL {
     }
 
     /// Project the model and parameter gradients over one isolated amplitude subset in
-    /// local execution, skipping missing amplitude names.
+    /// local execution, skipping missing amplitude tags.
     pub fn project_weights_and_gradients_subset_local<T: AsRef<str>>(
         &self,
         parameters: &[f64],
@@ -1294,7 +1294,7 @@ impl NLL {
     }
 
     /// Project the model and parameter gradients over one isolated amplitude subset in
-    /// local execution and return an error if any requested amplitude name is missing.
+    /// local execution and return an error if any requested amplitude tag is missing.
     pub fn project_weights_and_gradients_subset_local_strict<T: AsRef<str>>(
         &self,
         parameters: &[f64],
@@ -1313,7 +1313,7 @@ impl NLL {
     /// [`Evaluator`] with the given values for free parameters to obtain weights and gradients of
     /// those weights for each Monte-Carlo event. This method differs from the standard
     /// [`NLL::project_weights_and_gradients`] in that it first isolates the selected [`Amplitude`](`laddu_core::amplitudes::Amplitude`)s
-    /// by name, but returns the [`NLL`] to its prior state after calculation (MPI-compatible version).
+    /// by tag, but returns the [`NLL`] to its prior state after calculation (MPI-compatible version).
     ///
     /// # Notes
     ///
@@ -1370,7 +1370,7 @@ impl NLL {
 
     #[cfg(feature = "mpi")]
     /// Project the model and parameter gradients over one isolated amplitude subset in
-    /// MPI execution, skipping missing amplitude names.
+    /// MPI execution, skipping missing amplitude tags.
     pub fn project_weights_and_gradients_subset_mpi<T: AsRef<str>>(
         &self,
         parameters: &[f64],
@@ -1389,7 +1389,7 @@ impl NLL {
 
     #[cfg(feature = "mpi")]
     /// Project the model and parameter gradients over one isolated amplitude subset in
-    /// MPI execution and return an error if any requested amplitude name is missing.
+    /// MPI execution and return an error if any requested amplitude tag is missing.
     pub fn project_weights_and_gradients_subset_mpi_strict<T: AsRef<str>>(
         &self,
         parameters: &[f64],
@@ -1409,7 +1409,7 @@ impl NLL {
     /// [`Evaluator`] with the given values for free parameters to obtain weights and gradients of
     /// those weights for each
     /// Monte-Carlo event. This method differs from the standard [`NLL::project_weights_and_gradients`] in that it first
-    /// isolates the selected [`Amplitude`](`laddu_core::amplitudes::Amplitude`)s by name, but returns
+    /// isolates the selected [`Amplitude`](`laddu_core::amplitudes::Amplitude`)s by tag, but returns
     /// the [`NLL`] to its prior state after calculation.
     ///
     /// This method takes the real part of the given expression (discarding
@@ -1451,7 +1451,7 @@ impl NLL {
     }
 
     /// Project the model and parameter gradients over one isolated amplitude subset,
-    /// skipping missing amplitude names.
+    /// skipping missing amplitude tags.
     pub fn project_weights_and_gradients_subset<T: AsRef<str>>(
         &self,
         parameters: &[f64],
@@ -1467,7 +1467,7 @@ impl NLL {
     }
 
     /// Project the model and parameter gradients over one isolated amplitude subset and
-    /// return an error if any requested amplitude name is missing.
+    /// return an error if any requested amplitude tag is missing.
     pub fn project_weights_and_gradients_subset_strict<T: AsRef<str>>(
         &self,
         parameters: &[f64],

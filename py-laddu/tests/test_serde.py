@@ -37,28 +37,28 @@ def test_serde() -> None:
     res_mass = Mass(['kshort1', 'kshort2'])
     f0 = KopfKMatrixF0(
         'f0',
-        (
+        couplings=(
             (parameter('p0'), parameter('p1')),
             (parameter('p2'), parameter('p3')),
             (parameter('p4'), parameter('p5')),
             (parameter('p6'), parameter('p7')),
             (parameter('p8'), parameter('p9')),
         ),
-        KopfKMatrixF0Channel.FourPi,
-        res_mass,
+        channel=KopfKMatrixF0Channel.FourPi,
+        mass=res_mass,
     )
     f2 = KopfKMatrixF2(
         'f2',
-        (
+        couplings=(
             (parameter('g0'), parameter('g1')),
             (parameter('g2'), parameter('g3')),
             (parameter('g4'), parameter('g5')),
             (parameter('g6'), parameter('g7')),
         ),
-        KopfKMatrixF2Channel.FourPi,
-        res_mass,
+        channel=KopfKMatrixF2Channel.FourPi,
+        mass=res_mass,
     )
-    s = Scalar('s', parameter('s'))
+    s = Scalar('s', value=parameter('s'))
     expr = (f0 * s + f2).norm_sqr()
     dataset = make_test_dataset()
     evaluator = expr.load(dataset)

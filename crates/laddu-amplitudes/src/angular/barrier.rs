@@ -1,5 +1,8 @@
 use laddu_core::{
-    amplitudes::{debug_key, f64_key, Amplitude, AmplitudeID, AmplitudeSemanticKey, Expression},
+    amplitudes::{
+        debug_key, f64_key, Amplitude, AmplitudeID, AmplitudeSemanticKey, Expression, IntoTags,
+        Tags,
+    },
     data::{DatasetMetadata, Event},
     math::{blatt_weisskopf_m, BarrierKind, Sheet},
     resources::{Cache, ComplexScalarID, Parameters, Resources, ScalarID},
@@ -13,7 +16,7 @@ use serde::{Deserialize, Serialize};
 /// A Blatt-Weisskopf barrier-factor amplitude for a two-body decay.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct BlattWeisskopf {
-    name: String,
+    tags: Tags,
     decay_key: String,
     parent_mass: Box<dyn Variable>,
     daughter_1_mass: Box<dyn Variable>,
@@ -32,7 +35,7 @@ pub struct BlattWeisskopf {
 impl BlattWeisskopf {
     /// Construct a new Blatt-Weisskopf barrier-factor amplitude.
     pub fn new(
-        name: &str,
+        tags: impl IntoTags,
         decay: &Decay,
         l: OrbitalAngularMomentum,
         reference_mass: f64,
@@ -41,7 +44,7 @@ impl BlattWeisskopf {
         kind: BarrierKind,
     ) -> LadduResult<Expression> {
         Self {
-            name: name.to_string(),
+            tags: tags.into_tags(),
             decay_key: format!(
                 "{} -> {} {}",
                 decay.parent(),
@@ -68,20 +71,16 @@ impl BlattWeisskopf {
 #[typetag::serde]
 impl Amplitude for BlattWeisskopf {
     fn register(&mut self, resources: &mut Resources) -> LadduResult<AmplitudeID> {
-        self.parent_mass_id =
-            resources.register_scalar(Some(&format!("{}.parent_mass", self.name)));
-        self.daughter_1_mass_id =
-            resources.register_scalar(Some(&format!("{}.daughter_1_mass", self.name)));
-        self.daughter_2_mass_id =
-            resources.register_scalar(Some(&format!("{}.daughter_2_mass", self.name)));
+        self.parent_mass_id = resources.register_scalar(None);
+        self.daughter_1_mass_id = resources.register_scalar(None);
+        self.daughter_2_mass_id = resources.register_scalar(None);
         self.value_id = resources.register_complex_scalar(None);
-        resources.register_amplitude(&self.name)
+        resources.register_amplitude(self.tags.clone())
     }
 
     fn semantic_key(&self) -> Option<AmplitudeSemanticKey> {
         Some(
             AmplitudeSemanticKey::new("BlattWeisskopf")
-                .with_field("name", debug_key(&self.name))
                 .with_field("decay", debug_key(&self.decay_key))
                 .with_field("l", self.l.value().to_string())
                 .with_field("reference_mass", f64_key(self.reference_mass))
