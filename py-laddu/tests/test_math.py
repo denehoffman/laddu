@@ -16,6 +16,8 @@ def test_histogram_numpy_round_trip_and_pickle() -> None:
     np.testing.assert_allclose(hist.counts, counts)
     assert hist.total_weight == 5.0
     assert ld.Histogram is math.Histogram
+    assert 'Histogram' in repr(hist)
+    assert 'Histogram' in str(hist)
 
     restored = pickle.loads(pickle.dumps(hist))
     np.testing.assert_allclose(restored.bin_edges, hist.bin_edges)

@@ -717,6 +717,21 @@ impl PyDataset {
             Err(PyTypeError::new_err("Unsupported operand type for +"))
         }
     }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "Dataset(n_events={}, n_events_local={}, p4_names={:?}, aux_names={:?})",
+            self.0.n_events_global(),
+            self.0.n_events_local(),
+            self.0.p4_names(),
+            self.0.aux_names()
+        )
+    }
+
+    fn __str__(&self) -> String {
+        self.__repr__()
+    }
+
     /// Get the number of Events in the Dataset
     ///
     /// Notes
@@ -1437,5 +1452,17 @@ impl PyBinnedDataset {
             .get(index)
             .ok_or(PyIndexError::new_err("index out of range"))
             .map(|rust_dataset| PyDataset(rust_dataset.clone()))
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "BinnedDataset(n_bins={}, range={:?})",
+            self.0.n_bins(),
+            self.0.range()
+        )
+    }
+
+    fn __str__(&self) -> String {
+        self.__repr__()
     }
 }

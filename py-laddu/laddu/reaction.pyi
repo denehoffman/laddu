@@ -57,7 +57,7 @@ class Decay:
     def angles(self, daughter: str, frame: _Frame = 'Helicity') -> Angles: ...
     def helicity_factor(
         self,
-        name: str,
+        *tags: str,
         spin: QuantumNumber,
         projection: QuantumNumber,
         daughter: str,
@@ -67,7 +67,7 @@ class Decay:
     ) -> Expression: ...
     def canonical_factor(
         self,
-        name: str,
+        *tags: str,
         spin: QuantumNumber,
         projection: QuantumNumber,
         orbital_l: QuantumNumber,

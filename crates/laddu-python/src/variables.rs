@@ -16,7 +16,7 @@ use pyo3::{exceptions::PyValueError, prelude::*, types::PyTuple};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    amplitudes::PyExpression,
+    amplitudes::{py_tags, PyExpression},
     data::{PyDataset, PyEvent},
     quantum::angular_momentum::{
         parse_angular_momentum, parse_orbital_angular_momentum, parse_projection,
@@ -235,6 +235,10 @@ impl PyReaction {
     fn __repr__(&self) -> String {
         format!("{:?}", self.0)
     }
+
+    fn __str__(&self) -> String {
+        format!("{:?}", self.0)
+    }
 }
 
 /// A reaction-aware isobar decay view.
@@ -317,11 +321,11 @@ impl PyDecay {
     }
 
     /// Construct the helicity-basis angular factor for one explicit helicity term.
-    #[pyo3(signature=(name, spin, projection, daughter, lambda_1, lambda_2, frame="Helicity"))]
+    #[pyo3(signature=(*tags, spin, projection, daughter, lambda_1, lambda_2, frame="Helicity"))]
     #[allow(clippy::too_many_arguments)]
     fn helicity_factor(
         &self,
-        name: &str,
+        tags: &Bound<'_, PyTuple>,
         spin: &Bound<'_, PyAny>,
         projection: &Bound<'_, PyAny>,
         daughter: &str,
@@ -330,7 +334,7 @@ impl PyDecay {
         frame: &str,
     ) -> PyResult<PyExpression> {
         Ok(PyExpression(self.0.helicity_factor(
-            name,
+            py_tags(tags)?,
             parse_angular_momentum(spin)?,
             parse_projection(projection)?,
             daughter,
@@ -341,11 +345,11 @@ impl PyDecay {
     }
 
     /// Construct the canonical-basis spin-angular factor for one explicit LS/helicity term.
-    #[pyo3(signature=(name, spin, projection, orbital_l, coupled_spin, daughter, daughter_1_spin, daughter_2_spin, lambda_1, lambda_2, frame="Helicity"))]
+    #[pyo3(signature=(*tags, spin, projection, orbital_l, coupled_spin, daughter, daughter_1_spin, daughter_2_spin, lambda_1, lambda_2, frame="Helicity"))]
     #[allow(clippy::too_many_arguments)]
     fn canonical_factor(
         &self,
-        name: &str,
+        tags: &Bound<'_, PyTuple>,
         spin: &Bound<'_, PyAny>,
         projection: &Bound<'_, PyAny>,
         orbital_l: &Bound<'_, PyAny>,
@@ -358,7 +362,7 @@ impl PyDecay {
         frame: &str,
     ) -> PyResult<PyExpression> {
         Ok(PyExpression(self.0.canonical_factor(
-            name,
+            py_tags(tags)?,
             parse_angular_momentum(spin)?,
             parse_projection(projection)?,
             parse_orbital_angular_momentum(orbital_l)?,
@@ -373,6 +377,10 @@ impl PyDecay {
     }
 
     fn __repr__(&self) -> String {
+        format!("{:?}", self.0)
+    }
+
+    fn __str__(&self) -> String {
         format!("{:?}", self.0)
     }
 }
