@@ -1,6 +1,6 @@
 use laddu_core::{
     amplitudes::{
-        debug_key, display_key, Amplitude, AmplitudeID, AmplitudeSemanticKey, Expression,
+        display_key, Amplitude, AmplitudeID, AmplitudeSemanticKey, Expression, IntoTags, Tags,
     },
     data::{DatasetMetadata, Event},
     math::{rho_m, Sheet},
@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 /// A phase-space [`Amplitude`] for `$a+b\\to c+d$` with `$c\\to 1+2$`.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct PhaseSpaceFactor {
-    name: String,
+    tags: Tags,
     recoil_mass: Mass,
     daughter_1_mass: Mass,
     daughter_2_mass: Mass,
@@ -28,7 +28,7 @@ pub struct PhaseSpaceFactor {
 impl PhaseSpaceFactor {
     /// Construct a new [`PhaseSpaceFactor`] that models the two-body phase-space density.
     pub fn new(
-        name: &str,
+        tags: impl IntoTags,
         recoil_mass: &Mass,
         daughter_1_mass: &Mass,
         daughter_2_mass: &Mass,
@@ -36,7 +36,7 @@ impl PhaseSpaceFactor {
         mandelstam_s: &Mandelstam,
     ) -> LadduResult<Expression> {
         Self {
-            name: name.to_string(),
+            tags: tags.into_tags(),
             recoil_mass: recoil_mass.clone(),
             daughter_1_mass: daughter_1_mass.clone(),
             daughter_2_mass: daughter_2_mass.clone(),
@@ -52,13 +52,12 @@ impl PhaseSpaceFactor {
 impl Amplitude for PhaseSpaceFactor {
     fn register(&mut self, resources: &mut Resources) -> LadduResult<AmplitudeID> {
         self.sid = resources.register_scalar(None);
-        resources.register_amplitude(&self.name)
+        resources.register_amplitude(self.tags.clone())
     }
 
     fn semantic_key(&self) -> Option<AmplitudeSemanticKey> {
         Some(
             AmplitudeSemanticKey::new("PhaseSpaceFactor")
-                .with_field("name", debug_key(&self.name))
                 .with_field("recoil_mass", display_key(&self.recoil_mass))
                 .with_field("daughter_1_mass", display_key(&self.daughter_1_mass))
                 .with_field("daughter_2_mass", display_key(&self.daughter_2_mass))

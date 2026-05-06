@@ -225,7 +225,7 @@ pub trait Amplitude: DynClone + Send + Sync {
     /// an [`Expression`]. Use it to allocate parameter/cache state within [`Resources`] without assuming
     /// any dataset context.
     fn register(&mut self, resources: &mut Resources) -> LadduResult<AmplitudeID>;
-    /// Optional semantic identity key for same-name deduplication.
+    /// Optional semantic identity key for deduplicating equivalent amplitude computations.
     ///
     /// Return `Some` only when two independently constructed instances with equal keys are
     /// interchangeable after registration, binding, precomputation, value evaluation, and gradient
@@ -357,6 +357,106 @@ pub trait Amplitude: DynClone + Send + Sync {
     }
 }
 
+/// Normalized activation tags for an amplitude use-site.
+///
+/// Empty strings are ignored, and duplicate tags are removed while preserving the first
+/// occurrence. An empty tag set is a normal untagged amplitude use-site; it participates in
+/// expression evaluation but cannot be selected by tag activation APIs.
+#[derive(Clone, Default, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct Tags(Vec<String>);
+
+impl Tags {
+    /// Construct normalized tags from string-like inputs.
+    pub fn new(tags: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        let mut normalized = Vec::new();
+        for tag in tags {
+            let tag = tag.into();
+            if tag.is_empty() || normalized.contains(&tag) {
+                continue;
+            }
+            normalized.push(tag);
+        }
+        Self(normalized)
+    }
+
+    /// Construct an empty tag set.
+    pub fn empty() -> Self {
+        Self::default()
+    }
+
+    /// Borrow the normalized tags.
+    pub fn as_slice(&self) -> &[String] {
+        &self.0
+    }
+
+    /// Return true if this tag set has no selectable tags.
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    fn display_label(&self) -> String {
+        if self.is_empty() {
+            "<untagged>".to_string()
+        } else {
+            self.0.join(",")
+        }
+    }
+}
+
+/// Convert user-facing tag inputs into [`Tags`].
+pub trait IntoTags {
+    /// Convert into normalized tags.
+    fn into_tags(self) -> Tags;
+}
+
+impl IntoTags for Tags {
+    fn into_tags(self) -> Tags {
+        self
+    }
+}
+
+impl IntoTags for () {
+    fn into_tags(self) -> Tags {
+        Tags::empty()
+    }
+}
+
+impl IntoTags for &str {
+    fn into_tags(self) -> Tags {
+        Tags::new([self])
+    }
+}
+
+impl IntoTags for String {
+    fn into_tags(self) -> Tags {
+        Tags::new([self])
+    }
+}
+
+impl IntoTags for &String {
+    fn into_tags(self) -> Tags {
+        Tags::new([self.clone()])
+    }
+}
+
+impl<T: Into<String>> IntoTags for Vec<T> {
+    fn into_tags(self) -> Tags {
+        Tags::new(self)
+    }
+}
+
+impl<T: Clone + Into<String>> IntoTags for &[T] {
+    fn into_tags(self) -> Tags {
+        Tags::new(self.iter().cloned())
+    }
+}
+
+impl<T: Into<String>, const N: usize> IntoTags for [T; N] {
+    fn into_tags(self) -> Tags {
+        Tags::new(self)
+    }
+}
+
 /// Utility function to calculate a central finite difference gradient.
 pub fn central_difference<F: Fn(&[f64]) -> f64>(parameters: &[f64], func: F) -> DVector<f64> {
     let mut gradient = DVector::zeros(parameters.len());
@@ -388,19 +488,25 @@ pub struct AmplitudeValues(pub Vec<Complex64>);
 #[derive(Debug)]
 pub struct GradientValues(pub usize, pub Vec<DVector<Complex64>>);
 
-/// A tag which refers to a registered [`Amplitude`]. This is the base object which can be used to
+/// A tag set which refers to a registered [`Amplitude`]. This is the base object which can be used to
 /// build [`Expression`]s and should be obtained from the [`Resources::register_amplitude`] method.
 #[derive(Clone, Default, Debug, Serialize, Deserialize)]
-pub struct AmplitudeID(pub(crate) String, pub(crate) usize);
+pub struct AmplitudeID(pub(crate) Tags, pub(crate) usize);
 
 impl Display for AmplitudeID {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}(id={})", self.0, self.1)
+        write!(f, "{}(id={})", self.0.display_label(), self.1)
     }
 }
 
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+struct AmplitudeUseSite {
+    amplitude_index: usize,
+    tags: Tags,
+}
+
 /// A single named field in an [`AmplitudeSemanticKey`].
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct AmplitudeSemanticField {
     name: String,
     value: String,
@@ -416,11 +522,11 @@ impl AmplitudeSemanticField {
     }
 }
 
-/// A semantic identity key used to opt into deduplicating same-name amplitude instances.
+/// A semantic identity key used to opt into deduplicating equivalent amplitude computations.
 ///
 /// The key must include enough type/configuration information to prove that two independently
-/// constructed amplitudes with the same public name can safely share one registered amplitude.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// constructed amplitudes can safely share one registered computation.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct AmplitudeSemanticKey {
     kind: String,
     fields: Vec<AmplitudeSemanticField>,
@@ -440,49 +546,6 @@ impl AmplitudeSemanticKey {
         self.fields.push(AmplitudeSemanticField::new(name, value));
         self
     }
-
-    fn field_value(&self, name: &str) -> Option<&str> {
-        self.fields
-            .iter()
-            .find(|field| field.name == name)
-            .map(|field| field.value.as_str())
-    }
-
-    fn mismatch_summary(&self, other: &Self) -> String {
-        let mut mismatches = Vec::new();
-        if self.kind != other.kind {
-            mismatches.push(format!(
-                "kind differs (existing: {:?}, incoming: {:?})",
-                self.kind, other.kind
-            ));
-        }
-        for field in &self.fields {
-            match other.field_value(&field.name) {
-                Some(value) if value == field.value => {}
-                Some(value) => mismatches.push(format!(
-                    "{} differs (existing: {}, incoming: {})",
-                    field.name, field.value, value
-                )),
-                None => mismatches.push(format!(
-                    "{} is missing from the incoming key (existing: {})",
-                    field.name, field.value
-                )),
-            }
-        }
-        for field in &other.fields {
-            if self.field_value(&field.name).is_none() {
-                mismatches.push(format!(
-                    "{} is missing from the existing key (incoming: {})",
-                    field.name, field.value
-                ));
-            }
-        }
-        if mismatches.is_empty() {
-            "semantic keys differ".to_string()
-        } else {
-            mismatches.join("; ")
-        }
-    }
 }
 
 /// A holder struct that owns both an expression tree and the registered amplitudes.
@@ -500,6 +563,8 @@ pub struct ExpressionRegistry {
     amplitudes: Vec<Box<dyn Amplitude>>,
     amplitude_names: Vec<String>,
     amplitude_ids: Vec<u64>,
+    amplitude_use_sites: Vec<AmplitudeUseSite>,
+    amplitude_use_site_ids: Vec<u64>,
     resources: Resources,
 }
 
@@ -507,11 +572,18 @@ impl ExpressionRegistry {
     fn singleton(mut amplitude: Box<dyn Amplitude>) -> LadduResult<Self> {
         let mut resources = Resources::default();
         let aid = amplitude.register(&mut resources)?;
-        let amp_id = next_amplitude_id();
+        let compute_id = next_amplitude_id();
+        let use_site_id = next_amplitude_id();
+        resources.configure_amplitude_tags(std::slice::from_ref(&aid.0));
         Ok(Self {
             amplitudes: vec![amplitude],
-            amplitude_names: vec![aid.0],
-            amplitude_ids: vec![amp_id],
+            amplitude_names: vec![aid.0.display_label()],
+            amplitude_ids: vec![compute_id],
+            amplitude_use_sites: vec![AmplitudeUseSite {
+                amplitude_index: 0,
+                tags: aid.0,
+            }],
+            amplitude_use_site_ids: vec![use_site_id],
             resources,
         })
     }
@@ -519,75 +591,109 @@ impl ExpressionRegistry {
     fn merge(&self, other: &Self) -> LadduResult<(Self, Vec<usize>, Vec<usize>)> {
         let mut resources = Resources::default();
         let mut amplitudes = Vec::new();
-        let mut amplitude_names = Vec::new();
         let mut amplitude_ids = Vec::new();
-        let mut amplitude_semantic_keys = Vec::new();
-        let mut name_to_index = HashMap::new();
+        let mut compute_id_to_index = HashMap::new();
+        let mut semantic_key_to_index = HashMap::new();
 
-        let mut left_map = Vec::with_capacity(self.amplitudes.len());
-        for ((amp, name), amp_id) in self
-            .amplitudes
-            .iter()
-            .zip(&self.amplitude_names)
-            .zip(&self.amplitude_ids)
+        let mut left_compute_map = Vec::with_capacity(self.amplitudes.len());
+        for (amp_index, (amp, amp_id)) in
+            self.amplitudes.iter().zip(&self.amplitude_ids).enumerate()
         {
             let semantic_key = amp.semantic_key();
             let mut cloned_amp = dyn_clone::clone_box(&**amp);
             let aid = cloned_amp.register(&mut resources)?;
+            if let Some(key) = semantic_key.clone() {
+                semantic_key_to_index.insert(key, aid.1);
+            }
             amplitudes.push(cloned_amp);
-            amplitude_names.push(name.clone());
             amplitude_ids.push(*amp_id);
-            amplitude_semantic_keys.push(semantic_key);
-            name_to_index.insert(name.clone(), aid.1);
-            left_map.push(aid.1);
+            compute_id_to_index.insert(*amp_id, aid.1);
+            left_compute_map.push(aid.1);
+            debug_assert_eq!(amp_index, aid.1);
         }
 
-        let mut right_map = Vec::with_capacity(other.amplitudes.len());
-        for ((amp, name), amp_id) in other
-            .amplitudes
+        let mut right_compute_map = Vec::with_capacity(other.amplitudes.len());
+        for (amp, amp_id) in other.amplitudes.iter().zip(&other.amplitude_ids) {
+            if let Some(existing) = compute_id_to_index.get(amp_id) {
+                right_compute_map.push(*existing);
+                continue;
+            }
+            let incoming_semantic_key = amp.semantic_key();
+            if let Some(existing) = incoming_semantic_key
+                .as_ref()
+                .and_then(|key| semantic_key_to_index.get(key))
+            {
+                right_compute_map.push(*existing);
+                continue;
+            }
+            let mut cloned_amp = dyn_clone::clone_box(&**amp);
+            let aid = cloned_amp.register(&mut resources)?;
+            if let Some(key) = incoming_semantic_key.clone() {
+                semantic_key_to_index.insert(key, aid.1);
+            }
+            amplitudes.push(cloned_amp);
+            amplitude_ids.push(*amp_id);
+            compute_id_to_index.insert(*amp_id, aid.1);
+            right_compute_map.push(aid.1);
+        }
+
+        let mut amplitude_use_sites = Vec::new();
+        let mut amplitude_use_site_ids = Vec::new();
+        let mut amplitude_names = Vec::new();
+        let mut use_site_id_to_index = HashMap::new();
+
+        let mut left_map = Vec::with_capacity(self.amplitude_use_sites.len());
+        for (use_site, use_site_id) in self
+            .amplitude_use_sites
             .iter()
-            .zip(&other.amplitude_names)
-            .zip(&other.amplitude_ids)
+            .zip(&self.amplitude_use_site_ids)
         {
-            if let Some(existing) = name_to_index.get(name) {
-                let existing_amp_id = amplitude_ids[*existing];
-                let incoming_semantic_key = amp.semantic_key();
-                if existing_amp_id != *amp_id {
-                    match (&amplitude_semantic_keys[*existing], &incoming_semantic_key) {
-                        (Some(existing_key), Some(incoming_key))
-                            if existing_key == incoming_key => {}
-                        (Some(existing_key), Some(incoming_key)) => {
-                            return Err(LadduError::Custom(format!(
-                                "Amplitude name \"{name}\" refers to different underlying amplitudes; semantic keys differ: {}",
-                                existing_key.mismatch_summary(incoming_key)
-                            )));
-                        }
-                        _ => {
-                            return Err(LadduError::Custom(format!(
-                                "Amplitude name \"{name}\" refers to different underlying amplitudes; rename to avoid conflicts"
-                            )));
-                        }
-                    }
-                }
+            let mapped_index = left_compute_map[use_site.amplitude_index];
+            let new_index = amplitude_use_sites.len();
+            left_map.push(new_index);
+            use_site_id_to_index.insert(*use_site_id, new_index);
+            amplitude_use_site_ids.push(*use_site_id);
+            amplitude_names.push(use_site.tags.display_label());
+            amplitude_use_sites.push(AmplitudeUseSite {
+                amplitude_index: mapped_index,
+                tags: use_site.tags.clone(),
+            });
+        }
+
+        let mut right_map = Vec::with_capacity(other.amplitude_use_sites.len());
+        for (use_site, use_site_id) in other
+            .amplitude_use_sites
+            .iter()
+            .zip(&other.amplitude_use_site_ids)
+        {
+            if let Some(existing) = use_site_id_to_index.get(use_site_id) {
                 right_map.push(*existing);
                 continue;
             }
-            let semantic_key = amp.semantic_key();
-            let mut cloned_amp = dyn_clone::clone_box(&**amp);
-            let aid = cloned_amp.register(&mut resources)?;
-            amplitudes.push(cloned_amp);
-            amplitude_names.push(name.clone());
-            amplitude_ids.push(*amp_id);
-            amplitude_semantic_keys.push(semantic_key);
-            name_to_index.insert(name.clone(), aid.1);
-            right_map.push(aid.1);
+            let mapped_index = right_compute_map[use_site.amplitude_index];
+            let new_index = amplitude_use_sites.len();
+            right_map.push(new_index);
+            use_site_id_to_index.insert(*use_site_id, new_index);
+            amplitude_use_site_ids.push(*use_site_id);
+            amplitude_names.push(use_site.tags.display_label());
+            amplitude_use_sites.push(AmplitudeUseSite {
+                amplitude_index: mapped_index,
+                tags: use_site.tags.clone(),
+            });
         }
+        let use_site_tags = amplitude_use_sites
+            .iter()
+            .map(|use_site| use_site.tags.clone())
+            .collect::<Vec<_>>();
+        resources.configure_amplitude_tags(&use_site_tags);
 
         Ok((
             Self {
                 amplitudes,
                 amplitude_names,
                 amplitude_ids,
+                amplitude_use_sites,
+                amplitude_use_site_ids,
                 resources,
             },
             left_map,
@@ -1451,18 +1557,22 @@ impl Expression {
     /// [`Evaluator::compiled_expression`] when you need the compiled form for a loaded evaluator's
     /// current active-amplitude mask.
     pub fn compiled_expression(&self) -> CompiledExpression {
-        let active_amplitudes = vec![true; self.registry.amplitudes.len()];
+        let active_amplitudes = vec![true; self.registry.amplitude_use_sites.len()];
         let amplitude_dependencies = self
             .registry
-            .amplitudes
+            .amplitude_use_sites
             .iter()
-            .map(|amp| ir::DependenceClass::from(amp.dependence_hint()))
+            .map(|use_site| {
+                ir::DependenceClass::from(
+                    self.registry.amplitudes[use_site.amplitude_index].dependence_hint(),
+                )
+            })
             .collect::<Vec<_>>();
         let amplitude_realness = self
             .registry
-            .amplitudes
+            .amplitude_use_sites
             .iter()
-            .map(|amp| amp.real_valued_hint())
+            .map(|use_site| self.registry.amplitudes[use_site.amplitude_index].real_valued_hint())
             .collect::<Vec<_>>();
         let expression_ir = ir::compile_expression_ir_with_real_hints(
             &self.tree,
@@ -1514,17 +1624,25 @@ impl Expression {
         }
         let ir_compile_start = Instant::now();
         let expression_ir = {
-            let mut active_amplitudes = vec![false; amplitudes.len()];
+            let mut active_amplitudes = vec![false; self.registry.amplitude_use_sites.len()];
             for &index in resources.active_indices() {
                 active_amplitudes[index] = true;
             }
-            let amplitude_dependencies = amplitudes
+            let amplitude_dependencies = self
+                .registry
+                .amplitude_use_sites
                 .iter()
-                .map(|amp| ir::DependenceClass::from(amp.dependence_hint()))
+                .map(|use_site| {
+                    ir::DependenceClass::from(
+                        amplitudes[use_site.amplitude_index].dependence_hint(),
+                    )
+                })
                 .collect::<Vec<_>>();
-            let amplitude_realness = amplitudes
+            let amplitude_realness = self
+                .registry
+                .amplitude_use_sites
                 .iter()
-                .map(|amp| amp.real_valued_hint())
+                .map(|use_site| amplitudes[use_site.amplitude_index].real_valued_hint())
                 .collect::<Vec<_>>();
             ir::compile_expression_ir_with_real_hints(
                 &self.tree,
@@ -1538,6 +1656,7 @@ impl Expression {
         let cached_integrals = Evaluator::precompute_cached_integrals_at_load(
             &expression_ir,
             &amplitudes,
+            &self.registry.amplitude_use_sites,
             &resources,
             dataset,
             parameter_map.free().len(),
@@ -1567,6 +1686,7 @@ impl Expression {
             HashMap::from([(resources.active.clone(), lowered_artifacts.clone())]);
         Ok(Evaluator {
             amplitudes,
+            amplitude_use_sites: self.registry.amplitude_use_sites.clone(),
             resources: Arc::new(RwLock::new(resources)),
             dataset: dataset.clone(),
             expression: self.tree.clone(),
@@ -1847,11 +1967,11 @@ pub struct ExpressionValueProgramSnapshot {
 pub enum CompiledExpressionNode {
     /// A complex constant.
     Constant(Complex64),
-    /// A registered amplitude by index and display name.
+    /// A registered amplitude use-site by index and display label.
     Amplitude {
         /// The amplitude index used by the compiled evaluator.
         index: usize,
-        /// The registered amplitude name.
+        /// The registered amplitude display label.
         name: String,
     },
     /// A unary operation and its input node.
@@ -2083,6 +2203,7 @@ struct ExpressionIrPlanningState {
 #[derive(Clone)]
 pub struct Evaluator {
     pub amplitudes: Vec<Box<dyn Amplitude>>,
+    amplitude_use_sites: Vec<AmplitudeUseSite>,
     pub resources: Arc<RwLock<Resources>>,
     pub dataset: Arc<Dataset>,
     pub expression: ExpressionNode,
@@ -2342,6 +2463,7 @@ impl Evaluator {
         let values = Self::precompute_cached_integrals_at_load(
             &expression_ir,
             &self.amplitudes,
+            &self.amplitude_use_sites,
             resources,
             &self.dataset,
             self.resources.read().n_free_parameters(),
@@ -2463,6 +2585,7 @@ impl Evaluator {
     fn precompute_cached_integrals_at_load(
         expression_ir: &ir::ExpressionIR,
         amplitudes: &[Box<dyn Amplitude>],
+        amplitude_use_sites: &[AmplitudeUseSite],
         resources: &Resources,
         dataset: &Dataset,
         n_free_parameters: usize,
@@ -2474,7 +2597,8 @@ impl Evaluator {
         let execution_sets = expression_ir.normalization_execution_sets();
         let seed_parameters = vec![0.0; n_free_parameters];
         let parameters = resources.parameter_map.assemble(&seed_parameters)?;
-        let mut amplitude_values = vec![Complex64::ZERO; amplitudes.len()];
+        let mut amplitude_values = vec![Complex64::ZERO; amplitude_use_sites.len()];
+        let mut compute_values = vec![Complex64::ZERO; amplitudes.len()];
         let mut value_slots = vec![Complex64::ZERO; expression_ir.node_count()];
         let active_set = resources.active_indices();
         let cache_active_indices = execution_sets
@@ -2486,8 +2610,15 @@ impl Evaluator {
         let mut weighted_cache_sums = vec![Complex64::ZERO; descriptors.len()];
         for (cache, event) in resources.caches.iter().zip(dataset.weights_local().iter()) {
             amplitude_values.fill(Complex64::ZERO);
-            for &amp_idx in &cache_active_indices {
-                amplitude_values[amp_idx] = amplitudes[amp_idx].compute(&parameters, cache);
+            compute_values.fill(Complex64::ZERO);
+            let mut computed = vec![false; amplitudes.len()];
+            for &use_site_idx in &cache_active_indices {
+                let amp_idx = amplitude_use_sites[use_site_idx].amplitude_index;
+                if !computed[amp_idx] {
+                    compute_values[amp_idx] = amplitudes[amp_idx].compute(&parameters, cache);
+                    computed[amp_idx] = true;
+                }
+                amplitude_values[use_site_idx] = compute_values[amp_idx];
             }
             expression_ir.evaluate_into(&amplitude_values, &mut value_slots);
             let weight = *event;
@@ -2551,8 +2682,15 @@ impl Evaluator {
         cache: &Cache,
     ) {
         amplitude_values.fill(Complex64::ZERO);
-        for &amp_idx in active_indices {
-            amplitude_values[amp_idx] = self.amplitudes[amp_idx].compute(parameters, cache);
+        let mut compute_values = vec![Complex64::ZERO; self.amplitudes.len()];
+        let mut computed = vec![false; self.amplitudes.len()];
+        for &use_site_idx in active_indices {
+            let amp_idx = self.amplitude_use_sites[use_site_idx].amplitude_index;
+            if !computed[amp_idx] {
+                compute_values[amp_idx] = self.amplitudes[amp_idx].compute(parameters, cache);
+                computed[amp_idx] = true;
+            }
+            amplitude_values[use_site_idx] = compute_values[amp_idx];
         }
     }
 
@@ -2564,15 +2702,26 @@ impl Evaluator {
         parameters: &Parameters,
         cache: &Cache,
     ) {
-        for ((amp, active), grad) in self
-            .amplitudes
+        let mut compute_gradients = vec![DVector::zeros(parameters.len()); self.amplitudes.len()];
+        let mut computed = vec![false; self.amplitudes.len()];
+        for ((use_site, active), grad) in self
+            .amplitude_use_sites
             .iter()
             .zip(active_mask.iter())
             .zip(gradient_values.iter_mut())
         {
             grad.fill(Complex64::ZERO);
             if *active {
-                amp.compute_gradient(parameters, cache, grad);
+                let amp_idx = use_site.amplitude_index;
+                if !computed[amp_idx] {
+                    self.amplitudes[amp_idx].compute_gradient(
+                        parameters,
+                        cache,
+                        &mut compute_gradients[amp_idx],
+                    );
+                    computed[amp_idx] = true;
+                }
+                grad.copy_from(&compute_gradients[amp_idx]);
             }
         }
     }
@@ -2675,14 +2824,18 @@ impl Evaluator {
     }
     fn compile_expression_ir_for_active_mask(&self, active_mask: &[bool]) -> ir::ExpressionIR {
         let amplitude_dependencies = self
-            .amplitudes
+            .amplitude_use_sites
             .iter()
-            .map(|amp| ir::DependenceClass::from(amp.dependence_hint()))
+            .map(|use_site| {
+                ir::DependenceClass::from(
+                    self.amplitudes[use_site.amplitude_index].dependence_hint(),
+                )
+            })
             .collect::<Vec<_>>();
         let amplitude_realness = self
-            .amplitudes
+            .amplitude_use_sites
             .iter()
-            .map(|amp| amp.real_valued_hint())
+            .map(|use_site| self.amplitudes[use_site.amplitude_index].real_valued_hint())
             .collect::<Vec<_>>();
         ir::compile_expression_ir_with_real_hints(
             &self.expression,
@@ -2882,14 +3035,14 @@ impl Evaluator {
         };
 
         let parameter_values = resources.parameter_map.assemble(parameters)?;
-        let mut amplitude_values = vec![Complex64::ZERO; self.amplitudes.len()];
+        let mut amplitude_values = vec![Complex64::ZERO; self.amplitude_use_sites.len()];
         self.fill_amplitude_values(
             &mut amplitude_values,
             resources.active_indices(),
             &parameter_values,
             cache,
         );
-        let mut amplitude_gradients = (0..self.amplitudes.len())
+        let mut amplitude_gradients = (0..self.amplitude_use_sites.len())
             .map(|_| DVector::zeros(parameters.len()))
             .collect::<Vec<_>>();
         self.fill_amplitude_gradients(
@@ -3177,7 +3330,7 @@ impl Evaluator {
     ) -> LadduResult<(f64, f64)> {
         let resources = self.resources.read();
         let parameters = resources.parameter_map.assemble(parameters)?;
-        let amplitude_len = self.amplitudes.len();
+        let amplitude_len = self.amplitude_use_sites.len();
         let state = self.ensure_cached_integral_cache_state(&resources)?;
         let lowered_artifacts = self.active_lowered_artifacts();
         let residual_value_slot_count = lowered_artifacts
@@ -3350,7 +3503,7 @@ impl Evaluator {
     ) -> LadduResult<(DVector<f64>, DVector<f64>)> {
         let resources = self.resources.read();
         let parameters = resources.parameter_map.assemble(parameters)?;
-        let amplitude_len = self.amplitudes.len();
+        let amplitude_len = self.amplitude_use_sites.len();
         let grad_dim = parameters.len();
         let state = self.ensure_cached_integral_cache_state(&resources)?;
         let lowered_artifacts = self.active_lowered_artifacts();
@@ -3654,24 +3807,24 @@ impl Evaluator {
         self.resources.write().rename_parameters(mapping)
     }
 
-    /// Activate an [`Amplitude`] by name, skipping missing entries.
+    /// Activate [`Amplitude`] use-sites by tag or glob selector, skipping missing selectors.
     pub fn activate<T: AsRef<str>>(&self, name: T) {
         self.resources.write().activate(name);
         self.refresh_runtime_specializations();
     }
-    /// Activate an [`Amplitude`] by name and return an error if it is missing.
+    /// Activate [`Amplitude`] use-sites by tag or glob selector and return an error if no use-site matches.
     pub fn activate_strict<T: AsRef<str>>(&self, name: T) -> LadduResult<()> {
         self.resources.write().activate_strict(name)?;
         self.refresh_runtime_specializations();
         Ok(())
     }
 
-    /// Activate several [`Amplitude`]s by name, skipping missing entries.
+    /// Activate several [`Amplitude`] use-sites by tag or glob selector, skipping missing selectors.
     pub fn activate_many<T: AsRef<str>>(&self, names: &[T]) {
         self.resources.write().activate_many(names);
         self.refresh_runtime_specializations();
     }
-    /// Activate several [`Amplitude`]s by name and return an error if any are missing.
+    /// Activate several [`Amplitude`] use-sites by tag or glob selector and return an error if any selector has no matches.
     pub fn activate_many_strict<T: AsRef<str>>(&self, names: &[T]) -> LadduResult<()> {
         self.resources.write().activate_many_strict(names)?;
         self.refresh_runtime_specializations();
@@ -3684,57 +3837,57 @@ impl Evaluator {
         self.refresh_runtime_specializations();
     }
 
-    /// Dectivate an [`Amplitude`] by name, skipping missing entries.
+    /// Deactivate [`Amplitude`] use-sites by tag or glob selector, skipping missing selectors.
     pub fn deactivate<T: AsRef<str>>(&self, name: T) {
         self.resources.write().deactivate(name);
         self.refresh_runtime_specializations();
     }
 
-    /// Dectivate an [`Amplitude`] by name and return an error if it is missing.
+    /// Deactivate [`Amplitude`] use-sites by tag or glob selector and return an error if no use-site matches.
     pub fn deactivate_strict<T: AsRef<str>>(&self, name: T) -> LadduResult<()> {
         self.resources.write().deactivate_strict(name)?;
         self.refresh_runtime_specializations();
         Ok(())
     }
 
-    /// Deactivate several [`Amplitude`]s by name, skipping missing entries.
+    /// Deactivate several [`Amplitude`] use-sites by tag or glob selector, skipping missing selectors.
     pub fn deactivate_many<T: AsRef<str>>(&self, names: &[T]) {
         self.resources.write().deactivate_many(names);
         self.refresh_runtime_specializations();
     }
-    /// Dectivate several [`Amplitude`]s by name and return an error if any are missing.
+    /// Deactivate several [`Amplitude`] use-sites by tag or glob selector and return an error if any selector has no matches.
     pub fn deactivate_many_strict<T: AsRef<str>>(&self, names: &[T]) -> LadduResult<()> {
         self.resources.write().deactivate_many_strict(names)?;
         self.refresh_runtime_specializations();
         Ok(())
     }
 
-    /// Deactivate all registered [`Amplitude`]s.
+    /// Deactivate all tagged [`Amplitude`] use-sites.
     pub fn deactivate_all(&self) {
         self.resources.write().deactivate_all();
         self.refresh_runtime_specializations();
     }
 
-    /// Isolate an [`Amplitude`] by name (deactivate the rest), skipping missing entries.
+    /// Isolate [`Amplitude`] use-sites by tag or glob selector, skipping missing selectors.
     pub fn isolate<T: AsRef<str>>(&self, name: T) {
         self.resources.write().isolate(name);
         self.refresh_runtime_specializations();
     }
 
-    /// Isolate an [`Amplitude`] by name (deactivate the rest) and return an error if it is missing.
+    /// Isolate [`Amplitude`] use-sites by tag or glob selector and return an error if no use-site matches.
     pub fn isolate_strict<T: AsRef<str>>(&self, name: T) -> LadduResult<()> {
         self.resources.write().isolate_strict(name)?;
         self.refresh_runtime_specializations();
         Ok(())
     }
 
-    /// Isolate several [`Amplitude`]s by name (deactivate the rest), skipping missing entries.
+    /// Isolate several [`Amplitude`] use-sites by tag or glob selector, skipping missing selectors.
     pub fn isolate_many<T: AsRef<str>>(&self, names: &[T]) {
         self.resources.write().isolate_many(names);
         self.refresh_runtime_specializations();
     }
 
-    /// Isolate several [`Amplitude`]s by name (deactivate the rest) and return an error if any are missing.
+    /// Isolate several [`Amplitude`] use-sites by tag or glob selector and return an error if any selector has no matches.
     pub fn isolate_many_strict<T: AsRef<str>>(&self, names: &[T]) -> LadduResult<()> {
         self.resources.write().isolate_many_strict(names)?;
         self.refresh_runtime_specializations();
@@ -3746,7 +3899,7 @@ impl Evaluator {
         self.resources.read().active.clone()
     }
 
-    /// Apply a precomputed active-amplitude mask.
+    /// Apply a precomputed active-amplitude mask. Untagged use-sites cannot be deactivated.
     pub fn set_active_mask(&self, mask: &[bool]) -> LadduResult<()> {
         let resources = {
             let mut resources = self.resources.write();
@@ -3757,8 +3910,7 @@ impl Evaluator {
                     actual: mask.len(),
                 });
             }
-            resources.active.clone_from_slice(mask);
-            resources.refresh_active_indices();
+            resources.apply_active_mask(mask)?;
             resources.clone()
         };
         self.rebuild_runtime_specializations(&resources);
@@ -3775,7 +3927,7 @@ impl Evaluator {
     pub fn evaluate_local(&self, parameters: &[f64]) -> LadduResult<Vec<Complex64>> {
         let resources = self.resources.read();
         let parameters = resources.parameter_map.assemble(parameters)?;
-        let amplitude_len = self.amplitudes.len();
+        let amplitude_len = self.amplitude_use_sites.len();
         let active_indices = resources.active_indices().to_vec();
         let slot_count = self.expression_value_slot_count();
         let program_snapshot = self.expression_value_program_snapshot();
@@ -3846,7 +3998,7 @@ impl Evaluator {
             });
         }
         let parameters = resources.parameter_map.assemble(parameters)?;
-        let amplitude_len = self.amplitudes.len();
+        let amplitude_len = self.amplitude_use_sites.len();
         let active_indices = active_mask
             .iter()
             .enumerate()
@@ -3919,7 +4071,7 @@ impl Evaluator {
             .parameter_map
             .assemble(parameters)
             .expect("parameter slice must match evaluator resources");
-        let amplitude_len = self.amplitudes.len();
+        let amplitude_len = self.amplitude_use_sites.len();
         let active_indices = resources.active_indices().to_vec();
         let slot_count = self.expression_value_slot_count();
         let program_snapshot = self.expression_value_program_snapshot();
@@ -4065,7 +4217,7 @@ impl Evaluator {
     ) -> LadduResult<Vec<Complex64>> {
         let resources = self.resources.read();
         let parameters = resources.parameter_map.assemble(parameters)?;
-        let amplitude_len = self.amplitudes.len();
+        let amplitude_len = self.amplitude_use_sites.len();
         let active_indices = resources.active_indices().to_vec();
         let slot_count = self.expression_value_slot_count();
         let program_snapshot = self.expression_value_program_snapshot();
@@ -4165,7 +4317,7 @@ impl Evaluator {
     ) -> LadduResult<Vec<DVector<Complex64>>> {
         let resources = self.resources.read();
         let parameters = resources.parameter_map.assemble(parameters)?;
-        let amplitude_len = self.amplitudes.len();
+        let amplitude_len = self.amplitude_use_sites.len();
         let grad_dim = parameters.len();
         let active_indices = resources.active_indices().to_vec();
         let lowered_runtime = self.lowered_runtime();
@@ -4247,7 +4399,7 @@ impl Evaluator {
             .parameter_map
             .assemble(parameters)
             .expect("parameter slice must match evaluator resources");
-        let amplitude_len = self.amplitudes.len();
+        let amplitude_len = self.amplitude_use_sites.len();
         let grad_dim = parameters.len();
         let active_indices = resources.active_indices().to_vec();
         let slot_count = self.expression_slot_count();
@@ -4414,7 +4566,7 @@ impl Evaluator {
     ) -> LadduResult<Vec<DVector<Complex64>>> {
         let resources = self.resources.read();
         let parameters = resources.parameter_map.assemble(parameters)?;
-        let amplitude_len = self.amplitudes.len();
+        let amplitude_len = self.amplitude_use_sites.len();
         let grad_dim = parameters.len();
         let active_indices = resources.active_indices().to_vec();
         let lowered_runtime = self.lowered_runtime();
@@ -4536,7 +4688,7 @@ impl Evaluator {
     ) -> LadduResult<Vec<(Complex64, DVector<Complex64>)>> {
         let resources = self.resources.read();
         let parameters = resources.parameter_map.assemble(parameters)?;
-        let amplitude_len = self.amplitudes.len();
+        let amplitude_len = self.amplitude_use_sites.len();
         let grad_dim = parameters.len();
         let active_indices = resources.active_indices().to_vec();
         let lowered_runtime = self.lowered_runtime();
@@ -4621,7 +4773,7 @@ impl Evaluator {
             });
         }
         let parameters = resources.parameter_map.assemble(parameters)?;
-        let amplitude_len = self.amplitudes.len();
+        let amplitude_len = self.amplitude_use_sites.len();
         let grad_dim = parameters.len();
         let active_indices = active_mask
             .iter()
@@ -4706,7 +4858,7 @@ impl Evaluator {
     ) -> LadduResult<Vec<(Complex64, DVector<Complex64>)>> {
         let resources = self.resources.read();
         let parameters = resources.parameter_map.assemble(parameters)?;
-        let amplitude_len = self.amplitudes.len();
+        let amplitude_len = self.amplitude_use_sites.len();
         let grad_dim = parameters.len();
         let active_indices = resources.active_indices().to_vec();
         let lowered_runtime = self.lowered_runtime();

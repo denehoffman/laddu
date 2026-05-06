@@ -8,14 +8,14 @@ from laddu.variables import Angles, Polarization
 QuantumNumber: TypeAlias = int | float | Fraction
 
 def WignerD(
-    name: str,
+    *tags: str,
     spin: QuantumNumber,
     row_projection: QuantumNumber,
     column_projection: QuantumNumber,
     angles: Angles,
 ) -> Expression: ...
 def BlattWeisskopf(
-    name: str,
+    *tags: str,
     decay: Decay,
     l: QuantumNumber,
     reference_mass: float,
@@ -24,7 +24,7 @@ def BlattWeisskopf(
     kind: str = ...,
 ) -> Expression: ...
 def ClebschGordan(
-    name: str,
+    *tags: str,
     j1: QuantumNumber,
     m1: QuantumNumber,
     j2: QuantumNumber,
@@ -33,7 +33,7 @@ def ClebschGordan(
     m: QuantumNumber,
 ) -> Expression: ...
 def Wigner3j(
-    name: str,
+    *tags: str,
     j1: QuantumNumber,
     m1: QuantumNumber,
     j2: QuantumNumber,
@@ -42,14 +42,14 @@ def Wigner3j(
     m3: QuantumNumber,
 ) -> Expression: ...
 def PhotonSDME(
-    name: str,
+    *tags: str,
     helicity: int,
     helicity_prime: int,
     polarization: Polarization | None = ...,
 ) -> Expression: ...
-def Ylm(name: str, l: int, m: int, angles: Angles) -> Expression: ...
+def Ylm(*tags: str, l: int, m: int, angles: Angles) -> Expression: ...
 def Zlm(
-    name: str,
+    *tags: str,
     l: int,
     m: int,
     r: str,
@@ -57,7 +57,7 @@ def Zlm(
     polarization: Polarization,
 ) -> Expression: ...
 def PolPhase(
-    name: str,
+    *tags: str,
     polarization: Polarization,
 ) -> Expression: ...
 

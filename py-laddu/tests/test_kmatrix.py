@@ -1,5 +1,8 @@
+from typing import Any
+
 import pytest
 from laddu import Dataset, Event, Mass, Particle, Reaction, Vec3, parameter
+from laddu.amplitude import Expression
 from laddu.amplitudes.kmatrix import (
     KopfKMatrixA0,
     KopfKMatrixA0Channel,
@@ -50,9 +53,41 @@ def make_reaction_mass() -> Mass:
     return reaction.mass('x')
 
 
+def kopf_f0(
+    tag: str, couplings: Any, channel: Any, mass: Mass, seed: int | None = None
+) -> Expression:
+    return KopfKMatrixF0(tag, couplings=couplings, channel=channel, mass=mass, seed=seed)
+
+
+def kopf_f2(
+    tag: str, couplings: Any, channel: Any, mass: Mass, seed: int | None = None
+) -> Expression:
+    return KopfKMatrixF2(tag, couplings=couplings, channel=channel, mass=mass, seed=seed)
+
+
+def kopf_a0(
+    tag: str, couplings: Any, channel: Any, mass: Mass, seed: int | None = None
+) -> Expression:
+    return KopfKMatrixA0(tag, couplings=couplings, channel=channel, mass=mass, seed=seed)
+
+
+def kopf_a2(
+    tag: str, couplings: Any, channel: Any, mass: Mass, seed: int | None = None
+) -> Expression:
+    return KopfKMatrixA2(tag, couplings=couplings, channel=channel, mass=mass, seed=seed)
+
+
+def kopf_rho(tag: str, couplings: Any, channel: Any, mass: Mass) -> Expression:
+    return KopfKMatrixRho(tag, couplings=couplings, channel=channel, mass=mass)
+
+
+def kopf_pi1(tag: str, couplings: Any, channel: Any, mass: Mass) -> Expression:
+    return KopfKMatrixPi1(tag, couplings=couplings, channel=channel, mass=mass)
+
+
 def test_f0_evaluation() -> None:
     res_mass = Mass(['kshort1', 'kshort2'])
-    amp = KopfKMatrixF0(
+    amp = kopf_f0(
         'f0',
         (
             (parameter('p0'), parameter('p1')),
@@ -72,7 +107,7 @@ def test_f0_evaluation() -> None:
 
 
 def test_f0_accepts_reaction_mass_variable() -> None:
-    amp = KopfKMatrixF0(
+    amp = kopf_f0(
         'f0',
         (
             (parameter('p0'), parameter('p1')),
@@ -95,7 +130,7 @@ def test_f0_accepts_reaction_mass_variable() -> None:
 
 def test_f0_gradient() -> None:
     res_mass = Mass(['kshort1', 'kshort2'])
-    amp = KopfKMatrixF0(
+    amp = kopf_f0(
         'f0',
         (
             (parameter('p0'), parameter('p1')),
@@ -137,7 +172,7 @@ def test_f0_gradient() -> None:
 def test_f0_rejects_integer_channel() -> None:
     res_mass = Mass(['kshort1', 'kshort2'])
     with pytest.raises(TypeError):
-        KopfKMatrixF0(
+        kopf_f0(
             'f0',
             (
                 (parameter('p0'), parameter('p1')),
@@ -153,7 +188,7 @@ def test_f0_rejects_integer_channel() -> None:
 
 def test_f2_evaluation() -> None:
     res_mass = Mass(['kshort1', 'kshort2'])
-    amp = KopfKMatrixF2(
+    amp = kopf_f2(
         'f2',
         (
             (parameter('p0'), parameter('p1')),
@@ -173,7 +208,7 @@ def test_f2_evaluation() -> None:
 
 def test_f2_gradient() -> None:
     res_mass = Mass(['kshort1', 'kshort2'])
-    amp = KopfKMatrixF2(
+    amp = kopf_f2(
         'f2',
         (
             (parameter('p0'), parameter('p1')),
@@ -207,7 +242,7 @@ def test_f2_gradient() -> None:
 
 def test_a0_evaluation() -> None:
     res_mass = Mass(['kshort1', 'kshort2'])
-    amp = KopfKMatrixA0(
+    amp = kopf_a0(
         'a0',
         (
             (parameter('p0'), parameter('p1')),
@@ -225,7 +260,7 @@ def test_a0_evaluation() -> None:
 
 def test_a0_gradient() -> None:
     res_mass = Mass(['kshort1', 'kshort2'])
-    amp = KopfKMatrixA0(
+    amp = kopf_a0(
         'a0',
         (
             (parameter('p0'), parameter('p1')),
@@ -249,7 +284,7 @@ def test_a0_gradient() -> None:
 
 def test_a2_evaluation() -> None:
     res_mass = Mass(['kshort1', 'kshort2'])
-    amp = KopfKMatrixA2(
+    amp = kopf_a2(
         'a2',
         (
             (parameter('p0'), parameter('p1')),
@@ -267,7 +302,7 @@ def test_a2_evaluation() -> None:
 
 def test_a2_gradient() -> None:
     res_mass = Mass(['kshort1', 'kshort2'])
-    amp = KopfKMatrixA2(
+    amp = kopf_a2(
         'a2',
         (
             (parameter('p0'), parameter('p1')),
@@ -291,7 +326,7 @@ def test_a2_gradient() -> None:
 
 def test_rho_evaluation() -> None:
     res_mass = Mass(['kshort1', 'kshort2'])
-    amp = KopfKMatrixRho(
+    amp = kopf_rho(
         'rho',
         (
             (parameter('p0'), parameter('p1')),
@@ -309,7 +344,7 @@ def test_rho_evaluation() -> None:
 
 def test_rho_gradient() -> None:
     res_mass = Mass(['kshort1', 'kshort2'])
-    amp = KopfKMatrixRho(
+    amp = kopf_rho(
         'rho',
         (
             (parameter('p0'), parameter('p1')),
@@ -333,7 +368,7 @@ def test_rho_gradient() -> None:
 
 def test_pi1_evaluation() -> None:
     res_mass = Mass(['kshort1', 'kshort2'])
-    amp = KopfKMatrixPi1(
+    amp = kopf_pi1(
         'pi1',
         ((parameter('p0'), parameter('p1')),),
         KopfKMatrixPi1Channel.PiEtaPrime,
@@ -348,7 +383,7 @@ def test_pi1_evaluation() -> None:
 
 def test_pi1_gradient() -> None:
     res_mass = Mass(['kshort1', 'kshort2'])
-    amp = KopfKMatrixPi1(
+    amp = kopf_pi1(
         'pi1',
         ((parameter('p0'), parameter('p1')),),
         KopfKMatrixPi1Channel.PiEtaPrime,

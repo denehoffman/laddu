@@ -1,5 +1,7 @@
 use laddu_core::{
-    amplitudes::{debug_key, Amplitude, AmplitudeID, AmplitudeSemanticKey, Expression},
+    amplitudes::{
+        debug_key, Amplitude, AmplitudeID, AmplitudeSemanticKey, Expression, IntoTags, Tags,
+    },
     data::{DatasetMetadata, Event},
     resources::{Cache, ComplexScalarID, Parameters, Resources},
     traits::Variable,
@@ -42,7 +44,7 @@ impl PhotonHelicity {
 /// A photon spin-density matrix element.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct PhotonSDME {
-    name: String,
+    tags: Tags,
     polarization: PhotonPolarization,
     lambda: PhotonHelicity,
     lambda_prime: PhotonHelicity,
@@ -52,13 +54,13 @@ pub struct PhotonSDME {
 impl PhotonSDME {
     /// Construct a new photon SDME amplitude.
     pub fn new(
-        name: &str,
+        tags: impl IntoTags,
         polarization: PhotonPolarization,
         lambda: PhotonHelicity,
         lambda_prime: PhotonHelicity,
     ) -> LadduResult<Expression> {
         Self {
-            name: name.to_string(),
+            tags: tags.into_tags(),
             polarization,
             lambda,
             lambda_prime,
@@ -72,13 +74,12 @@ impl PhotonSDME {
 impl Amplitude for PhotonSDME {
     fn register(&mut self, resources: &mut Resources) -> LadduResult<AmplitudeID> {
         self.value_id = resources.register_complex_scalar(None);
-        resources.register_amplitude(&self.name)
+        resources.register_amplitude(self.tags.clone())
     }
 
     fn semantic_key(&self) -> Option<AmplitudeSemanticKey> {
         Some(
             AmplitudeSemanticKey::new("PhotonSDME")
-                .with_field("name", debug_key(&self.name))
                 .with_field("polarization", debug_key(&self.polarization))
                 .with_field("lambda", self.lambda.value().to_string())
                 .with_field("lambda_prime", self.lambda_prime.value().to_string()),

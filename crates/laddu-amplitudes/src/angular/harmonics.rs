@@ -1,6 +1,6 @@
 use laddu_core::{
     amplitudes::{
-        debug_key, display_key, Amplitude, AmplitudeID, AmplitudeSemanticKey, Expression,
+        display_key, Amplitude, AmplitudeID, AmplitudeSemanticKey, Expression, IntoTags, Tags,
     },
     data::{DatasetMetadata, Event},
     math::spherical_harmonic,
@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 /// An [`Amplitude`] for the spherical harmonic function $`Y_\ell^m(\theta, \phi)`$.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Ylm {
-    name: String,
+    tags: Tags,
     l: usize,
     m: isize,
     angles: Angles,
@@ -24,11 +24,16 @@ pub struct Ylm {
 }
 
 impl Ylm {
-    /// Construct a new [`Ylm`] with the given name, angular momentum (`l`) and moment (`m`) over
+    /// Construct a new [`Ylm`] with activation tags, angular momentum (`l`) and moment (`m`) over
     /// the given set of [`Angles`].
-    pub fn new(name: &str, l: usize, m: isize, angles: &Angles) -> LadduResult<Expression> {
+    pub fn new(
+        tags: impl IntoTags,
+        l: usize,
+        m: isize,
+        angles: &Angles,
+    ) -> LadduResult<Expression> {
         Self {
-            name: name.to_string(),
+            tags: tags.into_tags(),
             l,
             m,
             angles: angles.clone(),
@@ -42,13 +47,12 @@ impl Ylm {
 impl Amplitude for Ylm {
     fn register(&mut self, resources: &mut Resources) -> LadduResult<AmplitudeID> {
         self.csid = resources.register_complex_scalar(None);
-        resources.register_amplitude(&self.name)
+        resources.register_amplitude(self.tags.clone())
     }
 
     fn semantic_key(&self) -> Option<AmplitudeSemanticKey> {
         Some(
             AmplitudeSemanticKey::new("Ylm")
-                .with_field("name", debug_key(&self.name))
                 .with_field("l", self.l.to_string())
                 .with_field("m", self.m.to_string())
                 .with_field("angles", display_key(&self.angles)),
@@ -94,7 +98,7 @@ impl Amplitude for Ylm {
 /// polarized beam.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Zlm {
-    name: String,
+    tags: Tags,
     l: usize,
     m: isize,
     r: Sign,
@@ -107,7 +111,7 @@ impl Zlm {
     /// Construct a new [`Zlm`] with the given angular momentum, moment, reflectivity, angles, and
     /// polarization variables.
     pub fn new(
-        name: &str,
+        tags: impl IntoTags,
         l: usize,
         m: isize,
         r: Sign,
@@ -115,7 +119,7 @@ impl Zlm {
         polarization: &Polarization,
     ) -> LadduResult<Expression> {
         Self {
-            name: name.to_string(),
+            tags: tags.into_tags(),
             l,
             m,
             r,
@@ -131,13 +135,12 @@ impl Zlm {
 impl Amplitude for Zlm {
     fn register(&mut self, resources: &mut Resources) -> LadduResult<AmplitudeID> {
         self.csid = resources.register_complex_scalar(None);
-        resources.register_amplitude(&self.name)
+        resources.register_amplitude(self.tags.clone())
     }
 
     fn semantic_key(&self) -> Option<AmplitudeSemanticKey> {
         Some(
             AmplitudeSemanticKey::new("Zlm")
-                .with_field("name", debug_key(&self.name))
                 .with_field("l", self.l.to_string())
                 .with_field("m", self.m.to_string())
                 .with_field("r", display_key(self.r))
@@ -196,16 +199,16 @@ impl Amplitude for Zlm {
 /// An [`Amplitude`] representing the polarization phase $`P_\gamma e^{2 i \Phi}`$.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct PolPhase {
-    name: String,
+    tags: Tags,
     polarization: Polarization,
     csid: ComplexScalarID,
 }
 
 impl PolPhase {
     /// Construct a new [`PolPhase`] from the given polarization variables.
-    pub fn new(name: &str, polarization: &Polarization) -> LadduResult<Expression> {
+    pub fn new(tags: impl IntoTags, polarization: &Polarization) -> LadduResult<Expression> {
         Self {
-            name: name.to_string(),
+            tags: tags.into_tags(),
             polarization: polarization.clone(),
             csid: ComplexScalarID::default(),
         }
@@ -217,13 +220,12 @@ impl PolPhase {
 impl Amplitude for PolPhase {
     fn register(&mut self, resources: &mut Resources) -> LadduResult<AmplitudeID> {
         self.csid = resources.register_complex_scalar(None);
-        resources.register_amplitude(&self.name)
+        resources.register_amplitude(self.tags.clone())
     }
 
     fn semantic_key(&self) -> Option<AmplitudeSemanticKey> {
         Some(
             AmplitudeSemanticKey::new("PolPhase")
-                .with_field("name", debug_key(&self.name))
                 .with_field("polarization", display_key(&self.polarization)),
         )
     }
@@ -298,14 +300,14 @@ mod tests {
     fn test_ylm_m_zero_reports_real_valued_hint() {
         let (_, angles) = reaction_context();
         let real_ylm = Ylm {
-            name: "ylm0".to_string(),
+            tags: Tags::empty(),
             l: 1,
             m: 0,
             angles: angles.clone(),
             csid: ComplexScalarID::default(),
         };
         let complex_ylm = Ylm {
-            name: "ylm1".to_string(),
+            tags: Tags::empty(),
             l: 1,
             m: 1,
             angles,

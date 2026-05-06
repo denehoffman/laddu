@@ -2,7 +2,7 @@ from laddu.amplitude import Expression, Parameter
 from laddu.variables import Mandelstam, Mass
 
 def BreitWigner(
-    name: str,
+    *tags: str,
     mass: Parameter,
     width: Parameter,
     l: int,
@@ -12,13 +12,13 @@ def BreitWigner(
     barrier_factors: bool = True,
 ) -> Expression: ...
 def BreitWignerNonRelativistic(
-    name: str,
+    *tags: str,
     mass: Parameter,
     width: Parameter,
     resonance_mass: Mass,
 ) -> Expression: ...
 def Flatte(
-    name: str,
+    *tags: str,
     mass: Parameter,
     observed_channel_coupling: Parameter,
     alternate_channel_coupling: Parameter,
@@ -27,14 +27,14 @@ def Flatte(
     resonance_mass: Mass,
 ) -> Expression: ...
 def Voigt(
-    name: str,
+    *tags: str,
     mass: Parameter,
     width: Parameter,
     sigma: Parameter,
     resonance_mass: Mass,
 ) -> Expression: ...
 def PhaseSpaceFactor(
-    name: str,
+    *tags: str,
     recoil_mass: Mass,
     daughter_1_mass: Mass,
     daughter_2_mass: Mass,

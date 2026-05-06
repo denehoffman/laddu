@@ -3,8 +3,8 @@ use std::f64::consts::SQRT_2;
 use errorfunctions::ComplexErrorFunctions;
 use laddu_core::{
     amplitudes::{
-        debug_key, display_key, parameter_key, Amplitude, AmplitudeID, AmplitudeSemanticKey,
-        Expression, Parameter,
+        display_key, parameter_key, Amplitude, AmplitudeID, AmplitudeSemanticKey, Expression,
+        IntoTags, Parameter, Tags,
     },
     data::{DatasetMetadata, Event},
     resources::{Cache, ParameterID, Parameters, Resources},
@@ -21,7 +21,7 @@ const SQRT_2PI: f64 = 2.5066282746310002;
 /// A Voigt line-shape [`Amplitude`].
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Voigt {
-    name: String,
+    tags: Tags,
     mass: Parameter,
     width: Parameter,
     sigma: Parameter,
@@ -35,14 +35,14 @@ pub struct Voigt {
 impl Voigt {
     /// Construct a [`Voigt`] with the given mass, width, and Gaussian sigma.
     pub fn new(
-        name: &str,
+        tags: impl IntoTags,
         mass: Parameter,
         width: Parameter,
         sigma: Parameter,
         resonance_mass: &Mass,
     ) -> LadduResult<Expression> {
         Self {
-            name: name.to_string(),
+            tags: tags.into_tags(),
             mass,
             width,
             sigma,
@@ -70,15 +70,13 @@ impl Amplitude for Voigt {
         self.pid_mass = resources.register_parameter(&self.mass)?;
         self.pid_width = resources.register_parameter(&self.width)?;
         self.pid_sigma = resources.register_parameter(&self.sigma)?;
-        self.resonance_mass_id =
-            resources.register_scalar(Some(&format!("{}.resonance_mass", self.name)));
-        resources.register_amplitude(&self.name)
+        self.resonance_mass_id = resources.register_scalar(None);
+        resources.register_amplitude(self.tags.clone())
     }
 
     fn semantic_key(&self) -> Option<AmplitudeSemanticKey> {
         Some(
             AmplitudeSemanticKey::new("Voigt")
-                .with_field("name", debug_key(&self.name))
                 .with_field("mass", parameter_key(&self.mass))
                 .with_field("width", parameter_key(&self.width))
                 .with_field("sigma", parameter_key(&self.sigma))

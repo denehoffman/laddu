@@ -56,7 +56,7 @@ def get_measured_moment(data: ld.Dataset, *, i: int, l: int, m: int) -> complex:
         pol_term = np.cos(2 * big_phi) / p_gamma
     elif i == 2:
         pol_term = np.sin(2 * big_phi) / p_gamma
-    ylm = ld.Ylm('ylm', l, m, angles)
+    ylm = ld.Ylm('ylm', l=l, m=m, angles=angles)
     model = ylm.conj()
     evaluator = model.load(data)
     values = evaluator.evaluate([])
@@ -90,8 +90,8 @@ def get_norm_int_term(
         pol_term *= np.cos(2 * big_phi) * p_gamma
     elif ip == 2:
         pol_term *= np.sin(2 * big_phi) * p_gamma
-    ylm = ld.Ylm('ylm', l, m, angles)
-    ylpmp = ld.Ylm('ylpmp', lp, mp, angles)
+    ylm = ld.Ylm('ylm', l=l, m=m, angles=angles)
+    ylpmp = ld.Ylm('ylpmp', l=lp, m=mp, angles=angles)
     model = ylm.conj() * (ylpmp.imag() if ip == 2 else ylpmp.real())
     evaluator = model.load(accmc)
     values = evaluator.evaluate([])

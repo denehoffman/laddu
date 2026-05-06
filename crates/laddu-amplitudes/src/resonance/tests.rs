@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use approx::assert_relative_eq;
 use laddu_core::{
+    amplitudes::IntoTags,
     data::test_dataset,
     parameter,
     reaction::{Particle, Reaction},
@@ -11,7 +12,7 @@ use laddu_core::{
 
 use super::{BreitWigner, BreitWignerNonRelativistic, Flatte, PhaseSpaceFactor, Voigt};
 
-fn test_phase_space_expression(name: &str, channel: Channel) -> laddu_core::Expression {
+fn test_phase_space_expression(tags: impl IntoTags, channel: Channel) -> laddu_core::Expression {
     let beam = Particle::stored("beam");
     let target = Particle::missing("target");
     let kshort1 = Particle::stored("kshort1");
@@ -26,7 +27,7 @@ fn test_phase_space_expression(name: &str, channel: Channel) -> laddu_core::Expr
     let resonance_mass = decay.parent_mass();
     let mandelstam_s = reaction.mandelstam(channel).unwrap();
     PhaseSpaceFactor::new(
-        name,
+        tags,
         &recoil_mass,
         &daughter_1_mass,
         &daughter_2_mass,

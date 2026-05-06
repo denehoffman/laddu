@@ -53,8 +53,8 @@ def test_reaction_variables_feed_wigner_d_and_barrier() -> None:
     rxn, _, _, _ = reaction()
     decay = rxn.decay('x')
     angles = decay.angles('kshort1', 'Helicity')
-    d = WignerD('d', 2, 0, 0, angles)
-    b = BlattWeisskopf('b', decay, 2, 1.5)
+    d = WignerD('d', spin=2, row_projection=0, column_projection=0, angles=angles)
+    b = BlattWeisskopf('b', decay=decay, l=2, reference_mass=1.5)
     evaluator = (d * b).load(make_test_dataset())
     value = evaluator.evaluate([])[0]
 
@@ -65,14 +65,14 @@ def test_reaction_variables_feed_wigner_d_and_barrier() -> None:
 def test_clebsch_gordan_and_photon_sdme_are_expression_terms() -> None:
     cg = ClebschGordan(
         'cg',
-        Fraction(1, 2),
-        Fraction(1, 2),
-        Fraction(1, 2),
-        Fraction(-1, 2),
-        1,
-        0,
+        j1=Fraction(1, 2),
+        m1=Fraction(1, 2),
+        j2=Fraction(1, 2),
+        m2=Fraction(-1, 2),
+        j=1,
+        m=0,
     )
-    rho = PhotonSDME('rho', 1, 1)
+    rho = PhotonSDME('rho', helicity=1, helicity_prime=1)
     value = (cg * rho).load(make_test_dataset()).evaluate([])[0]
 
     assert value.real == pytest.approx(0.5 / 2.0**0.5)
@@ -85,20 +85,22 @@ def test_half_integer_quantum_numbers_accept_fraction_and_float() -> None:
     angles = rxn.decay('x').angles('kshort1', 'Helicity')
     d_fraction = WignerD(
         'd_fraction',
-        Fraction(3, 2),
-        Fraction(1, 2),
-        Fraction(-1, 2),
-        angles,
+        spin=Fraction(3, 2),
+        row_projection=Fraction(1, 2),
+        column_projection=Fraction(-1, 2),
+        angles=angles,
     )
-    d_float = WignerD('d_float', 1.5, 0.5, -0.5, angles)
+    d_float = WignerD(
+        'd_float', spin=1.5, row_projection=0.5, column_projection=-0.5, angles=angles
+    )
     cg = ClebschGordan(
         'cg_half',
-        Fraction(1, 2),
-        Fraction(1, 2),
-        1,
-        0,
-        1.5,
-        0.5,
+        j1=Fraction(1, 2),
+        m1=Fraction(1, 2),
+        j2=1,
+        m2=0,
+        j=1.5,
+        m=0.5,
     )
 
     values = (d_fraction + d_float + cg).load(dataset).evaluate([])
@@ -113,13 +115,15 @@ def test_quantum_number_inputs_reject_invalid_values() -> None:
     angles = rxn.decay('x').angles('kshort1', 'Helicity')
 
     with pytest.raises(RuntimeError, match='integer or half-integer'):
-        WignerD('bad_float', 1.25, 0, 0, angles).load(dataset)
+        WignerD(
+            'bad_float', spin=1.25, row_projection=0, column_projection=0, angles=angles
+        ).load(dataset)
 
     with pytest.raises(RuntimeError, match='integer or half-integer'):
-        ClebschGordan('bad_fraction', Fraction(1, 3), 0, 1, 0, 1, 0)
+        ClebschGordan('bad_fraction', j1=Fraction(1, 3), m1=0, j2=1, m2=0, j=1, m=0)
 
     with pytest.raises(RuntimeError, match='orbital angular momentum must be an integer'):
-        BlattWeisskopf('bad_l', rxn.decay('x'), 1.5, 1.5)
+        BlattWeisskopf('bad_l', decay=rxn.decay('x'), l=1.5, reference_mass=1.5)
 
 
 def test_decay_helicity_factor_matches_explicit_wigner_d() -> None:
@@ -127,7 +131,13 @@ def test_decay_helicity_factor_matches_explicit_wigner_d() -> None:
     rxn, _, _, _ = reaction()
     decay = rxn.decay('x')
     factor = decay.helicity_factor('h', 2, 1, 'kshort1', 1, 0)
-    explicit = WignerD('d', 2, 1, 1, decay.angles('kshort1', 'Helicity')).conj()
+    explicit = WignerD(
+        'd',
+        spin=2,
+        row_projection=1,
+        column_projection=1,
+        angles=decay.angles('kshort1', 'Helicity'),
+    ).conj()
 
     factor_value = factor.load(dataset).evaluate([])[0]
     explicit_value = explicit.load(dataset).evaluate([])[0]
@@ -142,9 +152,15 @@ def test_decay_canonical_factor_matches_explicit_product() -> None:
     decay = rxn.decay('x')
     factor = decay.canonical_factor('c', 2, 0, 2, 0, 'kshort1', 0, 0, 0, 0)
     explicit = (
-        ClebschGordan('ls_cg', 2, 0, 0, 0, 2, 0)
-        * ClebschGordan('spin_cg', 0, 0, 0, 0, 0, 0)
-        * WignerD('d', 2, 0, 0, decay.angles('kshort1', 'Helicity')).conj()
+        ClebschGordan('ls_cg', j1=2, m1=0, j2=0, m2=0, j=2, m=0)
+        * ClebschGordan('spin_cg', j1=0, m1=0, j2=0, m2=0, j=0, m=0)
+        * WignerD(
+            'd',
+            spin=2,
+            row_projection=0,
+            column_projection=0,
+            angles=decay.angles('kshort1', 'Helicity'),
+        ).conj()
     )
 
     factor_value = factor.load(dataset).evaluate([])[0]

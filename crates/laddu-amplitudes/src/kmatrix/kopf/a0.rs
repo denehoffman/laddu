@@ -2,8 +2,8 @@ use std::array;
 
 use laddu_core::{
     amplitudes::{
-        debug_key, display_key, parameter_array_key, seed_key, Amplitude, AmplitudeID,
-        AmplitudeSemanticKey, Expression, Parameter,
+        display_key, parameter_array_key, seed_key, Amplitude, AmplitudeID, AmplitudeSemanticKey,
+        Expression, IntoTags, Parameter, Tags,
     },
     data::{DatasetMetadata, Event},
     resources::{Cache, ComplexVectorID, MatrixID, ParameterID, Parameters, Resources},
@@ -45,7 +45,7 @@ const COV_A0: SMatrix<f64, 10, 10> = matrix![
 /// [^1]: Kopf, B., Albrecht, M., Koch, H., Küßner, M., Pychy, J., Qin, X., & Wiedner, U. (2021). Investigation of the lightest hybrid meson candidate with a coupled-channel analysis of $`\bar{p}p`$-, $`\pi^- p`$- and $`\pi \pi`$-Data. The European Physical Journal C, 81(12). [doi:10.1140/epjc/s10052-021-09821-2](https://doi.org/10.1140/epjc/s10052-021-09821-2)
 #[derive(Clone, Serialize, Deserialize)]
 pub struct KopfKMatrixA0 {
-    name: String,
+    tags: Tags,
     channel: KopfKMatrixA0Channel,
     mass: Mass,
     constants: FixedKMatrix<2, 2>,
@@ -59,7 +59,7 @@ pub struct KopfKMatrixA0 {
 }
 
 impl KopfKMatrixA0 {
-    /// Construct a new [`KopfKMatrixA0`] with the given name, production couplings, channel,
+    /// Construct a new [`KopfKMatrixA0`] with activation tags, production couplings, channel,
     /// and input mass.
     ///
     /// | Channel index | Channel |
@@ -72,7 +72,7 @@ impl KopfKMatrixA0 {
     /// | $`a_0(980)`$ |
     /// | $`a_0(1450)`$ |
     pub fn new(
-        name: &str,
+        tags: impl IntoTags,
         couplings: [[Parameter; 2]; 2],
         channel: KopfKMatrixA0Channel,
         mass: &Mass,
@@ -85,7 +85,7 @@ impl KopfKMatrixA0 {
             couplings_imag[i] = couplings[i][1].clone();
         }
         Self {
-            name: name.to_string(),
+            tags: tags.into_tags(),
             channel,
             mass: mass.clone(),
             constants: FixedKMatrix::new(
@@ -120,17 +120,14 @@ impl Amplitude for KopfKMatrixA0 {
             self.couplings_indices_imag[i] =
                 resources.register_parameter(&self.couplings_imag[i])?;
         }
-        self.ikc_cache_index = resources
-            .register_complex_vector(Some(&format!("KopfKMatrixA0<{}> ikc_vec", self.name)));
-        self.p_vec_cache_index =
-            resources.register_matrix(Some(&format!("KopfKMatrixA0<{}> p_vec", self.name)));
-        resources.register_amplitude(&self.name)
+        self.ikc_cache_index = resources.register_complex_vector(None);
+        self.p_vec_cache_index = resources.register_matrix(None);
+        resources.register_amplitude(self.tags.clone())
     }
 
     fn semantic_key(&self) -> Option<AmplitudeSemanticKey> {
         Some(
             AmplitudeSemanticKey::new("KopfKMatrixA0")
-                .with_field("name", debug_key(&self.name))
                 .with_field("channel", self.channel.to_string())
                 .with_field("mass", display_key(&self.mass))
                 .with_field("couplings_real", parameter_array_key(&self.couplings_real))
@@ -187,8 +184,8 @@ impl Amplitude for KopfKMatrixA0 {
 ///
 /// Parameters
 /// ----------
-/// name : str
-///     The Amplitude name
+/// tags : str
+///     Activation tag(s) for the amplitude.
 /// couplings : list of list of laddu.Parameter
 ///     Each initial-state coupling (as a list of pairs of real and imaginary parts)
 /// channel : laddu.KopfKMatrixA0Channel
@@ -339,10 +336,10 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "seed differs")]
-    fn test_a0_semantic_key_reports_mismatched_seed() {
+    fn test_a0_semantic_key_keeps_mismatched_seed_separate() {
+        let dataset = Arc::new(test_dataset());
         let res_mass = Mass::new(["kshort1", "kshort2"]);
-        let _expr = KopfKMatrixA0::new(
+        let expr = KopfKMatrixA0::new(
             "a0",
             [
                 [parameter!("p0"), parameter!("p1")],
@@ -364,5 +361,8 @@ mod tests {
                 Some(2),
             )
             .unwrap();
+        let evaluator = expr.load(&dataset).unwrap();
+
+        assert_eq!(evaluator.amplitudes.len(), 2);
     }
 }

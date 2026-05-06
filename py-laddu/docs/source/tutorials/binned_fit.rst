@@ -57,11 +57,11 @@ where the terms with particle names in square brackets still represent the produ
    angles = decay.angles('kshort1')
    polarization = reaction.polarization('pol_magnitude', 'pol_angle')
 
-   z00p = ld.Zlm("Z00+", 0, 0, "+", angles, polarization)
-   z22p = ld.Zlm("Z22+", 2, 2, "+", angles, polarization)
+   z00p = ld.Zlm("Z00+", l=0, m=0, r="+", angles=angles, polarization=polarization)
+   z22p = ld.Zlm("Z22+", l=2, m=2, r="+", angles=angles, polarization=polarization)
 
-   s0p = ld.Scalar("S0+", ld.parameter("Re[S0+]"))
-   d2p = ld.ComplexScalar("D2+", ld.parameter("Re[D2+]"), ld.parameter("Im[D2+]"))
+   s0p = ld.Scalar("S0+", value=ld.parameter("Re[S0+]"))
+   d2p = ld.ComplexScalar("D2+", re=ld.parameter("Re[D2+]"), im=ld.parameter("Im[D2+]"))
 
    positive_real_sum = (s0p * z00p.real() + d2p * z22p.real()).norm_sqr()
    positive_imag_sum = (s0p * z00p.imag() + d2p * z22p.imag()).norm_sqr()

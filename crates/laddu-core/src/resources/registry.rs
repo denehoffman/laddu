@@ -8,7 +8,7 @@ use super::{
     parameter_store::ParameterID,
 };
 use crate::{
-    amplitudes::{AmplitudeID, Parameter, ParameterMap},
+    amplitudes::{AmplitudeID, IntoTags, Parameter, ParameterMap, Tags},
     LadduError, LadduResult,
 };
 
@@ -43,8 +43,9 @@ fn glob_matches(pattern: &str, text: &str) -> bool {
 /// The main resource manager for cached values, amplitudes, parameters, and constants.
 #[derive(Default, Debug, Clone, Serialize, Deserialize)]
 pub struct Resources {
-    amplitudes: HashMap<String, AmplitudeID>,
-    /// A list indicating which amplitudes are active (using [`AmplitudeID`]s as indices)
+    amplitudes: HashMap<String, Vec<usize>>,
+    untagged_amplitudes: Vec<bool>,
+    /// A list indicating which amplitude use-sites are active.
     pub active: Vec<bool>,
     #[serde(default)]
     active_indices: Vec<usize>,
@@ -143,19 +144,17 @@ impl Resources {
         if is_glob_selector(selector) {
             self.amplitudes
                 .iter()
-                .filter_map(|(name, amplitude)| {
-                    if glob_matches(selector, name) {
-                        Some(amplitude.1)
+                .filter_map(|(tag, amplitudes)| {
+                    if glob_matches(selector, tag) {
+                        Some(amplitudes.iter().copied())
                     } else {
                         None
                     }
                 })
+                .flatten()
                 .collect()
         } else {
-            self.amplitudes
-                .get(selector)
-                .map(|amplitude| vec![amplitude.1])
-                .unwrap_or_default()
+            self.amplitudes.get(selector).cloned().unwrap_or_default()
         }
     }
 
@@ -176,6 +175,9 @@ impl Resources {
         }
         let mut changed = false;
         for idx in indices {
+            if self.untagged_amplitudes.get(idx).copied().unwrap_or(false) {
+                continue;
+            }
             if self.active[idx] != active {
                 self.active[idx] = active;
                 changed = true;
@@ -208,7 +210,8 @@ impl Resources {
     fn isolate_indices(&mut self, indices: &[usize]) {
         let mut changed = false;
         for (idx, active) in self.active.iter_mut().enumerate() {
-            let next_active = indices.binary_search(&idx).is_ok();
+            let next_active = self.untagged_amplitudes.get(idx).copied().unwrap_or(false)
+                || indices.binary_search(&idx).is_ok();
             if *active != next_active {
                 *active = next_active;
                 changed = true;
@@ -219,7 +222,7 @@ impl Resources {
         }
     }
 
-    /// Activate an [`Amplitude`](crate::amplitudes::Amplitude) by name.
+    /// Activate [`Amplitude`](crate::amplitudes::Amplitude) use-sites by tag or glob selector.
     pub fn activate<T: AsRef<str>>(&mut self, name: T) {
         if self
             .set_activation_state_by_selector(name.as_ref(), true, false)
@@ -228,7 +231,7 @@ impl Resources {
             self.rebuild_active_indices();
         }
     }
-    /// Activate several [`Amplitude`](crate::amplitudes::Amplitude)s by name.
+    /// Activate several [`Amplitude`](crate::amplitudes::Amplitude) use-sites by tag or glob selector.
     pub fn activate_many<T: AsRef<str>>(&mut self, names: &[T]) {
         let mut changed = false;
         for name in names {
@@ -243,14 +246,14 @@ impl Resources {
             self.rebuild_active_indices();
         }
     }
-    /// Activate an [`Amplitude`](crate::amplitudes::Amplitude) by name, returning an error if it is missing.
+    /// Activate [`Amplitude`](crate::amplitudes::Amplitude) use-sites by tag or glob selector, returning an error if no use-site matches.
     pub fn activate_strict<T: AsRef<str>>(&mut self, name: T) -> LadduResult<()> {
         if self.set_activation_state_by_selector(name.as_ref(), true, true)? {
             self.rebuild_active_indices();
         }
         Ok(())
     }
-    /// Activate several [`Amplitude`](crate::amplitudes::Amplitude)s by name, returning an error if any are missing.
+    /// Activate several [`Amplitude`](crate::amplitudes::Amplitude) use-sites by tag or glob selector, returning an error if any selector has no matches.
     pub fn activate_many_strict<T: AsRef<str>>(&mut self, names: &[T]) -> LadduResult<()> {
         let mut changed = false;
         for name in names {
@@ -276,7 +279,7 @@ impl Resources {
             self.rebuild_active_indices();
         }
     }
-    /// Deactivate an [`Amplitude`](crate::amplitudes::Amplitude) by name.
+    /// Deactivate [`Amplitude`](crate::amplitudes::Amplitude) use-sites by tag or glob selector.
     pub fn deactivate<T: AsRef<str>>(&mut self, name: T) {
         if self
             .set_activation_state_by_selector(name.as_ref(), false, false)
@@ -285,7 +288,7 @@ impl Resources {
             self.rebuild_active_indices();
         }
     }
-    /// Deactivate several [`Amplitude`](crate::amplitudes::Amplitude)s by name.
+    /// Deactivate several [`Amplitude`](crate::amplitudes::Amplitude) use-sites by tag or glob selector.
     pub fn deactivate_many<T: AsRef<str>>(&mut self, names: &[T]) {
         let mut changed = false;
         for name in names {
@@ -300,14 +303,14 @@ impl Resources {
             self.rebuild_active_indices();
         }
     }
-    /// Deactivate an [`Amplitude`](crate::amplitudes::Amplitude) by name, returning an error if it is missing.
+    /// Deactivate [`Amplitude`](crate::amplitudes::Amplitude) use-sites by tag or glob selector, returning an error if no use-site matches.
     pub fn deactivate_strict<T: AsRef<str>>(&mut self, name: T) -> LadduResult<()> {
         if self.set_activation_state_by_selector(name.as_ref(), false, true)? {
             self.rebuild_active_indices();
         }
         Ok(())
     }
-    /// Deactivate several [`Amplitude`](crate::amplitudes::Amplitude)s by name, returning an error if any are missing.
+    /// Deactivate several [`Amplitude`](crate::amplitudes::Amplitude) use-sites by tag or glob selector, returning an error if any selector has no matches.
     pub fn deactivate_many_strict<T: AsRef<str>>(&mut self, names: &[T]) -> LadduResult<()> {
         let mut changed = false;
         for name in names {
@@ -320,10 +323,13 @@ impl Resources {
         }
         Ok(())
     }
-    /// Deactivate all registered [`Amplitude`](crate::amplitudes::Amplitude)s.
+    /// Deactivate all tagged [`Amplitude`](crate::amplitudes::Amplitude) use-sites.
     pub fn deactivate_all(&mut self) {
         let mut changed = false;
-        for active in self.active.iter_mut() {
+        for (idx, active) in self.active.iter_mut().enumerate() {
+            if self.untagged_amplitudes.get(idx).copied().unwrap_or(false) {
+                continue;
+            }
             if *active {
                 *active = false;
                 changed = true;
@@ -333,59 +339,87 @@ impl Resources {
             self.rebuild_active_indices();
         }
     }
-    /// Isolate an [`Amplitude`](crate::amplitudes::Amplitude) by name (deactivate the rest).
+    /// Isolate [`Amplitude`](crate::amplitudes::Amplitude) use-sites by tag or glob selector.
     pub fn isolate<T: AsRef<str>>(&mut self, name: T) {
         let indices = self.selector_indices(name.as_ref());
-        if !indices.is_empty() || !is_glob_selector(name.as_ref()) {
+        if !indices.is_empty() {
             self.isolate_indices(&indices);
         }
     }
-    /// Isolate an [`Amplitude`](crate::amplitudes::Amplitude) by name (deactivate the rest), returning an error if it is missing.
+    /// Isolate [`Amplitude`](crate::amplitudes::Amplitude) use-sites by tag or glob selector, returning an error if no use-site matches.
     pub fn isolate_strict<T: AsRef<str>>(&mut self, name: T) -> LadduResult<()> {
         let indices = self.selector_indices_many(&[name], true)?;
         self.isolate_indices(&indices);
         Ok(())
     }
-    /// Isolate several [`Amplitude`](crate::amplitudes::Amplitude)s by name (deactivate the rest).
+    /// Isolate several [`Amplitude`](crate::amplitudes::Amplitude) use-sites by tag or glob selector.
     pub fn isolate_many<T: AsRef<str>>(&mut self, names: &[T]) {
         if let Ok(indices) = self.selector_indices_many(names, false) {
-            if !indices.is_empty() || names.iter().any(|name| !is_glob_selector(name.as_ref())) {
-                self.isolate_indices(&indices);
-            }
+            self.isolate_indices(&indices);
         }
     }
-    /// Isolate several [`Amplitude`](crate::amplitudes::Amplitude)s by name (deactivate the rest), returning an error if any are missing.
+    /// Isolate several [`Amplitude`](crate::amplitudes::Amplitude) use-sites by tag or glob selector, returning an error if any selector has no matches.
     pub fn isolate_many_strict<T: AsRef<str>>(&mut self, names: &[T]) -> LadduResult<()> {
         let indices = self.selector_indices_many(names, true)?;
         self.isolate_indices(&indices);
         Ok(())
     }
-    /// Register an [`Amplitude`](crate::amplitudes::Amplitude) with the [`Resources`] manager.
+    /// Register an [`Amplitude`](crate::amplitudes::Amplitude) use-site with activation tags.
     /// This method should be called at the end of the
     /// [`Amplitude::register`](crate::amplitudes::Amplitude::register) method. The
-    /// [`Amplitude`](crate::amplitudes::Amplitude) should probably obtain a name [`String`] in its
-    /// constructor.
+    /// The amplitude should store normalized activation tags and pass them here.
     ///
     /// # Errors
     ///
-    /// The [`Amplitude`](crate::amplitudes::Amplitude)'s name must be unique and not already
-    /// registered, else this will return a [`RegistrationError`][LadduError::RegistrationError].
-    pub fn register_amplitude(&mut self, name: &str) -> LadduResult<AmplitudeID> {
-        if self.amplitudes.contains_key(name) {
-            return Err(LadduError::RegistrationError {
-                name: name.to_string(),
-            });
+    /// Empty tag strings are discarded. If no non-empty tags remain, the amplitude use-site is
+    /// untagged; it still participates in evaluation but cannot be selected by
+    /// activation/deactivation/isolation APIs.
+    pub fn register_amplitude(&mut self, tags: impl IntoTags) -> LadduResult<AmplitudeID> {
+        let tags = tags.into_tags();
+        let next_id = AmplitudeID(tags.clone(), self.active.len());
+        for tag in tags.as_slice() {
+            self.amplitudes
+                .entry(tag.clone())
+                .or_default()
+                .push(next_id.1);
         }
-        let next_id = AmplitudeID(name.to_string(), self.amplitudes.len());
-        self.amplitudes.insert(name.to_string(), next_id.clone());
         self.active.push(true);
+        self.untagged_amplitudes.push(tags.is_empty());
         self.rebuild_active_indices();
         Ok(next_id)
     }
 
-    /// Fetch the [`AmplitudeID`] for a previously registered amplitude by name.
-    pub fn amplitude_id(&self, name: &str) -> Option<AmplitudeID> {
-        self.amplitudes.get(name).cloned()
+    /// Fetch the first [`AmplitudeID`] for a previously registered amplitude by tag.
+    pub fn amplitude_id(&self, tag: &str) -> Option<AmplitudeID> {
+        self.amplitudes
+            .get(tag)
+            .and_then(|indices| indices.first().copied())
+            .map(|idx| AmplitudeID(Tags::new([tag]), idx))
+    }
+
+    pub(crate) fn configure_amplitude_tags(&mut self, tags: &[Tags]) {
+        self.amplitudes.clear();
+        self.active = vec![true; tags.len()];
+        self.untagged_amplitudes = tags.iter().map(Tags::is_empty).collect();
+        for (idx, amplitude_tags) in tags.iter().enumerate() {
+            for tag in amplitude_tags.as_slice() {
+                self.amplitudes.entry(tag.clone()).or_default().push(idx);
+            }
+        }
+        self.rebuild_active_indices();
+    }
+
+    pub(crate) fn apply_active_mask(&mut self, mask: &[bool]) -> LadduResult<()> {
+        for (idx, &active) in mask.iter().enumerate() {
+            if !active && self.untagged_amplitudes.get(idx).copied().unwrap_or(false) {
+                return Err(LadduError::Custom(
+                    "active mask cannot deactivate untagged amplitudes".to_string(),
+                ));
+            }
+        }
+        self.active.clone_from_slice(mask);
+        self.rebuild_active_indices();
+        Ok(())
     }
 
     /// register a parameter. this method should be called within

@@ -6,8 +6,8 @@ This module re-exports the Rust-backed amplitude building blocks as a cohesive P
 Examples
 --------
 >>> from laddu.amplitudes import parameter, scalar
->>> scalar_amp = scalar.Scalar('mag', parameter('mag'))  # overall magnitude
->>> rho = scalar.ComplexScalar('rho', (parameter('rho_re'), parameter('rho_im')))
+>>> scalar_amp = scalar.Scalar('mag', value=parameter('mag'))  # overall magnitude
+>>> rho = scalar.ComplexScalar('rho', re=parameter('rho_re'), im=parameter('rho_im'))
 >>> expr = scalar_amp * rho
 >>> expr
 ×

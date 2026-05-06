@@ -2,8 +2,8 @@ use std::array;
 
 use laddu_core::{
     amplitudes::{
-        debug_key, display_key, parameter_array_key, Amplitude, AmplitudeID, AmplitudeSemanticKey,
-        Parameter,
+        display_key, parameter_array_key, Amplitude, AmplitudeID, AmplitudeSemanticKey, IntoTags,
+        Parameter, Tags,
     },
     data::{DatasetMetadata, Event},
     resources::{Cache, ComplexVectorID, MatrixID, ParameterID, Parameters, Resources},
@@ -23,7 +23,7 @@ use super::{FixedKMatrix, KopfKMatrixPi1Channel};
 /// [^1]: Kopf, B., Albrecht, M., Koch, H., Küßner, M., Pychy, J., Qin, X., & Wiedner, U. (2021). Investigation of the lightest hybrid meson candidate with a coupled-channel analysis of $`\bar{p}p`$-, $`\pi^- p`$- and $`\pi \pi`$-Data. The European Physical Journal C, 81(12). [doi:10.1140/epjc/s10052-021-09821-2](https://doi.org/10.1140/epjc/s10052-021-09821-2)
 #[derive(Clone, Serialize, Deserialize)]
 pub struct KopfKMatrixPi1 {
-    name: String,
+    tags: Tags,
     channel: KopfKMatrixPi1Channel,
     mass: Mass,
     constants: FixedKMatrix<2, 1>,
@@ -36,7 +36,7 @@ pub struct KopfKMatrixPi1 {
 }
 
 impl KopfKMatrixPi1 {
-    /// Construct a new [`KopfKMatrixPi1`] with the given name, production couplings, channel,
+    /// Construct a new [`KopfKMatrixPi1`] with activation tags, production couplings, channel,
     /// and input mass.
     ///
     /// | Channel index | Channel |
@@ -48,7 +48,7 @@ impl KopfKMatrixPi1 {
     /// | ---------- |
     /// | $`\pi_1(1600)`$ |
     pub fn new(
-        name: &str,
+        tags: impl IntoTags,
         couplings: [[Parameter; 2]; 1],
         channel: KopfKMatrixPi1Channel,
         mass: &Mass,
@@ -60,7 +60,7 @@ impl KopfKMatrixPi1 {
             couplings_imag[i] = couplings[i][1].clone();
         }
         Self {
-            name: name.to_string(),
+            tags: tags.into_tags(),
             channel,
             mass: mass.clone(),
             constants: FixedKMatrix {
@@ -98,17 +98,14 @@ impl Amplitude for KopfKMatrixPi1 {
             self.couplings_indices_imag[i] =
                 resources.register_parameter(&self.couplings_imag[i])?;
         }
-        self.ikc_cache_index = resources
-            .register_complex_vector(Some(&format!("KopfKMatrixPi1<{}> ikc_vec", self.name)));
-        self.p_vec_cache_index =
-            resources.register_matrix(Some(&format!("KopfKMatrixPi1<{}> p_vec", self.name)));
-        resources.register_amplitude(&self.name)
+        self.ikc_cache_index = resources.register_complex_vector(None);
+        self.p_vec_cache_index = resources.register_matrix(None);
+        resources.register_amplitude(self.tags.clone())
     }
 
     fn semantic_key(&self) -> Option<AmplitudeSemanticKey> {
         Some(
             AmplitudeSemanticKey::new("KopfKMatrixPi1")
-                .with_field("name", debug_key(&self.name))
                 .with_field("channel", self.channel.to_string())
                 .with_field("mass", display_key(&self.mass))
                 .with_field("couplings_real", parameter_array_key(&self.couplings_real))
@@ -162,8 +159,8 @@ impl Amplitude for KopfKMatrixPi1 {
 ///
 /// Parameters
 /// ----------
-/// name : str
-///     The Amplitude name
+/// tags : str
+///     Activation tag(s) for the amplitude.
 /// couplings : list of list of laddu.Parameter
 ///     Each initial-state coupling (as a list of pairs of real and imaginary parts)
 /// channel : laddu.KopfKMatrixPi1Channel

@@ -48,7 +48,7 @@ def _as_expression(self: _ScalarVariable, name: str) -> Expression:
     """Convert this variable into a real-valued expression."""
     from laddu.amplitudes.scalar import VariableScalar
 
-    return VariableScalar(name, self)
+    return VariableScalar(name, variable=self)
 
 
 _AS_EXPRESSION_NAME = 'as_expression'

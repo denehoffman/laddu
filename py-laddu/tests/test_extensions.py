@@ -46,7 +46,7 @@ def _dataset_from_weights(weights: list[float]) -> Dataset:
 
 
 def _simple_scalar_nll() -> NLL:
-    amp = Scalar('scale', parameter('scale'))
+    amp = Scalar('scale', value=parameter('scale'))
     expr = amp.norm_sqr()
     data = _dataset_from_weights([1.0, 2.0])
     mc = _dataset_from_weights([0.5, 1.5])
@@ -54,8 +54,8 @@ def _simple_scalar_nll() -> NLL:
 
 
 def _two_parameter_nll() -> NLL:
-    amp_a = Scalar('alpha_amp', parameter('alpha'))
-    amp_b = Scalar('beta_amp', parameter('beta'))
+    amp_a = Scalar('alpha_amp', value=parameter('alpha'))
+    amp_b = Scalar('beta_amp', value=parameter('beta'))
     expr = (amp_a + amp_b).norm_sqr()
     data = _dataset_from_weights([1.0, 2.0])
     mc = _dataset_from_weights([0.5, 1.5])
@@ -480,7 +480,7 @@ def test_regularizer_invalid_norm_raises() -> None:
 
 
 def test_nll_matches_constant_model() -> None:
-    amp = Scalar('scale', parameter('scale'))
+    amp = Scalar('scale', value=parameter('scale'))
     expr = amp.norm_sqr()
     data = _dataset_from_weights([1.0, 2.0])
     mc = _dataset_from_weights([0.5, 1.5])
@@ -494,7 +494,7 @@ def test_nll_matches_constant_model() -> None:
 
 
 def test_nll_project_returns_expected_weights() -> None:
-    amp = Scalar('scale', parameter('scale'))
+    amp = Scalar('scale', value=parameter('scale'))
     expr = amp.norm_sqr()
     data = _dataset_from_weights([1.0, 2.0])
     mc = _dataset_from_weights([0.5, 1.5])
@@ -504,8 +504,8 @@ def test_nll_project_returns_expected_weights() -> None:
 
 
 def test_nll_project_weights_subsets_matches_repeated_subset_projection() -> None:
-    amp_a = Scalar('amp_a', parameter('alpha'))
-    amp_b = Scalar('amp_b', parameter('beta'))
+    amp_a = Scalar('amp_a', value=parameter('alpha'))
+    amp_b = Scalar('amp_b', value=parameter('beta'))
     expr = (amp_a + amp_b).norm_sqr()
     data = _dataset_from_weights([1.0, 2.0])
     mc = _dataset_from_weights([0.5, 1.5])
@@ -520,8 +520,8 @@ def test_nll_project_weights_subsets_matches_repeated_subset_projection() -> Non
 
 
 def test_nll_project_weights_subsets_handles_empty_and_duplicate_subsets() -> None:
-    amp_a = Scalar('amp_a', parameter('alpha'))
-    amp_b = Scalar('amp_b', parameter('beta'))
+    amp_a = Scalar('amp_a', value=parameter('alpha'))
+    amp_b = Scalar('amp_b', value=parameter('beta'))
     expr = (amp_a + amp_b).norm_sqr()
     data = _dataset_from_weights([1.0, 2.0])
     mc = _dataset_from_weights([0.5, 1.5])
@@ -545,8 +545,8 @@ def test_nll_project_weights_subsets_handles_empty_and_duplicate_subsets() -> No
 
 
 def test_nll_project_weights_subsets_allow_none_for_total_projection() -> None:
-    amp_a = Scalar('amp_a', parameter('alpha'))
-    amp_b = Scalar('amp_b', parameter('beta'))
+    amp_a = Scalar('amp_a', value=parameter('alpha'))
+    amp_b = Scalar('amp_b', value=parameter('beta'))
     expr = (amp_a + amp_b).norm_sqr()
     data = _dataset_from_weights([1.0, 2.0])
     mc = _dataset_from_weights([0.5, 1.5])
@@ -596,8 +596,8 @@ def test_nll_project_weights_subsets_default_skips_missing_names() -> None:
 
 
 def test_nll_project_weights_and_gradients_subset_matches_expected_weights() -> None:
-    amp_a = Scalar('amp_a', parameter('alpha'))
-    amp_b = Scalar('amp_b', parameter('beta'))
+    amp_a = Scalar('amp_a', value=parameter('alpha'))
+    amp_b = Scalar('amp_b', value=parameter('beta'))
     expr = (amp_a + amp_b).norm_sqr()
     data = _dataset_from_weights([1.0, 2.0])
     mc = _dataset_from_weights([0.5, 1.5])
@@ -616,8 +616,8 @@ def test_nll_project_weights_and_gradients_subset_matches_expected_weights() -> 
 def test_nll_project_weights_and_gradients_subsets_matches_repeated_subset_calls() -> (
     None
 ):
-    amp_a = Scalar('amp_a', parameter('alpha'))
-    amp_b = Scalar('amp_b', parameter('beta'))
+    amp_a = Scalar('amp_a', value=parameter('alpha'))
+    amp_b = Scalar('amp_b', value=parameter('beta'))
     expr = (amp_a + amp_b).norm_sqr()
     data = _dataset_from_weights([1.0, 2.0])
     mc = _dataset_from_weights([0.5, 1.5])
@@ -642,8 +642,8 @@ def test_nll_project_weights_and_gradients_subsets_matches_repeated_subset_calls
 def test_nll_project_weights_and_gradients_subsets_allow_none_for_total_projection() -> (
     None
 ):
-    amp_a = Scalar('amp_a', parameter('alpha'))
-    amp_b = Scalar('amp_b', parameter('beta'))
+    amp_a = Scalar('amp_a', value=parameter('alpha'))
+    amp_b = Scalar('amp_b', value=parameter('beta'))
     expr = (amp_a + amp_b).norm_sqr()
     data = _dataset_from_weights([1.0, 2.0])
     mc = _dataset_from_weights([0.5, 1.5])
@@ -723,7 +723,7 @@ def test_nll_project_weights_rejects_subset_and_subsets_together() -> None:
 
 
 def test_repeated_short_calls_with_threads_remain_stable() -> None:
-    amp = Scalar('scale', parameter('scale'))
+    amp = Scalar('scale', value=parameter('scale'))
     expr = amp.norm_sqr()
     dataset = _dataset_from_weights([1.0, 2.0, 3.0, 4.0])
     evaluator = expr.load(dataset)
@@ -769,7 +769,7 @@ def test_repeated_short_calls_with_threads_remain_stable() -> None:
 
 
 def test_set_threads_aligns_omitted_and_zero_thread_requests() -> None:
-    amp = Scalar('scale', parameter('scale'))
+    amp = Scalar('scale', value=parameter('scale'))
     expr = amp.norm_sqr()
     dataset = _dataset_from_weights([1.0, 2.0, 3.0, 4.0])
     evaluator = expr.load(dataset)
@@ -860,7 +860,7 @@ def test_threads_context_manager_handles_none() -> None:
 
 
 def test_threads_context_aligns_none_and_zero_requests() -> None:
-    amp = Scalar('scale', parameter('scale'))
+    amp = Scalar('scale', value=parameter('scale'))
     expr = amp.norm_sqr()
     dataset = _dataset_from_weights([1.0, 2.0, 3.0, 4.0])
     evaluator = expr.load(dataset)
@@ -883,7 +883,7 @@ def test_threads_context_aligns_none_and_zero_requests() -> None:
 
 
 def test_explicit_thread_argument_overrides_context_default_for_a_single_call() -> None:
-    amp = Scalar('scale', parameter('scale'))
+    amp = Scalar('scale', value=parameter('scale'))
     expr = amp.norm_sqr()
     dataset = _dataset_from_weights([1.0, 2.0, 3.0, 4.0])
     evaluator = expr.load(dataset)
@@ -907,7 +907,7 @@ def test_explicit_thread_argument_overrides_context_default_for_a_single_call() 
 
 
 def test_nll_parameter_fix_free_and_rename() -> None:
-    amp = Scalar('scale', parameter('scale'))
+    amp = Scalar('scale', value=parameter('scale'))
     expr = amp.norm_sqr()
     data = _dataset_from_weights([1.0, 2.0])
     mc = _dataset_from_weights([0.5, 1.5])
@@ -930,7 +930,7 @@ def test_nll_parameter_fix_free_and_rename() -> None:
 
 
 def test_nll_free_from_fixed_parameter() -> None:
-    amp = Scalar('scale', parameter('scale', 2.0))
+    amp = Scalar('scale', value=parameter('scale', 2.0))
     expr = amp.norm_sqr()
     data = _dataset_from_weights([1.0])
     mc = _dataset_from_weights([1.0])
@@ -943,7 +943,7 @@ def test_nll_free_from_fixed_parameter() -> None:
     assert nll.parameters.free.names == ('scale',)
     assert nll.parameters.fixed.names == ()
 
-    reference = NLL(Scalar('scale', parameter('scale')).norm_sqr(), data, mc)
+    reference = NLL(Scalar('scale', value=parameter('scale')).norm_sqr(), data, mc)
     assert pytest.approx(nll.evaluate([2.5])) == reference.evaluate([2.5])
 
 

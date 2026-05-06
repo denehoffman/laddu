@@ -355,10 +355,10 @@ def fit_binned(
     data_ds_binned = data_ds.bin_by(res_mass, bins, (1.0, 2.0))
     accmc_ds_binned = accmc_ds.bin_by(res_mass, bins, (1.0, 2.0))
     genmc_ds_binned = genmc_ds.bin_by(res_mass, bins, (1.0, 2.0))
-    z00p = ld.Zlm('Z00+', 0, 0, '+', angles, polarization)
-    z22p = ld.Zlm('Z22+', 2, 2, '+', angles, polarization)
-    s0p = ld.Scalar('S0+', ld.parameter('S0+ re'))
-    d2p = ld.ComplexScalar('D2+', (ld.parameter('D2+ re'), ld.parameter('D2+ im')))
+    z00p = ld.Zlm('Z00+', l=0, m=0, r='+', angles=angles, polarization=polarization)
+    z22p = ld.Zlm('Z22+', l=2, m=2, r='+', angles=angles, polarization=polarization)
+    s0p = ld.Scalar('S0+', value=ld.parameter('S0+ re'))
+    d2p = ld.ComplexScalar('D2+', re=ld.parameter('D2+ re'), im=ld.parameter('D2+ im'))
     pos_re = (s0p * z00p.real() + d2p * z22p.real()).norm_sqr()
     pos_im = (s0p * z00p.imag() + d2p * z22p.imag()).norm_sqr()
     model = pos_re + pos_im
@@ -506,28 +506,28 @@ def fit_unbinned(
 ]:
     logger.info('Starting Unbinned Fit')
     res_mass, angles, polarization = reaction_variables()
-    z00p = ld.Zlm('Z00+', 0, 0, '+', angles, polarization)
-    z22p = ld.Zlm('Z22+', 2, 2, '+', angles, polarization)
+    z00p = ld.Zlm('Z00+', l=0, m=0, r='+', angles=angles, polarization=polarization)
+    z22p = ld.Zlm('Z22+', l=2, m=2, r='+', angles=angles, polarization=polarization)
     bw_f01500 = ld.BreitWigner(
         'f0(1500)',
-        ld.parameter('f0_mass', 1.506),
-        ld.parameter('f0_width'),
-        0,
-        ld.Mass(['kshort1']),
-        ld.Mass(['kshort2']),
-        res_mass,
+        mass=ld.parameter('f0_mass', 1.506),
+        width=ld.parameter('f0_width'),
+        l=0,
+        daughter_1_mass=ld.Mass(['kshort1']),
+        daughter_2_mass=ld.Mass(['kshort2']),
+        resonance_mass=res_mass,
     )
     bw_f21525 = ld.BreitWigner(
         'f2(1525)',
-        ld.parameter('f2_mass', 1.517),
-        ld.parameter('f2_width'),
-        2,
-        ld.Mass(['kshort1']),
-        ld.Mass(['kshort2']),
-        res_mass,
+        mass=ld.parameter('f2_mass', 1.517),
+        width=ld.parameter('f2_width'),
+        l=2,
+        daughter_1_mass=ld.Mass(['kshort1']),
+        daughter_2_mass=ld.Mass(['kshort2']),
+        resonance_mass=res_mass,
     )
-    s0p = ld.Scalar('S0+', ld.parameter('S0+ re'))
-    d2p = ld.ComplexScalar('D2+', (ld.parameter('D2+ re'), ld.parameter('D2+ im')))
+    s0p = ld.Scalar('S0+', value=ld.parameter('S0+ re'))
+    d2p = ld.ComplexScalar('D2+', re=ld.parameter('D2+ re'), im=ld.parameter('D2+ im'))
     pos_re = (s0p * bw_f01500 * z00p.real() + d2p * bw_f21525 * z22p.real()).norm_sqr()
     pos_im = (s0p * bw_f01500 * z00p.imag() + d2p * bw_f21525 * z22p.imag()).norm_sqr()
     model = pos_re + pos_im
