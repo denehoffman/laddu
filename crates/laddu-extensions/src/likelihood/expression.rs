@@ -706,7 +706,8 @@ mod tests {
         let compiled = nll.compiled_expression().to_string();
         assert!(compiled.contains("amp_a(id=0)"));
         assert!(!compiled.contains("amp_b(id=1)"));
-        assert!(compiled.contains("const 0"));
+        assert!(!compiled.contains("const 0"));
+        assert!(!compiled.contains("+"));
     }
 
     #[test]
