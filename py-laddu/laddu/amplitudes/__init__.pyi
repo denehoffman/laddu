@@ -1,4 +1,5 @@
 from laddu.amplitude import (
+    CompiledExpression,
     Evaluator,
     Expression,
     One,
@@ -18,6 +19,7 @@ from laddu.amplitudes import (
 )
 
 __all__ = [
+    'CompiledExpression',
     'Evaluator',
     'Expression',
     'One',

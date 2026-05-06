@@ -25,11 +25,13 @@ from . import (
 )
 from ._backend import backend as _backend_module
 from .amplitude import (
+    CompiledExpression,
     Evaluator,
     Expression,
     One,
     Parameter,
     ParameterMap,
+    TestAmplitude,
     Zero,
     expr_product,
     expr_sum,
@@ -166,6 +168,7 @@ __all__ = [
     'BreitWigner',
     'BreitWignerNonRelativistic',
     'ClebschGordan',
+    'CompiledExpression',
     'ComplexScalar',
     'CompositeGenerator',
     'ControlFlow',
@@ -235,6 +238,7 @@ __all__ = [
     'Scalar',
     'StableGenerator',
     'StochasticNLL',
+    'TestAmplitude',
     'VariableScalar',
     'Vec3',
     'Vec4',

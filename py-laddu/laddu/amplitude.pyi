@@ -133,6 +133,7 @@ __all__ = [
     'Expression',
     'One',
     'Parameter',
+    'ParameterMap',
     'TestAmplitude',
     'Zero',
     'expr_product',

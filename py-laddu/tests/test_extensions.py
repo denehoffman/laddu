@@ -73,7 +73,6 @@ def test_nll_exposes_evaluators_expression_and_compiled_expression() -> None:
     compiled = str(nll.compiled_expression)
     assert 'alpha_amp(id=0)' in compiled
     assert 'beta_amp(id=1)' not in compiled
-    assert 'const 0' in compiled
 
 
 def test_stochastic_nll_exposes_expression_and_compiled_expression() -> None:

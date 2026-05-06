@@ -94,4 +94,8 @@ impl PyHistogram {
     fn __repr__(&self) -> String {
         format!("{:?}", self.0)
     }
+
+    fn __str__(&self) -> String {
+        self.__repr__()
+    }
 }

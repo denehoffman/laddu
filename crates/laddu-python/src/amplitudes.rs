@@ -113,7 +113,7 @@ fn install_with_threads<R: Send>(
     ThreadPoolManager::shared().install(threads, op)
 }
 
-fn py_tags(tags: &Bound<'_, PyTuple>) -> PyResult<Vec<String>> {
+pub(crate) fn py_tags(tags: &Bound<'_, PyTuple>) -> PyResult<Vec<String>> {
     tags.iter()
         .map(|tag| tag.extract::<String>())
         .collect::<PyResult<Vec<_>>>()

@@ -22,11 +22,11 @@ if TYPE_CHECKING:
     _ScalarVariable = Mass | CosTheta | Phi | PolAngle | PolMagnitude | Mandelstam
 
 
-def _as_expression(self: _ScalarVariable, name: str) -> Expression:
+def _as_expression(self: _ScalarVariable, *tags: str) -> Expression:
     """Convert this variable into a real-valued expression."""
     from laddu.amplitudes.scalar import VariableScalar
 
-    return VariableScalar(name, variable=self)
+    return VariableScalar(*tags, variable=self)
 
 
 _AS_EXPRESSION_NAME = 'as_expression'

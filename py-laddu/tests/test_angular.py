@@ -130,7 +130,14 @@ def test_decay_helicity_factor_matches_explicit_wigner_d() -> None:
     dataset = make_test_dataset()
     rxn, _, _, _ = reaction()
     decay = rxn.decay('x')
-    factor = decay.helicity_factor('h', 2, 1, 'kshort1', 1, 0)
+    factor = decay.helicity_factor(
+        'h',
+        spin=2,
+        projection=1,
+        daughter='kshort1',
+        lambda_1=1,
+        lambda_2=0,
+    )
     explicit = WignerD(
         'd',
         spin=2,
@@ -150,7 +157,18 @@ def test_decay_canonical_factor_matches_explicit_product() -> None:
     dataset = make_test_dataset()
     rxn, _, _, _ = reaction()
     decay = rxn.decay('x')
-    factor = decay.canonical_factor('c', 2, 0, 2, 0, 'kshort1', 0, 0, 0, 0)
+    factor = decay.canonical_factor(
+        'c',
+        spin=2,
+        projection=0,
+        orbital_l=2,
+        coupled_spin=0,
+        daughter='kshort1',
+        daughter_1_spin=0,
+        daughter_2_spin=0,
+        lambda_1=0,
+        lambda_2=0,
+    )
     explicit = (
         ClebschGordan('ls_cg', j1=2, m1=0, j2=0, m2=0, j=2, m=0)
         * ClebschGordan('spin_cg', j1=0, m1=0, j2=0, m2=0, j=0, m=0)

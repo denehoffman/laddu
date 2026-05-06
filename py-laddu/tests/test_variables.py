@@ -154,10 +154,22 @@ def test_variable_as_expression() -> None:
     dataset = make_test_dataset()
     mass = Mass(['kshort1', 'kshort2'])
 
-    evaluator = mass.as_expression('mass').load(dataset)
+    evaluator = mass.as_expression('mass', 'projection').load(dataset)
     values = evaluator.evaluate([])
 
     assert len(values) == 1
     assert pytest.approx(values[0].real) == mass.value(make_test_event())
     assert pytest.approx(values[0].imag) == 0.0
     assert evaluator.parameters.names == ()
+    evaluator.deactivate('mass')
+    assert pytest.approx(evaluator.evaluate([])[0]) == 0.0
+
+
+def test_variable_as_expression_can_be_untagged() -> None:
+    dataset = make_test_dataset()
+    mass = Mass(['kshort1', 'kshort2'])
+
+    evaluator = mass.as_expression().load(dataset)
+    evaluator.deactivate_all()
+
+    assert pytest.approx(evaluator.evaluate([])[0].real) == mass.value(make_test_event())

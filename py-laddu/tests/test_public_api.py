@@ -15,6 +15,9 @@ def test_domain_modules_export_expected_core_types() -> None:
     assert ld.amplitude.Expression is ld.Expression
     assert ld.amplitude.Evaluator is ld.Evaluator
     assert ld.amplitude.Parameter is ld.Parameter
+    assert ld.amplitude.ParameterMap is ld.ParameterMap
+    assert ld.amplitude.CompiledExpression is ld.CompiledExpression
+    assert ld.amplitude.TestAmplitude is ld.TestAmplitude
     assert ld.vectors.Vec3 is ld.Vec3
     assert ld.vectors.Vec4 is ld.Vec4
 
@@ -74,3 +77,22 @@ def test_domain_modules_export_expected_analysis_types() -> None:
     assert ld.likelihood.NLL is ld.NLL
     assert ld.optimize.ControlFlow is ld.ControlFlow
     assert ld.quantum.allowed_projections is ld.allowed_projections
+
+
+def test_user_facing_objects_have_readable_display() -> None:
+    beam = ld.Particle.stored('beam')
+    target = ld.Particle.missing('target')
+    recoil = ld.Particle.stored('recoil')
+    daughter_1 = ld.Particle.stored('d1')
+    daughter_2 = ld.Particle.stored('d2')
+    parent = ld.Particle.composite('x', (daughter_1, daughter_2))
+    reaction = ld.Reaction.two_to_two(beam, target, parent, recoil)
+
+    dataset = ld.Dataset.empty_local(p4_names=['beam', 'recoil', 'd1', 'd2'])
+
+    assert 'Reaction' in repr(reaction)
+    assert 'x' in str(reaction)
+    assert 'Decay' in repr(reaction.decay('x'))
+    assert 'x' in str(reaction.decay('x'))
+    assert 'Dataset' in repr(dataset)
+    assert 'beam' in str(dataset)
