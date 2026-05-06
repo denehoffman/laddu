@@ -23,7 +23,7 @@ use pyo3::PyErr;
 ///
 /// To use this backend, the library must be built with the `mpi` feature, which requires an
 /// existing implementation of MPI like OpenMPI or MPICH. All processing code should be
-/// sandwiched between calls to [`use_mpi`] and [`finalize_mpi`]:
+/// sandwiched between calls to [`mpi::use_mpi`] and [`mpi::finalize_mpi`]:
 /// ```ignore
 /// fn main() {
 ///     laddu_core::mpi::use_mpi(true);
@@ -32,8 +32,12 @@ use pyo3::PyErr;
 /// }
 /// ```
 ///
-/// [`finalize_mpi`] must be called to trigger all the methods which clean up the MPI
-/// environment. While these are called by default when the [`Universe`](`mpi::environment::Universe`) is dropped, `laddu` uses a static `Universe` that can be accessed by all of the methods that need it, rather than passing the context to each method. This simplifies the way programs can be converted to use MPI, but means that the `Universe` is not automatically dropped at the end of the program (so it must be dropped manually).
+/// [`mpi::finalize_mpi`] must be called to trigger all the methods which clean up the MPI
+/// environment. While these are called by default when MPI's `Universe` is dropped, `laddu`
+/// uses a static `Universe` that can be accessed by all of the methods that need it, rather
+/// than passing the context to each method. This simplifies the way programs can be converted
+/// to use MPI, but means that the `Universe` is not automatically dropped at the end of the
+/// program (so it must be dropped manually).
 #[cfg(feature = "mpi")]
 #[cfg_attr(coverage_nightly, coverage(off))]
 pub mod mpi {
@@ -534,7 +538,7 @@ use thiserror::Error;
 
 /// Core amplitude traits, identifiers, and expression-facing compatibility exports.
 pub mod amplitudes;
-/// Methods for loading and manipulating [`EventData`]-based data.
+/// Methods for loading and manipulating event datasets.
 pub mod data;
 /// Execution-policy and thread-pool coordination helpers.
 pub mod execution;

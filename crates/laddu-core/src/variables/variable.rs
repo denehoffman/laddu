@@ -54,7 +54,7 @@ pub trait Variable: DynClone + Send + Sync + Debug + Display {
         Ok(local_values)
     }
 
-    /// This method distributes the [`Variable::value`] method over each [`EventData`] in a
+    /// This method distributes the [`Variable::value`] method over each [`Event`] in a
     /// [`Dataset`] (MPI-compatible version).
     ///
     /// # Notes
@@ -74,7 +74,7 @@ pub trait Variable: DynClone + Send + Sync + Debug + Display {
         Ok(buffer)
     }
 
-    /// This method distributes the [`Variable::value`] method over each [`EventData`] in a
+    /// This method distributes the [`Variable::value`] method over each [`Event`] in a
     /// [`Dataset`].
     fn value_on(&self, dataset: &Dataset) -> LadduResult<Vec<f64>> {
         #[cfg(feature = "mpi")]

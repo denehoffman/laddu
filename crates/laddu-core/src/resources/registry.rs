@@ -422,9 +422,10 @@ impl Resources {
         Ok(())
     }
 
-    /// register a parameter. this method should be called within
-    /// [`amplitude::register`](crate::amplitudes::amplitude::register). the resulting
-    /// [`ParameterID`] should be stored to retrieve the value from the [`Parameters`] wrapper.
+    /// Register a parameter. This method should be called within
+    /// [`Amplitude::register`](crate::amplitudes::Amplitude::register).
+    /// The resulting [`ParameterID`] should be stored to retrieve the value from the
+    /// [`Parameters`](crate::resources::Parameters) wrapper.
     ///
     /// # Errors
     ///

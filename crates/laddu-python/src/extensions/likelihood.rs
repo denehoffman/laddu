@@ -67,7 +67,7 @@ pub struct PyLikelihoodExpression(pub LikelihoodExpression);
 /// ----------
 /// terms : sequence of LikelihoodExpression
 ///     A non-empty sequence whose elements are summed. Single-element sequences are returned
-///     unchanged while empty sequences evaluate to [`LikelihoodZero`].
+///     unchanged while empty sequences evaluate to ``LikelihoodZero``.
 ///
 /// Returns
 /// -------
@@ -127,7 +127,7 @@ pub fn py_likelihood_sum(terms: Vec<Bound<'_, PyAny>>) -> PyResult<PyLikelihoodE
 /// ----------
 /// terms : sequence of LikelihoodExpression
 ///     A non-empty sequence whose elements are multiplied. Single-element sequences are returned
-///     unchanged while empty sequences evaluate to [`LikelihoodOne`].
+///     unchanged while empty sequences evaluate to ``LikelihoodOne``.
 ///
 /// Returns
 /// -------
