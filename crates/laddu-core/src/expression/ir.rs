@@ -973,6 +973,7 @@ pub(super) fn compile_expression_ir_with_real_hints(
         .cse()
         .activation_specialize(active_amplitudes.to_vec())
         .constant_fold()
+        .algebraic_identity()
         .rewrite_fixed_point(amplitude_dependencies.to_vec())
         .dependence_annotate(amplitude_dependencies.to_vec())
         .run(&mut ir);
@@ -2010,6 +2011,128 @@ impl IrPass for ConstantFoldPass {
     }
 }
 
+struct AlgebraicIdentityPass;
+
+impl AlgebraicIdentityPass {
+    fn apply(&self, ir: &mut ExpressionIR) -> bool {
+        fn constant_value(nodes: &[IrNode], index: IrValueId) -> Option<Complex64> {
+            match nodes.get(index) {
+                Some(IrNode::Constant(value)) => Some(*value),
+                _ => None,
+            }
+        }
+
+        fn is_zero(nodes: &[IrNode], index: IrValueId) -> bool {
+            constant_value(nodes, index) == Some(Complex64::ZERO)
+        }
+
+        fn is_one(nodes: &[IrNode], index: IrValueId) -> bool {
+            constant_value(nodes, index) == Some(Complex64::ONE)
+        }
+
+        fn is_nonzero(nodes: &[IrNode], index: IrValueId) -> bool {
+            constant_value(nodes, index).is_some_and(|value| value != Complex64::ZERO)
+        }
+
+        fn intern_constant(
+            value: Complex64,
+            nodes: &mut Vec<IrNode>,
+            interned: &mut HashMap<IrNodeKey, IrValueId>,
+        ) -> IrValueId {
+            intern_ir_node(IrNode::Constant(value), nodes, interned)
+        }
+
+        let old_nodes = ir.nodes.clone();
+        let old_root = ir.root;
+        let mut new_nodes = Vec::with_capacity(old_nodes.len());
+        let mut interned = HashMap::new();
+        let mut remap = vec![0; old_nodes.len()];
+
+        for (index, node) in old_nodes.iter().enumerate() {
+            let rewritten = match *node {
+                IrNode::Constant(value) => intern_constant(value, &mut new_nodes, &mut interned),
+                IrNode::Amp(amp_idx) => {
+                    intern_ir_node(IrNode::Amp(amp_idx), &mut new_nodes, &mut interned)
+                }
+                IrNode::Unary { op, input } => {
+                    let input = remap[input];
+                    match op {
+                        IrUnaryOp::Neg if is_zero(&new_nodes, input) => input,
+                        IrUnaryOp::PowI(0) => {
+                            intern_constant(Complex64::ONE, &mut new_nodes, &mut interned)
+                        }
+                        IrUnaryOp::PowI(1) => input,
+                        IrUnaryOp::PowF(power)
+                            if f64::from_bits(power) == 0.0 && is_nonzero(&new_nodes, input) =>
+                        {
+                            intern_constant(Complex64::ONE, &mut new_nodes, &mut interned)
+                        }
+                        IrUnaryOp::PowF(power) if f64::from_bits(power) == 1.0 => input,
+                        _ => intern_ir_node(
+                            IrNode::Unary { op, input },
+                            &mut new_nodes,
+                            &mut interned,
+                        ),
+                    }
+                }
+                IrNode::Binary { op, left, right } => {
+                    let left = remap[left];
+                    let right = remap[right];
+                    match op {
+                        IrBinaryOp::Add if is_zero(&new_nodes, left) => right,
+                        IrBinaryOp::Add if is_zero(&new_nodes, right) => left,
+                        IrBinaryOp::Sub if is_zero(&new_nodes, right) => left,
+                        IrBinaryOp::Mul
+                            if is_zero(&new_nodes, left) || is_zero(&new_nodes, right) =>
+                        {
+                            intern_constant(Complex64::ZERO, &mut new_nodes, &mut interned)
+                        }
+                        IrBinaryOp::Mul if is_one(&new_nodes, left) => right,
+                        IrBinaryOp::Mul if is_one(&new_nodes, right) => left,
+                        IrBinaryOp::Div
+                            if is_zero(&new_nodes, left) && is_nonzero(&new_nodes, right) =>
+                        {
+                            intern_constant(Complex64::ZERO, &mut new_nodes, &mut interned)
+                        }
+                        IrBinaryOp::Div if is_one(&new_nodes, right) => left,
+                        IrBinaryOp::Pow if is_one(&new_nodes, right) => left,
+                        IrBinaryOp::Pow
+                            if is_zero(&new_nodes, right) && is_nonzero(&new_nodes, left) =>
+                        {
+                            intern_constant(Complex64::ONE, &mut new_nodes, &mut interned)
+                        }
+                        _ => intern_ir_node(
+                            IrNode::Binary { op, left, right },
+                            &mut new_nodes,
+                            &mut interned,
+                        ),
+                    }
+                }
+            };
+            remap[index] = rewritten;
+        }
+
+        ir.nodes = new_nodes;
+        ir.root = remap.get(old_root).copied().unwrap_or(0);
+        ir.root != old_root || ir.nodes != old_nodes
+    }
+}
+
+impl IrPass for AlgebraicIdentityPass {
+    fn name(&self) -> &'static str {
+        "algebraic-identity"
+    }
+
+    fn run(&self, ir: &mut ExpressionIR, _ctx: &mut IrPassContext<'_>) -> IrPassReport {
+        let changed = self.apply(ir);
+        IrPassReport {
+            changed,
+            rewrites: usize::from(changed),
+            saturated: false,
+        }
+    }
+}
+
 struct ActivationSpecializePass {
     active_amplitudes: Vec<bool>,
 }
@@ -2119,10 +2242,12 @@ impl FixedPointRewritePass {
             passes: vec![
                 Box::new(AlgebraicNormalizePass),
                 Box::new(ConstantFoldPass),
+                Box::new(AlgebraicIdentityPass),
                 Box::new(RealValueSimplifyPass),
                 Box::new(CsePass),
                 Box::new(ControlledExpansionPass::new()),
                 Box::new(ConstantFoldPass),
+                Box::new(AlgebraicIdentityPass),
                 Box::new(RealValueSimplifyPass),
                 Box::new(CsePass),
             ],
@@ -2225,6 +2350,11 @@ impl ExpressionIrPipeline {
 
     fn constant_fold(mut self) -> Self {
         self.passes.push(Box::new(ConstantFoldPass));
+        self
+    }
+
+    fn algebraic_identity(mut self) -> Self {
+        self.passes.push(Box::new(AlgebraicIdentityPass));
         self
     }
 

@@ -816,7 +816,79 @@ fn test_compiled_expression_display_uses_current_active_mask() {
 
     assert!(compiled.contains("a(id=0)"));
     assert!(!compiled.contains("b(id=1)"));
-    assert!(compiled.contains("const 0"));
+    assert!(!compiled.contains("const 0"));
+    assert!(!compiled.contains("+"));
+}
+
+fn assert_compiled_single_amplitude(expr: &Expression, expected_label: &str) {
+    let compiled = expr.compiled_expression();
+    assert_eq!(compiled.nodes().len(), 1);
+    assert_eq!(compiled.root(), 0);
+    match &compiled.nodes()[0] {
+        CompiledExpressionNode::Amplitude { index, name } => {
+            assert_eq!(*index, 0);
+            assert_eq!(name, expected_label);
+        }
+        node => panic!("expected one amplitude node, got {node:?}"),
+    }
+}
+
+fn assert_compiled_constant(expr: &Expression, expected: Complex64) {
+    let compiled = expr.compiled_expression();
+    assert_eq!(compiled.nodes().len(), 1);
+    assert_eq!(compiled.root(), 0);
+    match compiled.nodes()[0] {
+        CompiledExpressionNode::Constant(value) => {
+            assert_relative_eq!(value.re, expected.re);
+            assert_relative_eq!(value.im, expected.im);
+        }
+        ref node => panic!("expected one constant node, got {node:?}"),
+    }
+}
+
+#[test]
+fn test_compiled_expression_simplifies_arithmetic_identities() {
+    let amp = TestAmplitude::new("a", parameter!("ar"), parameter!("ai")).unwrap();
+    let zero = Expression::zero();
+    let one = Expression::one();
+
+    assert_compiled_single_amplitude(&(&amp + &zero), "a");
+    assert_compiled_single_amplitude(&(&zero + &amp), "a");
+    assert_compiled_single_amplitude(&(&amp - &zero), "a");
+    assert_compiled_single_amplitude(&(&amp * &one), "a");
+    assert_compiled_single_amplitude(&(&one * &amp), "a");
+    assert_compiled_single_amplitude(&(&amp / &one), "a");
+    assert_compiled_single_amplitude(&amp.pow(&one), "a");
+    assert_compiled_single_amplitude(&amp.powi(1), "a");
+    assert_compiled_single_amplitude(&amp.powf(1.0), "a");
+
+    let times_zero = &amp * &zero;
+    assert_compiled_constant(&times_zero, Complex64::ZERO);
+    assert!(times_zero.parameters().contains_key("ar"));
+    assert!(times_zero.parameters().contains_key("ai"));
+
+    assert_compiled_constant(&(&zero * &amp), Complex64::ZERO);
+    assert_compiled_constant(&(&zero / &Expression::from(2.0)), Complex64::ZERO);
+    assert_compiled_constant(&amp.powi(0), Complex64::ONE);
+    assert_compiled_constant(
+        &Expression::from(2.0).pow(&Expression::zero()),
+        Complex64::ONE,
+    );
+    assert_compiled_constant(&Expression::from(2.0).powf(0.0), Complex64::ONE);
+
+    let unsafe_zero_division = (&zero / &amp).compiled_expression().to_string();
+    assert!(unsafe_zero_division.contains("÷"));
+    assert!(unsafe_zero_division.contains("a(id=0)"));
+}
+
+#[test]
+fn test_compiled_expression_folds_unary_constant_functions() {
+    assert_compiled_constant(&Expression::from(0.0).exp(), Complex64::ONE);
+    assert_compiled_constant(&Expression::from(0.0).sin(), Complex64::ZERO);
+    assert_compiled_constant(&Expression::from(0.0).cos(), Complex64::ONE);
+    assert_compiled_constant(&Expression::from(1.0).log(), Complex64::ZERO);
+    assert_compiled_constant(&Expression::from(4.0).sqrt(), Complex64::new(2.0, 0.0));
+    assert_compiled_constant(&Expression::from(0.0).cis(), Complex64::ONE);
 }
 
 #[test]

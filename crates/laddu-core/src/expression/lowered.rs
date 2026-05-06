@@ -2166,7 +2166,7 @@ mod tests {
     }
 
     #[test]
-    fn peephole_rewrites_add_zero_to_identity() {
+    fn algebraic_identity_removes_add_zero_before_lowering() {
         let ir = compile_expression_ir(
             &ExpressionNode::Add(
                 Box::new(ExpressionNode::Amp(0)),
@@ -2180,8 +2180,8 @@ mod tests {
 
         assert!(matches!(
             program.instructions().last(),
-            Some(LoweredInstruction::Unary {
-                op: LoweredUnaryOp::Identity,
+            Some(LoweredInstruction::LoadAmplitude {
+                amplitude_index: 0,
                 ..
             })
         ));
