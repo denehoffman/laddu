@@ -97,17 +97,18 @@ Although this particular amplitude is already included in `laddu`, let's assume 
 
 ```rust
 use laddu::{
-   AmplitudeID, Cache, DatasetMetadata, EventData, Expression, LadduError, LadduResult, Mass,
-   ParameterID, Parameter, Parameters, Resources, PI,
+   AmplitudeID, BarrierKind, Cache, DatasetMetadata, Event, Expression, LadduResult, Mass,
+   ParameterID, Parameter, Parameters, PI, QR_DEFAULT, Resources, ScalarID, Sheet,
 };
+use laddu::expression::{IntoTags, Tags};
 use laddu::traits::*;
-use laddu::utils::functions::{blatt_weisskopf, breakup_momentum};
+use laddu::math::{blatt_weisskopf_m, q_m};
 use laddu::{Deserialize, Serialize, typetag};
 use num::complex::Complex64;
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct MyBreitWigner {
-    name: String,
+    tags: Tags,
     mass: Parameter,
     width: Parameter,
     pid_mass: ParameterID,
@@ -116,10 +117,13 @@ pub struct MyBreitWigner {
     daughter_1_mass: Mass,
     daughter_2_mass: Mass,
     resonance_mass: Mass,
+    daughter_1_mass_id: ScalarID,
+    daughter_2_mass_id: ScalarID,
+    resonance_mass_id: ScalarID,
 }
 impl MyBreitWigner {
     pub fn new(
-        name: &str,
+        tags: impl IntoTags,
         mass: Parameter,
         width: Parameter,
         l: usize,
@@ -128,7 +132,7 @@ impl MyBreitWigner {
         resonance_mass: &Mass,
     ) -> LadduResult<Expression> {
         Self {
-            name: name.to_string(),
+            tags: tags.into_tags(),
             mass,
             width,
             pid_mass: ParameterID::default(),
@@ -137,6 +141,9 @@ impl MyBreitWigner {
             daughter_1_mass: daughter_1_mass.clone(),
             daughter_2_mass: daughter_2_mass.clone(),
             resonance_mass: resonance_mass.clone(),
+            daughter_1_mass_id: ScalarID::default(),
+            daughter_2_mass_id: ScalarID::default(),
+            resonance_mass_id: ScalarID::default(),
         }
         .into_expression()
     }
@@ -147,7 +154,10 @@ impl Amplitude for MyBreitWigner {
     fn register(&mut self, resources: &mut Resources) -> LadduResult<AmplitudeID> {
         self.pid_mass = resources.register_parameter(&self.mass)?;
         self.pid_width = resources.register_parameter(&self.width)?;
-        resources.register_amplitude(&self.name)
+        self.daughter_1_mass_id = resources.register_scalar(None);
+        self.daughter_2_mass_id = resources.register_scalar(None);
+        self.resonance_mass_id = resources.register_scalar(None);
+        resources.register_amplitude(self.tags.clone())
     }
 
     fn bind(
@@ -160,16 +170,22 @@ impl Amplitude for MyBreitWigner {
         Ok(())
     }
 
-    fn compute(&self, parameters: &Parameters, event: &EventData, _cache: &Cache) -> Complex64 {
-        let mass = self.resonance_mass.value(event);
-        let mass0 = parameters.get(self.pid_mass);
-        let width0 = parameters.get(self.pid_width);
-        let mass1 = self.daughter_1_mass.value(event);
-        let mass2 = self.daughter_2_mass.value(event);
-        let q0 = breakup_momentum(mass0, mass1, mass2);
-        let q = breakup_momentum(mass, mass1, mass2);
-        let f0 = blatt_weisskopf(mass0, mass1, mass2, self.l);
-        let f = blatt_weisskopf(mass, mass1, mass2, self.l);
+    fn precompute(&self, event: &Event<'_>, cache: &mut Cache) {
+        cache.store_scalar(self.daughter_1_mass_id, event.evaluate(&self.daughter_1_mass));
+        cache.store_scalar(self.daughter_2_mass_id, event.evaluate(&self.daughter_2_mass));
+        cache.store_scalar(self.resonance_mass_id, event.evaluate(&self.resonance_mass));
+    }
+
+    fn compute(&self, parameters: &Parameters, cache: &Cache) -> Complex64 {
+        let mass = cache.get_scalar(self.resonance_mass_id);
+        let mass0 = parameters.get(self.pid_mass).abs();
+        let width0 = parameters.get(self.pid_width).abs();
+        let mass1 = cache.get_scalar(self.daughter_1_mass_id);
+        let mass2 = cache.get_scalar(self.daughter_2_mass_id);
+        let q0 = q_m(mass0, mass1, mass2, Sheet::Physical);
+        let q = q_m(mass, mass1, mass2, Sheet::Physical);
+        let f0 = blatt_weisskopf_m(mass0, mass1, mass2, self.l, QR_DEFAULT, Sheet::Physical, BarrierKind::Full);
+        let f = blatt_weisskopf_m(mass, mass1, mass2, self.l, QR_DEFAULT, Sheet::Physical, BarrierKind::Full);
         let width = width0 * (mass0 / mass) * (q / q0) * (f / f0).powi(2);
         let n = (mass0 * width0 / PI).sqrt();
         let d = Complex64::new(mass0.powi(2) - mass.powi(2), -(mass0 * width));

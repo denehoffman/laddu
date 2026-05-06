@@ -213,7 +213,7 @@ impl Dataset {
 
     /// Collect all events into a [`Vec`] using the default global iteration semantics.
     ///
-    /// When MPI is enabled, the returned vector is ordered like [`Dataset::iter`] and
+    /// When MPI is enabled, the returned vector is ordered like [`Dataset::event_global`] and
     /// may include remotely owned events fetched on demand.
     pub fn events_global(&self) -> Vec<OwnedEvent> {
         (0..self.n_events())

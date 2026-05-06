@@ -60,6 +60,7 @@
 //!    ParameterID, Parameter, Parameters, Resources,
 //! };
 //! use laddu::Event;
+//! use laddu::expression::{IntoTags, Tags};
 //! use laddu::resources::ScalarID;
 //! use laddu::traits::*;
 //! use laddu::math::{BarrierKind, QR_DEFAULT, Sheet, blatt_weisskopf_m, q_m};
@@ -68,7 +69,7 @@
 //!
 //! #[derive(Clone, Serialize, Deserialize)]
 //! pub struct MyBreitWigner {
-//!     name: String,
+//!     tags: Tags,
 //!     mass: Parameter,
 //!     width: Parameter,
 //!     pid_mass: ParameterID,
@@ -83,7 +84,7 @@
 //! }
 //! impl MyBreitWigner {
 //!     pub fn new(
-//!         name: &str,
+//!         tags: impl IntoTags,
 //!         mass: Parameter,
 //!         width: Parameter,
 //!         l: usize,
@@ -92,7 +93,7 @@
 //!         resonance_mass: &Mass,
 //!     ) -> LadduResult<Expression> {
 //!         Self {
-//!             name: name.to_string(),
+//!             tags: tags.into_tags(),
 //!             mass,
 //!             width,
 //!             pid_mass: ParameterID::default(),
@@ -114,10 +115,10 @@
 //!     fn register(&mut self, resources: &mut Resources) -> LadduResult<AmplitudeID> {
 //!         self.pid_mass = resources.register_parameter(&self.mass)?;
 //!         self.pid_width = resources.register_parameter(&self.width)?;
-//!         self.daughter_1_mass_id = resources.register_scalar(Some(&format!("{}.daughter_1_mass", self.name)));
-//!         self.daughter_2_mass_id = resources.register_scalar(Some(&format!("{}.daughter_2_mass", self.name)));
-//!         self.resonance_mass_id = resources.register_scalar(Some(&format!("{}.resonance_mass", self.name)));
-//!         resources.register_amplitude(&self.name)
+//!         self.daughter_1_mass_id = resources.register_scalar(None);
+//!         self.daughter_2_mass_id = resources.register_scalar(None);
+//!         self.resonance_mass_id = resources.register_scalar(None);
+//!         resources.register_amplitude(self.tags.clone())
 //!     }
 //!
 //!     fn bind(
@@ -166,6 +167,7 @@
 //! #    ParameterID, Parameter, Parameters, Resources,
 //! # };
 //! # use laddu::Event;
+//! # use laddu::expression::{IntoTags, Tags};
 //! # use laddu::resources::ScalarID;
 //! # use laddu::traits::*;
 //! # use laddu::math::{BarrierKind, QR_DEFAULT, Sheet, blatt_weisskopf_m, q_m};
@@ -174,7 +176,7 @@
 //! #
 //! # #[derive(Clone, Serialize, Deserialize)]
 //! # pub struct MyBreitWigner {
-//! #     name: String,
+//! #     tags: Tags,
 //! #     mass: Parameter,
 //! #     width: Parameter,
 //! #     pid_mass: ParameterID,
@@ -189,7 +191,7 @@
 //! # }
 //! # impl MyBreitWigner {
 //! #     pub fn new(
-//! #         name: &str,
+//! #         tags: impl IntoTags,
 //! #         mass: Parameter,
 //! #         width: Parameter,
 //! #         l: usize,
@@ -198,7 +200,7 @@
 //! #         resonance_mass: &Mass,
 //! #     ) -> LadduResult<Expression> {
 //! #         Self {
-//! #             name: name.to_string(),
+//! #             tags: tags.into_tags(),
 //! #             mass,
 //! #             width,
 //! #             pid_mass: ParameterID::default(),
@@ -220,10 +222,10 @@
 //! #     fn register(&mut self, resources: &mut Resources) -> LadduResult<AmplitudeID> {
 //! #         self.pid_mass = resources.register_parameter(&self.mass)?;
 //! #         self.pid_width = resources.register_parameter(&self.width)?;
-//! #         self.daughter_1_mass_id = resources.register_scalar(Some(&format!("{}.daughter_1_mass", self.name)));
-//! #         self.daughter_2_mass_id = resources.register_scalar(Some(&format!("{}.daughter_2_mass", self.name)));
-//! #         self.resonance_mass_id = resources.register_scalar(Some(&format!("{}.resonance_mass", self.name)));
-//! #         resources.register_amplitude(&self.name)
+//! #         self.daughter_1_mass_id = resources.register_scalar(None);
+//! #         self.daughter_2_mass_id = resources.register_scalar(None);
+//! #         self.resonance_mass_id = resources.register_scalar(None);
+//! #         resources.register_amplitude(self.tags.clone())
 //! #     }
 //! #
 //! #     fn bind(
@@ -344,7 +346,7 @@
 //! It could be the case that I am leaving out software with which I am not familiar. If so, I'd love to include it here for reference. I don't think that `laddu` will ever be the end-all-be-all of amplitude analysis, just an alternative that might improve on existing systems. It is important for physicists to be aware of these alternatives. For example, if you really don't want to learn Rust but need to implement an amplitude which isn't already included here, `laddu` isn't for you, and one of these alternatives might be best.
 #![warn(clippy::perf, clippy::style, missing_docs)]
 
-/// Methods for loading and manipulating [`EventData`]-based data.
+/// Methods for loading and manipulating event datasets.
 pub mod data {
     pub use laddu_core::data::{
         BinnedDataset, Dataset, DatasetMetadata, DatasetReadOptions, DatasetWriteOptions, EventData,
@@ -468,7 +470,7 @@ pub use typetag;
 ///
 /// To use this backend, the library must be built with the `mpi` feature, which requires an
 /// existing implementation of MPI like OpenMPI or MPICH. All processing code should be
-/// sandwiched between calls to [`use_mpi`] and [`finalize_mpi`]:
+/// sandwiched between calls to [`mpi::use_mpi`] and [`mpi::finalize_mpi`]:
 /// ```ignore
 /// fn main() {
 ///     laddu_core::mpi::use_mpi(true);
@@ -477,8 +479,12 @@ pub use typetag;
 /// }
 /// ```
 ///
-/// [`finalize_mpi`] must be called to trigger all the methods which clean up the MPI
-/// environment. While these are called by default when the [`Universe`](`mpi::environment::Universe`) is dropped, `laddu` uses a static `Universe` that can be accessed by all of the methods that need it, rather than passing the context to each method. This simplifies the way programs can be converted to use MPI, but means that the `Universe` is not automatically dropped at the end of the program (so it must be dropped manually).
+/// [`mpi::finalize_mpi`] must be called to trigger all the methods which clean up the MPI
+/// environment. While these are called by default when MPI's `Universe` is dropped, `laddu`
+/// uses a static `Universe` that can be accessed by all of the methods that need it, rather
+/// than passing the context to each method. This simplifies the way programs can be converted
+/// to use MPI, but means that the `Universe` is not automatically dropped at the end of the
+/// program (so it must be dropped manually).
 #[cfg(feature = "mpi")]
 pub mod mpi {
     pub use laddu_core::mpi::{

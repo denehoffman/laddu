@@ -230,7 +230,8 @@ pub trait Amplitude: DynClone + Send + Sync {
     /// Return `Some` only when two independently constructed instances with equal keys are
     /// interchangeable after registration, binding, precomputation, value evaluation, and gradient
     /// evaluation. The key should include the concrete amplitude type and all user-facing
-    /// configuration, but must ignore registration-assigned IDs like [`ParameterID`]s and cache IDs.
+    /// configuration, but must ignore registration-assigned IDs like
+    /// [`ParameterID`](crate::resources::ParameterID)s and cache IDs.
     fn semantic_key(&self) -> Option<AmplitudeSemanticKey> {
         None
     }
@@ -291,7 +292,8 @@ pub trait Amplitude: DynClone + Send + Sync {
     /// This method yields the gradient of a particular [`Amplitude`] at a point specified
     /// by a set of [`Parameters`]. See those structs, as well as
     /// [`Cache`], for documentation on their available methods. For the most part,
-    /// [`Parameters`] and the [`Cache`] are key-value storage accessed by [`ParameterID`]s and
+    /// [`Parameters`] and the [`Cache`] are key-value storage accessed by
+    /// [`ParameterID`](crate::resources::ParameterID)s and
     /// several different types of cache
     /// IDs. If the analytic version of the gradient is known, this method can be overwritten to
     /// improve performance for some derivative-using methods of minimization. The default

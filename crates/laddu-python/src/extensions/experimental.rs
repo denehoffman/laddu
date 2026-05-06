@@ -76,7 +76,11 @@ pub fn py_binned_guide_term(
 /// parameter values :math:`\vec{\beta}`, choosing a value :math:`\gamma>0`, and setting the weights to
 /// :math:`\vec{w} = 1/|\vec{\beta}|^\gamma` according to [Zou]_.
 ///
-/// .. [Zou] Zou, H. (2006). The Adaptive Lasso and Its Oracle Properties. In Journal of the American Statistical Association (Vol. 101, Issue 476, pp. 1418–1429). Informa UK Limited. doi:10.1198/016214506000000735
+/// References
+/// ----------
+/// .. [Zou] Zou, H. (2006). The Adaptive Lasso and Its Oracle Properties.
+///    Journal of the American Statistical Association, 101(476), 1418–1429.
+///    doi:10.1198/016214506000000735
 ///
 /// Parameters
 /// ----------
@@ -100,6 +104,7 @@ pub fn py_binned_guide_term(
 /// -------
 /// LikelihoodExpression
 ///     A term that can be combined with other likelihood expressions.
+#[allow(rustdoc::broken_intra_doc_links)]
 #[pyfunction(name = "Regularizer", signature = (parameters, lda, p=1, weights=None))]
 pub fn py_regularizer(
     parameters: Vec<String>,
