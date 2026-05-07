@@ -6,7 +6,6 @@ use std::{
     sync::Arc,
 };
 
-#[cfg(feature = "rayon")]
 use accurate::{sum::Klein, traits::*};
 use approx::{assert_relative_eq, assert_relative_ne};
 use fastrand;
