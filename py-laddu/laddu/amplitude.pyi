@@ -1,4 +1,4 @@
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from typing import overload
 
 import numpy as np
@@ -28,6 +28,8 @@ class ParameterMap:
     def __getitem__(self, index: int) -> Parameter: ...
     @overload
     def __getitem__(self, name: str) -> Parameter: ...
+    def index(self, name: str) -> int: ...
+    def __iter__(self) -> Iterator[Parameter]: ...
 
 class Expression:
     parameters: ParameterMap
