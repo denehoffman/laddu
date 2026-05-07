@@ -98,6 +98,16 @@ def from_dict(
     aux: list[str] | None = None,
     aliases: _Mapping[str, str | _Sequence[str]] | None = None,
 ) -> Dataset:
+    return from_columns(data, p4s=p4s, aux=aux, aliases=aliases)
+
+
+def from_columns(
+    data: _Mapping[str, ColumnInput],
+    *,
+    p4s: list[str] | None = None,
+    aux: list[str] | None = None,
+    aliases: _Mapping[str, str | _Sequence[str]] | None = None,
+) -> Dataset:
     normalized = _normalize_ingestion_columns(data)
     return _backend_from_numpy_columns(normalized, p4s=p4s, aux=aux, aliases=aliases)
 
@@ -1096,6 +1106,7 @@ def _amptools_columns(
 
 __all__ = [
     'from_arrow',
+    'from_columns',
     'from_dict',
     'from_numpy',
     'from_pandas',

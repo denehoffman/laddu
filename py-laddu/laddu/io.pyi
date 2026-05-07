@@ -17,6 +17,13 @@ def from_dict(
     aux: Sequence[str] | None = None,
     aliases: Mapping[str, str | Sequence[str]] | None = None,
 ) -> Dataset: ...
+def from_columns(
+    data: Mapping[str, Sequence[float] | NDArray[np.float32] | NDArray[np.float64]],
+    *,
+    p4s: Sequence[str] | None = None,
+    aux: Sequence[str] | None = None,
+    aliases: Mapping[str, str | Sequence[str]] | None = None,
+) -> Dataset: ...
 def from_numpy(
     data: Mapping[str, NDArray[np.floating]],
     *,
@@ -128,6 +135,7 @@ def write_root(
 
 __all__ = [
     'from_arrow',
+    'from_columns',
     'from_dict',
     'from_numpy',
     'from_pandas',
