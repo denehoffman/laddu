@@ -10,7 +10,7 @@ use rayon::prelude::*;
 #[cfg(feature = "mpi")]
 use crate::mpi::LadduMPI;
 use crate::{
-    data::{Dataset, DatasetMetadata, Event},
+    data::{Dataset, DatasetMetadata, EventLike},
     LadduResult,
 };
 
@@ -25,7 +25,7 @@ pub trait Variable: DynClone + Send + Sync + Debug + Display {
     }
 
     /// This method extracts a single value (like a mass) from an event access view.
-    fn value(&self, event: &Event<'_>) -> f64;
+    fn value(&self, event: &dyn EventLike) -> f64;
 
     /// This method distributes [`Variable::value`] over each event in a [`Dataset`] (non-MPI version).
     ///
@@ -228,7 +228,7 @@ impl CompiledVariableExpression {
     }
 
     /// Evaluate the [`CompiledExpression`] on a given named event view.
-    pub fn evaluate(&self, event: &Event<'_>) -> bool {
+    pub fn evaluate(&self, event: &dyn EventLike) -> bool {
         let mut stack = Vec::with_capacity(self.bytecode.len());
 
         for op in &self.bytecode {

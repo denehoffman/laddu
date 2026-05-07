@@ -1,10 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    data::{DatasetMetadata, EventData},
-    vectors::Vec4,
-    LadduError, LadduResult,
-};
+use crate::{data::DatasetMetadata, LadduError, LadduResult};
 
 fn names_to_string(names: &[String]) -> String {
     names.join(", ")
@@ -62,10 +58,6 @@ impl P4Selection {
     /// The resolved column indices backing this selection.
     pub fn indices(&self) -> &[usize] {
         &self.indices
-    }
-
-    pub(crate) fn momentum(&self, event: &EventData) -> Vec4 {
-        event.get_p4_sum(self.indices())
     }
 }
 

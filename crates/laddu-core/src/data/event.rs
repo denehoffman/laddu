@@ -369,48 +369,124 @@ pub struct Event<'a> {
     metadata: &'a DatasetMetadata,
 }
 
-impl Event<'_> {
+/// Shared event access interface implemented by borrowed and owned event rows.
+pub trait EventLike {
     /// Retrieve a four-momentum by positional index.
-    pub fn p4_at(&self, p4_index: usize) -> Vec4 {
-        self.row.p4(p4_index)
-    }
+    fn p4_at(&self, p4_index: usize) -> Vec4;
 
     /// Retrieve an auxiliary scalar by positional index.
-    pub fn aux_at(&self, aux_index: usize) -> f64 {
-        self.row.aux(aux_index)
-    }
+    fn aux_at(&self, aux_index: usize) -> f64;
 
     /// Number of four-momenta in this event.
-    pub fn n_p4(&self) -> usize {
-        self.row.n_p4()
-    }
+    fn n_p4(&self) -> usize;
 
     /// Number of auxiliary values in this event.
-    pub fn n_aux(&self) -> usize {
-        self.row.n_aux()
-    }
+    fn n_aux(&self) -> usize;
+
+    /// Retrieve event weight.
+    fn weight(&self) -> f64;
+
+    /// Retrieve the dataset metadata attached to this event.
+    fn metadata(&self) -> &DatasetMetadata;
 
     /// Retrieve a four-momentum by metadata name.
-    pub fn p4(&self, name: &str) -> Option<Vec4> {
-        let selection = self.metadata.p4_selection(name)?;
+    fn p4(&self, name: &str) -> Option<Vec4> {
+        let selection = self.metadata().p4_selection(name)?;
         Some(
             selection
                 .indices()
                 .iter()
-                .map(|index| self.row.p4(*index))
+                .map(|index| self.p4_at(*index))
                 .sum(),
         )
     }
 
     /// Retrieve an auxiliary scalar by metadata name.
+    fn aux(&self, name: &str) -> Option<f64> {
+        let index = self.metadata().aux_index(name)?;
+        Some(self.aux_at(index))
+    }
+
+    /// Retrieve the sum of multiple four-momenta selected by name.
+    fn get_p4_sum<N>(&self, names: N) -> Option<Vec4>
+    where
+        Self: Sized,
+        N: IntoIterator,
+        N::Item: AsRef<str>,
+    {
+        names
+            .into_iter()
+            .map(|name| self.p4(name.as_ref()))
+            .collect::<Option<Vec<_>>>()
+            .map(|momenta| momenta.into_iter().sum())
+    }
+}
+
+impl EventLike for Event<'_> {
+    /// Retrieve a four-momentum by positional index.
+    fn p4_at(&self, p4_index: usize) -> Vec4 {
+        self.row.p4(p4_index)
+    }
+
+    /// Retrieve an auxiliary scalar by positional index.
+    fn aux_at(&self, aux_index: usize) -> f64 {
+        self.row.aux(aux_index)
+    }
+
+    /// Number of four-momenta in this event.
+    fn n_p4(&self) -> usize {
+        self.row.n_p4()
+    }
+
+    /// Number of auxiliary values in this event.
+    fn n_aux(&self) -> usize {
+        self.row.n_aux()
+    }
+
+    /// Retrieve event weight.
+    fn weight(&self) -> f64 {
+        self.row.weight()
+    }
+
+    fn metadata(&self) -> &DatasetMetadata {
+        self.metadata
+    }
+}
+
+impl Event<'_> {
+    /// Retrieve a four-momentum by positional index.
+    pub fn p4_at(&self, p4_index: usize) -> Vec4 {
+        EventLike::p4_at(self, p4_index)
+    }
+
+    /// Retrieve an auxiliary scalar by positional index.
+    pub fn aux_at(&self, aux_index: usize) -> f64 {
+        EventLike::aux_at(self, aux_index)
+    }
+
+    /// Number of four-momenta in this event.
+    pub fn n_p4(&self) -> usize {
+        EventLike::n_p4(self)
+    }
+
+    /// Number of auxiliary values in this event.
+    pub fn n_aux(&self) -> usize {
+        EventLike::n_aux(self)
+    }
+
+    /// Retrieve a four-momentum by metadata name.
+    pub fn p4(&self, name: &str) -> Option<Vec4> {
+        EventLike::p4(self, name)
+    }
+
+    /// Retrieve an auxiliary scalar by metadata name.
     pub fn aux(&self, name: &str) -> Option<f64> {
-        let index = self.metadata.aux_index(name)?;
-        Some(self.row.aux(index))
+        EventLike::aux(self, name)
     }
 
     /// Retrieve event weight.
     pub fn weight(&self) -> f64 {
-        self.row.weight()
+        EventLike::weight(self)
     }
 
     /// Copy this borrowed event into owned raw event data.
@@ -428,11 +504,7 @@ impl Event<'_> {
         N: IntoIterator,
         N::Item: AsRef<str>,
     {
-        names
-            .into_iter()
-            .map(|name| self.p4(name.as_ref()))
-            .collect::<Option<Vec<_>>>()
-            .map(|momenta| momenta.into_iter().sum())
+        EventLike::get_p4_sum(self, names)
     }
 
     /// Evaluate a [`Variable`] against this event.
@@ -542,9 +614,7 @@ impl OwnedEvent {
 
     /// Retrieve a four-momentum (or aliased sum) by name.
     pub fn p4(&self, name: &str) -> Option<Vec4> {
-        self.metadata
-            .p4_selection(name)
-            .map(|selection| selection.momentum(&self.event))
+        EventLike::p4(self, name)
     }
 
     fn resolve_p4_indices<N>(&self, names: N) -> Vec<usize>
@@ -582,6 +652,32 @@ impl OwnedEvent {
     {
         let indices = self.resolve_p4_indices(names);
         self.event.boost_to_rest_frame_of(&indices)
+    }
+}
+
+impl EventLike for OwnedEvent {
+    fn p4_at(&self, p4_index: usize) -> Vec4 {
+        self.event.p4s[p4_index]
+    }
+
+    fn aux_at(&self, aux_index: usize) -> f64 {
+        self.event.aux[aux_index]
+    }
+
+    fn n_p4(&self) -> usize {
+        self.event.p4s.len()
+    }
+
+    fn n_aux(&self) -> usize {
+        self.event.aux.len()
+    }
+
+    fn weight(&self) -> f64 {
+        self.event.weight
+    }
+
+    fn metadata(&self) -> &DatasetMetadata {
+        &self.metadata
     }
 }
 

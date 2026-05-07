@@ -9,7 +9,7 @@ use laddu_core::{
         read_parquet as core_read_parquet,
         read_parquet_chunks_with_options as core_read_parquet_chunks_with_options,
         read_root as core_read_root, write_parquet as core_write_parquet,
-        write_root as core_write_root, BinnedDataset, Dataset, DatasetMetadata,
+        write_root as core_write_root, BinnedDataset, Dataset, DatasetArcIter, DatasetMetadata,
         DatasetWriteOptions, EventData, FloatPrecision, OwnedEvent, SharedDatasetIterExt,
     },
     variables::IntoP4Selection,
@@ -530,6 +530,64 @@ impl PyParquetChunkIter {
     }
 }
 
+#[pyclass(
+    name = "DatasetEventsGlobal",
+    module = "laddu",
+    unsendable,
+    skip_from_py_object
+)]
+pub struct PyDatasetEventsGlobalIter {
+    iter: DatasetArcIter,
+}
+
+#[pymethods]
+impl PyDatasetEventsGlobalIter {
+    fn __iter__(slf: PyRef<'_, Self>) -> Py<PyDatasetEventsGlobalIter> {
+        slf.into()
+    }
+
+    fn __next__(&mut self) -> Option<PyEvent> {
+        self.iter.next().map(|rust_event| PyEvent {
+            event: rust_event,
+            has_metadata: true,
+        })
+    }
+}
+
+#[pyclass(
+    name = "DatasetEventsLocal",
+    module = "laddu",
+    unsendable,
+    skip_from_py_object
+)]
+pub struct PyDatasetEventsLocalIter {
+    dataset: Arc<Dataset>,
+    index: usize,
+}
+
+#[pymethods]
+impl PyDatasetEventsLocalIter {
+    fn __iter__(slf: PyRef<'_, Self>) -> Py<PyDatasetEventsLocalIter> {
+        slf.into()
+    }
+
+    fn __next__(&mut self) -> Option<PyEvent> {
+        if self.index >= self.dataset.n_events_local() {
+            return None;
+        }
+        let event = self
+            .dataset
+            .event_local(self.index)
+            .expect("local event index should exist")
+            .to_event_data();
+        self.index += 1;
+        Some(PyEvent {
+            event: OwnedEvent::new(Arc::new(event), self.dataset.metadata_arc()),
+            has_metadata: true,
+        })
+    }
+}
+
 #[pymethods]
 impl PyDataset {
     #[new]
@@ -835,37 +893,24 @@ impl PyDataset {
     fn weights_local<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f64>> {
         PyArray1::from_slice(py, &self.0.weights_local())
     }
-    /// The global list of Events in dataset order.
+    /// Iterate over global Events in dataset order.
     #[getter]
-    fn events_global(&self) -> Vec<PyEvent> {
-        self.0
-            .shared_iter_global()
-            .map(|rust_event| PyEvent {
-                event: rust_event,
-                has_metadata: true,
-            })
-            .collect()
+    fn events_global(&self) -> PyDatasetEventsGlobalIter {
+        PyDatasetEventsGlobalIter {
+            iter: self.0.shared_iter_global(),
+        }
     }
-    /// The list of Events stored on the current rank.
+    /// Iterate over Events stored on the current rank.
     ///
     /// Notes
     /// -----
     /// This is the explicit rank-local counterpart to ``events_global``.
     #[getter]
-    fn events_local(&self) -> Vec<PyEvent> {
-        (0..self.0.n_events_local())
-            .map(|index| {
-                let event = self
-                    .0
-                    .event_local(index)
-                    .expect("local event index should exist")
-                    .to_event_data();
-                PyEvent {
-                    event: OwnedEvent::new(Arc::new(event), self.0.metadata_arc()),
-                    has_metadata: true,
-                }
-            })
-            .collect()
+    fn events_local(&self) -> PyDatasetEventsLocalIter {
+        PyDatasetEventsLocalIter {
+            dataset: self.0.clone(),
+            index: 0,
+        }
     }
     /// Retrieve a four-momentum by particle name for the event at ``index``.
     fn p4_by_name(&self, index: usize, name: &str) -> PyResult<PyVec4> {

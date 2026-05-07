@@ -211,14 +211,36 @@ impl Dataset {
         }
     }
 
-    /// Collect all events into a [`Vec`] using the default global iteration semantics.
+    /// Iterate over all events using the default global iteration semantics.
     ///
-    /// When MPI is enabled, the returned vector is ordered like [`Dataset::event_global`] and
-    /// may include remotely owned events fetched on demand.
-    pub fn events_global(&self) -> Vec<OwnedEvent> {
-        (0..self.n_events())
-            .map(|index| self.event_global(index).expect("event index should exist"))
-            .collect()
+    /// When MPI is enabled, the iterator is ordered like [`Dataset::event_global`] and may
+    /// fetch remotely owned events in chunks.
+    pub fn events_global(&self) -> DatasetGlobalIter<'_> {
+        let total = self.n_events();
+        #[cfg(feature = "mpi")]
+        {
+            if let (Some(world), Some(layout)) = (crate::mpi::get_world(), self.mpi_layout) {
+                return DatasetGlobalIter {
+                    dataset: self,
+                    index: 0,
+                    total,
+                    world: Some(world),
+                    cursor: Some(MpiEventChunkCursor::for_iteration(total)),
+                    layout: Some(layout),
+                };
+            }
+        }
+        DatasetGlobalIter {
+            dataset: self,
+            index: 0,
+            total,
+            #[cfg(feature = "mpi")]
+            world: None,
+            #[cfg(feature = "mpi")]
+            cursor: None,
+            #[cfg(feature = "mpi")]
+            layout: None,
+        }
     }
 
     fn refresh_local_weight_cache(&mut self) {
@@ -392,6 +414,42 @@ impl<'a> Iterator for DatasetViewIter<'a> {
         let event = self.dataset.event_view(self.index);
         self.index += 1;
         Some(event)
+    }
+}
+
+/// Iterator over global owned events in a [`Dataset`].
+pub struct DatasetGlobalIter<'a> {
+    dataset: &'a Dataset,
+    index: usize,
+    total: usize,
+    #[cfg(feature = "mpi")]
+    world: Option<SimpleCommunicator>,
+    #[cfg(feature = "mpi")]
+    cursor: Option<MpiEventChunkCursor>,
+    #[cfg(feature = "mpi")]
+    layout: Option<MpiDatasetLayout>,
+}
+
+impl Iterator for DatasetGlobalIter<'_> {
+    type Item = OwnedEvent;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.index >= self.total {
+            return None;
+        }
+        let index = self.index;
+        self.index += 1;
+
+        #[cfg(feature = "mpi")]
+        {
+            if let (Some(world), Some(cursor), Some(layout)) =
+                (&self.world, &mut self.cursor, self.layout)
+            {
+                return cursor.event_for_dataset(self.dataset, index, world, self.total, layout);
+            }
+        }
+
+        self.dataset.event_global_opt(index)
     }
 }
 
@@ -1466,11 +1524,7 @@ impl Dataset {
     #[cfg(feature = "mpi")]
     pub fn weights_mpi(&self, world: &SimpleCommunicator) -> Vec<f64> {
         if self.mpi_layout == Some(MpiDatasetLayout::RoundRobin) {
-            return self
-                .events_global()
-                .into_iter()
-                .map(|event| event.weight())
-                .collect();
+            return self.events_global().map(|event| event.weight()).collect();
         }
         let local_weights = self.weights_local();
         let n_events = self.n_events();

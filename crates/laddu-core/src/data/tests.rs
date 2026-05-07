@@ -867,7 +867,7 @@ fn test_binned_dataset() {
     }
     #[typetag::serde]
     impl Variable for BeamEnergy {
-        fn value(&self, event: &Event<'_>) -> f64 {
+        fn value(&self, event: &dyn EventLike) -> f64 {
             event.p4_at(0).e()
         }
     }
@@ -993,7 +993,6 @@ fn test_dataset_events_global_returns_events() {
     let dataset = test_dataset();
     let weights: Vec<f64> = dataset
         .events_global()
-        .into_iter()
         .map(|event| event.weight())
         .collect();
     assert_eq!(weights.len(), 1);
