@@ -1,4 +1,4 @@
-Vectors
+vectors
 =======
 
 .. automodule:: laddu.utils.vectors

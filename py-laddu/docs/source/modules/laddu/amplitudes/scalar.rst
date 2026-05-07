@@ -1,5 +1,5 @@
-Common
-======
+Scalar Amplitudes
+=================
 
 .. automodule:: laddu.amplitudes.common
    :members:

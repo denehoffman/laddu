@@ -1,5 +1,5 @@
-Lookup Table
-============
+Lookup Tables
+=============
 
 .. automodule:: laddu.amplitudes.lookup_table
    :members:

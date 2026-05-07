@@ -57,7 +57,7 @@ Example
 
 For a simple unbinned fit, we must first obtain some data. ``laddu`` does not currently have a built-in event generator, so it is recommended that users utilize other methods of generating Monte Carlo data. For the sake of this tutorial, we will assume that these data files are readily available as Parquet files.
 
-.. note:: ``laddu`` only requires the column naming convention described in :ref:`the API reference <laddu.data.Dataset>`. Parquet remains the recommended container (and works in both Rust and Python), but the reader can also ingest generic ROOT TTrees via :func:`laddu.io.read_root` (either with the native oxyroot backend or ``backend='uproot'``) and, in Python, AmpTools-style ROOT tuples through :func:`laddu.io.read_amptools`. This avoids the need for any intermediate conversion scripts when working with those formats.
+.. note:: ``laddu`` only requires the column naming convention described by :class:`laddu.data.Dataset`. Parquet remains the recommended container (and works in both Rust and Python), but the reader can also ingest generic ROOT TTrees via :func:`laddu.io.read_root` (either with the native oxyroot backend or ``backend='uproot'``) and, in Python, AmpTools-style ROOT tuples through :func:`laddu.io.read_amptools`. This avoids the need for any intermediate conversion scripts when working with those formats.
 
 Reading data with ``laddu`` is as simple as using the `laddu.io.read_parquet` function. It takes the path to the data file as its argument:
 

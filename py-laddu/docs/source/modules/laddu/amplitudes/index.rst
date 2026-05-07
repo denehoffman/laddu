@@ -1,19 +1,15 @@
 amplitudes
 ==========
 
-.. automodule:: laddu.amplitudes
-   :members:
-   :undoc-members:
-
+Concrete amplitude constructors are grouped by physics or implementation type.
+The core expression and evaluator APIs live in :doc:`../amplitude`.
 
 .. toctree::
    :maxdepth: 1
    :caption: Amplitudes:
 
-   common
-   lookup_table
-   ylm
-   zlm
-   phase_space
-   breit_wigner
+   scalar
+   angular
+   resonance
+   lookup
    kmatrix
