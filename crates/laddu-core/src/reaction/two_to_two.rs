@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{graph::ParticleGraph, particle::resolve_particle_direct, Particle};
 use crate::{
-    data::Event,
+    data::EventLike,
     vectors::{Vec3, Vec4},
     LadduError, LadduResult,
 };
@@ -69,7 +69,7 @@ impl TwoToTwoReaction {
     pub fn resolve(
         &self,
         graph: &ParticleGraph,
-        event: &Event<'_>,
+        event: &dyn EventLike,
     ) -> LadduResult<ResolvedTwoToTwo> {
         let mut momenta = [
             resolve_particle_direct(event, graph.particle(&self.p1)?)?,

@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use super::Variable;
 use crate::{
-    data::{DatasetMetadata, Event},
+    data::{DatasetMetadata, EventLike},
     quantum::Frame,
     reaction::Reaction,
     LadduResult,
@@ -23,14 +23,14 @@ impl AngleSource {
         Ok(())
     }
 
-    fn costheta(&self, event: &Event<'_>, frame: Frame) -> f64 {
+    fn costheta(&self, event: &dyn EventLike, frame: Frame) -> f64 {
         self.reaction
             .angles_value(event, &self.parent, &self.daughter, frame)
             .unwrap_or_else(|err| panic!("failed to evaluate reaction costheta: {err}"))
             .costheta()
     }
 
-    fn phi(&self, event: &Event<'_>, frame: Frame) -> f64 {
+    fn phi(&self, event: &dyn EventLike, frame: Frame) -> f64 {
         self.reaction
             .angles_value(event, &self.parent, &self.daughter, frame)
             .unwrap_or_else(|err| panic!("failed to evaluate reaction phi: {err}"))
@@ -80,7 +80,7 @@ impl Variable for CosTheta {
         self.source.bind(metadata)
     }
 
-    fn value(&self, event: &Event<'_>) -> f64 {
+    fn value(&self, event: &dyn EventLike) -> f64 {
         self.source.costheta(event, self.frame)
     }
 }
@@ -127,7 +127,7 @@ impl Variable for Phi {
         self.source.bind(metadata)
     }
 
-    fn value(&self, event: &Event<'_>) -> f64 {
+    fn value(&self, event: &dyn EventLike) -> f64 {
         self.source.phi(event, self.frame)
     }
 }

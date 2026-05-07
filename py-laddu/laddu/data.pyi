@@ -1,4 +1,4 @@
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from typing import Any, Literal, overload
 
 import numpy as np
@@ -38,8 +38,8 @@ class Event:
     ) -> float: ...
 
 class Dataset:
-    events_global: list[Event]
-    events_local: list[Event]
+    events_global: Iterator[Event]
+    events_local: Iterator[Event]
     n_events: int
     n_events_global: int
     n_events_local: int

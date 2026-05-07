@@ -371,8 +371,10 @@ def test_dataset_from_events_explicit_constructors() -> None:
 
     assert local.n_events_local == 1
     assert global_dataset.n_events == 1
-    _assert_events_close(local.events_local[0], events[0], P4_NAMES, AUX_NAMES)
-    _assert_events_close(global_dataset.events_global[0], events[0], P4_NAMES, AUX_NAMES)
+    _assert_events_close(next(local.events_local), events[0], P4_NAMES, AUX_NAMES)
+    _assert_events_close(
+        next(global_dataset.events_global), events[0], P4_NAMES, AUX_NAMES
+    )
 
 
 def test_dataset_push_event_validation() -> None:
@@ -849,7 +851,7 @@ def test_dataset_bootstrap() -> None:
 
 def test_dataset_iteration() -> None:
     dataset = make_test_dataset()
-    events = dataset.events_global
+    events = list(dataset.events_global)
     assert len(events) == dataset.n_events
     assert all(isinstance(event, Event) for event in events)
     proton_vec_from_events = events[0].p4s['proton']
@@ -877,10 +879,10 @@ def test_dataset_iteration_modes() -> None:
         aux_names=AUX_NAMES,
     )
 
-    local_events = dataset.events_local
-    global_events = dataset.events_global
+    local_events = list(dataset.events_local)
+    global_events = list(dataset.events_global)
     default_events = global_events
-    stored_local_events = dataset.events_local
+    stored_local_events = list(dataset.events_local)
 
     assert len(default_events) == dataset.n_events
     assert dataset.n_events_local == dataset.n_events
@@ -892,7 +894,7 @@ def test_dataset_iteration_modes() -> None:
 
     global_alias_event = dataset.event_global(0)
     assert isinstance(global_alias_event, Event)
-    assert isinstance(dataset.events_global, list)
+    assert iter(dataset.events_global) is not None
     assert isinstance(dataset.weights_global, np.ndarray)
     assert isinstance(dataset.n_events_global, int)
     assert isinstance(dataset.n_events_weighted_global, float)

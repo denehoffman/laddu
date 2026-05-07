@@ -7,7 +7,7 @@ use super::{
     two_to_two::{ResolvedTwoToTwo, TwoToTwoReaction},
 };
 use crate::{
-    data::Event,
+    data::EventLike,
     kinematics::{DecayAngles, FrameAxes, RestFrame},
     quantum::{Channel, Frame},
     variables::{Mandelstam, Mass, PolAngle, Polarization},
@@ -74,7 +74,7 @@ impl Reaction {
     }
 
     /// Resolve a particle p4 from an event.
-    pub fn p4(&self, event: &Event<'_>, particle: &str) -> LadduResult<Vec4> {
+    pub fn p4(&self, event: &dyn EventLike, particle: &str) -> LadduResult<Vec4> {
         let particle = self.particle(particle)?;
         match &self.topology {
             ReactionTopology::TwoToTwo(topology) => {
@@ -100,7 +100,7 @@ impl Reaction {
     }
 
     /// Resolve the two-to-two topology momenta from an event.
-    pub fn resolve_two_to_two(&self, event: &Event<'_>) -> LadduResult<ResolvedTwoToTwo> {
+    pub fn resolve_two_to_two(&self, event: &dyn EventLike) -> LadduResult<ResolvedTwoToTwo> {
         match &self.topology {
             ReactionTopology::TwoToTwo(topology) => topology.resolve(&self.graph, event),
         }
@@ -153,7 +153,12 @@ impl Reaction {
     }
 
     /// Compute axes for a particle in this reaction.
-    pub fn axes(&self, event: &Event<'_>, particle: &str, frame: Frame) -> LadduResult<FrameAxes> {
+    pub fn axes(
+        &self,
+        event: &dyn EventLike,
+        particle: &str,
+        frame: Frame,
+    ) -> LadduResult<FrameAxes> {
         let (root_index, root) = self.root_particle_for(particle)?;
         let particle_ref = self.particle(particle)?;
         if particle_ref == root {
@@ -188,7 +193,7 @@ impl Reaction {
     /// Compute a daughter's decay angles in its parent rest frame.
     pub fn angles_value(
         &self,
-        event: &Event<'_>,
+        event: &dyn EventLike,
         parent: &str,
         daughter: &str,
         frame: Frame,
@@ -254,7 +259,7 @@ impl Reaction {
 
     fn p4_in_rest_frame_of(
         &self,
-        event: &Event<'_>,
+        event: &dyn EventLike,
         frame_particle: &str,
         target: &str,
     ) -> LadduResult<Vec4> {
