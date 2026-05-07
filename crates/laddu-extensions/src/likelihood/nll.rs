@@ -1,6 +1,8 @@
 #[cfg(feature = "rayon")]
 use std::cell::RefCell;
-use std::{collections::HashMap, fmt::Debug, sync::Arc};
+#[cfg(feature = "rayon")]
+use std::fmt::Debug;
+use std::{collections::HashMap, sync::Arc};
 
 use accurate::{sum::Klein, traits::*};
 use fastrand::Rng;
