@@ -377,6 +377,97 @@ def test_dataset_from_events_explicit_constructors() -> None:
     )
 
 
+def test_io_from_columns_explicit_metadata() -> None:
+    columns = {
+        'beam_px': np.array([0.0, 0.0]),
+        'beam_py': np.array([0.0, 0.0]),
+        'beam_pz': np.array([8.0, 9.0]),
+        'beam_e': np.array([8.0, 9.0]),
+        'proton_px': np.array([0.1, 0.2]),
+        'proton_py': np.array([0.0, 0.1]),
+        'proton_pz': np.array([0.3, 0.4]),
+        'proton_e': np.array([1.0, 1.1]),
+        'pol_angle': np.array([0.25, 0.5]),
+        'weight': np.array([2.0, 3.0]),
+    }
+
+    dataset = ldio.from_columns(
+        columns,
+        p4s=['beam', 'proton'],
+        aux=['pol_angle'],
+        aliases={'target': 'proton'},
+    )
+
+    assert dataset.p4_names == ['beam', 'proton']
+    assert dataset.aux_names == ['pol_angle']
+    assert dataset.n_events == 2
+    assert np.allclose(dataset.weights, [2.0, 3.0])
+    assert pytest.approx(dataset[1].p4('beam').pz) == 9.0
+    assert pytest.approx(dataset[0].p4('target').px) == 0.1
+    assert pytest.approx(dataset[1].aux['pol_angle']) == 0.5
+    assert np.allclose(dataset.evaluate(Mass(['target'])), dataset[Mass(['target'])])
+
+
+def test_io_from_columns_infers_metadata_and_default_weights() -> None:
+    dataset = ldio.from_columns(
+        {
+            'beam_px': [0.0, 0.0],
+            'beam_py': [0.0, 0.0],
+            'beam_pz': [8.0, 9.0],
+            'beam_e': [8.0, 9.0],
+            'recoil_px': [0.1, 0.2],
+            'recoil_py': [0.0, 0.1],
+            'recoil_pz': [0.3, 0.4],
+            'recoil_e': [1.0, 1.1],
+            'pol_angle': [0.25, 0.5],
+        }
+    )
+
+    assert dataset.p4_names == ['beam', 'recoil']
+    assert dataset.aux_names == ['pol_angle']
+    assert np.allclose(dataset.weights, [1.0, 1.0])
+
+
+def test_io_from_columns_validation() -> None:
+    valid_recoil = {
+        'recoil_px': [0.1, 0.2],
+        'recoil_py': [0.0, 0.1],
+        'recoil_pz': [0.3, 0.4],
+        'recoil_e': [1.0, 1.1],
+    }
+    with pytest.raises(ValueError, match='same length'):
+        ldio.from_columns(
+            {
+                'beam_px': [0.0, 0.0],
+                'beam_py': [0.0],
+                'beam_pz': [8.0, 9.0],
+                'beam_e': [8.0, 9.0],
+                **valid_recoil,
+            }
+        )
+    with pytest.raises(ValueError, match="Auxiliary column 'pol_angle'"):
+        ldio.from_columns(
+            {
+                'beam_px': [0.0, 0.0],
+                'beam_py': [0.0, 0.0],
+                'beam_pz': [8.0, 9.0],
+                'beam_e': [8.0, 9.0],
+                **valid_recoil,
+                'pol_angle': [0.25],
+            },
+            aux=['pol_angle'],
+        )
+    with pytest.raises(KeyError, match='beam_e'):
+        ldio.from_columns(
+            {
+                'beam_px': [0.0, 0.0],
+                'beam_py': [0.0, 0.0],
+                'beam_pz': [8.0, 9.0],
+            },
+            p4s=['beam'],
+        )
+
+
 def test_dataset_push_event_validation() -> None:
     dataset = Dataset.empty_local(p4_names=['beam', 'recoil'], aux_names=['pol_angle'])
     beam = Vec3(0.0, 0.0, 8.0).with_mass(0.0)

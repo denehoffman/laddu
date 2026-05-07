@@ -181,7 +181,7 @@ def test_f0_rejects_integer_channel() -> None:
                 (parameter('p6'), parameter('p7')),
                 (parameter('p8'), parameter('p9')),
             ),
-            1,  # ty: ignore[invalid-argument-type]
+            1,
             res_mass,
         )
 
