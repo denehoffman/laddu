@@ -84,26 +84,26 @@ def main(bins: int, niters: int, nboot: int) -> None:
     logger.info(f'Total time: {end - start:.3f}s')
     logger.info(f'\n\n{fit}')
 
-    f0_width = fit.x[parameters.index('f0_width')]
-    f2_width = fit.x[parameters.index('f2_width')]
-    f0_re = fit.x[parameters.index('S0+ re')]
-    f2_re = fit.x[parameters.index('D2+ re')]
-    f2_im = fit.x[parameters.index('D2+ im')]
+    f0_width = fit.x[parameters.free.index('f0_width')]
+    f2_width = fit.x[parameters.free.index('f2_width')]
+    f0_re = fit.x[parameters.free.index('S0+ re')]
+    f2_re = fit.x[parameters.free.index('D2+ re')]
+    f2_im = fit.x[parameters.free.index('D2+ im')]
 
     f0_width_err = np.array(
-        [boot_fit.x[parameters.index('f0_width')] for boot_fit in boot_fites]
+        [boot_fit.x[parameters.free.index('f0_width')] for boot_fit in boot_fites]
     ).std()
     f2_width_err = np.array(
-        [boot_fit.x[parameters.index('f2_width')] for boot_fit in boot_fites]
+        [boot_fit.x[parameters.free.index('f2_width')] for boot_fit in boot_fites]
     ).std()
     f0_re_err = np.array(
-        [boot_fit.x[parameters.index('S0+ re')] for boot_fit in boot_fites]
+        [boot_fit.x[parameters.free.index('S0+ re')] for boot_fit in boot_fites]
     ).std()
     f2_re_err = np.array(
-        [boot_fit.x[parameters.index('D2+ re')] for boot_fit in boot_fites]
+        [boot_fit.x[parameters.free.index('D2+ re')] for boot_fit in boot_fites]
     ).std()
     f2_im_err = np.array(
-        [boot_fit.x[parameters.index('D2+ im')] for boot_fit in boot_fites]
+        [boot_fit.x[parameters.free.index('D2+ im')] for boot_fit in boot_fites]
     ).std()
 
     u_f0_re = ufloat(f0_re, f0_re_err)
@@ -355,8 +355,12 @@ def fit_binned(
     data_ds_binned = data_ds.bin_by(res_mass, bins, (1.0, 2.0))
     accmc_ds_binned = accmc_ds.bin_by(res_mass, bins, (1.0, 2.0))
     genmc_ds_binned = genmc_ds.bin_by(res_mass, bins, (1.0, 2.0))
-    z00p = ld.Zlm('Z00+', l=0, m=0, r='+', angles=angles, polarization=polarization)
-    z22p = ld.Zlm('Z22+', l=2, m=2, r='+', angles=angles, polarization=polarization)
+    z00p = ld.Zlm(
+        'S0+', 'Z00+', l=0, m=0, r='+', angles=angles, polarization=polarization
+    )
+    z22p = ld.Zlm(
+        'D2+', 'Z22+', l=2, m=2, r='+', angles=angles, polarization=polarization
+    )
     s0p = ld.Scalar('S0+', value=ld.parameter('S0+ re'))
     d2p = ld.ComplexScalar('D2+', re=ld.parameter('D2+ re'), im=ld.parameter('D2+ im'))
     pos_re = (s0p * z00p.real() + d2p * z22p.real()).norm_sqr()
@@ -384,9 +388,7 @@ def fit_binned(
         best_nll = np.inf
         best_fit = None
         nll = ld.NLL(model, data_ds_binned[ibin], accmc_ds_binned[ibin])
-        gen_eval = model.load(
-            genmc_ds_binned[ibin],
-        )
+        gen_eval = model.load(genmc_ds_binned[ibin])
         for iiter in range(niters):
             logger.info(f'Fitting Iteration #{iiter}')
             p0 = rng.uniform(-1000.0, 1000.0, len(nll.parameters))
@@ -401,7 +403,7 @@ def fit_binned(
 
         fit_weights = nll.project_weights(
             best_fit.x,
-            subsets=[None, ['Z00+', 'S0+'], ['Z22+', 'D2+']],
+            subsets=[None, ['S0+'], ['D2+']],
         )
         tot_count, s0p_count, d2p_count = fit_weights.sum(axis=1)
         tot_res.append(tot_count)
@@ -409,7 +411,7 @@ def fit_binned(
         d2p_res.append(d2p_count)
         fit_weights_acc = nll.project_weights(
             best_fit.x,
-            subsets=[None, ['Z00+', 'S0+'], ['Z22+', 'D2+']],
+            subsets=[None, ['S0+'], ['D2+']],
             mc_evaluator=gen_eval,
         )
         tot_count_acc, s0p_count_acc, d2p_count_acc = fit_weights_acc.sum(axis=1)
@@ -438,7 +440,7 @@ def fit_binned(
 
             boot_weights = boot_nll.project_weights(
                 boot_fit.x,
-                subsets=[None, ['Z00+', 'S0+'], ['Z22+', 'D2+']],
+                subsets=[None, ['S0+'], ['D2+']],
             )
             tot_count, s0p_count, d2p_count = boot_weights.sum(axis=1)
             tot_boot.append(tot_count)
@@ -446,7 +448,7 @@ def fit_binned(
             d2p_boot.append(d2p_count)
             boot_weights_acc = boot_nll.project_weights(
                 boot_fit.x,
-                subsets=[None, ['Z00+', 'S0+'], ['Z22+', 'D2+']],
+                subsets=[None, ['S0+'], ['D2+']],
                 mc_evaluator=gen_eval,
             )
             tot_count_acc, s0p_count_acc, d2p_count_acc = boot_weights_acc.sum(axis=1)
@@ -506,9 +508,14 @@ def fit_unbinned(
 ]:
     logger.info('Starting Unbinned Fit')
     res_mass, angles, polarization = reaction_variables()
-    z00p = ld.Zlm('Z00+', l=0, m=0, r='+', angles=angles, polarization=polarization)
-    z22p = ld.Zlm('Z22+', l=2, m=2, r='+', angles=angles, polarization=polarization)
+    z00p = ld.Zlm(
+        'S0+', 'Z00+', l=0, m=0, r='+', angles=angles, polarization=polarization
+    )
+    z22p = ld.Zlm(
+        'D2+', 'Z22+', l=2, m=2, r='+', angles=angles, polarization=polarization
+    )
     bw_f01500 = ld.BreitWigner(
+        'S0+',
         'f0(1500)',
         mass=ld.parameter('f0_mass', 1.506),
         width=ld.parameter('f0_width'),
@@ -518,6 +525,7 @@ def fit_unbinned(
         resonance_mass=res_mass,
     )
     bw_f21525 = ld.BreitWigner(
+        'D2+',
         'f2(1525)',
         mass=ld.parameter('f2_mass', 1.517),
         width=ld.parameter('f2_width'),
@@ -544,9 +552,7 @@ def fit_unbinned(
         (0.001, 1.0),
     ]
     nll = ld.NLL(model, data_ds, accmc_ds)
-    gen_eval = model.load(
-        genmc_ds,
-    )
+    gen_eval = model.load(genmc_ds)
     for iiter in range(niters):
         logger.info(f'Fitting Iteration #{iiter}')
         p0 = rng.uniform(-1000.0, 1000.0, 3)
@@ -562,11 +568,11 @@ def fit_unbinned(
 
     tot_weights, s0p_weights, d2p_weights = nll.project_weights(
         best_fit.x,
-        subsets=[None, ['S0+', 'Z00+', 'f0(1500)'], ['D2+', 'Z22+', 'f2(1525)']],
+        subsets=[None, ['S0+'], ['D2+']],
     )
     tot_weights_acc, s0p_weights_acc, d2p_weights_acc = nll.project_weights(
         best_fit.x,
-        subsets=[None, ['S0+', 'Z00+', 'f0(1500)'], ['D2+', 'Z22+', 'f2(1525)']],
+        subsets=[None, ['S0+'], ['D2+']],
         mc_evaluator=gen_eval,
     )
     nll.activate_all()
