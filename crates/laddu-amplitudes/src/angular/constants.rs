@@ -1,5 +1,5 @@
 use laddu_core::{
-    amplitudes::{Expression, IntoTags},
+    amplitude::{Expression, IntoTags},
     math::{clebsch_gordon, wigner_3j},
     AngularMomentum, AngularMomentumProjection, LadduResult,
 };

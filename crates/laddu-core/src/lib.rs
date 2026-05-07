@@ -537,7 +537,7 @@ pub mod mpi {
 use thiserror::Error;
 
 /// Core amplitude traits, identifiers, and expression-facing compatibility exports.
-pub mod amplitudes;
+pub mod amplitude;
 /// Methods for loading and manipulating event datasets.
 pub mod data;
 /// Execution-policy and thread-pool coordination helpers.
@@ -562,10 +562,10 @@ pub mod variables;
 pub mod vectors;
 /// Useful traits for all crate structs
 pub mod traits {
-    pub use crate::{amplitudes::Amplitude, variables::Variable};
+    pub use crate::{amplitude::Amplitude, variables::Variable};
 }
 
-pub use amplitudes::{Amplitude, AmplitudeID, AmplitudeSemanticField, AmplitudeSemanticKey};
+pub use amplitude::{Amplitude, AmplitudeID, AmplitudeSemanticField, AmplitudeSemanticKey};
 
 #[cfg(feature = "execution-context-prototype")]
 pub use crate::execution::{ExecutionContext, ScratchAllocator, ThreadPolicy};

@@ -1,6 +1,49 @@
-//! Helpers for constructing amplitude semantic identity keys.
+use serde::{Deserialize, Serialize};
 
 use crate::parameters::Parameter;
+
+/// A single named field in an [`AmplitudeSemanticKey`].
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct AmplitudeSemanticField {
+    name: String,
+    value: String,
+}
+
+impl AmplitudeSemanticField {
+    /// Construct a semantic key field.
+    pub fn new(name: impl Into<String>, value: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            value: value.into(),
+        }
+    }
+}
+
+/// A semantic identity key used to opt into deduplicating equivalent amplitude computations.
+///
+/// The key must include enough type/configuration information to prove that two independently
+/// constructed amplitudes can safely share one registered computation.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct AmplitudeSemanticKey {
+    kind: String,
+    fields: Vec<AmplitudeSemanticField>,
+}
+
+impl AmplitudeSemanticKey {
+    /// Construct a semantic key for the given amplitude kind.
+    pub fn new(kind: impl Into<String>) -> Self {
+        Self {
+            kind: kind.into(),
+            fields: Vec::new(),
+        }
+    }
+
+    /// Add a named field to this semantic key.
+    pub fn with_field(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
+        self.fields.push(AmplitudeSemanticField::new(name, value));
+        self
+    }
+}
 
 /// Encode an `f64` as a stable bit-pattern string for semantic keys.
 pub fn f64_key(value: f64) -> String {

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use laddu_core::{
-    amplitudes::{Amplitude, AmplitudeID, ExpressionDependence, Parameter, TestAmplitude},
+    amplitude::{Amplitude, AmplitudeID, ExpressionDependence, Parameter, TestAmplitude},
     data::{DatasetMetadata, Event, EventData},
     parameter,
     resources::{Cache, ParameterID, Parameters, Resources, ScalarID},

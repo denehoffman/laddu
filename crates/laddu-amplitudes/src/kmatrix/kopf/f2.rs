@@ -1,7 +1,7 @@
 use std::array;
 
 use laddu_core::{
-    amplitudes::{
+    amplitude::{
         display_key, parameter_array_key, seed_key, Amplitude, AmplitudeID, AmplitudeSemanticKey,
         IntoTags, Parameter, Tags,
     },

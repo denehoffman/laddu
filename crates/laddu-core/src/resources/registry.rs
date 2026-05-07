@@ -8,7 +8,7 @@ use super::{
     parameter_store::ParameterID,
 };
 use crate::{
-    amplitudes::{AmplitudeID, IntoTags, Parameter, ParameterMap, Tags},
+    amplitude::{AmplitudeID, IntoTags, Parameter, ParameterMap, Tags},
     LadduError, LadduResult,
 };
 
@@ -222,7 +222,7 @@ impl Resources {
         }
     }
 
-    /// Activate [`Amplitude`](crate::amplitudes::Amplitude) use-sites by tag or glob selector.
+    /// Activate [`Amplitude`](crate::amplitude::Amplitude) use-sites by tag or glob selector.
     pub fn activate<T: AsRef<str>>(&mut self, name: T) {
         if self
             .set_activation_state_by_selector(name.as_ref(), true, false)
@@ -231,7 +231,7 @@ impl Resources {
             self.rebuild_active_indices();
         }
     }
-    /// Activate several [`Amplitude`](crate::amplitudes::Amplitude) use-sites by tag or glob selector.
+    /// Activate several [`Amplitude`](crate::amplitude::Amplitude) use-sites by tag or glob selector.
     pub fn activate_many<T: AsRef<str>>(&mut self, names: &[T]) {
         let mut changed = false;
         for name in names {
@@ -246,14 +246,14 @@ impl Resources {
             self.rebuild_active_indices();
         }
     }
-    /// Activate [`Amplitude`](crate::amplitudes::Amplitude) use-sites by tag or glob selector, returning an error if no use-site matches.
+    /// Activate [`Amplitude`](crate::amplitude::Amplitude) use-sites by tag or glob selector, returning an error if no use-site matches.
     pub fn activate_strict<T: AsRef<str>>(&mut self, name: T) -> LadduResult<()> {
         if self.set_activation_state_by_selector(name.as_ref(), true, true)? {
             self.rebuild_active_indices();
         }
         Ok(())
     }
-    /// Activate several [`Amplitude`](crate::amplitudes::Amplitude) use-sites by tag or glob selector, returning an error if any selector has no matches.
+    /// Activate several [`Amplitude`](crate::amplitude::Amplitude) use-sites by tag or glob selector, returning an error if any selector has no matches.
     pub fn activate_many_strict<T: AsRef<str>>(&mut self, names: &[T]) -> LadduResult<()> {
         let mut changed = false;
         for name in names {
@@ -266,7 +266,7 @@ impl Resources {
         }
         Ok(())
     }
-    /// Activate all registered [`Amplitude`](crate::amplitudes::Amplitude)s.
+    /// Activate all registered [`Amplitude`](crate::amplitude::Amplitude)s.
     pub fn activate_all(&mut self) {
         let mut changed = false;
         for active in self.active.iter_mut() {
@@ -279,7 +279,7 @@ impl Resources {
             self.rebuild_active_indices();
         }
     }
-    /// Deactivate [`Amplitude`](crate::amplitudes::Amplitude) use-sites by tag or glob selector.
+    /// Deactivate [`Amplitude`](crate::amplitude::Amplitude) use-sites by tag or glob selector.
     pub fn deactivate<T: AsRef<str>>(&mut self, name: T) {
         if self
             .set_activation_state_by_selector(name.as_ref(), false, false)
@@ -288,7 +288,7 @@ impl Resources {
             self.rebuild_active_indices();
         }
     }
-    /// Deactivate several [`Amplitude`](crate::amplitudes::Amplitude) use-sites by tag or glob selector.
+    /// Deactivate several [`Amplitude`](crate::amplitude::Amplitude) use-sites by tag or glob selector.
     pub fn deactivate_many<T: AsRef<str>>(&mut self, names: &[T]) {
         let mut changed = false;
         for name in names {
@@ -303,14 +303,14 @@ impl Resources {
             self.rebuild_active_indices();
         }
     }
-    /// Deactivate [`Amplitude`](crate::amplitudes::Amplitude) use-sites by tag or glob selector, returning an error if no use-site matches.
+    /// Deactivate [`Amplitude`](crate::amplitude::Amplitude) use-sites by tag or glob selector, returning an error if no use-site matches.
     pub fn deactivate_strict<T: AsRef<str>>(&mut self, name: T) -> LadduResult<()> {
         if self.set_activation_state_by_selector(name.as_ref(), false, true)? {
             self.rebuild_active_indices();
         }
         Ok(())
     }
-    /// Deactivate several [`Amplitude`](crate::amplitudes::Amplitude) use-sites by tag or glob selector, returning an error if any selector has no matches.
+    /// Deactivate several [`Amplitude`](crate::amplitude::Amplitude) use-sites by tag or glob selector, returning an error if any selector has no matches.
     pub fn deactivate_many_strict<T: AsRef<str>>(&mut self, names: &[T]) -> LadduResult<()> {
         let mut changed = false;
         for name in names {
@@ -323,7 +323,7 @@ impl Resources {
         }
         Ok(())
     }
-    /// Deactivate all tagged [`Amplitude`](crate::amplitudes::Amplitude) use-sites.
+    /// Deactivate all tagged [`Amplitude`](crate::amplitude::Amplitude) use-sites.
     pub fn deactivate_all(&mut self) {
         let mut changed = false;
         for (idx, active) in self.active.iter_mut().enumerate() {
@@ -339,34 +339,34 @@ impl Resources {
             self.rebuild_active_indices();
         }
     }
-    /// Isolate [`Amplitude`](crate::amplitudes::Amplitude) use-sites by tag or glob selector.
+    /// Isolate [`Amplitude`](crate::amplitude::Amplitude) use-sites by tag or glob selector.
     pub fn isolate<T: AsRef<str>>(&mut self, name: T) {
         let indices = self.selector_indices(name.as_ref());
         if !indices.is_empty() {
             self.isolate_indices(&indices);
         }
     }
-    /// Isolate [`Amplitude`](crate::amplitudes::Amplitude) use-sites by tag or glob selector, returning an error if no use-site matches.
+    /// Isolate [`Amplitude`](crate::amplitude::Amplitude) use-sites by tag or glob selector, returning an error if no use-site matches.
     pub fn isolate_strict<T: AsRef<str>>(&mut self, name: T) -> LadduResult<()> {
         let indices = self.selector_indices_many(&[name], true)?;
         self.isolate_indices(&indices);
         Ok(())
     }
-    /// Isolate several [`Amplitude`](crate::amplitudes::Amplitude) use-sites by tag or glob selector.
+    /// Isolate several [`Amplitude`](crate::amplitude::Amplitude) use-sites by tag or glob selector.
     pub fn isolate_many<T: AsRef<str>>(&mut self, names: &[T]) {
         if let Ok(indices) = self.selector_indices_many(names, false) {
             self.isolate_indices(&indices);
         }
     }
-    /// Isolate several [`Amplitude`](crate::amplitudes::Amplitude) use-sites by tag or glob selector, returning an error if any selector has no matches.
+    /// Isolate several [`Amplitude`](crate::amplitude::Amplitude) use-sites by tag or glob selector, returning an error if any selector has no matches.
     pub fn isolate_many_strict<T: AsRef<str>>(&mut self, names: &[T]) -> LadduResult<()> {
         let indices = self.selector_indices_many(names, true)?;
         self.isolate_indices(&indices);
         Ok(())
     }
-    /// Register an [`Amplitude`](crate::amplitudes::Amplitude) use-site with activation tags.
+    /// Register an [`Amplitude`](crate::amplitude::Amplitude) use-site with activation tags.
     /// This method should be called at the end of the
-    /// [`Amplitude::register`](crate::amplitudes::Amplitude::register) method. The
+    /// [`Amplitude::register`](crate::amplitude::Amplitude::register) method. The
     /// The amplitude should store normalized activation tags and pass them here.
     ///
     /// # Errors
@@ -423,7 +423,7 @@ impl Resources {
     }
 
     /// Register a parameter. This method should be called within
-    /// [`Amplitude::register`](crate::amplitudes::Amplitude::register).
+    /// [`Amplitude::register`](crate::amplitude::Amplitude::register).
     /// The resulting [`ParameterID`] should be stored to retrieve the value from the
     /// [`Parameters`](crate::resources::Parameters) wrapper.
     ///
@@ -440,7 +440,7 @@ impl Resources {
     /// Register a scalar with an optional name (names are unique to the [`Cache`] so two different
     /// registrations of the same type which share a name will also share values and may overwrite
     /// each other). This method should be called within the
-    /// [`Amplitude::register`](crate::amplitudes::Amplitude::register) method, and the
+    /// [`Amplitude::register`](crate::amplitude::Amplitude::register) method, and the
     /// resulting [`ScalarID`] should be stored to use later to retrieve the value from the [`Cache`].
     pub fn register_scalar(&mut self, name: Option<&str>) -> ScalarID {
         let first_index = if let Some(name) = name {
@@ -460,7 +460,7 @@ impl Resources {
     /// Register a complex scalar with an optional name (names are unique to the [`Cache`] so two different
     /// registrations of the same type which share a name will also share values and may overwrite
     /// each other). This method should be called within the
-    /// [`Amplitude::register`](crate::amplitudes::Amplitude::register) method, and the
+    /// [`Amplitude::register`](crate::amplitude::Amplitude::register) method, and the
     /// resulting [`ComplexScalarID`] should be stored to use later to retrieve the value from the [`Cache`].
     pub fn register_complex_scalar(&mut self, name: Option<&str>) -> ComplexScalarID {
         let first_index = if let Some(name) = name {
@@ -480,7 +480,7 @@ impl Resources {
     /// Register a vector with an optional name (names are unique to the [`Cache`] so two different
     /// registrations of the same type which share a name will also share values and may overwrite
     /// each other). This method should be called within the
-    /// [`Amplitude::register`](crate::amplitudes::Amplitude::register) method, and the
+    /// [`Amplitude::register`](crate::amplitude::Amplitude::register) method, and the
     /// resulting [`VectorID`] should be stored to use later to retrieve the value from the [`Cache`].
     pub fn register_vector<const R: usize>(&mut self, name: Option<&str>) -> VectorID<R> {
         let first_index = if let Some(name) = name {
@@ -500,7 +500,7 @@ impl Resources {
     /// Register a complex-valued vector with an optional name (names are unique to the [`Cache`] so two different
     /// registrations of the same type which share a name will also share values and may overwrite
     /// each other). This method should be called within the
-    /// [`Amplitude::register`](crate::amplitudes::Amplitude::register) method, and the
+    /// [`Amplitude::register`](crate::amplitude::Amplitude::register) method, and the
     /// resulting [`ComplexVectorID`] should be stored to use later to retrieve the value from the [`Cache`].
     pub fn register_complex_vector<const R: usize>(
         &mut self,
@@ -526,7 +526,7 @@ impl Resources {
     /// Register a matrix with an optional name (names are unique to the [`Cache`] so two different
     /// registrations of the same type which share a name will also share values and may overwrite
     /// each other). This method should be called within the
-    /// [`Amplitude::register`](crate::amplitudes::Amplitude::register) method, and the
+    /// [`Amplitude::register`](crate::amplitude::Amplitude::register) method, and the
     /// resulting [`MatrixID`] should be stored to use later to retrieve the value from the [`Cache`].
     pub fn register_matrix<const R: usize, const C: usize>(
         &mut self,
@@ -551,7 +551,7 @@ impl Resources {
     /// Register a complex-valued matrix with an optional name (names are unique to the [`Cache`] so two different
     /// registrations of the same type which share a name will also share values and may overwrite
     /// each other). This method should be called within the
-    /// [`Amplitude::register`](crate::amplitudes::Amplitude::register) method, and the
+    /// [`Amplitude::register`](crate::amplitude::Amplitude::register) method, and the
     /// resulting [`ComplexMatrixID`] should be stored to use later to retrieve the value from the [`Cache`].
     pub fn register_complex_matrix<const R: usize, const C: usize>(
         &mut self,

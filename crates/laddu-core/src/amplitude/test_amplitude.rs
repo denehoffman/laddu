@@ -3,8 +3,8 @@ use num::complex::Complex64;
 use serde::{Deserialize, Serialize};
 
 use crate::{
+    amplitude::{Amplitude, AmplitudeID, Expression, IntoTags, Tags},
     data::Event,
-    expression::{Amplitude, AmplitudeID, Expression, IntoTags, Tags},
     parameters::Parameter,
     resources::{Cache, Parameters, Resources},
     LadduResult, ParameterID, ScalarID,

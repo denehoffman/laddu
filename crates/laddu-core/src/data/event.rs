@@ -12,7 +12,7 @@ use crate::{
 };
 
 /// An event that can be used to test the implementation of an
-/// [`Amplitude`](crate::amplitudes::Amplitude). This particular event contains the reaction
+/// [`Amplitude`](crate::amplitude::Amplitude). This particular event contains the reaction
 /// $`\gamma p \to K_S^0 K_S^0 p`$ with a polarized photon beam.
 pub fn test_event() -> EventData {
     let pol_magnitude = 0.38562805;
