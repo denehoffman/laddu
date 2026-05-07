@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use approx::assert_relative_eq;
 use laddu_core::{
-    amplitudes::IntoTags,
+    amplitude::IntoTags,
     data::test_dataset,
     parameter,
     reaction::{Particle, Reaction},

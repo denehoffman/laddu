@@ -1,5 +1,5 @@
 use laddu_core::{
-    amplitudes::{
+    amplitude::{
         debug_key, Amplitude, AmplitudeID, AmplitudeSemanticKey, Expression, IntoTags, Tags,
     },
     data::{DatasetMetadata, Event},

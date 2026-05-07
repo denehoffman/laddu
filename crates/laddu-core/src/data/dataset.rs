@@ -57,7 +57,7 @@ fn local_weighted_sum(weights: &[f64]) -> f64 {
 }
 
 /// A dataset that can be used to test the implementation of an
-/// [`Amplitude`](crate::amplitudes::Amplitude). This particular dataset contains a single
+/// [`Amplitude`](crate::amplitude::Amplitude). This particular dataset contains a single
 /// [`EventData`] generated from [`test_event`].
 pub fn test_dataset() -> Dataset {
     let metadata = Arc::new(

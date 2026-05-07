@@ -1,7 +1,7 @@
 use std::str::FromStr;
 
 use laddu_core::{
-    amplitudes::{
+    amplitude::{
         debug_key, parameter_pair_slice_key, parameter_slice_key, Amplitude, AmplitudeID,
         AmplitudeSemanticKey, Expression, ExpressionDependence, IntoTags, Parameter, Tags,
     },

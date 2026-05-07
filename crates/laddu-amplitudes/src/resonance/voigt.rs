@@ -2,7 +2,7 @@ use std::f64::consts::SQRT_2;
 
 use errorfunctions::ComplexErrorFunctions;
 use laddu_core::{
-    amplitudes::{
+    amplitude::{
         display_key, parameter_key, Amplitude, AmplitudeID, AmplitudeSemanticKey, Expression,
         IntoTags, Parameter, Tags,
     },

@@ -4,7 +4,7 @@ use criterion::{
     black_box, criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion, Throughput,
 };
 use laddu_core::{
-    amplitudes::{Amplitude, AmplitudeID, ExpressionDependence, Parameter, TestAmplitude},
+    amplitude::{Amplitude, AmplitudeID, ExpressionDependence, Parameter, TestAmplitude},
     data::{read_parquet, DatasetMetadata, DatasetReadOptions, Event, EventData},
     parameter,
     resources::{Cache, ParameterID, Parameters, Resources, ScalarID},

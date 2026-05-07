@@ -5,7 +5,7 @@ use std::{
 };
 
 use auto_ops::*;
-use laddu_core::{amplitudes::ParameterMap, LadduResult};
+use laddu_core::{amplitude::ParameterMap, LadduResult};
 use nalgebra::DVector;
 use parking_lot::RwLock;
 
@@ -435,7 +435,7 @@ mod tests {
     #[cfg(feature = "mpi")]
     use laddu_core::mpi::{finalize_mpi, get_world, use_mpi, LadduMPI};
     use laddu_core::{
-        amplitudes::{Amplitude, AmplitudeID, ExpressionDependence, Parameter},
+        amplitude::{Amplitude, AmplitudeID, ExpressionDependence, Parameter},
         data::{Dataset, DatasetMetadata, EventData},
         parameter,
         resources::{Cache, ParameterID, Parameters, Resources, ScalarID},

@@ -18,8 +18,8 @@
 //! - [Alternatives](#alternatives)
 //!
 //! # Key Features
-//! * A simple interface focused on combining [`Amplitude`](crate::amplitudes::Amplitude)s into models which can be evaluated over [`Dataset`]s.
-//! * A single [`Amplitude`](crate::amplitudes::Amplitude) trait which makes it easy to write new amplitudes and integrate them into the library.
+//! * A simple interface focused on combining [`Amplitude`](crate::amplitude::Amplitude)s into models which can be evaluated over [`Dataset`]s.
+//! * A single [`Amplitude`](crate::amplitude::Amplitude) trait which makes it easy to write new amplitudes and integrate them into the library.
 //! * Easy interfaces to precompute and cache values before the main calculation to speed up model evaluations.
 //! * Efficient parallelism using [`rayon`](https://github.com/rayon-rs/rayon).
 //! * Python bindings to allow users to write quick, easy-to-read code that just works.
@@ -60,7 +60,7 @@
 //!    ParameterID, Parameter, Parameters, Resources,
 //! };
 //! use laddu::Event;
-//! use laddu::expression::{IntoTags, Tags};
+//! use laddu::amplitude::{IntoTags, Tags};
 //! use laddu::resources::ScalarID;
 //! use laddu::traits::*;
 //! use laddu::math::{BarrierKind, QR_DEFAULT, Sheet, blatt_weisskopf_m, q_m};
@@ -154,8 +154,8 @@
 //! ```
 //!
 //! While it isn't shown here, we can often be more efficient when implementing
-//! [`Amplitude`](crate::amplitudes::Amplitude)s by precomputing values which do not depend on the
-//! free parameters. See the [`Amplitude::precompute`](crate::amplitudes::Amplitude::precompute)
+//! [`Amplitude`](crate::amplitude::Amplitude)s by precomputing values which do not depend on the
+//! free parameters. See the [`Amplitude::precompute`](crate::amplitude::Amplitude::precompute)
 //! method for more details.
 //!
 //! ### Calculating a Likelihood
@@ -167,7 +167,7 @@
 //! #    ParameterID, Parameter, Parameters, Resources,
 //! # };
 //! # use laddu::Event;
-//! # use laddu::expression::{IntoTags, Tags};
+//! # use laddu::amplitude::{IntoTags, Tags};
 //! # use laddu::resources::ScalarID;
 //! # use laddu::traits::*;
 //! # use laddu::math::{BarrierKind, QR_DEFAULT, Sheet, blatt_weisskopf_m, q_m};
@@ -406,19 +406,17 @@ pub mod expression {
 }
 /// Useful traits for all crate structs
 pub mod traits {
-    pub use laddu_core::{amplitudes::Amplitude, variables::Variable};
+    pub use laddu_core::{amplitude::Amplitude, variables::Variable};
     pub use laddu_extensions::likelihood::LikelihoodTerm;
 }
-/// [`Amplitude`](crate::amplitudes::Amplitude)s and methods for making and evaluating them.
+/// [`Amplitude`](crate::amplitude::Amplitude)s and methods for making and evaluating them.
+pub mod amplitude {
+    pub use laddu_core::{amplitude::*, parameter};
+}
+
+/// Concrete amplitude constructors and physics-model building blocks.
 pub mod amplitudes {
     pub use laddu_amplitudes::*;
-    pub use laddu_core::{
-        amplitudes::{
-            Amplitude, AmplitudeID, AmplitudeSemanticField, AmplitudeSemanticKey, Evaluator,
-            Expression, Parameter,
-        },
-        parameter,
-    };
 }
 
 /// <div class="warning">
@@ -433,7 +431,7 @@ pub mod experimental {
 
 pub use laddu_amplitudes::*;
 pub use laddu_core::{
-    amplitudes::{
+    amplitude::{
         AmplitudeID, AmplitudeSemanticField, AmplitudeSemanticKey, Evaluator, Expression, Parameter,
     },
     data::{

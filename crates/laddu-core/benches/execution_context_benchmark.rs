@@ -2,7 +2,7 @@ use std::{sync::Arc, time::Duration};
 
 use criterion::{black_box, criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion};
 use laddu_core::{
-    amplitudes::TestAmplitude,
+    amplitude::TestAmplitude,
     data::{read_parquet, DatasetReadOptions},
     parameter, Dataset, Evaluator, ExecutionContext, ThreadPolicy,
 };

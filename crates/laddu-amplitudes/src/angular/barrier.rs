@@ -1,5 +1,5 @@
 use laddu_core::{
-    amplitudes::{
+    amplitude::{
         debug_key, f64_key, Amplitude, AmplitudeID, AmplitudeSemanticKey, Expression, IntoTags,
         Tags,
     },

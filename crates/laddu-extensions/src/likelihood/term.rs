@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use dyn_clone::DynClone;
-use laddu_core::{amplitudes::ParameterMap, LadduResult};
+use laddu_core::{amplitude::ParameterMap, LadduResult};
 use nalgebra::DVector;
 
 use super::LikelihoodExpression;

@@ -1,6 +1,6 @@
 use std::{collections::HashMap, sync::Arc};
 
-use laddu_core::{amplitudes::ParameterMap, LadduResult, Parameter};
+use laddu_core::{amplitude::ParameterMap, LadduResult, Parameter};
 use nalgebra::DVector;
 use parking_lot::RwLock;
 

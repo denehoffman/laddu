@@ -15,7 +15,7 @@ use laddu_amplitudes::{
     scalar::{ComplexScalar, PolarComplexScalar, Scalar, VariableScalar},
 };
 use laddu_core::{
-    amplitudes::{Evaluator, Expression, Parameter, ParameterMap, TestAmplitude},
+    amplitude::{Evaluator, Expression, Parameter, ParameterMap, TestAmplitude},
     math::{BarrierKind, Sheet, QR_DEFAULT},
     traits::Variable,
     CompiledExpression, LadduError, LadduResult, ThreadPoolManager,
