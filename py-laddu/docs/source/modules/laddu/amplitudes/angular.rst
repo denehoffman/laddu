@@ -12,5 +12,3 @@ Spin and angular functions are grouped together here for the API reference.
    :undoc-members:
 
 .. automodule:: laddu.amplitudes.zlm
-   :members:
-   :undoc-members:

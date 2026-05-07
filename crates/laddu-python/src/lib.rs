@@ -1,8 +1,7 @@
 #![warn(clippy::perf, clippy::style)]
 #![cfg_attr(coverage_nightly, feature(coverage_attribute))]
 use laddu_core::ThreadPoolManager;
-use pyo3::prelude::*;
-use pyo3::types::PyDict;
+use pyo3::{prelude::*, types::PyDict};
 
 /// Returns the number of CPUs (logical cores) available for use by ``laddu``.
 ///
@@ -41,7 +40,18 @@ pub mod amplitudes;
 #[cfg_attr(coverage_nightly, coverage(off))]
 pub mod data;
 #[cfg_attr(coverage_nightly, coverage(off))]
-pub mod utils;
+pub mod generation;
+#[cfg_attr(coverage_nightly, coverage(off))]
+pub mod math;
+#[cfg_attr(coverage_nightly, coverage(off))]
+pub mod quantum;
+#[cfg_attr(coverage_nightly, coverage(off))]
+pub mod variables;
+#[cfg_attr(coverage_nightly, coverage(off))]
+pub mod vectors;
+
+#[cfg_attr(coverage_nightly, coverage(off))]
+pub mod extensions;
 
 #[cfg_attr(coverage_nightly, coverage(off))]
 pub mod mpi {

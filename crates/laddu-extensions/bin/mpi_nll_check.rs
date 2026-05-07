@@ -1,16 +1,16 @@
 use std::sync::Arc;
 
-use laddu_amplitudes::common::ComplexScalar;
-use laddu_core::data::{Dataset, DatasetMetadata, EventData};
-use laddu_core::parameter;
-use laddu_core::utils::vectors::Vec4;
-use laddu_core::{Expression, LadduResult};
-use laddu_extensions::likelihoods::LikelihoodTerm;
-use laddu_extensions::NLL;
-use nalgebra::DVector;
-
+use laddu_amplitudes::scalar::ComplexScalar;
 #[cfg(feature = "mpi")]
 use laddu_core::mpi::{finalize_mpi, get_world, use_mpi, LadduMPI};
+use laddu_core::{
+    data::{Dataset, DatasetMetadata, EventData},
+    parameter,
+    vectors::Vec4,
+    Expression, LadduResult,
+};
+use laddu_extensions::{likelihood::LikelihoodTerm, NLL};
+use nalgebra::DVector;
 
 struct CaseConfig {
     name: &'static str,
@@ -28,8 +28,8 @@ fn main() -> LadduResult<()> {
             let _ = world;
             for case in case_configs() {
                 let nll = make_test_nll(&case, None, None);
-                let mpi_value = nll.evaluate_mpi_value(&case.parameters, &world)?;
-                let mpi_gradient = nll.evaluate_mpi_gradient(&case.parameters, &world)?;
+                let mpi_value = nll.evaluate_mpi(&case.parameters, &world)?;
+                let mpi_gradient = nll.evaluate_gradient_mpi(&case.parameters, &world)?;
                 if world.is_root() {
                     print_result_json("mpi", case.name, mpi_value, mpi_gradient.as_slice());
                 }

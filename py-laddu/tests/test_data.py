@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import tempfile
 from pathlib import Path
+from typing import Any, cast
 
 import laddu.io as ldio
 import numpy as np
@@ -74,8 +75,12 @@ def _assert_datasets_close(dataset_left: Dataset, dataset_right: Dataset) -> Non
 def _materialize_chunked(chunks: list[Dataset], reference: Dataset) -> Dataset:
     events: list[Event] = []
     for chunk in chunks:
-        events.extend(list(chunk))
-    return Dataset(events, p4_names=reference.p4_names, aux_names=reference.aux_names)
+        events.extend(chunk.events_global)
+    return Dataset.from_events_global(
+        events,
+        p4_names=reference.p4_names,
+        aux_names=reference.aux_names,
+    )
 
 
 def make_test_event() -> Event:
@@ -294,6 +299,194 @@ def test_dataset_conversion() -> None:
     assert pytest.approx(ds_from_numpy[0].aux['pol_angle']) == 0.1
     assert ds_from_pandas[2].weight == 2.0
     assert ds_from_polars[2].p4s['proton'].e == 100.0
+
+
+def test_dataset_empty_push_event() -> None:
+    dataset = Dataset.empty_local(p4_names=['beam', 'recoil'], aux_names=['pol_angle'])
+    beam = Vec3(0.0, 0.0, 8.0).with_mass(0.0)
+    recoil = Vec3(0.1, 0.2, 0.3).with_mass(0.938)
+
+    dataset.push_event_local(
+        p4={'recoil': recoil, 'beam': beam},
+        aux={'pol_angle': 0.25},
+        weight=2.0,
+    )
+
+    assert dataset.n_events == 1
+    assert pytest.approx(dataset[0].p4('beam').e) == beam.e
+    assert pytest.approx(dataset[0].p4('recoil').px) == recoil.px
+    assert pytest.approx(dataset[0].aux['pol_angle']) == 0.25
+    assert pytest.approx(dataset[0].weight) == 2.0
+
+
+def test_dataset_add_columns_local() -> None:
+    dataset = Dataset.empty_local(p4_names=['beam'], aux_names=[])
+    beam_a = Vec3(0.0, 0.0, 8.0).with_mass(0.0)
+    beam_b = Vec3(0.0, 0.0, 9.0).with_mass(0.0)
+    dataset.push_event_local(p4={'beam': beam_a})
+    dataset.push_event_local(p4={'beam': beam_b})
+
+    recoil_a = Vec3(0.1, 0.0, 0.0).with_mass(0.938)
+    recoil_b = Vec3(0.2, 0.0, 0.0).with_mass(0.938)
+    dataset.add_p4_column_local('recoil', [recoil_a, recoil_b])
+    dataset.add_aux_column_local('pol_angle', np.array([0.25, 0.5], dtype=np.float32))
+
+    assert dataset.p4_names == ['beam', 'recoil']
+    assert dataset.aux_names == ['pol_angle']
+    assert pytest.approx(dataset[0].p4('recoil').px) == recoil_a.px
+    assert pytest.approx(dataset[1].p4('recoil').px) == recoil_b.px
+    assert pytest.approx(dataset[0].aux['pol_angle']) == 0.25
+    assert pytest.approx(dataset[1].aux['pol_angle']) == 0.5
+
+
+def test_dataset_add_columns_global_without_mpi() -> None:
+    dataset = Dataset.empty_local(p4_names=['beam'], aux_names=[])
+    beam = Vec3(0.0, 0.0, 8.0).with_mass(0.0)
+    dataset.push_event_local(p4={'beam': beam})
+
+    recoil = Vec3(0.1, 0.0, 0.0).with_mass(0.938)
+    dataset.add_p4_column_global('recoil', [recoil])
+    dataset.add_aux_column_global('pol_angle', [0.25])
+
+    assert pytest.approx(dataset[0].p4('recoil').e) == recoil.e
+    assert pytest.approx(dataset[0].aux['pol_angle']) == 0.25
+
+
+def test_dataset_add_column_validation() -> None:
+    dataset = make_test_dataset()
+    with pytest.raises(ValueError, match='Duplicate aux'):
+        dataset.add_aux_column_local('pol_angle', [0.1])
+    with pytest.raises(ValueError, match='Duplicate p4'):
+        dataset.add_p4_column_local('beam', [Vec3(0.0, 0.0, 1.0).with_mass(0.0)])
+    with pytest.raises(ValueError, match='length mismatch'):
+        dataset.add_aux_column_local('too_long', [0.1, 0.2])
+
+
+def test_dataset_from_events_explicit_constructors() -> None:
+    events = [make_test_event()]
+    local = Dataset.from_events_local(events, p4_names=P4_NAMES, aux_names=AUX_NAMES)
+    global_dataset = Dataset.from_events_global(
+        events, p4_names=P4_NAMES, aux_names=AUX_NAMES
+    )
+
+    assert local.n_events_local == 1
+    assert global_dataset.n_events == 1
+    _assert_events_close(next(local.events_local), events[0], P4_NAMES, AUX_NAMES)
+    _assert_events_close(
+        next(global_dataset.events_global), events[0], P4_NAMES, AUX_NAMES
+    )
+
+
+def test_io_from_columns_explicit_metadata() -> None:
+    columns = {
+        'beam_px': np.array([0.0, 0.0]),
+        'beam_py': np.array([0.0, 0.0]),
+        'beam_pz': np.array([8.0, 9.0]),
+        'beam_e': np.array([8.0, 9.0]),
+        'proton_px': np.array([0.1, 0.2]),
+        'proton_py': np.array([0.0, 0.1]),
+        'proton_pz': np.array([0.3, 0.4]),
+        'proton_e': np.array([1.0, 1.1]),
+        'pol_angle': np.array([0.25, 0.5]),
+        'weight': np.array([2.0, 3.0]),
+    }
+
+    dataset = ldio.from_columns(
+        columns,
+        p4s=['beam', 'proton'],
+        aux=['pol_angle'],
+        aliases={'target': 'proton'},
+    )
+
+    assert dataset.p4_names == ['beam', 'proton']
+    assert dataset.aux_names == ['pol_angle']
+    assert dataset.n_events == 2
+    assert np.allclose(dataset.weights, [2.0, 3.0])
+    assert pytest.approx(dataset[1].p4('beam').pz) == 9.0
+    assert pytest.approx(dataset[0].p4('target').px) == 0.1
+    assert pytest.approx(dataset[1].aux['pol_angle']) == 0.5
+    assert np.allclose(dataset.evaluate(Mass(['target'])), dataset[Mass(['target'])])
+
+
+def test_io_from_columns_infers_metadata_and_default_weights() -> None:
+    dataset = ldio.from_columns(
+        {
+            'beam_px': [0.0, 0.0],
+            'beam_py': [0.0, 0.0],
+            'beam_pz': [8.0, 9.0],
+            'beam_e': [8.0, 9.0],
+            'recoil_px': [0.1, 0.2],
+            'recoil_py': [0.0, 0.1],
+            'recoil_pz': [0.3, 0.4],
+            'recoil_e': [1.0, 1.1],
+            'pol_angle': [0.25, 0.5],
+        }
+    )
+
+    assert dataset.p4_names == ['beam', 'recoil']
+    assert dataset.aux_names == ['pol_angle']
+    assert np.allclose(dataset.weights, [1.0, 1.0])
+
+
+def test_io_from_columns_validation() -> None:
+    valid_recoil = {
+        'recoil_px': [0.1, 0.2],
+        'recoil_py': [0.0, 0.1],
+        'recoil_pz': [0.3, 0.4],
+        'recoil_e': [1.0, 1.1],
+    }
+    with pytest.raises(ValueError, match='same length'):
+        ldio.from_columns(
+            {
+                'beam_px': [0.0, 0.0],
+                'beam_py': [0.0],
+                'beam_pz': [8.0, 9.0],
+                'beam_e': [8.0, 9.0],
+                **valid_recoil,
+            }
+        )
+    with pytest.raises(ValueError, match="Auxiliary column 'pol_angle'"):
+        ldio.from_columns(
+            {
+                'beam_px': [0.0, 0.0],
+                'beam_py': [0.0, 0.0],
+                'beam_pz': [8.0, 9.0],
+                'beam_e': [8.0, 9.0],
+                **valid_recoil,
+                'pol_angle': [0.25],
+            },
+            aux=['pol_angle'],
+        )
+    with pytest.raises(KeyError, match='beam_e'):
+        ldio.from_columns(
+            {
+                'beam_px': [0.0, 0.0],
+                'beam_py': [0.0, 0.0],
+                'beam_pz': [8.0, 9.0],
+            },
+            p4s=['beam'],
+        )
+
+
+def test_dataset_push_event_validation() -> None:
+    dataset = Dataset.empty_local(p4_names=['beam', 'recoil'], aux_names=['pol_angle'])
+    beam = Vec3(0.0, 0.0, 8.0).with_mass(0.0)
+    recoil = Vec3(0.1, 0.2, 0.3).with_mass(0.938)
+
+    with pytest.raises(RuntimeError, match='Missing p4'):
+        dataset.push_event_local(p4={'beam': beam}, aux={'pol_angle': 0.25})
+    with pytest.raises(KeyError, match='unknown'):
+        dataset.push_event_local(
+            p4={'beam': beam, 'unknown': recoil},
+            aux={'pol_angle': 0.25},
+        )
+    with pytest.raises(RuntimeError, match='Missing aux'):
+        dataset.push_event_local(p4={'beam': beam, 'recoil': recoil})
+    with pytest.raises(KeyError, match='unknown'):
+        dataset.push_event_local(
+            p4={'beam': beam, 'recoil': recoil},
+            aux={'unknown': 0.25},
+        )
 
 
 def test_table_entrypoints_io_compatibility(tmp_path: Path) -> None:
@@ -749,7 +942,7 @@ def test_dataset_bootstrap() -> None:
 
 def test_dataset_iteration() -> None:
     dataset = make_test_dataset()
-    events = list(dataset)
+    events = list(dataset.events_global)
     assert len(events) == dataset.n_events
     assert all(isinstance(event, Event) for event in events)
     proton_vec_from_events = events[0].p4s['proton']
@@ -757,6 +950,8 @@ def test_dataset_iteration() -> None:
     proton_vec_from_dataset = dataset[0].p4s['proton']
     assert isinstance(proton_vec_from_dataset, Vec4)
     assert pytest.approx(proton_vec_from_events.e) == proton_vec_from_dataset.e
+    with pytest.raises(TypeError, match=r'events_local or dataset\.events_global'):
+        list(cast(Any, dataset))
 
 
 def test_dataset_iteration_modes() -> None:
@@ -775,24 +970,22 @@ def test_dataset_iteration_modes() -> None:
         aux_names=AUX_NAMES,
     )
 
-    default_events = list(dataset)
-    local_events = list(dataset.iter_local())
-    global_events = list(dataset.iter_global())
-    stored_events = dataset.events
-    stored_local_events = dataset.events_local
+    local_events = list(dataset.events_local)
+    global_events = list(dataset.events_global)
+    default_events = global_events
+    stored_local_events = list(dataset.events_local)
 
     assert len(default_events) == dataset.n_events
     assert dataset.n_events_local == dataset.n_events
     assert dataset.n_events_weighted_local == dataset.n_events_weighted
     assert len(local_events) == dataset.n_events
     assert len(global_events) == dataset.n_events
-    assert len(stored_events) == dataset.n_events
     assert len(stored_local_events) == dataset.n_events_local
     assert np.allclose(dataset.weights_local, dataset.weights)
 
     global_alias_event = dataset.event_global(0)
     assert isinstance(global_alias_event, Event)
-    assert isinstance(dataset.events_global, list)
+    assert iter(dataset.events_global) is not None
     assert isinstance(dataset.weights_global, np.ndarray)
     assert isinstance(dataset.n_events_global, int)
     assert isinstance(dataset.n_events_weighted_global, float)
@@ -800,7 +993,6 @@ def test_dataset_iteration_modes() -> None:
     for actual in (
         local_events,
         global_events,
-        stored_events,
         stored_local_events,
     ):
         for expected_event, actual_event in zip(default_events, actual, strict=True):
@@ -823,9 +1015,25 @@ def test_event_display() -> None:
     assert 'Event:' in display_string
     assert 'p4s:' in display_string
     assert 'aux:' in display_string
-    assert 'aux[0]: 0.38562805' in display_string
-    assert 'aux[1]: 0.05708078' in display_string
+    assert 'pol_magnitude: 0.38562805' in display_string
+    assert 'pol_angle: 0.05708078' in display_string
     assert 'weight:' in display_string
+    assert repr(event) == display_string
+
+
+def test_unnamed_event_display_uses_indices() -> None:
+    event = Event(
+        [
+            Vec3(0.0, 0.0, 8.747).with_mass(0.0),
+            Vec3(0.119, 0.374, 0.222).with_mass(1.007),
+        ],
+        [0.38562805],
+        0.48,
+    )
+    display_string = str(event)
+    assert 'p4[0]:' in display_string
+    assert 'p4[1]:' in display_string
+    assert 'aux[0]: 0.38562805' in display_string
 
 
 def test_dataset_from_parquet_auto_vs_named() -> None:

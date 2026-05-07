@@ -46,7 +46,7 @@ def _dataset_from_weights(weights: list[float]) -> Dataset:
 
 
 def _simple_scalar_nll() -> NLL:
-    amp = Scalar('scale', parameter('scale'))
+    amp = Scalar('scale', value=parameter('scale'))
     expr = amp.norm_sqr()
     data = _dataset_from_weights([1.0, 2.0])
     mc = _dataset_from_weights([0.5, 1.5])
@@ -54,8 +54,8 @@ def _simple_scalar_nll() -> NLL:
 
 
 def _two_parameter_nll() -> NLL:
-    amp_a = Scalar('alpha_amp', parameter('alpha'))
-    amp_b = Scalar('beta_amp', parameter('beta'))
+    amp_a = Scalar('alpha_amp', value=parameter('alpha'))
+    amp_b = Scalar('beta_amp', value=parameter('beta'))
     expr = (amp_a + amp_b).norm_sqr()
     data = _dataset_from_weights([1.0, 2.0])
     mc = _dataset_from_weights([0.5, 1.5])
@@ -73,7 +73,6 @@ def test_nll_exposes_evaluators_expression_and_compiled_expression() -> None:
     compiled = str(nll.compiled_expression)
     assert 'alpha_amp(id=0)' in compiled
     assert 'beta_amp(id=1)' not in compiled
-    assert 'const 0' in compiled
 
 
 def test_stochastic_nll_exposes_expression_and_compiled_expression() -> None:
@@ -452,7 +451,7 @@ def test_ganesh_sampler_defaults_construct_and_run() -> None:
 def test_regularizer_l1_matches_rust_implementation() -> None:
     expr = Regularizer(['alpha', 'beta'], 2.0, weights=[1.0, 0.5])
     expression = likelihood_sum([expr])
-    assert expression.parameters == ('alpha', 'beta')
+    assert expression.parameters.names == ('alpha', 'beta')
     params = [1.5, -2.0]
     assert expression.evaluate(params) == pytest.approx(7.0)
     grad = expression.evaluate_gradient(params).tolist()
@@ -480,7 +479,7 @@ def test_regularizer_invalid_norm_raises() -> None:
 
 
 def test_nll_matches_constant_model() -> None:
-    amp = Scalar('scale', parameter('scale'))
+    amp = Scalar('scale', value=parameter('scale'))
     expr = amp.norm_sqr()
     data = _dataset_from_weights([1.0, 2.0])
     mc = _dataset_from_weights([0.5, 1.5])
@@ -494,7 +493,7 @@ def test_nll_matches_constant_model() -> None:
 
 
 def test_nll_project_returns_expected_weights() -> None:
-    amp = Scalar('scale', parameter('scale'))
+    amp = Scalar('scale', value=parameter('scale'))
     expr = amp.norm_sqr()
     data = _dataset_from_weights([1.0, 2.0])
     mc = _dataset_from_weights([0.5, 1.5])
@@ -504,8 +503,8 @@ def test_nll_project_returns_expected_weights() -> None:
 
 
 def test_nll_project_weights_subsets_matches_repeated_subset_projection() -> None:
-    amp_a = Scalar('amp_a', parameter('alpha'))
-    amp_b = Scalar('amp_b', parameter('beta'))
+    amp_a = Scalar('amp_a', value=parameter('alpha'))
+    amp_b = Scalar('amp_b', value=parameter('beta'))
     expr = (amp_a + amp_b).norm_sqr()
     data = _dataset_from_weights([1.0, 2.0])
     mc = _dataset_from_weights([0.5, 1.5])
@@ -520,8 +519,8 @@ def test_nll_project_weights_subsets_matches_repeated_subset_projection() -> Non
 
 
 def test_nll_project_weights_subsets_handles_empty_and_duplicate_subsets() -> None:
-    amp_a = Scalar('amp_a', parameter('alpha'))
-    amp_b = Scalar('amp_b', parameter('beta'))
+    amp_a = Scalar('amp_a', value=parameter('alpha'))
+    amp_b = Scalar('amp_b', value=parameter('beta'))
     expr = (amp_a + amp_b).norm_sqr()
     data = _dataset_from_weights([1.0, 2.0])
     mc = _dataset_from_weights([0.5, 1.5])
@@ -545,8 +544,8 @@ def test_nll_project_weights_subsets_handles_empty_and_duplicate_subsets() -> No
 
 
 def test_nll_project_weights_subsets_allow_none_for_total_projection() -> None:
-    amp_a = Scalar('amp_a', parameter('alpha'))
-    amp_b = Scalar('amp_b', parameter('beta'))
+    amp_a = Scalar('amp_a', value=parameter('alpha'))
+    amp_b = Scalar('amp_b', value=parameter('beta'))
     expr = (amp_a + amp_b).norm_sqr()
     data = _dataset_from_weights([1.0, 2.0])
     mc = _dataset_from_weights([0.5, 1.5])
@@ -596,8 +595,8 @@ def test_nll_project_weights_subsets_default_skips_missing_names() -> None:
 
 
 def test_nll_project_weights_and_gradients_subset_matches_expected_weights() -> None:
-    amp_a = Scalar('amp_a', parameter('alpha'))
-    amp_b = Scalar('amp_b', parameter('beta'))
+    amp_a = Scalar('amp_a', value=parameter('alpha'))
+    amp_b = Scalar('amp_b', value=parameter('beta'))
     expr = (amp_a + amp_b).norm_sqr()
     data = _dataset_from_weights([1.0, 2.0])
     mc = _dataset_from_weights([0.5, 1.5])
@@ -616,8 +615,8 @@ def test_nll_project_weights_and_gradients_subset_matches_expected_weights() -> 
 def test_nll_project_weights_and_gradients_subsets_matches_repeated_subset_calls() -> (
     None
 ):
-    amp_a = Scalar('amp_a', parameter('alpha'))
-    amp_b = Scalar('amp_b', parameter('beta'))
+    amp_a = Scalar('amp_a', value=parameter('alpha'))
+    amp_b = Scalar('amp_b', value=parameter('beta'))
     expr = (amp_a + amp_b).norm_sqr()
     data = _dataset_from_weights([1.0, 2.0])
     mc = _dataset_from_weights([0.5, 1.5])
@@ -642,8 +641,8 @@ def test_nll_project_weights_and_gradients_subsets_matches_repeated_subset_calls
 def test_nll_project_weights_and_gradients_subsets_allow_none_for_total_projection() -> (
     None
 ):
-    amp_a = Scalar('amp_a', parameter('alpha'))
-    amp_b = Scalar('amp_b', parameter('beta'))
+    amp_a = Scalar('amp_a', value=parameter('alpha'))
+    amp_b = Scalar('amp_b', value=parameter('beta'))
     expr = (amp_a + amp_b).norm_sqr()
     data = _dataset_from_weights([1.0, 2.0])
     mc = _dataset_from_weights([0.5, 1.5])
@@ -723,7 +722,7 @@ def test_nll_project_weights_rejects_subset_and_subsets_together() -> None:
 
 
 def test_repeated_short_calls_with_threads_remain_stable() -> None:
-    amp = Scalar('scale', parameter('scale'))
+    amp = Scalar('scale', value=parameter('scale'))
     expr = amp.norm_sqr()
     dataset = _dataset_from_weights([1.0, 2.0, 3.0, 4.0])
     evaluator = expr.load(dataset)
@@ -769,7 +768,7 @@ def test_repeated_short_calls_with_threads_remain_stable() -> None:
 
 
 def test_set_threads_aligns_omitted_and_zero_thread_requests() -> None:
-    amp = Scalar('scale', parameter('scale'))
+    amp = Scalar('scale', value=parameter('scale'))
     expr = amp.norm_sqr()
     dataset = _dataset_from_weights([1.0, 2.0, 3.0, 4.0])
     evaluator = expr.load(dataset)
@@ -860,7 +859,7 @@ def test_threads_context_manager_handles_none() -> None:
 
 
 def test_threads_context_aligns_none_and_zero_requests() -> None:
-    amp = Scalar('scale', parameter('scale'))
+    amp = Scalar('scale', value=parameter('scale'))
     expr = amp.norm_sqr()
     dataset = _dataset_from_weights([1.0, 2.0, 3.0, 4.0])
     evaluator = expr.load(dataset)
@@ -883,7 +882,7 @@ def test_threads_context_aligns_none_and_zero_requests() -> None:
 
 
 def test_explicit_thread_argument_overrides_context_default_for_a_single_call() -> None:
-    amp = Scalar('scale', parameter('scale'))
+    amp = Scalar('scale', value=parameter('scale'))
     expr = amp.norm_sqr()
     dataset = _dataset_from_weights([1.0, 2.0, 3.0, 4.0])
     evaluator = expr.load(dataset)
@@ -907,7 +906,7 @@ def test_explicit_thread_argument_overrides_context_default_for_a_single_call() 
 
 
 def test_nll_parameter_fix_free_and_rename() -> None:
-    amp = Scalar('scale', parameter('scale'))
+    amp = Scalar('scale', value=parameter('scale'))
     expr = amp.norm_sqr()
     data = _dataset_from_weights([1.0, 2.0])
     mc = _dataset_from_weights([0.5, 1.5])
@@ -915,44 +914,44 @@ def test_nll_parameter_fix_free_and_rename() -> None:
 
     reference = nll.evaluate([1.7])
     nll.fix_parameter('scale', 1.7)
-    assert nll.parameters == ('scale',)
-    assert nll.free_parameters == ()
-    assert nll.fixed_parameters == ('scale',)
+    assert nll.parameters.names == ('scale',)
+    assert nll.parameters.free.names == ()
+    assert nll.parameters.fixed.names == ('scale',)
     assert nll.n_free == 0
     assert pytest.approx(nll.evaluate([])) == reference
 
     nll.rename_parameter('scale', 'beta')
-    assert nll.parameters == ('beta',)
+    assert nll.parameters.names == ('beta',)
     assert pytest.approx(nll.evaluate([])) == reference
 
     nll.rename_parameters({'beta': 'gamma'})
-    assert nll.parameters == ('gamma',)
+    assert nll.parameters.names == ('gamma',)
 
 
 def test_nll_free_from_fixed_parameter() -> None:
-    amp = Scalar('scale', parameter('scale', 2.0))
+    amp = Scalar('scale', value=parameter('scale', 2.0))
     expr = amp.norm_sqr()
     data = _dataset_from_weights([1.0])
     mc = _dataset_from_weights([1.0])
     nll = NLL(expr, data, mc)
     assert nll.n_free == 0
-    assert nll.fixed_parameters == ('scale',)
+    assert nll.parameters.fixed.names == ('scale',)
 
     nll.free_parameter('scale')
     assert nll.n_free == 1
-    assert nll.free_parameters == ('scale',)
-    assert nll.fixed_parameters == ()
+    assert nll.parameters.free.names == ('scale',)
+    assert nll.parameters.fixed.names == ()
 
-    reference = NLL(Scalar('scale', parameter('scale')).norm_sqr(), data, mc)
+    reference = NLL(Scalar('scale', value=parameter('scale')).norm_sqr(), data, mc)
     assert pytest.approx(nll.evaluate([2.5])) == reference.evaluate([2.5])
 
 
 def test_evaluator_parameters_include_fixed_entries() -> None:
     expr = likelihood_sum([LikelihoodScalar('alpha'), LikelihoodScalar('beta')])
     expr.fix_parameter('alpha', 1.5)
-    assert expr.parameters == ('alpha', 'beta')
-    assert expr.free_parameters == ('beta',)
-    assert expr.fixed_parameters == ('alpha',)
+    assert expr.parameters.names == ('alpha', 'beta')
+    assert expr.parameters.free.names == ('beta',)
+    assert expr.parameters.fixed.names == ('alpha',)
     assert expr.evaluate([2.0]) == pytest.approx(3.5)
     with pytest.raises(
         ValueError, match='free parameter vector length mismatch: expected 1, received 2'
@@ -965,3 +964,20 @@ def test_evaluator_parameters_include_fixed_entries() -> None:
         ValueError, match='free parameter vector length mismatch: expected 1, received 2'
     ):
         expr.evaluate_gradient([10.0, 2.0]).tolist()
+
+    expr.fix_parameter('beta', 2.0)
+    assert expr.parameters.names == ('alpha', 'beta')
+    assert expr.parameters.free.names == ()
+    assert expr.parameters.fixed.names == ('alpha', 'beta')
+    assert expr.evaluate([]) == pytest.approx(3.5)
+    assert expr.evaluate_gradient([]).tolist() == pytest.approx([])
+
+    with pytest.raises(
+        ValueError, match='free parameter vector length mismatch: expected 0, received 1'
+    ):
+        expr.evaluate([1.0])
+
+    with pytest.raises(
+        ValueError, match='free parameter vector length mismatch: expected 0, received 1'
+    ):
+        expr.evaluate_gradient([1.0]).tolist()

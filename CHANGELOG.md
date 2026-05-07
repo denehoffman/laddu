@@ -1,5 +1,76 @@
 # Changelog
 
+## [0.19.0](https://github.com/denehoffman/laddu/compare/v0.18.0...v0.19.0) (2026-05-07)
+
+
+### ⚠ BREAKING CHANGES
+
+* split core amplitude module
+* share dataset storage for derived views
+* stream dataset event iteration
+* replace amplitude names with tags
+* expose canonical parameter maps
+* add explicit dataset column mutation APIs
+* clarify dataset event APIs
+* make dataset access explicit
+* redesign generation particle API
+* gate mandelstam by reaction topology
+* query reaction particles by id
+
+### Features
+
+* Add appendable dataset api ([14d7b51](https://github.com/denehoffman/laddu/commit/14d7b51ffb88f509c226c85707671c89d307fc21))
+* Add deterministic generated batch iterator ([5e7f7e3](https://github.com/denehoffman/laddu/commit/5e7f7e322f8c798b1c0085dd1dde88a55625e609))
+* Add explicit dataset column mutation APIs ([0c2ac58](https://github.com/denehoffman/laddu/commit/0c2ac58c9b2a9dc2804c4ce6cd52fc338a44a92f))
+* Add fixed-envelope rejection sampler ([6c7b5f0](https://github.com/denehoffman/laddu/commit/6c7b5f071337f7a7bc0e805a35c90abae470f254))
+* Add generated batch metadata ([656fdfa](https://github.com/denehoffman/laddu/commit/656fdfa947d09a346c30346d143bf7e6c179ad91))
+* Add generated layout query helpers ([490f8f3](https://github.com/denehoffman/laddu/commit/490f8f34e0c9ec54a79132f261d32c4872c129c5))
+* Add generated p4 storage projection ([c9285b0](https://github.com/denehoffman/laddu/commit/c9285b04f0c8fc822f1317639d89d371b641762a))
+* Add generated particle layout ids ([533ed3d](https://github.com/denehoffman/laddu/commit/533ed3dd43eb6dfb17f976ca33ed0d610c2114d0))
+* Add generated particle species metadata ([e8bc310](https://github.com/denehoffman/laddu/commit/e8bc3109400af5c4ee7a4bab34b756d7d9ea4744))
+* Add generation crate to workspace ([aa19e3f](https://github.com/denehoffman/laddu/commit/aa19e3ff9c5fb716a5c0767b57fb9a5ad3837869))
+* Add index and __iter__ to Python ParameterMap ([1ce8d3f](https://github.com/denehoffman/laddu/commit/1ce8d3f1393a5ebc5c9bbd648927a77433dad5a9))
+* Add reusable histogram api ([30c11b0](https://github.com/denehoffman/laddu/commit/30c11b08990cf63b1c465be916925d51ddcc8559))
+* Add vertex layouts to generation ([2cecde7](https://github.com/denehoffman/laddu/commit/2cecde7991273590e669db678e90e1e77d2f82ca))
+* Clarify dataset event APIs ([ea99bad](https://github.com/denehoffman/laddu/commit/ea99bad056f5adda8a105aaac46b6d78ba84aa28))
+* Expose canonical parameter maps ([4f54cf3](https://github.com/denehoffman/laddu/commit/4f54cf30d7f053d3ea0ddfab629bd16c565c7c8e))
+* Expose decay reaction in Python ([56848f5](https://github.com/denehoffman/laddu/commit/56848f5a2654a377521f5a2e22e01dd4f4ffeeac))
+* Expose generation bindings to python ([c2d1a5a](https://github.com/denehoffman/laddu/commit/c2d1a5a7b2ccba6ae962c2169c9c18ae2483f5b7))
+* Expose python from_columns ([2d79d46](https://github.com/denehoffman/laddu/commit/2d79d4646cbc9eb2ee71868554fa423836da3b59))
+* First step of reorganization pass, moved laddu-core into smaller submodules and updated cargo fmt settings ([13f7a24](https://github.com/denehoffman/laddu/commit/13f7a24fd2c70adf5221ba36830455ceb49cfaa8))
+* Gate mandelstam by reaction topology ([5e88f33](https://github.com/denehoffman/laddu/commit/5e88f33a6a96407fc17184830cc56f8ab8c3369d))
+* Make dataset access explicit ([7c003d4](https://github.com/denehoffman/laddu/commit/7c003d460ad87da00dffef2e80d3de2e8bda5ad4))
+* More reorganization, laddu-extensions no longer exports any PyO3 ([ff2c9b7](https://github.com/denehoffman/laddu/commit/ff2c9b7426c571797e414c7d5313115c16603ef3))
+* Query reaction particles by id ([a7a2938](https://github.com/denehoffman/laddu/commit/a7a29385cfe84cef3198aa71c090b3f3c2c5a86e))
+* Redesign generation particle API ([48a9857](https://github.com/denehoffman/laddu/commit/48a9857f6db59b530f2de2434aa7420b60dc4a57))
+* Replace amplitude names with tags ([93b2dde](https://github.com/denehoffman/laddu/commit/93b2dde9ed0f85212d653c95d029ea78b4beebfa))
+* Share dataset storage for derived views ([09a0f34](https://github.com/denehoffman/laddu/commit/09a0f34a5a1c0928137570a8e87ad0a04c05ef8f))
+* Split reaction graph from topology ([fad69bf](https://github.com/denehoffman/laddu/commit/fad69bf93a75c120a7277191a74e7ff28636d34f))
+* Stream dataset event iteration ([3f9647f](https://github.com/denehoffman/laddu/commit/3f9647f59da30df6f34b05aba150383bb96da7ec))
+
+
+### Bug Fixes
+
+* Add matplotlib as dev-dependency and fix ty errors ([4d279a3](https://github.com/denehoffman/laddu/commit/4d279a371d3c43758a38033b2b402c60c863b639))
+* Adjust feature gate to pass CI ([dc0b5d4](https://github.com/denehoffman/laddu/commit/dc0b5d4baedb49ea995c0f9f1a1497927d339bae))
+* Align python api parity ([d6f8ab8](https://github.com/denehoffman/laddu/commit/d6f8ab89eed283a7bf43fb3cb0368fab914d344c))
+* Change brackets to parentheses ([699b500](https://github.com/denehoffman/laddu/commit/699b5007aa8de2c6222a749db59b7eb5109aaec0))
+* Correct feature gate in tests ([5948e6b](https://github.com/denehoffman/laddu/commit/5948e6b9a2f70c25051ea2268a835e81d6f5a4f1))
+* Remove microbenchmarks from CI ([37157d8](https://github.com/denehoffman/laddu/commit/37157d8decf7756e3da89180f9c187a7b9c92679))
+* Update check-mpi script ([168efcc](https://github.com/denehoffman/laddu/commit/168efccfa84725fb8635636b138a8f7a3c09a074))
+* Update example_1 to handle some of the newer syntax ([61a42f0](https://github.com/denehoffman/laddu/commit/61a42f079fa1d7a17a5be41abd3b0d7dfe126dd2))
+* Update non-rayon call to removed method in precompute ([574a3d5](https://github.com/denehoffman/laddu/commit/574a3d5a2e48023db802f4fbc9470009458c00cb))
+
+
+### Performance Improvements
+
+* Simplify expression identities ([f153875](https://github.com/denehoffman/laddu/commit/f1538755575d4128fc6ed4f2b6855ed49c174d5c))
+
+
+### Code Refactoring
+
+* Split core amplitude module ([add6e70](https://github.com/denehoffman/laddu/commit/add6e70bbfafe7721ada82457998ec100eaf443f))
+
 ## [0.18.0](https://github.com/denehoffman/laddu/compare/v0.17.1...v0.18.0) (2026-04-22)
 
 

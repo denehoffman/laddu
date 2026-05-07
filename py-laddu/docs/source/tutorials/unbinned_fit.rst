@@ -83,15 +83,15 @@ Let's further assume that there are only two resonances present in our data, an 
    res_mass = ld.Mass(['kshort1', 'kshort2'])
 
    # the decay angles in the helicity frame
-   beam = ld.Particle.measured('beam', 'beam')
+   beam = ld.Particle.stored('beam')
    target = ld.Particle.missing('target')
-   kshort1 = ld.Particle.measured('K_S1', 'kshort1')
-   kshort2 = ld.Particle.measured('K_S2', 'kshort2')
-   kk = ld.Particle.composite('KK', [kshort1, kshort2])
-   proton = ld.Particle.measured('proton', 'proton')
+   kshort1 = ld.Particle.stored('kshort1')
+   kshort2 = ld.Particle.stored('kshort2')
+   kk = ld.Particle.composite('kk', [kshort1, kshort2])
+   proton = ld.Particle.stored('proton')
    reaction = ld.Reaction.two_to_two(beam, target, kk, proton)
-   decay = reaction.decay(kk)
-   angles = decay.angles(kshort1)
+   decay = reaction.decay('kk')
+   angles = decay.angles('kshort1')
 
 So far, these angles just represent particles in a generic dataset by index and provide an appropriate method to calculate the corresponding observable. Before we fit anything, we might want to just see what the dataset looks like:
 
@@ -134,22 +134,22 @@ Next, we can create ``Zlm`` amplitudes:
 
 .. code:: python
 
-   z00p = ld.Zlm("Z00+", 0, 0, "+", angles, polarization)
-   z22p = ld.Zlm("Z22+", 2, 2, "+", angles, polarization)
+   z00p = ld.Zlm("Z00+", l=0, m=0, r="+", angles=angles, polarization=polarization)
+   z22p = ld.Zlm("Z22+", l=2, m=2, r="+", angles=angles, polarization=polarization)
 
 The ``z00p`` and ``z22p`` objects can be combined with other amplitudes using basic math operations. The first artgument to ``Zlm`` is the name by which we will refer to the amplitude when we project the fit results onto the Monte Carlo later. Since there are no free parameters in the ``Zlm`` amplitudes, if we just built a model with these amplitudes alone, we wouldn't have anything to minimize. Let's now construct some amplitudes which have free parameters, particularly our production coefficients. These are the simplest amplitudes, just scalar values which are either purely real or complex. We can use the ``parameter`` function to create a named parameter in our model:
 
 .. code:: python
 
-   f0_1500 = ld.Scalar("[f_0(1500)]", ld.parameter("Re[f_0(1500)]"))
-   f2_1525 = ld.ComplexScalar("[f_2'(1525)]", ld.parameter("Re[f_2'(1525)]"), ld.parameter("Im[f_2'(1525)]"))
+   f0_1500 = ld.Scalar("[f_0(1500)]", value=ld.parameter("Re[f_0(1500)]"))
+   f2_1525 = ld.ComplexScalar("[f_2'(1525)]", re=ld.parameter("Re[f_2'(1525)]"), im=ld.parameter("Im[f_2'(1525)]"))
 
 Finally, we can register the Breit-Wigners. These have two free parameters, the mass and width of the resonance. For the sake of demonstration, let's fix the mass by passing in a ``parameter`` with a fixed value and let the width float with a ``parameter``. These two functions create the same object, so we could just as easily write this with both values fixed or free in the fit:
 
 .. code:: python
 
-   bw0 = ld.BreitWigner("BW_0", ld.parameter(1.506), ld.parameter("f_0 width"), 0, ld.Mass(['kshort1']), ld.Mass(['kshort2']), res_mass)
-   bw2 = ld.BreitWigner("BW_2", ld.parameter(1.517), ld.parameter("f_2 width"), 0, ld.Mass(['kshort1']), ld.Mass(['kshort2']), res_mass)
+   bw0 = ld.BreitWigner("BW_0", mass=ld.parameter(1.506), width=ld.parameter("f_0 width"), l=0, daughter_1_mass=ld.Mass(['kshort1']), daughter_2_mass=ld.Mass(['kshort2']), resonance_mass=res_mass)
+   bw2 = ld.BreitWigner("BW_2", mass=ld.parameter(1.517), width=ld.parameter("f_2 width"), l=0, daughter_1_mass=ld.Mass(['kshort1']), daughter_2_mass=ld.Mass(['kshort2']), resonance_mass=res_mass)
 
 As you can see, these amplitudes also take additional parameters like the masses of each decay product.
 

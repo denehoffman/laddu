@@ -1,8 +1,9 @@
+use std::path::PathBuf;
+
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use laddu_core::data::{
     read_parquet, read_parquet_chunks_with_options, read_root, DatasetReadOptions,
 };
-use std::path::PathBuf;
 
 const DATASETS: [(&str, &str, &str); 4] = [
     ("parquet", "f32", "data_f32.parquet"),

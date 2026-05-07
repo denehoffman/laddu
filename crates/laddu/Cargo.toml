@@ -1,6 +1,6 @@
 [package]
 name = "laddu"
-version = "0.18.0"
+version = "0.19.0"
 description = "Amplitude analysis made short and sweet"
 documentation = "https://docs.rs/laddu"
 edition.workspace = true
@@ -17,6 +17,7 @@ rust-version.workspace = true
 laddu-core = { workspace = true }
 laddu-amplitudes = { workspace = true }
 laddu-extensions = { workspace = true }
+laddu-generation = { workspace = true }
 mpi = { workspace = true, optional = true }
 num = { workspace = true }
 fastrand = { workspace = true }
@@ -44,13 +45,19 @@ required-features = ["mpi"]
 name = "kmatrix_benchmark"
 harness = false
 
+[[bin]]
+name = "profile_cached_paths"
+path = "bin/profile_cached_paths.rs"
+
+[[bin]]
+name = "profile_value_hotspots"
+path = "bin/profile_value_hotspots.rs"
+
 [features]
 default = ["rayon"]
 rayon = ["laddu-core/rayon"]
 python = [
   "laddu-core/python",
-  "laddu-amplitudes/python",
-  "laddu-extensions/python",
 ]
 mpi = ["laddu-core/mpi", "laddu-extensions/mpi", "dep:mpi"]
 execution-context-prototype = ["laddu-core/execution-context-prototype"]

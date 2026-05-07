@@ -3,27 +3,22 @@ use std::sync::Arc;
 use criterion::{
     black_box, criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion, Throughput,
 };
-use laddu::parameter;
 use laddu::{
     amplitudes::{
-        breit_wigner::BreitWigner,
-        common::ComplexScalar,
-        common::Scalar,
+        angular::{Ylm, Zlm},
         kmatrix::{
             KopfKMatrixA0, KopfKMatrixA0Channel, KopfKMatrixA2, KopfKMatrixA2Channel,
             KopfKMatrixF0, KopfKMatrixF0Channel, KopfKMatrixF2, KopfKMatrixF2Channel,
         },
-        ylm::Ylm,
-        zlm::Zlm,
+        resonance::BreitWigner,
+        scalar::{ComplexScalar, Scalar},
     },
     data::{Dataset, DatasetReadOptions},
     extensions::NLL,
-    io,
+    io, parameter,
+    quantum::{Frame, Sign},
     traits::{LikelihoodTerm, Variable},
-    utils::{
-        enums::{Frame, Sign},
-        variables::{Mass, PolMagnitude},
-    },
+    variables::{Mass, PolMagnitude},
     RngSubsetExtension,
 };
 use nalgebra::{DMatrix, DVector};
@@ -56,15 +51,15 @@ fn reaction_variables() -> (
     Mass,
     Mass,
 ) {
-    let beam = laddu::Particle::measured("beam", "beam");
+    let beam = laddu::Particle::stored("beam");
     let target = laddu::Particle::missing("target");
-    let kshort1 = laddu::Particle::measured("K_S1", "kshort1");
-    let kshort2 = laddu::Particle::measured("K_S2", "kshort2");
-    let kk = laddu::Particle::composite("KK", [&kshort1, &kshort2]).unwrap();
-    let proton = laddu::Particle::measured("proton", "proton");
+    let kshort1 = laddu::Particle::stored("kshort1");
+    let kshort2 = laddu::Particle::stored("kshort2");
+    let kk = laddu::Particle::composite("kk", (&kshort1, &kshort2)).unwrap();
+    let proton = laddu::Particle::stored("proton");
     let reaction = laddu::Reaction::two_to_two(&beam, &target, &kk, &proton).unwrap();
-    let decay = reaction.decay(&kk).unwrap();
-    let angles = decay.angles(&kshort1, Frame::Helicity).unwrap();
+    let decay = reaction.decay("kk").unwrap();
+    let angles = decay.angles("kshort1", Frame::Helicity).unwrap();
     let polarization = reaction.polarization("pol_magnitude", "pol_angle");
     let resonance_mass = decay.parent_mass();
     let daughter_1_mass = decay.daughter_1_mass();
@@ -113,7 +108,7 @@ fn sample_dataset(dataset: &Arc<Dataset>, seed: u64, max_events: usize) -> Arc<D
         .into_iter()
         .map(|index| {
             dataset
-                .event(index)
+                .event_global(index)
                 .expect("subset index should be valid")
                 .data_arc()
         })

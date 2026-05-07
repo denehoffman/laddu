@@ -4,7 +4,7 @@ from typing import Any, Literal, overload
 import numpy as np
 from numpy.typing import NDArray
 
-from laddu.utils.variables import (
+from laddu.variables import (
     CosTheta,
     Mandelstam,
     Mass,
@@ -13,7 +13,7 @@ from laddu.utils.variables import (
     PolMagnitude,
     VariableExpression,
 )
-from laddu.utils.vectors import Vec4
+from laddu.vectors import Vec4
 
 class Event:
     p4s: dict[str, Vec4]
@@ -37,10 +37,9 @@ class Event:
         self, variable: Mass | CosTheta | Phi | PolAngle | PolMagnitude | Mandelstam
     ) -> float: ...
 
-class Dataset(Sequence[Event]):
-    events: list[Event]
-    events_global: list[Event]
-    events_local: list[Event]
+class Dataset:
+    events_global: Iterator[Event]
+    events_local: Iterator[Event]
     n_events: int
     n_events_global: int
     n_events_local: int
@@ -61,8 +60,30 @@ class Dataset(Sequence[Event]):
         aux_names: Sequence[str] | None = None,
         aliases: Mapping[str, str | Sequence[str]] | None = None,
     ) -> None: ...
+    @staticmethod
+    def from_events_local(
+        events: Sequence[Event],
+        *,
+        p4_names: Sequence[str] | None = None,
+        aux_names: Sequence[str] | None = None,
+        aliases: Mapping[str, str | Sequence[str]] | None = None,
+    ) -> Dataset: ...
+    @staticmethod
+    def from_events_global(
+        events: Sequence[Event],
+        *,
+        p4_names: Sequence[str] | None = None,
+        aux_names: Sequence[str] | None = None,
+        aliases: Mapping[str, str | Sequence[str]] | None = None,
+    ) -> Dataset: ...
+    @staticmethod
+    def empty_local(
+        *,
+        p4_names: Sequence[str],
+        aux_names: Sequence[str] | None = None,
+        aliases: Mapping[str, str | Sequence[str]] | None = None,
+    ) -> Dataset: ...
     def __len__(self) -> int: ...
-    def __iter__(self) -> Iterator[Event]: ...
     def __add__(self, other: Dataset | int) -> Dataset: ...
     def __radd__(self, other: Dataset | int) -> Dataset: ...
     @overload
@@ -85,9 +106,33 @@ class Dataset(Sequence[Event]):
     ) -> BinnedDataset: ...
     def filter(self, expression: VariableExpression) -> Dataset: ...
     def bootstrap(self, seed: int) -> Dataset: ...
-    def iter_local(self) -> Iterator[Event]: ...
-    def iter_global(self) -> Iterator[Event]: ...
     def event_global(self, index: int) -> Event: ...
+    def push_event_local(
+        self,
+        *,
+        p4: Mapping[str, Vec4],
+        aux: Mapping[str, float] | None = None,
+        weight: float = 1.0,
+    ) -> None: ...
+    def push_event_global(
+        self,
+        *,
+        p4: Mapping[str, Vec4],
+        aux: Mapping[str, float] | None = None,
+        weight: float = 1.0,
+    ) -> None: ...
+    def add_p4_column_local(self, name: str, values: Sequence[Vec4]) -> None: ...
+    def add_aux_column_local(
+        self,
+        name: str,
+        values: Sequence[float] | NDArray[np.float64] | NDArray[np.float32],
+    ) -> None: ...
+    def add_p4_column_global(self, name: str, values: Sequence[Vec4]) -> None: ...
+    def add_aux_column_global(
+        self,
+        name: str,
+        values: Sequence[float] | NDArray[np.float64] | NDArray[np.float32],
+    ) -> None: ...
     def p4_by_name(self, index: int, name: str) -> Vec4: ...
     def aux_by_name(self, index: int, name: str) -> float: ...
     def boost_to_rest_frame_of(self, names: Sequence[str]) -> Dataset: ...

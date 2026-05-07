@@ -4,11 +4,11 @@ use criterion::{
     black_box, criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion, Throughput,
 };
 use laddu_core::{
-    amplitudes::{Amplitude, AmplitudeID, ExpressionDependence, Parameter, TestAmplitude},
-    data::{read_parquet, DatasetMetadata, DatasetReadOptions, EventData, NamedEventView},
+    amplitude::{Amplitude, AmplitudeID, ExpressionDependence, Parameter, TestAmplitude},
+    data::{read_parquet, DatasetMetadata, DatasetReadOptions, Event, EventData},
     parameter,
     resources::{Cache, ParameterID, Parameters, Resources, ScalarID},
-    utils::vectors::Vec4,
+    vectors::Vec4,
     Dataset, Evaluator, Expression, LadduResult,
 };
 use nalgebra::DVector;
@@ -88,7 +88,7 @@ impl Amplitude for CacheOnlyScalar {
         ExpressionDependence::CacheOnly
     }
 
-    fn precompute(&self, event: &NamedEventView<'_>, cache: &mut Cache) {
+    fn precompute(&self, event: &Event<'_>, cache: &mut Cache) {
         cache.store_scalar(self.beam_energy, event.p4_at(0).e());
     }
 
@@ -223,7 +223,7 @@ fn build_large_gradient_case(dataset: &Arc<Dataset>, n_terms: usize) -> LargeGra
     .norm_sqr();
     for index in 1..n_terms {
         let amplitude = TestAmplitude::new(
-            &format!("large_grad_amp_{index}"),
+            format!("large_grad_amp_{index}"),
             parameter!(&format!("large_grad_re_{index}")),
             parameter!(&format!("large_grad_im_{index}")),
         )
@@ -299,10 +299,8 @@ fn eventwise_weighted_value_sum(evaluator: &Evaluator, parameters: &[f64]) -> La
     Ok(evaluator
         .evaluate_local(parameters)?
         .iter()
-        .zip(evaluator.dataset.events_local().iter())
-        .fold(0.0, |accum, (value, event)| {
-            accum + event.weight() * value.re
-        }))
+        .zip(evaluator.dataset.weights_local().iter())
+        .fold(0.0, |accum, (value, weight)| accum + weight * value.re))
 }
 
 fn eventwise_weighted_gradient_sum(
@@ -312,11 +310,11 @@ fn eventwise_weighted_gradient_sum(
     Ok(evaluator
         .evaluate_gradient_local(parameters)?
         .iter()
-        .zip(evaluator.dataset.events_local().iter())
+        .zip(evaluator.dataset.weights_local().iter())
         .fold(
             DVector::zeros(parameters.len()),
-            |mut accum, (gradient, event)| {
-                accum += gradient.map(|value| value.re).scale(event.weight());
+            |mut accum, (gradient, weight)| {
+                accum += gradient.map(|value| value.re).scale(*weight);
                 accum
             },
         ))
@@ -333,12 +331,14 @@ fn load_bench_dataset() -> Arc<Dataset> {
 }
 
 fn sampled_dataset(dataset: &Arc<Dataset>, n_take: usize) -> Arc<Dataset> {
-    let n_take = n_take.min(dataset.events_local().len());
-    let events = dataset
-        .events_local()
-        .iter()
-        .take(n_take)
-        .map(|event| event.data_arc())
+    let n_take = n_take.min(dataset.n_events_local());
+    let events = (0..n_take)
+        .map(|index| {
+            dataset
+                .event_global(index)
+                .expect("benchmark event should exist")
+                .data_arc()
+        })
         .collect();
     Arc::new(Dataset::new_with_metadata(events, dataset.metadata_arc()))
 }

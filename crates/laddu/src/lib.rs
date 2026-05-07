@@ -18,8 +18,8 @@
 //! - [Alternatives](#alternatives)
 //!
 //! # Key Features
-//! * A simple interface focused on combining [`Amplitude`](crate::amplitudes::Amplitude)s into models which can be evaluated over [`Dataset`]s.
-//! * A single [`Amplitude`](crate::amplitudes::Amplitude) trait which makes it easy to write new amplitudes and integrate them into the library.
+//! * A simple interface focused on combining [`Amplitude`](crate::amplitude::Amplitude)s into models which can be evaluated over [`Dataset`]s.
+//! * A single [`Amplitude`](crate::amplitude::Amplitude) trait which makes it easy to write new amplitudes and integrate them into the library.
 //! * Easy interfaces to precompute and cache values before the main calculation to speed up model evaluations.
 //! * Efficient parallelism using [`rayon`](https://github.com/rayon-rs/rayon).
 //! * Python bindings to allow users to write quick, easy-to-read code that just works.
@@ -59,16 +59,17 @@
 //!    AmplitudeID, Cache, DatasetMetadata, Expression, LadduResult, Mass,
 //!    ParameterID, Parameter, Parameters, Resources,
 //! };
-//! use laddu::NamedEventView;
+//! use laddu::Event;
+//! use laddu::amplitude::{IntoTags, Tags};
 //! use laddu::resources::ScalarID;
 //! use laddu::traits::*;
-//! use laddu::utils::functions::{BarrierKind, QR_DEFAULT, Sheet, blatt_weisskopf_m, q_m};
+//! use laddu::math::{BarrierKind, QR_DEFAULT, Sheet, blatt_weisskopf_m, q_m};
 //! use laddu::{Deserialize, Serialize, typetag};
 //! use num::complex::Complex64;
 //!
 //! #[derive(Clone, Serialize, Deserialize)]
 //! pub struct MyBreitWigner {
-//!     name: String,
+//!     tags: Tags,
 //!     mass: Parameter,
 //!     width: Parameter,
 //!     pid_mass: ParameterID,
@@ -83,7 +84,7 @@
 //! }
 //! impl MyBreitWigner {
 //!     pub fn new(
-//!         name: &str,
+//!         tags: impl IntoTags,
 //!         mass: Parameter,
 //!         width: Parameter,
 //!         l: usize,
@@ -92,7 +93,7 @@
 //!         resonance_mass: &Mass,
 //!     ) -> LadduResult<Expression> {
 //!         Self {
-//!             name: name.to_string(),
+//!             tags: tags.into_tags(),
 //!             mass,
 //!             width,
 //!             pid_mass: ParameterID::default(),
@@ -114,10 +115,10 @@
 //!     fn register(&mut self, resources: &mut Resources) -> LadduResult<AmplitudeID> {
 //!         self.pid_mass = resources.register_parameter(&self.mass)?;
 //!         self.pid_width = resources.register_parameter(&self.width)?;
-//!         self.daughter_1_mass_id = resources.register_scalar(Some(&format!("{}.daughter_1_mass", self.name)));
-//!         self.daughter_2_mass_id = resources.register_scalar(Some(&format!("{}.daughter_2_mass", self.name)));
-//!         self.resonance_mass_id = resources.register_scalar(Some(&format!("{}.resonance_mass", self.name)));
-//!         resources.register_amplitude(&self.name)
+//!         self.daughter_1_mass_id = resources.register_scalar(None);
+//!         self.daughter_2_mass_id = resources.register_scalar(None);
+//!         self.resonance_mass_id = resources.register_scalar(None);
+//!         resources.register_amplitude(self.tags.clone())
 //!     }
 //!
 //!     fn bind(
@@ -130,7 +131,7 @@
 //!         Ok(())
 //!     }
 //!
-//!     fn precompute(&self, event: &NamedEventView<'_>, cache: &mut Cache) {
+//!     fn precompute(&self, event: &Event<'_>, cache: &mut Cache) {
 //!         cache.store_scalar(self.daughter_1_mass_id, event.evaluate(&self.daughter_1_mass));
 //!         cache.store_scalar(self.daughter_2_mass_id, event.evaluate(&self.daughter_2_mass));
 //!         cache.store_scalar(self.resonance_mass_id, event.evaluate(&self.resonance_mass));
@@ -153,8 +154,8 @@
 //! ```
 //!
 //! While it isn't shown here, we can often be more efficient when implementing
-//! [`Amplitude`](crate::amplitudes::Amplitude)s by precomputing values which do not depend on the
-//! free parameters. See the [`Amplitude::precompute`](crate::amplitudes::Amplitude::precompute)
+//! [`Amplitude`](crate::amplitude::Amplitude)s by precomputing values which do not depend on the
+//! free parameters. See the [`Amplitude::precompute`](crate::amplitude::Amplitude::precompute)
 //! method for more details.
 //!
 //! ### Calculating a Likelihood
@@ -165,16 +166,17 @@
 //! #    AmplitudeID, Cache, DatasetMetadata, Expression, LadduResult,
 //! #    ParameterID, Parameter, Parameters, Resources,
 //! # };
-//! # use laddu::NamedEventView;
+//! # use laddu::Event;
+//! # use laddu::amplitude::{IntoTags, Tags};
 //! # use laddu::resources::ScalarID;
 //! # use laddu::traits::*;
-//! # use laddu::utils::functions::{BarrierKind, QR_DEFAULT, Sheet, blatt_weisskopf_m, q_m};
+//! # use laddu::math::{BarrierKind, QR_DEFAULT, Sheet, blatt_weisskopf_m, q_m};
 //! # use laddu::{Deserialize, Serialize, typetag};
 //! # use num::complex::Complex64;
 //! #
 //! # #[derive(Clone, Serialize, Deserialize)]
 //! # pub struct MyBreitWigner {
-//! #     name: String,
+//! #     tags: Tags,
 //! #     mass: Parameter,
 //! #     width: Parameter,
 //! #     pid_mass: ParameterID,
@@ -189,7 +191,7 @@
 //! # }
 //! # impl MyBreitWigner {
 //! #     pub fn new(
-//! #         name: &str,
+//! #         tags: impl IntoTags,
 //! #         mass: Parameter,
 //! #         width: Parameter,
 //! #         l: usize,
@@ -198,7 +200,7 @@
 //! #         resonance_mass: &Mass,
 //! #     ) -> LadduResult<Expression> {
 //! #         Self {
-//! #             name: name.to_string(),
+//! #             tags: tags.into_tags(),
 //! #             mass,
 //! #             width,
 //! #             pid_mass: ParameterID::default(),
@@ -220,10 +222,10 @@
 //! #     fn register(&mut self, resources: &mut Resources) -> LadduResult<AmplitudeID> {
 //! #         self.pid_mass = resources.register_parameter(&self.mass)?;
 //! #         self.pid_width = resources.register_parameter(&self.width)?;
-//! #         self.daughter_1_mass_id = resources.register_scalar(Some(&format!("{}.daughter_1_mass", self.name)));
-//! #         self.daughter_2_mass_id = resources.register_scalar(Some(&format!("{}.daughter_2_mass", self.name)));
-//! #         self.resonance_mass_id = resources.register_scalar(Some(&format!("{}.resonance_mass", self.name)));
-//! #         resources.register_amplitude(&self.name)
+//! #         self.daughter_1_mass_id = resources.register_scalar(None);
+//! #         self.daughter_2_mass_id = resources.register_scalar(None);
+//! #         self.resonance_mass_id = resources.register_scalar(None);
+//! #         resources.register_amplitude(self.tags.clone())
 //! #     }
 //! #
 //! #     fn bind(
@@ -236,7 +238,7 @@
 //! #         Ok(())
 //! #     }
 //! #
-//! #     fn precompute(&self, event: &NamedEventView<'_>, cache: &mut Cache) {
+//! #     fn precompute(&self, event: &Event<'_>, cache: &mut Cache) {
 //! #         cache.store_scalar(self.daughter_1_mass_id, event.evaluate(&self.daughter_1_mass));
 //! #         cache.store_scalar(self.daughter_2_mass_id, event.evaluate(&self.daughter_2_mass));
 //! #         cache.store_scalar(self.resonance_mass_id, event.evaluate(&self.resonance_mass));
@@ -344,7 +346,7 @@
 //! It could be the case that I am leaving out software with which I am not familiar. If so, I'd love to include it here for reference. I don't think that `laddu` will ever be the end-all-be-all of amplitude analysis, just an alternative that might improve on existing systems. It is important for physicists to be aware of these alternatives. For example, if you really don't want to learn Rust but need to implement an amplitude which isn't already included here, `laddu` isn't for you, and one of these alternatives might be best.
 #![warn(clippy::perf, clippy::style, missing_docs)]
 
-/// Methods for loading and manipulating [`EventData`]-based data.
+/// Methods for loading and manipulating event datasets.
 pub mod data {
     pub use laddu_core::data::{
         BinnedDataset, Dataset, DatasetMetadata, DatasetReadOptions, DatasetWriteOptions, EventData,
@@ -358,29 +360,63 @@ pub mod io {
 pub mod extensions {
     pub use laddu_extensions::*;
 }
+/// Monte Carlo event generation tools.
+pub mod generation {
+    pub use laddu_generation::*;
+}
 /// Structures for manipulating the cache and free parameters.
 pub mod resources {
     pub use laddu_core::resources::*;
 }
-/// Utility functions, enums, and traits
-pub mod utils {
-    pub use laddu_core::utils::*;
+/// Special functions and numerical helpers.
+pub mod math {
+    pub use laddu_core::math::*;
+}
+/// Quantum-number helpers and discrete analysis enums.
+pub mod quantum {
+    pub use laddu_core::quantum::*;
+}
+/// Kinematic frame helpers and angle containers.
+pub mod kinematics {
+    pub use laddu_core::kinematics::*;
+}
+/// Reaction topology, particles, and decay-node helpers.
+pub mod reaction {
+    pub use laddu_core::reaction::*;
+}
+/// Event variables derived from reactions and particle selections.
+pub mod variables {
+    pub use laddu_core::variables::*;
+}
+/// Three- and four-vector types used throughout the library.
+pub mod vectors {
+    pub use laddu_core::vectors::*;
+}
+/// Execution-policy and thread-pool coordination helpers.
+pub mod execution {
+    pub use laddu_core::execution::*;
+}
+/// Parameter handles, identifiers, and assembled parameter storage.
+pub mod parameters {
+    pub use laddu_core::parameters::*;
+}
+/// Expression trees, compiled diagnostics, and evaluator interfaces.
+pub mod expression {
+    pub use laddu_core::expression::*;
 }
 /// Useful traits for all crate structs
 pub mod traits {
-    pub use laddu_core::amplitudes::Amplitude;
-    pub use laddu_core::utils::variables::Variable;
-    pub use laddu_core::ReadWrite;
-    pub use laddu_extensions::likelihoods::LikelihoodTerm;
+    pub use laddu_core::{amplitude::Amplitude, variables::Variable};
+    pub use laddu_extensions::likelihood::LikelihoodTerm;
 }
-/// [`Amplitude`](crate::amplitudes::Amplitude)s and methods for making and evaluating them.
+/// [`Amplitude`](crate::amplitude::Amplitude)s and methods for making and evaluating them.
+pub mod amplitude {
+    pub use laddu_core::{amplitude::*, parameter};
+}
+
+/// Concrete amplitude constructors and physics-model building blocks.
 pub mod amplitudes {
     pub use laddu_amplitudes::*;
-    pub use laddu_core::amplitudes::{
-        Amplitude, AmplitudeID, AmplitudeSemanticField, AmplitudeSemanticKey, Evaluator,
-        Expression, Parameter,
-    };
-    pub use laddu_core::parameter;
 }
 
 /// <div class="warning">
@@ -394,25 +430,30 @@ pub mod experimental {
 }
 
 pub use laddu_amplitudes::*;
-pub use laddu_core::amplitudes::{
-    AmplitudeID, AmplitudeSemanticField, AmplitudeSemanticKey, Evaluator, Expression, Parameter,
+pub use laddu_core::{
+    amplitude::{
+        AmplitudeID, AmplitudeSemanticField, AmplitudeSemanticKey, Evaluator, Expression, Parameter,
+    },
+    data::{
+        BinnedDataset, Dataset, DatasetMetadata, DatasetReadOptions, DatasetWriteOptions, Event,
+        EventData, OwnedEvent,
+    },
+    parameter,
+    parameters::{ParameterID, Parameters},
+    reaction::{
+        Decay, Particle, ParticleGraph, ParticleSource, Reaction, ReactionTopology,
+        ResolvedTwoToTwo, TwoToTwoReaction,
+    },
+    resources::{Cache, Resources},
+    variables::{
+        Angles, CosTheta, IntoP4Selection, Mandelstam, Mass, P4Selection, Phi, PolAngle,
+        PolMagnitude, Polarization,
+    },
+    vectors::{Vec3, Vec4},
+    LadduError, LadduResult, PI,
 };
-pub use laddu_core::data::{
-    BinnedDataset, Dataset, DatasetMetadata, DatasetReadOptions, DatasetWriteOptions, Event,
-    EventData, NamedEventView,
-};
-pub use laddu_core::parameter;
-pub use laddu_core::resources::{Cache, ParameterID, Parameters, Resources};
-pub use laddu_core::utils::reaction::{
-    Decay, Particle, ParticleSource, Reaction, ReactionTopology, ResolvedTwoToTwo, TwoToTwoReaction,
-};
-pub use laddu_core::utils::variables::{
-    AngleVariables, Angles, CosTheta, Mandelstam, Mass, Phi, PolAngle, PolMagnitude, Polarization,
-};
-pub use laddu_core::utils::vectors::{Vec3, Vec4};
-pub use laddu_core::PI;
-pub use laddu_core::{LadduError, LadduResult};
 pub use laddu_extensions::*;
+pub use laddu_generation::*;
 pub use serde::{Deserialize, Serialize};
 pub use typetag;
 
@@ -427,7 +468,7 @@ pub use typetag;
 ///
 /// To use this backend, the library must be built with the `mpi` feature, which requires an
 /// existing implementation of MPI like OpenMPI or MPICH. All processing code should be
-/// sandwiched between calls to [`use_mpi`] and [`finalize_mpi`]:
+/// sandwiched between calls to [`mpi::use_mpi`] and [`mpi::finalize_mpi`]:
 /// ```ignore
 /// fn main() {
 ///     laddu_core::mpi::use_mpi(true);
@@ -436,8 +477,12 @@ pub use typetag;
 /// }
 /// ```
 ///
-/// [`finalize_mpi`] must be called to trigger all the methods which clean up the MPI
-/// environment. While these are called by default when the [`Universe`](`mpi::environment::Universe`) is dropped, `laddu` uses a static `Universe` that can be accessed by all of the methods that need it, rather than passing the context to each method. This simplifies the way programs can be converted to use MPI, but means that the `Universe` is not automatically dropped at the end of the program (so it must be dropped manually).
+/// [`mpi::finalize_mpi`] must be called to trigger all the methods which clean up the MPI
+/// environment. While these are called by default when MPI's `Universe` is dropped, `laddu`
+/// uses a static `Universe` that can be accessed by all of the methods that need it, rather
+/// than passing the context to each method. This simplifies the way programs can be converted
+/// to use MPI, but means that the `Universe` is not automatically dropped at the end of the
+/// program (so it must be dropped manually).
 #[cfg(feature = "mpi")]
 pub mod mpi {
     pub use laddu_core::mpi::{

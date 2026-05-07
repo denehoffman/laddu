@@ -1,7 +1,7 @@
 from enum import Enum
 
-from laddu.amplitudes import Expression, Parameter
-from laddu.utils.variables import Mass
+from laddu.amplitude import Expression, Parameter
+from laddu.variables import Mass
 
 class KopfKMatrixF0Channel(Enum):
     PiPi: KopfKMatrixF0Channel
@@ -35,7 +35,7 @@ class KopfKMatrixPi1Channel(Enum):
     PiEtaPrime: KopfKMatrixPi1Channel
 
 def KopfKMatrixF0(
-    name: str,
+    *tags: str,
     couplings: tuple[
         tuple[Parameter, Parameter],
         tuple[Parameter, Parameter],
@@ -45,11 +45,10 @@ def KopfKMatrixF0(
     ],
     channel: KopfKMatrixF0Channel,
     mass: Mass,
-    *,
     seed: int | None = None,
 ) -> Expression: ...
 def KopfKMatrixF2(
-    name: str,
+    *tags: str,
     couplings: tuple[
         tuple[Parameter, Parameter],
         tuple[Parameter, Parameter],
@@ -58,33 +57,30 @@ def KopfKMatrixF2(
     ],
     channel: KopfKMatrixF2Channel,
     mass: Mass,
-    *,
     seed: int | None = None,
 ) -> Expression: ...
 def KopfKMatrixA0(
-    name: str,
+    *tags: str,
     couplings: tuple[
         tuple[Parameter, Parameter],
         tuple[Parameter, Parameter],
     ],
     channel: KopfKMatrixA0Channel,
     mass: Mass,
-    *,
     seed: int | None = None,
 ) -> Expression: ...
 def KopfKMatrixA2(
-    name: str,
+    *tags: str,
     couplings: tuple[
         tuple[Parameter, Parameter],
         tuple[Parameter, Parameter],
     ],
     channel: KopfKMatrixA2Channel,
     mass: Mass,
-    *,
     seed: int | None = None,
 ) -> Expression: ...
 def KopfKMatrixRho(
-    name: str,
+    *tags: str,
     couplings: tuple[
         tuple[Parameter, Parameter],
         tuple[Parameter, Parameter],
@@ -93,7 +89,7 @@ def KopfKMatrixRho(
     mass: Mass,
 ) -> Expression: ...
 def KopfKMatrixPi1(
-    name: str,
+    *tags: str,
     couplings: tuple[tuple[Parameter, Parameter],],
     channel: KopfKMatrixPi1Channel,
     mass: Mass,

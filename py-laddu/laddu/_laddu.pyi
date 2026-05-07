@@ -5,26 +5,29 @@ from typing import Literal
 import numpy as np
 import numpy.typing as npt
 
-from laddu.amplitudes import (
+from laddu.amplitude import (
     CompiledExpression,
     Evaluator,
     Expression,
     One,
     Parameter,
+    ParameterMap,
     TestAmplitude,
     Zero,
     expr_product,
     expr_sum,
     parameter,
 )
-from laddu.amplitudes.breit_wigner import BreitWigner, BreitWignerNonRelativistic
-from laddu.amplitudes.common import (
-    ComplexScalar,
-    PolarComplexScalar,
-    Scalar,
-    VariableScalar,
+from laddu.amplitudes.angular import (
+    BlattWeisskopf,
+    ClebschGordan,
+    PhotonSDME,
+    PolPhase,
+    Wigner3j,
+    WignerD,
+    Ylm,
+    Zlm,
 )
-from laddu.amplitudes.flatte import Flatte
 from laddu.amplitudes.kmatrix import (
     KopfKMatrixA0,
     KopfKMatrixA0Channel,
@@ -39,60 +42,81 @@ from laddu.amplitudes.kmatrix import (
     KopfKMatrixRho,
     KopfKMatrixRhoChannel,
 )
-from laddu.amplitudes.lookup_table import (
+from laddu.amplitudes.lookup import (
     LookupTable,
     LookupTableComplex,
     LookupTablePolar,
     LookupTableScalar,
 )
-from laddu.amplitudes.phase_space import PhaseSpaceFactor
-from laddu.amplitudes.spin_factors import (
-    BlattWeisskopf,
-    ClebschGordan,
-    PhotonSDME,
-    Wigner3j,
-    WignerD,
+from laddu.amplitudes.resonance import (
+    BreitWigner,
+    BreitWignerNonRelativistic,
+    Flatte,
+    PhaseSpaceFactor,
+    Voigt,
 )
-from laddu.amplitudes.voigt import Voigt
-from laddu.amplitudes.ylm import Ylm
-from laddu.amplitudes.zlm import PolPhase, Zlm
+from laddu.amplitudes.scalar import (
+    ComplexScalar,
+    PolarComplexScalar,
+    Scalar,
+    VariableScalar,
+)
 from laddu.data import BinnedDataset, Dataset, Event
 from laddu.experimental import BinnedGuideTerm, Regularizer
-from laddu.extensions import (
+from laddu.generation import (
+    CompositeGenerator,
+    Distribution,
+    EventGenerator,
+    GeneratedBatch,
+    GeneratedBatchIter,
+    GeneratedEventLayout,
+    GeneratedParticle,
+    GeneratedParticleLayout,
+    GeneratedReaction,
+    GeneratedStorage,
+    GeneratedVertexLayout,
+    InitialGenerator,
+    MandelstamTDistribution,
+    ParticleSpecies,
+    Reconstruction,
+    StableGenerator,
+)
+from laddu.likelihood import (
     NLL,
-    ControlFlow,
-    EnsembleStatus,
-    GradientFreeStatus,
-    GradientStatus,
     LikelihoodExpression,
     LikelihoodOne,
     LikelihoodScalar,
     LikelihoodZero,
-    MCMCSummary,
-    MinimizationStatus,
-    MinimizationSummary,
     StochasticNLL,
-    SwarmStatus,
-    integrated_autocorrelation_times,
     likelihood_product,
     likelihood_sum,
 )
-from laddu.utils.angular_momentum import allowed_projections, helicity_combinations
-from laddu.utils.variables import (
+from laddu.math import Histogram
+from laddu.optimize import (
+    ControlFlow,
+    EnsembleStatus,
+    GradientFreeStatus,
+    GradientStatus,
+    MCMCSummary,
+    MinimizationStatus,
+    MinimizationSummary,
+    SwarmStatus,
+    integrated_autocorrelation_times,
+)
+from laddu.quantum import allowed_projections, helicity_combinations
+from laddu.reaction import Decay, Particle, Reaction
+from laddu.variables import (
     Angles,
     CosTheta,
-    Decay,
     Mandelstam,
     Mass,
-    Particle,
     Phi,
     PolAngle,
     Polarization,
     PolMagnitude,
-    Reaction,
     VariableExpression,
 )
-from laddu.utils.vectors import Vec3, Vec4
+from laddu.vectors import Vec3, Vec4
 
 __all__ = [
     'NLL',
@@ -105,17 +129,30 @@ __all__ = [
     'ClebschGordan',
     'CompiledExpression',
     'ComplexScalar',
+    'CompositeGenerator',
     'ControlFlow',
     'CosTheta',
     'Dataset',
     'Decay',
+    'Distribution',
     'EnsembleStatus',
     'Evaluator',
     'Event',
+    'EventGenerator',
     'Expression',
     'Flatte',
+    'GeneratedBatch',
+    'GeneratedBatchIter',
+    'GeneratedEventLayout',
+    'GeneratedParticle',
+    'GeneratedParticleLayout',
+    'GeneratedReaction',
+    'GeneratedStorage',
+    'GeneratedVertexLayout',
     'GradientFreeStatus',
     'GradientStatus',
+    'Histogram',
+    'InitialGenerator',
     'KopfKMatrixA0',
     'KopfKMatrixA0Channel',
     'KopfKMatrixA2',
@@ -138,13 +175,16 @@ __all__ = [
     'LookupTableScalar',
     'MCMCSummary',
     'Mandelstam',
+    'MandelstamTDistribution',
     'Mass',
     'MinimizationStatus',
     'MinimizationSummary',
     'One',
     'Parameter',
+    'ParameterMap',
     'ParquetChunkIter',
     'Particle',
+    'ParticleSpecies',
     'PhaseSpaceFactor',
     'Phi',
     'PhotonSDME',
@@ -154,8 +194,10 @@ __all__ = [
     'PolarComplexScalar',
     'Polarization',
     'Reaction',
+    'Reconstruction',
     'Regularizer',
     'Scalar',
+    'StableGenerator',
     'StochasticNLL',
     'SwarmStatus',
     'TestAmplitude',

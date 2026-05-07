@@ -2,8 +2,8 @@ from collections.abc import Sequence
 
 import numpy.typing as npt
 
-from laddu.extensions import NLL, LikelihoodExpression
-from laddu.utils.variables import CosTheta, Mandelstam, Mass, Phi, PolAngle, PolMagnitude
+from laddu.likelihood import NLL, LikelihoodExpression
+from laddu.variables import CosTheta, Mandelstam, Mass, Phi, PolAngle, PolMagnitude
 
 def BinnedGuideTerm(
     nll: NLL,

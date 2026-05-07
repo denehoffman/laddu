@@ -3,19 +3,19 @@ mod mpi_benches {
     use std::sync::Arc;
 
     use criterion::{black_box, BatchSize, BenchmarkId, Criterion, Throughput};
-    use laddu::mpi::{finalize_mpi, get_world, use_mpi};
     use laddu::{
         amplitudes::{
+            angular::Zlm,
             kmatrix::{
                 KopfKMatrixA0, KopfKMatrixA0Channel, KopfKMatrixA2, KopfKMatrixA2Channel,
                 KopfKMatrixF0, KopfKMatrixF0Channel, KopfKMatrixF2, KopfKMatrixF2Channel,
             },
             parameter,
-            zlm::Zlm,
         },
         data::{Dataset, DatasetReadOptions},
         extensions::NLL,
         io,
+        mpi::{finalize_mpi, get_world, use_mpi},
         traits::LikelihoodTerm,
         utils::{
             enums::{Frame, Sign},
@@ -23,8 +23,10 @@ mod mpi_benches {
         },
         RngSubsetExtension,
     };
-    use mpi::collective::SystemOperation;
-    use mpi::traits::{Communicator, CommunicatorCollectives};
+    use mpi::{
+        collective::SystemOperation,
+        traits::{Communicator, CommunicatorCollectives},
+    };
 
     const BENCH_DATASET_RELATIVE_PATH: &str = "benches/bench.parquet";
     const P4_NAMES: [&str; 4] = ["beam", "proton", "kshort1", "kshort2"];
@@ -32,20 +34,20 @@ mod mpi_benches {
     const KMATRIX_DATASET_SEED: u64 = 71;
 
     fn reaction_variables() -> (laddu::Angles, laddu::Polarization, Mass) {
-        let beam = laddu::Particle::measured("beam", "beam");
+        let beam = laddu::Particle::stored("beam");
         let target = laddu::Particle::missing("target");
-        let kshort1 = laddu::Particle::measured("K_S1", "kshort1");
-        let kshort2 = laddu::Particle::measured("K_S2", "kshort2");
-        let kk = laddu::Particle::composite("KK", [&kshort1, &kshort2]).unwrap();
-        let proton = laddu::Particle::measured("proton", "proton");
+        let kshort1 = laddu::Particle::stored("kshort1");
+        let kshort2 = laddu::Particle::stored("kshort2");
+        let kk = laddu::Particle::composite("kk", (&kshort1, &kshort2)).unwrap();
+        let proton = laddu::Particle::stored("proton");
         let reaction = laddu::Reaction::two_to_two(&beam, &target, &kk, &proton).unwrap();
         let angles = reaction
-            .decay(&kk)
+            .decay("kk")
             .unwrap()
-            .angles(&kshort1, Frame::Helicity)
+            .angles("kshort1", Frame::Helicity)
             .unwrap();
         let polarization = reaction.polarization("pol_magnitude", "pol_angle");
-        let resonance_mass = reaction.mass(&kk);
+        let resonance_mass = reaction.mass("kk");
         (angles, polarization, resonance_mass)
     }
 
@@ -75,7 +77,7 @@ mod mpi_benches {
             .into_iter()
             .map(|index| {
                 dataset
-                    .event(index)
+                    .event_global(index)
                     .expect("subset index should be valid")
                     .data_arc()
             })

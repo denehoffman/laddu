@@ -1,151 +1,37 @@
-from collections.abc import Mapping, Sequence
-
-import numpy as np
-import numpy.typing as npt
-
-from laddu.amplitudes import (
-    breit_wigner,
-    common,
-    flatte,
-    kmatrix,
-    lookup_table,
-    phase_space,
-    spin_factors,
-    voigt,
-    ylm,
-    zlm,
+from laddu.amplitude import (
+    CompiledExpression,
+    Evaluator,
+    Expression,
+    One,
+    Parameter,
+    TestAmplitude,
+    Zero,
+    expr_product,
+    expr_sum,
+    parameter,
 )
-from laddu.data import Dataset
-
-class Parameter:
-    name: str
-    fixed: float | None
-    initial: float | None
-    bounds: tuple[float | None, float | None]
-    unit: str | None
-    latex: str | None
-    description: str | None
-
-class Expression:
-    parameters: tuple[str, ...]
-    free_parameters: tuple[str, ...]
-    fixed_parameters: tuple[str, ...]
-    n_free: int
-    n_fixed: int
-    n_parameters: int
-    compiled_expression: CompiledExpression
-
-    def load(self, dataset: Dataset) -> Evaluator: ...
-    def real(self) -> Expression: ...
-    def imag(self) -> Expression: ...
-    def conj(self) -> Expression: ...
-    def norm_sqr(self) -> Expression: ...
-    def sqrt(self) -> Expression: ...
-    def power(self, power: int | float | Expression) -> Expression: ...
-    def exp(self) -> Expression: ...
-    def sin(self) -> Expression: ...
-    def cos(self) -> Expression: ...
-    def log(self) -> Expression: ...
-    def cis(self) -> Expression: ...
-    def fix_parameter(self, name: str, value: float) -> None: ...
-    def free_parameter(self, name: str) -> None: ...
-    def rename_parameter(self, old: str, new: str) -> None: ...
-    def rename_parameters(self, mapping: Mapping[str, str]) -> None: ...
-    def __add__(self, other: Expression | int | float | complex) -> Expression: ...
-    def __radd__(self, other: Expression | int | float | complex) -> Expression: ...
-    def __sub__(self, other: Expression | int | float | complex) -> Expression: ...
-    def __rsub__(self, other: Expression | int | float | complex) -> Expression: ...
-    def __mul__(self, other: Expression | int | float | complex) -> Expression: ...
-    def __rmul__(self, other: Expression | int | float | complex) -> Expression: ...
-    def __truediv__(self, other: Expression | int | float | complex) -> Expression: ...
-    def __rtruediv__(self, other: Expression | int | float | complex) -> Expression: ...
-    def __neg__(self) -> Expression: ...
-
-def One() -> Expression: ...
-def Zero() -> Expression: ...
-def expr_sum(amplitudes: Sequence[Expression]) -> Expression: ...
-def expr_product(amplitudes: Sequence[Expression]) -> Expression: ...
-def parameter(
-    name: str,
-    fixed: float | None = None,
-    *,
-    initial: float | None = None,
-    bounds: tuple[float | None, float | None] = (None, None),
-    unit: str | None = None,
-    latex: str | None = None,
-    description: str | None = None,
-) -> Parameter: ...
-
-class CompiledExpression: ...
-
-class Evaluator:
-    parameters: tuple[str, ...]
-    free_parameters: tuple[str, ...]
-    fixed_parameters: tuple[str, ...]
-    n_free: int
-    n_fixed: int
-    n_parameters: int
-    active_mask: list[bool]
-    expression: Expression
-    compiled_expression: CompiledExpression
-
-    def fix_parameter(self, name: str, value: float) -> None: ...
-    def free_parameter(self, name: str) -> None: ...
-    def rename_parameter(self, old: str, new: str) -> None: ...
-    def rename_parameters(self, mapping: Mapping[str, str]) -> None: ...
-    def activate(self, name: str | Sequence[str], *, strict: bool = True) -> None: ...
-    def activate_all(self) -> None: ...
-    def deactivate(self, name: str | Sequence[str], *, strict: bool = True) -> None: ...
-    def deactivate_all(self) -> None: ...
-    def isolate(self, name: str | Sequence[str], *, strict: bool = True) -> None: ...
-    def set_active_mask(self, mask: Sequence[bool]) -> None: ...
-    def evaluate(
-        self,
-        parameters: Sequence[float] | npt.NDArray[np.float64],
-        *,
-        threads: int | None = None,
-    ) -> npt.NDArray[np.complex128]: ...
-    def evaluate_batch(
-        self,
-        parameters: Sequence[float] | npt.NDArray[np.float64],
-        indices: Sequence[int] | npt.NDArray[np.integer],
-        *,
-        threads: int | None = None,
-    ) -> npt.NDArray[np.complex128]: ...
-    def evaluate_gradient(
-        self,
-        parameters: Sequence[float] | npt.NDArray[np.float64],
-        *,
-        threads: int | None = None,
-    ) -> npt.NDArray[np.complex128]: ...
-    def evaluate_gradient_batch(
-        self,
-        parameters: Sequence[float] | npt.NDArray[np.float64],
-        indices: Sequence[int] | npt.NDArray[np.integer],
-        *,
-        threads: int | None = None,
-    ) -> npt.NDArray[np.complex128]: ...
-
-def TestAmplitude(name: str, re: Parameter, im: Parameter) -> Expression: ...
+from laddu.amplitudes import (
+    angular,
+    kmatrix,
+    lookup,
+    resonance,
+    scalar,
+)
 
 __all__ = [
+    'CompiledExpression',
     'Evaluator',
     'Expression',
     'One',
     'Parameter',
     'TestAmplitude',
     'Zero',
-    'breit_wigner',
-    'common',
+    'angular',
     'expr_product',
     'expr_sum',
-    'flatte',
     'kmatrix',
-    'lookup_table',
+    'lookup',
     'parameter',
-    'phase_space',
-    'spin_factors',
-    'voigt',
-    'ylm',
-    'zlm',
+    'resonance',
+    'scalar',
 ]

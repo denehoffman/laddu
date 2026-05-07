@@ -55,7 +55,7 @@ def make_test_dataset() -> Dataset:
 
 
 def test_constant_amplitude() -> None:
-    amp = Scalar('constant', parameter('const_amp', 2.0))
+    amp = Scalar('constant', value=parameter('const_amp', 2.0))
     dataset = make_test_dataset()
     evaluator = amp.load(dataset)
     result = evaluator.evaluate([])
@@ -63,7 +63,7 @@ def test_constant_amplitude() -> None:
 
 
 def test_parametric_amplitude() -> None:
-    amp = Scalar('parametric', parameter('test_param'))
+    amp = Scalar('parametric', value=parameter('test_param'))
     dataset = make_test_dataset()
     evaluator = amp.load(dataset)
     result = evaluator.evaluate([3.0])
@@ -71,7 +71,7 @@ def test_parametric_amplitude() -> None:
 
 
 def test_batch_evaluation() -> None:
-    amp = TestAmplitude('test', parameter('real'), parameter('imag'))
+    amp = TestAmplitude('test', re=parameter('real'), im=parameter('imag'))
     event1 = make_test_event_with_beam_energy(10.0)
     event2 = make_test_event_with_beam_energy(11.0)
     event3 = make_test_event_with_beam_energy(12.0)
@@ -99,13 +99,13 @@ def test_batch_evaluation() -> None:
 
 def test_expression_operations() -> None:
     amp1 = ComplexScalar(
-        'const1', (parameter('const1_re', 2.0), parameter('const1_im', 0.0))
+        'const1', re=parameter('const1_re', 2.0), im=parameter('const1_im', 0.0)
     )
     amp2 = ComplexScalar(
-        'const2', (parameter('const2_re', 0.0), parameter('const2_im', 1.0))
+        'const2', re=parameter('const2_re', 0.0), im=parameter('const2_im', 1.0)
     )
     amp3 = ComplexScalar(
-        'const3', (parameter('const3_re', 3.0), parameter('const3_im', 4.0))
+        'const3', re=parameter('const3_re', 3.0), im=parameter('const3_im', 4.0)
     )
     dataset = make_test_dataset()
 
@@ -201,8 +201,8 @@ def test_expression_operations() -> None:
 
 
 def test_compiled_expression_display() -> None:
-    amp1 = TestAmplitude('a', parameter('ar'), parameter('ai'))
-    amp2 = TestAmplitude('b', parameter('br'), parameter('bi'))
+    amp1 = TestAmplitude('a', re=parameter('ar'), im=parameter('ai'))
+    amp2 = TestAmplitude('b', re=parameter('br'), im=parameter('bi'))
     term = amp1 * amp2
     expression = term + term
 
@@ -227,10 +227,10 @@ def test_compiled_expression_display() -> None:
 
 def test_amplitude_activation() -> None:
     amp1 = ComplexScalar(
-        'const1', (parameter('const1_re', 1.0), parameter('const1_im', 0.0))
+        'const1', re=parameter('const1_re', 1.0), im=parameter('const1_im', 0.0)
     )
     amp2 = ComplexScalar(
-        'const2', (parameter('const2_re', 2.0), parameter('const2_im', 0.0))
+        'const2', re=parameter('const2_re', 2.0), im=parameter('const2_im', 0.0)
     )
     dataset = make_test_dataset()
 
@@ -261,13 +261,15 @@ def test_amplitude_activation() -> None:
 
 def test_amplitude_activation_globs() -> None:
     amp1 = ComplexScalar(
-        'signal.s', (parameter('signal_s_re', 1.0), parameter('signal_s_im', 0.0))
+        'signal.s', re=parameter('signal_s_re', 1.0), im=parameter('signal_s_im', 0.0)
     )
     amp2 = ComplexScalar(
-        'signal.d', (parameter('signal_d_re', 2.0), parameter('signal_d_im', 0.0))
+        'signal.d', re=parameter('signal_d_re', 2.0), im=parameter('signal_d_im', 0.0)
     )
     amp3 = ComplexScalar(
-        'background', (parameter('background_re', 4.0), parameter('background_im', 0.0))
+        'background',
+        re=parameter('background_re', 4.0),
+        im=parameter('background_im', 0.0),
     )
     evaluator = (amp1 + amp2 + amp3).load(make_test_dataset())
 
@@ -298,10 +300,10 @@ def test_amplitude_activation_globs() -> None:
 
 def test_evaluator_active_mask_roundtrip() -> None:
     amp1 = ComplexScalar(
-        'const1', (parameter('const1_re', 1.0), parameter('const1_im', 0.0))
+        'const1', re=parameter('const1_re', 1.0), im=parameter('const1_im', 0.0)
     )
     amp2 = ComplexScalar(
-        'const2', (parameter('const2_re', 2.0), parameter('const2_im', 0.0))
+        'const2', re=parameter('const2_re', 2.0), im=parameter('const2_im', 0.0)
     )
     evaluator = (amp1 + amp2).load(make_test_dataset())
 
@@ -316,10 +318,10 @@ def test_evaluator_active_mask_roundtrip() -> None:
 
 def test_gradient() -> None:
     amp1 = ComplexScalar(
-        'parametric_1', (parameter('test_param_re_1'), parameter('test_param_im_1'))
+        'parametric_1', re=parameter('test_param_re_1'), im=parameter('test_param_im_1')
     )
     amp2 = ComplexScalar(
-        'parametric_2', (parameter('test_param_re_2'), parameter('test_param_im_2'))
+        'parametric_2', re=parameter('test_param_re_2'), im=parameter('test_param_im_2')
     )
     dataset = make_test_dataset()
     params = [2.0, 3.0, 4.0, 5.0]
@@ -453,7 +455,7 @@ def test_gradient() -> None:
 
 def test_zeros_and_ones() -> None:
     amp = ComplexScalar(
-        'parametric', (parameter('test_param_re'), parameter('zeros_const_im', 2.0))
+        'parametric', re=parameter('test_param_re'), im=parameter('zeros_const_im', 2.0)
     )
     dataset = make_test_dataset()
     expr = (amp * One() + Zero()).norm_sqr()
@@ -471,68 +473,77 @@ def test_zeros_and_ones() -> None:
 
 
 def test_parameter_registration() -> None:
-    amp = Scalar('parametric', parameter('test_param'))
+    amp = Scalar('parametric', value=parameter('test_param'))
     parameters = amp.parameters
     assert len(parameters) == 1
-    assert parameters[0] == 'test_param'
+    assert parameters.names[0] == 'test_param'
+    assert parameters.free.names == ('test_param',)
+    assert parameters.fixed.names == ()
+    assert 'test_param' in parameters
+    assert parameters[0].name == 'test_param'
+    assert parameters[-1].name == 'test_param'
+    assert parameters['test_param'].name == 'test_param'
+    assert 'ParameterMap' in str(parameters)
+    with pytest.raises(IndexError):
+        _ = parameters[1]
 
 
 def test_expression_fix_updates_metadata_and_evaluator() -> None:
     dataset = make_test_dataset()
-    amp = Scalar('scale', parameter('scale'))
+    amp = Scalar('scale', value=parameter('scale'))
     expr = amp.norm_sqr()
 
     expr.fix_parameter('scale', 3.0)
-    assert expr.parameters == ('scale',)
-    assert expr.free_parameters == ()
-    assert expr.fixed_parameters == ('scale',)
+    assert expr.parameters.names == ('scale',)
+    assert expr.parameters.free.names == ()
+    assert expr.parameters.fixed.names == ('scale',)
     assert expr.n_free == 0
     assert expr.n_fixed == 1
 
     fixed_evaluator = expr.load(dataset)
     assert fixed_evaluator.n_free == 0
-    assert fixed_evaluator.fixed_parameters == ('scale',)
+    assert fixed_evaluator.parameters.fixed.names == ('scale',)
     result = fixed_evaluator.evaluate([])
     assert pytest.approx(result[0].real) == 9.0
 
     loaded = expr.load(dataset)
     loaded.fix_parameter('scale', 3.0)
     assert loaded.n_free == 0
-    assert loaded.fixed_parameters == ('scale',)
+    assert loaded.parameters.fixed.names == ('scale',)
     assert pytest.approx(loaded.evaluate([])[0].real) == 9.0
 
 
 def test_expression_free_and_rename_parameters() -> None:
     dataset = make_test_dataset()
-    amp = Scalar('scale', parameter('scale', 2.0))
+    amp = Scalar('scale', value=parameter('scale', 2.0))
     expr = amp.norm_sqr()
 
     expr.free_parameter('scale')
     assert expr.n_free == 1
-    assert expr.free_parameters == ('scale',)
-    assert expr.fixed_parameters == ()
+    assert expr.parameters.free.names == ('scale',)
+    assert expr.parameters.fixed.names == ()
 
     freed_eval = expr.load(dataset)
     assert pytest.approx(freed_eval.evaluate([3.0])[0].real) == 9.0
 
     expr.rename_parameter('scale', 'beta')
-    assert expr.parameters == ('beta',)
+    assert expr.parameters.names == ('beta',)
 
     expr.rename_parameters({'beta': 'gamma'})
-    assert expr.parameters == ('gamma',)
+    assert expr.parameters.names == ('gamma',)
 
     freed_eval.rename_parameter('scale', 'beta')
-    assert freed_eval.parameters == ('beta',)
+    assert freed_eval.parameters.names == ('beta',)
 
     freed_eval.rename_parameters({'beta': 'gamma'})
-    assert freed_eval.parameters == ('gamma',)
+    assert freed_eval.parameters.names == ('gamma',)
 
 
 # TODO: This panics rather than raises an exception.
 # I'm not sure if it's possible to avoid this, since operations in Rust aren't fallible
 # def test_duplicate_amplitude_registration() -> None:
-#     amp1 = ComplexScalar('same_name', parameter(1.0), parameter(0.0))
-#     amp2 = ComplexScalar('same_name', parameter(2.0), parameter(0.0))
+#     amp1 = ComplexScalar('same_name', re=parameter(1.0), im=parameter(0.0))
+#     amp2 = ComplexScalar('same_name', re=parameter(2.0), im=parameter(0.0))
 #     with pytest.raises(ValueError):
 #         amp1 + amp2
 #
@@ -540,10 +551,10 @@ def test_expression_free_and_rename_parameters() -> None:
 
 def test_tree_printing() -> None:
     amp1 = ComplexScalar(
-        'parametric_1', (parameter('test_param_re_1'), parameter('test_param_im_1'))
+        'parametric_1', re=parameter('test_param_re_1'), im=parameter('test_param_im_1')
     )
     amp2 = ComplexScalar(
-        'parametric_2', (parameter('test_param_re_2'), parameter('test_param_im_2'))
+        'parametric_2', re=parameter('test_param_re_2'), im=parameter('test_param_im_2')
     )
     expr = (
         amp1.real()
@@ -578,7 +589,7 @@ def test_tree_printing() -> None:
 
 
 def test_amplitude_summation() -> None:
-    terms = [Scalar(f'{i}', parameter(f'const_sum_{i}', i)) for i in range(1, 5)]
+    terms = [Scalar(f'{i}', value=parameter(f'const_sum_{i}', i)) for i in range(1, 5)]
     dataset = make_test_dataset()
     params = []
 
@@ -614,7 +625,7 @@ def test_amplitude_summation() -> None:
 
 
 def test_amplitude_product() -> None:
-    terms = [Scalar(f'{i}', parameter(f'const_prod_{i}', i)) for i in range(1, 5)]
+    terms = [Scalar(f'{i}', value=parameter(f'const_prod_{i}', i)) for i in range(1, 5)]
     dataset = make_test_dataset()
     params = []
 

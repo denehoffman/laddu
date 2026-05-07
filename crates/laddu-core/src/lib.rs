@@ -5,13 +5,12 @@
 #![allow(clippy::excessive_precision)]
 #![cfg_attr(coverage_nightly, feature(coverage_attribute))]
 
-use ganesh::core::{MCMCSummary, MinimizationSummary};
-#[cfg(feature = "python")]
-use pyo3::PyErr;
-
 /// Re-exported alias for `std::f64` to ease dependent crates transitioning to the 64-bit
 /// floating point API.
 pub use std::f64;
+
+#[cfg(feature = "python")]
+use pyo3::PyErr;
 
 /// MPI backend for `laddu`
 ///
@@ -24,7 +23,7 @@ pub use std::f64;
 ///
 /// To use this backend, the library must be built with the `mpi` feature, which requires an
 /// existing implementation of MPI like OpenMPI or MPICH. All processing code should be
-/// sandwiched between calls to [`use_mpi`] and [`finalize_mpi`]:
+/// sandwiched between calls to [`mpi::use_mpi`] and [`mpi::finalize_mpi`]:
 /// ```ignore
 /// fn main() {
 ///     laddu_core::mpi::use_mpi(true);
@@ -33,20 +32,30 @@ pub use std::f64;
 /// }
 /// ```
 ///
-/// [`finalize_mpi`] must be called to trigger all the methods which clean up the MPI
-/// environment. While these are called by default when the [`Universe`](`mpi::environment::Universe`) is dropped, `laddu` uses a static `Universe` that can be accessed by all of the methods that need it, rather than passing the context to each method. This simplifies the way programs can be converted to use MPI, but means that the `Universe` is not automatically dropped at the end of the program (so it must be dropped manually).
+/// [`mpi::finalize_mpi`] must be called to trigger all the methods which clean up the MPI
+/// environment. While these are called by default when MPI's `Universe` is dropped, `laddu`
+/// uses a static `Universe` that can be accessed by all of the methods that need it, rather
+/// than passing the context to each method. This simplifies the way programs can be converted
+/// to use MPI, but means that the `Universe` is not automatically dropped at the end of the
+/// program (so it must be dropped manually).
 #[cfg(feature = "mpi")]
 #[cfg_attr(coverage_nightly, coverage(off))]
 pub mod mpi {
-    use std::ops::Range;
-    use std::sync::atomic::{AtomicBool, Ordering};
-    use std::sync::OnceLock;
+    use std::{
+        ops::Range,
+        sync::{
+            atomic::{AtomicBool, Ordering},
+            OnceLock,
+        },
+    };
 
     use lazy_static::lazy_static;
-    use mpi::datatype::PartitionMut;
-    use mpi::environment::Universe;
-    use mpi::topology::{Process, SimpleCommunicator};
-    use mpi::traits::{Communicator, CommunicatorCollectives, Equivalence};
+    use mpi::{
+        datatype::PartitionMut,
+        environment::Universe,
+        topology::{Process, SimpleCommunicator},
+        traits::{Communicator, CommunicatorCollectives, Equivalence},
+    };
     use parking_lot::RwLock;
 
     lazy_static! {
@@ -527,52 +536,64 @@ pub mod mpi {
 
 use thiserror::Error;
 
-/// [`Amplitude`](crate::amplitudes::Amplitude)s and methods for making and evaluating them.
-pub mod amplitudes;
-/// Methods for loading and manipulating [`EventData`]-based data.
+/// Core amplitude traits, identifiers, and expression-facing compatibility exports.
+pub mod amplitude;
+/// Methods for loading and manipulating event datasets.
 pub mod data;
-/// Prototype execution context API for thread-policy and scratch reuse.
-#[cfg(feature = "execution-context-prototype")]
-pub mod execution_context;
+/// Execution-policy and thread-pool coordination helpers.
+pub mod execution;
+/// Expression trees, compiled diagnostics, and evaluator interfaces.
+pub mod expression;
+/// Kinematic frame helpers and angle containers.
+pub mod kinematics;
+/// Special functions and numerical helpers.
+pub mod math;
+/// Parameter handles, identifiers, and assembled parameter storage.
+pub mod parameters;
+/// Quantum-number helpers and discrete analysis enums.
+pub mod quantum;
+/// Reaction topology, particles, and decay-node helpers.
+pub mod reaction;
 /// Structures for manipulating the cache and free parameters.
 pub mod resources;
-/// Shared per-call thread-pool reuse utilities.
-pub mod thread_pool;
-/// Utility functions, enums, and traits
-pub mod utils;
+/// Event variables derived from reactions and particle selections.
+pub mod variables;
+/// Three- and four-vector types used throughout the library.
+pub mod vectors;
 /// Useful traits for all crate structs
 pub mod traits {
-    pub use crate::amplitudes::Amplitude;
-    pub use crate::utils::variables::Variable;
-    pub use crate::ReadWrite;
+    pub use crate::{amplitude::Amplitude, variables::Variable};
 }
 
-pub use crate::data::{
-    BinnedDataset, Dataset, DatasetMetadata, DatasetReadOptions, Event, EventData,
-};
+pub use amplitude::{Amplitude, AmplitudeID, AmplitudeSemanticField, AmplitudeSemanticKey};
+
 #[cfg(feature = "execution-context-prototype")]
-pub use crate::execution_context::{ExecutionContext, ScratchAllocator, ThreadPolicy};
-pub use crate::resources::{
-    Cache, ComplexMatrixID, ComplexScalarID, ComplexVectorID, MatrixID, ParameterID, Parameters,
-    Resources, ScalarID, VectorID,
-};
-pub use crate::thread_pool::ThreadPoolManager;
-pub use crate::utils::angular_momentum::{
-    allowed_projections, helicity_combinations, AngularMomentum, AngularMomentumProjection,
-    HelicityCombination, OrbitalAngularMomentum, Parity, SpinState,
-};
-pub use crate::utils::enums::{Channel, Frame, Sign};
-pub use crate::utils::kinematics::{DecayAngles, FrameAxes, RestFrame};
-pub use crate::utils::reaction::{
-    Decay, Particle, ParticleSource, Reaction, ReactionTopology, ResolvedTwoToTwo, TwoToTwoReaction,
-};
-pub use crate::utils::variables::{
-    AngleVariables, Angles, CosTheta, Mandelstam, Mass, Phi, PolAngle, PolMagnitude, Polarization,
-};
-pub use crate::utils::vectors::{Vec3, Vec4};
-pub use amplitudes::{
-    AmplitudeID, CompiledExpression, CompiledExpressionNode, Evaluator, Expression, Parameter,
-    ParameterMap,
+pub use crate::execution::{ExecutionContext, ScratchAllocator, ThreadPolicy};
+pub use crate::{
+    data::{
+        BinnedDataset, Dataset, DatasetMetadata, DatasetReadOptions, Event, EventData, OwnedEvent,
+    },
+    execution::ThreadPoolManager,
+    expression::{CompiledExpression, CompiledExpressionNode, Evaluator, Expression},
+    kinematics::{DecayAngles, FrameAxes, RestFrame},
+    parameters::{Parameter, ParameterID, ParameterMap, Parameters},
+    quantum::{
+        allowed_projections, helicity_combinations, AngularMomentum, AngularMomentumProjection,
+        Channel, Frame, HelicityCombination, OrbitalAngularMomentum, Parity, Sign, SpinState,
+    },
+    reaction::{
+        Decay, Particle, ParticleGraph, ParticleSource, Reaction, ReactionTopology,
+        ResolvedTwoToTwo, TwoToTwoReaction,
+    },
+    resources::{
+        Cache, ComplexMatrixID, ComplexScalarID, ComplexVectorID, MatrixID, Resources, ScalarID,
+        VectorID,
+    },
+    variables::{
+        Angles, CosTheta, IntoP4Selection, Mandelstam, Mass, P4Selection, Phi, PolAngle,
+        PolMagnitude, Polarization,
+    },
+    vectors::{Vec3, Vec4},
 };
 
 /// The mathematical constant $`\pi`$.
@@ -602,8 +623,8 @@ pub enum LadduError {
         /// Name of amplitude which is already registered
         name: String,
     },
-    /// An error which occurs when the user tries to use an unregistered amplitude.
-    #[error("No registered amplitude with name \"{name}\"!")]
+    /// An error which occurs when the user tries to select an unregistered amplitude tag.
+    #[error("No registered amplitude with tag \"{name}\"!")]
     AmplitudeNotFoundError {
         /// Name of amplitude which failed lookup
         name: String,
@@ -750,26 +771,5 @@ impl From<LadduError> for PyErr {
             #[cfg(feature = "numpy")]
             LadduError::NumpyError(_) => PyValueError::new_err(err_string),
         }
-    }
-}
-
-use serde::{de::DeserializeOwned, Serialize};
-use std::fmt::Debug;
-/// A trait which allows structs with [`Serialize`] and [`Deserialize`](`serde::Deserialize`) to
-/// have a null constructor which Python can fill with data. This allows such structs to be
-/// pickle-able from the Python API.
-pub trait ReadWrite: Serialize + DeserializeOwned {
-    /// Create a null version of the object which acts as a shell into which Python's `pickle` module
-    /// can load data. This generally shouldn't be used to construct the struct in regular code.
-    fn create_null() -> Self;
-}
-impl ReadWrite for MCMCSummary {
-    fn create_null() -> Self {
-        MCMCSummary::default()
-    }
-}
-impl ReadWrite for MinimizationSummary {
-    fn create_null() -> Self {
-        MinimizationSummary::default()
     }
 }

@@ -1,6 +1,6 @@
 [package]
 name = "laddu-core"
-version = "0.18.0"
+version = "0.19.0"
 authors.workspace = true
 edition.workspace = true
 homepage.workspace = true
@@ -19,7 +19,6 @@ bitcode = { workspace = true }
 dyn-clone = { workspace = true }
 factorial = { workspace = true }
 fastrand = { workspace = true }
-ganesh = { workspace = true }
 indexmap = { workspace = true }
 lazy_static = { workspace = true }
 mpi = { workspace = true, optional = true }
@@ -58,6 +57,10 @@ required-features = ["execution-context-prototype"]
 [[bench]]
 name = "expression_ir_benchmarks"
 harness = false
+
+[[bin]]
+name = "expression_ir_compile_probe"
+path = "bin/expression_ir_compile_probe.rs"
 
 [features]
 default = ["rayon"]

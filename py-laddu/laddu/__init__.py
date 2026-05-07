@@ -5,12 +5,48 @@ from contextlib import contextmanager as _contextmanager
 from typing import Protocol as _Protocol
 from typing import cast as _cast
 
-from . import amplitudes, data, experimental, extensions, io, mpi, utils
+from . import (
+    amplitude,
+    amplitudes,
+    data,
+    experimental,
+    extensions,
+    generation,
+    io,
+    likelihood,
+    math,
+    mpi,
+    optimize,
+    quantum,
+    reaction,
+    utils,
+    variables,
+    vectors,
+)
 from ._backend import backend as _backend_module
-from .amplitudes import One, Parameter, Zero, expr_product, expr_sum, parameter
-from .amplitudes.breit_wigner import BreitWigner, BreitWignerNonRelativistic
-from .amplitudes.common import ComplexScalar, PolarComplexScalar, Scalar, VariableScalar
-from .amplitudes.flatte import Flatte
+from .amplitude import (
+    CompiledExpression,
+    Evaluator,
+    Expression,
+    One,
+    Parameter,
+    ParameterMap,
+    TestAmplitude,
+    Zero,
+    expr_product,
+    expr_sum,
+    parameter,
+)
+from .amplitudes.angular import (
+    BlattWeisskopf,
+    ClebschGordan,
+    PhotonSDME,
+    PolPhase,
+    Wigner3j,
+    WignerD,
+    Ylm,
+    Zlm,
+)
 from .amplitudes.kmatrix import (
     KopfKMatrixA0,
     KopfKMatrixA0Channel,
@@ -25,28 +61,49 @@ from .amplitudes.kmatrix import (
     KopfKMatrixRho,
     KopfKMatrixRhoChannel,
 )
-from .amplitudes.phase_space import PhaseSpaceFactor
-from .amplitudes.spin_factors import (
-    BlattWeisskopf,
-    ClebschGordan,
-    PhotonSDME,
-    Wigner3j,
-    WignerD,
+from .amplitudes.resonance import (
+    BreitWigner,
+    BreitWignerNonRelativistic,
+    Flatte,
+    PhaseSpaceFactor,
+    Voigt,
 )
-from .amplitudes.voigt import Voigt
-from .amplitudes.ylm import Ylm
-from .amplitudes.zlm import PolPhase, Zlm
+from .amplitudes.scalar import ComplexScalar, PolarComplexScalar, Scalar, VariableScalar
 from .data import BinnedDataset, Dataset, Event
-from .extensions import (
+from .generation import (
+    CompositeGenerator,
+    Distribution,
+    EventGenerator,
+    GeneratedBatch,
+    GeneratedBatchIter,
+    GeneratedEventLayout,
+    GeneratedParticle,
+    GeneratedParticleLayout,
+    GeneratedReaction,
+    GeneratedStorage,
+    GeneratedVertexLayout,
+    InitialGenerator,
+    MandelstamTDistribution,
+    ParticleSpecies,
+    Reconstruction,
+    StableGenerator,
+)
+from .likelihood import (
     NLL,
-    ControlFlow,
-    EnsembleStatus,
-    GradientFreeStatus,
-    GradientStatus,
     LikelihoodExpression,
     LikelihoodOne,
     LikelihoodScalar,
     LikelihoodZero,
+    StochasticNLL,
+    likelihood_product,
+    likelihood_sum,
+)
+from .math import Histogram
+from .optimize import (
+    ControlFlow,
+    EnsembleStatus,
+    GradientFreeStatus,
+    GradientStatus,
     MCMCObserver,
     MCMCSummary,
     MCMCTerminator,
@@ -54,27 +111,21 @@ from .extensions import (
     MinimizationStatus,
     MinimizationSummary,
     MinimizationTerminator,
-    StochasticNLL,
     integrated_autocorrelation_times,
-    likelihood_product,
-    likelihood_sum,
 )
-from .laddu import Evaluator, Expression
-from .utils.angular_momentum import allowed_projections, helicity_combinations
-from .utils.variables import (
+from .quantum import allowed_projections, helicity_combinations
+from .reaction import Decay, Particle, Reaction
+from .variables import (
     Angles,
     CosTheta,
-    Decay,
     Mandelstam,
     Mass,
-    Particle,
     Phi,
     PolAngle,
     Polarization,
     PolMagnitude,
-    Reaction,
 )
-from .utils.vectors import Vec3, Vec4
+from .vectors import Vec3, Vec4
 
 
 class _BackendProtocol(_Protocol):
@@ -117,18 +168,32 @@ __all__ = [
     'BreitWigner',
     'BreitWignerNonRelativistic',
     'ClebschGordan',
+    'CompiledExpression',
     'ComplexScalar',
+    'CompositeGenerator',
     'ControlFlow',
     'CosTheta',
     'Dataset',
     'Decay',
+    'Distribution',
     'EnsembleStatus',
     'Evaluator',
     'Event',
+    'EventGenerator',
     'Expression',
     'Flatte',
+    'GeneratedBatch',
+    'GeneratedBatchIter',
+    'GeneratedEventLayout',
+    'GeneratedParticle',
+    'GeneratedParticleLayout',
+    'GeneratedReaction',
+    'GeneratedStorage',
+    'GeneratedVertexLayout',
     'GradientFreeStatus',
     'GradientStatus',
+    'Histogram',
+    'InitialGenerator',
     'KopfKMatrixA0',
     'KopfKMatrixA0Channel',
     'KopfKMatrixA2',
@@ -149,6 +214,7 @@ __all__ = [
     'MCMCSummary',
     'MCMCTerminator',
     'Mandelstam',
+    'MandelstamTDistribution',
     'Mass',
     'MinimizationObserver',
     'MinimizationStatus',
@@ -156,7 +222,9 @@ __all__ = [
     'MinimizationTerminator',
     'One',
     'Parameter',
+    'ParameterMap',
     'Particle',
+    'ParticleSpecies',
     'PhaseSpaceFactor',
     'Phi',
     'PhotonSDME',
@@ -166,8 +234,11 @@ __all__ = [
     'PolarComplexScalar',
     'Polarization',
     'Reaction',
+    'Reconstruction',
     'Scalar',
+    'StableGenerator',
     'StochasticNLL',
+    'TestAmplitude',
     'VariableScalar',
     'Vec3',
     'Vec4',
@@ -179,21 +250,30 @@ __all__ = [
     'Zlm',
     '__version__',
     'allowed_projections',
+    'amplitude',
     'amplitudes',
     'data',
     'experimental',
     'expr_product',
     'expr_sum',
     'extensions',
+    'generation',
     'get_threads',
     'helicity_combinations',
     'integrated_autocorrelation_times',
     'io',
+    'likelihood',
     'likelihood_product',
     'likelihood_sum',
+    'math',
     'mpi',
+    'optimize',
     'parameter',
+    'quantum',
+    'reaction',
     'set_threads',
     'threads',
     'utils',
+    'variables',
+    'vectors',
 ]

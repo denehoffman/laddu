@@ -1,22 +1,122 @@
-use crate::data::PyDataset;
+use std::{array, collections::HashMap};
+
+use laddu_amplitudes::{
+    angular::{
+        BlattWeisskopf, ClebschGordan, PhotonHelicity, PhotonPolarization, PhotonSDME, PolPhase,
+        Wigner3j, WignerD, Ylm, Zlm,
+    },
+    kmatrix::{
+        KopfKMatrixA0, KopfKMatrixA0Channel, KopfKMatrixA2, KopfKMatrixA2Channel, KopfKMatrixF0,
+        KopfKMatrixF0Channel, KopfKMatrixF2, KopfKMatrixF2Channel, KopfKMatrixPi1,
+        KopfKMatrixPi1Channel, KopfKMatrixRho, KopfKMatrixRhoChannel,
+    },
+    lookup::{LookupAxis, LookupTable},
+    resonance::{BreitWigner, BreitWignerNonRelativistic, Flatte, PhaseSpaceFactor, Voigt},
+    scalar::{ComplexScalar, PolarComplexScalar, Scalar, VariableScalar},
+};
 use laddu_core::{
-    amplitudes::{Evaluator, Expression, Parameter, TestAmplitude},
-    CompiledExpression, LadduError, LadduResult, ReadWrite, ThreadPoolManager,
+    amplitude::{Evaluator, Expression, Parameter, ParameterMap, TestAmplitude},
+    math::{BarrierKind, Sheet, QR_DEFAULT},
+    traits::Variable,
+    CompiledExpression, LadduError, LadduResult, ThreadPoolManager,
 };
 use num::complex::Complex64;
 use numpy::{PyArray1, PyArray2};
 use pyo3::{
-    exceptions::PyTypeError,
+    exceptions::{PyTypeError, PyValueError},
     prelude::*,
-    types::{PyBytes, PyList, PyTuple},
+    types::{PyAny, PyBytes, PyIterator, PyList, PyTuple},
 };
-use std::collections::HashMap;
+
+use crate::{
+    data::PyDataset,
+    quantum::angular_momentum::{
+        parse_angular_momentum, parse_orbital_angular_momentum, parse_projection,
+    },
+    variables::{PyAngles, PyDecay, PyMandelstam, PyMass, PyPolarization, PyVariable},
+};
+
+type LookupInputs = (Vec<Box<dyn Variable>>, Vec<LookupAxis>);
+
+macro_rules! py_kmatrix_channel {
+    ($py_name:ident, $python_name:literal, $rust_name:path { $($variant:ident),+ $(,)? }) => {
+        #[pyclass(eq, name = $python_name, module = "laddu", from_py_object)]
+        #[derive(Clone, PartialEq)]
+        pub enum $py_name {
+            $($variant,)+
+        }
+
+        impl From<$py_name> for $rust_name {
+            fn from(value: $py_name) -> Self {
+                match value {
+                    $( $py_name::$variant => Self::$variant, )+
+                }
+            }
+        }
+    };
+}
+
+py_kmatrix_channel!(
+    PyKopfKMatrixA0Channel,
+    "KopfKMatrixA0Channel",
+    KopfKMatrixA0Channel { PiEta, KKbar }
+);
+py_kmatrix_channel!(
+    PyKopfKMatrixA2Channel,
+    "KopfKMatrixA2Channel",
+    KopfKMatrixA2Channel {
+        PiEta,
+        KKbar,
+        PiEtaPrime
+    }
+);
+py_kmatrix_channel!(
+    PyKopfKMatrixF0Channel,
+    "KopfKMatrixF0Channel",
+    KopfKMatrixF0Channel {
+        PiPi,
+        FourPi,
+        KKbar,
+        EtaEta,
+        EtaEtaPrime
+    }
+);
+py_kmatrix_channel!(
+    PyKopfKMatrixF2Channel,
+    "KopfKMatrixF2Channel",
+    KopfKMatrixF2Channel {
+        PiPi,
+        FourPi,
+        KKbar,
+        EtaEta
+    }
+);
+py_kmatrix_channel!(
+    PyKopfKMatrixPi1Channel,
+    "KopfKMatrixPi1Channel",
+    KopfKMatrixPi1Channel { PiEta, PiEtaPrime }
+);
+py_kmatrix_channel!(
+    PyKopfKMatrixRhoChannel,
+    "KopfKMatrixRhoChannel",
+    KopfKMatrixRhoChannel {
+        PiPi,
+        FourPi,
+        KKbar
+    }
+);
 
 fn install_with_threads<R: Send>(
     threads: Option<usize>,
     op: impl FnOnce() -> R + Send,
 ) -> LadduResult<R> {
     ThreadPoolManager::shared().install(threads, op)
+}
+
+pub(crate) fn py_tags(tags: &Bound<'_, PyTuple>) -> PyResult<Vec<String>> {
+    tags.iter()
+        .map(|tag| tag.extract::<String>())
+        .collect::<PyResult<Vec<_>>>()
 }
 
 /// A mathematical expression formed from amplitudes.
@@ -115,27 +215,550 @@ pub fn py_expr_one() -> PyExpression {
     PyExpression(Expression::one())
 }
 
+/// Construct a scalar amplitude from one parameter.
+#[pyfunction(name = "Scalar", signature = (*tags, value))]
+pub fn py_scalar(tags: &Bound<'_, PyTuple>, value: PyParameter) -> PyResult<PyExpression> {
+    Ok(PyExpression(Scalar::new(py_tags(tags)?, value.0)?))
+}
+
+/// Construct a real expression from an event variable.
+#[pyfunction(name = "VariableScalar", signature = (*tags, variable))]
+pub fn py_variable_scalar(
+    tags: &Bound<'_, PyTuple>,
+    variable: Bound<'_, PyAny>,
+) -> PyResult<PyExpression> {
+    let variable = variable.extract::<PyVariable>()?;
+    Ok(PyExpression(VariableScalar::new(
+        py_tags(tags)?,
+        &variable,
+    )?))
+}
+
+/// Construct a cartesian complex scalar amplitude.
+#[pyfunction(name = "ComplexScalar", signature = (*tags, re, im))]
+pub fn py_complex_scalar(
+    tags: &Bound<'_, PyTuple>,
+    re: PyParameter,
+    im: PyParameter,
+) -> PyResult<PyExpression> {
+    Ok(PyExpression(ComplexScalar::new(
+        py_tags(tags)?,
+        re.0,
+        im.0,
+    )?))
+}
+
+/// Construct a polar complex scalar amplitude.
+#[pyfunction(name = "PolarComplexScalar", signature = (*tags, r, theta))]
+pub fn py_polar_complex_scalar(
+    tags: &Bound<'_, PyTuple>,
+    r: PyParameter,
+    theta: PyParameter,
+) -> PyResult<PyExpression> {
+    Ok(PyExpression(PolarComplexScalar::new(
+        py_tags(tags)?,
+        r.0,
+        theta.0,
+    )?))
+}
+
+/// Construct a relativistic Breit-Wigner amplitude.
+#[pyfunction(name = "BreitWigner", signature = (*tags, mass, width, l, daughter_1_mass, daughter_2_mass, resonance_mass, barrier_factors=true))]
+#[allow(clippy::too_many_arguments)]
+pub fn py_breit_wigner(
+    tags: &Bound<'_, PyTuple>,
+    mass: PyParameter,
+    width: PyParameter,
+    l: usize,
+    daughter_1_mass: &PyMass,
+    daughter_2_mass: &PyMass,
+    resonance_mass: &PyMass,
+    barrier_factors: bool,
+) -> PyResult<PyExpression> {
+    if barrier_factors {
+        Ok(PyExpression(BreitWigner::new(
+            py_tags(tags)?,
+            mass.0,
+            width.0,
+            l,
+            &daughter_1_mass.0,
+            &daughter_2_mass.0,
+            &resonance_mass.0,
+        )?))
+    } else {
+        Ok(PyExpression(BreitWigner::new_without_barrier_factors(
+            py_tags(tags)?,
+            mass.0,
+            width.0,
+            l,
+            &daughter_1_mass.0,
+            &daughter_2_mass.0,
+            &resonance_mass.0,
+        )?))
+    }
+}
+
+/// Construct a non-relativistic Breit-Wigner amplitude.
+#[pyfunction(name = "BreitWignerNonRelativistic", signature = (*tags, mass, width, resonance_mass))]
+pub fn py_breit_wigner_non_relativistic(
+    tags: &Bound<'_, PyTuple>,
+    mass: PyParameter,
+    width: PyParameter,
+    resonance_mass: &PyMass,
+) -> PyResult<PyExpression> {
+    Ok(PyExpression(BreitWignerNonRelativistic::new(
+        py_tags(tags)?,
+        mass.0,
+        width.0,
+        &resonance_mass.0,
+    )?))
+}
+
+/// Construct a Flatte amplitude.
+#[pyfunction(name = "Flatte", signature = (*tags, mass, observed_channel_coupling, alternate_channel_coupling, observed_channel_daughter_masses, alternate_channel_daughter_masses, resonance_mass))]
+pub fn py_flatte(
+    tags: &Bound<'_, PyTuple>,
+    mass: PyParameter,
+    observed_channel_coupling: PyParameter,
+    alternate_channel_coupling: PyParameter,
+    observed_channel_daughter_masses: (PyMass, PyMass),
+    alternate_channel_daughter_masses: (f64, f64),
+    resonance_mass: &PyMass,
+) -> PyResult<PyExpression> {
+    Ok(PyExpression(Flatte::new(
+        py_tags(tags)?,
+        mass.0,
+        observed_channel_coupling.0,
+        alternate_channel_coupling.0,
+        (
+            &observed_channel_daughter_masses.0 .0,
+            &observed_channel_daughter_masses.1 .0,
+        ),
+        alternate_channel_daughter_masses,
+        &resonance_mass.0,
+    )?))
+}
+
+/// Construct a Voigt amplitude.
+#[pyfunction(name = "Voigt", signature = (*tags, mass, width, sigma, resonance_mass))]
+pub fn py_voigt(
+    tags: &Bound<'_, PyTuple>,
+    mass: PyParameter,
+    width: PyParameter,
+    sigma: PyParameter,
+    resonance_mass: &PyMass,
+) -> PyResult<PyExpression> {
+    Ok(PyExpression(Voigt::new(
+        py_tags(tags)?,
+        mass.0,
+        width.0,
+        sigma.0,
+        &resonance_mass.0,
+    )?))
+}
+
+/// Construct a spherical-harmonic amplitude.
+#[pyfunction(name = "Ylm", signature = (*tags, l, m, angles))]
+pub fn py_ylm(
+    tags: &Bound<'_, PyTuple>,
+    l: usize,
+    m: isize,
+    angles: &PyAngles,
+) -> PyResult<PyExpression> {
+    Ok(PyExpression(Ylm::new(py_tags(tags)?, l, m, &angles.0)?))
+}
+
+/// Construct a polarized spherical-harmonic amplitude.
+#[pyfunction(name = "Zlm", signature = (*tags, l, m, r, angles, polarization))]
+pub fn py_zlm(
+    tags: &Bound<'_, PyTuple>,
+    l: usize,
+    m: isize,
+    r: &str,
+    angles: &PyAngles,
+    polarization: &PyPolarization,
+) -> PyResult<PyExpression> {
+    Ok(PyExpression(Zlm::new(
+        py_tags(tags)?,
+        l,
+        m,
+        r.parse()?,
+        &angles.0,
+        &polarization.0,
+    )?))
+}
+
+/// Construct a polarization phase amplitude.
+#[pyfunction(name = "PolPhase", signature = (*tags, polarization))]
+pub fn py_polphase(
+    tags: &Bound<'_, PyTuple>,
+    polarization: &PyPolarization,
+) -> PyResult<PyExpression> {
+    Ok(PyExpression(PolPhase::new(
+        py_tags(tags)?,
+        &polarization.0,
+    )?))
+}
+
+/// Construct a Wigner-D amplitude.
+#[pyfunction(name = "WignerD", signature = (*tags, spin, row_projection, column_projection, angles))]
+pub fn py_wigner_d(
+    tags: &Bound<'_, PyTuple>,
+    spin: &Bound<'_, PyAny>,
+    row_projection: &Bound<'_, PyAny>,
+    column_projection: &Bound<'_, PyAny>,
+    angles: &PyAngles,
+) -> PyResult<PyExpression> {
+    Ok(PyExpression(WignerD::new(
+        py_tags(tags)?,
+        parse_angular_momentum(spin)?,
+        parse_projection(row_projection)?,
+        parse_projection(column_projection)?,
+        &angles.0,
+    )?))
+}
+
+/// Construct a Blatt-Weisskopf amplitude.
+#[pyfunction(name = "BlattWeisskopf", signature = (*tags, decay, l, reference_mass, q_r = QR_DEFAULT, sheet = "physical", kind = "full"))]
+pub fn py_blatt_weisskopf(
+    tags: &Bound<'_, PyTuple>,
+    decay: &PyDecay,
+    l: &Bound<'_, PyAny>,
+    reference_mass: f64,
+    q_r: f64,
+    sheet: &str,
+    kind: &str,
+) -> PyResult<PyExpression> {
+    let sheet = match sheet.to_ascii_lowercase().as_str() {
+        "physical" => Sheet::Physical,
+        "unphysical" => Sheet::Unphysical,
+        _ => {
+            return Err(PyValueError::new_err(
+                "sheet must be 'physical' or 'unphysical'",
+            ));
+        }
+    };
+    let kind = match kind.to_ascii_lowercase().as_str() {
+        "full" => BarrierKind::Full,
+        "tensor" => BarrierKind::Tensor,
+        _ => {
+            return Err(PyValueError::new_err("kind must be 'full' or 'tensor'"));
+        }
+    };
+    Ok(PyExpression(BlattWeisskopf::new(
+        py_tags(tags)?,
+        &decay.0,
+        parse_orbital_angular_momentum(l)?,
+        reference_mass,
+        q_r,
+        sheet,
+        kind,
+    )?))
+}
+
+/// Construct a Clebsch-Gordan constant expression.
+#[pyfunction(name = "ClebschGordan", signature = (*tags, j1, m1, j2, m2, j, m))]
+pub fn py_clebsch_gordan(
+    tags: &Bound<'_, PyTuple>,
+    j1: &Bound<'_, PyAny>,
+    m1: &Bound<'_, PyAny>,
+    j2: &Bound<'_, PyAny>,
+    m2: &Bound<'_, PyAny>,
+    j: &Bound<'_, PyAny>,
+    m: &Bound<'_, PyAny>,
+) -> PyResult<PyExpression> {
+    Ok(PyExpression(ClebschGordan::new(
+        py_tags(tags)?,
+        parse_angular_momentum(j1)?,
+        parse_projection(m1)?,
+        parse_angular_momentum(j2)?,
+        parse_projection(m2)?,
+        parse_angular_momentum(j)?,
+        parse_projection(m)?,
+    )?))
+}
+
+/// Construct a Wigner-3j constant expression.
+#[pyfunction(name = "Wigner3j", signature = (*tags, j1, m1, j2, m2, j3, m3))]
+pub fn py_wigner_3j(
+    tags: &Bound<'_, PyTuple>,
+    j1: &Bound<'_, PyAny>,
+    m1: &Bound<'_, PyAny>,
+    j2: &Bound<'_, PyAny>,
+    m2: &Bound<'_, PyAny>,
+    j3: &Bound<'_, PyAny>,
+    m3: &Bound<'_, PyAny>,
+) -> PyResult<PyExpression> {
+    Ok(PyExpression(Wigner3j::new(
+        py_tags(tags)?,
+        parse_angular_momentum(j1)?,
+        parse_projection(m1)?,
+        parse_angular_momentum(j2)?,
+        parse_projection(m2)?,
+        parse_angular_momentum(j3)?,
+        parse_projection(m3)?,
+    )?))
+}
+
+/// Construct a photon SDME amplitude.
+#[pyfunction(name = "PhotonSDME", signature = (*tags, helicity, helicity_prime, polarization = None))]
+pub fn py_photon_sdme(
+    tags: &Bound<'_, PyTuple>,
+    helicity: i32,
+    helicity_prime: i32,
+    polarization: Option<&PyPolarization>,
+) -> PyResult<PyExpression> {
+    let polarization = polarization
+        .map(|polarization| PhotonPolarization::Linear(Box::new(polarization.0.clone())))
+        .unwrap_or(PhotonPolarization::Unpolarized);
+    Ok(PyExpression(PhotonSDME::new(
+        py_tags(tags)?,
+        polarization,
+        PhotonHelicity::new(helicity)?,
+        PhotonHelicity::new(helicity_prime)?,
+    )?))
+}
+
+/// Construct a phase-space factor amplitude.
+#[pyfunction(name = "PhaseSpaceFactor", signature = (*tags, recoil_mass, daughter_1_mass, daughter_2_mass, resonance_mass, mandelstam_s))]
+pub fn py_phase_space_factor(
+    tags: &Bound<'_, PyTuple>,
+    recoil_mass: &PyMass,
+    daughter_1_mass: &PyMass,
+    daughter_2_mass: &PyMass,
+    resonance_mass: &PyMass,
+    mandelstam_s: &PyMandelstam,
+) -> PyResult<PyExpression> {
+    Ok(PyExpression(PhaseSpaceFactor::new(
+        py_tags(tags)?,
+        &recoil_mass.0,
+        &daughter_1_mass.0,
+        &daughter_2_mass.0,
+        &resonance_mass.0,
+        &mandelstam_s.0,
+    )?))
+}
+
+fn py_lookup_inputs(
+    variables: Vec<PyVariable>,
+    axis_coordinates: Vec<Vec<f64>>,
+) -> LadduResult<LookupInputs> {
+    let axis_coordinates = axis_coordinates
+        .into_iter()
+        .map(LookupAxis::new)
+        .collect::<LadduResult<Vec<_>>>()?;
+    let variables = variables
+        .into_iter()
+        .map(|variable| Box::new(variable) as Box<dyn Variable>)
+        .collect();
+    Ok((variables, axis_coordinates))
+}
+
+/// Construct a fixed-complex lookup table amplitude.
+#[pyfunction(name = "LookupTable", signature = (*tags, variables, axis_coordinates, values, interpolation = "nearest", boundary_mode = "zero"))]
+pub fn py_lookup_table(
+    tags: &Bound<'_, PyTuple>,
+    variables: Vec<PyVariable>,
+    axis_coordinates: Vec<Vec<f64>>,
+    values: Vec<Complex64>,
+    interpolation: &str,
+    boundary_mode: &str,
+) -> PyResult<PyExpression> {
+    let (variables, axis_coordinates) = py_lookup_inputs(variables, axis_coordinates)?;
+    Ok(PyExpression(LookupTable::new(
+        py_tags(tags)?,
+        variables,
+        axis_coordinates,
+        values,
+        interpolation.parse()?,
+        boundary_mode.parse()?,
+    )?))
+}
+
+/// Construct a scalar-parameter lookup table amplitude.
+#[pyfunction(name = "LookupTableScalar", signature = (*tags, variables, axis_coordinates, values, interpolation = "nearest", boundary_mode = "zero"))]
+pub fn py_lookup_table_scalar(
+    tags: &Bound<'_, PyTuple>,
+    variables: Vec<PyVariable>,
+    axis_coordinates: Vec<Vec<f64>>,
+    values: Vec<PyParameter>,
+    interpolation: &str,
+    boundary_mode: &str,
+) -> PyResult<PyExpression> {
+    let (variables, axis_coordinates) = py_lookup_inputs(variables, axis_coordinates)?;
+    Ok(PyExpression(LookupTable::new_scalar(
+        py_tags(tags)?,
+        variables,
+        axis_coordinates,
+        values.into_iter().map(|value| value.0).collect(),
+        interpolation.parse()?,
+        boundary_mode.parse()?,
+    )?))
+}
+
+/// Construct a cartesian-complex lookup table amplitude.
+#[pyfunction(name = "LookupTableComplex", signature = (*tags, variables, axis_coordinates, values, interpolation = "nearest", boundary_mode = "zero"))]
+pub fn py_lookup_table_complex(
+    tags: &Bound<'_, PyTuple>,
+    variables: Vec<PyVariable>,
+    axis_coordinates: Vec<Vec<f64>>,
+    values: Vec<(PyParameter, PyParameter)>,
+    interpolation: &str,
+    boundary_mode: &str,
+) -> PyResult<PyExpression> {
+    let (variables, axis_coordinates) = py_lookup_inputs(variables, axis_coordinates)?;
+    Ok(PyExpression(LookupTable::new_cartesian_complex(
+        py_tags(tags)?,
+        variables,
+        axis_coordinates,
+        values
+            .into_iter()
+            .map(|(value_re, value_im)| (value_re.0, value_im.0))
+            .collect(),
+        interpolation.parse()?,
+        boundary_mode.parse()?,
+    )?))
+}
+
+/// Construct a polar-complex lookup table amplitude.
+#[pyfunction(name = "LookupTablePolar", signature = (*tags, variables, axis_coordinates, values, interpolation = "nearest", boundary_mode = "zero"))]
+pub fn py_lookup_table_polar(
+    tags: &Bound<'_, PyTuple>,
+    variables: Vec<PyVariable>,
+    axis_coordinates: Vec<Vec<f64>>,
+    values: Vec<(PyParameter, PyParameter)>,
+    interpolation: &str,
+    boundary_mode: &str,
+) -> PyResult<PyExpression> {
+    let (variables, axis_coordinates) = py_lookup_inputs(variables, axis_coordinates)?;
+    Ok(PyExpression(LookupTable::new_polar_complex(
+        py_tags(tags)?,
+        variables,
+        axis_coordinates,
+        values
+            .into_iter()
+            .map(|(value_r, value_theta)| (value_r.0, value_theta.0))
+            .collect(),
+        interpolation.parse()?,
+        boundary_mode.parse()?,
+    )?))
+}
+
+/// Construct the fixed Kopf `a0` K-matrix amplitude.
+#[pyfunction(name = "KopfKMatrixA0", signature = (*tags, couplings, channel, mass, seed = None))]
+pub fn py_kopf_kmatrix_a0(
+    tags: &Bound<'_, PyTuple>,
+    couplings: [[PyParameter; 2]; 2],
+    channel: PyKopfKMatrixA0Channel,
+    mass: PyMass,
+    seed: Option<usize>,
+) -> PyResult<PyExpression> {
+    Ok(PyExpression(KopfKMatrixA0::new(
+        py_tags(tags)?,
+        array::from_fn(|i| array::from_fn(|j| couplings[i][j].clone().0)),
+        channel.into(),
+        &mass.0,
+        seed,
+    )?))
+}
+
+/// Construct the fixed Kopf `a2` K-matrix amplitude.
+#[pyfunction(name = "KopfKMatrixA2", signature = (*tags, couplings, channel, mass, seed = None))]
+pub fn py_kopf_kmatrix_a2(
+    tags: &Bound<'_, PyTuple>,
+    couplings: [[PyParameter; 2]; 2],
+    channel: PyKopfKMatrixA2Channel,
+    mass: PyMass,
+    seed: Option<usize>,
+) -> PyResult<PyExpression> {
+    Ok(PyExpression(KopfKMatrixA2::new(
+        py_tags(tags)?,
+        array::from_fn(|i| array::from_fn(|j| couplings[i][j].clone().0)),
+        channel.into(),
+        &mass.0,
+        seed,
+    )?))
+}
+
+/// Construct the fixed Kopf `f0` K-matrix amplitude.
+#[pyfunction(name = "KopfKMatrixF0", signature = (*tags, couplings, channel, mass, seed = None))]
+pub fn py_kopf_kmatrix_f0(
+    tags: &Bound<'_, PyTuple>,
+    couplings: [[PyParameter; 2]; 5],
+    channel: PyKopfKMatrixF0Channel,
+    mass: PyMass,
+    seed: Option<usize>,
+) -> PyResult<PyExpression> {
+    Ok(PyExpression(KopfKMatrixF0::new(
+        py_tags(tags)?,
+        array::from_fn(|i| array::from_fn(|j| couplings[i][j].clone().0)),
+        channel.into(),
+        &mass.0,
+        seed,
+    )?))
+}
+
+/// Construct the fixed Kopf `f2` K-matrix amplitude.
+#[pyfunction(name = "KopfKMatrixF2", signature = (*tags, couplings, channel, mass, seed = None))]
+pub fn py_kopf_kmatrix_f2(
+    tags: &Bound<'_, PyTuple>,
+    couplings: [[PyParameter; 2]; 4],
+    channel: PyKopfKMatrixF2Channel,
+    mass: PyMass,
+    seed: Option<usize>,
+) -> PyResult<PyExpression> {
+    Ok(PyExpression(KopfKMatrixF2::new(
+        py_tags(tags)?,
+        array::from_fn(|i| array::from_fn(|j| couplings[i][j].clone().0)),
+        channel.into(),
+        &mass.0,
+        seed,
+    )?))
+}
+
+/// Construct the fixed Kopf `pi1` K-matrix amplitude.
+#[pyfunction(name = "KopfKMatrixPi1", signature = (*tags, couplings, channel, mass))]
+pub fn py_kopf_kmatrix_pi1(
+    tags: &Bound<'_, PyTuple>,
+    couplings: [[PyParameter; 2]; 1],
+    channel: PyKopfKMatrixPi1Channel,
+    mass: PyMass,
+) -> PyResult<PyExpression> {
+    Ok(PyExpression(KopfKMatrixPi1::new(
+        py_tags(tags)?,
+        array::from_fn(|i| array::from_fn(|j| couplings[i][j].clone().0)),
+        channel.into(),
+        &mass.0,
+    )?))
+}
+
+/// Construct the fixed Kopf `rho` K-matrix amplitude.
+#[pyfunction(name = "KopfKMatrixRho", signature = (*tags, couplings, channel, mass))]
+pub fn py_kopf_kmatrix_rho(
+    tags: &Bound<'_, PyTuple>,
+    couplings: [[PyParameter; 2]; 2],
+    channel: PyKopfKMatrixRhoChannel,
+    mass: PyMass,
+) -> PyResult<PyExpression> {
+    Ok(PyExpression(KopfKMatrixRho::new(
+        py_tags(tags)?,
+        array::from_fn(|i| array::from_fn(|j| couplings[i][j].clone().0)),
+        channel.into(),
+        &mass.0,
+    )?))
+}
+
 #[pymethods]
 impl PyExpression {
-    /// The free parameters used by the Expression
+    /// The parameters used by the Expression.
     ///
     /// Returns
     /// -------
-    /// parameters : tuple of str
-    ///     The tuple of parameter names
+    /// parameters : ParameterMap
+    ///     The parameter map.
     #[getter]
-    fn parameters<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
-        PyTuple::new(py, self.0.parameters())
-    }
-    /// The free parameters used by the Expression
-    #[getter]
-    fn free_parameters<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
-        PyTuple::new(py, self.0.free_parameters())
-    }
-    /// The fixed parameters used by the Expression
-    #[getter]
-    fn fixed_parameters<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
-        PyTuple::new(py, self.0.fixed_parameters())
+    fn parameters(&self) -> PyParameterMap {
+        PyParameterMap(self.0.parameters())
     }
     /// Number of free parameters
     #[getter]
@@ -310,7 +933,7 @@ impl PyExpression {
 
     #[new]
     fn new() -> Self {
-        Self(Expression::create_null())
+        Self(Expression::default())
     }
     fn __getstate__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
         Ok(PyBytes::new(
@@ -345,22 +968,12 @@ impl PyEvaluator {
     ///
     /// Returns
     /// -------
-    /// parameters : tuple of str
-    ///     The tuple of parameter names
+    /// parameters : ParameterMap
+    ///     The parameter map.
     ///
     #[getter]
-    fn parameters<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
-        PyTuple::new(py, self.0.parameters())
-    }
-    /// The free parameters used by the Evaluator
-    #[getter]
-    fn free_parameters<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
-        PyTuple::new(py, self.0.free_parameters())
-    }
-    /// The fixed parameters used by the Evaluator
-    #[getter]
-    fn fixed_parameters<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
-        PyTuple::new(py, self.0.fixed_parameters())
+    fn parameters(&self) -> PyParameterMap {
+        PyParameterMap(self.0.parameters())
     }
     /// Number of free parameters
     #[getter]
@@ -393,19 +1006,19 @@ impl PyEvaluator {
     fn rename_parameters(&self, mapping: HashMap<String, String>) -> PyResult<()> {
         Ok(self.0.rename_parameters(&mapping)?)
     }
-    /// Activates Amplitudes in the Expression by name or glob selector
+    /// Activates Amplitude use-sites in the Expression by tag or glob selector.
     ///
     /// Parameters
     /// ----------
     /// arg : str or list of str
-    ///     Names or ``*``/``?`` glob selectors of Amplitudes to be activated
+    ///     Tags or ``*``/``?`` glob selectors of Amplitudes to be activated
     ///
     /// Raises
     /// ------
     /// TypeError
     ///     If `arg` is not a str or list of str
     /// ValueError
-    ///     If `arg` or any items of `arg` are not registered Amplitudes
+    ///     If `arg` or any items of `arg` match no tagged Amplitudes
     /// strict : bool, default=True
     ///     When ``True``, raise an error if any selector matches no amplitudes. When
     ///     ``False``, silently skip selectors with no matches.
@@ -431,26 +1044,26 @@ impl PyEvaluator {
         }
         Ok(())
     }
-    /// Activates all Amplitudes in the Expression
+    /// Activates all Amplitude use-sites in the Expression.
     ///
     fn activate_all(&self) {
         self.0.activate_all();
     }
-    /// Deactivates Amplitudes in the Expression by name or glob selector
+    /// Deactivates Amplitude use-sites in the Expression by tag or glob selector.
     ///
     /// Deactivated Amplitudes act as zeros in the Expression
     ///
     /// Parameters
     /// ----------
     /// arg : str or list of str
-    ///     Names or ``*``/``?`` glob selectors of Amplitudes to be deactivated
+    ///     Tags or ``*``/``?`` glob selectors of Amplitudes to be deactivated
     ///
     /// Raises
     /// ------
     /// TypeError
     ///     If `arg` is not a str or list of str
     /// ValueError
-    ///     If `arg` or any items of `arg` are not registered Amplitudes
+    ///     If `arg` or any items of `arg` match no tagged Amplitudes
     /// strict : bool, default=True
     ///     When ``True``, raise an error if any selector matches no amplitudes. When
     ///     ``False``, silently skip selectors with no matches.
@@ -476,26 +1089,26 @@ impl PyEvaluator {
         }
         Ok(())
     }
-    /// Deactivates all Amplitudes in the Expression
+    /// Deactivates all tagged Amplitude use-sites in the Expression.
     ///
     fn deactivate_all(&self) {
         self.0.deactivate_all();
     }
-    /// Isolates Amplitudes in the Expression by name or glob selector
+    /// Isolates Amplitude use-sites in the Expression by tag or glob selector.
     ///
-    /// Activates the Amplitudes given in `arg` and deactivates the rest
+    /// Activates the tagged Amplitudes given in `arg` and deactivates the rest.
     ///
     /// Parameters
     /// ----------
     /// arg : str or list of str
-    ///     Names or ``*``/``?`` glob selectors of Amplitudes to be isolated
+    ///     Tags or ``*``/``?`` glob selectors of Amplitudes to be isolated
     ///
     /// Raises
     /// ------
     /// TypeError
     ///     If `arg` is not a str or list of str
     /// ValueError
-    ///     If `arg` or any items of `arg` are not registered Amplitudes
+    ///     If `arg` or any items of `arg` match no tagged Amplitudes
     /// strict : bool, default=True
     ///     When ``True``, raise an error if any selector matches no amplitudes. When
     ///     ``False``, silently skip selectors with no matches.
@@ -715,6 +1328,88 @@ impl PyCompiledExpression {
     }
 }
 
+#[pyclass(name = "ParameterMap", module = "laddu", from_py_object)]
+#[derive(Clone)]
+pub struct PyParameterMap(pub ParameterMap);
+
+#[pymethods]
+impl PyParameterMap {
+    #[getter]
+    fn names<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
+        PyTuple::new(py, self.0.names())
+    }
+
+    #[getter]
+    fn free(&self) -> PyParameterMap {
+        PyParameterMap(self.0.free())
+    }
+
+    #[getter]
+    fn fixed(&self) -> PyParameterMap {
+        PyParameterMap(self.0.fixed())
+    }
+
+    fn contains(&self, name: &str) -> bool {
+        self.0.contains_key(name)
+    }
+
+    fn __contains__(&self, name: &str) -> bool {
+        self.contains(name)
+    }
+
+    fn __len__(&self) -> usize {
+        self.0.len()
+    }
+
+    fn __bool__(&self) -> bool {
+        !self.0.is_empty()
+    }
+
+    fn __getitem__(&self, index: &Bound<'_, PyAny>) -> PyResult<PyParameter> {
+        if let Ok(name) = index.extract::<String>() {
+            return self
+                .0
+                .get(&name)
+                .cloned()
+                .map(PyParameter)
+                .ok_or_else(|| pyo3::exceptions::PyKeyError::new_err(name));
+        }
+        if let Ok(index) = index.extract::<isize>() {
+            let len = self.0.len() as isize;
+            let normalized = if index < 0 { len + index } else { index };
+            if normalized < 0 || normalized >= len {
+                return Err(pyo3::exceptions::PyIndexError::new_err(format!(
+                    "parameter index out of range: {index}"
+                )));
+            }
+            return Ok(PyParameter(self.0[normalized as usize].clone()));
+        }
+        Err(pyo3::exceptions::PyTypeError::new_err(
+            "ParameterMap indices must be str or int",
+        ))
+    }
+
+    fn __str__(&self) -> String {
+        self.0.to_string()
+    }
+
+    fn __repr__(&self) -> String {
+        format!("{:?}", self.0)
+    }
+
+    fn index(&self, name: &str) -> PyResult<usize> {
+        self.0
+            .index(name)
+            .ok_or_else(|| PyValueError::new_err(format!("parameter not found: {name}")))
+    }
+
+    fn __iter__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyIterator>> {
+        let params: Vec<PyParameter> = self.0.clone().into_iter().map(PyParameter).collect();
+        let list = PyList::new(py, params)?;
+        PyIterator::from_object(&list)
+    }
+}
+
 #[pyclass(name = "Parameter", module = "laddu", from_py_object)]
 #[derive(Clone)]
 pub struct PyParameter(pub Parameter);
@@ -813,7 +1508,15 @@ pub fn py_parameter(
 }
 
 /// An amplitude used only for internal testing which evaluates `(p0 + i * p1) * event.p4s\[0\].e`.
-#[pyfunction(name = "TestAmplitude")]
-pub fn py_test_amplitude(name: &str, re: PyParameter, im: PyParameter) -> PyResult<PyExpression> {
-    Ok(PyExpression(TestAmplitude::new(name, re.0, im.0)?))
+#[pyfunction(name = "TestAmplitude", signature = (*tags, re, im))]
+pub fn py_test_amplitude(
+    tags: &Bound<'_, PyTuple>,
+    re: PyParameter,
+    im: PyParameter,
+) -> PyResult<PyExpression> {
+    Ok(PyExpression(TestAmplitude::new(
+        py_tags(tags)?,
+        re.0,
+        im.0,
+    )?))
 }

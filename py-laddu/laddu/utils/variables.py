@@ -8,7 +8,7 @@ an :class:`laddu.extensions.NLL`.
 Examples
 --------
 >>> import laddu as ld
->>> from laddu.utils.variables import Mass
+>>> from laddu.variables import Mass
 >>> columns = {
 ...     'kshort1_px': [0.1], 'kshort1_py': [0.0], 'kshort1_pz': [0.2], 'kshort1_e': [0.3],
 ...     'kshort2_px': [-0.1], 'kshort2_py': [0.0], 'kshort2_pz': [0.1], 'kshort2_e': [0.25],
@@ -39,16 +39,16 @@ from laddu.laddu import (
 )
 
 if TYPE_CHECKING:
-    from laddu.amplitudes import Expression
+    from laddu.amplitude import Expression
 
     _ScalarVariable = Mass | CosTheta | Phi | PolAngle | PolMagnitude | Mandelstam
 
 
-def _as_expression(self: _ScalarVariable, name: str) -> Expression:
+def _as_expression(self: _ScalarVariable, *tags: str) -> Expression:
     """Convert this variable into a real-valued expression."""
-    from laddu.amplitudes.common import VariableScalar
+    from laddu.amplitudes.scalar import VariableScalar
 
-    return VariableScalar(name, self)
+    return VariableScalar(*tags, variable=self)
 
 
 _AS_EXPRESSION_NAME = 'as_expression'

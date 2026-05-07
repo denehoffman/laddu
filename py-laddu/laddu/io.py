@@ -98,6 +98,16 @@ def from_dict(
     aux: list[str] | None = None,
     aliases: _Mapping[str, str | _Sequence[str]] | None = None,
 ) -> Dataset:
+    return from_columns(data, p4s=p4s, aux=aux, aliases=aliases)
+
+
+def from_columns(
+    data: _Mapping[str, ColumnInput],
+    *,
+    p4s: list[str] | None = None,
+    aux: list[str] | None = None,
+    aliases: _Mapping[str, str | _Sequence[str]] | None = None,
+) -> Dataset:
     normalized = _normalize_ingestion_columns(data)
     return _backend_from_numpy_columns(normalized, p4s=p4s, aux=aux, aliases=aliases)
 
@@ -293,7 +303,7 @@ def read_root(
     backend: _Literal['oxyroot', 'uproot'] = 'oxyroot',
     uproot_kwargs: UprootKwargs | None = None,
 ) -> Dataset:
-    backend_name = backend.lower() if backend else 'oxyroot'
+    backend_name = backend.lower()
     native_aliases = dict(aliases) if aliases is not None else None
 
     if backend_name not in {'oxyroot', 'uproot'}:
@@ -313,7 +323,7 @@ def read_root(
     backend_tree = tree or kwargs.pop('tree', None)
     return _open_with_uproot(
         _Path(path),
-        tree=backend_tree,
+        tree=str(backend_tree) if backend_tree is not None else None,
         p4s=p4s,
         aux=aux,
         aliases=native_aliases,
@@ -335,7 +345,7 @@ def read_root_chunked(
     if chunk_size < 1:
         msg = 'chunk_size must be >= 1'
         raise ValueError(msg)
-    backend_name = backend.lower() if backend else 'oxyroot'
+    backend_name = backend.lower()
     native_aliases = dict(aliases) if aliases is not None else None
 
     if backend_name not in {'oxyroot', 'uproot'}:
@@ -364,7 +374,7 @@ def read_root_chunked(
     backend_tree = tree or kwargs.pop('tree', None)
     yield from _open_with_uproot_chunked(
         _Path(path),
-        tree=backend_tree,
+        tree=str(backend_tree) if backend_tree is not None else None,
         p4s=p4s,
         aux=aux,
         aliases=native_aliases,
@@ -482,7 +492,7 @@ def write_root(
     precision: _Literal['f64', 'f32'] = 'f64',
     uproot_kwargs: UprootKwargs | None = None,
 ) -> None:
-    backend_name = backend.lower() if backend else 'oxyroot'
+    backend_name = backend.lower()
     if backend_name not in {'oxyroot', 'uproot'}:
         msg = f"Unsupported backend '{backend_name}'. Valid options are 'oxyroot' or 'uproot'."
         raise ValueError(msg)
@@ -801,7 +811,7 @@ def _iter_numpy_batches(
     buffers = _empty_numpy_buffers(p4_names, aux_names)
     count = 0
 
-    for event in dataset:
+    for event in dataset.events_global:
         p4_map = event.p4s
         for name in p4_names:
             vec = p4_map[name]
@@ -1096,6 +1106,7 @@ def _amptools_columns(
 
 __all__ = [
     'from_arrow',
+    'from_columns',
     'from_dict',
     'from_numpy',
     'from_pandas',
