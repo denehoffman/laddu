@@ -25,7 +25,7 @@ use numpy::{PyArray1, PyArray2};
 use pyo3::{
     exceptions::{PyTypeError, PyValueError},
     prelude::*,
-    types::{PyAny, PyBytes, PyList, PyTuple},
+    types::{PyAny, PyBytes, PyIterator, PyList, PyTuple},
 };
 
 use crate::{
@@ -1395,6 +1395,18 @@ impl PyParameterMap {
 
     fn __repr__(&self) -> String {
         format!("{:?}", self.0)
+    }
+
+    fn index(&self, name: &str) -> PyResult<usize> {
+        self.0
+            .index(name)
+            .ok_or_else(|| PyValueError::new_err(format!("parameter not found: {name}")))
+    }
+
+    fn __iter__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyIterator>> {
+        let params: Vec<PyParameter> = self.0.clone().into_iter().map(PyParameter).collect();
+        let list = PyList::new(py, params)?;
+        PyIterator::from_object(&list)
     }
 }
 
