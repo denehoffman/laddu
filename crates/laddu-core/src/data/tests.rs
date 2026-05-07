@@ -694,7 +694,12 @@ fn test_dataset_filtering() {
 
     let filtered = dataset.filter(&expression).unwrap();
     assert_eq!(filtered.n_events(), 1);
+    assert!(Arc::ptr_eq(&dataset.columnar, &filtered.columnar));
     assert_relative_eq!(mass.value(&filtered.event_local(0).unwrap()), 0.5);
+    let mut filtered_clone = (*filtered).clone();
+    assert!(filtered_clone
+        .add_aux_column_local("selected", [1.0])
+        .is_err());
 }
 
 #[test]
@@ -907,6 +912,7 @@ fn test_dataset_bootstrap() {
 
     let bootstrapped = dataset.bootstrap(43);
     assert_eq!(bootstrapped.n_events(), dataset.n_events());
+    assert!(Arc::ptr_eq(&dataset.columnar, &bootstrapped.columnar));
     assert_relative_eq!(
         bootstrapped
             .event_global(0)
@@ -1399,13 +1405,15 @@ fn test_fetch_event_chunk_mpi_matches_single_event_fetches() {
     let world = get_world().expect("MPI world should be initialized");
 
     let dataset = mpi_chunk_test_dataset(8);
-    let chunk = dataset.fetch_event_chunk_mpi(
-        1,
-        5,
-        &world,
-        dataset.n_events(),
-        MpiDatasetLayout::Canonical,
-    );
+    let chunk = dataset
+        .fetch_event_chunk_mpi(
+            1,
+            5,
+            &world,
+            dataset.n_events(),
+            MpiDatasetLayout::Canonical,
+        )
+        .expect("chunk fetch should succeed");
 
     assert_eq!(chunk.len(), 5);
     for (offset, event) in chunk.iter().enumerate() {
@@ -1423,6 +1431,7 @@ fn test_fetch_event_chunk_mpi_matches_single_event_fetches() {
             dataset.n_events(),
             MpiDatasetLayout::Canonical,
         )
+        .expect("empty chunk fetch should succeed")
         .is_empty());
     finalize_mpi();
 }
@@ -1434,13 +1443,15 @@ fn test_fetch_event_chunk_mpi_truncates_at_dataset_end() {
     let world = get_world().expect("MPI world should be initialized");
 
     let dataset = mpi_chunk_test_dataset(8);
-    let chunk = dataset.fetch_event_chunk_mpi(
-        6,
-        10,
-        &world,
-        dataset.n_events(),
-        MpiDatasetLayout::Canonical,
-    );
+    let chunk = dataset
+        .fetch_event_chunk_mpi(
+            6,
+            10,
+            &world,
+            dataset.n_events(),
+            MpiDatasetLayout::Canonical,
+        )
+        .expect("chunk fetch should succeed");
 
     assert_eq!(chunk.len(), 2);
     for (offset, event) in chunk.iter().enumerate() {
@@ -1465,6 +1476,7 @@ fn test_mpi_event_chunk_cursor_reuses_cached_chunk_for_dataset_and_events() {
     for index in 0..total {
         let actual = dataset_cursor
             .event_for_dataset(&dataset, index, &world, total, MpiDatasetLayout::Canonical)
+            .expect("dataset cursor fetch should succeed")
             .expect("dataset cursor event should exist");
         let expected = dataset
             .event_global(index)
@@ -1473,12 +1485,14 @@ fn test_mpi_event_chunk_cursor_reuses_cached_chunk_for_dataset_and_events() {
     }
     assert!(dataset_cursor
         .event_for_dataset(&dataset, total, &world, total, MpiDatasetLayout::Canonical)
+        .expect("dataset cursor fetch should succeed")
         .is_none());
 
     let mut events_cursor = MpiEventChunkCursor::new(4);
     for index in 0..total {
         let actual = events_cursor
             .event_for_dataset(&dataset, index, &world, total, MpiDatasetLayout::Canonical)
+            .expect("events cursor fetch should succeed")
             .expect("events cursor event should exist");
         let expected = dataset
             .event_global(index)
@@ -1514,6 +1528,7 @@ fn probe_mpi_iteration_chunk_size() {
             for index in 0..total {
                 let event = cursor
                     .event_for_dataset(&dataset, index, &world, total, MpiDatasetLayout::Canonical)
+                    .expect("cursor fetch should succeed")
                     .expect("cursor event should exist");
                 checksum += event.weight() + event.p4("beam").expect("beam should exist").e();
             }

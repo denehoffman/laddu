@@ -40,7 +40,7 @@ fn expand_output_path(file_path: &str) -> LadduResult<PathBuf> {
 /// Load a [`Dataset`] from a Parquet file.
 pub fn read_parquet(file_path: &str, options: &DatasetReadOptions) -> LadduResult<Arc<Dataset>> {
     let storage = read_parquet_storage(file_path, options)?;
-    Ok(Arc::new(storage.to_dataset()))
+    Ok(Arc::new(dataset_from_full_storage(storage)))
 }
 
 /// Load a Parquet file as an iterator of chunked [`Dataset`] values.
@@ -50,7 +50,7 @@ pub fn read_parquet_chunks(
     chunk_size: usize,
 ) -> LadduResult<impl Iterator<Item = LadduResult<Arc<Dataset>>>> {
     let chunks = read_parquet_storage_chunks(file_path, options, chunk_size)?;
-    Ok(chunks.map(|chunk| chunk.map(|storage| Arc::new(storage.to_dataset()))))
+    Ok(chunks.map(|chunk| chunk.map(|storage| Arc::new(dataset_from_chunk_storage(storage)))))
 }
 
 /// Load a Parquet file as chunked [`Dataset`] values using the chunk size from [`DatasetReadOptions`].
@@ -539,7 +539,35 @@ fn trim_columnar_rows(columnar: &mut DatasetStorage, drop_front: usize, expected
 /// Load a [`Dataset`] from a ROOT TTree using the oxyroot backend.
 pub fn read_root(file_path: &str, options: &DatasetReadOptions) -> LadduResult<Arc<Dataset>> {
     let storage = read_root_storage(file_path, options)?;
-    Ok(Arc::new(storage.to_dataset()))
+    Ok(Arc::new(dataset_from_full_storage(storage)))
+}
+
+fn dataset_from_full_storage(storage: Arc<DatasetStorage>) -> Dataset {
+    let dataset = storage.to_dataset();
+    #[cfg(feature = "mpi")]
+    {
+        let mut dataset = dataset;
+        if let Some(world) = crate::mpi::get_world() {
+            dataset.mpi_layout = Some(MpiDatasetLayout::Canonical);
+            dataset.set_cached_global_event_count_from_world(&world);
+            dataset.set_cached_global_weighted_sum_from_world(&world);
+        }
+        return dataset;
+    }
+    #[cfg(not(feature = "mpi"))]
+    dataset
+}
+
+fn dataset_from_chunk_storage(storage: Arc<DatasetStorage>) -> Dataset {
+    let dataset = storage.to_dataset();
+    #[cfg(feature = "mpi")]
+    {
+        let mut dataset = dataset;
+        dataset.mpi_layout = None;
+        return dataset;
+    }
+    #[cfg(not(feature = "mpi"))]
+    dataset
 }
 
 pub(crate) fn read_root_storage(
@@ -838,6 +866,7 @@ impl Dataset {
                 } else {
                     None
                 };
+                let local_storage = self.local_storage_for_export()?;
 
                 for (source_rank, source_count) in local_counts.iter().enumerate() {
                     let source_total_rows = *source_count as usize;
@@ -856,8 +885,8 @@ impl Dataset {
                         for i in 1..chunk_displs.len() {
                             chunk_displs[i] = chunk_displs[i - 1] + chunk_counts[i - 1];
                         }
-                        let mut gathered_p4 = Vec::with_capacity(self.columnar.p4.len());
-                        for p4 in &self.columnar.p4 {
+                        let mut gathered_p4 = Vec::with_capacity(local_storage.p4.len());
+                        for p4 in &local_storage.p4 {
                             let px_local = if world.rank() as usize == source_rank {
                                 &p4.px[source_start..source_end]
                             } else {
@@ -902,8 +931,8 @@ impl Dataset {
                             });
                         }
 
-                        let mut gathered_aux = Vec::with_capacity(self.columnar.aux.len());
-                        for aux_column in &self.columnar.aux {
+                        let mut gathered_aux = Vec::with_capacity(local_storage.aux.len());
+                        for aux_column in &local_storage.aux {
                             let aux_local = if world.rank() as usize == source_rank {
                                 &aux_column[source_start..source_end]
                             } else {
@@ -917,7 +946,7 @@ impl Dataset {
                         }
 
                         let weights_local = if world.rank() as usize == source_rank {
-                            &self.columnar.weights[source_start..source_end]
+                            &local_storage.weights[source_start..source_end]
                         } else {
                             &[]
                         };
@@ -965,7 +994,8 @@ impl Dataset {
                 return Ok(());
             }
         }
-        self.columnar.write_parquet_impl(file_path, options)
+        self.local_storage_for_export()?
+            .write_parquet_impl(file_path, options)
     }
 
     pub(super) fn write_root_impl(
@@ -1036,7 +1066,8 @@ impl Dataset {
         T: RootWriteValue,
     {
         if world.is_none() {
-            let columns = build_root_local_column_buffers::<T>(&self.columnar);
+            let local_storage = self.local_storage_for_export()?;
+            let columns = build_root_local_column_buffers::<T>(&local_storage);
             return write_root_file_from_local_columns(columns, file_path, tree_name);
         }
 
@@ -1075,7 +1106,7 @@ where
     T: RootWriteValue,
 {
     let mut iterators =
-        build_root_column_iterators::<T>(dataset, world, total_events, fetch_chunk_size);
+        build_root_column_iterators::<T>(dataset, world, total_events, fetch_chunk_size)?;
 
     if is_root {
         let mut file = RootFile::create(file_path).map_err(|err| {
@@ -1813,11 +1844,12 @@ fn build_root_column_iterators<T>(
     world: WorldHandle,
     total: usize,
     fetch_chunk_size: Option<usize>,
-) -> Vec<(String, ColumnIterator<T>)>
+) -> LadduResult<Vec<(String, ColumnIterator<T>)>>
 where
     T: FromF64 + Equivalence + Default + Clone,
 {
-    let columns = build_root_local_column_buffers::<T>(&dataset.columnar);
+    let local_storage = dataset.local_storage_for_export()?;
+    let columns = build_root_local_column_buffers::<T>(&local_storage);
     let fetcher = Rc::new(RefCell::new(SharedColumnChunkFetcher::new(
         columns,
         world,
@@ -1830,11 +1862,11 @@ where
         .iter()
         .map(|(name, _)| name.clone())
         .collect::<Vec<_>>();
-    column_names
+    Ok(column_names
         .into_iter()
         .enumerate()
         .map(|(column_index, name)| (name, ColumnIterator::new(fetcher.clone(), column_index)))
-        .collect()
+        .collect())
 }
 
 #[cfg(feature = "mpi")]

@@ -3,6 +3,8 @@ use std::{fmt::Display, ops::Deref, sync::Arc};
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
+#[cfg(feature = "mpi")]
+use super::dataset::MpiDatasetLayout;
 use super::{Dataset, DatasetMetadata};
 use crate::{
     variables::Variable,
@@ -219,6 +221,7 @@ impl DatasetStorage {
         #[cfg(feature = "mpi")]
         {
             if let Some(world) = crate::mpi::get_world() {
+                dataset.mpi_layout = Some(MpiDatasetLayout::Canonical);
                 dataset.set_cached_global_event_count_from_world(&world);
                 dataset.set_cached_global_weighted_sum_from_world(&world);
             }

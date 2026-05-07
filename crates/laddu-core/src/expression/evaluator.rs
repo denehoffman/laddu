@@ -2576,12 +2576,13 @@ impl Evaluator {
         active_mask: Vec<bool>,
         dataset: &Dataset,
     ) -> CachedIntegralCacheKey {
+        let (weights_ptr, weights_local_len) = dataset.local_weight_cache_key();
         CachedIntegralCacheKey {
             active_mask,
             n_events_local: dataset.n_events_local(),
-            weights_local_len: dataset.columnar.weights.len(),
+            weights_local_len,
             weighted_sum_bits: dataset.n_events_weighted_local().to_bits(),
-            weights_ptr: dataset.columnar.weights.as_ptr() as usize,
+            weights_ptr,
         }
     }
     fn precompute_cached_integrals_at_load(

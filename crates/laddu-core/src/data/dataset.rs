@@ -1,4 +1,5 @@
 use std::{
+    borrow::Cow,
     ops::{Deref, DerefMut, Index, IndexMut},
     sync::Arc,
 };
@@ -72,7 +73,8 @@ pub fn test_dataset() -> Dataset {
 /// A collection of events with optional metadata for name-based lookups.
 #[derive(Debug, Clone)]
 pub struct Dataset {
-    pub(crate) columnar: DatasetStorage,
+    pub(crate) columnar: Arc<DatasetStorage>,
+    rows: RowSelection,
     pub(crate) metadata: Arc<DatasetMetadata>,
     pub(crate) cached_local_weighted_sum: f64,
     #[cfg(feature = "mpi")]
@@ -80,7 +82,33 @@ pub struct Dataset {
     #[cfg(feature = "mpi")]
     pub(crate) cached_global_weighted_sum: f64,
     #[cfg(feature = "mpi")]
-    mpi_layout: Option<MpiDatasetLayout>,
+    pub(crate) mpi_layout: Option<MpiDatasetLayout>,
+}
+
+#[derive(Debug, Clone)]
+enum RowSelection {
+    Identity,
+    Indices(Arc<[usize]>),
+}
+
+impl RowSelection {
+    fn len(&self, storage_len: usize) -> usize {
+        match self {
+            Self::Identity => storage_len,
+            Self::Indices(indices) => indices.len(),
+        }
+    }
+
+    const fn is_identity(&self) -> bool {
+        matches!(self, Self::Identity)
+    }
+
+    fn physical_index(&self, logical_index: usize) -> usize {
+        match self {
+            Self::Identity => logical_index,
+            Self::Indices(indices) => indices[logical_index],
+        }
+    }
 }
 
 #[cfg(feature = "mpi")]
@@ -88,6 +116,7 @@ pub struct Dataset {
 pub(crate) enum MpiDatasetLayout {
     Canonical,
     RoundRobin,
+    Derived,
 }
 
 #[cfg(feature = "mpi")]
@@ -96,7 +125,7 @@ impl MpiDatasetLayout {
         self,
         global_index: usize,
         total: usize,
-        _local_len: usize,
+        local_len: usize,
         world: &SimpleCommunicator,
     ) -> (i32, usize) {
         match self {
@@ -105,13 +134,43 @@ impl MpiDatasetLayout {
                 let size = world.size() as usize;
                 ((global_index % size) as i32, global_index / size)
             }
+            Self::Derived => {
+                let counts = gather_local_event_counts(local_len, world);
+                let mut start = 0usize;
+                for (rank, count) in counts.into_iter().enumerate() {
+                    let end = start + count;
+                    if global_index < end {
+                        return (rank as i32, global_index - start);
+                    }
+                    start = end;
+                }
+                debug_assert!(
+                    global_index < total,
+                    "validated derived global event index should be in range"
+                );
+                (world.rank(), 0)
+            }
         }
     }
 
-    fn local_range(self, total: usize, world: &SimpleCommunicator) -> std::ops::Range<usize> {
+    fn local_range(
+        self,
+        total: usize,
+        local_len: usize,
+        world: &SimpleCommunicator,
+    ) -> std::ops::Range<usize> {
         match self {
             Self::Canonical => world.partition(total).range_for_rank(world.rank() as usize),
             Self::RoundRobin => 0..local_len_for_round_robin(total, world),
+            Self::Derived => {
+                let counts = gather_local_event_counts(local_len, world);
+                let start = counts
+                    .iter()
+                    .take(world.rank() as usize)
+                    .copied()
+                    .sum::<usize>();
+                start..start + counts[world.rank() as usize]
+            }
         }
     }
 
@@ -125,7 +184,7 @@ impl MpiDatasetLayout {
     ) -> Vec<usize> {
         match self {
             Self::Canonical => {
-                let local_range = self.local_range(total, world);
+                let local_range = self.local_range(total, local_len, world);
                 let owned_start = start.max(local_range.start);
                 let owned_end = end.min(local_range.end);
                 if owned_start < owned_end {
@@ -148,8 +207,31 @@ impl MpiDatasetLayout {
                     .filter(|local_index| *local_index < local_len)
                     .collect()
             }
+            Self::Derived => {
+                let counts = gather_local_event_counts(local_len, world);
+                let local_start = counts
+                    .iter()
+                    .take(world.rank() as usize)
+                    .copied()
+                    .sum::<usize>();
+                let local_end = local_start + local_len;
+                let owned_start = start.max(local_start);
+                let owned_end = end.min(local_end);
+                if owned_start < owned_end {
+                    (owned_start - local_start..owned_end - local_start).collect()
+                } else {
+                    Vec::new()
+                }
+            }
         }
     }
+}
+
+#[cfg(feature = "mpi")]
+fn gather_local_event_counts(local_len: usize, world: &SimpleCommunicator) -> Vec<usize> {
+    let mut counts = vec![0usize; world.size() as usize];
+    world.all_gather_into(&local_len, &mut counts);
+    counts
 }
 
 #[cfg(feature = "mpi")]
@@ -203,6 +285,96 @@ impl SharedDatasetIterExt for Arc<Dataset> {
 }
 
 impl Dataset {
+    fn from_columnar_storage(
+        columnar: DatasetStorage,
+        metadata: Arc<DatasetMetadata>,
+        rows: RowSelection,
+    ) -> Self {
+        #[cfg(feature = "mpi")]
+        let local_count = rows.len(columnar.n_events());
+        let local_weighted_sum = Self::weighted_sum_for_rows(&columnar, &rows);
+        Dataset {
+            columnar: Arc::new(columnar),
+            rows,
+            metadata,
+            cached_local_weighted_sum: local_weighted_sum,
+            #[cfg(feature = "mpi")]
+            cached_global_event_count: local_count,
+            #[cfg(feature = "mpi")]
+            cached_global_weighted_sum: local_weighted_sum,
+            #[cfg(feature = "mpi")]
+            mpi_layout: None,
+        }
+    }
+
+    fn weighted_sum_for_rows(columnar: &DatasetStorage, rows: &RowSelection) -> f64 {
+        match rows {
+            RowSelection::Identity => local_weighted_sum(&columnar.weights),
+            RowSelection::Indices(indices) => {
+                #[cfg(feature = "rayon")]
+                {
+                    indices
+                        .par_iter()
+                        .map(|index| columnar.weight(*index))
+                        .parallel_sum_with_accumulator::<Klein<f64>>()
+                }
+                #[cfg(not(feature = "rayon"))]
+                {
+                    indices
+                        .iter()
+                        .map(|index| columnar.weight(*index))
+                        .sum_with_accumulator::<Klein<f64>>()
+                }
+            }
+        }
+    }
+
+    fn indexed_local_view<I>(&self, indices: I) -> Arc<Dataset>
+    where
+        I: IntoIterator<Item = usize>,
+    {
+        let rows = RowSelection::Indices(indices.into_iter().collect::<Vec<_>>().into());
+        let local_weighted_sum = Self::weighted_sum_for_rows(&self.columnar, &rows);
+        let dataset = Dataset {
+            columnar: self.columnar.clone(),
+            rows,
+            metadata: self.metadata.clone(),
+            cached_local_weighted_sum: local_weighted_sum,
+            #[cfg(feature = "mpi")]
+            cached_global_event_count: 0,
+            #[cfg(feature = "mpi")]
+            cached_global_weighted_sum: local_weighted_sum,
+            #[cfg(feature = "mpi")]
+            mpi_layout: self.mpi_layout,
+        };
+        #[cfg(feature = "mpi")]
+        {
+            let mut dataset = dataset;
+            if dataset.mpi_layout.is_some() {
+                dataset.mpi_layout = Some(MpiDatasetLayout::Derived);
+                if let Some(world) = crate::mpi::get_world() {
+                    dataset.set_cached_global_event_count_from_world(&world);
+                    dataset.set_cached_global_weighted_sum_from_world(&world);
+                }
+            }
+            Arc::new(dataset)
+        }
+        #[cfg(not(feature = "mpi"))]
+        {
+            Arc::new(dataset)
+        }
+    }
+
+    fn ensure_mutable_storage(&self, operation: &str) -> LadduResult<()> {
+        if self.rows.is_identity() {
+            Ok(())
+        } else {
+            Err(LadduError::Custom(format!(
+                "Cannot {operation} on a filtered or bootstrapped dataset view; materialize it first"
+            )))
+        }
+    }
+
     /// Iterate over locally stored events as borrowed [`Event`] views.
     pub fn events_local(&self) -> impl Iterator<Item = Event<'_>> {
         DatasetViewIter {
@@ -244,7 +416,7 @@ impl Dataset {
     }
 
     fn refresh_local_weight_cache(&mut self) {
-        self.cached_local_weighted_sum = local_weighted_sum(&self.columnar.weights);
+        self.cached_local_weighted_sum = Self::weighted_sum_for_rows(&self.columnar, &self.rows);
         #[cfg(feature = "mpi")]
         {
             self.cached_global_weighted_sum = self.cached_local_weighted_sum;
@@ -260,16 +432,19 @@ impl Dataset {
 
     #[cfg(test)]
     pub(crate) fn clear_events_local(&mut self) {
-        for column in &mut self.columnar.p4 {
+        self.ensure_mutable_storage("clear local events")
+            .expect("test datasets should be materialized");
+        let columnar = Arc::make_mut(&mut self.columnar);
+        for column in &mut columnar.p4 {
             column.px.clear();
             column.py.clear();
             column.pz.clear();
             column.e.clear();
         }
-        for column in &mut self.columnar.aux {
+        for column in &mut columnar.aux {
             column.clear();
         }
-        self.columnar.weights.clear();
+        columnar.weights.clear();
         self.refresh_local_weight_cache();
     }
 
@@ -303,29 +478,25 @@ impl Dataset {
         self.metadata.aux_index(name)
     }
 
-    fn event_global_opt(&self, index: usize) -> Option<OwnedEvent> {
+    fn event_global_opt(&self, index: usize) -> LadduResult<Option<OwnedEvent>> {
         #[cfg(feature = "mpi")]
         {
             if let (Some(world), Some(_)) = (crate::mpi::get_world(), self.mpi_layout) {
                 let total = self.n_events();
                 if index >= total {
-                    return None;
+                    return Ok(None);
                 }
-                return Some(self.fetch_event_mpi(index, &world, total));
+                return self.fetch_event_mpi(index, &world, total).map(Some);
             }
         }
 
-        (index < self.n_events_local()).then(|| {
-            OwnedEvent::new(
-                Arc::new(self.columnar.event_data(index)),
-                self.metadata.clone(),
-            )
-        })
+        Ok((index < self.n_events_local())
+            .then(|| OwnedEvent::new(self.event_data_arc_local(index), self.metadata.clone())))
     }
 
     /// Retrieve a single owned event by global index.
     pub fn event_global(&self, index: usize) -> LadduResult<OwnedEvent> {
-        self.event_global_opt(index).ok_or_else(|| {
+        self.event_global_opt(index)?.ok_or_else(|| {
             LadduError::Custom(format!(
                 "Dataset index out of bounds: index {index}, length {}",
                 self.n_events()
@@ -341,12 +512,14 @@ impl Dataset {
                 self.n_events_local()
             )));
         }
-        Ok(self.columnar.event_view(event_index))
+        Ok(self.event_view(event_index))
     }
 
     /// Retrieve a four-momentum by name for the event at `event_index`.
     pub fn p4_by_name(&self, event_index: usize, name: &str) -> Option<Vec4> {
         self.event_global_opt(event_index)
+            .ok()
+            .flatten()
             .and_then(|event| event.p4(name))
     }
 
@@ -354,11 +527,14 @@ impl Dataset {
     pub fn aux_by_name(&self, event_index: usize, name: &str) -> Option<f64> {
         let idx = self.aux_index(name)?;
         self.event_global_opt(event_index)
+            .ok()
+            .flatten()
             .and_then(|event| event.aux.get(idx).copied())
     }
 
     pub(crate) fn event_view(&self, event_index: usize) -> Event<'_> {
-        self.columnar.event_view(event_index)
+        self.columnar
+            .event_view(self.rows.physical_index(event_index))
     }
 
     /// Get a reference to the [`EventData`] at the given index in the [`Dataset`] (non-MPI
@@ -374,13 +550,34 @@ impl Dataset {
     /// let event_0 = ds.event_global(0)?;
     /// ```
     pub(crate) fn event_data_arc_local(&self, index: usize) -> Arc<EventData> {
-        Arc::new(self.columnar.event_data(index))
+        Arc::new(self.columnar.event_data(self.rows.physical_index(index)))
     }
 
     pub(crate) fn local_event_data_arcs(&self) -> Vec<Arc<EventData>> {
         (0..self.n_events_local())
             .map(|index| self.event_data_arc_local(index))
             .collect()
+    }
+
+    pub(crate) fn local_storage_for_export(&self) -> LadduResult<Cow<'_, DatasetStorage>> {
+        if self.rows.is_identity() {
+            Ok(Cow::Borrowed(self.columnar.as_ref()))
+        } else {
+            Ok(Cow::Owned(Self::columnar_from_events(
+                &self.local_event_data_arcs(),
+                self.metadata.clone(),
+            )?))
+        }
+    }
+
+    pub(crate) fn local_weight_cache_key(&self) -> (usize, usize) {
+        match &self.rows {
+            RowSelection::Identity => (
+                self.columnar.weights.as_ptr() as usize,
+                self.n_events_local(),
+            ),
+            RowSelection::Indices(indices) => (indices.as_ptr() as usize, indices.len()),
+        }
     }
 
     #[cfg(feature = "mpi")]
@@ -445,11 +642,14 @@ impl Iterator for DatasetGlobalIter<'_> {
             if let (Some(world), Some(cursor), Some(layout)) =
                 (&self.world, &mut self.cursor, self.layout)
             {
-                return cursor.event_for_dataset(self.dataset, index, world, self.total, layout);
+                return cursor
+                    .event_for_dataset(self.dataset, index, world, self.total, layout)
+                    .ok()
+                    .flatten();
             }
         }
 
-        self.dataset.event_global_opt(index)
+        self.dataset.event_global_opt(index).ok().flatten()
     }
 }
 
@@ -555,18 +755,24 @@ impl MpiEventChunkCursor {
         world: &SimpleCommunicator,
         total: usize,
         layout: MpiDatasetLayout,
-    ) -> Option<OwnedEvent> {
+    ) -> LadduResult<Option<OwnedEvent>> {
         if global_index >= total {
-            return None;
+            return Ok(None);
         }
         if !self.contains(global_index) {
             self.chunk_start = global_index;
-            self.cached_events =
-                dataset.fetch_event_chunk_mpi(global_index, self.chunk_size, world, total, layout);
+            self.cached_events = dataset.fetch_event_chunk_mpi(
+                global_index,
+                self.chunk_size,
+                world,
+                total,
+                layout,
+            )?;
         }
-        self.cached_events
+        Ok(self
+            .cached_events
             .get(global_index - self.chunk_start)
-            .cloned()
+            .cloned())
     }
 }
 
@@ -586,13 +792,17 @@ impl Iterator for DatasetArcMpiIter {
     type Item = OwnedEvent;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let event = self.cursor.event_for_dataset(
-            &self.dataset,
-            self.index,
-            &self.world,
-            self.total,
-            self.layout,
-        );
+        let event = self
+            .cursor
+            .event_for_dataset(
+                &self.dataset,
+                self.index,
+                &self.world,
+                self.total,
+                self.layout,
+            )
+            .ok()
+            .flatten();
         self.index += 1;
         event
     }
@@ -619,7 +829,7 @@ impl Dataset {
             len_ok,
             duplicate,
         };
-        let serialized = bitcode::serialize(&local_status).unwrap();
+        let serialized = bitcode::serialize(&local_status)?;
         let local_byte_count = serialized.len() as i32;
         let mut byte_counts = vec![0_i32; world.size() as usize];
         world.all_gather_into(&local_byte_count, &mut byte_counts);
@@ -674,17 +884,21 @@ impl Dataset {
         global_index: usize,
         world: &SimpleCommunicator,
         total: usize,
-    ) -> OwnedEvent {
-        let layout = self
-            .mpi_layout
-            .expect("global MPI event fetch requires a global dataset layout");
+    ) -> LadduResult<OwnedEvent> {
+        let layout = self.mpi_layout.ok_or_else(|| {
+            LadduError::Custom(
+                "global MPI event fetch requires a global dataset layout".to_string(),
+            )
+        })?;
         let (owning_rank, local_index) =
             layout.owner_of(global_index, total, self.n_events_local(), world);
         let mut serialized_event_buffer_len: usize = 0;
         let mut serialized_event_buffer: Vec<u8> = Vec::default();
         if world.rank() == owning_rank {
-            let event = self.columnar.event_data(local_index);
-            serialized_event_buffer = bitcode::serialize(&event).unwrap();
+            let event = self
+                .columnar
+                .event_data(self.rows.physical_index(local_index));
+            serialized_event_buffer = bitcode::serialize(&event)?;
             serialized_event_buffer_len = serialized_event_buffer.len();
         }
         world
@@ -698,13 +912,16 @@ impl Dataset {
             .broadcast_into(&mut serialized_event_buffer);
 
         if world.rank() == owning_rank {
-            OwnedEvent::new(
-                Arc::new(self.columnar.event_data(local_index)),
+            Ok(OwnedEvent::new(
+                Arc::new(
+                    self.columnar
+                        .event_data(self.rows.physical_index(local_index)),
+                ),
                 self.metadata.clone(),
-            )
+            ))
         } else {
-            let event: EventData = bitcode::deserialize(&serialized_event_buffer[..]).unwrap();
-            OwnedEvent::new(Arc::new(event), self.metadata.clone())
+            let event: EventData = bitcode::deserialize(&serialized_event_buffer[..])?;
+            Ok(OwnedEvent::new(Arc::new(event), self.metadata.clone()))
         }
     }
 
@@ -716,9 +933,9 @@ impl Dataset {
         world: &SimpleCommunicator,
         total: usize,
         layout: MpiDatasetLayout,
-    ) -> Vec<OwnedEvent> {
+    ) -> LadduResult<Vec<OwnedEvent>> {
         if len == 0 || start >= total {
-            return Vec::new();
+            return Ok(Vec::new());
         }
 
         let end = (start + len).min(total);
@@ -727,14 +944,17 @@ impl Dataset {
 
         let local_events: Vec<EventData> = local_indices
             .into_iter()
-            .map(|local_index| self.columnar.event_data(local_index))
+            .map(|local_index| {
+                self.columnar
+                    .event_data(self.rows.physical_index(local_index))
+            })
             .collect();
         let local_event_count = local_events.len() as i32;
 
         let serialized_local = if local_events.is_empty() {
             Vec::new()
         } else {
-            bitcode::serialize(&local_events).unwrap()
+            bitcode::serialize(&local_events)?
         };
         let local_byte_count = serialized_local.len() as i32;
 
@@ -754,7 +974,7 @@ impl Dataset {
             &gathered_byte_displs,
         );
 
-        let mut events = Vec::with_capacity(end - start);
+        let mut events_by_rank = vec![Vec::new(); world.size() as usize];
         for rank in 0..world.size() as usize {
             if gathered_event_counts[rank] == 0 {
                 continue;
@@ -762,16 +982,25 @@ impl Dataset {
             let byte_start = gathered_byte_displs[rank] as usize;
             let byte_end = byte_start + gathered_byte_counts[rank] as usize;
             let decoded: Vec<EventData> =
-                bitcode::deserialize(&gathered_bytes[byte_start..byte_end]).unwrap();
+                bitcode::deserialize(&gathered_bytes[byte_start..byte_end])?;
             debug_assert_eq!(decoded.len(), gathered_event_counts[rank] as usize);
-            events.extend(
-                decoded
-                    .into_iter()
-                    .map(|event| OwnedEvent::new(Arc::new(event), self.metadata.clone())),
-            );
+            events_by_rank[rank] = decoded
+                .into_iter()
+                .map(|event| OwnedEvent::new(Arc::new(event), self.metadata.clone()))
+                .collect();
         }
 
-        events
+        let mut offsets = vec![0usize; world.size() as usize];
+        let mut events = Vec::with_capacity(end - start);
+        for global_index in start..end {
+            let (owning_rank, _) =
+                layout.owner_of(global_index, total, self.n_events_local(), world);
+            let rank = owning_rank as usize;
+            let offset = offsets[rank];
+            events.push(events_by_rank[rank][offset].clone());
+            offsets[rank] += 1;
+        }
+        Ok(events)
     }
 
     #[cfg(feature = "mpi")]
@@ -851,33 +1080,9 @@ impl Dataset {
     /// This method is not intended to be called in analyses but rather in writing methods
     /// that have `mpi`-feature-gated versions. Most users should just call [`Dataset::new`] instead.
     pub fn new_local(events: Vec<Arc<EventData>>, metadata: Arc<DatasetMetadata>) -> Self {
-        #[cfg(feature = "mpi")]
-        let local_count = events.len();
         let columnar = Self::columnar_from_events(&events, metadata.clone())
             .expect("Dataset requires rectangular p4/aux columns for canonical columnar storage");
-        #[cfg(feature = "rayon")]
-        let local_weighted_sum = columnar
-            .weights
-            .par_iter()
-            .copied()
-            .parallel_sum_with_accumulator::<Klein<f64>>();
-        #[cfg(not(feature = "rayon"))]
-        let local_weighted_sum = columnar
-            .weights
-            .iter()
-            .copied()
-            .sum_with_accumulator::<Klein<f64>>();
-        Dataset {
-            columnar,
-            metadata,
-            cached_local_weighted_sum: local_weighted_sum,
-            #[cfg(feature = "mpi")]
-            cached_global_event_count: local_count,
-            #[cfg(feature = "mpi")]
-            cached_global_weighted_sum: local_weighted_sum,
-            #[cfg(feature = "mpi")]
-            mpi_layout: None,
-        }
+        Self::from_columnar_storage(columnar, metadata, RowSelection::Identity)
     }
 
     /// Create an empty local dataset with explicit metadata.
@@ -894,7 +1099,8 @@ impl Dataset {
         {
             if crate::mpi::get_world().is_some() {
                 let dataset = Dataset {
-                    columnar: DatasetStorage::empty_with_capacity(metadata.clone(), 0),
+                    columnar: Arc::new(DatasetStorage::empty_with_capacity(metadata.clone(), 0)),
+                    rows: RowSelection::Identity,
                     metadata,
                     cached_local_weighted_sum: 0.0,
                     cached_global_event_count: 0,
@@ -905,7 +1111,8 @@ impl Dataset {
             }
         }
         Dataset {
-            columnar: DatasetStorage::empty_with_capacity(metadata.clone(), 0),
+            columnar: Arc::new(DatasetStorage::empty_with_capacity(metadata.clone(), 0)),
+            rows: RowSelection::Identity,
             metadata,
             cached_local_weighted_sum: 0.0,
             #[cfg(feature = "mpi")]
@@ -1008,20 +1215,10 @@ impl Dataset {
         let local = &partitions[world.rank() as usize];
         let columnar = Self::columnar_from_events(local, metadata.clone())
             .expect("Dataset requires rectangular p4/aux columns for canonical columnar storage");
-        #[cfg(feature = "rayon")]
-        let local_weighted_sum = columnar
-            .weights
-            .par_iter()
-            .copied()
-            .parallel_sum_with_accumulator::<Klein<f64>>();
-        #[cfg(not(feature = "rayon"))]
-        let local_weighted_sum = columnar
-            .weights
-            .iter()
-            .copied()
-            .sum_with_accumulator::<Klein<f64>>();
+        let local_weighted_sum = local_weighted_sum(&columnar.weights);
         let mut dataset = Dataset {
-            columnar,
+            columnar: Arc::new(columnar),
+            rows: RowSelection::Identity,
             metadata,
             cached_local_weighted_sum: local_weighted_sum,
             cached_global_event_count: 0,
@@ -1054,15 +1251,17 @@ impl Dataset {
         Dataset::new_local(events, metadata)
     }
 
-    fn push_event_data_local(&mut self, event_data: Arc<EventData>) {
-        self.columnar.push_event_data(&event_data);
+    fn push_event_data_local(&mut self, event_data: Arc<EventData>) -> LadduResult<()> {
+        self.ensure_mutable_storage("push events")?;
+        Arc::make_mut(&mut self.columnar).push_event_data(&event_data);
         self.refresh_local_weight_cache();
+        Ok(())
     }
 
     fn replace_metadata(&mut self, metadata: DatasetMetadata) {
         let metadata = Arc::new(metadata);
         self.metadata = metadata.clone();
-        self.columnar.set_metadata(metadata);
+        Arc::make_mut(&mut self.columnar).set_metadata(metadata);
     }
 
     fn validate_p4_column_len(&self, name: &str, len: usize) -> LadduResult<()> {
@@ -1090,7 +1289,7 @@ impl Dataset {
     fn add_p4_column_unchecked(&mut self, name: String, values: Vec<Vec4>) -> LadduResult<()> {
         let mut metadata = (*self.metadata).clone();
         metadata.add_p4_name(name)?;
-        self.columnar.push_p4_column(values);
+        Arc::make_mut(&mut self.columnar).push_p4_column(values);
         self.replace_metadata(metadata);
         Ok(())
     }
@@ -1098,7 +1297,7 @@ impl Dataset {
     fn add_aux_column_unchecked(&mut self, name: String, values: Vec<f64>) -> LadduResult<()> {
         let mut metadata = (*self.metadata).clone();
         metadata.add_aux_name(name)?;
-        self.columnar.push_aux_column(values);
+        Arc::make_mut(&mut self.columnar).push_aux_column(values);
         self.replace_metadata(metadata);
         Ok(())
     }
@@ -1113,6 +1312,7 @@ impl Dataset {
         N: Into<String>,
         V: IntoIterator<Item = Vec4>,
     {
+        self.ensure_mutable_storage("add a p4 column")?;
         #[cfg(feature = "mpi")]
         {
             if self.mpi_layout.is_some() {
@@ -1139,6 +1339,7 @@ impl Dataset {
         N: Into<String>,
         V: IntoIterator<Item = f64>,
     {
+        self.ensure_mutable_storage("add an aux column")?;
         #[cfg(feature = "mpi")]
         {
             if self.mpi_layout.is_some() {
@@ -1164,6 +1365,7 @@ impl Dataset {
         N: Into<String>,
         V: IntoIterator<Item = Vec4>,
     {
+        self.ensure_mutable_storage("add a p4 column")?;
         let name = name.into();
         let values = values.into_iter().collect::<Vec<_>>();
         #[cfg(feature = "mpi")]
@@ -1191,6 +1393,7 @@ impl Dataset {
         N: Into<String>,
         V: IntoIterator<Item = f64>,
     {
+        self.ensure_mutable_storage("add an aux column")?;
         let name = name.into();
         let values = values.into_iter().collect::<Vec<_>>();
         #[cfg(feature = "mpi")]
@@ -1221,6 +1424,7 @@ impl Dataset {
         P: IntoIterator<Item = Vec4>,
         A: IntoIterator<Item = f64>,
     {
+        self.ensure_mutable_storage("push events")?;
         #[cfg(feature = "mpi")]
         {
             if self.mpi_layout == Some(MpiDatasetLayout::RoundRobin) && self.n_events() > 0 {
@@ -1248,8 +1452,7 @@ impl Dataset {
         }
 
         let event_data = Arc::new(EventData { p4s, aux, weight });
-        self.push_event_data_local(event_data);
-        Ok(())
+        self.push_event_data_local(event_data)
     }
 
     /// Append one ordered event row collectively as a single global event.
@@ -1262,6 +1465,7 @@ impl Dataset {
         P: IntoIterator<Item = Vec4>,
         A: IntoIterator<Item = f64>,
     {
+        self.ensure_mutable_storage("push events")?;
         let p4s = p4s.into_iter().collect::<Vec<_>>();
         let aux = aux.into_iter().collect::<Vec<_>>();
         if p4s.len() != self.metadata.p4_names().len() {
@@ -1291,7 +1495,7 @@ impl Dataset {
                 self.mpi_layout = Some(MpiDatasetLayout::RoundRobin);
                 let global_index = self.n_events();
                 if global_index % world.size() as usize == world.rank() as usize {
-                    self.push_event_data_local(Arc::new(EventData { p4s, aux, weight }));
+                    self.push_event_data_local(Arc::new(EventData { p4s, aux, weight }))?;
                 } else {
                     self.refresh_local_weight_cache();
                 }
@@ -1299,8 +1503,7 @@ impl Dataset {
             }
         }
 
-        self.push_event_data_local(Arc::new(EventData { p4s, aux, weight }));
-        Ok(())
+        self.push_event_data_local(Arc::new(EventData { p4s, aux, weight }))
     }
 
     /// Append one named event row to the current rank.
@@ -1469,7 +1672,7 @@ impl Dataset {
     /// This method is not intended to be called in analyses but rather in writing methods
     /// that have `mpi`-feature-gated versions. Most users should just call [`Dataset::n_events`] instead.
     pub fn n_events_local(&self) -> usize {
-        self.columnar.n_events()
+        self.rows.len(self.columnar.n_events())
     }
 
     /// The number of [`EventData`]s in the [`Dataset`] (MPI-compatible version).
@@ -1512,7 +1715,13 @@ impl Dataset {
     /// This method is not intended to be called in analyses but rather in writing methods
     /// that have `mpi`-feature-gated versions. Most users should just call [`Dataset::weights`] instead.
     pub fn weights_local(&self) -> Vec<f64> {
-        self.columnar.weights.clone()
+        match &self.rows {
+            RowSelection::Identity => self.columnar.weights.clone(),
+            RowSelection::Indices(indices) => indices
+                .iter()
+                .map(|index| self.columnar.weight(*index))
+                .collect(),
+        }
     }
 
     /// Extract a list of weights over each [`EventData`] in the [`Dataset`] (MPI-compatible version).
@@ -1523,7 +1732,10 @@ impl Dataset {
     /// that have `mpi`-feature-gated versions. Most users should just call [`Dataset::weights`] instead.
     #[cfg(feature = "mpi")]
     pub fn weights_mpi(&self, world: &SimpleCommunicator) -> Vec<f64> {
-        if self.mpi_layout == Some(MpiDatasetLayout::RoundRobin) {
+        if matches!(
+            self.mpi_layout,
+            Some(MpiDatasetLayout::RoundRobin | MpiDatasetLayout::Derived)
+        ) {
             return self.events_global().map(|event| event.weight()).collect();
         }
         let local_weights = self.weights_local();
@@ -1608,24 +1820,16 @@ impl Dataset {
     /// that have `mpi`-feature-gated versions. Most users should just call [`Dataset::bootstrap`] instead.
     pub fn bootstrap_local(&self, seed: usize) -> Arc<Dataset> {
         let mut rng = fastrand::Rng::with_seed(seed as u64);
-        let mut indices: Vec<usize> = (0..self.n_events())
-            .map(|_| rng.usize(0..self.n_events()))
+        let n_events = self.n_events_local();
+        let mut indices: Vec<usize> = (0..n_events)
+            .map(|_| rng.usize(0..n_events))
             .collect::<Vec<usize>>();
         indices.sort();
-        #[cfg(feature = "rayon")]
-        let bootstrapped_events: Vec<Arc<EventData>> = indices
-            .into_par_iter()
-            .map(|idx| self.event_data_arc_local(idx))
-            .collect();
-        #[cfg(not(feature = "rayon"))]
-        let bootstrapped_events: Vec<Arc<EventData>> = indices
-            .into_iter()
-            .map(|idx| self.event_data_arc_local(idx))
-            .collect();
-        Arc::new(Dataset::new_with_metadata(
-            bootstrapped_events,
-            self.metadata.clone(),
-        ))
+        self.indexed_local_view(
+            indices
+                .into_iter()
+                .map(|index| self.rows.physical_index(index)),
+        )
     }
 
     /// Generate a new dataset with the same length by resampling the events in the original datset
@@ -1658,22 +1862,11 @@ impl Dataset {
                 }
             })
             .collect();
-        // `local_indices` only contains indices owned by the current rank, translating them into
-        // local indices on the events vector.
-        #[cfg(feature = "rayon")]
-        let bootstrapped_events: Vec<Arc<EventData>> = local_indices
-            .into_par_iter()
-            .map(|idx| self.event_data_arc_local(idx))
-            .collect();
-        #[cfg(not(feature = "rayon"))]
-        let bootstrapped_events: Vec<Arc<EventData>> = local_indices
-            .into_iter()
-            .map(|idx| self.event_data_arc_local(idx))
-            .collect();
-        Arc::new(Dataset::new_with_metadata(
-            bootstrapped_events,
-            self.metadata.clone(),
-        ))
+        self.indexed_local_view(
+            local_indices
+                .into_iter()
+                .map(|index| self.rows.physical_index(index)),
+        )
     }
 
     /// Generate a new dataset with the same length by resampling the events in the original datset
@@ -1693,29 +1886,26 @@ impl Dataset {
     pub fn filter(&self, expression: &VariableExpression) -> LadduResult<Arc<Dataset>> {
         let compiled = expression.compile(&self.metadata)?;
         #[cfg(feature = "rayon")]
-        let filtered_events: Vec<Arc<EventData>> = (0..self.n_events_local())
+        let filtered_indices: Vec<usize> = (0..self.n_events_local())
             .into_par_iter()
             .filter_map(|event_index| {
                 let event = self.event_view(event_index);
                 compiled
                     .evaluate(&event)
-                    .then(|| self.event_data_arc_local(event_index))
+                    .then(|| self.rows.physical_index(event_index))
             })
             .collect();
         #[cfg(not(feature = "rayon"))]
-        let filtered_events: Vec<Arc<EventData>> = (0..self.n_events_local())
+        let filtered_indices: Vec<usize> = (0..self.n_events_local())
             .into_iter()
             .filter_map(|event_index| {
                 let event = self.event_view(event_index);
                 compiled
                     .evaluate(&event)
-                    .then(|| self.event_data_arc_local(event_index))
+                    .then(|| self.rows.physical_index(event_index))
             })
             .collect();
-        Ok(Arc::new(Dataset::new_with_metadata(
-            filtered_events,
-            self.metadata.clone(),
-        )))
+        Ok(self.indexed_local_view(filtered_indices))
     }
 
     /// Bin a [`Dataset`] by the value of the given [`Variable`] into a number of `bins` within the
@@ -1734,46 +1924,46 @@ impl Dataset {
         let bin_edges = get_bin_edges(bins, range);
         let variable = variable;
         #[cfg(feature = "rayon")]
-        let evaluated: Vec<(usize, Arc<EventData>)> = (0..self.n_events_local())
+        let evaluated: Vec<(usize, usize)> = (0..self.n_events_local())
             .into_par_iter()
             .filter_map(|event| {
                 let value = variable.value(&self.event_view(event));
                 if value >= range.0 && value < range.1 {
                     let bin_index = ((value - range.0) / bin_width) as usize;
                     let bin_index = bin_index.min(bins - 1);
-                    Some((bin_index, self.event_data_arc_local(event)))
+                    Some((bin_index, self.rows.physical_index(event)))
                 } else {
                     None
                 }
             })
             .collect();
         #[cfg(not(feature = "rayon"))]
-        let evaluated: Vec<(usize, Arc<EventData>)> = (0..self.n_events_local())
+        let evaluated: Vec<(usize, usize)> = (0..self.n_events_local())
             .into_iter()
             .filter_map(|event| {
                 let value = variable.value(&self.event_view(event));
                 if value >= range.0 && value < range.1 {
                     let bin_index = ((value - range.0) / bin_width) as usize;
                     let bin_index = bin_index.min(bins - 1);
-                    Some((bin_index, self.event_data_arc_local(event)))
+                    Some((bin_index, self.rows.physical_index(event)))
                 } else {
                     None
                 }
             })
             .collect();
-        let mut binned_events: Vec<Vec<Arc<EventData>>> = vec![Vec::default(); bins];
-        for (bin_index, event) in evaluated {
-            binned_events[bin_index].push(event.clone());
+        let mut binned_indices: Vec<Vec<usize>> = vec![Vec::default(); bins];
+        for (bin_index, index) in evaluated {
+            binned_indices[bin_index].push(index);
         }
         #[cfg(feature = "rayon")]
-        let datasets: Vec<Arc<Dataset>> = binned_events
+        let datasets: Vec<Arc<Dataset>> = binned_indices
             .into_par_iter()
-            .map(|events| Arc::new(Dataset::new_with_metadata(events, self.metadata.clone())))
+            .map(|indices| self.indexed_local_view(indices))
             .collect();
         #[cfg(not(feature = "rayon"))]
-        let datasets: Vec<Arc<Dataset>> = binned_events
+        let datasets: Vec<Arc<Dataset>> = binned_indices
             .into_iter()
-            .map(|events| Arc::new(Dataset::new_with_metadata(events, self.metadata.clone())))
+            .map(|indices| self.indexed_local_view(indices))
             .collect();
         Ok(BinnedDataset {
             datasets,
