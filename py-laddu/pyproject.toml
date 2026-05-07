@@ -45,7 +45,7 @@ Documentation = "https://laddu.readthedocs.io/en/stable/"
 docs = ["sphinx", "sphinx-rtd-theme", "sphinx-copybutton"]
 pandas = ["pandas"]
 polars = ["polars"]
-tests = ["pytest", "pytest-cov", "pandas", "polars", "uproot"]
+tests = ["pytest", "pytest-cov", "pandas", "polars", "uproot", "matplotlib"]
 uproot = ["uproot"]
 mpi = ["laddu-mpi == 0.18.0"] # x-release-please-version #WARNING:  DO NOT EDIT
 
