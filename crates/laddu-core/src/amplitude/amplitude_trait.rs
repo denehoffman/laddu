@@ -95,7 +95,7 @@ pub trait Amplitude: DynClone + Send + Sync {
             .iter_mut()
             .enumerate()
             .for_each(|(event_index, cache)| {
-                let event = dataset.event_view[event_index];
+                let event = dataset.event_view(event_index);
                 self.precompute(&event, cache);
             });
     }
