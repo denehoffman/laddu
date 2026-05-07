@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+from collections.abc import Iterator
 from pathlib import Path
 
 import laddu as ld
@@ -42,7 +43,7 @@ def check_manual_dataset() -> None:
     assert list(dataset.weights) == global_weights
     assert list(dataset.weights_local) == local_weights
     assert isinstance(dataset.event_global(rank), Event)
-    assert isinstance(dataset.events_global, list)
+    assert isinstance(dataset.events_global, Iterator)
     assert isinstance(dataset.weights_global, type(dataset.weights))
     assert isinstance(dataset.n_events_global, int)
     assert isinstance(dataset.n_events_weighted_global, float)
@@ -69,7 +70,7 @@ def check_parquet_dataset() -> None:
     assert dataset.n_events_weighted == sum(global_weights)
     assert dataset.n_events_weighted_local == sum(local_weights)
     assert isinstance(dataset.event_global(0), Event)
-    assert isinstance(dataset.events_global, list)
+    assert isinstance(dataset.events_global, Iterator)
     assert isinstance(dataset.weights_global, type(dataset.weights))
     assert isinstance(dataset.n_events_global, int)
     assert isinstance(dataset.n_events_weighted_global, float)
