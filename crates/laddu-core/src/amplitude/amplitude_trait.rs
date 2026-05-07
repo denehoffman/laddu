@@ -90,10 +90,14 @@ pub trait Amplitude: DynClone + Send + Sync {
     /// Evaluate [`Amplitude::precompute`] over columnar event views in a [`Dataset`].
     #[cfg(not(feature = "rayon"))]
     fn precompute_all(&self, dataset: &Dataset, resources: &mut Resources) {
-        dataset.for_each_event_local(|event_index, event| {
-            let cache = &mut resources.caches[event_index];
-            self.precompute(&event, cache);
-        });
+        resources
+            .caches
+            .iter_mut()
+            .enumerate()
+            .for_each(|(event_index, cache)| {
+                let event = dataset.event_view[event_index];
+                self.precompute(&event, cache);
+            });
     }
 
     /// This method constitutes the main machinery of an [`Amplitude`], returning the actual
