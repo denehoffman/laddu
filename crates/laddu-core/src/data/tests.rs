@@ -596,6 +596,40 @@ fn test_dataset_explicit_local_global_push_non_mpi() {
 
 #[cfg(feature = "mpi")]
 #[mpi_test(np = [2])]
+fn test_dataset_push_event_local_mpi_appends_per_rank() {
+    use_mpi(true);
+    let world = get_world().expect("MPI world should be initialized");
+    let metadata = DatasetMetadata::new(vec!["beam"], vec!["pol_angle"]).unwrap();
+    let mut dataset = Dataset::empty_local(metadata);
+    let rank = world.rank() as f64;
+
+    for local_index in 0..2 {
+        let pz = rank * 10.0 + local_index as f64 + 1.0;
+        let beam = Vec3::new(0.0, 0.0, pz).with_mass(0.0);
+        dataset
+            .push_event_named_local([("beam", beam)], [("pol_angle", pz)], pz)
+            .expect("local event push should succeed");
+    }
+
+    assert_eq!(dataset.n_events_local(), 2);
+    assert_eq!(dataset.n_events(), 2);
+    let local_weights = dataset.weights_local();
+    assert_eq!(local_weights, vec![rank * 10.0 + 1.0, rank * 10.0 + 2.0]);
+    let iterated_weights = dataset
+        .events_global()
+        .map(|event| event.weight())
+        .collect::<Vec<_>>();
+    assert_eq!(iterated_weights, local_weights);
+
+    let local_count = dataset.n_events_local();
+    let mut gathered_counts = vec![0usize; world.size() as usize];
+    world.all_gather_into(&local_count, &mut gathered_counts);
+    assert_eq!(gathered_counts, vec![2; world.size() as usize]);
+    finalize_mpi();
+}
+
+#[cfg(feature = "mpi")]
+#[mpi_test(np = [2])]
 fn test_dataset_push_event_global_round_robin_mpi() {
     use_mpi(true);
     let world = get_world().expect("MPI world should be initialized");
@@ -625,6 +659,35 @@ fn test_dataset_push_event_global_round_robin_mpi() {
         .map(|event| event.weight())
         .collect::<Vec<_>>();
     assert_eq!(global_weights, vec![1.0, 2.0, 3.0, 4.0]);
+    finalize_mpi();
+}
+
+#[cfg(feature = "mpi")]
+#[mpi_test(np = [2])]
+fn test_dataset_push_event_mpi_rejects_mixed_local_and_global_layouts() {
+    use_mpi(true);
+    let metadata = DatasetMetadata::new(vec!["beam"], Vec::<String>::new()).unwrap();
+    let beam = Vec3::new(0.0, 0.0, 1.0).with_mass(0.0);
+
+    let mut local_dataset = Dataset::empty_local(metadata.clone());
+    local_dataset
+        .push_event_local([beam], [], 1.0)
+        .expect("local push should succeed");
+    assert!(matches!(
+        local_dataset.push_event_global([beam], [], 1.0),
+        Err(LadduError::Custom(message))
+            if message.contains("round-robin global events into a non-empty local")
+    ));
+
+    let mut global_dataset = Dataset::empty_local(metadata);
+    global_dataset
+        .push_event_global([beam], [], 1.0)
+        .expect("global push should succeed");
+    assert!(matches!(
+        global_dataset.push_event_local([beam], [], 1.0),
+        Err(LadduError::Custom(message))
+            if message.contains("local events into a round-robin global dataset")
+    ));
     finalize_mpi();
 }
 
