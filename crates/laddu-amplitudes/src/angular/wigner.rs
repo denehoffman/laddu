@@ -7,8 +7,7 @@ use laddu_core::{
     resources::{Cache, ComplexScalarID, Parameters, Resources},
     traits::Variable,
     variables::Angles,
-    AngularMomentum, AngularMomentumProjection, Decay, Frame, LadduResult, OrbitalAngularMomentum,
-    SpinState,
+    AngularMomentum, Decay, Frame, LadduResult, OrbitalAngularMomentum, Projection, SpinState,
 };
 use nalgebra::DVector;
 use num::complex::Complex64;
@@ -21,8 +20,8 @@ use crate::angular::ClebschGordan;
 pub struct WignerD {
     tags: Tags,
     spin: AngularMomentum,
-    row_projection: AngularMomentumProjection,
-    column_projection: AngularMomentumProjection,
+    row_projection: Projection,
+    column_projection: Projection,
     costheta: Box<dyn Variable>,
     phi: Box<dyn Variable>,
     angles_key: String,
@@ -37,8 +36,8 @@ impl WignerD {
     pub fn new(
         tags: impl IntoTags,
         spin: AngularMomentum,
-        row_projection: AngularMomentumProjection,
-        column_projection: AngularMomentumProjection,
+        row_projection: Projection,
+        column_projection: Projection,
         angles: &Angles,
     ) -> LadduResult<Expression> {
         SpinState::new(spin, row_projection)?;
@@ -65,10 +64,10 @@ pub trait DecayAmplitudeExt {
         &self,
         tags: impl IntoTags,
         spin: AngularMomentum,
-        projection: AngularMomentumProjection,
+        projection: Projection,
         daughter: &str,
-        lambda_1: AngularMomentumProjection,
-        lambda_2: AngularMomentumProjection,
+        lambda_1: Projection,
+        lambda_2: Projection,
         frame: Frame,
     ) -> LadduResult<Expression>;
 
@@ -78,14 +77,14 @@ pub trait DecayAmplitudeExt {
         &self,
         tags: impl IntoTags,
         spin: AngularMomentum,
-        projection: AngularMomentumProjection,
+        projection: Projection,
         orbital_l: OrbitalAngularMomentum,
         coupled_spin: AngularMomentum,
         daughter: &str,
         daughter_1_spin: AngularMomentum,
         daughter_2_spin: AngularMomentum,
-        lambda_1: AngularMomentumProjection,
-        lambda_2: AngularMomentumProjection,
+        lambda_1: Projection,
+        lambda_2: Projection,
         frame: Frame,
     ) -> LadduResult<Expression>;
 }
@@ -95,13 +94,13 @@ impl DecayAmplitudeExt for Decay {
         &self,
         tags: impl IntoTags,
         spin: AngularMomentum,
-        projection: AngularMomentumProjection,
+        projection: Projection,
         daughter: &str,
-        lambda_1: AngularMomentumProjection,
-        lambda_2: AngularMomentumProjection,
+        lambda_1: Projection,
+        lambda_2: Projection,
         frame: Frame,
     ) -> LadduResult<Expression> {
-        let lambda = AngularMomentumProjection::from_twice(lambda_1.value() - lambda_2.value());
+        let lambda = Projection::half_integer(lambda_1.value() - lambda_2.value());
         let angles = self.angles(daughter, frame)?;
         Ok(WignerD::new(tags, spin, projection, lambda, &angles)?.conj())
     }
@@ -110,24 +109,24 @@ impl DecayAmplitudeExt for Decay {
         &self,
         tags: impl IntoTags,
         spin: AngularMomentum,
-        projection: AngularMomentumProjection,
+        projection: Projection,
         orbital_l: OrbitalAngularMomentum,
         coupled_spin: AngularMomentum,
         daughter: &str,
         daughter_1_spin: AngularMomentum,
         daughter_2_spin: AngularMomentum,
-        lambda_1: AngularMomentumProjection,
-        lambda_2: AngularMomentumProjection,
+        lambda_1: Projection,
+        lambda_2: Projection,
         frame: Frame,
     ) -> LadduResult<Expression> {
-        let lambda = AngularMomentumProjection::from_twice(lambda_1.value() - lambda_2.value());
-        let minus_lambda_2 = AngularMomentumProjection::from_twice(-lambda_2.value());
+        let lambda = Projection::half_integer(lambda_1.value() - lambda_2.value());
+        let minus_lambda_2 = Projection::half_integer(-lambda_2.value());
         Ok(
             Expression::from(f64::from(2 * orbital_l.value() + 1).sqrt())
                 * ClebschGordan::new(
                     (),
                     orbital_l.angular_momentum(),
-                    AngularMomentumProjection::integer(0),
+                    Projection::integer(0),
                     coupled_spin,
                     lambda,
                     spin,

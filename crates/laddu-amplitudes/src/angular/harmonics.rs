@@ -7,7 +7,7 @@ use laddu_core::{
     resources::{Cache, ComplexScalarID, Parameters, Resources},
     traits::Variable,
     variables::Angles,
-    LadduResult, Polarization, Sign,
+    LadduResult, Polarization, Reflectivity,
 };
 use nalgebra::DVector;
 use num::complex::Complex64;
@@ -101,7 +101,7 @@ pub struct Zlm {
     tags: Tags,
     l: usize,
     m: isize,
-    r: Sign,
+    r: Reflectivity,
     angles: Angles,
     polarization: Polarization,
     csid: ComplexScalarID,
@@ -114,7 +114,7 @@ impl Zlm {
         tags: impl IntoTags,
         l: usize,
         m: isize,
-        r: Sign,
+        r: Reflectivity,
         angles: &Angles,
         polarization: &Polarization,
     ) -> LadduResult<Expression> {
@@ -171,11 +171,11 @@ impl Amplitude for Zlm {
         cache.store_complex_scalar(
             self.csid,
             match self.r {
-                Sign::Positive => Complex64::new(
+                Reflectivity::Positive => Complex64::new(
                     f64::sqrt(1.0 + pgamma) * zlm.re,
                     f64::sqrt(1.0 - pgamma) * zlm.im,
                 ),
-                Sign::Negative => Complex64::new(
+                Reflectivity::Negative => Complex64::new(
                     f64::sqrt(1.0 - pgamma) * zlm.re,
                     f64::sqrt(1.0 + pgamma) * zlm.im,
                 ),
@@ -322,7 +322,7 @@ mod tests {
         let dataset = Arc::new(test_dataset());
         let (reaction, angles) = reaction_context();
         let polarization = reaction.polarization("pol_magnitude", "pol_angle");
-        let expr = Zlm::new("zlm", 1, 1, Sign::Positive, &angles, &polarization).unwrap();
+        let expr = Zlm::new("zlm", 1, 1, Reflectivity::Positive, &angles, &polarization).unwrap();
         let evaluator = expr.load(&dataset).unwrap();
         let result = evaluator.evaluate(&[]).unwrap();
         assert_relative_eq!(result[0].re, 0.042841277808013944);

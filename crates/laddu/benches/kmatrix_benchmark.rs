@@ -11,7 +11,7 @@ use laddu::{
     data::DatasetReadOptions,
     extensions::NLL,
     io, parameter,
-    quantum::{Frame, Sign},
+    quantum::{Frame, Reflectivity},
     traits::LikelihoodTerm,
     variables::Mass,
 };
@@ -45,9 +45,9 @@ fn kmatrix_nll_benchmark(c: &mut Criterion) {
     let ds_mc = io::read_parquet("benches/bench.parquet", &options).unwrap();
 
     let (angles, polarization, resonance_mass) = reaction_variables();
-    let z00p = Zlm::new("Z00+", 0, 0, Sign::Positive, &angles, &polarization).unwrap();
-    let z00n = Zlm::new("Z00-", 0, 0, Sign::Negative, &angles, &polarization).unwrap();
-    let z22p = Zlm::new("Z22+", 2, 2, Sign::Positive, &angles, &polarization).unwrap();
+    let z00p = Zlm::new("Z00+", 0, 0, Reflectivity::Positive, &angles, &polarization).unwrap();
+    let z00n = Zlm::new("Z00-", 0, 0, Reflectivity::Negative, &angles, &polarization).unwrap();
+    let z22p = Zlm::new("Z22+", 2, 2, Reflectivity::Positive, &angles, &polarization).unwrap();
     let f0p = KopfKMatrixF0::new(
         "f0+",
         [
