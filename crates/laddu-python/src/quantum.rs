@@ -1,7 +1,7 @@
 pub mod angular_momentum {
     use laddu_core::{
-        allowed_projections, helicity_combinations, AngularMomentum, AngularMomentumProjection,
-        LadduError, LadduResult, OrbitalAngularMomentum,
+        allowed_projections, helicity_combinations, AngularMomentum, LadduError, LadduResult,
+        OrbitalAngularMomentum, Projection,
     };
     use num::rational::Ratio;
     use pyo3::{
@@ -13,7 +13,7 @@ pub mod angular_momentum {
     type PyHelicityCombination = (PyQuantumNumber, PyQuantumNumber, PyQuantumNumber);
 
     pub fn parse_angular_momentum(input: &Bound<'_, PyAny>) -> PyResult<AngularMomentum> {
-        Ok(parse_ratio_like(input).and_then(AngularMomentum::from_ratio)?)
+        Ok(parse_ratio_like(input).and_then(AngularMomentum::try_from)?)
     }
 
     fn parse_ratio_like(input: &Bound<'_, PyAny>) -> LadduResult<Ratio<i32>> {
@@ -26,7 +26,7 @@ pub mod angular_momentum {
             return Ok(Ratio::from_integer(value));
         }
         if let Ok(value) = input.extract::<f64>() {
-            let twice = AngularMomentumProjection::from_f64(value)?.value();
+            let twice = Projection::try_from(value)?.value();
             return Ok(Ratio::new(twice, 2));
         }
         let numerator = input
@@ -48,19 +48,19 @@ pub mod angular_momentum {
         ))
     }
 
-    pub fn parse_projection(input: &Bound<'_, PyAny>) -> PyResult<AngularMomentumProjection> {
-        Ok(parse_ratio_like(input).and_then(AngularMomentumProjection::from_ratio)?)
+    pub fn parse_projection(input: &Bound<'_, PyAny>) -> PyResult<Projection> {
+        Ok(parse_ratio_like(input).and_then(Projection::try_from)?)
     }
 
     pub fn parse_orbital_angular_momentum(
         input: &Bound<'_, PyAny>,
     ) -> PyResult<OrbitalAngularMomentum> {
-        Ok(parse_ratio_like(input).and_then(OrbitalAngularMomentum::from_ratio)?)
+        Ok(parse_ratio_like(input).and_then(OrbitalAngularMomentum::try_from)?)
     }
 
     pub fn projection_to_python(
         py: Python<'_>,
-        projection: AngularMomentumProjection,
+        projection: Projection,
     ) -> PyResult<PyQuantumNumber> {
         let twice = projection.value();
         if twice % 2 == 0 {
