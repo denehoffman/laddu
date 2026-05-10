@@ -427,8 +427,6 @@ impl LikelihoodRegistry {
 
 #[cfg(test)]
 mod tests {
-    #[cfg(feature = "mpi")]
-    use std::fs;
     use std::sync::Arc;
 
     use approx::assert_relative_eq;
@@ -634,7 +632,7 @@ mod tests {
     fn read_resident_rss_kb() -> Option<u64> {
         #[cfg(target_os = "linux")]
         {
-            let status = fs::read_to_string("/proc/self/status").ok()?;
+            let status = std::fs::read_to_string("/proc/self/status").ok()?;
             let vm_rss = status
                 .lines()
                 .find(|line| line.starts_with("VmRSS:"))?
