@@ -4,7 +4,7 @@ use std::{fmt::Display, str::FromStr};
 
 use serde::{Deserialize, Serialize};
 
-use crate::LadduError;
+use crate::{quantum::types::Sign, LadduError};
 
 mod types;
 pub use types::{AngularMomentum, Charge, OrbitalAngularMomentum, Parity, Projection, Statistics};
@@ -15,63 +15,11 @@ pub use state::{AllowedPartialWave, Isospin, PartialWave, ParticleProperties, Sp
 mod rules;
 pub use rules::{RuleSet, SelectionRules};
 
-/// A two-particle helicity combination.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
-pub struct HelicityCombination {
-    lambda_1: Projection,
-    lambda_2: Projection,
-    helicity: Projection,
-}
-
-impl HelicityCombination {
-    /// Construct a helicity combination from two daughter spin projections.
-    pub fn new(lambda_1: Projection, lambda_2: Projection) -> Self {
-        Self {
-            lambda_1,
-            lambda_2,
-            helicity: Projection::half_integer(lambda_1.value() - lambda_2.value()),
-        }
-    }
-
-    /// Return the first daughter projection.
-    pub const fn lambda_1(self) -> Projection {
-        self.lambda_1
-    }
-
-    /// Return the second daughter projection.
-    pub const fn lambda_2(self) -> Projection {
-        self.lambda_2
-    }
-
-    /// Return `lambda_1 - lambda_2`.
-    pub const fn helicity(self) -> Projection {
-        self.helicity
-    }
-}
-
 /// Enumerate allowed projections for a spin.
 pub fn allowed_projections(spin: AngularMomentum) -> Vec<Projection> {
     SpinState::allowed_projections(spin)
         .into_iter()
         .map(SpinState::projection)
-        .collect()
-}
-
-/// Enumerate all daughter helicity combinations for two spins.
-pub fn helicity_combinations(
-    spin_1: AngularMomentum,
-    spin_2: AngularMomentum,
-) -> Vec<HelicityCombination> {
-    let projections_1 = allowed_projections(spin_1);
-    let projections_2 = allowed_projections(spin_2);
-    projections_1
-        .into_iter()
-        .flat_map(|lambda_1| {
-            projections_2
-                .iter()
-                .copied()
-                .map(move |lambda_2| HelicityCombination::new(lambda_1, lambda_2))
-        })
         .collect()
 }
 
@@ -137,14 +85,21 @@ impl FromStr for Reflectivity {
     type Err = LadduError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_lowercase().as_ref() {
-            "+" | "plus" | "pos" | "positive" => Ok(Self::Positive),
-            "-" | "minus" | "neg" | "negative" => Ok(Self::Negative),
-            _ => Err(LadduError::ParseError {
-                name: s.to_string(),
-                object: "Reflectivity".to_string(),
-            }),
+        match parse_sign_value(s, "Reflectivity")? {
+            Sign::Positive => Ok(Self::Positive),
+            Sign::Negative => Ok(Self::Negative),
         }
+    }
+}
+
+pub(crate) fn parse_sign_value(s: &str, object: &str) -> Result<Sign, LadduError> {
+    match s.to_lowercase().as_ref() {
+        "+" | "plus" | "pos" | "positive" => Ok(Sign::Positive),
+        "-" | "minus" | "neg" | "negative" => Ok(Sign::Negative),
+        _ => Err(LadduError::ParseError {
+            name: s.to_string(),
+            object: object.to_string(),
+        }),
     }
 }
 
@@ -265,27 +220,6 @@ mod tests {
                 Projection::integer(1),
             ]
         );
-    }
-
-    #[test]
-    fn helicity_combinations_enumerate_daughter_projection_products() {
-        let spin_half = AngularMomentum::half_integer(1);
-        let combinations = helicity_combinations(spin_half, spin_half);
-
-        assert_eq!(
-            combinations,
-            vec![
-                HelicityCombination::new(
-                    Projection::half_integer(-1),
-                    Projection::half_integer(-1),
-                ),
-                HelicityCombination::new(Projection::half_integer(-1), Projection::half_integer(1),),
-                HelicityCombination::new(Projection::half_integer(1), Projection::half_integer(-1),),
-                HelicityCombination::new(Projection::half_integer(1), Projection::half_integer(1),),
-            ]
-        );
-        assert_eq!(combinations[1].helicity(), Projection::integer(-1));
-        assert_eq!(combinations[2].helicity(), Projection::integer(1));
     }
 
     #[test]

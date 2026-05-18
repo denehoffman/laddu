@@ -1,11 +1,20 @@
-use std::fmt::Display;
+use std::{fmt::Display, str::FromStr};
 
 use num::rational::Ratio;
 use serde::{Deserialize, Serialize};
 
-use crate::{LadduError, LadduResult};
+use crate::{quantum::parse_sign_value, LadduError, LadduResult};
 
 const QUANTUM_NUMBER_FLOAT_TOLERANCE: f64 = 1.0e-12;
+
+/// A helper enum denoting the sign of a state.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
+pub(crate) enum Sign {
+    /// A positive sign.
+    Positive,
+    /// A negative sign.
+    Negative,
+}
 
 /// A non-negative angular momentum stored as twice its physical value.
 ///
@@ -300,6 +309,17 @@ impl Display for Parity {
                 Self::Negative => "-",
             }
         )
+    }
+}
+
+impl FromStr for Parity {
+    type Err = LadduError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match parse_sign_value(s, "Parity")? {
+            Sign::Positive => Ok(Self::Positive),
+            Sign::Negative => Ok(Self::Negative),
+        }
     }
 }
 

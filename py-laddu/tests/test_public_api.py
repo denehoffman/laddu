@@ -77,6 +77,8 @@ def test_domain_modules_export_expected_analysis_types() -> None:
     assert ld.likelihood.NLL is ld.NLL
     assert ld.optimize.ControlFlow is ld.ControlFlow
     assert ld.quantum.allowed_projections is ld.allowed_projections
+    assert ld.quantum.allowed_partial_waves is ld.allowed_partial_waves
+    assert ld.quantum.ParticleProperties is ld.ParticleProperties
 
 
 def test_user_facing_objects_have_readable_display() -> None:

@@ -578,9 +578,9 @@ pub use crate::{
     kinematics::{DecayAngles, FrameAxes, RestFrame},
     parameters::{Parameter, ParameterID, ParameterMap, Parameters},
     quantum::{
-        allowed_projections, helicity_combinations, AllowedPartialWave, AngularMomentum, Channel,
-        Charge, Frame, HelicityCombination, Isospin, OrbitalAngularMomentum, Parity, PartialWave,
-        Projection, Reflectivity, SpinState, Statistics,
+        allowed_projections, AllowedPartialWave, AngularMomentum, Channel, Charge, Frame, Isospin,
+        OrbitalAngularMomentum, Parity, PartialWave, ParticleProperties, Projection, Reflectivity,
+        RuleSet, SelectionRules, SpinState, Statistics,
     },
     reaction::{
         Decay, Particle, ParticleGraph, ParticleSource, Reaction, ReactionTopology,
