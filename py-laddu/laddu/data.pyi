@@ -96,8 +96,8 @@ class Dataset:
     ) -> NDArray[np.float64]: ...
     def __getitem__(
         self,
-        index: int | Mass | CosTheta | Phi | PolAngle | PolMagnitude | Mandelstam,
-    ) -> Event | NDArray[np.float64]: ...
+        index: int | slice | Mass | CosTheta | Phi | PolAngle | PolMagnitude | Mandelstam,
+    ) -> Dataset | Event | NDArray[np.float64]: ...
     def bin_by(
         self,
         variable: Mass | CosTheta | Phi | PolAngle | PolMagnitude | Mandelstam,
