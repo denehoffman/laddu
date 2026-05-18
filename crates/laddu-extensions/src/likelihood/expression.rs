@@ -1,13 +1,11 @@
 use std::{
     collections::HashMap,
     fmt::{Debug, Display},
-    sync::Arc,
 };
 
 use auto_ops::*;
-use laddu_core::{amplitude::ParameterMap, LadduResult};
+use laddu_core::{amplitude::ParameterMap, LadduError, LadduResult};
 use nalgebra::DVector;
-use parking_lot::RwLock;
 
 use super::term::LikelihoodTerm;
 
@@ -171,54 +169,41 @@ impl LikelihoodExpression {
 
     /// The parameters referenced across all terms in this expression.
     pub fn parameters(&self) -> ParameterMap {
-        self.registry.parameter_map.read().clone()
+        self.registry.global_parameter_map().clone()
     }
 
     /// Number of free parameters.
     pub fn n_free(&self) -> usize {
-        self.registry.parameter_map.read().free().len()
+        self.registry.global_parameter_map().free().len()
     }
 
     /// Number of fixed parameters.
     pub fn n_fixed(&self) -> usize {
-        self.registry.parameter_map.read().fixed().len()
+        self.registry.global_parameter_map().fixed().len()
     }
 
     /// Total number of parameters (free + fixed).
     pub fn n_parameters(&self) -> usize {
-        self.registry.parameter_map.read().len()
-    }
-
-    fn assemble(&self, parameters: &[f64]) -> LadduResult<Vec<f64>> {
-        Ok(self
-            .registry
-            .parameter_map
-            .read()
-            .assemble(parameters)?
-            .values()
-            .to_vec())
+        self.registry.global_parameter_map().len()
     }
 
     /// Evaluate the sum/product of all terms.
     pub fn evaluate(&self, parameters: &[f64]) -> LadduResult<f64> {
-        let parameters = self.assemble(parameters)?;
-        let mut param_buffers = self.registry.buffers();
-        for (layout, buffer) in self
-            .registry
-            .param_layouts
-            .iter()
-            .zip(param_buffers.iter_mut())
-        {
-            for (buffer_idx, &param_idx) in layout.iter().enumerate() {
-                buffer[buffer_idx] = parameters[param_idx];
-            }
-        }
+        let layout = self.registry.global_layout()?;
+        layout.global_map.assemble(parameters)?; // NOTE: just a check
         let likelihood_values = LikelihoodValues(
             self.registry
                 .terms
                 .iter()
-                .zip(param_buffers.iter())
-                .map(|(term, buffer)| term.evaluate(buffer))
+                .zip(layout.layouts.iter())
+                .map(|(term, term_layout)| {
+                    term.evaluate(
+                        &term_layout
+                            .iter()
+                            .map(|&global_idx| parameters[global_idx])
+                            .collect::<Vec<_>>(),
+                    )
+                })
                 .collect::<LadduResult<Vec<_>>>()?,
         );
         Ok(self.tree.evaluate(&likelihood_values))
@@ -227,39 +212,38 @@ impl LikelihoodExpression {
     /// Evaluate the gradient.
     pub fn evaluate_gradient(&self, parameters: &[f64]) -> LadduResult<DVector<f64>> {
         let free_parameter_count = parameters.len();
-        let free_parameter_indices = self.registry.parameter_map.read().free_parameter_indices();
-        let parameters = self.assemble(parameters)?;
-        let mut param_buffers = self.registry.buffers();
-        for (layout, buffer) in self
-            .registry
-            .param_layouts
+        let layout = self.registry.global_layout()?;
+        layout.global_map.assemble(parameters)?; // NOTE: just a check
+        let parameter_sets = layout
+            .layouts
             .iter()
-            .zip(param_buffers.iter_mut())
-        {
-            for (buffer_idx, &param_idx) in layout.iter().enumerate() {
-                buffer[buffer_idx] = parameters[param_idx];
-            }
-        }
+            .map(|term_layout| {
+                term_layout
+                    .iter()
+                    .map(|&global_idx| parameters[global_idx])
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
         let likelihood_values = LikelihoodValues(
             self.registry
                 .terms
                 .iter()
-                .zip(param_buffers.iter())
-                .map(|(term, buffer)| term.evaluate(buffer))
+                .zip(parameter_sets.iter())
+                .map(|(term, term_parameters)| term.evaluate(term_parameters))
                 .collect::<LadduResult<Vec<_>>>()?,
         );
         let mut gradient_buffers: Vec<DVector<f64>> = (0..self.registry.terms.len())
             .map(|_| DVector::zeros(parameters.len()))
             .collect();
-        for (((term, param_buffer), gradient_buffer), layout) in self
+        for (((term, term_parameters), gradient_buffer), layout) in self
             .registry
             .terms
             .iter()
-            .zip(param_buffers.iter())
+            .zip(parameter_sets.iter())
             .zip(gradient_buffers.iter_mut())
-            .zip(self.registry.param_layouts.iter())
+            .zip(layout.layouts.iter())
         {
-            let term_gradient = term.evaluate_gradient(param_buffer)?; // This has a local layout
+            let term_gradient = term.evaluate_gradient(term_parameters)?; // This has a local layout
             for (term_idx, &buffer_idx) in layout.iter().enumerate() {
                 gradient_buffer[buffer_idx] = term_gradient[term_idx] // This has a global layout
             }
@@ -269,7 +253,12 @@ impl LikelihoodExpression {
             .tree
             .evaluate_gradient(&likelihood_values, &likelihood_gradients);
         let mut reduced = DVector::zeros(free_parameter_count);
-        for (out_idx, &global_idx) in free_parameter_indices.iter().enumerate() {
+        for (out_idx, &global_idx) in layout
+            .global_map
+            .free_parameter_indices()
+            .iter()
+            .enumerate()
+        {
             reduced[out_idx] = full_gradient[global_idx];
         }
         Ok(reduced)
@@ -303,7 +292,7 @@ impl LikelihoodTerm for LikelihoodExpression {
     }
 
     fn parameter_map(&self) -> ParameterMap {
-        self.registry.parameter_map.read().clone()
+        self.registry.global_parameter_map().clone()
     }
 }
 
@@ -328,11 +317,14 @@ impl_op_ex!(
     }
 );
 
+struct GlobalParameterLayout {
+    global_map: ParameterMap,
+    layouts: Vec<Vec<usize>>,
+}
+
 #[derive(Clone, Default)]
 struct LikelihoodRegistry {
     terms: Vec<Box<dyn LikelihoodTerm>>,
-    param_layouts: Vec<Vec<usize>>,
-    parameter_map: Arc<RwLock<ParameterMap>>,
 }
 
 impl LikelihoodRegistry {
@@ -342,27 +334,8 @@ impl LikelihoodRegistry {
         Ok(registry)
     }
 
-    fn buffers(&self) -> Vec<Vec<f64>> {
-        self.param_layouts
-            .iter()
-            .map(|layout| vec![0.0; layout.len()])
-            .collect()
-    }
-
     fn push_term(&mut self, term: Box<dyn LikelihoodTerm>) -> usize {
         let term_idx = self.terms.len();
-        let right_parameter_map = term.parameter_map();
-        let (merged_parameter_map, left_indices, right_indices) = {
-            let left_parameter_map = self.parameter_map.read();
-            left_parameter_map.merge(&right_parameter_map)
-        };
-        *self.parameter_map.write() = merged_parameter_map;
-        for layout in &mut self.param_layouts {
-            for index in layout {
-                *index = left_indices[*index];
-            }
-        }
-        self.param_layouts.push(right_indices);
         self.terms.push(term);
         term_idx
     }
@@ -382,28 +355,78 @@ impl LikelihoodRegistry {
         (registry, left_map, right_map)
     }
 
+    fn global_parameter_map(&self) -> ParameterMap {
+        let mut global = ParameterMap::default();
+        for term in &self.terms {
+            (global, _, _) = global.merge(&term.parameter_map());
+        }
+        global
+    }
+
+    fn global_layout(&self) -> LadduResult<GlobalParameterLayout> {
+        let global_map = self.global_parameter_map();
+        let global_free_index: HashMap<String, usize> = global_map
+            .free()
+            .names()
+            .into_iter()
+            .enumerate()
+            .map(|(idx, name)| (name, idx))
+            .collect();
+
+        let layouts = self
+            .terms
+            .iter()
+            .map(|term| {
+                term.parameter_map()
+                    .free()
+                    .names()
+                    .into_iter()
+                    .map(|name| {
+                        global_free_index.get(&name).copied().ok_or_else(|| {
+                            LadduError::UnregisteredParameter {
+                                name,
+                                reason: "free parameter missing in global parameter map"
+                                    .to_string(),
+                            }
+                        })
+                    })
+                    .collect()
+            })
+            .collect::<LadduResult<Vec<_>>>()?;
+
+        Ok(GlobalParameterLayout {
+            global_map,
+            layouts,
+        })
+    }
+
     fn fix_parameter(&self, name: &str, value: f64) -> LadduResult<()> {
-        self.parameter_map.read().fix_parameter(name, value)?;
         for term in &self.terms {
             if term.parameter_map().contains_key(name) {
-                term.fix_parameter(name, value)?;
+                term.parameter_map().fix_parameter(name, value)?;
             }
         }
         Ok(())
     }
 
     fn free_parameter(&self, name: &str) -> LadduResult<()> {
-        self.parameter_map.read().free_parameter(name)?;
         for term in &self.terms {
             if term.parameter_map().contains_key(name) {
-                term.free_parameter(name)?;
+                term.parameter_map().free_parameter(name)?;
             }
         }
         Ok(())
     }
 
     fn rename_parameter(&self, old: &str, new: &str) -> LadduResult<()> {
-        self.parameter_map.write().rename_parameter(old, new)?;
+        for term in &self.terms {
+            if term.parameter_map().contains_key(new) {
+                return Err(LadduError::ParameterConflict {
+                    name: new.to_string(),
+                    reason: "rename target already exists".to_string(),
+                });
+            }
+        }
         for term in &self.terms {
             if term.parameter_map().contains_key(old) {
                 term.rename_parameter(old, new)?;
@@ -413,13 +436,8 @@ impl LikelihoodRegistry {
     }
 
     fn rename_parameters(&self, mapping: &HashMap<String, String>) -> LadduResult<()> {
-        self.parameter_map.write().rename_parameters(mapping)?;
-        for term in &self.terms {
-            for (old, new) in mapping.iter() {
-                if term.parameter_map().contains_key(old) {
-                    term.rename_parameter(old, new)?;
-                }
-            }
+        for (old, new) in mapping {
+            self.rename_parameter(old, new)?;
         }
         Ok(())
     }

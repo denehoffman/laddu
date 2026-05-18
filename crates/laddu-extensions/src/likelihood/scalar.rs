@@ -28,7 +28,8 @@ impl LikelihoodScalar {
 
 impl LikelihoodTerm for LikelihoodScalar {
     fn evaluate(&self, parameters: &[f64]) -> LadduResult<f64> {
-        Ok(parameters[0])
+        let parameters = self.parameter_map.read().assemble(parameters)?;
+        Ok(parameters.values()[0])
     }
 
     fn evaluate_gradient(&self, _parameters: &[f64]) -> LadduResult<DVector<f64>> {
