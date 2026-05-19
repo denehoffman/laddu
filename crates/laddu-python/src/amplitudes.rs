@@ -269,12 +269,13 @@ pub fn py_breit_wigner(
     tags: &Bound<'_, PyTuple>,
     mass: PyParameter,
     width: PyParameter,
-    l: usize,
+    l: &Bound<'_, PyAny>,
     daughter_1_mass: &PyMass,
     daughter_2_mass: &PyMass,
     resonance_mass: &PyMass,
     barrier_factors: bool,
 ) -> PyResult<PyExpression> {
+    let l = parse_orbital_angular_momentum(l)?.value() as usize;
     if barrier_factors {
         Ok(PyExpression(BreitWigner::new(
             py_tags(tags)?,

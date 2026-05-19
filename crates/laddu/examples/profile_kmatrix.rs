@@ -14,7 +14,7 @@ use laddu::{
     data::DatasetReadOptions,
     extensions::NLL,
     io, parameter,
-    quantum::{Frame, Sign},
+    quantum::{Frame, Reflectivity},
     traits::LikelihoodTerm,
     variables::Mass,
 };
@@ -193,9 +193,9 @@ fn build_kmatrix_nll(dataset_path: &str) -> Box<NLL> {
     let ds_data = io::read_parquet(dataset_path, &options).expect("failed to load data sample");
     let ds_mc = io::read_parquet(dataset_path, &options).expect("failed to load MC sample");
     let (angles, polarization, resonance_mass) = reaction_variables();
-    let z00p = Zlm::new("Z00+", 0, 0, Sign::Positive, &angles, &polarization).unwrap();
-    let z00n = Zlm::new("Z00-", 0, 0, Sign::Negative, &angles, &polarization).unwrap();
-    let z22p = Zlm::new("Z22+", 2, 2, Sign::Positive, &angles, &polarization).unwrap();
+    let z00p = Zlm::new("Z00+", 0, 0, Reflectivity::Positive, &angles, &polarization).unwrap();
+    let z00n = Zlm::new("Z00-", 0, 0, Reflectivity::Negative, &angles, &polarization).unwrap();
+    let z22p = Zlm::new("Z22+", 2, 2, Reflectivity::Positive, &angles, &polarization).unwrap();
     let f0p = KopfKMatrixF0::new(
         "f0+",
         [

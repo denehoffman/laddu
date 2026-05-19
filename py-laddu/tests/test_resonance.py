@@ -114,6 +114,31 @@ def test_bw_no_bwbf_gradient() -> None:
     assert pytest.approx(result[0][1].imag) == 0.3131899140692953
 
 
+def test_bw_orbital_angular_momentum_accepts_quantum_number_inputs() -> None:
+    amp = BreitWigner(
+        'bw',
+        mass=parameter('mass'),
+        width=parameter('width'),
+        l=2.0,
+        daughter_1_mass=Mass(['kshort1']),
+        daughter_2_mass=Mass(['kshort2']),
+        resonance_mass=Mass(['kshort1', 'kshort2']),
+    )
+    result = amp.load(make_test_dataset()).evaluate([1.5, 0.3])
+    assert pytest.approx(result[0].real) == 1.4308791652435884
+
+    with pytest.raises(RuntimeError, match='orbital angular momentum must be integer'):
+        BreitWigner(
+            'bad_bw',
+            mass=parameter('mass'),
+            width=parameter('width'),
+            l=1.5,
+            daughter_1_mass=Mass(['kshort1']),
+            daughter_2_mass=Mass(['kshort2']),
+            resonance_mass=Mass(['kshort1', 'kshort2']),
+        )
+
+
 def test_bw_nonrel_evaluation() -> None:
     amp = BreitWignerNonRelativistic(
         'bw',

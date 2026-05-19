@@ -18,7 +18,7 @@ mod mpi_benches {
         mpi::{finalize_mpi, get_world, use_mpi},
         traits::LikelihoodTerm,
         utils::{
-            enums::{Frame, Sign},
+            enums::{Frame, Reflectivity},
             variables::Mass,
         },
         RngSubsetExtension,
@@ -101,11 +101,11 @@ mod mpi_benches {
             (dataset.clone(), dataset)
         };
         let (angles, polarization, resonance_mass) = reaction_variables();
-        let z00p = Zlm::new("Z00+", 0, 0, Sign::Positive, &angles, &polarization)
+        let z00p = Zlm::new("Z00+", 0, 0, Reflectivity::Positive, &angles, &polarization)
             .expect("z00+ should construct");
-        let z00n = Zlm::new("Z00-", 0, 0, Sign::Negative, &angles, &polarization)
+        let z00n = Zlm::new("Z00-", 0, 0, Reflectivity::Negative, &angles, &polarization)
             .expect("z00- should construct");
-        let z22p = Zlm::new("Z22+", 2, 2, Sign::Positive, &angles, &polarization)
+        let z22p = Zlm::new("Z22+", 2, 2, Reflectivity::Positive, &angles, &polarization)
             .expect("z22+ should construct");
 
         let f0p = KopfKMatrixF0::new(

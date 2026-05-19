@@ -12,7 +12,7 @@ use laddu::{
     },
     data::{Dataset, DatasetReadOptions},
     io, parameter,
-    quantum::{Frame, Sign},
+    quantum::{Frame, Reflectivity},
     traits::LikelihoodTerm,
     variables::Mass,
 };
@@ -158,10 +158,10 @@ fn build_breit_wigner_partial_wave_model() -> laddu::Expression {
     let (angles, polarization, resonance_mass, daughter_1_mass, daughter_2_mass) =
         reaction_variables();
 
-    let z00p =
-        Zlm::new("Z00+", 0, 0, Sign::Positive, &angles, &polarization).expect("z00 should build");
-    let z22p =
-        Zlm::new("Z22+", 2, 2, Sign::Positive, &angles, &polarization).expect("z22 should build");
+    let z00p = Zlm::new("Z00+", 0, 0, Reflectivity::Positive, &angles, &polarization)
+        .expect("z00 should build");
+    let z22p = Zlm::new("Z22+", 2, 2, Reflectivity::Positive, &angles, &polarization)
+        .expect("z22 should build");
     let bw_f01500 = BreitWigner::new(
         "f0(1500)",
         parameter!("f0_mass", 1.506),
@@ -202,12 +202,12 @@ fn build_kmatrix_nll() -> (Box<laddu::extensions::NLL>, Vec<f64>) {
     let ds_data = sample_dataset(&dataset, SAMPLE_SEED, SAMPLE_EVENTS);
     let ds_mc = ds_data.clone();
     let (angles, polarization, resonance_mass, _, _) = reaction_variables();
-    let z00p =
-        Zlm::new("Z00+", 0, 0, Sign::Positive, &angles, &polarization).expect("z00+ should build");
-    let z00n =
-        Zlm::new("Z00-", 0, 0, Sign::Negative, &angles, &polarization).expect("z00- should build");
-    let z22p =
-        Zlm::new("Z22+", 2, 2, Sign::Positive, &angles, &polarization).expect("z22+ should build");
+    let z00p = Zlm::new("Z00+", 0, 0, Reflectivity::Positive, &angles, &polarization)
+        .expect("z00+ should build");
+    let z00n = Zlm::new("Z00-", 0, 0, Reflectivity::Negative, &angles, &polarization)
+        .expect("z00- should build");
+    let z22p = Zlm::new("Z22+", 2, 2, Reflectivity::Positive, &angles, &polarization)
+        .expect("z22+ should build");
 
     let f0p = KopfKMatrixF0::new(
         "f0+",

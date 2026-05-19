@@ -1,11 +1,12 @@
 from laddu.amplitude import Expression, Parameter
+from laddu.quantum import QuantumNumber
 from laddu.variables import Mandelstam, Mass
 
 def BreitWigner(
     *tags: str,
     mass: Parameter,
     width: Parameter,
-    l: int,
+    l: QuantumNumber,
     daughter_1_mass: Mass,
     daughter_2_mass: Mass,
     resonance_mass: Mass,

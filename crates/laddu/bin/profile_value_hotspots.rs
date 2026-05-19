@@ -13,7 +13,7 @@ use laddu::{
     data::{Dataset, DatasetReadOptions},
     extensions::NLL,
     io, parameter,
-    quantum::{Frame, Sign},
+    quantum::{Frame, Reflectivity},
     traits::LikelihoodTerm,
     variables::Mass,
     Evaluator, Expression, RngSubsetExtension,
@@ -292,9 +292,9 @@ fn build_breit_wigner_partial_wave_model() -> Expression {
     let (angles, polarization, resonance_mass, daughter_1_mass, daughter_2_mass) =
         reaction_variables();
 
-    let z00p = Zlm::new("Z00+", 0, 0, Sign::Positive, &angles, &polarization)
+    let z00p = Zlm::new("Z00+", 0, 0, Reflectivity::Positive, &angles, &polarization)
         .expect("z00 should construct");
-    let z22p = Zlm::new("Z22+", 2, 2, Sign::Positive, &angles, &polarization)
+    let z22p = Zlm::new("Z22+", 2, 2, Reflectivity::Positive, &angles, &polarization)
         .expect("z22 should construct");
     let bw_f01500 = BreitWigner::new(
         "f0(1500)",
@@ -368,11 +368,11 @@ fn build_kmatrix_nll(dataset_path: &str, max_events: Option<usize>) -> Box<NLL> 
         (dataset.clone(), dataset)
     };
     let (angles, polarization, resonance_mass, _, _) = reaction_variables();
-    let z00p = Zlm::new("Z00+", 0, 0, Sign::Positive, &angles, &polarization)
+    let z00p = Zlm::new("Z00+", 0, 0, Reflectivity::Positive, &angles, &polarization)
         .expect("z00+ should construct");
-    let z00n = Zlm::new("Z00-", 0, 0, Sign::Negative, &angles, &polarization)
+    let z00n = Zlm::new("Z00-", 0, 0, Reflectivity::Negative, &angles, &polarization)
         .expect("z00- should construct");
-    let z22p = Zlm::new("Z22+", 2, 2, Sign::Positive, &angles, &polarization)
+    let z22p = Zlm::new("Z22+", 2, 2, Reflectivity::Positive, &angles, &polarization)
         .expect("z22+ should construct");
     let f0p = KopfKMatrixF0::new(
         "f0+",

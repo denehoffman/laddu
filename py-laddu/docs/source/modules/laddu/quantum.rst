@@ -3,7 +3,6 @@ quantum
 
 Quantum-number helpers.
 
-.. automodule:: laddu.utils.angular_momentum
-   :no-index:
+.. automodule:: laddu.quantum
    :members:
    :undoc-members:

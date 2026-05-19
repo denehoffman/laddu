@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.19.1](https://github.com/denehoffman/laddu/compare/v0.19.0...v0.19.1) (2026-05-18)
+
+
+### Features
+
+* Add selection rules and more complex quantum state handling, plus a few minor renames and API changes ([6922866](https://github.com/denehoffman/laddu/commit/6922866998d1fa0c8114efc3abb862b155a77baa))
+* Simplify helicity surface, add python API for quantum numbers ([01a95c2](https://github.com/denehoffman/laddu/commit/01a95c29d4e518c46894435e0b5a65e8c8fff274))
+
+
+### Bug Fixes
+
+* Correct parameter behavior in complex likelihood expressions ([6bdab33](https://github.com/denehoffman/laddu/commit/6bdab333ed7412ce152d4474647feaafcd33a4cd))
+
 ## [0.19.0](https://github.com/denehoffman/laddu/compare/v0.18.0...v0.19.0) (2026-05-07)
 
 

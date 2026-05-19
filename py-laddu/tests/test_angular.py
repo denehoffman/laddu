@@ -122,7 +122,7 @@ def test_quantum_number_inputs_reject_invalid_values() -> None:
     with pytest.raises(RuntimeError, match='integer or half-integer'):
         ClebschGordan('bad_fraction', j1=Fraction(1, 3), m1=0, j2=1, m2=0, j=1, m=0)
 
-    with pytest.raises(RuntimeError, match='orbital angular momentum must be an integer'):
+    with pytest.raises(RuntimeError, match='orbital angular momentum must be integer'):
         BlattWeisskopf('bad_l', decay=rxn.decay('x'), l=1.5, reference_mass=1.5)
 
 
