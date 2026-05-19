@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.19.2](https://github.com/denehoffman/laddu/compare/v0.19.1...v0.19.2) (2026-05-19)
+
+
+### Bug Fixes
+
+* Handle reused amplitude use sites in NLL ([6bc45c8](https://github.com/denehoffman/laddu/commit/6bc45c896536d010ae6db06dda1f0f3bcbb5507d))
+
 ## [0.19.1](https://github.com/denehoffman/laddu/compare/v0.19.0...v0.19.1) (2026-05-18)
 
 
