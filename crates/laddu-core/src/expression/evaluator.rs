@@ -2344,8 +2344,26 @@ impl Evaluator {
         .ok()
     }
 
+    /// Number of slots required for buffers passed to expression amplitude evaluation helpers.
+    ///
+    /// This count is the number of amplitude use-sites in the expression, not the number of
+    /// unique registered amplitude computations. Reused amplitudes therefore have one slot per
+    /// expression use-site, and all expression value/gradient scratch buffers should be sized
+    /// with this value.
+    pub fn amplitude_value_slot_count(&self) -> usize {
+        self.amplitude_use_sites.len()
+    }
+
+    /// Fill amplitude values for one event in expression use-site order.
+    ///
+    /// `amplitude_values` must have length [`Evaluator::amplitude_value_slot_count`].
+    /// `active_indices` must contain active amplitude use-site indices, such as those returned
+    /// by [`Resources::active_indices`](crate::resources::Resources::active_indices) or derived
+    /// from an active mask. The buffer is zeroed before active values are written. If multiple
+    /// use-sites refer to the same registered amplitude computation, that amplitude is computed
+    /// once and copied into each active use-site slot.
     #[inline]
-    fn fill_amplitude_values(
+    pub fn fill_amplitude_values(
         &self,
         amplitude_values: &mut [Complex64],
         active_indices: &[usize],
@@ -2397,8 +2415,15 @@ impl Evaluator {
         }
     }
 
+    /// Fill amplitude values and parameter gradients for one event in expression use-site order.
+    ///
+    /// `amplitude_values` and `gradient_values` must both have length
+    /// [`Evaluator::amplitude_value_slot_count`]. `active_indices` and `active_mask` are both
+    /// expressed in amplitude use-site space. Values and gradients for inactive use-sites are
+    /// zeroed, while reused amplitude computations are evaluated once and copied into each active
+    /// use-site slot that references them.
     #[inline]
-    fn fill_amplitude_values_and_gradients(
+    pub fn fill_amplitude_values_and_gradients(
         &self,
         amplitude_values: &mut [Complex64],
         gradient_values: &mut [DVector<Complex64>],
@@ -2409,26 +2434,6 @@ impl Evaluator {
     ) {
         self.fill_amplitude_values(amplitude_values, active_indices, parameters, cache);
         self.fill_amplitude_gradients(gradient_values, active_mask, parameters, cache);
-    }
-
-    #[doc(hidden)]
-    pub fn fill_amplitude_values_and_gradients_public(
-        &self,
-        amplitude_values: &mut [Complex64],
-        gradient_values: &mut [DVector<Complex64>],
-        active_indices: &[usize],
-        active_mask: &[bool],
-        parameters: &Parameters,
-        cache: &Cache,
-    ) {
-        self.fill_amplitude_values_and_gradients(
-            amplitude_values,
-            gradient_values,
-            active_indices,
-            active_mask,
-            parameters,
-            cache,
-        );
     }
 
     #[cfg(feature = "execution-context-prototype")]

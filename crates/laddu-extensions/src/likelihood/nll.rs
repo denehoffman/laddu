@@ -71,7 +71,7 @@ where
 {
     let resources = evaluator.resources.read();
     let parameters = resources.parameter_map.assemble(parameters)?;
-    let amplitude_len = evaluator.amplitudes.len();
+    let amplitude_len = evaluator.amplitude_value_slot_count();
     let active_indices = resources.active_indices().to_vec();
     let program_snapshot = evaluator.expression_value_program_snapshot();
     let slot_count = evaluator.expression_value_program_snapshot_slot_count(&program_snapshot);
@@ -89,10 +89,12 @@ where
                     )
                 },
                 |(amplitude_values, expr_slots), (cache, event)| {
-                    for &amp_idx in &active_indices {
-                        amplitude_values[amp_idx] =
-                            evaluator.amplitudes[amp_idx].compute(&parameters, cache);
-                    }
+                    evaluator.fill_amplitude_values(
+                        amplitude_values,
+                        &active_indices,
+                        &parameters,
+                        cache,
+                    );
                     let l = evaluator.evaluate_expression_value_with_program_snapshot(
                         &program_snapshot,
                         amplitude_values,
@@ -112,10 +114,12 @@ where
             .iter()
             .zip(evaluator.dataset.weights_local().iter())
             .map(|(cache, event)| {
-                for &amp_idx in &active_indices {
-                    amplitude_values[amp_idx] =
-                        evaluator.amplitudes[amp_idx].compute(&parameters, cache);
-                }
+                evaluator.fill_amplitude_values(
+                    &mut amplitude_values,
+                    &active_indices,
+                    &parameters,
+                    cache,
+                );
                 let l = evaluator.evaluate_expression_value_with_program_snapshot(
                     &program_snapshot,
                     &amplitude_values,
@@ -134,7 +138,7 @@ pub(crate) fn project_weights_local_from_evaluator(
 ) -> LadduResult<Vec<f64>> {
     let resources = evaluator.resources.read();
     let parameters = resources.parameter_map.assemble(parameters)?;
-    let amplitude_len = evaluator.amplitudes.len();
+    let amplitude_len = evaluator.amplitude_value_slot_count();
     let active_indices = resources.active_indices().to_vec();
     let program_snapshot = evaluator.expression_value_program_snapshot();
     let slot_count = evaluator.expression_value_program_snapshot_slot_count(&program_snapshot);
@@ -152,10 +156,12 @@ pub(crate) fn project_weights_local_from_evaluator(
                     )
                 },
                 |(amplitude_values, expr_slots), (cache, event)| {
-                    for &amp_idx in &active_indices {
-                        amplitude_values[amp_idx] =
-                            evaluator.amplitudes[amp_idx].compute(&parameters, cache);
-                    }
+                    evaluator.fill_amplitude_values(
+                        amplitude_values,
+                        &active_indices,
+                        &parameters,
+                        cache,
+                    );
                     let value = evaluator.evaluate_expression_value_with_program_snapshot(
                         &program_snapshot,
                         amplitude_values,
@@ -175,10 +181,12 @@ pub(crate) fn project_weights_local_from_evaluator(
             .iter()
             .zip(evaluator.dataset.weights_local().iter())
             .map(|(cache, event)| {
-                for &amp_idx in &active_indices {
-                    amplitude_values[amp_idx] =
-                        evaluator.amplitudes[amp_idx].compute(&parameters, cache);
-                }
+                evaluator.fill_amplitude_values(
+                    &mut amplitude_values,
+                    &active_indices,
+                    &parameters,
+                    cache,
+                );
                 let value = evaluator.evaluate_expression_value_with_program_snapshot(
                     &program_snapshot,
                     &amplitude_values,
@@ -198,7 +206,7 @@ pub(crate) fn project_weights_local_from_resolved_mask(
 ) -> LadduResult<Vec<f64>> {
     let resources = evaluator.resources.read();
     let parameters = resources.parameter_map.assemble(parameters)?;
-    let amplitude_len = evaluator.amplitudes.len();
+    let amplitude_len = evaluator.amplitude_value_slot_count();
     let active_indices = resolved_mask
         .iter()
         .enumerate()
@@ -221,10 +229,12 @@ pub(crate) fn project_weights_local_from_resolved_mask(
                     )
                 },
                 |(amplitude_values, expr_slots), (cache, event)| {
-                    for &amp_idx in &active_indices {
-                        amplitude_values[amp_idx] =
-                            evaluator.amplitudes[amp_idx].compute(&parameters, cache);
-                    }
+                    evaluator.fill_amplitude_values(
+                        amplitude_values,
+                        &active_indices,
+                        &parameters,
+                        cache,
+                    );
                     let value = evaluator.evaluate_expression_value_with_program_snapshot(
                         &program_snapshot,
                         amplitude_values,
@@ -244,10 +254,12 @@ pub(crate) fn project_weights_local_from_resolved_mask(
             .iter()
             .zip(evaluator.dataset.weights_local().iter())
             .map(|(cache, event)| {
-                for &amp_idx in &active_indices {
-                    amplitude_values[amp_idx] =
-                        evaluator.amplitudes[amp_idx].compute(&parameters, cache);
-                }
+                evaluator.fill_amplitude_values(
+                    &mut amplitude_values,
+                    &active_indices,
+                    &parameters,
+                    cache,
+                );
                 let value = evaluator.evaluate_expression_value_with_program_snapshot(
                     &program_snapshot,
                     &amplitude_values,
@@ -266,7 +278,7 @@ pub(crate) fn project_weights_and_gradients_local_from_evaluator(
 ) -> LadduResult<(Vec<f64>, Vec<DVector<f64>>)> {
     let resources = evaluator.resources.read();
     let parameters = resources.parameter_map.assemble(parameters)?;
-    let amplitude_len = evaluator.amplitudes.len();
+    let amplitude_len = evaluator.amplitude_value_slot_count();
     let grad_dim = parameters.len();
     let active_indices = resources.active_indices().to_vec();
     let active_mask = resources.active.clone();
@@ -289,7 +301,7 @@ pub(crate) fn project_weights_and_gradients_local_from_evaluator(
                 },
                 |(amplitude_values, gradient_values, value_slots, gradient_slots),
                  (cache, event)| {
-                    evaluator.fill_amplitude_values_and_gradients_public(
+                    evaluator.fill_amplitude_values_and_gradients(
                         amplitude_values,
                         gradient_values,
                         &active_indices,
@@ -324,7 +336,7 @@ pub(crate) fn project_weights_and_gradients_local_from_evaluator(
             .iter()
             .zip(evaluator.dataset.weights_local().iter())
             .map(|(cache, event)| {
-                evaluator.fill_amplitude_values_and_gradients_public(
+                evaluator.fill_amplitude_values_and_gradients(
                     &mut amplitude_values,
                     &mut gradient_values,
                     &active_indices,
@@ -1521,12 +1533,14 @@ impl NLL {
     ) -> LadduResult<DVector<f64>> {
         let data_resources = self.data_evaluator.resources.read();
         let data_parameters = data_resources.parameter_map.assemble(parameters)?;
+        let data_active_indices = data_resources.active_indices().to_vec();
+        let data_active_mask = data_resources.active.clone();
         #[cfg(feature = "rayon")]
         let n_parameters = parameters.len();
         #[cfg(feature = "rayon")]
         let data_scratch_key = GradientScratchKey {
             n_parameters,
-            n_amplitudes: self.data_evaluator.amplitudes.len(),
+            n_amplitudes: self.data_evaluator.amplitude_value_slot_count(),
             n_expression_slots: self.data_evaluator.expression_slot_count(),
         };
         #[cfg(feature = "rayon")]
@@ -1542,16 +1556,14 @@ impl NLL {
                         let workspace = scratch.workspace_mut();
                         let amp_vals = &mut workspace.amplitude_values;
                         let grad_vals = &mut workspace.gradient_values;
-                        for (idx, amp) in self.data_evaluator.amplitudes.iter().enumerate() {
-                            if data_resources.active[idx] {
-                                grad_vals[idx].fill(Complex64::ZERO);
-                                amp.compute_gradient(&data_parameters, cache, &mut grad_vals[idx]);
-                                amp_vals[idx] = amp.compute(&data_parameters, cache);
-                            } else {
-                                grad_vals[idx].fill(Complex64::ZERO);
-                                amp_vals[idx] = Complex64::ZERO;
-                            }
-                        }
+                        self.data_evaluator.fill_amplitude_values_and_gradients(
+                            amp_vals,
+                            grad_vals,
+                            &data_active_indices,
+                            &data_active_mask,
+                            &data_parameters,
+                            cache,
+                        );
                         let (value, gradient) = self
                             .data_evaluator
                             .evaluate_expression_value_gradient_with_scratch(
@@ -1568,9 +1580,9 @@ impl NLL {
         );
         #[cfg(not(feature = "rayon"))]
         let data_term: DVector<f64> = {
-            let mut amp_vals = vec![Complex64::ZERO; self.data_evaluator.amplitudes.len()];
-            let mut grad_vals =
-                vec![DVector::zeros(parameters.len()); self.data_evaluator.amplitudes.len()];
+            let amplitude_len = self.data_evaluator.amplitude_value_slot_count();
+            let mut amp_vals = vec![Complex64::ZERO; amplitude_len];
+            let mut grad_vals = vec![DVector::zeros(parameters.len()); amplitude_len];
             let mut value_slots =
                 vec![Complex64::ZERO; self.data_evaluator.expression_slot_count()];
             let mut gradient_slots =
@@ -1581,16 +1593,14 @@ impl NLL {
                 .iter()
                 .zip(data_resources.caches.iter())
                 .map(|(event, cache)| {
-                    for (idx, amp) in self.data_evaluator.amplitudes.iter().enumerate() {
-                        if data_resources.active[idx] {
-                            grad_vals[idx].fill(Complex64::ZERO);
-                            amp.compute_gradient(&data_parameters, cache, &mut grad_vals[idx]);
-                            amp_vals[idx] = amp.compute(&data_parameters, cache);
-                        } else {
-                            grad_vals[idx].fill(Complex64::ZERO);
-                            amp_vals[idx] = Complex64::ZERO;
-                        }
-                    }
+                    self.data_evaluator.fill_amplitude_values_and_gradients(
+                        &mut amp_vals,
+                        &mut grad_vals,
+                        &data_active_indices,
+                        &data_active_mask,
+                        &data_parameters,
+                        cache,
+                    );
                     let (value, gradient) = self
                         .data_evaluator
                         .evaluate_expression_value_gradient_with_scratch(
@@ -1898,12 +1908,14 @@ impl StochasticNLL {
     ) -> LadduResult<DVector<f64>> {
         let data_resources = self.nll.data_evaluator.resources.read();
         let data_parameters = data_resources.parameter_map.assemble(parameters)?;
+        let data_active_indices = data_resources.active_indices().to_vec();
+        let data_active_mask = data_resources.active.clone();
         #[cfg(feature = "rayon")]
         let n_parameters = parameters.len();
         #[cfg(feature = "rayon")]
         let data_scratch_key = GradientScratchKey {
             n_parameters,
-            n_amplitudes: self.nll.data_evaluator.amplitudes.len(),
+            n_amplitudes: self.nll.data_evaluator.amplitude_value_slot_count(),
             n_expression_slots: self.nll.data_evaluator.expression_slot_count(),
         };
         #[cfg(feature = "rayon")]
@@ -1918,21 +1930,14 @@ impl StochasticNLL {
                         let grad_vals = &mut workspace.gradient_values;
                         let event = &self.nll.data_evaluator.dataset.weights_local()[idx];
                         let cache = &data_resources.caches[idx];
-                        for (amp_idx, amp) in self.nll.data_evaluator.amplitudes.iter().enumerate()
-                        {
-                            if data_resources.active[amp_idx] {
-                                grad_vals[amp_idx].fill(Complex64::ZERO);
-                                amp.compute_gradient(
-                                    &data_parameters,
-                                    cache,
-                                    &mut grad_vals[amp_idx],
-                                );
-                                amp_vals[amp_idx] = amp.compute(&data_parameters, cache);
-                            } else {
-                                grad_vals[amp_idx].fill(Complex64::ZERO);
-                                amp_vals[amp_idx] = Complex64::ZERO;
-                            }
-                        }
+                        self.nll.data_evaluator.fill_amplitude_values_and_gradients(
+                            amp_vals,
+                            grad_vals,
+                            &data_active_indices,
+                            &data_active_mask,
+                            &data_parameters,
+                            cache,
+                        );
                         let (value, gradient) = self
                             .nll
                             .data_evaluator
@@ -1950,9 +1955,9 @@ impl StochasticNLL {
         );
         #[cfg(not(feature = "rayon"))]
         let data_term: DVector<f64> = {
-            let mut amp_vals = vec![Complex64::ZERO; self.nll.data_evaluator.amplitudes.len()];
-            let mut grad_vals =
-                vec![DVector::zeros(parameters.len()); self.nll.data_evaluator.amplitudes.len()];
+            let amplitude_len = self.nll.data_evaluator.amplitude_value_slot_count();
+            let mut amp_vals = vec![Complex64::ZERO; amplitude_len];
+            let mut grad_vals = vec![DVector::zeros(parameters.len()); amplitude_len];
             let mut value_slots =
                 vec![Complex64::ZERO; self.nll.data_evaluator.expression_slot_count()];
             let mut gradient_slots = vec![
@@ -1964,16 +1969,14 @@ impl StochasticNLL {
                 .map(|&idx| {
                     let event = &self.nll.data_evaluator.dataset.weights_local()[idx];
                     let cache = &data_resources.caches[idx];
-                    for (amp_idx, amp) in self.nll.data_evaluator.amplitudes.iter().enumerate() {
-                        if data_resources.active[amp_idx] {
-                            grad_vals[amp_idx].fill(Complex64::ZERO);
-                            amp.compute_gradient(&data_parameters, cache, &mut grad_vals[amp_idx]);
-                            amp_vals[amp_idx] = amp.compute(&data_parameters, cache);
-                        } else {
-                            grad_vals[amp_idx].fill(Complex64::ZERO);
-                            amp_vals[amp_idx] = Complex64::ZERO;
-                        }
-                    }
+                    self.nll.data_evaluator.fill_amplitude_values_and_gradients(
+                        &mut amp_vals,
+                        &mut grad_vals,
+                        &data_active_indices,
+                        &data_active_mask,
+                        &data_parameters,
+                        cache,
+                    );
                     let (value, gradient) = self
                         .nll
                         .data_evaluator

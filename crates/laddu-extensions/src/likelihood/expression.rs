@@ -695,6 +695,42 @@ mod tests {
     }
 
     #[test]
+    fn nll_handles_reused_amplitudes_in_coherent_expression() {
+        let amp_a = ConstantAmplitude::new("amp_a", parameter!("alpha")).unwrap();
+        let amp_b = ConstantAmplitude::new("amp_b", parameter!("beta")).unwrap();
+
+        let coherent_plus = amp_a.clone() + amp_b.clone();
+        let coherent_minus = amp_a - amp_b;
+        let expr = coherent_plus.norm_sqr() + coherent_minus.norm_sqr();
+
+        let data = dataset_with_weights(&[1.0, 2.0, 3.0]);
+        let mc = dataset_with_weights(&[0.5, 1.5, 2.5]);
+        let params = vec![0.75, -1.25];
+
+        let evaluator = expr.load(&data).unwrap();
+        let direct_values = evaluator.evaluate(&params).unwrap();
+        assert_eq!(direct_values.len(), 3);
+
+        let nll = NLL::new(&expr, &data, &mc, None).unwrap();
+        let value = nll.evaluate(&params).unwrap();
+        assert!(value.is_finite());
+
+        let gradient = nll.evaluate_gradient(&params).unwrap();
+        assert_eq!(gradient.len(), params.len());
+        assert!(gradient.iter().all(|value| value.is_finite()));
+
+        let projection = nll.project_weights(&params, None).unwrap();
+        assert_eq!(projection.len(), mc.n_events());
+        assert!(projection.iter().all(|value| value.is_finite()));
+
+        let (_, projection_gradient) = nll.project_weights_and_gradients(&params, None).unwrap();
+        assert_eq!(projection_gradient.len(), mc.n_events());
+        assert!(projection_gradient
+            .iter()
+            .all(|gradient| gradient.iter().all(|value| value.is_finite())));
+    }
+
+    #[test]
     fn nll_exposes_expression_and_current_compiled_expression() {
         let (nll, _) = make_two_parameter_nll();
 
