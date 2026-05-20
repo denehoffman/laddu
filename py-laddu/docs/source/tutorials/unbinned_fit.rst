@@ -128,7 +128,7 @@ where :math:`BW_{L}(m, m_\alpha, \Gamma_\alpha)` is the Breit-Wigner amplitude f
 
 .. code:: python
 
-   polarization = reaction.polarization('pol_magnitude', 'pol_angle')
+   polarization = reaction.polarization(pol_magnitude='pol_magnitude', pol_angle='pol_angle')
 
 Next, we can create ``Zlm`` amplitudes:
 
