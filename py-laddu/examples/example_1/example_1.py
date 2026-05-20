@@ -52,7 +52,7 @@ def reaction_variables() -> tuple[ld.Mass, ld.Angles, ld.Polarization]:
     return (
         decay.parent_mass(),
         decay.angles('kshort1'),
-        reaction.polarization('pol_magnitude', 'pol_angle'),
+        reaction.polarization(pol_magnitude='pol_magnitude', pol_angle='pol_angle'),
     )
 
 

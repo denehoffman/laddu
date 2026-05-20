@@ -55,7 +55,7 @@ where the terms with particle names in square brackets still represent the produ
    reaction = ld.Reaction.two_to_two(beam, target, kk, proton)
    decay = reaction.decay('kk')
    angles = decay.angles('kshort1')
-   polarization = reaction.polarization('pol_magnitude', 'pol_angle')
+   polarization = reaction.polarization(pol_magnitude='pol_magnitude', pol_angle='pol_angle')
 
    z00p = ld.Zlm("Z00+", l=0, m=0, r="+", angles=angles, polarization=polarization)
    z22p = ld.Zlm("Z22+", l=2, m=2, r="+", angles=angles, polarization=polarization)
