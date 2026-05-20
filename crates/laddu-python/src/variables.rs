@@ -1,9 +1,9 @@
 use std::fmt::{Debug, Display};
 
-use laddu_amplitudes::DecayAmplitudeExt;
+use laddu_amplitudes::{DecayAmplitudeExt, ProductionAmplitudeExt};
 use laddu_core::{
     data::{Dataset, DatasetMetadata, EventLike, OwnedEvent},
-    reaction::{Decay, Particle, Reaction},
+    reaction::{Decay, Particle, Production, Reaction},
     traits::Variable,
     variables::{
         Angles, CosTheta, IntoP4Selection, Mandelstam, Mass, P4Selection, Phi, PolAngle,
@@ -210,6 +210,11 @@ impl PyReaction {
         Ok(PyDecay(self.0.decay(parent)?))
     }
 
+    /// Construct a two-to-two production view.
+    fn production(&self) -> PyResult<PyProduction> {
+        Ok(PyProduction(self.0.production()?))
+    }
+
     /// Construct a Mandelstam variable.
     fn mandelstam(&self, channel: &str) -> PyResult<PyMandelstam> {
         Ok(PyMandelstam(self.0.mandelstam(channel.parse()?)?))
@@ -221,6 +226,7 @@ impl PyReaction {
     }
 
     /// Construct polarization variables.
+    #[pyo3(signature=(*, pol_magnitude, pol_angle))]
     fn polarization(&self, pol_magnitude: String, pol_angle: String) -> PyResult<PyPolarization> {
         if pol_magnitude == pol_angle {
             return Err(PyValueError::new_err(
@@ -372,6 +378,110 @@ impl PyDecay {
             parse_angular_momentum(daughter_2_spin)?,
             parse_projection(lambda_1)?,
             parse_projection(lambda_2)?,
+            frame.parse()?,
+        )?))
+    }
+
+    fn __repr__(&self) -> String {
+        format!("{:?}", self.0)
+    }
+
+    fn __str__(&self) -> String {
+        format!("{:?}", self.0)
+    }
+}
+
+/// A reaction-aware two-to-two production view.
+#[pyclass(name = "Production", module = "laddu", from_py_object)]
+#[derive(Clone, Serialize, Deserialize)]
+pub struct PyProduction(pub Production);
+
+#[pymethods]
+impl PyProduction {
+    /// The enclosing reaction.
+    #[getter]
+    fn reaction(&self) -> PyReaction {
+        PyReaction(self.0.reaction().clone())
+    }
+
+    /// The produced-system particle.
+    #[getter]
+    fn produced(&self) -> String {
+        self.0.produced().to_string()
+    }
+
+    /// The recoil particle.
+    #[getter]
+    fn recoil(&self) -> String {
+        self.0.recoil().to_string()
+    }
+
+    /// Production costheta variable for the selected frame.
+    #[pyo3(signature=(frame="Helicity"))]
+    fn costheta(&self, frame: &str) -> PyResult<PyCosTheta> {
+        Ok(PyCosTheta(self.0.costheta(frame.parse()?)?))
+    }
+
+    /// Production phi variable for the selected frame.
+    #[pyo3(signature=(frame="Helicity"))]
+    fn phi(&self, frame: &str) -> PyResult<PyPhi> {
+        Ok(PyPhi(self.0.phi(frame.parse()?)?))
+    }
+
+    /// Production angle variables for the selected frame.
+    #[pyo3(signature=(frame="Helicity"))]
+    fn angles(&self, frame: &str) -> PyResult<PyAngles> {
+        Ok(PyAngles(self.0.angles(frame.parse()?)?))
+    }
+
+    /// Construct the helicity-basis production angular factor for one explicit helicity term.
+    #[pyo3(signature=(*tags, spin, projection, lambda_produced, lambda_recoil, frame="Helicity"))]
+    #[allow(clippy::too_many_arguments)]
+    fn helicity_factor(
+        &self,
+        tags: &Bound<'_, PyTuple>,
+        spin: &Bound<'_, PyAny>,
+        projection: &Bound<'_, PyAny>,
+        lambda_produced: &Bound<'_, PyAny>,
+        lambda_recoil: &Bound<'_, PyAny>,
+        frame: &str,
+    ) -> PyResult<PyExpression> {
+        Ok(PyExpression(self.0.helicity_factor(
+            py_tags(tags)?,
+            parse_angular_momentum(spin)?,
+            parse_projection(projection)?,
+            parse_projection(lambda_produced)?,
+            parse_projection(lambda_recoil)?,
+            frame.parse()?,
+        )?))
+    }
+
+    /// Construct the canonical-basis production spin-angular factor for one LS/helicity term.
+    #[pyo3(signature=(*tags, spin, projection, orbital_l, coupled_spin, produced_spin, recoil_spin, lambda_produced, lambda_recoil, frame="Helicity"))]
+    #[allow(clippy::too_many_arguments)]
+    fn canonical_factor(
+        &self,
+        tags: &Bound<'_, PyTuple>,
+        spin: &Bound<'_, PyAny>,
+        projection: &Bound<'_, PyAny>,
+        orbital_l: &Bound<'_, PyAny>,
+        coupled_spin: &Bound<'_, PyAny>,
+        produced_spin: &Bound<'_, PyAny>,
+        recoil_spin: &Bound<'_, PyAny>,
+        lambda_produced: &Bound<'_, PyAny>,
+        lambda_recoil: &Bound<'_, PyAny>,
+        frame: &str,
+    ) -> PyResult<PyExpression> {
+        Ok(PyExpression(self.0.canonical_factor(
+            py_tags(tags)?,
+            parse_angular_momentum(spin)?,
+            parse_projection(projection)?,
+            parse_orbital_angular_momentum(orbital_l)?,
+            parse_angular_momentum(coupled_spin)?,
+            parse_angular_momentum(produced_spin)?,
+            parse_angular_momentum(recoil_spin)?,
+            parse_projection(lambda_produced)?,
+            parse_projection(lambda_recoil)?,
             frame.parse()?,
         )?))
     }

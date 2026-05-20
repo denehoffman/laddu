@@ -117,7 +117,7 @@ from laddu.quantum import (
     allowed_projections,
     coupled_spins,
 )
-from laddu.reaction import Decay, Particle, Reaction
+from laddu.reaction import Decay, Particle, Production, Reaction
 from laddu.variables import (
     Angles,
     CosTheta,
@@ -212,6 +212,7 @@ __all__ = [
     'PolPhase',
     'PolarComplexScalar',
     'Polarization',
+    'Production',
     'Reaction',
     'Reconstruction',
     'Regularizer',

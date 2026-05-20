@@ -583,7 +583,7 @@ pub use crate::{
         RuleSet, SelectionRules, SpinState, Statistics,
     },
     reaction::{
-        Decay, Particle, ParticleGraph, ParticleSource, Reaction, ReactionTopology,
+        Decay, Particle, ParticleGraph, ParticleSource, Production, Reaction, ReactionTopology,
         ResolvedTwoToTwo, TwoToTwoReaction,
     },
     resources::{

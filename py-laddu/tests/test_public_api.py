@@ -37,6 +37,24 @@ def test_decay_exposes_enclosing_reaction() -> None:
     assert isinstance(decay.reaction.mass('x'), ld.Mass)
 
 
+def test_production_exposes_two_to_two_roles() -> None:
+    beam = ld.Particle.stored('beam')
+    target = ld.Particle.missing('target')
+    daughter_1 = ld.Particle.stored('d1')
+    daughter_2 = ld.Particle.stored('d2')
+    x = ld.Particle.composite('x', (daughter_1, daughter_2))
+    recoil = ld.Particle.stored('recoil')
+    reaction = ld.Reaction.two_to_two(beam, target, x, recoil)
+
+    production = reaction.production()
+
+    assert isinstance(production.reaction, ld.Reaction)
+    assert production.produced == 'x'
+    assert production.recoil == 'recoil'
+    assert isinstance(production.angles(), ld.Angles)
+    assert 'Production' in repr(production)
+
+
 def test_reaction_rejects_invalid_particle_queries() -> None:
     beam = ld.Particle.stored('beam')
     target = ld.Particle.missing('target')
@@ -72,6 +90,7 @@ def test_domain_modules_export_expected_analysis_types() -> None:
     assert ld.reaction.Particle is ld.Particle
     assert ld.reaction.Reaction is ld.Reaction
     assert ld.reaction.Decay is ld.Decay
+    assert ld.reaction.Production is ld.Production
     assert ld.variables.Mass is ld.Mass
     assert ld.variables.CosTheta is ld.CosTheta
     assert ld.likelihood.NLL is ld.NLL

@@ -12,4 +12,4 @@ pub use barrier::BlattWeisskopf;
 pub use constants::{ClebschGordan, Wigner3j};
 pub use harmonics::{PolPhase, Ylm, Zlm};
 pub use sdme::{PhotonHelicity, PhotonPolarization, PhotonSDME};
-pub use wigner::{DecayAmplitudeExt, WignerD};
+pub use wigner::{DecayAmplitudeExt, ProductionAmplitudeExt, WignerD};
