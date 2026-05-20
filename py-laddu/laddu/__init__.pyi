@@ -121,7 +121,7 @@ from .quantum import (
     allowed_projections,
     coupled_spins,
 )
-from .reaction import Decay, Particle, Reaction
+from .reaction import Decay, Particle, Production, Reaction
 from .variables import (
     Angles,
     CosTheta,
@@ -220,6 +220,7 @@ __all__ = [
     'PolPhase',
     'PolarComplexScalar',
     'Polarization',
+    'Production',
     'Reaction',
     'Reconstruction',
     'RuleSet',

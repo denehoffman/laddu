@@ -186,3 +186,65 @@ def test_decay_canonical_factor_matches_explicit_product() -> None:
 
     assert factor_value.real == pytest.approx(explicit_value.real)
     assert factor_value.imag == pytest.approx(explicit_value.imag)
+
+
+def test_production_helicity_factor_matches_explicit_wigner_d() -> None:
+    dataset = make_test_dataset()
+    rxn, _, _, _ = reaction()
+    production = rxn.production()
+    factor = production.helicity_factor(
+        'prod_h',
+        spin=1,
+        projection=1,
+        lambda_produced=0,
+        lambda_recoil=0,
+        frame='GottfriedJackson',
+    )
+    explicit = WignerD(
+        'prod_d',
+        spin=1,
+        row_projection=1,
+        column_projection=0,
+        angles=production.angles('GottfriedJackson'),
+    ).conj()
+
+    factor_value = factor.load(dataset).evaluate([])[0]
+    explicit_value = explicit.load(dataset).evaluate([])[0]
+
+    assert factor_value.real == pytest.approx(explicit_value.real)
+    assert factor_value.imag == pytest.approx(explicit_value.imag)
+
+
+def test_production_canonical_factor_matches_explicit_product() -> None:
+    dataset = make_test_dataset()
+    rxn, _, _, _ = reaction()
+    production = rxn.production()
+    factor = production.canonical_factor(
+        'prod_c',
+        spin=1,
+        projection=0,
+        orbital_l=1,
+        coupled_spin=1,
+        produced_spin=0,
+        recoil_spin=1,
+        lambda_produced=0,
+        lambda_recoil=0,
+        frame='GottfriedJackson',
+    )
+    explicit = (
+        ClebschGordan('prod_ls_cg', j1=1, m1=0, j2=1, m2=0, j=1, m=0)
+        * ClebschGordan('prod_spin_cg', j1=0, m1=0, j2=1, m2=0, j=1, m=0)
+        * WignerD(
+            'prod_d',
+            spin=1,
+            row_projection=0,
+            column_projection=0,
+            angles=production.angles('GottfriedJackson'),
+        ).conj()
+    )
+
+    factor_value = factor.load(dataset).evaluate([])[0]
+    explicit_value = explicit.load(dataset).evaluate([])[0] * (3.0**0.5)
+
+    assert factor_value.real == pytest.approx(explicit_value.real)
+    assert factor_value.imag == pytest.approx(explicit_value.imag)

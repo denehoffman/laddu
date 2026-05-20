@@ -4,6 +4,7 @@ use super::{
     decay::Decay,
     graph::ParticleGraph,
     particle::{resolve_particle_direct, Particle},
+    production::Production,
     two_to_two::{ResolvedTwoToTwo, TwoToTwoReaction},
 };
 use crate::{
@@ -129,6 +130,16 @@ impl Reaction {
         })
     }
 
+    /// Construct a two-to-two production view.
+    pub fn production(&self) -> LadduResult<Production> {
+        let topology = self.two_to_two_topology()?;
+        Ok(Production {
+            reaction: self.clone(),
+            produced: topology.p3().to_string(),
+            recoil: topology.p4().to_string(),
+        })
+    }
+
     /// Construct a Mandelstam variable for this reaction.
     pub fn mandelstam(&self, channel: Channel) -> LadduResult<Mandelstam> {
         self.topology.require_mandelstam()?;
@@ -210,6 +221,37 @@ impl Reaction {
         }
         let axes = self.axes(event, parent, frame)?;
         axes.angles(self.p4_in_rest_frame_of(event, parent, daughter)?.vec3())
+    }
+
+    /// Compute the produced-system production angles in the overall center-of-momentum frame.
+    pub fn production_angles_value(
+        &self,
+        event: &dyn EventLike,
+        produced: &str,
+        frame: Frame,
+    ) -> LadduResult<DecayAngles> {
+        let topology = self.two_to_two_topology()?;
+        if produced != topology.p3() {
+            return Err(LadduError::Custom(format!(
+                "particle '{produced}' is not the produced p3 system"
+            )));
+        }
+        let resolved = self.resolve_two_to_two(event)?;
+        let com_boost = resolved.com_boost();
+        let reference = resolved.p1.boost(&com_boost);
+        let produced_p4 = resolved.p3.boost(&com_boost);
+        let produced_vec = produced_p4.vec3();
+        let plane_normal = reference.vec3().cross(&produced_vec);
+        let z = match frame {
+            Frame::Helicity => produced_vec,
+            Frame::GottfriedJackson => reference.vec3(),
+            Frame::Adair => {
+                return Err(LadduError::Custom(
+                    "Adair frame construction is not implemented yet".to_string(),
+                ));
+            }
+        };
+        FrameAxes::from_z_and_plane_normal(z, plane_normal)?.angles(produced_vec)
     }
 
     /// Return the particle with the given identifier.

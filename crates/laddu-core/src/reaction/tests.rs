@@ -345,3 +345,33 @@ fn production_frame_axes_support_known_frames() {
     assert!(reaction.axes(&event, "x", Frame::GottfriedJackson).is_ok());
     assert!(reaction.axes(&event, "x", Frame::Adair).is_err());
 }
+
+#[test]
+fn reaction_production_view_infers_two_to_two_roles() {
+    let (_, reaction, _, _, _) = pion_cascade_dataset();
+    let production = reaction.production().unwrap();
+
+    assert_eq!(production.produced(), "x");
+    assert_eq!(production.recoil(), "recoil");
+    assert_eq!(production.reaction(), &reaction);
+}
+
+#[test]
+fn production_angles_use_two_to_two_scattering_geometry() {
+    let (dataset, reaction, _, _, _) = pion_cascade_dataset();
+    let event = dataset.event_local(0).unwrap();
+
+    let helicity = reaction
+        .production_angles_value(&event, "x", Frame::Helicity)
+        .unwrap();
+    let gj = reaction
+        .production_angles_value(&event, "x", Frame::GottfriedJackson)
+        .unwrap();
+
+    assert_relative_eq!(helicity.costheta(), 1.0);
+    assert!(gj.costheta() < 1.0);
+    assert!(gj.costheta() > -1.0);
+    assert!(reaction
+        .production_angles_value(&event, "rho", Frame::Helicity)
+        .is_err());
+}

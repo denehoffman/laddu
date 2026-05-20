@@ -22,7 +22,7 @@ pub use lookup::{LookupAxis, LookupBoundaryMode, LookupInterpolation, LookupTabl
 pub mod angular;
 pub use angular::{
     BlattWeisskopf, ClebschGordan, DecayAmplitudeExt, PhotonHelicity, PhotonPolarization,
-    PhotonSDME, PolPhase, Wigner3j, WignerD, Ylm, Zlm,
+    PhotonSDME, PolPhase, ProductionAmplitudeExt, Wigner3j, WignerD, Ylm, Zlm,
 };
 
 /// Resonance line shapes and related factors.

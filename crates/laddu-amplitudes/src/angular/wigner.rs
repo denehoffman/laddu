@@ -7,7 +7,8 @@ use laddu_core::{
     resources::{Cache, ComplexScalarID, Parameters, Resources},
     traits::Variable,
     variables::Angles,
-    AngularMomentum, Decay, Frame, LadduResult, OrbitalAngularMomentum, Projection, SpinState,
+    AngularMomentum, Decay, Frame, LadduResult, OrbitalAngularMomentum, Production, Projection,
+    SpinState,
 };
 use nalgebra::DVector;
 use num::complex::Complex64;
@@ -143,6 +144,99 @@ impl DecayAmplitudeExt for Decay {
                 )?
                 * self
                     .helicity_factor(tags, spin, projection, daughter, lambda_1, lambda_2, frame)?,
+        )
+    }
+}
+
+/// Extension methods that build production-local angular expressions from [`Production`] objects.
+pub trait ProductionAmplitudeExt {
+    /// Construct the helicity-basis angular factor for one explicit helicity term.
+    #[allow(clippy::too_many_arguments)]
+    fn helicity_factor(
+        &self,
+        tags: impl IntoTags,
+        spin: AngularMomentum,
+        projection: Projection,
+        lambda_produced: Projection,
+        lambda_recoil: Projection,
+        frame: Frame,
+    ) -> LadduResult<Expression>;
+
+    /// Construct the canonical-basis spin-angular factor for one explicit LS/helicity term.
+    #[allow(clippy::too_many_arguments)]
+    fn canonical_factor(
+        &self,
+        tags: impl IntoTags,
+        spin: AngularMomentum,
+        projection: Projection,
+        orbital_l: OrbitalAngularMomentum,
+        coupled_spin: AngularMomentum,
+        produced_spin: AngularMomentum,
+        recoil_spin: AngularMomentum,
+        lambda_produced: Projection,
+        lambda_recoil: Projection,
+        frame: Frame,
+    ) -> LadduResult<Expression>;
+}
+
+impl ProductionAmplitudeExt for Production {
+    fn helicity_factor(
+        &self,
+        tags: impl IntoTags,
+        spin: AngularMomentum,
+        projection: Projection,
+        lambda_produced: Projection,
+        lambda_recoil: Projection,
+        frame: Frame,
+    ) -> LadduResult<Expression> {
+        let lambda = Projection::half_integer(lambda_produced.value() - lambda_recoil.value());
+        let angles = self.angles(frame)?;
+        Ok(WignerD::new(tags, spin, projection, lambda, &angles)?.conj())
+    }
+
+    fn canonical_factor(
+        &self,
+        tags: impl IntoTags,
+        spin: AngularMomentum,
+        projection: Projection,
+        orbital_l: OrbitalAngularMomentum,
+        coupled_spin: AngularMomentum,
+        produced_spin: AngularMomentum,
+        recoil_spin: AngularMomentum,
+        lambda_produced: Projection,
+        lambda_recoil: Projection,
+        frame: Frame,
+    ) -> LadduResult<Expression> {
+        let lambda = Projection::half_integer(lambda_produced.value() - lambda_recoil.value());
+        let minus_lambda_recoil = Projection::half_integer(-lambda_recoil.value());
+        Ok(
+            Expression::from(f64::from(2 * orbital_l.value() + 1).sqrt())
+                * ClebschGordan::new(
+                    (),
+                    orbital_l.angular_momentum(),
+                    Projection::integer(0),
+                    coupled_spin,
+                    lambda,
+                    spin,
+                    lambda,
+                )?
+                * ClebschGordan::new(
+                    (),
+                    produced_spin,
+                    lambda_produced,
+                    recoil_spin,
+                    minus_lambda_recoil,
+                    coupled_spin,
+                    lambda,
+                )?
+                * self.helicity_factor(
+                    tags,
+                    spin,
+                    projection,
+                    lambda_produced,
+                    lambda_recoil,
+                    frame,
+                )?,
         )
     }
 }

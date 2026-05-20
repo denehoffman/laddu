@@ -80,6 +80,37 @@ class Decay:
         frame: _Frame = 'Helicity',
     ) -> Expression: ...
 
+class Production:
+    reaction: Reaction
+    produced: str
+    recoil: str
+
+    def costheta(self, frame: _Frame = 'Helicity') -> CosTheta: ...
+    def phi(self, frame: _Frame = 'Helicity') -> Phi: ...
+    def angles(self, frame: _Frame = 'Helicity') -> Angles: ...
+    def helicity_factor(
+        self,
+        *tags: str,
+        spin: QuantumNumber,
+        projection: QuantumNumber,
+        lambda_produced: QuantumNumber,
+        lambda_recoil: QuantumNumber,
+        frame: _Frame = 'Helicity',
+    ) -> Expression: ...
+    def canonical_factor(
+        self,
+        *tags: str,
+        spin: QuantumNumber,
+        projection: QuantumNumber,
+        orbital_l: QuantumNumber,
+        coupled_spin: QuantumNumber,
+        produced_spin: QuantumNumber,
+        recoil_spin: QuantumNumber,
+        lambda_produced: QuantumNumber,
+        lambda_recoil: QuantumNumber,
+        frame: _Frame = 'Helicity',
+    ) -> Expression: ...
+
 class Reaction:
     @staticmethod
     def two_to_two(
@@ -87,10 +118,11 @@ class Reaction:
     ) -> Reaction: ...
     def mass(self, particle: str) -> Mass: ...
     def decay(self, parent: str) -> Decay: ...
+    def production(self) -> Production: ...
     def mandelstam(
         self, channel: Literal['s', 't', 'u', 'S', 'T', 'U']
     ) -> Mandelstam: ...
     def pol_angle(self, pol_angle: str) -> PolAngle: ...
-    def polarization(self, pol_magnitude: str, pol_angle: str) -> Polarization: ...
+    def polarization(self, *, pol_magnitude: str, pol_angle: str) -> Polarization: ...
 
-__all__ = ['Decay', 'Particle', 'Reaction']
+__all__ = ['Decay', 'Particle', 'Production', 'Reaction']
