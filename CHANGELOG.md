@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.19.4](https://github.com/denehoffman/laddu/compare/v0.19.3...v0.19.4) (2026-05-21)
+
+
+### Features
+
+* Add checked/unchecked versions of particle properties ([865d269](https://github.com/denehoffman/laddu/commit/865d2698ecc140950475ab1e4167792168130b85))
+
+
+### Bug Fixes
+
+* Remove production frame selection ([09a548e](https://github.com/denehoffman/laddu/commit/09a548e68f93d047e9ba890e33c488751cd40127))
+
 ## [0.19.3](https://github.com/denehoffman/laddu/compare/v0.19.2...v0.19.3) (2026-05-21)
 
 

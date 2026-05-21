@@ -1,6 +1,6 @@
 [package]
 name = "laddu-generation"
-version = "0.19.3"
+version = "0.19.4"
 description = "Monte Carlo event generation tools for laddu"
 documentation = "https://docs.rs/laddu-generation"
 edition.workspace = true
