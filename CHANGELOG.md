@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.19.5](https://github.com/denehoffman/laddu/compare/v0.19.4...v0.19.5) (2026-05-21)
+
+
+### Bug Fixes
+
+* Generating Mandelstam-t from an exponential distribution produced unphysical (positive) values due to sign error ([f221a71](https://github.com/denehoffman/laddu/commit/f221a7188c7ad6aca2cbdd49bcc779f3200ad2be))
+
 ## [0.19.4](https://github.com/denehoffman/laddu/compare/v0.19.3...v0.19.4) (2026-05-21)
 
 
