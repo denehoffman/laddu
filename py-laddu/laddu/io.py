@@ -32,8 +32,10 @@ _backend_from_columns = _backend_module.from_columns
 _backend_read_parquet = _backend_module.read_parquet
 _backend_read_parquet_chunked = _backend_module.read_parquet_chunked
 _backend_read_root = _backend_module.read_root
+_backend_open_parquet_writer = _backend_module.open_parquet_writer
 _backend_write_parquet = _backend_module.write_parquet
 _backend_write_root = _backend_module.write_root
+ParquetBatchWriter = _backend_module.ParquetBatchWriter
 
 if _TYPE_CHECKING:
     import pandas as pd
@@ -476,6 +478,20 @@ def write_parquet(
     validated_precision = _validate_precision(precision)
     _backend_write_parquet(
         dataset,
+        path,
+        chunk_size=chunk_size,
+        precision=validated_precision,
+    )
+
+
+def open_parquet_writer(
+    path: str | _Path,
+    *,
+    chunk_size: int = 10_000,
+    precision: _Literal['f64', 'f32'] = 'f64',
+) -> ParquetBatchWriter:
+    validated_precision = _validate_precision(precision)
+    return _backend_open_parquet_writer(
         path,
         chunk_size=chunk_size,
         precision=validated_precision,
@@ -1105,12 +1121,14 @@ def _amptools_columns(
 
 
 __all__ = [
+    'ParquetBatchWriter',
     'from_arrow',
     'from_columns',
     'from_dict',
     'from_numpy',
     'from_pandas',
     'from_polars',
+    'open_parquet_writer',
     'read_amptools',
     'read_amptools_chunked',
     'read_parquet',

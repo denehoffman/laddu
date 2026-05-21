@@ -1,9 +1,13 @@
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 
 use fastrand::Rng;
 use laddu_core::{
     math::{q_m, Histogram, Sheet},
-    Dataset, DatasetMetadata, LadduError, LadduResult, Particle, Reaction, Vec3, Vec4, PI,
+    Dataset, DatasetMetadata, Expression, LadduError, LadduResult, Particle, Reaction, Vec3, Vec4,
+    PI,
 };
 use serde::{Deserialize, Serialize};
 
@@ -1107,16 +1111,73 @@ impl Iterator for GeneratedBatchIter {
 
 /// Evaluates unnormalized intensities for generated batches.
 pub trait BatchIntensity {
-    /// Return one nonnegative finite intensity for each event in `batch`.
-    fn evaluate(&mut self, batch: &GeneratedBatch) -> LadduResult<Vec<f64>>;
+    /// Return one real-valued intensity for each event in `batch`.
+    fn evaluate(&self, batch: &GeneratedBatch) -> LadduResult<Vec<f64>>;
+
+    /// Evaluate and validate one finite nonnegative intensity for each event in `batch`.
+    fn evaluate_checked(&self, batch: &GeneratedBatch) -> LadduResult<Vec<f64>> {
+        let intensities = self.evaluate(batch)?;
+        if intensities.len() != batch.dataset().n_events() {
+            return Err(LadduError::Custom(format!(
+                "intensity length mismatch: expected {}, got {}",
+                batch.dataset().n_events(),
+                intensities.len()
+            )));
+        }
+        for (index, weight) in intensities.iter().enumerate() {
+            if !weight.is_finite() || *weight < 0.0 {
+                return Err(LadduError::Custom(format!(
+                    "intensity at event {index} must be finite and nonnegative, got {weight}"
+                )));
+            }
+        }
+        Ok(intensities)
+    }
 }
 
 impl<F> BatchIntensity for F
 where
-    F: FnMut(&GeneratedBatch) -> LadduResult<Vec<f64>>,
+    F: Fn(&GeneratedBatch) -> LadduResult<Vec<f64>>,
 {
-    fn evaluate(&mut self, batch: &GeneratedBatch) -> LadduResult<Vec<f64>> {
+    fn evaluate(&self, batch: &GeneratedBatch) -> LadduResult<Vec<f64>> {
         self(batch)
+    }
+}
+
+/// Evaluates a real-valued [`Expression`] as a generated-batch intensity.
+#[derive(Clone, Debug)]
+pub struct ExpressionIntensity {
+    expression: Expression,
+    parameters: Vec<f64>,
+}
+
+impl ExpressionIntensity {
+    /// Construct an expression-backed generated-batch intensity.
+    pub fn new(expression: Expression, parameters: Vec<f64>) -> Self {
+        Self {
+            expression,
+            parameters,
+        }
+    }
+}
+
+impl BatchIntensity for ExpressionIntensity {
+    fn evaluate(&self, batch: &GeneratedBatch) -> LadduResult<Vec<f64>> {
+        let dataset = Arc::new(batch.dataset().clone());
+        let evaluator = self.expression.load(&dataset)?;
+        evaluator
+            .evaluate(&self.parameters)?
+            .into_iter()
+            .enumerate()
+            .map(|(index, value)| {
+                if !value.im.is_finite() || value.im.abs() > f64::EPSILON {
+                    return Err(LadduError::Custom(format!(
+                        "expression intensity at event {index} must be real-valued, got {value}"
+                    )));
+                }
+                Ok(value.re)
+            })
+            .collect()
     }
 }
 
@@ -1128,14 +1189,15 @@ pub enum RejectionEnvelope {
         /// Maximum event weight used as the rejection envelope.
         max_weight: f64,
     },
-}
-
-impl RejectionEnvelope {
-    fn max_weight(&self) -> f64 {
-        match self {
-            Self::Fixed { max_weight } => *max_weight,
-        }
-    }
+    /// Estimate the maximum event weight from a pilot sample and inflate it.
+    Pilot {
+        /// Number of pilot events used to estimate the envelope.
+        pilot_events: usize,
+        /// Optional raw generation batch size used for pilot evaluation.
+        batch_size: Option<usize>,
+        /// Multiplicative safety factor applied to the observed maximum.
+        safety_factor: f64,
+    },
 }
 
 /// Options for rejection sampling generated events.
@@ -1186,6 +1248,7 @@ impl RejectionSamplingDiagnostics {
 pub struct RejectionSampler<I> {
     generator: EventGenerator,
     intensity: I,
+    max_weight: f64,
     options: RejectionSamplingOptions,
 }
 
@@ -1209,7 +1272,20 @@ where
                 "output_batch_size must be greater than zero".to_string(),
             ));
         }
-        let max_weight = options.envelope.max_weight();
+        let max_weight = match options.envelope {
+            RejectionEnvelope::Fixed { max_weight } => max_weight,
+            RejectionEnvelope::Pilot {
+                pilot_events,
+                batch_size,
+                safety_factor,
+            } => estimate_rejection_envelope(
+                &generator,
+                &intensity,
+                pilot_events,
+                batch_size.unwrap_or(options.generation_batch_size),
+                safety_factor,
+            )?,
+        };
         if !max_weight.is_finite() || max_weight <= 0.0 {
             return Err(LadduError::Custom(
                 "rejection envelope max_weight must be finite and positive".to_string(),
@@ -1218,18 +1294,18 @@ where
         Ok(Self {
             generator,
             intensity,
+            max_weight,
             options,
         })
     }
 
     /// Consume this sampler and return an iterator over accepted generated batches.
     pub fn accepted_batches(self) -> RejectionSampleIter<I> {
-        let envelope_max_weight = self.options.envelope.max_weight();
         RejectionSampleIter {
             generation_rng: Rng::with_seed(self.generator.seed),
             rejection_rng: Rng::with_seed(self.options.seed),
             diagnostics: RejectionSamplingDiagnostics {
-                envelope_max_weight,
+                envelope_max_weight: self.max_weight,
                 ..Default::default()
             },
             sampler: self,
@@ -1238,6 +1314,54 @@ where
             current_index: 0,
         }
     }
+}
+
+fn estimate_rejection_envelope<I>(
+    generator: &EventGenerator,
+    intensity: &I,
+    pilot_events: usize,
+    batch_size: usize,
+    safety_factor: f64,
+) -> LadduResult<f64>
+where
+    I: BatchIntensity,
+{
+    if pilot_events == 0 {
+        return Err(LadduError::Custom(
+            "pilot_events must be greater than zero".to_string(),
+        ));
+    }
+    if batch_size == 0 {
+        return Err(LadduError::Custom(
+            "pilot batch_size must be greater than zero".to_string(),
+        ));
+    }
+    if !safety_factor.is_finite() || safety_factor <= 0.0 {
+        return Err(LadduError::Custom(
+            "pilot safety_factor must be finite and positive".to_string(),
+        ));
+    }
+
+    let mut max_observed = 0.0_f64;
+    let mut rng = Rng::with_seed(generator.seed);
+    let mut remaining = pilot_events;
+    while remaining > 0 {
+        let n_events = remaining.min(batch_size);
+        let batch = generator.generate_batch_with_rng(n_events, &mut rng)?;
+        let weights = intensity.evaluate_checked(&batch)?;
+        for weight in weights {
+            max_observed = max_observed.max(weight);
+        }
+        remaining -= n_events;
+    }
+
+    let max_weight = max_observed * safety_factor;
+    if !max_weight.is_finite() || max_weight <= 0.0 {
+        return Err(LadduError::Custom(format!(
+            "pilot envelope produced invalid max_weight {max_weight}; observed maximum was {max_observed}"
+        )));
+    }
+    Ok(max_weight)
 }
 
 /// Iterator over accepted generated batches.
@@ -1268,14 +1392,7 @@ where
             self.sampler.options.generation_batch_size,
             &mut self.generation_rng,
         )?;
-        let intensities = self.sampler.intensity.evaluate(&batch)?;
-        if intensities.len() != batch.dataset().n_events() {
-            return Err(LadduError::Custom(format!(
-                "intensity length mismatch: expected {}, got {}",
-                batch.dataset().n_events(),
-                intensities.len()
-            )));
-        }
+        let intensities = self.sampler.intensity.evaluate_checked(&batch)?;
         self.diagnostics.generated_events += batch.dataset().n_events();
         self.current_batch = Some(batch);
         self.current_intensities = intensities;
@@ -1325,14 +1442,8 @@ where
             }
 
             let weight = self.current_intensities[self.current_index];
-            if !weight.is_finite() || weight < 0.0 {
-                return Some(Err(LadduError::Custom(format!(
-                    "intensity at event {} must be finite and nonnegative, got {weight}",
-                    self.current_index
-                ))));
-            }
             self.diagnostics.max_observed_weight = self.diagnostics.max_observed_weight.max(weight);
-            let envelope_max = self.sampler.options.envelope.max_weight();
+            let envelope_max = self.sampler.max_weight;
             if weight > envelope_max {
                 self.diagnostics.envelope_violations += 1;
                 return Some(Err(LadduError::Custom(format!(
@@ -1484,12 +1595,26 @@ impl EventGenerator {
     pub fn generate_dataset(&self, n_events: usize) -> LadduResult<Dataset> {
         Ok(self.generate_batch(n_events)?.into_dataset())
     }
+
+    /// Construct a rejection sampler using a real-valued expression intensity.
+    pub fn rejection_sampler_with_expression(
+        &self,
+        expression: Expression,
+        parameters: Vec<f64>,
+        options: RejectionSamplingOptions,
+    ) -> LadduResult<RejectionSampler<ExpressionIntensity>> {
+        RejectionSampler::new(
+            self.clone(),
+            ExpressionIntensity::new(expression, parameters),
+            options,
+        )
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use approx::assert_relative_eq;
-    use laddu_core::{traits::Variable, Channel, Frame};
+    use laddu_core::{traits::Variable, Channel, Expression, Frame};
 
     use super::*;
 
@@ -1922,6 +2047,120 @@ mod tests {
         assert!(err.is_err());
         assert_eq!(iter.diagnostics().envelope_violations, 1);
         assert_relative_eq!(iter.diagnostics().max_observed_weight, 2.0);
+    }
+
+    #[test]
+    fn rejection_sampler_validates_custom_batch_intensities() {
+        let generator = EventGenerator::new(demo_reaction(), HashMap::new(), Some(12345));
+        let sampler = RejectionSampler::new(
+            generator,
+            |batch: &GeneratedBatch| Ok(vec![f64::NAN; batch.dataset().n_events()]),
+            RejectionSamplingOptions {
+                target_accepted: 1,
+                generation_batch_size: 1,
+                output_batch_size: 1,
+                envelope: RejectionEnvelope::Fixed { max_weight: 1.0 },
+                seed: 67890,
+            },
+        )
+        .unwrap();
+
+        let err = sampler
+            .accepted_batches()
+            .next()
+            .expect("sampler should produce an error");
+        assert!(err.is_err());
+    }
+
+    #[test]
+    fn expression_rejection_sampler_streams_exact_target_count() {
+        let generator = EventGenerator::new(demo_reaction(), HashMap::new(), Some(12345));
+        let sampler = generator
+            .rejection_sampler_with_expression(
+                Expression::from(1.0),
+                vec![],
+                RejectionSamplingOptions {
+                    target_accepted: 5,
+                    generation_batch_size: 4,
+                    output_batch_size: 2,
+                    envelope: RejectionEnvelope::Fixed { max_weight: 1.0 },
+                    seed: 67890,
+                },
+            )
+            .unwrap();
+
+        let batches = sampler
+            .accepted_batches()
+            .collect::<LadduResult<Vec<_>>>()
+            .unwrap();
+        assert_eq!(
+            batches
+                .iter()
+                .map(|batch| batch.dataset().n_events())
+                .collect::<Vec<_>>(),
+            vec![2, 2, 1]
+        );
+        assert_eq!(
+            batches
+                .iter()
+                .map(|batch| batch.dataset().n_events())
+                .sum::<usize>(),
+            5
+        );
+    }
+
+    #[test]
+    fn expression_rejection_sampler_supports_pilot_envelope() {
+        let generator = EventGenerator::new(demo_reaction(), HashMap::new(), Some(12345));
+        let sampler = generator
+            .rejection_sampler_with_expression(
+                Expression::from(1.0),
+                vec![],
+                RejectionSamplingOptions {
+                    target_accepted: 3,
+                    generation_batch_size: 2,
+                    output_batch_size: 2,
+                    envelope: RejectionEnvelope::Pilot {
+                        pilot_events: 4,
+                        batch_size: Some(2),
+                        safety_factor: 1.25,
+                    },
+                    seed: 67890,
+                },
+            )
+            .unwrap();
+        let mut iter = sampler.accepted_batches();
+        let batches = iter.by_ref().collect::<LadduResult<Vec<_>>>().unwrap();
+        assert_eq!(
+            batches
+                .iter()
+                .map(|batch| batch.dataset().n_events())
+                .sum::<usize>(),
+            3
+        );
+        assert_relative_eq!(iter.diagnostics().envelope_max_weight, 1.25);
+    }
+
+    #[test]
+    fn expression_rejection_sampler_rejects_invalid_intensities() {
+        let generator = EventGenerator::new(demo_reaction(), HashMap::new(), Some(12345));
+        let err = generator
+            .rejection_sampler_with_expression(
+                Expression::from(-1.0),
+                vec![],
+                RejectionSamplingOptions {
+                    target_accepted: 1,
+                    generation_batch_size: 1,
+                    output_batch_size: 1,
+                    envelope: RejectionEnvelope::Fixed { max_weight: 1.0 },
+                    seed: 67890,
+                },
+            )
+            .unwrap()
+            .accepted_batches()
+            .next()
+            .expect("sampler should emit an error");
+        assert!(err.is_err());
     }
 
     #[test]

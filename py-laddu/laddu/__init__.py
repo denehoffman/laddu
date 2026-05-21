@@ -86,6 +86,9 @@ from .generation import (
     MandelstamTDistribution,
     ParticleSpecies,
     Reconstruction,
+    RejectionEnvelope,
+    RejectionSampleIter,
+    RejectionSamplingDiagnostics,
     StableGenerator,
 )
 from .likelihood import (
@@ -255,6 +258,9 @@ __all__ = [
     'Production',
     'Reaction',
     'Reconstruction',
+    'RejectionEnvelope',
+    'RejectionSampleIter',
+    'RejectionSamplingDiagnostics',
     'RuleSet',
     'Scalar',
     'SelectionRules',

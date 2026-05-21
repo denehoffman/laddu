@@ -4,7 +4,8 @@ use laddu_core::{
     data::{
         io::{
             infer_p4_and_aux_names_from_columns, resolve_columns_case_insensitive,
-            resolve_optional_weight_column, resolve_p4_component_columns, P4_COMPONENT_SUFFIXES,
+            resolve_optional_weight_column, resolve_p4_component_columns, ParquetBatchWriter,
+            P4_COMPONENT_SUFFIXES,
         },
         read_parquet as core_read_parquet,
         read_parquet_chunks_with_options as core_read_parquet_chunks_with_options,
@@ -527,6 +528,59 @@ impl PyParquetChunkIter {
             Some(Err(err)) => Err(PyErr::from(err)),
             None => Ok(None),
         }
+    }
+}
+
+/// Streaming writer for appending compatible Dataset batches to one Parquet file.
+#[pyclass(name = "ParquetBatchWriter", module = "laddu", unsendable)]
+pub struct PyParquetBatchWriter {
+    writer: Option<ParquetBatchWriter>,
+}
+
+#[pymethods]
+impl PyParquetBatchWriter {
+    /// Append one Dataset batch.
+    fn write(&mut self, dataset: &PyDataset) -> PyResult<()> {
+        self.writer_mut()?
+            .write(dataset.0.as_ref())
+            .map_err(PyErr::from)
+    }
+
+    /// Finalize the Parquet file.
+    fn close(&mut self) -> PyResult<()> {
+        if let Some(writer) = &mut self.writer {
+            writer.close()?;
+        }
+        self.writer = None;
+        Ok(())
+    }
+
+    fn __enter__(slf: Py<Self>) -> Py<Self> {
+        slf
+    }
+
+    fn __exit__(
+        &mut self,
+        _exc_type: Bound<'_, PyAny>,
+        _exc_value: Bound<'_, PyAny>,
+        _traceback: Bound<'_, PyAny>,
+    ) -> PyResult<bool> {
+        self.close()?;
+        Ok(false)
+    }
+}
+
+impl PyParquetBatchWriter {
+    fn new(writer: ParquetBatchWriter) -> Self {
+        Self {
+            writer: Some(writer),
+        }
+    }
+
+    fn writer_mut(&mut self) -> PyResult<&mut ParquetBatchWriter> {
+        self.writer
+            .as_mut()
+            .ok_or_else(|| PyValueError::new_err("ParquetBatchWriter is closed"))
     }
 }
 
@@ -1232,6 +1286,26 @@ pub fn write_parquet(
     }
     write_options.precision = parse_precision_arg(Some(precision))?;
     core_write_parquet(dataset.0.as_ref(), &path_str, &write_options).map_err(PyErr::from)
+}
+
+/// Open a streaming Parquet writer for compatible Dataset batches.
+#[pyfunction]
+#[pyo3(signature = (path, *, chunk_size=None, precision="f64"))]
+pub fn open_parquet_writer(
+    path: Bound<PyAny>,
+    chunk_size: Option<usize>,
+    precision: &str,
+) -> PyResult<PyParquetBatchWriter> {
+    let path_str = parse_dataset_path(path)?;
+    let mut write_options = DatasetWriteOptions::default();
+    if let Some(size) = chunk_size {
+        write_options.batch_size = size.max(1);
+    }
+    write_options.precision = parse_precision_arg(Some(precision))?;
+    Ok(PyParquetBatchWriter::new(ParquetBatchWriter::new(
+        &path_str,
+        write_options,
+    )?))
 }
 
 /// Write a Dataset to a ROOT file using the oxyroot backend.

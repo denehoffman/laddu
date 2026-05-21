@@ -1,5 +1,6 @@
 from collections.abc import Iterator, Mapping, Sequence
 from pathlib import Path
+from types import TracebackType
 from typing import Any, Literal, TypeAlias
 
 import numpy as np
@@ -115,6 +116,24 @@ def to_numpy(
     dataset: Dataset, *, precision: Literal['f64', 'f32'] = 'f64'
 ) -> dict[str, NDArray[np.floating]]: ...
 def to_arrow(dataset: Dataset, *, precision: Literal['f64', 'f32'] = 'f64') -> Any: ...
+
+class ParquetBatchWriter:
+    def write(self, dataset: Dataset) -> None: ...
+    def close(self) -> None: ...
+    def __enter__(self) -> ParquetBatchWriter: ...  # noqa: PYI034
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> bool: ...
+
+def open_parquet_writer(
+    path: str | Path,
+    *,
+    chunk_size: int = 10000,
+    precision: Literal['f64', 'f32'] = 'f64',
+) -> ParquetBatchWriter: ...
 def write_parquet(
     dataset: Dataset,
     path: str | Path,
@@ -134,12 +153,14 @@ def write_root(
 ) -> None: ...
 
 __all__ = [
+    'ParquetBatchWriter',
     'from_arrow',
     'from_columns',
     'from_dict',
     'from_numpy',
     'from_pandas',
     'from_polars',
+    'open_parquet_writer',
     'read_amptools',
     'read_amptools_chunked',
     'read_parquet',

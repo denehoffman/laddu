@@ -1,5 +1,6 @@
 from collections.abc import Mapping
 
+from laddu.amplitude import Expression
 from laddu.data import Dataset
 from laddu.math import Histogram
 from laddu.reaction import Reaction
@@ -144,6 +145,31 @@ class GeneratedBatchIter:
     def __iter__(self) -> GeneratedBatchIter: ...
     def __next__(self) -> GeneratedBatch: ...
 
+class RejectionEnvelope:
+    @staticmethod
+    def fixed(max_weight: float) -> RejectionEnvelope: ...
+    @staticmethod
+    def pilot(
+        pilot_events: int,
+        *,
+        safety_factor: float = 1.2,
+        batch_size: int | None = None,
+    ) -> RejectionEnvelope: ...
+
+class RejectionSamplingDiagnostics:
+    generated_events: int
+    accepted_events: int
+    rejected_events: int
+    max_observed_weight: float
+    envelope_max_weight: float
+    envelope_violations: int
+    def acceptance_efficiency(self) -> float: ...
+
+class RejectionSampleIter:
+    diagnostics: RejectionSamplingDiagnostics
+    def __iter__(self) -> RejectionSampleIter: ...
+    def __next__(self) -> GeneratedBatch: ...
+
 class EventGenerator:
     def __init__(
         self,
@@ -156,4 +182,26 @@ class EventGenerator:
     def generate_batches(
         self, total_events: int, batch_size: int
     ) -> GeneratedBatchIter: ...
+    def generate_batches_rejection(
+        self,
+        expression: Expression,
+        parameters: list[float] | tuple[float, ...],
+        *,
+        n_events: int,
+        generation_batch_size: int,
+        output_batch_size: int,
+        envelope: RejectionEnvelope,
+        seed: int | None = None,
+    ) -> RejectionSampleIter: ...
+    def generate_dataset_rejection(
+        self,
+        expression: Expression,
+        parameters: list[float] | tuple[float, ...],
+        *,
+        n_events: int,
+        generation_batch_size: int,
+        output_batch_size: int,
+        envelope: RejectionEnvelope,
+        seed: int | None = None,
+    ) -> Dataset: ...
     def generate_dataset(self, n_events: int) -> Dataset: ...

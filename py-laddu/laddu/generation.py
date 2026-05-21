@@ -16,6 +16,9 @@ from laddu.laddu import (
     MandelstamTDistribution,
     ParticleSpecies,
     Reconstruction,
+    RejectionEnvelope,
+    RejectionSampleIter,
+    RejectionSamplingDiagnostics,
     StableGenerator,
 )
 
@@ -35,5 +38,8 @@ __all__ = [
     'MandelstamTDistribution',
     'ParticleSpecies',
     'Reconstruction',
+    'RejectionEnvelope',
+    'RejectionSampleIter',
+    'RejectionSamplingDiagnostics',
     'StableGenerator',
 ]
