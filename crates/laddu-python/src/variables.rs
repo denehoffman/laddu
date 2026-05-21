@@ -416,26 +416,23 @@ impl PyProduction {
         self.0.recoil().to_string()
     }
 
-    /// Production costheta variable for the selected frame.
-    #[pyo3(signature=(frame="Helicity"))]
-    fn costheta(&self, frame: &str) -> PyResult<PyCosTheta> {
-        Ok(PyCosTheta(self.0.costheta(frame.parse()?)?))
+    /// Production costheta variable.
+    fn costheta(&self) -> PyResult<PyCosTheta> {
+        Ok(PyCosTheta(self.0.costheta()?))
     }
 
-    /// Production phi variable for the selected frame.
-    #[pyo3(signature=(frame="Helicity"))]
-    fn phi(&self, frame: &str) -> PyResult<PyPhi> {
-        Ok(PyPhi(self.0.phi(frame.parse()?)?))
+    /// Production phi variable.
+    fn phi(&self) -> PyResult<PyPhi> {
+        Ok(PyPhi(self.0.phi()?))
     }
 
-    /// Production angle variables for the selected frame.
-    #[pyo3(signature=(frame="Helicity"))]
-    fn angles(&self, frame: &str) -> PyResult<PyAngles> {
-        Ok(PyAngles(self.0.angles(frame.parse()?)?))
+    /// Production angle variables.
+    fn angles(&self) -> PyResult<PyAngles> {
+        Ok(PyAngles(self.0.angles()?))
     }
 
     /// Construct the helicity-basis production angular factor for one explicit helicity term.
-    #[pyo3(signature=(*tags, spin, projection, lambda_produced, lambda_recoil, frame="Helicity"))]
+    #[pyo3(signature=(*tags, spin, projection, lambda_produced, lambda_recoil))]
     #[allow(clippy::too_many_arguments)]
     fn helicity_factor(
         &self,
@@ -444,7 +441,6 @@ impl PyProduction {
         projection: &Bound<'_, PyAny>,
         lambda_produced: &Bound<'_, PyAny>,
         lambda_recoil: &Bound<'_, PyAny>,
-        frame: &str,
     ) -> PyResult<PyExpression> {
         Ok(PyExpression(self.0.helicity_factor(
             py_tags(tags)?,
@@ -452,12 +448,11 @@ impl PyProduction {
             parse_projection(projection)?,
             parse_projection(lambda_produced)?,
             parse_projection(lambda_recoil)?,
-            frame.parse()?,
         )?))
     }
 
     /// Construct the canonical-basis production spin-angular factor for one LS/helicity term.
-    #[pyo3(signature=(*tags, spin, projection, orbital_l, coupled_spin, produced_spin, recoil_spin, lambda_produced, lambda_recoil, frame="Helicity"))]
+    #[pyo3(signature=(*tags, spin, projection, orbital_l, coupled_spin, produced_spin, recoil_spin, lambda_produced, lambda_recoil))]
     #[allow(clippy::too_many_arguments)]
     fn canonical_factor(
         &self,
@@ -470,7 +465,6 @@ impl PyProduction {
         recoil_spin: &Bound<'_, PyAny>,
         lambda_produced: &Bound<'_, PyAny>,
         lambda_recoil: &Bound<'_, PyAny>,
-        frame: &str,
     ) -> PyResult<PyExpression> {
         Ok(PyExpression(self.0.canonical_factor(
             py_tags(tags)?,
@@ -482,7 +476,6 @@ impl PyProduction {
             parse_angular_momentum(recoil_spin)?,
             parse_projection(lambda_produced)?,
             parse_projection(lambda_recoil)?,
-            frame.parse()?,
         )?))
     }
 

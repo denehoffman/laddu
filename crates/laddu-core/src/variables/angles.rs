@@ -16,6 +16,7 @@ enum AngleSource {
         reaction: Box<Reaction>,
         parent: String,
         daughter: String,
+        frame: Frame,
     },
     Production {
         reaction: Box<Reaction>,
@@ -29,59 +30,63 @@ impl AngleSource {
         Ok(())
     }
 
-    fn costheta(&self, event: &dyn EventLike, frame: Frame) -> f64 {
+    fn costheta(&self, event: &dyn EventLike) -> f64 {
         match self {
             Self::Decay {
                 reaction,
                 parent,
                 daughter,
+                frame,
             } => reaction
-                .angles_value(event, parent, daughter, frame)
+                .angles_value(event, parent, daughter, *frame)
                 .unwrap_or_else(|err| panic!("failed to evaluate reaction costheta: {err}"))
                 .costheta(),
             Self::Production { reaction, produced } => reaction
-                .production_angles_value(event, produced, frame)
+                .production_angles_value(event, produced)
                 .unwrap_or_else(|err| panic!("failed to evaluate production costheta: {err}"))
                 .costheta(),
         }
     }
 
-    fn phi(&self, event: &dyn EventLike, frame: Frame) -> f64 {
+    fn phi(&self, event: &dyn EventLike) -> f64 {
         match self {
             Self::Decay {
                 reaction,
                 parent,
                 daughter,
+                frame,
             } => reaction
-                .angles_value(event, parent, daughter, frame)
+                .angles_value(event, parent, daughter, *frame)
                 .unwrap_or_else(|err| panic!("failed to evaluate reaction phi: {err}"))
                 .phi(),
             Self::Production { reaction, produced } => reaction
-                .production_angles_value(event, produced, frame)
+                .production_angles_value(event, produced)
                 .unwrap_or_else(|err| panic!("failed to evaluate production phi: {err}"))
                 .phi(),
         }
     }
 
-    fn label(&self, kind: &str, frame: Frame) -> String {
+    fn label(&self, kind: &str) -> String {
         match self {
             Self::Decay {
-                parent, daughter, ..
+                parent,
+                daughter,
+                frame,
+                ..
             } => format!("{kind}(parent={parent}, daughter={daughter}, frame={frame})"),
-            Self::Production { produced, .. } => {
-                format!("{kind}(produced={produced}, frame={frame})")
-            }
+            Self::Production { produced, .. } => format!("{kind}(produced={produced})"),
         }
     }
 
-    fn angles_label(&self, frame: Frame) -> String {
+    fn angles_label(&self) -> String {
         match self {
             Self::Decay {
-                parent, daughter, ..
+                parent,
+                daughter,
+                frame,
+                ..
             } => format!("Angles(parent={parent}, daughter={daughter}, frame={frame})"),
-            Self::Production { produced, .. } => {
-                format!("Angles(produced={produced}, frame={frame})")
-            }
+            Self::Production { produced, .. } => format!("Angles(produced={produced})"),
         }
     }
 }
@@ -90,12 +95,11 @@ impl AngleSource {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CosTheta {
     source: AngleSource,
-    frame: Frame,
 }
 
 impl Display for CosTheta {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.source.label("CosTheta", self.frame))
+        write!(f, "{}", self.source.label("CosTheta"))
     }
 }
 
@@ -112,19 +116,18 @@ impl CosTheta {
                 reaction: Box::new(reaction),
                 parent: parent.into(),
                 daughter: daughter.into(),
+                frame,
             },
-            frame,
         }
     }
 
-    /// Construct an angle for the produced system in the production frame.
-    pub fn from_production(reaction: Reaction, produced: impl Into<String>, frame: Frame) -> Self {
+    /// Construct an angle for the produced system.
+    pub fn from_production(reaction: Reaction, produced: impl Into<String>) -> Self {
         Self {
             source: AngleSource::Production {
                 reaction: Box::new(reaction),
                 produced: produced.into(),
             },
-            frame,
         }
     }
 }
@@ -136,7 +139,7 @@ impl Variable for CosTheta {
     }
 
     fn value(&self, event: &dyn EventLike) -> f64 {
-        self.source.costheta(event, self.frame)
+        self.source.costheta(event)
     }
 }
 
@@ -144,12 +147,11 @@ impl Variable for CosTheta {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Phi {
     source: AngleSource,
-    frame: Frame,
 }
 
 impl Display for Phi {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.source.label("Phi", self.frame))
+        write!(f, "{}", self.source.label("Phi"))
     }
 }
 
@@ -166,19 +168,18 @@ impl Phi {
                 reaction: Box::new(reaction),
                 parent: parent.into(),
                 daughter: daughter.into(),
+                frame,
             },
-            frame,
         }
     }
 
-    /// Construct an angle for the produced system in the production frame.
-    pub fn from_production(reaction: Reaction, produced: impl Into<String>, frame: Frame) -> Self {
+    /// Construct an angle for the produced system.
+    pub fn from_production(reaction: Reaction, produced: impl Into<String>) -> Self {
         Self {
             source: AngleSource::Production {
                 reaction: Box::new(reaction),
                 produced: produced.into(),
             },
-            frame,
         }
     }
 }
@@ -190,7 +191,7 @@ impl Variable for Phi {
     }
 
     fn value(&self, event: &dyn EventLike) -> f64 {
-        self.source.phi(event, self.frame)
+        self.source.phi(event)
     }
 }
 
@@ -205,11 +206,7 @@ pub struct Angles {
 
 impl Display for Angles {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{}",
-            self.costheta.source.angles_label(self.costheta.frame)
-        )
+        write!(f, "{}", self.costheta.source.angles_label())
     }
 }
 
@@ -240,10 +237,10 @@ impl Angles {
     }
 
     /// Construct reaction-derived production angle variables.
-    pub fn from_production(reaction: Reaction, produced: impl Into<String>, frame: Frame) -> Self {
+    pub fn from_production(reaction: Reaction, produced: impl Into<String>) -> Self {
         let produced = produced.into();
-        let costheta = CosTheta::from_production(reaction.clone(), produced.clone(), frame);
-        let phi = Phi::from_production(reaction, produced, frame);
+        let costheta = CosTheta::from_production(reaction.clone(), produced.clone());
+        let phi = Phi::from_production(reaction, produced);
         Self { costheta, phi }
     }
 }

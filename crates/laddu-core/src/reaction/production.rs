@@ -2,7 +2,6 @@ use serde::{Deserialize, Serialize};
 
 use super::Reaction;
 use crate::{
-    quantum::Frame,
     variables::{Angles, CosTheta, Phi},
     LadduResult,
 };
@@ -32,29 +31,26 @@ impl Production {
     }
 
     /// Return the production costheta variable.
-    pub fn costheta(&self, frame: Frame) -> LadduResult<CosTheta> {
+    pub fn costheta(&self) -> LadduResult<CosTheta> {
         Ok(CosTheta::from_production(
             self.reaction.clone(),
             self.produced.clone(),
-            frame,
         ))
     }
 
     /// Return the production phi variable.
-    pub fn phi(&self, frame: Frame) -> LadduResult<Phi> {
+    pub fn phi(&self) -> LadduResult<Phi> {
         Ok(Phi::from_production(
             self.reaction.clone(),
             self.produced.clone(),
-            frame,
         ))
     }
 
     /// Return both production angle variables.
-    pub fn angles(&self, frame: Frame) -> LadduResult<Angles> {
+    pub fn angles(&self) -> LadduResult<Angles> {
         Ok(Angles::from_production(
             self.reaction.clone(),
             self.produced.clone(),
-            frame,
         ))
     }
 }

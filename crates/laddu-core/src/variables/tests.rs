@@ -137,6 +137,16 @@ fn test_angles_display() {
 }
 
 #[test]
+fn test_production_angles_display() {
+    let (reaction, _, _, _) = reaction();
+    let angles = reaction.production().unwrap().angles().unwrap();
+
+    assert_eq!(angles.costheta.to_string(), "CosTheta(produced=kk)");
+    assert_eq!(angles.phi.to_string(), "Phi(produced=kk)");
+    assert_eq!(angles.to_string(), "Angles(produced=kk)");
+}
+
+#[test]
 fn test_pol_angle() {
     let dataset = test_dataset();
     let (reaction, _, _, _) = reaction();
