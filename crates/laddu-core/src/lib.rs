@@ -715,6 +715,12 @@ pub enum LadduError {
         /// Name that could not be resolved
         name: String,
     },
+    /// A particle is missing the requested property
+    #[error("Particle is missing the requested property \"{property}\"")]
+    MissingParticleProperty {
+        /// The name of the missing property
+        property: &'static str,
+    },
     /// A custom fallback error for errors too complex or too infrequent to warrant their own error
     /// category.
     #[error("{0}")]
@@ -771,6 +777,7 @@ impl From<LadduError> for PyErr {
             LadduError::ThreadPoolError(_) => PyRuntimeError::new_err(err_string),
             #[cfg(feature = "numpy")]
             LadduError::NumpyError(_) => PyValueError::new_err(err_string),
+            LadduError::MissingParticleProperty { .. } => PyValueError::new_err(err_string),
         }
     }
 }

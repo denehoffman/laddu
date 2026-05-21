@@ -31,19 +31,51 @@ class Charge:
 
 class Isospin:
     isospin: int | Fraction
-    projection: int | Fraction | None
+    projection: int | Fraction
+    projection_unchecked: int | Fraction | None
     def __init__(
         self, isospin: QuantumNumber, *, projection: QuantumNumber | None = None
     ) -> None: ...
 
 class ParticleProperties:
-    name: str | None
-    spin: int | Fraction | None
-    parity: Parity | None
-    c_parity: Parity | None
-    g_parity: Parity | None
-    charge: Charge | None
-    isospin: Isospin | None
+    name: str
+    name_unchecked: str | None
+    species: str
+    species_unchecked: str | None
+    antiparticle_species: str
+    antiparticle_species_unchecked: str | None
+    self_conjugate: bool
+    self_conjugate_unchecked: bool | None
+    spin: int | Fraction
+    spin_unchecked: int | Fraction | None
+    parity: Parity
+    parity_unchecked: Parity | None
+    c_parity: Parity
+    c_parity_unchecked: Parity | None
+    g_parity: Parity
+    g_parity_unchecked: Parity | None
+    charge: Charge
+    charge_unchecked: Charge | None
+    isospin: Isospin
+    isospin_unchecked: Isospin | None
+    strangeness: int
+    strangeness_unchecked: int | None
+    charm: int
+    charm_unchecked: int | None
+    bottomness: int
+    bottomness_unchecked: int | None
+    topness: int
+    topness_unchecked: int | None
+    baryon_number: int
+    baryon_number_unchecked: int | None
+    electron_lepton_number: int
+    electron_lepton_number_unchecked: int | None
+    muon_lepton_number: int
+    muon_lepton_number_unchecked: int | None
+    tau_lepton_number: int
+    tau_lepton_number_unchecked: int | None
+    statistics: Statistics
+    statistics_unchecked: Statistics | None
     def __init__(
         self,
         name: str | None = None,

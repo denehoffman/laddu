@@ -47,8 +47,10 @@ impl SpinState {
 /// An isospin state with optional projection.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
 pub struct Isospin {
-    isospin: AngularMomentum,
-    projection: Option<Projection>,
+    /// The total isospin of the state.
+    pub isospin: AngularMomentum,
+    /// The isospin projection of the state.
+    pub projection: Option<Projection>,
 }
 
 impl Isospin {
@@ -67,8 +69,13 @@ impl Isospin {
         self.isospin
     }
     /// The isospin projection of the state.
-    pub fn projection(self) -> Option<Projection> {
+    ///
+    /// Returns an error if this property is not known.
+    pub fn projection(self) -> LadduResult<Projection> {
         self.projection
+            .ok_or_else(|| LadduError::MissingParticleProperty {
+                property: "isospin.projection",
+            })
     }
 }
 
@@ -116,6 +123,190 @@ pub struct ParticleProperties {
 }
 
 impl ParticleProperties {
+    /// Get the particle's name
+    ///
+    /// Returns an error if this property is not known.
+    pub fn name(&self) -> LadduResult<String> {
+        self.name
+            .clone()
+            .ok_or_else(|| LadduError::MissingParticleProperty { property: "name" })
+            .clone()
+    }
+    /// Get the particle's species
+    ///
+    /// Returns an error if this property is not known.
+    pub fn species(&self) -> LadduResult<String> {
+        self.species
+            .clone()
+            .ok_or_else(|| LadduError::MissingParticleProperty {
+                property: "species",
+            })
+            .clone()
+    }
+    /// Get the particle's antiparticle species
+    ///
+    /// Returns an error if this property is not known.
+    pub fn antiparticle_species(&self) -> LadduResult<String> {
+        self.antiparticle_species
+            .clone()
+            .ok_or_else(|| LadduError::MissingParticleProperty {
+                property: "antiparticle_species",
+            })
+            .clone()
+    }
+    /// Get the particle's self-conjugate status
+    ///
+    /// Returns an error if this property is not known.
+    pub fn self_conjugate(&self) -> LadduResult<bool> {
+        self.self_conjugate
+            .ok_or_else(|| LadduError::MissingParticleProperty {
+                property: "self_conjugate",
+            })
+            .clone()
+    }
+    /// Get the particle's spin
+    ///
+    /// Returns an error if this property is not known.
+    pub fn spin(&self) -> LadduResult<AngularMomentum> {
+        self.spin
+            .ok_or_else(|| LadduError::MissingParticleProperty { property: "spin" })
+            .clone()
+    }
+    /// Get the particle's intrinsic parity
+    ///
+    /// Returns an error if this property is not known.
+    pub fn parity(&self) -> LadduResult<Parity> {
+        self.parity
+            .ok_or_else(|| LadduError::MissingParticleProperty { property: "parity" })
+            .clone()
+    }
+    /// Get the particle's intrinsic C-parity
+    ///
+    /// Returns an error if this property is not known.
+    pub fn c_parity(&self) -> LadduResult<Parity> {
+        self.c_parity
+            .ok_or_else(|| LadduError::MissingParticleProperty {
+                property: "c_parity",
+            })
+            .clone()
+    }
+    /// Get the particle's intrinsic G-parity
+    ///
+    /// Returns an error if this property is not known.
+    pub fn g_parity(&self) -> LadduResult<Parity> {
+        self.g_parity
+            .ok_or_else(|| LadduError::MissingParticleProperty {
+                property: "g_parity",
+            })
+            .clone()
+    }
+    /// Get the particle's electric charge
+    ///
+    /// Returns an error if this property is not known.
+    pub fn charge(&self) -> LadduResult<Charge> {
+        self.charge
+            .ok_or_else(|| LadduError::MissingParticleProperty { property: "charge" })
+            .clone()
+    }
+    /// Get the particle's isospin
+    ///
+    /// Returns an error if this property is not known.
+    pub fn isospin(&self) -> LadduResult<Isospin> {
+        self.isospin
+            .ok_or_else(|| LadduError::MissingParticleProperty {
+                property: "isospin",
+            })
+            .clone()
+    }
+    /// Get the particle's strangeness
+    ///
+    /// Returns an error if this property is not known.
+    pub fn strangeness(&self) -> LadduResult<i32> {
+        self.strangeness
+            .ok_or_else(|| LadduError::MissingParticleProperty {
+                property: "strangeness",
+            })
+            .clone()
+    }
+    /// Get the particle's charm
+    ///
+    /// Returns an error if this property is not known.
+    pub fn charm(&self) -> LadduResult<i32> {
+        self.charm
+            .ok_or_else(|| LadduError::MissingParticleProperty { property: "charm" })
+            .clone()
+    }
+    /// Get the particle's bottomness
+    ///
+    /// Returns an error if this property is not known.
+    pub fn bottomness(&self) -> LadduResult<i32> {
+        self.bottomness
+            .ok_or_else(|| LadduError::MissingParticleProperty {
+                property: "bottomness",
+            })
+            .clone()
+    }
+    /// Get the particle's topness
+    ///
+    /// Returns an error if this property is not known.
+    pub fn topness(&self) -> LadduResult<i32> {
+        self.topness
+            .ok_or_else(|| LadduError::MissingParticleProperty {
+                property: "topness",
+            })
+            .clone()
+    }
+    /// Get the particle's baryon number
+    ///
+    /// Returns an error if this property is not known.
+    pub fn baryon_number(&self) -> LadduResult<i32> {
+        self.baryon_number
+            .ok_or_else(|| LadduError::MissingParticleProperty {
+                property: "baryon_number",
+            })
+            .clone()
+    }
+    /// Get the particle's electron lepton number
+    ///
+    /// Returns an error if this property is not known.
+    pub fn electron_lepton_number(&self) -> LadduResult<i32> {
+        self.electron_lepton_number
+            .ok_or_else(|| LadduError::MissingParticleProperty {
+                property: "electron_lepton_number",
+            })
+            .clone()
+    }
+    /// Get the particle's muon lepton number
+    ///
+    /// Returns an error if this property is not known.
+    pub fn muon_lepton_number(&self) -> LadduResult<i32> {
+        self.muon_lepton_number
+            .ok_or_else(|| LadduError::MissingParticleProperty {
+                property: "muon_lepton_number",
+            })
+            .clone()
+    }
+    /// Get the particle's tau lepton number
+    ///
+    /// Returns an error if this property is not known.
+    pub fn tau_lepton_number(&self) -> LadduResult<i32> {
+        self.tau_lepton_number
+            .ok_or_else(|| LadduError::MissingParticleProperty {
+                property: "tau_lepton_number",
+            })
+            .clone()
+    }
+    /// Get the particle's statistics
+    ///
+    /// Returns an error if this property is not known.
+    pub fn statistics(&self) -> LadduResult<Statistics> {
+        self.statistics
+            .ok_or_else(|| LadduError::MissingParticleProperty {
+                property: "statistics",
+            })
+            .clone()
+    }
+
     /// Construct a particle with no specified properties.
     pub fn unknown() -> Self {
         Self::default()

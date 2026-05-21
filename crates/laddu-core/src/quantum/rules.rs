@@ -254,9 +254,9 @@ impl RuleSet {
         let i_parent = parent.isospin?;
         let i_a = daughters.0.isospin?;
         let i_b = daughters.1.isospin?;
-        let i3_parent = i_parent.projection()?;
-        let i3_a = i_a.projection()?;
-        let i3_b = i_b.projection()?;
+        let i3_parent = i_parent.projection?;
+        let i3_a = i_a.projection?;
+        let i3_b = i_b.projection?;
         Some(i3_parent.value() == i3_a.value() + i3_b.value())
     }
     fn check_c_parity(
