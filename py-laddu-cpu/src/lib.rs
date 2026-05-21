@@ -11,7 +11,8 @@ mod laddu {
 
     #[pymodule_export]
     use laddu_python::data::{
-        from_columns, read_parquet, read_parquet_chunked, read_root, write_parquet, write_root,
+        from_columns, open_parquet_writer, read_parquet, read_parquet_chunked, read_root,
+        write_parquet, write_root,
     };
     #[pymodule_export]
     use laddu_python::extensions::{
@@ -37,13 +38,14 @@ mod laddu {
             PyKopfKMatrixPi1Channel, PyKopfKMatrixRhoChannel, PyParameter, PyParameterMap,
         },
         available_parallelism,
-        data::{PyBinnedDataset, PyDataset, PyEvent, PyParquetChunkIter},
+        data::{PyBinnedDataset, PyDataset, PyEvent, PyParquetBatchWriter, PyParquetChunkIter},
         generation::{
             PyCompositeGenerator, PyDistribution, PyEventGenerator, PyGeneratedBatch,
             PyGeneratedBatchIter, PyGeneratedEventLayout, PyGeneratedParticle,
             PyGeneratedParticleLayout, PyGeneratedReaction, PyGeneratedStorage,
             PyGeneratedVertexLayout, PyInitialGenerator, PyMandelstamTDistribution,
-            PyParticleSpecies, PyReconstruction, PyStableGenerator,
+            PyParticleSpecies, PyReconstruction, PyRejectionEnvelope, PyRejectionSampleIter,
+            PyRejectionSamplingDiagnostics, PyStableGenerator,
         },
         get_threads,
         math::PyHistogram,

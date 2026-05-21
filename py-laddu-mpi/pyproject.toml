@@ -19,7 +19,7 @@ classifiers = [
 dynamic = ["version", "license", "description", "readme"]
 dependencies = [
   "numpy",
-  "ganesh-rs == 0.27.0",
+  "ganesh-rs == 0.27.1",
 ]
 
 [project.urls]

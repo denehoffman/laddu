@@ -1740,6 +1740,32 @@ fn test_parquet_roundtrip_incremental_small_batches() {
 }
 
 #[test]
+fn test_parquet_batch_writer_roundtrip_multiple_batches() {
+    let dataset = open_test_dataset("data_f32.parquet", DatasetReadOptions::new());
+    let dir = make_temp_dir();
+    let path = dir.join("streaming_batches.parquet");
+    let path_str = path.to_str().expect("path should be valid UTF-8");
+
+    let mut writer =
+        io::ParquetBatchWriter::new(path_str, DatasetWriteOptions::default().batch_size(1))
+            .expect("streaming writer should construct");
+    writer
+        .write(&dataset)
+        .expect("first dataset batch should write");
+    writer
+        .write(&dataset)
+        .expect("second dataset batch should write");
+    writer.close().expect("streaming writer should close");
+
+    let reopened = read_parquet(path_str, &DatasetReadOptions::new())
+        .expect("parquet roundtrip should reopen");
+    assert_eq!(reopened.n_events(), dataset.n_events() * 2);
+    assert_eq!(reopened.p4_names(), dataset.p4_names());
+    assert_eq!(reopened.aux_names(), dataset.aux_names());
+    fs::remove_dir_all(&dir).expect("temp dir cleanup should succeed");
+}
+
+#[test]
 fn test_parquet_read_order_is_deterministic_across_repeated_reads() {
     let dataset = open_test_dataset("data_f32.parquet", DatasetReadOptions::new());
     let dir = make_temp_dir();

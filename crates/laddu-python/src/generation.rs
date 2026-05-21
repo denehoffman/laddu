@@ -1,14 +1,18 @@
 use std::{collections::HashMap, sync::Arc};
 
 use laddu_generation::{
-    CompositeGenerator, Distribution, EventGenerator, GeneratedBatch, GeneratedEventLayout,
-    GeneratedParticle, GeneratedParticleLayout, GeneratedReaction, GeneratedStorage,
-    GeneratedVertexKind, GeneratedVertexLayout, HistogramSampler, InitialGenerator,
-    MandelstamTDistribution, ParticleSpecies, Reconstruction, StableGenerator,
+    CompositeGenerator, Distribution, EventGenerator, ExpressionIntensity, GeneratedBatch,
+    GeneratedEventLayout, GeneratedParticle, GeneratedParticleLayout, GeneratedReaction,
+    GeneratedStorage, GeneratedVertexKind, GeneratedVertexLayout, HistogramSampler,
+    InitialGenerator, MandelstamTDistribution, ParticleSpecies, Reconstruction, RejectionEnvelope,
+    RejectionSampleIter, RejectionSamplingDiagnostics, RejectionSamplingOptions, StableGenerator,
 };
 use pyo3::{exceptions::PyValueError, prelude::*, types::PyTuple};
 
-use crate::{data::PyDataset, math::PyHistogram, variables::PyReaction, vectors::PyVec4};
+use crate::{
+    amplitudes::PyExpression, data::PyDataset, math::PyHistogram, variables::PyReaction,
+    vectors::PyVec4,
+};
 
 /// A scalar distribution used by generated auxiliary columns.
 #[pyclass(name = "Distribution", module = "laddu", from_py_object)]
@@ -671,6 +675,116 @@ impl PyGeneratedBatchIter {
     }
 }
 
+/// Envelope strategy used by rejection sampling.
+#[pyclass(name = "RejectionEnvelope", module = "laddu", from_py_object)]
+#[derive(Clone, Debug)]
+pub struct PyRejectionEnvelope(pub RejectionEnvelope);
+
+#[pymethods]
+impl PyRejectionEnvelope {
+    /// Use a fixed maximum event weight.
+    #[staticmethod]
+    fn fixed(max_weight: f64) -> Self {
+        Self(RejectionEnvelope::Fixed { max_weight })
+    }
+
+    /// Estimate the maximum event weight from a pilot sample.
+    #[staticmethod]
+    #[pyo3(signature = (pilot_events, *, safety_factor=1.2, batch_size=None))]
+    fn pilot(pilot_events: usize, safety_factor: f64, batch_size: Option<usize>) -> Self {
+        Self(RejectionEnvelope::Pilot {
+            pilot_events,
+            batch_size,
+            safety_factor,
+        })
+    }
+
+    fn __repr__(&self) -> String {
+        format!("{:?}", self.0)
+    }
+}
+
+/// Rejection-sampling diagnostics.
+#[pyclass(
+    name = "RejectionSamplingDiagnostics",
+    module = "laddu",
+    from_py_object
+)]
+#[derive(Clone, Debug)]
+pub struct PyRejectionSamplingDiagnostics(pub RejectionSamplingDiagnostics);
+
+#[pymethods]
+impl PyRejectionSamplingDiagnostics {
+    #[getter]
+    fn generated_events(&self) -> usize {
+        self.0.generated_events
+    }
+
+    #[getter]
+    fn accepted_events(&self) -> usize {
+        self.0.accepted_events
+    }
+
+    #[getter]
+    fn rejected_events(&self) -> usize {
+        self.0.rejected_events
+    }
+
+    #[getter]
+    fn max_observed_weight(&self) -> f64 {
+        self.0.max_observed_weight
+    }
+
+    #[getter]
+    fn envelope_max_weight(&self) -> f64 {
+        self.0.envelope_max_weight
+    }
+
+    #[getter]
+    fn envelope_violations(&self) -> usize {
+        self.0.envelope_violations
+    }
+
+    fn acceptance_efficiency(&self) -> f64 {
+        self.0.acceptance_efficiency()
+    }
+
+    fn __repr__(&self) -> String {
+        format!("{:?}", self.0)
+    }
+}
+
+/// Iterator over expression rejection-sampled generated batches.
+#[pyclass(
+    name = "RejectionSampleIter",
+    module = "laddu",
+    unsendable,
+    skip_from_py_object
+)]
+pub struct PyRejectionSampleIter {
+    iter: RejectionSampleIter<ExpressionIntensity>,
+}
+
+#[pymethods]
+impl PyRejectionSampleIter {
+    fn __iter__(slf: PyRef<'_, Self>) -> Py<PyRejectionSampleIter> {
+        slf.into()
+    }
+
+    fn __next__(&mut self) -> PyResult<Option<PyGeneratedBatch>> {
+        match self.iter.next() {
+            Some(Ok(batch)) => Ok(Some(PyGeneratedBatch(batch))),
+            Some(Err(err)) => Err(PyErr::from(err)),
+            None => Ok(None),
+        }
+    }
+
+    #[getter]
+    fn diagnostics(&self) -> PyRejectionSamplingDiagnostics {
+        PyRejectionSamplingDiagnostics(self.iter.diagnostics().clone())
+    }
+}
+
 /// Event generator for generated reaction layouts.
 #[pyclass(name = "EventGenerator", module = "laddu", from_py_object)]
 #[derive(Clone, Debug)]
@@ -718,6 +832,98 @@ impl PyEventGenerator {
         Ok(PyGeneratedBatchIter {
             iter: Box::new(self.0.generate_batches(total_events, batch_size)?),
         })
+    }
+
+    /// Generate accepted batches using a real-valued expression as the rejection intensity.
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (
+        expression,
+        parameters,
+        *,
+        n_events,
+        generation_batch_size,
+        output_batch_size,
+        envelope,
+        seed=None
+    ))]
+    fn generate_batches_rejection(
+        &self,
+        expression: &PyExpression,
+        parameters: Vec<f64>,
+        n_events: usize,
+        generation_batch_size: usize,
+        output_batch_size: usize,
+        envelope: &PyRejectionEnvelope,
+        seed: Option<u64>,
+    ) -> PyResult<PyRejectionSampleIter> {
+        let sampler = self.0.rejection_sampler_with_expression(
+            expression.0.clone(),
+            parameters,
+            RejectionSamplingOptions {
+                target_accepted: n_events,
+                generation_batch_size,
+                output_batch_size,
+                envelope: envelope.0.clone(),
+                seed: seed.unwrap_or_else(|| fastrand::u64(..)),
+            },
+        )?;
+        Ok(PyRejectionSampleIter {
+            iter: sampler.accepted_batches(),
+        })
+    }
+
+    /// Generate a Dataset using a real-valued expression as the rejection intensity.
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (
+        expression,
+        parameters,
+        *,
+        n_events,
+        generation_batch_size,
+        output_batch_size,
+        envelope,
+        seed=None
+    ))]
+    fn generate_dataset_rejection(
+        &self,
+        expression: &PyExpression,
+        parameters: Vec<f64>,
+        n_events: usize,
+        generation_batch_size: usize,
+        output_batch_size: usize,
+        envelope: &PyRejectionEnvelope,
+        seed: Option<u64>,
+    ) -> PyResult<PyDataset> {
+        let mut iter = self.generate_batches_rejection(
+            expression,
+            parameters,
+            n_events,
+            generation_batch_size,
+            output_batch_size,
+            envelope,
+            seed,
+        )?;
+        let mut output = None;
+        while let Some(batch) = iter.__next__()? {
+            let dataset = batch.0.into_dataset();
+            if output.is_none() {
+                output = Some(laddu_core::Dataset::empty_local(dataset.metadata().clone()));
+            }
+            let output_dataset = output.as_mut().expect("output dataset should exist");
+            for index in 0..dataset.n_events() {
+                let event = dataset.event_global(index)?;
+                output_dataset.push_event_local(
+                    event.p4s.clone(),
+                    event.aux.clone(),
+                    event.weight,
+                )?;
+            }
+        }
+        let output = match output {
+            Some(output) => output,
+            None => self.0.generate_batch(0)?.into_dataset(),
+        };
+        Ok(PyDataset(Arc::new(output)))
     }
 
     /// Generate a dataset.

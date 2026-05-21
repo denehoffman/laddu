@@ -772,6 +772,111 @@ pub fn write_parquet(
     dataset.write_parquet_impl(path, options)
 }
 
+/// Incrementally writes compatible [`Dataset`] batches to one Parquet file.
+pub struct ParquetBatchWriter {
+    file_path: PathBuf,
+    options: DatasetWriteOptions,
+    writer: Option<ArrowWriter<File>>,
+    metadata: Option<Arc<DatasetMetadata>>,
+    schema: Option<Arc<Schema>>,
+    closed: bool,
+}
+
+impl ParquetBatchWriter {
+    /// Construct a streaming Parquet writer.
+    pub fn new(file_path: &str, options: DatasetWriteOptions) -> LadduResult<Self> {
+        Ok(Self {
+            file_path: expand_output_path(file_path)?,
+            options,
+            writer: None,
+            metadata: None,
+            schema: None,
+            closed: false,
+        })
+    }
+
+    /// Append one dataset batch to this Parquet file.
+    pub fn write(&mut self, dataset: &Dataset) -> LadduResult<()> {
+        if self.closed {
+            return Err(LadduError::Custom(
+                "Cannot write to a closed ParquetBatchWriter".to_string(),
+            ));
+        }
+        self.ensure_open(dataset)?;
+        let schema = self
+            .schema
+            .as_ref()
+            .expect("streaming writer should have a schema after opening")
+            .clone();
+        let precision = self.options.precision;
+        let batch_size = self.options.batch_size.max(1);
+        let storage = dataset.local_storage_for_export()?;
+        let n_rows = storage.n_events();
+        let mut start = 0usize;
+        while start < n_rows {
+            let end = (start + batch_size).min(n_rows);
+            let batch =
+                columnar_range_to_record_batch(&storage, start, end, schema.clone(), precision)
+                    .map_err(|err| {
+                        LadduError::Custom(format!("Failed to build Parquet batch: {err}"))
+                    })?;
+            self.writer
+                .as_mut()
+                .expect("streaming writer should be open before writing")
+                .write(&batch)
+                .map_err(|err| {
+                    LadduError::Custom(format!("Failed to write Parquet batch: {err}"))
+                })?;
+            start = end;
+        }
+        Ok(())
+    }
+
+    /// Finalize the Parquet file.
+    pub fn close(&mut self) -> LadduResult<()> {
+        if self.closed {
+            return Ok(());
+        }
+        self.closed = true;
+        if let Some(writer) = self.writer.take() {
+            writer.close().map_err(|err| {
+                LadduError::Custom(format!("Failed to finalise Parquet file: {err}"))
+            })?;
+        }
+        Ok(())
+    }
+
+    fn ensure_open(&mut self, dataset: &Dataset) -> LadduResult<()> {
+        if let Some(metadata) = &self.metadata {
+            if metadata.p4_names() != dataset.p4_names()
+                || metadata.aux_names() != dataset.aux_names()
+            {
+                return Err(LadduError::Custom(
+                    "Dataset batch metadata does not match previous Parquet writer batches"
+                        .to_string(),
+                ));
+            }
+            return Ok(());
+        }
+
+        let metadata = Arc::new(dataset.metadata().clone());
+        let schema = Arc::new(build_parquet_schema(&metadata, self.options.precision));
+        let file = File::create(&self.file_path)?;
+        let writer = ArrowWriter::try_new(file, schema.clone(), None)
+            .map_err(|err| LadduError::Custom(format!("Failed to create Parquet writer: {err}")))?;
+        self.metadata = Some(metadata);
+        self.schema = Some(schema);
+        self.writer = Some(writer);
+        Ok(())
+    }
+}
+
+impl Drop for ParquetBatchWriter {
+    fn drop(&mut self) {
+        let _ = self.close();
+    }
+}
+
 #[cfg(test)]
 pub(crate) fn write_parquet_storage(
     dataset: &DatasetStorage,

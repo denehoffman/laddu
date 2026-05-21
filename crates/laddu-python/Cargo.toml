@@ -19,6 +19,7 @@ laddu-extensions = { workspace = true }
 laddu-generation = { workspace = true }
 
 ganesh = { workspace = true, features = ["python"] }
+fastrand = { workspace = true }
 num = { workspace = true }
 num_cpus = { workspace = true }
 numpy = { workspace = true }

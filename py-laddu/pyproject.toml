@@ -35,7 +35,7 @@ readme = "README.md"
 dependencies = [
   "laddu-cpu == 0.19.2", # x-release-please-version # WARNING: DO NOT EDIT
   "numpy",
-  "ganesh-rs == 0.27.0",
+  "ganesh-rs == 0.27.1",
 ]
 
 [project.urls]

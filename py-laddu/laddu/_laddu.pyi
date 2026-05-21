@@ -79,6 +79,9 @@ from laddu.generation import (
     MandelstamTDistribution,
     ParticleSpecies,
     Reconstruction,
+    RejectionEnvelope,
+    RejectionSampleIter,
+    RejectionSamplingDiagnostics,
     StableGenerator,
 )
 from laddu.likelihood import (
@@ -199,6 +202,7 @@ __all__ = [
     'Parameter',
     'ParameterMap',
     'Parity',
+    'ParquetBatchWriter',
     'ParquetChunkIter',
     'PartialWave',
     'Particle',
@@ -216,6 +220,9 @@ __all__ = [
     'Reaction',
     'Reconstruction',
     'Regularizer',
+    'RejectionEnvelope',
+    'RejectionSampleIter',
+    'RejectionSamplingDiagnostics',
     'RuleSet',
     'Scalar',
     'SelectionRules',
@@ -250,6 +257,7 @@ __all__ = [
     'is_root',
     'likelihood_product',
     'likelihood_sum',
+    'open_parquet_writer',
     'parameter',
     'read_parquet',
     'read_parquet_chunked',
@@ -347,6 +355,22 @@ def write_parquet(
     precision: Literal['f64', 'f32'] = 'f64',
 ) -> None:
     """Write a dataset to a Parquet file using the loaded backend."""
+
+class ParquetBatchWriter:
+    def write(self, dataset: Dataset) -> None: ...
+    def close(self) -> None: ...
+    def __enter__(self) -> ParquetBatchWriter: ...  # noqa: PYI034
+    def __exit__(
+        self, exc_type: object, exc_value: object, traceback: object
+    ) -> bool: ...
+
+def open_parquet_writer(
+    path: str | os.PathLike[str],
+    *,
+    chunk_size: int | None = None,
+    precision: Literal['f64', 'f32'] = 'f64',
+) -> ParquetBatchWriter:
+    """Open a streaming Parquet writer for compatible Dataset batches."""
 
 def write_root(
     dataset: Dataset,
