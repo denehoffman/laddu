@@ -59,7 +59,7 @@ pub enum MandelstamTDistribution {
 impl MandelstamTDistribution {
     pub fn sample(&self, rng: &mut Rng) -> f64 {
         match self {
-            Self::Exponential { slope } => rng.exponential(*slope),
+            Self::Exponential { slope } => -rng.exponential(*slope),
             Self::Histogram(sampler) => sampler.sample(rng),
         }
     }
