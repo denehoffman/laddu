@@ -63,12 +63,12 @@ impl FrameAxes {
         Self::new(x, y, z)
     }
 
-    /// Construct production-frame axes from caller-selected production momenta.
+    /// Construct decay-frame axes for a reaction root from caller-selected production momenta.
     ///
     /// `reference`, `parent`, and `spectator` are lab-frame four-momenta. `system_boost` is the
     /// boost into the frame where the production plane is defined. This keeps named event topology
     /// handling outside the frame helper while still sharing the convention-sensitive geometry.
-    pub fn from_production_frame(
+    pub fn from_decay_frame(
         frame: Frame,
         reference: Vec4,
         parent: Vec4,
@@ -90,7 +90,7 @@ impl FrameAxes {
         )?;
 
         let z = match frame {
-            Frame::Helicity => unit_vector(-spectator_in_parent, "production-frame z axis")?,
+            Frame::Helicity => unit_vector(-spectator_in_parent, "decay-frame z axis")?,
             Frame::GottfriedJackson => {
                 unit_vector(reference_in_parent, "Gottfried-Jackson z axis")?
             }
@@ -165,7 +165,7 @@ mod tests {
 
     fn transverse_axes(frame: Frame) -> FrameAxes {
         let (reference, parent, spectator) = transverse_momenta();
-        FrameAxes::from_production_frame(frame, reference, parent, spectator, Vec3::zero()).unwrap()
+        FrameAxes::from_decay_frame(frame, reference, parent, spectator, Vec3::zero()).unwrap()
     }
 
     fn assert_vec3_close(actual: Vec3, expected: Vec3) {
@@ -225,7 +225,7 @@ mod tests {
 
     #[test]
     fn frame_axes_reject_degenerate_production_plane() {
-        let err = FrameAxes::from_production_frame(
+        let err = FrameAxes::from_decay_frame(
             Frame::Helicity,
             Vec4::new(0.0, 0.0, 5.0, 5.0),
             Vec4::new(0.0, 0.0, 1.0, 2.0),

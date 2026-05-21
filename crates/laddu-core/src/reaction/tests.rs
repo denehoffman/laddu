@@ -33,7 +33,7 @@ fn pion_cascade_dataset() -> (Dataset, Reaction, Particle, Particle, Particle) {
         Vec3::new(-0.200000000000000, 0.0, 0.400000000000000).with_mass(0.938000000000000);
     let beam_lab = Vec4::new(0.0, 0.0, 6.000000000000000, 6.000000000000000);
     let target_lab = x_lab + recoil_lab - beam_lab;
-    let x_rest_axes = FrameAxes::from_production_frame(
+    let x_rest_axes = FrameAxes::from_decay_frame(
         Frame::Helicity,
         beam_lab,
         x_lab,
@@ -337,7 +337,7 @@ fn reaction_mandelstam_variables_match_resolved_values() {
 }
 
 #[test]
-fn production_frame_axes_support_known_frames() {
+fn decay_root_axes_support_known_frames() {
     let (dataset, reaction, _, _, _) = pion_cascade_dataset();
     let event = dataset.event_local(0).unwrap();
 
@@ -357,21 +357,13 @@ fn reaction_production_view_infers_two_to_two_roles() {
 }
 
 #[test]
-fn production_angles_use_two_to_two_scattering_geometry() {
+fn production_angles_use_fixed_two_to_two_scattering_geometry() {
     let (dataset, reaction, _, _, _) = pion_cascade_dataset();
     let event = dataset.event_local(0).unwrap();
 
-    let helicity = reaction
-        .production_angles_value(&event, "x", Frame::Helicity)
-        .unwrap();
-    let gj = reaction
-        .production_angles_value(&event, "x", Frame::GottfriedJackson)
-        .unwrap();
+    let angles = reaction.production_angles_value(&event, "x").unwrap();
 
-    assert_relative_eq!(helicity.costheta(), 1.0);
-    assert!(gj.costheta() < 1.0);
-    assert!(gj.costheta() > -1.0);
-    assert!(reaction
-        .production_angles_value(&event, "rho", Frame::Helicity)
-        .is_err());
+    assert!(angles.costheta() < 1.0);
+    assert!(angles.costheta() > -1.0);
+    assert!(reaction.production_angles_value(&event, "rho").is_err());
 }

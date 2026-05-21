@@ -183,7 +183,7 @@ impl Reaction {
                     ));
                 }
             };
-            return FrameAxes::from_production_frame(
+            return FrameAxes::from_decay_frame(
                 frame,
                 resolved.p1,
                 parent,
@@ -228,7 +228,6 @@ impl Reaction {
         &self,
         event: &dyn EventLike,
         produced: &str,
-        frame: Frame,
     ) -> LadduResult<DecayAngles> {
         let topology = self.two_to_two_topology()?;
         if produced != topology.p3() {
@@ -242,16 +241,7 @@ impl Reaction {
         let produced_p4 = resolved.p3.boost(&com_boost);
         let produced_vec = produced_p4.vec3();
         let plane_normal = reference.vec3().cross(&produced_vec);
-        let z = match frame {
-            Frame::Helicity => produced_vec,
-            Frame::GottfriedJackson => reference.vec3(),
-            Frame::Adair => {
-                return Err(LadduError::Custom(
-                    "Adair frame construction is not implemented yet".to_string(),
-                ));
-            }
-        };
-        FrameAxes::from_z_and_plane_normal(z, plane_normal)?.angles(produced_vec)
+        FrameAxes::from_z_and_plane_normal(reference.vec3(), plane_normal)?.angles(produced_vec)
     }
 
     /// Return the particle with the given identifier.

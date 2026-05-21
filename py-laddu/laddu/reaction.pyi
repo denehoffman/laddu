@@ -85,9 +85,9 @@ class Production:
     produced: str
     recoil: str
 
-    def costheta(self, frame: _Frame = 'Helicity') -> CosTheta: ...
-    def phi(self, frame: _Frame = 'Helicity') -> Phi: ...
-    def angles(self, frame: _Frame = 'Helicity') -> Angles: ...
+    def costheta(self) -> CosTheta: ...
+    def phi(self) -> Phi: ...
+    def angles(self) -> Angles: ...
     def helicity_factor(
         self,
         *tags: str,
@@ -95,7 +95,6 @@ class Production:
         projection: QuantumNumber,
         lambda_produced: QuantumNumber,
         lambda_recoil: QuantumNumber,
-        frame: _Frame = 'Helicity',
     ) -> Expression: ...
     def canonical_factor(
         self,
@@ -108,7 +107,6 @@ class Production:
         recoil_spin: QuantumNumber,
         lambda_produced: QuantumNumber,
         lambda_recoil: QuantumNumber,
-        frame: _Frame = 'Helicity',
     ) -> Expression: ...
 
 class Reaction:

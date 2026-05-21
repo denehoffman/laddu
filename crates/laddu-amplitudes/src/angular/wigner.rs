@@ -159,7 +159,6 @@ pub trait ProductionAmplitudeExt {
         projection: Projection,
         lambda_produced: Projection,
         lambda_recoil: Projection,
-        frame: Frame,
     ) -> LadduResult<Expression>;
 
     /// Construct the canonical-basis spin-angular factor for one explicit LS/helicity term.
@@ -175,7 +174,6 @@ pub trait ProductionAmplitudeExt {
         recoil_spin: AngularMomentum,
         lambda_produced: Projection,
         lambda_recoil: Projection,
-        frame: Frame,
     ) -> LadduResult<Expression>;
 }
 
@@ -187,10 +185,9 @@ impl ProductionAmplitudeExt for Production {
         projection: Projection,
         lambda_produced: Projection,
         lambda_recoil: Projection,
-        frame: Frame,
     ) -> LadduResult<Expression> {
         let lambda = Projection::half_integer(lambda_produced.value() - lambda_recoil.value());
-        let angles = self.angles(frame)?;
+        let angles = self.angles()?;
         Ok(WignerD::new(tags, spin, projection, lambda, &angles)?.conj())
     }
 
@@ -205,7 +202,6 @@ impl ProductionAmplitudeExt for Production {
         recoil_spin: AngularMomentum,
         lambda_produced: Projection,
         lambda_recoil: Projection,
-        frame: Frame,
     ) -> LadduResult<Expression> {
         let lambda = Projection::half_integer(lambda_produced.value() - lambda_recoil.value());
         let minus_lambda_recoil = Projection::half_integer(-lambda_recoil.value());
@@ -229,14 +225,7 @@ impl ProductionAmplitudeExt for Production {
                     coupled_spin,
                     lambda,
                 )?
-                * self.helicity_factor(
-                    tags,
-                    spin,
-                    projection,
-                    lambda_produced,
-                    lambda_recoil,
-                    frame,
-                )?,
+                * self.helicity_factor(tags, spin, projection, lambda_produced, lambda_recoil)?,
         )
     }
 }
