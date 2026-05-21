@@ -301,15 +301,20 @@ impl PyIsospin {
     }
 
     #[getter]
-    fn projection(&self, py: Python<'_>) -> PyResult<Option<PyQuantumNumber>> {
+    fn projection_unchecked(&self, py: Python<'_>) -> PyResult<Option<PyQuantumNumber>> {
         self.0
-            .projection()
+            .projection
             .map(|projection| projection_to_python(py, projection))
             .transpose()
     }
 
+    #[getter]
+    fn projection(&self, py: Python<'_>) -> PyResult<PyQuantumNumber> {
+        projection_to_python(py, self.0.projection()?)
+    }
+
     fn __repr__(&self) -> String {
-        match self.0.projection() {
+        match self.0.projection {
             Some(projection) => format!("Isospin({}, projection={})", self.0.isospin(), projection),
             None => format!("Isospin({})", self.0.isospin()),
         }
@@ -408,12 +413,52 @@ impl PyParticleProperties {
     }
 
     #[getter]
-    fn name(&self) -> Option<String> {
+    fn name(&self) -> PyResult<String> {
+        Ok(self.0.name()?)
+    }
+
+    #[getter]
+    fn name_unchecked(&self) -> Option<String> {
         self.0.name.clone()
     }
 
     #[getter]
-    fn spin(&self, py: Python<'_>) -> PyResult<Option<PyQuantumNumber>> {
+    fn species(&self) -> PyResult<String> {
+        Ok(self.0.species()?)
+    }
+
+    #[getter]
+    fn species_unchecked(&self) -> Option<String> {
+        self.0.species.clone()
+    }
+
+    #[getter]
+    fn antiparticle_species(&self) -> PyResult<String> {
+        Ok(self.0.antiparticle_species()?)
+    }
+
+    #[getter]
+    fn antiparticle_species_unchecked(&self) -> Option<String> {
+        self.0.antiparticle_species.clone()
+    }
+
+    #[getter]
+    fn self_conjugate(&self) -> PyResult<bool> {
+        Ok(self.0.self_conjugate()?)
+    }
+
+    #[getter]
+    fn self_conjugate_unchecked(&self) -> Option<bool> {
+        self.0.self_conjugate
+    }
+
+    #[getter]
+    fn spin(&self, py: Python<'_>) -> PyResult<PyQuantumNumber> {
+        angular_momentum_to_python(py, self.0.spin()?)
+    }
+
+    #[getter]
+    fn spin_unchecked(&self, py: Python<'_>) -> PyResult<Option<PyQuantumNumber>> {
         self.0
             .spin
             .map(|spin| angular_momentum_to_python(py, spin))
@@ -421,28 +466,143 @@ impl PyParticleProperties {
     }
 
     #[getter]
-    fn parity(&self) -> Option<PyParity> {
+    fn parity(&self) -> PyResult<PyParity> {
+        Ok(PyParity(self.0.parity()?))
+    }
+
+    #[getter]
+    fn parity_unchecked(&self) -> Option<PyParity> {
         self.0.parity.map(PyParity)
     }
 
     #[getter]
-    fn c_parity(&self) -> Option<PyParity> {
+    fn c_parity(&self) -> PyResult<PyParity> {
+        Ok(PyParity(self.0.c_parity()?))
+    }
+
+    #[getter]
+    fn c_parity_unchecked(&self) -> Option<PyParity> {
         self.0.c_parity.map(PyParity)
     }
 
     #[getter]
-    fn g_parity(&self) -> Option<PyParity> {
+    fn g_parity(&self) -> PyResult<PyParity> {
+        Ok(PyParity(self.0.g_parity()?))
+    }
+
+    #[getter]
+    fn g_parity_unchecked(&self) -> Option<PyParity> {
         self.0.g_parity.map(PyParity)
     }
 
     #[getter]
-    fn charge(&self) -> Option<PyCharge> {
+    fn charge(&self) -> PyResult<PyCharge> {
+        Ok(PyCharge(self.0.charge()?))
+    }
+
+    #[getter]
+    fn charge_unchecked(&self) -> Option<PyCharge> {
         self.0.charge.map(PyCharge)
     }
 
     #[getter]
-    fn isospin(&self) -> Option<PyIsospin> {
+    fn isospin(&self) -> PyResult<PyIsospin> {
+        Ok(PyIsospin(self.0.isospin()?))
+    }
+
+    #[getter]
+    fn isospin_unchecked(&self) -> Option<PyIsospin> {
         self.0.isospin.map(PyIsospin)
+    }
+
+    #[getter]
+    fn strangeness(&self) -> PyResult<i32> {
+        Ok(self.0.strangeness()?)
+    }
+
+    #[getter]
+    fn strangeness_unchecked(&self) -> Option<i32> {
+        self.0.strangeness
+    }
+
+    #[getter]
+    fn charm(&self) -> PyResult<i32> {
+        Ok(self.0.charm()?)
+    }
+
+    #[getter]
+    fn charm_unchecked(&self) -> Option<i32> {
+        self.0.charm
+    }
+
+    #[getter]
+    fn bottomness(&self) -> PyResult<i32> {
+        Ok(self.0.bottomness()?)
+    }
+
+    #[getter]
+    fn bottomness_unchecked(&self) -> Option<i32> {
+        self.0.bottomness
+    }
+
+    #[getter]
+    fn topness(&self) -> PyResult<i32> {
+        Ok(self.0.topness()?)
+    }
+
+    #[getter]
+    fn topness_unchecked(&self) -> Option<i32> {
+        self.0.topness
+    }
+
+    #[getter]
+    fn baryon_number(&self) -> PyResult<i32> {
+        Ok(self.0.baryon_number()?)
+    }
+
+    #[getter]
+    fn baryon_number_unchecked(&self) -> Option<i32> {
+        self.0.baryon_number
+    }
+
+    #[getter]
+    fn electron_lepton_number(&self) -> PyResult<i32> {
+        Ok(self.0.electron_lepton_number()?)
+    }
+
+    #[getter]
+    fn electron_lepton_number_unchecked(&self) -> Option<i32> {
+        self.0.electron_lepton_number
+    }
+
+    #[getter]
+    fn muon_lepton_number(&self) -> PyResult<i32> {
+        Ok(self.0.muon_lepton_number()?)
+    }
+
+    #[getter]
+    fn muon_lepton_number_unchecked(&self) -> Option<i32> {
+        self.0.muon_lepton_number
+    }
+
+    #[getter]
+    fn tau_lepton_number(&self) -> PyResult<i32> {
+        Ok(self.0.tau_lepton_number()?)
+    }
+
+    #[getter]
+    fn tau_lepton_number_unchecked(&self) -> Option<i32> {
+        self.0.tau_lepton_number
+    }
+
+    #[getter]
+    fn statistics(&self) -> PyResult<PyStatistics> {
+        Ok(self.0.statistics()?.into())
+    }
+
+    #[getter]
+    fn statistics_unchecked(&self) -> Option<PyStatistics> {
+        self.0.statistics.map(|s| s.into())
     }
 
     fn __repr__(&self) -> String {

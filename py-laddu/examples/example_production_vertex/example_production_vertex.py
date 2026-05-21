@@ -97,7 +97,7 @@ def allowed_production_waves(
     max_l: int,
 ) -> list[ld.PartialWave]:
     waves = []
-    for j_initial in ld.coupled_spins(PHOTON.spin, PROTON.spin):  # ty: ignore
+    for j_initial in ld.coupled_spins(PHOTON.spin, PROTON.spin):
         parent = ld.ParticleProperties(f'gamma_p_J{j_initial}', spin=j_initial)
         allowed_waves = ld.allowed_partial_waves(
             parent,
@@ -117,8 +117,8 @@ def decay_factor(decay_wave: DecayWave) -> ld.Expression:
         orbital_l=decay_wave.l,
         coupled_spin=0,
         daughter='kshort1',
-        daughter_1_spin=KSHORT.spin,  # ty: ignore
-        daughter_2_spin=KSHORT.spin,  # ty: ignore
+        daughter_1_spin=KSHORT.spin,
+        daughter_2_spin=KSHORT.spin,
         lambda_1=0,
         lambda_2=0,
         frame=FRAME,
@@ -142,10 +142,9 @@ def production_factor(
         orbital_l=production_wave.l,
         coupled_spin=production_wave.s,
         produced_spin=decay_wave.j,
-        recoil_spin=PROTON.spin,  # ty: ignore
+        recoil_spin=PROTON.spin,
         lambda_produced=decay_wave.m,
         lambda_recoil=recoil_spin,
-        frame=FRAME,
     )
 
 

@@ -43,7 +43,7 @@ def test_particle_properties_accept_keyword_quantum_numbers() -> None:
     assert pi_plus.name == 'pi+'
     assert pi_plus.spin == 0
     assert str(pi_plus.parity) == '-'
-    assert pi_plus.charge is not None
+    assert pi_plus.charge_unchecked is not None
     assert pi_plus.charge.value == 1
 
 
