@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.19.3](https://github.com/denehoffman/laddu/compare/v0.19.2...v0.19.3) (2026-05-21)
+
+
+### Features
+
+* Add expression rejection sampling ([1b57229](https://github.com/denehoffman/laddu/commit/1b57229073948ae35de7e0f2b65e6d0653058f10))
+* Add production vertex reaction API ([f9c0c70](https://github.com/denehoffman/laddu/commit/f9c0c70353a606d76ff2989b1d972f7f209fe856))
+
 ## [0.19.2](https://github.com/denehoffman/laddu/compare/v0.19.1...v0.19.2) (2026-05-19)
 
 
