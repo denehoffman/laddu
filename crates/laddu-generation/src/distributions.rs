@@ -57,10 +57,30 @@ pub enum MandelstamTDistribution {
     Histogram(HistogramSampler),
 }
 impl MandelstamTDistribution {
-    pub fn sample(&self, rng: &mut Rng) -> f64 {
+    pub fn sample(&self, rng: &mut Rng, range: Option<(f64, f64)>) -> f64 {
         match self {
-            Self::Exponential { slope } => -rng.exponential(*slope),
-            Self::Histogram(sampler) => sampler.sample(rng),
+            Self::Exponential { slope } => {
+                if let Some(range) = range {
+                    let mut result = -rng.truncated_exponential(*slope, range);
+                    while result <= range.0 || result >= range.1 {
+                        result = -rng.truncated_exponential(*slope, range)
+                    }
+                    result
+                } else {
+                    -rng.exponential(*slope)
+                }
+            }
+            Self::Histogram(sampler) => {
+                if let Some(range) = range {
+                    let mut result = sampler.sample(rng);
+                    while result <= range.0 || result >= range.1 {
+                        result = sampler.sample(rng);
+                    }
+                    result
+                } else {
+                    sampler.sample(rng)
+                }
+            }
         }
     }
 }
@@ -89,6 +109,7 @@ pub trait LadduGenRngExt {
     fn uniform(&mut self, min: f64, max: f64) -> f64;
     fn normal(&mut self, mu: f64, sigma: f64) -> f64;
     fn exponential(&mut self, slope: f64) -> f64;
+    fn truncated_exponential(&mut self, slope: f64, range: (f64, f64)) -> f64;
     fn p4(&mut self, mass: f64, energy: f64, direction: Vec3) -> Vec4;
 }
 
@@ -104,6 +125,11 @@ impl LadduGenRngExt for Rng {
     fn exponential(&mut self, slope: f64) -> f64 {
         -(-self.f64()).ln_1p() / slope
     }
+
+    fn truncated_exponential(&mut self, slope: f64, range: (f64, f64)) -> f64 {
+        -(1. / slope) * (1.0 - self.f64() * (1.0 - (-slope * (range.1 - range.0)).exp())).ln()
+    }
+
     fn p4(&mut self, mass: f64, energy: f64, direction: Vec3) -> Vec4 {
         debug_assert!(
             energy >= mass,

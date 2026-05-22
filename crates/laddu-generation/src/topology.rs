@@ -676,7 +676,6 @@ impl GeneratedTwoToTwoReaction {
         let cm_boost = -cm.beta();
         let s = cm.mag2();
         let sqrt_s = s.sqrt();
-        let t = self.tdist.sample(rng);
 
         let p1_p4_cm = p1_p4_lab.boost(&cm_boost);
         let p3_m = self.p3.sample_mass(rng);
@@ -688,9 +687,12 @@ impl GeneratedTwoToTwoReaction {
         let p1_e_cm = (s + p1_msq - p2_msq) / (2.0 * sqrt_s);
         let p3_e_cm = (s + p3_msq - p4_msq) / (2.0 * sqrt_s);
         let p4_e_cm = (s + p4_msq - p3_msq) / (2.0 * sqrt_s);
-        let costheta =
-            (t - p1_msq - p3_msq + 2.0 * p1_e_cm * p3_e_cm) / (2.0 * p_in_mag * p_out_mag);
-        let costheta = costheta.clamp(-1.0, 1.0);
+        let a = p1_msq + p3_msq - 2.0 * p1_e_cm * p3_e_cm;
+        let b_angle = 2.0 * p_in_mag * p_out_mag;
+        let t_lo = a - b_angle;
+        let t_hi = a + b_angle;
+        let t = self.tdist.sample(rng, Some((t_lo, t_hi)));
+        let costheta = (t - a) / b_angle;
         let sintheta = (1.0 - costheta * costheta).sqrt();
         let phi = rng.uniform(0.0, 2.0 * PI);
         let (sin_phi, cos_phi) = phi.sin_cos();
