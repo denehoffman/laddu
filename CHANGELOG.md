@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.19.6](https://github.com/denehoffman/laddu/compare/v0.19.5...v0.19.6) (2026-05-22)
+
+
+### Bug Fixes
+
+* Use truncated t distributions in generation ([3961faf](https://github.com/denehoffman/laddu/commit/3961fafe40d56b75eb20be294760a3ce91b328e8))
+
 ## [0.19.5](https://github.com/denehoffman/laddu/compare/v0.19.4...v0.19.5) (2026-05-21)
 
 
