@@ -18,7 +18,10 @@ use serde::{Deserialize, Serialize};
 use super::*;
 #[cfg(feature = "mpi")]
 use crate::mpi::{finalize_mpi, get_world, use_mpi, LadduMPI};
-use crate::{traits::Variable, vectors::Vec3, LadduError, LadduResult, Mass, Vec4};
+use crate::{
+    traits::Variable, variables::IntoP4Selection, vectors::Vec3, LadduError, LadduResult, Mass,
+    Vec4,
+};
 
 const TEST_P4_NAMES: &[&str] = &["beam", "proton", "kshort1", "kshort2"];
 const TEST_AUX_NAMES: &[&str] = &["pol_magnitude", "pol_angle"];
@@ -758,6 +761,14 @@ fn test_dataset_filtering() {
     assert_eq!(filtered.n_events(), 1);
     assert!(Arc::ptr_eq(&dataset.columnar, &filtered.columnar));
     assert_relative_eq!(mass.value(&filtered.event_local(0).unwrap()), 0.5);
+    let filtered_column = filtered
+        .p4_column_local("beam")
+        .expect("filtered column should be available");
+    assert_eq!(filtered_column.len(), 1);
+    assert_relative_eq!(
+        filtered_column[0].e(),
+        filtered.event_local(0).unwrap().p4("beam").unwrap().e()
+    );
     let mut filtered_clone = (*filtered).clone();
     assert!(filtered_clone
         .add_aux_column_local("selected", [1.0])
@@ -843,6 +854,62 @@ fn test_dataset_lookup_by_name() {
         dataset.event_global(0).expect("event should exist").aux[1]
     );
     assert!(dataset.aux_by_name(0, "missing").is_none());
+}
+
+#[test]
+fn test_dataset_column_retrieval_supports_aliases_and_errors() {
+    let base = test_dataset();
+    let mut metadata = (*base.metadata_arc()).clone();
+    metadata
+        .add_p4_alias("pair", ["kshort1", "kshort2"].into_selection())
+        .expect("alias should be valid");
+    let dataset = Dataset::new_with_metadata(
+        vec![Arc::new(test_event()), Arc::new(test_event())],
+        Arc::new(metadata),
+    );
+
+    let canonical = dataset
+        .p4_column_global("proton")
+        .expect("canonical column should resolve");
+    let alias = dataset
+        .p4_column_local("pair")
+        .expect("alias column should resolve");
+    let aux = dataset
+        .aux_column_global("pol_angle")
+        .expect("aux column should resolve");
+    assert_eq!(canonical.len(), 2);
+    assert_eq!(alias.len(), 2);
+    assert_eq!(aux.len(), 2);
+    for (index, value) in alias.iter().enumerate() {
+        let expected = dataset
+            .event_global(index)
+            .expect("event should exist")
+            .p4("pair")
+            .expect("alias should resolve");
+        assert_relative_eq!(value.px(), expected.px());
+        assert_relative_eq!(value.py(), expected.py());
+        assert_relative_eq!(value.pz(), expected.pz());
+        assert_relative_eq!(value.e(), expected.e());
+    }
+    assert!(matches!(
+        dataset.p4_column_global("missing"),
+        Err(LadduError::UnknownName { category, .. }) if category == "p4"
+    ));
+    assert!(matches!(
+        dataset.aux_column_local("missing"),
+        Err(LadduError::UnknownName { category, .. }) if category == "aux"
+    ));
+}
+
+#[test]
+fn test_dataset_column_retrieval_empty_dataset() {
+    let metadata =
+        DatasetMetadata::new(vec!["beam"], vec!["pol_angle"]).expect("metadata should be valid");
+    let dataset = Dataset::empty_local(metadata);
+    assert!(dataset.p4_column_local("beam").unwrap().is_empty());
+    assert!(dataset.p4_column_global("beam").unwrap().is_empty());
+    assert!(dataset.aux_column_local("pol_angle").unwrap().is_empty());
+    assert!(dataset.aux_column_global("pol_angle").unwrap().is_empty());
 }
 
 #[test]
@@ -1380,6 +1447,33 @@ fn test_add_columns_global_mpi_canonical_dataset() {
         assert_relative_eq!(actual.pz(), p4_values[local_index].pz());
         assert_relative_eq!(actual.e(), p4_values[local_index].e());
     }
+    let global_aux = dataset
+        .aux_column_global("rank_aux")
+        .expect("global aux column should resolve");
+    let global_p4 = dataset
+        .p4_column_global("rank_p4")
+        .expect("global p4 column should resolve");
+    assert_eq!(global_aux.len(), dataset.n_events());
+    assert_eq!(global_p4.len(), dataset.n_events());
+    for (index, event) in dataset.events_global().enumerate() {
+        assert_relative_eq!(
+            global_aux[index],
+            event.aux().get("rank_aux").copied().unwrap()
+        );
+        assert_relative_eq!(global_p4[index].e(), event.p4("rank_p4").unwrap().e());
+    }
+
+    let derived = dataset
+        .filter(&Mass::new(["beam"]).gt(-1.0))
+        .expect("filtered MPI dataset should be valid");
+    let derived_aux = derived
+        .aux_column_global("rank_aux")
+        .expect("derived global aux column should resolve");
+    let expected_aux = derived
+        .events_global()
+        .map(|event| event.aux().get("rank_aux").copied().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(derived_aux, expected_aux);
     finalize_mpi();
 }
 
@@ -1418,6 +1512,14 @@ fn test_add_aux_column_global_mpi_round_robin_dataset() {
             local_values[local_index]
         );
     }
+    let global_values = dataset
+        .aux_column_global("local_rank_value")
+        .expect("global round-robin column should resolve");
+    let expected = dataset
+        .events_global()
+        .map(|event| event.aux().get("local_rank_value").copied().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(global_values, expected);
     finalize_mpi();
 }
 

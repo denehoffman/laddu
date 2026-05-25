@@ -5,6 +5,7 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import laddu as ld
+import numpy as np
 from laddu import Dataset, Event, Vec3
 
 P4_NAMES = ['beam']
@@ -42,6 +43,14 @@ def check_manual_dataset() -> None:
     assert stored_local_weights == [float(rank + 1)]
     assert list(dataset.weights) == global_weights
     assert list(dataset.weights_local) == local_weights
+    assert np.allclose(
+        dataset.p4_column_global('beam')[:, 2],
+        [event.p4('beam').pz for event in dataset.events_global],
+    )
+    assert np.allclose(
+        dataset.p4_column_local('beam')[:, 2],
+        [event.p4('beam').pz for event in dataset.events_local],
+    )
     assert isinstance(dataset.event_global(rank), Event)
     assert isinstance(dataset.events_global, Iterator)
     assert isinstance(dataset.weights_global, type(dataset.weights))
@@ -67,6 +76,22 @@ def check_parquet_dataset() -> None:
     assert len(local_weights) <= len(global_weights)
     assert list(dataset.weights) == global_weights
     assert list(dataset.weights_local) == local_weights
+    assert np.allclose(
+        dataset.p4_column_global('beam')[:, 3],
+        [event.p4('beam').e for event in dataset.events_global],
+    )
+    assert np.allclose(
+        dataset.p4_column_local('beam')[:, 3],
+        [event.p4('beam').e for event in dataset.events_local],
+    )
+    assert np.allclose(
+        dataset.aux_column_global('pol_angle'),
+        [event.aux['pol_angle'] for event in dataset.events_global],
+    )
+    assert np.allclose(
+        dataset.aux_column_local('pol_angle'),
+        [event.aux['pol_angle'] for event in dataset.events_local],
+    )
     assert dataset.n_events_weighted == sum(global_weights)
     assert dataset.n_events_weighted_local == sum(local_weights)
     assert isinstance(dataset.event_global(0), Event)

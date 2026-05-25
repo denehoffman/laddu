@@ -532,6 +532,88 @@ impl Dataset {
             .and_then(|event| event.aux.get(idx).copied())
     }
 
+    /// Retrieve one named four-momentum column in local event order.
+    ///
+    /// Names may refer to stored p4 columns or registered aliases. Composite aliases are
+    /// materialized as row-wise sums, matching [`Event::p4`].
+    pub fn p4_column_local(&self, name: &str) -> LadduResult<Vec<Vec4>> {
+        let selection =
+            self.metadata
+                .p4_selection(name)
+                .ok_or_else(|| LadduError::UnknownName {
+                    category: "p4",
+                    name: name.to_string(),
+                })?;
+        Ok((0..self.n_events_local())
+            .map(|event_index| {
+                let physical_index = self.rows.physical_index(event_index);
+                selection
+                    .indices()
+                    .iter()
+                    .map(|p4_index| self.columnar.p4(physical_index, *p4_index))
+                    .sum()
+            })
+            .collect())
+    }
+
+    /// Retrieve one named four-momentum column in global dataset order.
+    ///
+    /// In MPI mode this performs numeric column collection rather than materializing complete
+    /// events.
+    pub fn p4_column_global(&self, name: &str) -> LadduResult<Vec<Vec4>> {
+        let local = self.p4_column_local(name)?;
+        #[cfg(feature = "mpi")]
+        {
+            if self.mpi_layout.is_some() {
+                if let Some(world) = crate::mpi::get_world() {
+                    let flattened = local
+                        .iter()
+                        .flat_map(|value| [value.px(), value.py(), value.pz(), value.e()])
+                        .collect::<Vec<_>>();
+                    return Ok(self
+                        .gather_numeric_column_mpi(&flattened, 4, &world)
+                        .chunks_exact(4)
+                        .map(|value| Vec4::new(value[0], value[1], value[2], value[3]))
+                        .collect());
+                }
+            }
+        }
+        Ok(local)
+    }
+
+    /// Retrieve one named auxiliary scalar column in local event order.
+    pub fn aux_column_local(&self, name: &str) -> LadduResult<Vec<f64>> {
+        let aux_index = self
+            .aux_index(name)
+            .ok_or_else(|| LadduError::UnknownName {
+                category: "aux",
+                name: name.to_string(),
+            })?;
+        Ok((0..self.n_events_local())
+            .map(|event_index| {
+                self.columnar
+                    .aux(self.rows.physical_index(event_index), aux_index)
+            })
+            .collect())
+    }
+
+    /// Retrieve one named auxiliary scalar column in global dataset order.
+    ///
+    /// In MPI mode this performs numeric column collection rather than materializing complete
+    /// events.
+    pub fn aux_column_global(&self, name: &str) -> LadduResult<Vec<f64>> {
+        let local = self.aux_column_local(name)?;
+        #[cfg(feature = "mpi")]
+        {
+            if self.mpi_layout.is_some() {
+                if let Some(world) = crate::mpi::get_world() {
+                    return Ok(self.gather_numeric_column_mpi(&local, 1, &world));
+                }
+            }
+        }
+        Ok(local)
+    }
+
     pub(crate) fn event_view(&self, event_index: usize) -> Event<'_> {
         self.columnar
             .event_view(self.rows.physical_index(event_index))
@@ -876,6 +958,41 @@ impl Dataset {
             }
         }
         Ok(())
+    }
+
+    #[cfg(feature = "mpi")]
+    fn gather_numeric_column_mpi(
+        &self,
+        local: &[f64],
+        stride: usize,
+        world: &SimpleCommunicator,
+    ) -> Vec<f64> {
+        debug_assert!(stride > 0);
+        debug_assert_eq!(local.len(), self.n_events_local() * stride);
+
+        let mut row_counts = vec![0usize; world.size() as usize];
+        world.all_gather_into(&self.n_events_local(), &mut row_counts);
+        let counts = row_counts
+            .iter()
+            .map(|count| (count * stride) as i32)
+            .collect::<Vec<_>>();
+        let mut displs = vec![0_i32; counts.len()];
+        for index in 1..displs.len() {
+            displs[index] = displs[index - 1] + counts[index - 1];
+        }
+        let gathered = world.all_gather_with_counts(local, &counts, &displs);
+        if self.mpi_layout != Some(MpiDatasetLayout::RoundRobin) {
+            return gathered;
+        }
+
+        let mut ordered = Vec::with_capacity(gathered.len());
+        for global_index in 0..self.n_events() {
+            let rank = global_index % world.size() as usize;
+            let local_index = global_index / world.size() as usize;
+            let start = displs[rank] as usize + local_index * stride;
+            ordered.extend_from_slice(&gathered[start..start + stride]);
+        }
+        ordered
     }
 
     #[cfg(feature = "mpi")]

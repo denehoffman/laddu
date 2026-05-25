@@ -1,6 +1,7 @@
 from typing import cast
 
 import laddu as ld
+import numpy as np
 from laddu import generation
 
 
@@ -138,6 +139,23 @@ def test_generation_smoke() -> None:
         'kshort1',
         'kshort2',
     ]
+    for particle in batch.layout.particles:
+        if particle.p4_label is None:
+            continue
+        column = dataset.p4_column_global(particle.p4_label)
+        assert column.shape == (len(dataset.weights_global), 4)
+        expected = np.array(
+            [
+                [
+                    event.p4(particle.p4_label).px,
+                    event.p4(particle.p4_label).py,
+                    event.p4(particle.p4_label).pz,
+                    event.p4(particle.p4_label).e,
+                ]
+                for event in dataset.events_global
+            ]
+        )
+        assert np.allclose(column, expected)
     assert generator.generate_dataset(4).n_events == 4
 
     one_shot = generator.generate_dataset(7)
@@ -189,6 +207,13 @@ def test_generation_smoke() -> None:
         'kshort2',
         'recoil',
     ]
+    stored_columns = {
+        particle.id: projected.dataset.p4_column_global(particle.p4_label)
+        for particle in projected.layout.particles
+        if particle.p4_label is not None
+    }
+    assert 'kk' not in stored_columns
+    assert set(stored_columns) == {'beam', 'target', 'kshort1', 'kshort2', 'recoil'}
 
     with pytest.raises(RuntimeError, match='unknown particle ID'):
         generation.EventGenerator(

@@ -14,9 +14,9 @@ use laddu_core::{
         DatasetWriteOptions, EventData, FloatPrecision, OwnedEvent, SharedDatasetIterExt,
     },
     variables::IntoP4Selection,
-    DatasetReadOptions, Vec4,
+    DatasetReadOptions, LadduError, Vec4,
 };
-use numpy::{PyArray1, PyReadonlyArray1};
+use numpy::{PyArray1, PyArray2, PyReadonlyArray1};
 use pyo3::{
     exceptions::{PyIndexError, PyKeyError, PyTypeError, PyValueError},
     prelude::*,
@@ -154,6 +154,17 @@ fn parse_aux_mapping(aux: Option<Bound<'_, PyDict>>) -> PyResult<Vec<(String, f6
 
 fn parse_p4_column(values: Vec<PyVec4>) -> Vec<Vec4> {
     values.into_iter().map(|value| value.0).collect()
+}
+
+fn p4_column_array<'py>(py: Python<'py>, values: Vec<Vec4>) -> PyResult<Bound<'py, PyArray2<f64>>> {
+    if values.is_empty() {
+        return Ok(PyArray2::zeros(py, (0, 4), false));
+    }
+    let rows = values
+        .into_iter()
+        .map(|value| vec![value.px(), value.py(), value.pz(), value.e()])
+        .collect::<Vec<_>>();
+    Ok(PyArray2::from_vec2(py, &rows).map_err(LadduError::NumpyError)?)
 }
 
 fn dataset_from_py_events(
@@ -946,6 +957,43 @@ impl PyDataset {
     #[getter]
     fn weights_local<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f64>> {
         PyArray1::from_slice(py, &self.0.weights_local())
+    }
+    /// Retrieve a named four-momentum column in global dataset order.
+    ///
+    /// Returns an ``(n_events, 4)`` float64 array ordered as ``(px, py, pz, e)``.
+    /// Registered aliases are supported and composite aliases are summed row-wise.
+    fn p4_column_global<'py>(
+        &self,
+        py: Python<'py>,
+        name: &str,
+    ) -> PyResult<Bound<'py, PyArray2<f64>>> {
+        p4_column_array(py, self.0.p4_column_global(name)?)
+    }
+    /// Retrieve a named four-momentum column on the current rank.
+    ///
+    /// Returns an ``(n_events_local, 4)`` float64 array ordered as ``(px, py, pz, e)``.
+    fn p4_column_local<'py>(
+        &self,
+        py: Python<'py>,
+        name: &str,
+    ) -> PyResult<Bound<'py, PyArray2<f64>>> {
+        p4_column_array(py, self.0.p4_column_local(name)?)
+    }
+    /// Retrieve a named auxiliary scalar column in global dataset order.
+    fn aux_column_global<'py>(
+        &self,
+        py: Python<'py>,
+        name: &str,
+    ) -> PyResult<Bound<'py, PyArray1<f64>>> {
+        Ok(PyArray1::from_vec(py, self.0.aux_column_global(name)?))
+    }
+    /// Retrieve a named auxiliary scalar column on the current rank.
+    fn aux_column_local<'py>(
+        &self,
+        py: Python<'py>,
+        name: &str,
+    ) -> PyResult<Bound<'py, PyArray1<f64>>> {
+        Ok(PyArray1::from_vec(py, self.0.aux_column_local(name)?))
     }
     /// Iterate over global Events in dataset order.
     #[getter]

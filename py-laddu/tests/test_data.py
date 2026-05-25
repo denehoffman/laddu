@@ -275,6 +275,71 @@ def test_dataset_name_lookup_errors_are_specific() -> None:
         dataset.aux_by_name(0, 'missing')
 
 
+def test_dataset_bulk_columns_match_event_lookups_and_aliases() -> None:
+    dataset = Dataset(
+        [make_test_event(), make_test_event()],
+        p4_names=P4_NAMES,
+        aux_names=AUX_NAMES,
+        aliases={'pair': ['kshort1', 'kshort2']},
+    )
+
+    p4_global = dataset.p4_column_global('proton')
+    p4_local = dataset.p4_column_local('proton')
+    alias = dataset.p4_column_global('pair')
+    aux_global = dataset.aux_column_global('pol_angle')
+    aux_local = dataset.aux_column_local('pol_angle')
+
+    assert p4_global.shape == (dataset.n_events, 4)
+    assert p4_local.shape == (dataset.n_events_local, 4)
+    assert p4_global.dtype == np.float64
+    assert aux_global.shape == (dataset.n_events,)
+    assert aux_global.dtype == np.float64
+    expected_p4 = np.array(
+        [
+            [
+                event.p4('proton').px,
+                event.p4('proton').py,
+                event.p4('proton').pz,
+                event.p4('proton').e,
+            ]
+            for event in dataset.events_global
+        ]
+    )
+    expected_alias = np.array(
+        [
+            [
+                event.p4('pair').px,
+                event.p4('pair').py,
+                event.p4('pair').pz,
+                event.p4('pair').e,
+            ]
+            for event in dataset.events_global
+        ]
+    )
+    assert np.allclose(p4_global, expected_p4)
+    assert np.allclose(p4_local, expected_p4)
+    assert np.allclose(alias, expected_alias)
+    assert np.allclose(
+        aux_global, [event.aux['pol_angle'] for event in dataset.events_global]
+    )
+    assert np.allclose(
+        aux_local, [event.aux['pol_angle'] for event in dataset.events_local]
+    )
+
+    with pytest.raises(KeyError):
+        dataset.p4_column_global('missing')
+    with pytest.raises(KeyError):
+        dataset.aux_column_local('missing')
+
+
+def test_dataset_bulk_columns_preserve_empty_shapes() -> None:
+    dataset = Dataset.empty_local(p4_names=['beam'], aux_names=['pol_angle'])
+    assert dataset.p4_column_global('beam').shape == (0, 4)
+    assert dataset.p4_column_local('beam').shape == (0, 4)
+    assert dataset.aux_column_global('pol_angle').shape == (0,)
+    assert dataset.aux_column_local('pol_angle').shape == (0,)
+
+
 def test_dataset_conversion() -> None:
     data = {
         'beam_px': [1.0, 2.0, 3.0, 4.0],
@@ -822,6 +887,11 @@ def test_dataset_filtering() -> None:
     filtered = dataset.filter(expression)
     assert filtered.n_events == 1
     assert mass.value(filtered[0]) == 0.5
+    expected = filtered[0].p4('p')
+    assert np.allclose(
+        filtered.p4_column_local('p'),
+        [[expected.px, expected.py, expected.pz, expected.e]],
+    )
 
 
 def test_dataset_evaluate() -> None:
