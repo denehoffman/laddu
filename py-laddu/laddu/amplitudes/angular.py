@@ -1,8 +1,5 @@
 """Angular amplitudes and related factors."""
 
-from fractions import Fraction
-from typing import TypeAlias
-
 from laddu.laddu import (
     BlattWeisskopf,
     ClebschGordan,
@@ -13,8 +10,7 @@ from laddu.laddu import (
     Ylm,
     Zlm,
 )
-
-QuantumNumber: TypeAlias = int | float | Fraction
+from laddu.quantum import QuantumNumber
 
 __all__ = [
     'BlattWeisskopf',

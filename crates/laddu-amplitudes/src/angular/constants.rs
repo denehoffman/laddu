@@ -1,7 +1,7 @@
 use laddu_core::{
     amplitude::{Expression, IntoTags},
     math::{clebsch_gordon, wigner_3j},
-    AngularMomentum, LadduResult, Projection,
+    LadduResult, J, M,
 };
 
 /// A Clebsch-Gordan coefficient expression.
@@ -11,12 +11,12 @@ impl ClebschGordan {
     /// Construct a new constant expression for a Clebsch-Gordan coefficient.
     pub fn new(
         tags: impl IntoTags,
-        j1: AngularMomentum,
-        m1: Projection,
-        j2: AngularMomentum,
-        m2: Projection,
-        j: AngularMomentum,
-        m: Projection,
+        j1: J,
+        m1: M,
+        j2: J,
+        m2: M,
+        j: J,
+        m: M,
     ) -> LadduResult<Expression> {
         let value = clebsch_gordon(
             j1.value() as u64,
@@ -38,12 +38,12 @@ impl Wigner3j {
     /// Construct a new constant expression for a Wigner-3j symbol.
     pub fn new(
         tags: impl IntoTags,
-        j1: AngularMomentum,
-        m1: Projection,
-        j2: AngularMomentum,
-        m2: Projection,
-        j3: AngularMomentum,
-        m3: Projection,
+        j1: J,
+        m1: M,
+        j2: J,
+        m2: M,
+        j3: J,
+        m3: M,
     ) -> LadduResult<Expression> {
         let value = wigner_3j(
             j1.value() as u64,

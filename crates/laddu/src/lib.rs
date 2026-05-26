@@ -374,7 +374,7 @@ pub mod math {
 }
 /// Quantum-number helpers and discrete analysis enums.
 pub mod quantum {
-    pub use laddu_core::quantum::*;
+    pub use laddu_core::{j, l, m, quantum::*, s};
 }
 /// Kinematic frame helpers and angle containers.
 pub mod kinematics {
@@ -438,13 +438,20 @@ pub use laddu_core::{
         BinnedDataset, Dataset, DatasetMetadata, DatasetReadOptions, DatasetWriteOptions, Event,
         EventData, OwnedEvent,
     },
-    parameter,
+    j, l, m, parameter,
     parameters::{ParameterID, Parameters},
+    quantum::{
+        AllowedPartialWave, Charge, Frame, Isospin, MandelstamChannel, Parity, PartialWave,
+        ParticleProperties, Reflectivity, RuleSet, SelectionRules, SpinState, Statistics, J, L, M,
+        S,
+    },
     reaction::{
-        Decay, Particle, ParticleGraph, ParticleSource, Reaction, ReactionTopology,
-        ResolvedTwoToTwo, TwoToTwoReaction,
+        Channel, ChannelP4Source, ChannelParticle, ChannelVertex, Decay, ExternalId, Particle,
+        ParticleGraph, ParticleSource, Production, Reaction, ReactionTopology, ResolvedTwoToTwo,
+        Species, TwoToTwoReaction,
     },
     resources::{Cache, Resources},
+    s,
     variables::{
         Angles, CosTheta, IntoP4Selection, Mandelstam, Mass, P4Selection, Phi, PolAngle,
         PolMagnitude, Polarization,

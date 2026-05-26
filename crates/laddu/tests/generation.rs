@@ -1,9 +1,21 @@
 use std::collections::HashMap;
 
-use laddu::generation::{
-    CompositeGenerator, EventGenerator, GeneratedParticle, GeneratedReaction, InitialGenerator,
-    MandelstamTDistribution, Reconstruction, StableGenerator,
+use laddu::{
+    generation::{
+        CompositeGenerator, EventGenerator, GeneratedParticle, GeneratedReaction, InitialGenerator,
+        MandelstamTDistribution, Reconstruction, StableGenerator,
+    },
+    j, l, m, s, J, L, M, S,
 };
+
+#[test]
+fn umbrella_crate_exposes_quantum_macros() {
+    assert_eq!(j!(3 / 2), J::half(3));
+    assert_eq!(s!(1), S::int(1));
+    assert_eq!(m!(-1 / 2), M::half(-1));
+    assert_eq!(l!(2), L::int(2));
+    assert_eq!(laddu::quantum::j!(1), J::int(1));
+}
 
 #[test]
 fn umbrella_crate_exposes_generation_api() {

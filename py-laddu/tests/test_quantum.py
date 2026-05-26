@@ -4,10 +4,14 @@ import pytest
 from laddu import (
     Charge,
     Isospin,
+    J,
+    L,
+    M,
     Parity,
     PartialWave,
     ParticleProperties,
     RuleSet,
+    S,
     SelectionRules,
     allowed_partial_waves,
     coupled_spins,
@@ -29,6 +33,10 @@ def test_charge_and_isospin_use_physical_values() -> None:
     assert charge.value == Fraction(2, 3)
     assert isospin.isospin == Fraction(1, 2)
     assert isospin.projection == Fraction(-1, 2)
+
+    typed_isospin = Isospin(J.half(1), projection=M.half(-1))
+    assert typed_isospin.isospin == Fraction(1, 2)
+    assert typed_isospin.projection == Fraction(-1, 2)
 
 
 def test_particle_properties_accept_keyword_quantum_numbers() -> None:
@@ -56,6 +64,9 @@ def test_coupled_spins_and_partial_wave_validation() -> None:
     assert wave.l == 0
     assert wave.s == 1
     assert wave.label == '3S1'
+
+    typed_wave = PartialWave(j=J.int(1), l=L.int(0), s=S.int(1))
+    assert typed_wave.label == '3S1'
 
     with pytest.raises(RuntimeError, match='compatible'):
         PartialWave(j=2, l=0, s=1)

@@ -578,13 +578,14 @@ pub use crate::{
     kinematics::{DecayAngles, FrameAxes, RestFrame},
     parameters::{Parameter, ParameterID, ParameterMap, Parameters},
     quantum::{
-        allowed_projections, AllowedPartialWave, AngularMomentum, Channel, Charge, Frame, Isospin,
-        OrbitalAngularMomentum, Parity, PartialWave, ParticleProperties, Projection, Reflectivity,
-        RuleSet, SelectionRules, SpinState, Statistics,
+        AllowedPartialWave, Charge, Frame, Isospin, MandelstamChannel, Parity, PartialWave,
+        ParticleProperties, Reflectivity, RuleSet, SelectionRules, SpinState, Statistics, J, L, M,
+        S,
     },
     reaction::{
-        Decay, Particle, ParticleGraph, ParticleSource, Production, Reaction, ReactionTopology,
-        ResolvedTwoToTwo, TwoToTwoReaction,
+        Channel, ChannelP4Source, ChannelParticle, ChannelVertex, Decay, ExternalId, Particle,
+        ParticleGraph, ParticleSource, Production, Reaction, ReactionTopology, ResolvedTwoToTwo,
+        Species, TwoToTwoReaction,
     },
     resources::{
         Cache, ComplexMatrixID, ComplexScalarID, ComplexVectorID, MatrixID, Resources, ScalarID,

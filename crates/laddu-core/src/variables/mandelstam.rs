@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use super::Variable;
 use crate::{
     data::{DatasetMetadata, EventLike},
-    quantum::Channel,
+    quantum::MandelstamChannel,
     reaction::Reaction,
     LadduResult,
 };
@@ -14,7 +14,7 @@ use crate::{
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Mandelstam {
     reaction: Reaction,
-    channel: Channel,
+    channel: MandelstamChannel,
 }
 
 impl Display for Mandelstam {
@@ -25,7 +25,7 @@ impl Display for Mandelstam {
 
 impl Mandelstam {
     /// Constructs the Mandelstam variable for the given `channel` using the supplied [`Reaction`].
-    pub fn new(reaction: Reaction, channel: Channel) -> Self {
+    pub fn new(reaction: Reaction, channel: MandelstamChannel) -> Self {
         Self { reaction, channel }
     }
 }
@@ -43,9 +43,9 @@ impl Variable for Mandelstam {
             .resolve_two_to_two(event)
             .unwrap_or_else(|err| panic!("failed to evaluate reaction Mandelstam: {err}"));
         match self.channel {
-            Channel::S => resolved.s(),
-            Channel::T => resolved.t(),
-            Channel::U => resolved.u(),
+            MandelstamChannel::S => resolved.s(),
+            MandelstamChannel::T => resolved.t(),
+            MandelstamChannel::U => resolved.u(),
         }
     }
 }

@@ -3,7 +3,7 @@ use approx::assert_relative_eq;
 use super::*;
 use crate::{
     data::test_dataset,
-    quantum::{Channel, Frame},
+    quantum::{Frame, MandelstamChannel},
     reaction::{Particle, Reaction},
 };
 
@@ -191,9 +191,9 @@ fn test_mandelstam() {
     let dataset = test_dataset();
     let metadata = dataset.metadata();
     let (reaction, _, _, _) = reaction();
-    let mut s = reaction.mandelstam(Channel::S).unwrap();
-    let mut t = reaction.mandelstam(Channel::T).unwrap();
-    let mut u = reaction.mandelstam(Channel::U).unwrap();
+    let mut s = reaction.mandelstam(MandelstamChannel::S).unwrap();
+    let mut t = reaction.mandelstam(MandelstamChannel::T).unwrap();
+    let mut u = reaction.mandelstam(MandelstamChannel::U).unwrap();
     for variable in [&mut s, &mut t, &mut u] {
         variable.bind(metadata).unwrap();
     }
@@ -207,7 +207,7 @@ fn test_mandelstam() {
 #[test]
 fn test_mandelstam_display() {
     let (reaction, _, _, _) = reaction();
-    let s = reaction.mandelstam(Channel::S).unwrap();
+    let s = reaction.mandelstam(MandelstamChannel::S).unwrap();
     assert_eq!(s.to_string(), "Mandelstam(channel=s)");
 }
 

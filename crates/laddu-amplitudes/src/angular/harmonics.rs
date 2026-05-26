@@ -263,7 +263,7 @@ mod tests {
     use approx::assert_relative_eq;
     use laddu_core::{
         data::test_dataset,
-        reaction::{Particle, Reaction},
+        reaction::{Channel, Particle, Reaction},
         Frame,
     };
 
@@ -321,6 +321,36 @@ mod tests {
     fn test_zlm_evaluation() {
         let dataset = Arc::new(test_dataset());
         let (reaction, angles) = reaction_context();
+        let polarization = reaction.polarization("pol_magnitude", "pol_angle");
+        let expr = Zlm::new("zlm", 1, 1, Reflectivity::Positive, &angles, &polarization).unwrap();
+        let evaluator = expr.load(&dataset).unwrap();
+        let result = evaluator.evaluate(&[]).unwrap();
+        assert_relative_eq!(result[0].re, 0.042841277808013944);
+        assert_relative_eq!(result[0].im, -0.23859639139484332);
+    }
+
+    #[test]
+    fn test_zlm_evaluation_from_channel_adapter() {
+        let dataset = Arc::new(test_dataset());
+        let mut channel = Channel::new();
+        channel.particle("beam").unwrap().stored().unwrap();
+        channel.particle("target").unwrap().missing().unwrap();
+        channel.particle("kk").unwrap();
+        channel.particle("kshort1").unwrap().stored().unwrap();
+        channel.particle("kshort2").unwrap().stored().unwrap();
+        channel.particle("proton").unwrap().stored().unwrap();
+        channel
+            .vertex("ksks", ["kk"], ["kshort1", "kshort2"])
+            .unwrap();
+        channel
+            .vertex("production", ["beam", "target"], ["kk", "proton"])
+            .unwrap();
+        let reaction = channel.two_to_two_reaction("production").unwrap();
+        let angles = reaction
+            .decay("kk")
+            .unwrap()
+            .angles("kshort1", Frame::Helicity)
+            .unwrap();
         let polarization = reaction.polarization("pol_magnitude", "pol_angle");
         let expr = Zlm::new("zlm", 1, 1, Reflectivity::Positive, &angles, &polarization).unwrap();
         let evaluator = expr.load(&dataset).unwrap();

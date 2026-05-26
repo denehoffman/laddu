@@ -7,8 +7,7 @@ use laddu_core::{
     resources::{Cache, ComplexScalarID, Parameters, Resources},
     traits::Variable,
     variables::Angles,
-    AngularMomentum, Decay, Frame, LadduResult, OrbitalAngularMomentum, Production, Projection,
-    SpinState,
+    Decay, Frame, LadduResult, Production, SpinState, J, L, M, S,
 };
 use nalgebra::DVector;
 use num::complex::Complex64;
@@ -20,9 +19,9 @@ use crate::angular::ClebschGordan;
 #[derive(Clone, Serialize, Deserialize)]
 pub struct WignerD {
     tags: Tags,
-    spin: AngularMomentum,
-    row_projection: Projection,
-    column_projection: Projection,
+    spin: J,
+    row_projection: M,
+    column_projection: M,
     costheta: Box<dyn Variable>,
     phi: Box<dyn Variable>,
     angles_key: String,
@@ -36,9 +35,9 @@ impl WignerD {
     /// `D^j_{m' m}(phi, theta, 0)`, with `theta = acos(costheta)`.
     pub fn new(
         tags: impl IntoTags,
-        spin: AngularMomentum,
-        row_projection: Projection,
-        column_projection: Projection,
+        spin: J,
+        row_projection: M,
+        column_projection: M,
         angles: &Angles,
     ) -> LadduResult<Expression> {
         SpinState::new(spin, row_projection)?;
@@ -64,11 +63,11 @@ pub trait DecayAmplitudeExt {
     fn helicity_factor(
         &self,
         tags: impl IntoTags,
-        spin: AngularMomentum,
-        projection: Projection,
+        spin: J,
+        projection: M,
         daughter: &str,
-        lambda_1: Projection,
-        lambda_2: Projection,
+        lambda_1: M,
+        lambda_2: M,
         frame: Frame,
     ) -> LadduResult<Expression>;
 
@@ -77,15 +76,15 @@ pub trait DecayAmplitudeExt {
     fn canonical_factor(
         &self,
         tags: impl IntoTags,
-        spin: AngularMomentum,
-        projection: Projection,
-        orbital_l: OrbitalAngularMomentum,
-        coupled_spin: AngularMomentum,
+        spin: J,
+        projection: M,
+        orbital_l: L,
+        coupled_spin: S,
         daughter: &str,
-        daughter_1_spin: AngularMomentum,
-        daughter_2_spin: AngularMomentum,
-        lambda_1: Projection,
-        lambda_2: Projection,
+        daughter_1_spin: J,
+        daughter_2_spin: J,
+        lambda_1: M,
+        lambda_2: M,
         frame: Frame,
     ) -> LadduResult<Expression>;
 }
@@ -94,14 +93,14 @@ impl DecayAmplitudeExt for Decay {
     fn helicity_factor(
         &self,
         tags: impl IntoTags,
-        spin: AngularMomentum,
-        projection: Projection,
+        spin: J,
+        projection: M,
         daughter: &str,
-        lambda_1: Projection,
-        lambda_2: Projection,
+        lambda_1: M,
+        lambda_2: M,
         frame: Frame,
     ) -> LadduResult<Expression> {
-        let lambda = Projection::half_integer(lambda_1.value() - lambda_2.value());
+        let lambda = M::half(lambda_1.value() - lambda_2.value());
         let angles = self.angles(daughter, frame)?;
         Ok(WignerD::new(tags, spin, projection, lambda, &angles)?.conj())
     }
@@ -109,25 +108,25 @@ impl DecayAmplitudeExt for Decay {
     fn canonical_factor(
         &self,
         tags: impl IntoTags,
-        spin: AngularMomentum,
-        projection: Projection,
-        orbital_l: OrbitalAngularMomentum,
-        coupled_spin: AngularMomentum,
+        spin: J,
+        projection: M,
+        orbital_l: L,
+        coupled_spin: S,
         daughter: &str,
-        daughter_1_spin: AngularMomentum,
-        daughter_2_spin: AngularMomentum,
-        lambda_1: Projection,
-        lambda_2: Projection,
+        daughter_1_spin: J,
+        daughter_2_spin: J,
+        lambda_1: M,
+        lambda_2: M,
         frame: Frame,
     ) -> LadduResult<Expression> {
-        let lambda = Projection::half_integer(lambda_1.value() - lambda_2.value());
-        let minus_lambda_2 = Projection::half_integer(-lambda_2.value());
+        let lambda = M::half(lambda_1.value() - lambda_2.value());
+        let minus_lambda_2 = M::half(-lambda_2.value());
         Ok(
             Expression::from(f64::from(2 * orbital_l.value() + 1).sqrt())
                 * ClebschGordan::new(
                     (),
-                    orbital_l.angular_momentum(),
-                    Projection::integer(0),
+                    orbital_l.as_j(),
+                    M::int(0),
                     coupled_spin,
                     lambda,
                     spin,
@@ -155,10 +154,10 @@ pub trait ProductionAmplitudeExt {
     fn helicity_factor(
         &self,
         tags: impl IntoTags,
-        spin: AngularMomentum,
-        projection: Projection,
-        lambda_produced: Projection,
-        lambda_recoil: Projection,
+        spin: J,
+        projection: M,
+        lambda_produced: M,
+        lambda_recoil: M,
     ) -> LadduResult<Expression>;
 
     /// Construct the canonical-basis spin-angular factor for one explicit LS/helicity term.
@@ -166,14 +165,14 @@ pub trait ProductionAmplitudeExt {
     fn canonical_factor(
         &self,
         tags: impl IntoTags,
-        spin: AngularMomentum,
-        projection: Projection,
-        orbital_l: OrbitalAngularMomentum,
-        coupled_spin: AngularMomentum,
-        produced_spin: AngularMomentum,
-        recoil_spin: AngularMomentum,
-        lambda_produced: Projection,
-        lambda_recoil: Projection,
+        spin: J,
+        projection: M,
+        orbital_l: L,
+        coupled_spin: S,
+        produced_spin: J,
+        recoil_spin: J,
+        lambda_produced: M,
+        lambda_recoil: M,
     ) -> LadduResult<Expression>;
 }
 
@@ -181,12 +180,12 @@ impl ProductionAmplitudeExt for Production {
     fn helicity_factor(
         &self,
         tags: impl IntoTags,
-        spin: AngularMomentum,
-        projection: Projection,
-        lambda_produced: Projection,
-        lambda_recoil: Projection,
+        spin: J,
+        projection: M,
+        lambda_produced: M,
+        lambda_recoil: M,
     ) -> LadduResult<Expression> {
-        let lambda = Projection::half_integer(lambda_produced.value() - lambda_recoil.value());
+        let lambda = M::half(lambda_produced.value() - lambda_recoil.value());
         let angles = self.angles()?;
         Ok(WignerD::new(tags, spin, projection, lambda, &angles)?.conj())
     }
@@ -194,23 +193,23 @@ impl ProductionAmplitudeExt for Production {
     fn canonical_factor(
         &self,
         tags: impl IntoTags,
-        spin: AngularMomentum,
-        projection: Projection,
-        orbital_l: OrbitalAngularMomentum,
-        coupled_spin: AngularMomentum,
-        produced_spin: AngularMomentum,
-        recoil_spin: AngularMomentum,
-        lambda_produced: Projection,
-        lambda_recoil: Projection,
+        spin: J,
+        projection: M,
+        orbital_l: L,
+        coupled_spin: S,
+        produced_spin: J,
+        recoil_spin: J,
+        lambda_produced: M,
+        lambda_recoil: M,
     ) -> LadduResult<Expression> {
-        let lambda = Projection::half_integer(lambda_produced.value() - lambda_recoil.value());
-        let minus_lambda_recoil = Projection::half_integer(-lambda_recoil.value());
+        let lambda = M::half(lambda_produced.value() - lambda_recoil.value());
+        let minus_lambda_recoil = M::half(-lambda_recoil.value());
         Ok(
             Expression::from(f64::from(2 * orbital_l.value() + 1).sqrt())
                 * ClebschGordan::new(
                     (),
-                    orbital_l.angular_momentum(),
-                    Projection::integer(0),
+                    orbital_l.as_j(),
+                    M::int(0),
                     coupled_spin,
                     lambda,
                     spin,

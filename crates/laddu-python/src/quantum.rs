@@ -1,18 +1,20 @@
 pub mod angular_momentum {
-    use laddu_core::{
-        allowed_projections, AngularMomentum, LadduError, LadduResult, OrbitalAngularMomentum,
-        Projection,
-    };
+    use laddu_core::{LadduError, LadduResult, J, L, M};
     use num::rational::Ratio;
     use pyo3::{
         prelude::*,
         types::{PyAny, PyBool, PyModule},
         IntoPyObjectExt,
     };
+
+    use super::{PyJ, PyL, PyM};
     type PyQuantumNumber = Py<PyAny>;
 
-    pub fn parse_angular_momentum(input: &Bound<'_, PyAny>) -> PyResult<AngularMomentum> {
-        Ok(parse_ratio_like(input).and_then(AngularMomentum::try_from)?)
+    pub fn parse_angular_momentum(input: &Bound<'_, PyAny>) -> PyResult<J> {
+        if let Ok(value) = input.extract::<PyJ>() {
+            return Ok(value.0);
+        }
+        Ok(parse_ratio_like(input).and_then(J::try_from)?)
     }
 
     fn parse_ratio_like(input: &Bound<'_, PyAny>) -> LadduResult<Ratio<i32>> {
@@ -25,7 +27,7 @@ pub mod angular_momentum {
             return Ok(Ratio::from_integer(value));
         }
         if let Ok(value) = input.extract::<f64>() {
-            let twice = Projection::try_from(value)?.value();
+            let twice = M::try_from(value)?.value();
             return Ok(Ratio::new(twice, 2));
         }
         let numerator = input
@@ -47,19 +49,23 @@ pub mod angular_momentum {
         ))
     }
 
-    pub fn parse_projection(input: &Bound<'_, PyAny>) -> PyResult<Projection> {
-        Ok(parse_ratio_like(input).and_then(Projection::try_from)?)
+    pub fn parse_projection(input: &Bound<'_, PyAny>) -> PyResult<M> {
+        if let Ok(value) = input.extract::<PyM>() {
+            return Ok(value.0);
+        }
+        Ok(parse_ratio_like(input).and_then(M::try_from)?)
     }
 
-    pub fn parse_orbital_angular_momentum(
-        input: &Bound<'_, PyAny>,
-    ) -> PyResult<OrbitalAngularMomentum> {
-        Ok(parse_ratio_like(input).and_then(OrbitalAngularMomentum::try_from)?)
+    pub fn parse_orbital_angular_momentum(input: &Bound<'_, PyAny>) -> PyResult<L> {
+        if let Ok(value) = input.extract::<PyL>() {
+            return Ok(value.0);
+        }
+        Ok(parse_ratio_like(input).and_then(L::try_from)?)
     }
 
     pub fn angular_momentum_to_python(
         py: Python<'_>,
-        angular_momentum: laddu_core::AngularMomentum,
+        angular_momentum: J,
     ) -> PyResult<PyQuantumNumber> {
         let twice = angular_momentum.value() as i32;
         if twice % 2 == 0 {
@@ -71,10 +77,7 @@ pub mod angular_momentum {
         }
     }
 
-    pub fn projection_to_python(
-        py: Python<'_>,
-        projection: Projection,
-    ) -> PyResult<PyQuantumNumber> {
+    pub fn projection_to_python(py: Python<'_>, projection: M) -> PyResult<PyQuantumNumber> {
         let twice = projection.value();
         if twice % 2 == 0 {
             Ok((twice / 2).into_bound_py_any(py)?.unbind())
@@ -91,7 +94,8 @@ pub mod angular_momentum {
         py: Python<'_>,
         spin: &Bound<'_, PyAny>,
     ) -> PyResult<Vec<PyQuantumNumber>> {
-        allowed_projections(parse_angular_momentum(spin)?)
+        parse_angular_momentum(spin)?
+            .projections()
             .into_iter()
             .map(|projection| projection_to_python(py, projection))
             .collect()
@@ -99,8 +103,8 @@ pub mod angular_momentum {
 }
 
 use laddu_core::{
-    AllowedPartialWave, Charge, Isospin, LadduError, OrbitalAngularMomentum, Parity, PartialWave,
-    ParticleProperties, RuleSet, SelectionRules, Statistics,
+    AllowedPartialWave, Charge, Isospin, LadduError, Parity, PartialWave, ParticleProperties,
+    RuleSet, SelectionRules, Statistics, L,
 };
 use pyo3::{
     exceptions::PyTypeError,
@@ -115,6 +119,114 @@ use self::angular_momentum::{
 };
 
 type PyQuantumNumber = Py<PyAny>;
+
+#[pyclass(eq, name = "J", module = "laddu", from_py_object)]
+#[derive(Clone, Copy, PartialEq)]
+pub struct PyJ(pub laddu_core::J);
+
+#[pymethods]
+impl PyJ {
+    #[new]
+    fn new(value: &Bound<'_, PyAny>) -> PyResult<Self> {
+        Ok(Self(parse_angular_momentum(value)?))
+    }
+
+    #[staticmethod]
+    fn int(value: u32) -> Self {
+        Self(laddu_core::J::int(value))
+    }
+
+    #[staticmethod]
+    fn half(value: u32) -> Self {
+        Self(laddu_core::J::half(value))
+    }
+
+    #[getter]
+    fn value(&self, py: Python<'_>) -> PyResult<PyQuantumNumber> {
+        angular_momentum_to_python(py, self.0)
+    }
+
+    fn projections(&self) -> Vec<PyM> {
+        self.0.projections().into_iter().map(PyM).collect()
+    }
+
+    fn __repr__(&self) -> String {
+        format!("J({})", self.0)
+    }
+
+    fn __str__(&self) -> String {
+        self.0.to_string()
+    }
+}
+
+#[pyclass(eq, name = "L", module = "laddu", from_py_object)]
+#[derive(Clone, Copy, PartialEq)]
+pub struct PyL(pub laddu_core::L);
+
+#[pymethods]
+impl PyL {
+    #[new]
+    fn new(value: &Bound<'_, PyAny>) -> PyResult<Self> {
+        Ok(Self(parse_orbital_angular_momentum(value)?))
+    }
+
+    #[staticmethod]
+    fn int(value: u32) -> Self {
+        Self(laddu_core::L::int(value))
+    }
+
+    #[getter]
+    fn value(&self) -> u32 {
+        self.0.value()
+    }
+
+    fn projections(&self) -> Vec<PyM> {
+        self.0.projections().into_iter().map(PyM).collect()
+    }
+
+    fn __repr__(&self) -> String {
+        format!("L({})", self.0.value())
+    }
+
+    fn __str__(&self) -> String {
+        self.0.value().to_string()
+    }
+}
+
+#[pyclass(eq, name = "M", module = "laddu", from_py_object)]
+#[derive(Clone, Copy, PartialEq)]
+pub struct PyM(pub laddu_core::M);
+
+#[pymethods]
+impl PyM {
+    #[new]
+    fn new(value: &Bound<'_, PyAny>) -> PyResult<Self> {
+        Ok(Self(parse_projection(value)?))
+    }
+
+    #[staticmethod]
+    fn int(value: i32) -> Self {
+        Self(laddu_core::M::int(value))
+    }
+
+    #[staticmethod]
+    fn half(value: i32) -> Self {
+        Self(laddu_core::M::half(value))
+    }
+
+    #[getter]
+    fn value(&self, py: Python<'_>) -> PyResult<PyQuantumNumber> {
+        projection_to_python(py, self.0)
+    }
+
+    fn __repr__(&self) -> String {
+        format!("M({})", self.0)
+    }
+
+    fn __str__(&self) -> String {
+        self.0.to_string()
+    }
+}
 
 fn parse_parity(input: &Bound<'_, PyAny>) -> PyResult<Parity> {
     if let Ok(value) = input.extract::<PyParity>() {
@@ -761,7 +873,7 @@ impl PySelectionRules {
     #[pyo3(signature = (*, max_l=6, rules=None))]
     fn new(max_l: u32, rules: Option<&Bound<'_, PyAny>>) -> PyResult<Self> {
         Ok(Self(SelectionRules {
-            max_l: OrbitalAngularMomentum::integer(max_l),
+            max_l: L::int(max_l),
             rules: parse_rules(rules)?,
         }))
     }

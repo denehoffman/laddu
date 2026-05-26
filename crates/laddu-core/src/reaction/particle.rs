@@ -43,6 +43,16 @@ impl Particle {
         }
     }
 
+    /// Construct a stored particle whose dataset p4 column differs from its reaction label.
+    pub fn stored_as(label: impl Into<String>, p4_name: impl Into<String>) -> Self {
+        Self {
+            label: label.into(),
+            source: ParticleSource::Stored {
+                p4_name: p4_name.into(),
+            },
+        }
+    }
+
     /// Construct a particle with a fixed four-momentum.
     pub fn fixed(label: impl Into<String>, p4: Vec4) -> Self {
         Self {

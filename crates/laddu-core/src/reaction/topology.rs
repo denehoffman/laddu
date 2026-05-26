@@ -10,7 +10,7 @@ use super::{
 use crate::{
     data::EventLike,
     kinematics::{DecayAngles, FrameAxes, RestFrame},
-    quantum::{Channel, Frame},
+    quantum::{Frame, MandelstamChannel},
     variables::{Mandelstam, Mass, PolAngle, Polarization},
     vectors::Vec4,
     LadduError, LadduResult,
@@ -141,7 +141,7 @@ impl Reaction {
     }
 
     /// Construct a Mandelstam variable for this reaction.
-    pub fn mandelstam(&self, channel: Channel) -> LadduResult<Mandelstam> {
+    pub fn mandelstam(&self, channel: MandelstamChannel) -> LadduResult<Mandelstam> {
         self.topology.require_mandelstam()?;
         Ok(Mandelstam::new(self.clone(), channel))
     }

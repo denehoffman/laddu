@@ -7,7 +7,7 @@ use laddu_core::{
     math::{blatt_weisskopf_m, BarrierKind, Sheet},
     resources::{Cache, ComplexScalarID, Parameters, Resources, ScalarID},
     traits::Variable,
-    Decay, LadduResult, OrbitalAngularMomentum,
+    Decay, LadduResult, L,
 };
 use nalgebra::DVector;
 use num::complex::Complex64;
@@ -21,7 +21,7 @@ pub struct BlattWeisskopf {
     parent_mass: Box<dyn Variable>,
     daughter_1_mass: Box<dyn Variable>,
     daughter_2_mass: Box<dyn Variable>,
-    l: OrbitalAngularMomentum,
+    l: L,
     reference_mass: f64,
     q_r: f64,
     sheet: Sheet,
@@ -37,7 +37,7 @@ impl BlattWeisskopf {
     pub fn new(
         tags: impl IntoTags,
         decay: &Decay,
-        l: OrbitalAngularMomentum,
+        l: L,
         reference_mass: f64,
         q_r: f64,
         sheet: Sheet,

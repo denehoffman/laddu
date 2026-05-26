@@ -1,7 +1,38 @@
+import builtins
 from fractions import Fraction
 from typing import Literal, TypeAlias
 
-QuantumNumber: TypeAlias = int | float | Fraction
+class J:
+    value: builtins.int | Fraction
+    def __init__(self, value: builtins.int | builtins.float | Fraction | J) -> None: ...
+    @staticmethod
+    def int(value: builtins.int) -> J: ...
+    @staticmethod
+    def half(value: builtins.int) -> J: ...
+    def projections(self) -> list[M]: ...
+
+S: TypeAlias = J
+
+class L:
+    value: builtins.int
+    def __init__(self, value: builtins.int | builtins.float | Fraction | L) -> None: ...
+    @staticmethod
+    def int(value: builtins.int) -> L: ...
+    def projections(self) -> list[M]: ...
+
+class M:
+    value: builtins.int | Fraction
+    def __init__(self, value: builtins.int | builtins.float | Fraction | M) -> None: ...
+    @staticmethod
+    def int(value: builtins.int) -> M: ...
+    @staticmethod
+    def half(value: builtins.int) -> M: ...
+
+ScalarQuantumNumber: TypeAlias = int | float | Fraction
+JLike: TypeAlias = ScalarQuantumNumber | J
+LLike: TypeAlias = ScalarQuantumNumber | L
+MLike: TypeAlias = ScalarQuantumNumber | M
+QuantumNumber: TypeAlias = ScalarQuantumNumber | J | L | M
 Sign: TypeAlias = Literal[
     '+',
     '-',
@@ -27,15 +58,13 @@ class Statistics:
 
 class Charge:
     value: int | Fraction
-    def __init__(self, value: QuantumNumber) -> None: ...
+    def __init__(self, value: ScalarQuantumNumber) -> None: ...
 
 class Isospin:
     isospin: int | Fraction
     projection: int | Fraction
     projection_unchecked: int | Fraction | None
-    def __init__(
-        self, isospin: QuantumNumber, *, projection: QuantumNumber | None = None
-    ) -> None: ...
+    def __init__(self, isospin: JLike, *, projection: MLike | None = None) -> None: ...
 
 class ParticleProperties:
     name: str
@@ -83,11 +112,11 @@ class ParticleProperties:
         species: str | None = None,
         antiparticle_species: str | None = None,
         self_conjugate: bool | None = None,
-        spin: QuantumNumber | None = None,
+        spin: JLike | None = None,
         parity: Parity | Sign | None = None,
         c_parity: Parity | Sign | None = None,
         g_parity: Parity | Sign | None = None,
-        charge: Charge | QuantumNumber | None = None,
+        charge: Charge | ScalarQuantumNumber | None = None,
         isospin: Isospin | None = None,
         strangeness: int | None = None,
         charm: int | None = None,
@@ -108,9 +137,9 @@ class PartialWave:
     def __init__(
         self,
         *,
-        j: QuantumNumber,
-        l: QuantumNumber,
-        s: QuantumNumber,
+        j: JLike,
+        l: LLike,
+        s: JLike,
         label: str | None = None,
     ) -> None: ...
 
@@ -133,9 +162,7 @@ class RuleSet:
 class SelectionRules:
     def __init__(self, *, max_l: int = 6, rules: RuleSet | str | None = None) -> None: ...
     @staticmethod
-    def coupled_spins(
-        spin_1: QuantumNumber, spin_2: QuantumNumber
-    ) -> list[int | Fraction]: ...
+    def coupled_spins(spin_1: JLike, spin_2: JLike) -> list[int | Fraction]: ...
     def allowed_partial_waves(
         self,
         parent: ParticleProperties,
@@ -143,10 +170,8 @@ class SelectionRules:
         daughter_2: ParticleProperties,
     ) -> list[AllowedPartialWave]: ...
 
-def allowed_projections(spin: QuantumNumber) -> list[int | Fraction]: ...
-def coupled_spins(
-    spin_1: QuantumNumber, spin_2: QuantumNumber
-) -> list[int | Fraction]: ...
+def allowed_projections(spin: JLike) -> list[int | Fraction]: ...
+def coupled_spins(spin_1: JLike, spin_2: JLike) -> list[int | Fraction]: ...
 def allowed_partial_waves(
     parent: ParticleProperties,
     daughter_1: ParticleProperties,
@@ -160,11 +185,19 @@ __all__ = [
     'AllowedPartialWave',
     'Charge',
     'Isospin',
+    'J',
+    'JLike',
+    'L',
+    'LLike',
+    'M',
+    'MLike',
     'Parity',
     'PartialWave',
     'ParticleProperties',
     'QuantumNumber',
     'RuleSet',
+    'S',
+    'ScalarQuantumNumber',
     'SelectionRules',
     'Sign',
     'Statistics',

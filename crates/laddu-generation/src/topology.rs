@@ -1616,7 +1616,7 @@ impl EventGenerator {
 #[cfg(test)]
 mod tests {
     use approx::assert_relative_eq;
-    use laddu_core::{traits::Variable, Channel, Expression, Frame};
+    use laddu_core::{traits::Variable, Expression, Frame, MandelstamChannel};
 
     use super::*;
 
@@ -1708,7 +1708,7 @@ mod tests {
             .angles("kshort1", Frame::Helicity)
             .unwrap();
         let mandelstam = reaction
-            .mandelstam(Channel::S)
+            .mandelstam(MandelstamChannel::S)
             .unwrap()
             .value_on(&dataset)
             .unwrap();

@@ -7,12 +7,15 @@ use laddu_core::{
     parameter,
     reaction::{Particle, Reaction},
     variables::Mass,
-    Channel,
+    MandelstamChannel,
 };
 
 use super::{BreitWigner, BreitWignerNonRelativistic, Flatte, PhaseSpaceFactor, Voigt};
 
-fn test_phase_space_expression(tags: impl IntoTags, channel: Channel) -> laddu_core::Expression {
+fn test_phase_space_expression(
+    tags: impl IntoTags,
+    channel: MandelstamChannel,
+) -> laddu_core::Expression {
     let beam = Particle::stored("beam");
     let target = Particle::missing("target");
     let kshort1 = Particle::stored("kshort1");
@@ -127,7 +130,7 @@ fn test_voigt_sqrt_profile_evaluation() {
 #[test]
 fn test_phase_space_factor_evaluation() {
     let dataset = Arc::new(test_dataset());
-    let expr = test_phase_space_expression("kappa", Channel::S);
+    let expr = test_phase_space_expression("kappa", MandelstamChannel::S);
     let evaluator = expr.load(&dataset).unwrap();
 
     let result = evaluator.evaluate(&[]).unwrap();

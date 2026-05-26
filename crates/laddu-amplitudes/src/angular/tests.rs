@@ -40,9 +40,9 @@ fn wigner_d_matches_core_function() {
     let angles = decay.angles("kshort1", Frame::Helicity).unwrap();
     let expr = WignerD::new(
         "d",
-        laddu_core::AngularMomentum::half_integer(2),
-        laddu_core::Projection::half_integer(2),
-        laddu_core::Projection::half_integer(0),
+        laddu_core::J::half(2),
+        laddu_core::M::half(2),
+        laddu_core::M::half(0),
         &angles,
     )
     .unwrap();
@@ -68,12 +68,12 @@ fn clebsch_gordan_constant_matches_core_function() {
     let dataset = Arc::new(test_dataset());
     let expr = ClebschGordan::new(
         "cg",
-        laddu_core::AngularMomentum::half_integer(1),
-        laddu_core::Projection::half_integer(1),
-        laddu_core::AngularMomentum::half_integer(1),
-        laddu_core::Projection::half_integer(-1),
-        laddu_core::AngularMomentum::half_integer(2),
-        laddu_core::Projection::half_integer(0),
+        laddu_core::J::half(1),
+        laddu_core::M::half(1),
+        laddu_core::J::half(1),
+        laddu_core::M::half(-1),
+        laddu_core::J::half(2),
+        laddu_core::M::half(0),
     )
     .unwrap();
     let value = expr.load(&dataset).unwrap().evaluate(&[]).unwrap()[0];
@@ -123,7 +123,7 @@ fn blatt_weisskopf_accepts_reaction_decay_context() {
     let expr = BlattWeisskopf::new(
         "b",
         &decay,
-        laddu_core::OrbitalAngularMomentum::integer(2),
+        laddu_core::L::int(2),
         1.5,
         QR_DEFAULT,
         laddu_core::math::Sheet::Physical,
@@ -163,20 +163,20 @@ fn helicity_factor_matches_conjugated_wigner_d() {
     let factor = DecayAmplitudeExt::helicity_factor(
         &decay,
         "h",
-        laddu_core::AngularMomentum::integer(2),
-        laddu_core::Projection::integer(1),
+        laddu_core::J::int(2),
+        laddu_core::M::int(1),
         "kshort1",
-        laddu_core::Projection::integer(1),
-        laddu_core::Projection::integer(0),
+        laddu_core::M::int(1),
+        laddu_core::M::int(0),
         Frame::Helicity,
     )
     .unwrap();
     let angles = decay.angles("kshort1", Frame::Helicity).unwrap();
     let explicit = WignerD::new(
         "d",
-        laddu_core::AngularMomentum::integer(2),
-        laddu_core::Projection::integer(1),
-        laddu_core::Projection::integer(1),
+        laddu_core::J::int(2),
+        laddu_core::M::int(1),
+        laddu_core::M::int(1),
         &angles,
     )
     .unwrap()
@@ -197,47 +197,47 @@ fn canonical_factor_matches_explicit_product() {
     let factor = DecayAmplitudeExt::canonical_factor(
         &decay,
         "c",
-        laddu_core::AngularMomentum::integer(2),
-        laddu_core::Projection::integer(0),
-        laddu_core::OrbitalAngularMomentum::integer(2),
-        laddu_core::AngularMomentum::integer(0),
+        laddu_core::J::int(2),
+        laddu_core::M::int(0),
+        laddu_core::L::int(2),
+        laddu_core::S::int(0),
         "kshort1",
-        laddu_core::AngularMomentum::integer(0),
-        laddu_core::AngularMomentum::integer(0),
-        laddu_core::Projection::integer(0),
-        laddu_core::Projection::integer(0),
+        laddu_core::J::int(0),
+        laddu_core::J::int(0),
+        laddu_core::M::int(0),
+        laddu_core::M::int(0),
         Frame::Helicity,
     )
     .unwrap();
     let explicit = Scalar::new("norm", parameter!("norm.value", 5.0_f64.sqrt())).unwrap()
         * ClebschGordan::new(
             "orbital_spin",
-            laddu_core::AngularMomentum::integer(2),
-            laddu_core::Projection::integer(0),
-            laddu_core::AngularMomentum::integer(0),
-            laddu_core::Projection::integer(0),
-            laddu_core::AngularMomentum::integer(2),
-            laddu_core::Projection::integer(0),
+            laddu_core::J::int(2),
+            laddu_core::M::int(0),
+            laddu_core::S::int(0),
+            laddu_core::M::int(0),
+            laddu_core::J::int(2),
+            laddu_core::M::int(0),
         )
         .unwrap()
         * ClebschGordan::new(
             "daughter_spin",
-            laddu_core::AngularMomentum::integer(0),
-            laddu_core::Projection::integer(0),
-            laddu_core::AngularMomentum::integer(0),
-            laddu_core::Projection::integer(0),
-            laddu_core::AngularMomentum::integer(0),
-            laddu_core::Projection::integer(0),
+            laddu_core::J::int(0),
+            laddu_core::M::int(0),
+            laddu_core::J::int(0),
+            laddu_core::M::int(0),
+            laddu_core::S::int(0),
+            laddu_core::M::int(0),
         )
         .unwrap()
         * DecayAmplitudeExt::helicity_factor(
             &decay,
             "d",
-            laddu_core::AngularMomentum::integer(2),
-            laddu_core::Projection::integer(0),
+            laddu_core::J::int(2),
+            laddu_core::M::int(0),
             "kshort1",
-            laddu_core::Projection::integer(0),
-            laddu_core::Projection::integer(0),
+            laddu_core::M::int(0),
+            laddu_core::M::int(0),
             Frame::Helicity,
         )
         .unwrap();
@@ -257,30 +257,30 @@ fn decay_factors_with_matching_names_deduplicate() {
     let factor_1 = DecayAmplitudeExt::canonical_factor(
         &decay,
         "rho.factor",
-        laddu_core::AngularMomentum::integer(1),
-        laddu_core::Projection::integer(0),
-        laddu_core::OrbitalAngularMomentum::integer(1),
-        laddu_core::AngularMomentum::integer(0),
+        laddu_core::J::int(1),
+        laddu_core::M::int(0),
+        laddu_core::L::int(1),
+        laddu_core::S::int(0),
         "kshort1",
-        laddu_core::AngularMomentum::integer(0),
-        laddu_core::AngularMomentum::integer(0),
-        laddu_core::Projection::integer(0),
-        laddu_core::Projection::integer(0),
+        laddu_core::J::int(0),
+        laddu_core::J::int(0),
+        laddu_core::M::int(0),
+        laddu_core::M::int(0),
         Frame::Helicity,
     )
     .unwrap();
     let factor_2 = DecayAmplitudeExt::canonical_factor(
         &decay,
         "rho.factor",
-        laddu_core::AngularMomentum::integer(1),
-        laddu_core::Projection::integer(0),
-        laddu_core::OrbitalAngularMomentum::integer(1),
-        laddu_core::AngularMomentum::integer(0),
+        laddu_core::J::int(1),
+        laddu_core::M::int(0),
+        laddu_core::L::int(1),
+        laddu_core::S::int(0),
         "kshort1",
-        laddu_core::AngularMomentum::integer(0),
-        laddu_core::AngularMomentum::integer(0),
-        laddu_core::Projection::integer(0),
-        laddu_core::Projection::integer(0),
+        laddu_core::J::int(0),
+        laddu_core::J::int(0),
+        laddu_core::M::int(0),
+        laddu_core::M::int(0),
         Frame::Helicity,
     )
     .unwrap();

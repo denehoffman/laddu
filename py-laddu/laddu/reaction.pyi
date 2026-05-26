@@ -1,7 +1,7 @@
 from typing import Literal, TypeAlias
 
 from laddu.amplitude import Expression
-from laddu.quantum import QuantumNumber
+from laddu.quantum import JLike, LLike, MLike
 from laddu.variables import (
     Angles,
     CosTheta,
@@ -58,25 +58,25 @@ class Decay:
     def helicity_factor(
         self,
         *tags: str,
-        spin: QuantumNumber,
-        projection: QuantumNumber,
+        spin: JLike,
+        projection: MLike,
         daughter: str,
-        lambda_1: QuantumNumber,
-        lambda_2: QuantumNumber,
+        lambda_1: MLike,
+        lambda_2: MLike,
         frame: _Frame = 'Helicity',
     ) -> Expression: ...
     def canonical_factor(
         self,
         *tags: str,
-        spin: QuantumNumber,
-        projection: QuantumNumber,
-        orbital_l: QuantumNumber,
-        coupled_spin: QuantumNumber,
+        spin: JLike,
+        projection: MLike,
+        orbital_l: LLike,
+        coupled_spin: JLike,
         daughter: str,
-        daughter_1_spin: QuantumNumber,
-        daughter_2_spin: QuantumNumber,
-        lambda_1: QuantumNumber,
-        lambda_2: QuantumNumber,
+        daughter_1_spin: JLike,
+        daughter_2_spin: JLike,
+        lambda_1: MLike,
+        lambda_2: MLike,
         frame: _Frame = 'Helicity',
     ) -> Expression: ...
 
@@ -91,22 +91,22 @@ class Production:
     def helicity_factor(
         self,
         *tags: str,
-        spin: QuantumNumber,
-        projection: QuantumNumber,
-        lambda_produced: QuantumNumber,
-        lambda_recoil: QuantumNumber,
+        spin: JLike,
+        projection: MLike,
+        lambda_produced: MLike,
+        lambda_recoil: MLike,
     ) -> Expression: ...
     def canonical_factor(
         self,
         *tags: str,
-        spin: QuantumNumber,
-        projection: QuantumNumber,
-        orbital_l: QuantumNumber,
-        coupled_spin: QuantumNumber,
-        produced_spin: QuantumNumber,
-        recoil_spin: QuantumNumber,
-        lambda_produced: QuantumNumber,
-        lambda_recoil: QuantumNumber,
+        spin: JLike,
+        projection: MLike,
+        orbital_l: LLike,
+        coupled_spin: JLike,
+        produced_spin: JLike,
+        recoil_spin: JLike,
+        lambda_produced: MLike,
+        lambda_recoil: MLike,
     ) -> Expression: ...
 
 class Reaction:

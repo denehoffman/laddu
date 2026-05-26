@@ -3,7 +3,7 @@ use std::{fmt::Display, str::FromStr};
 use num::rational::Ratio;
 use serde::{Deserialize, Serialize};
 
-use crate::{quantum::parse_sign_value, LadduError, LadduResult};
+use crate::{quantum::parse_sign_value, LadduError};
 
 const QUANTUM_NUMBER_FLOAT_TOLERANCE: f64 = 1.0e-12;
 
@@ -16,23 +16,28 @@ pub(crate) enum Sign {
     Negative,
 }
 
-/// A non-negative angular momentum stored as twice its physical value.
+/// A non-negative total angular momentum stored as twice its physical value.
 ///
 /// This representation keeps integer and half-integer quantum numbers exact. For example,
-/// `AngularMomentum::from_twice(1)` represents `$1/2$`, and
-/// `AngularMomentum::from_twice(2)` represents `$1$`.
+/// `J::half(1)` represents `$1/2$`, and `J::int(1)` represents `$1$`.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
-pub struct AngularMomentum(u32);
+pub struct J(u32);
 
-impl AngularMomentum {
+impl J {
     /// Construct a non-negative integer angular momentum.
-    pub const fn integer(value: u32) -> Self {
+    pub const fn int(value: u32) -> Self {
         Self(2 * value)
     }
 
     /// Construct a non-negative angular momentum from the given numerator over two.
-    pub const fn half_integer(value: u32) -> Self {
+    pub const fn half(value: u32) -> Self {
         Self(value)
+    }
+
+    /// Enumerate the valid signed projections for this angular momentum.
+    pub fn projections(self) -> Vec<M> {
+        let twice = self.0 as i32;
+        (-twice..=twice).step_by(2).map(M::half).collect()
     }
 
     /// Return the doubled integer value.
@@ -52,19 +57,19 @@ impl AngularMomentum {
 
     /// Return whether this angular momentum has the same integer/half-integer parity as
     /// `projection`.
-    pub const fn has_same_parity_as(self, projection: Projection) -> bool {
+    pub(crate) const fn has_same_parity_as(self, projection: M) -> bool {
         (self.0 & 1) as i32 == projection.value() & 1
     }
 
     /// Returns true if the given angular momenta can couple to produce this one.
-    pub fn can_couple_to(&self, j1: Self, j2: Self) -> bool {
+    pub(crate) fn can_couple_to(&self, j1: Self, j2: Self) -> bool {
         let min = j1.value().abs_diff(j2.value());
         let max = j1.value() + j2.value();
         self.value() >= min && self.value() <= max && (self.value() - min).is_multiple_of(2)
     }
 }
 
-impl TryFrom<Ratio<i32>> for AngularMomentum {
+impl TryFrom<Ratio<i32>> for J {
     type Error = LadduError;
 
     fn try_from(value: Ratio<i32>) -> Result<Self, Self::Error> {
@@ -80,7 +85,7 @@ impl TryFrom<Ratio<i32>> for AngularMomentum {
     }
 }
 
-impl TryFrom<f64> for AngularMomentum {
+impl TryFrom<f64> for J {
     type Error = LadduError;
 
     fn try_from(value: f64) -> Result<Self, Self::Error> {
@@ -106,7 +111,7 @@ impl TryFrom<f64> for AngularMomentum {
         })?))
     }
 }
-impl Display for AngularMomentum {
+impl Display for J {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if self.is_integer() {
             write!(f, "{}", self.value() / 2)
@@ -118,22 +123,12 @@ impl Display for AngularMomentum {
 
 /// A non-negative integer orbital angular momentum.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
-pub struct OrbitalAngularMomentum(u32);
+pub struct L(u32);
 
-impl OrbitalAngularMomentum {
+impl L {
     /// Construct an orbital angular momentum.
-    pub const fn integer(value: u32) -> Self {
+    pub const fn int(value: u32) -> Self {
         Self(value)
-    }
-
-    /// Construct an orbital angular momentum from a non-negative angular momentum.
-    pub fn from_angular_momentum(value: AngularMomentum) -> LadduResult<Self> {
-        if !value.is_integer() {
-            return Err(LadduError::Custom(
-                "orbital angular momentum must be an integer".to_string(),
-            ));
-        }
-        Ok(Self(value.value() / 2))
     }
 
     /// Return the integer orbital angular momentum.
@@ -141,13 +136,18 @@ impl OrbitalAngularMomentum {
         self.0
     }
 
-    /// Return the orbital angular momentum as a doubled non-negative angular momentum.
-    pub fn angular_momentum(self) -> AngularMomentum {
-        AngularMomentum::integer(self.0)
+    /// Enumerate the valid signed projections for this orbital angular momentum.
+    pub fn projections(self) -> Vec<M> {
+        J::int(self.0).projections()
+    }
+
+    /// Return the orbital angular momentum as a total angular momentum.
+    pub const fn as_j(self) -> J {
+        J::int(self.0)
     }
 }
 
-impl TryFrom<Ratio<i32>> for OrbitalAngularMomentum {
+impl TryFrom<Ratio<i32>> for L {
     type Error = LadduError;
 
     fn try_from(value: Ratio<i32>) -> Result<Self, Self::Error> {
@@ -162,7 +162,7 @@ impl TryFrom<Ratio<i32>> for OrbitalAngularMomentum {
     }
 }
 
-impl TryFrom<f64> for OrbitalAngularMomentum {
+impl TryFrom<f64> for L {
     type Error = LadduError;
 
     fn try_from(value: f64) -> Result<Self, Self::Error> {
@@ -179,16 +179,16 @@ impl TryFrom<f64> for OrbitalAngularMomentum {
         }
         if rounded < f64::from(i32::MIN) || rounded > f64::from(i32::MAX) {
             return Err(LadduError::Custom(
-                "angular momentum is too large".to_string(),
+                "orbital angular momentum is too large".to_string(),
             ));
         }
         Ok(Self(u32::try_from(rounded as i32).map_err(|_| {
-            LadduError::Custom("angular momentum cannot be negative".to_string())
+            LadduError::Custom("orbital angular momentum cannot be negative".to_string())
         })?))
     }
 }
 
-impl Display for OrbitalAngularMomentum {
+impl Display for L {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
@@ -209,16 +209,16 @@ impl Display for OrbitalAngularMomentum {
 
 /// A signed integer or half-integer projection stored as twice its physical value.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
-pub struct Projection(i32);
+pub struct M(i32);
 
-impl Projection {
+impl M {
     /// Construct a signed integer projection.
-    pub const fn integer(value: i32) -> Self {
+    pub const fn int(value: i32) -> Self {
         Self(2 * value)
     }
 
     /// Construct a signed projection from the given numerator over two.
-    pub const fn half_integer(value: i32) -> Self {
+    pub const fn half(value: i32) -> Self {
         Self(value)
     }
 
@@ -238,7 +238,7 @@ impl Projection {
     }
 }
 
-impl TryFrom<Ratio<i32>> for Projection {
+impl TryFrom<Ratio<i32>> for M {
     type Error = LadduError;
 
     fn try_from(value: Ratio<i32>) -> Result<Self, Self::Error> {
@@ -251,7 +251,7 @@ impl TryFrom<Ratio<i32>> for Projection {
         Ok(Self(*twice.numer()))
     }
 }
-impl TryFrom<f64> for Projection {
+impl TryFrom<f64> for M {
     type Error = LadduError;
 
     fn try_from(value: f64) -> Result<Self, Self::Error> {
@@ -271,7 +271,7 @@ impl TryFrom<f64> for Projection {
         Ok(Self(rounded as i32))
     }
 }
-impl Display for Projection {
+impl Display for M {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if self.is_integer() {
             write!(f, "{}", self.value() / 2)
@@ -372,7 +372,7 @@ pub enum Statistics {
 
 impl Statistics {
     /// Construct quantum statistics from a spin value.
-    pub fn from_spin(spin: AngularMomentum) -> Self {
+    pub fn from_spin(spin: J) -> Self {
         if spin.is_integer() {
             Self::Boson
         } else {
@@ -426,42 +426,26 @@ mod tests {
 
     #[test]
     fn orbital_angular_momentum_rejects_half_integer_values() {
-        assert_eq!(
-            OrbitalAngularMomentum::from_angular_momentum(AngularMomentum::integer(2))
-                .unwrap()
-                .value(),
-            2
-        );
-        assert!(
-            OrbitalAngularMomentum::from_angular_momentum(AngularMomentum::half_integer(3))
-                .is_err()
-        );
+        assert_eq!(L::try_from(Ratio::new(2, 1)).unwrap().value(), 2);
+        assert!(L::try_from(Ratio::new(3, 2)).is_err());
     }
 
     #[test]
     fn angular_momentum_accepts_ratio_and_float_physical_values() {
-        assert_eq!(
-            AngularMomentum::try_from(Ratio::new(3, 2)).unwrap().value(),
-            3
-        );
-        assert_eq!(AngularMomentum::try_from(1.5).unwrap().value(), 3);
-        assert_eq!(Projection::try_from(Ratio::new(-1, 2)).unwrap().value(), -1);
-        assert_eq!(Projection::try_from(-0.5).unwrap().value(), -1);
-        assert!(AngularMomentum::try_from(Ratio::new(1, 3)).is_err());
-        assert!(Projection::try_from(0.25).is_err());
+        assert_eq!(J::try_from(Ratio::new(3, 2)).unwrap().value(), 3);
+        assert_eq!(J::try_from(1.5).unwrap().value(), 3);
+        assert_eq!(M::try_from(Ratio::new(-1, 2)).unwrap().value(), -1);
+        assert_eq!(M::try_from(-0.5).unwrap().value(), -1);
+        assert!(J::try_from(Ratio::new(1, 3)).is_err());
+        assert!(M::try_from(0.25).is_err());
     }
 
     #[test]
     fn orbital_angular_momentum_accepts_integer_ratio_and_float_values() {
-        assert_eq!(
-            OrbitalAngularMomentum::try_from(Ratio::new(2, 1))
-                .unwrap()
-                .value(),
-            2
-        );
-        assert_eq!(OrbitalAngularMomentum::try_from(2.0).unwrap().value(), 2);
-        assert!(OrbitalAngularMomentum::try_from(Ratio::new(3, 2)).is_err());
-        assert!(OrbitalAngularMomentum::try_from(1.5).is_err());
+        assert_eq!(L::try_from(Ratio::new(2, 1)).unwrap().value(), 2);
+        assert_eq!(L::try_from(2.0).unwrap().value(), 2);
+        assert!(L::try_from(Ratio::new(3, 2)).is_err());
+        assert!(L::try_from(1.5).is_err());
     }
 
     #[test]

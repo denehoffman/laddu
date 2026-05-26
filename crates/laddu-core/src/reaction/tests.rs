@@ -5,8 +5,8 @@ use serde_pickle::{DeOptions, SerOptions};
 
 use super::*;
 use crate::{
-    kinematics::FrameAxes, traits::Variable, Channel, Dataset, DatasetMetadata, EventData, Frame,
-    Vec3, Vec4,
+    kinematics::FrameAxes, traits::Variable, Dataset, DatasetMetadata, EventData, Frame,
+    MandelstamChannel, Vec3, Vec4,
 };
 
 fn two_body_momentum(parent_mass: f64, daughter_1_mass: f64, daughter_2_mass: f64) -> f64 {
@@ -323,15 +323,24 @@ fn reaction_mandelstam_variables_match_resolved_values() {
     assert!(reaction.topology().supports_mandelstam());
     assert!(reaction.topology().require_mandelstam().is_ok());
     assert_relative_eq!(
-        reaction.mandelstam(Channel::S).unwrap().value(&event),
+        reaction
+            .mandelstam(MandelstamChannel::S)
+            .unwrap()
+            .value(&event),
         resolved.s()
     );
     assert_relative_eq!(
-        reaction.mandelstam(Channel::T).unwrap().value(&event),
+        reaction
+            .mandelstam(MandelstamChannel::T)
+            .unwrap()
+            .value(&event),
         resolved.t()
     );
     assert_relative_eq!(
-        reaction.mandelstam(Channel::U).unwrap().value(&event),
+        reaction
+            .mandelstam(MandelstamChannel::U)
+            .unwrap()
+            .value(&event),
         resolved.u()
     );
 }

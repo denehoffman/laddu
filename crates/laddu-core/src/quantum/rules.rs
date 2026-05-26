@@ -1,6 +1,6 @@
 use crate::{
     quantum::{PartialWave, ParticleProperties},
-    AllowedPartialWave, AngularMomentum, OrbitalAngularMomentum, Parity, Statistics,
+    AllowedPartialWave, Parity, Statistics, J, L, S,
 };
 
 /// A collection of optional selection rules for testing whether a two-body
@@ -210,8 +210,8 @@ impl RuleSet {
         &self,
         parent: &ParticleProperties,
         daughters: (&ParticleProperties, &ParticleProperties),
-        l: OrbitalAngularMomentum,
-        s: AngularMomentum,
+        l: L,
+        s: S,
     ) -> bool {
         (!self.parity || Self::check_parity(parent, daughters, l).unwrap_or(true))
             && (!self.isospin || Self::check_isospin(parent, daughters).unwrap_or(true))
@@ -226,7 +226,7 @@ impl RuleSet {
     fn check_parity(
         parent: &ParticleProperties,
         daughters: (&ParticleProperties, &ParticleProperties),
-        l: OrbitalAngularMomentum,
+        l: L,
     ) -> Option<bool> {
         let p_parent = parent.parity?;
         let p_a = daughters.0.parity?;
@@ -262,8 +262,8 @@ impl RuleSet {
     fn check_c_parity(
         parent: &ParticleProperties,
         daughters: (&ParticleProperties, &ParticleProperties),
-        l: OrbitalAngularMomentum,
-        s: AngularMomentum,
+        l: L,
+        s: S,
     ) -> Option<bool> {
         let c_parent = parent.c_parity?;
         if !daughters.0.is_antiparticle_of(daughters.1) {
@@ -423,7 +423,7 @@ impl RuleSet {
     }
     fn check_identical_particle_symmetry(
         daughters: (&ParticleProperties, &ParticleProperties),
-        l: OrbitalAngularMomentum,
+        l: L,
     ) -> Option<bool> {
         let sp_a = daughters.0.species.as_ref()?;
         let sp_b = daughters.1.species.as_ref()?;
@@ -466,7 +466,7 @@ pub struct SelectionRules {
     ///
     /// The solver scans all integer values
     /// $`L = 0, 1, \ldots, L_\text{max}`$.
-    pub max_l: OrbitalAngularMomentum,
+    pub max_l: L,
 
     /// Conservation and symmetry rules used to filter candidate waves.
     ///
@@ -479,7 +479,7 @@ pub struct SelectionRules {
 impl Default for SelectionRules {
     fn default() -> Self {
         Self {
-            max_l: OrbitalAngularMomentum::integer(6),
+            max_l: L::int(6),
             rules: RuleSet::strong(),
         }
     }
@@ -492,13 +492,10 @@ impl SelectionRules {
     ///
     /// Internally angular momenta are stored as doubled values, so the returned
     /// sequence advances by two in the doubled representation.
-    pub fn coupled_spins(a: AngularMomentum, b: AngularMomentum) -> Vec<AngularMomentum> {
+    pub fn coupled_spins(a: J, b: J) -> Vec<S> {
         let min = a.value().abs_diff(b.value());
         let max = a.value() + b.value();
-        (min..=max)
-            .step_by(2)
-            .map(AngularMomentum::half_integer)
-            .collect()
+        (min..=max).step_by(2).map(J::half).collect()
     }
     /// Generate all allowed two-body partial waves for a parent and two
     /// daughters.
@@ -536,7 +533,7 @@ impl SelectionRules {
         let mut out = Vec::new();
         for s in Self::coupled_spins(ja, jb) {
             for l_raw in 0..=self.max_l.value() {
-                let l = OrbitalAngularMomentum::integer(l_raw);
+                let l = L::int(l_raw);
                 let wave = PartialWave::new(parent_j, l, s);
                 if let Ok(wave) = wave {
                     // TODO: replace with let-chain in 2024 Rust
@@ -553,14 +550,14 @@ impl SelectionRules {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Charge, Isospin, Projection};
+    use crate::{Charge, Isospin, M};
 
-    fn j(twice: u32) -> AngularMomentum {
-        AngularMomentum::half_integer(twice)
+    fn j(twice: u32) -> J {
+        J::half(twice)
     }
 
-    fn l(value: u32) -> OrbitalAngularMomentum {
-        OrbitalAngularMomentum::integer(value)
+    fn l(value: u32) -> L {
+        L::int(value)
     }
 
     fn q(thirds: i32) -> Charge {
@@ -725,11 +722,11 @@ mod tests {
     #[test]
     fn isospin_projection_checks_i3_conservation() {
         let parent = ParticleProperties::unknown()
-            .with_isospin(Isospin::new(j(2), Some(Projection::integer(0))).unwrap());
+            .with_isospin(Isospin::new(j(2), Some(M::int(0))).unwrap());
         let a = ParticleProperties::unknown()
-            .with_isospin(Isospin::new(j(1), Some(Projection::half_integer(1))).unwrap());
+            .with_isospin(Isospin::new(j(1), Some(M::half(1))).unwrap());
         let b = ParticleProperties::unknown()
-            .with_isospin(Isospin::new(j(1), Some(Projection::half_integer(-1))).unwrap());
+            .with_isospin(Isospin::new(j(1), Some(M::half(-1))).unwrap());
         assert_eq!(
             RuleSet::check_isospin_projection(&parent, (&a, &b)),
             Some(true)

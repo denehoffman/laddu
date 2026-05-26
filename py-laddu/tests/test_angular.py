@@ -6,6 +6,9 @@ from laddu import (
     ClebschGordan,
     Dataset,
     Event,
+    J,
+    L,
+    M,
     Particle,
     PhotonSDME,
     Reaction,
@@ -107,6 +110,25 @@ def test_half_integer_quantum_numbers_accept_fraction_and_float() -> None:
 
     assert values[0].real == pytest.approx(values[0].real)
     assert values[0].imag == pytest.approx(values[0].imag)
+
+
+def test_angular_terms_accept_typed_quantum_numbers() -> None:
+    dataset = make_test_dataset()
+    rxn, _, _, _ = reaction()
+    decay = rxn.decay('x')
+    angles = decay.angles('kshort1', 'Helicity')
+    d = WignerD(
+        'd_typed',
+        spin=J.int(2),
+        row_projection=M.int(0),
+        column_projection=M.int(0),
+        angles=angles,
+    )
+    b = BlattWeisskopf('b_typed', decay=decay, l=L.int(2), reference_mass=1.5)
+
+    value = (d * b).load(dataset).evaluate([])[0]
+
+    assert value.real == pytest.approx(value.real)
 
 
 def test_quantum_number_inputs_reject_invalid_values() -> None:

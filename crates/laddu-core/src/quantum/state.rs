@@ -2,45 +2,30 @@ use std::fmt::Display;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    quantum::types::Statistics, AngularMomentum, Charge, LadduError, LadduResult,
-    OrbitalAngularMomentum, Parity, Projection,
-};
+use crate::{quantum::types::Statistics, Charge, LadduError, LadduResult, Parity, J, L, M, S};
 
 /// A validated spin state with spin and projection stored as doubled quantum numbers.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
 pub struct SpinState {
-    spin: AngularMomentum,
-    projection: Projection,
+    spin: J,
+    projection: M,
 }
 
 impl SpinState {
     /// Construct a spin state after validating projection bounds and parity.
-    pub fn new(spin: AngularMomentum, projection: Projection) -> LadduResult<Self> {
+    pub fn new(spin: J, projection: M) -> LadduResult<Self> {
         validate_projection(spin, projection)?;
         Ok(Self { spin, projection })
     }
 
     /// Return the spin quantum number.
-    pub const fn spin(self) -> AngularMomentum {
+    pub const fn spin(self) -> J {
         self.spin
     }
 
     /// Return the spin projection quantum number.
-    pub const fn projection(self) -> Projection {
+    pub const fn projection(self) -> M {
         self.projection
-    }
-
-    /// Enumerate all allowed projections for `spin`.
-    pub fn allowed_projections(spin: AngularMomentum) -> Vec<Self> {
-        let spin_value = spin.value() as i32;
-        (-spin_value..=spin_value)
-            .step_by(2)
-            .map(|projection| Self {
-                spin,
-                projection: Projection::half_integer(projection),
-            })
-            .collect()
     }
 }
 
@@ -48,14 +33,14 @@ impl SpinState {
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
 pub struct Isospin {
     /// The total isospin of the state.
-    pub isospin: AngularMomentum,
+    pub isospin: J,
     /// The isospin projection of the state.
-    pub projection: Option<Projection>,
+    pub projection: Option<M>,
 }
 
 impl Isospin {
     /// Construct a new isospin state from the given total isospin and optional projection.
-    pub fn new(isospin: AngularMomentum, projection: Option<Projection>) -> LadduResult<Self> {
+    pub fn new(isospin: J, projection: Option<M>) -> LadduResult<Self> {
         if let Some(projection) = projection {
             validate_projection(isospin, projection)?;
         }
@@ -65,13 +50,13 @@ impl Isospin {
         })
     }
     /// The total isospin of the state.
-    pub fn isospin(self) -> AngularMomentum {
+    pub fn isospin(self) -> J {
         self.isospin
     }
     /// The isospin projection of the state.
     ///
     /// Returns an error if this property is not known.
-    pub fn projection(self) -> LadduResult<Projection> {
+    pub fn projection(self) -> LadduResult<M> {
         self.projection
             .ok_or_else(|| LadduError::MissingParticleProperty {
                 property: "isospin.projection",
@@ -91,7 +76,7 @@ pub struct ParticleProperties {
     /// Whether the particle is its own antiparticle.
     pub self_conjugate: Option<bool>,
     /// The spin of the particle, if known.
-    pub spin: Option<AngularMomentum>,
+    pub spin: Option<J>,
     /// The intrinsic parity of the particle, if known.
     pub parity: Option<Parity>,
     /// The intrinsic C-parity of the particle, if known or applicable.
@@ -167,7 +152,7 @@ impl ParticleProperties {
     /// Get the particle's spin
     ///
     /// Returns an error if this property is not known.
-    pub fn spin(&self) -> LadduResult<AngularMomentum> {
+    pub fn spin(&self) -> LadduResult<J> {
         self.spin
             .ok_or_else(|| LadduError::MissingParticleProperty { property: "spin" })
             .clone()
@@ -313,7 +298,7 @@ impl ParticleProperties {
     }
 
     /// Construct a particle with the given spin and parity.
-    pub fn jp(j: AngularMomentum, p: Parity) -> Self {
+    pub fn jp(j: J, p: Parity) -> Self {
         Self {
             spin: Some(j),
             parity: Some(p),
@@ -322,7 +307,7 @@ impl ParticleProperties {
         }
     }
     /// Construct a particle with the given spin, parity, and C-parity.
-    pub fn jpc(j: AngularMomentum, p: Parity, c: Parity) -> Self {
+    pub fn jpc(j: J, p: Parity, c: Parity) -> Self {
         Self {
             spin: Some(j),
             parity: Some(p),
@@ -352,7 +337,7 @@ impl ParticleProperties {
         self
     }
     /// Set the particle's spin.
-    pub fn with_spin(mut self, j: AngularMomentum) -> Self {
+    pub fn with_spin(mut self, j: J) -> Self {
         self.spin = Some(j);
         self.statistics = Some(Statistics::from_spin(j));
         self
@@ -459,21 +444,17 @@ impl ParticleProperties {
 #[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
 pub struct PartialWave {
     /// The total angular momentum of the wave
-    pub j: AngularMomentum,
+    pub j: J,
     /// The orbital angular momentum of the wave
-    pub l: OrbitalAngularMomentum,
+    pub l: L,
     /// The spin of the wave
-    pub s: AngularMomentum,
+    pub s: S,
     /// The spectroscopic label of the wave
     pub label: String,
 }
 impl PartialWave {
     /// Construct a new partial wave from the given angular momentum quantum numbers.
-    pub fn new(
-        j: AngularMomentum,
-        l: OrbitalAngularMomentum,
-        s: AngularMomentum,
-    ) -> LadduResult<Self> {
+    pub fn new(j: J, l: L, s: S) -> LadduResult<Self> {
         PartialWave::validate_coupling(j, l, s)?;
         let multiplicity = s.value() + 1;
         Ok(Self {
@@ -489,11 +470,7 @@ impl PartialWave {
         self
     }
     /// Validate the set of angular momentum quantum numbers which define a partial wave.
-    pub fn validate_coupling(
-        j: AngularMomentum,
-        l: OrbitalAngularMomentum,
-        s: AngularMomentum,
-    ) -> LadduResult<()> {
+    pub fn validate_coupling(j: J, l: L, s: S) -> LadduResult<()> {
         let l_twice = 2 * l.value();
         let s_twice = s.value();
         let j_twice = j.value();
@@ -539,7 +516,7 @@ impl AllowedPartialWave {
     /// Infer the parity of a state given the parity of its decay products and its orbital angular momentum.
     pub fn infer_parity(
         daughters: (&ParticleProperties, &ParticleProperties),
-        l: OrbitalAngularMomentum,
+        l: L,
     ) -> Option<Parity> {
         let p_a = daughters.0.parity?;
         let p_b = daughters.1.parity?;
@@ -556,8 +533,8 @@ impl AllowedPartialWave {
     /// Infer the C-parity of a state given the species of its decay products, its orbital angular momentum, and its intrinsic spin.
     pub fn infer_c_parity(
         daughters: (&ParticleProperties, &ParticleProperties),
-        l: OrbitalAngularMomentum,
-        s: AngularMomentum,
+        l: L,
+        s: S,
     ) -> Option<Parity> {
         if !daughters.0.is_antiparticle_of(daughters.1) {
             return None;
@@ -577,7 +554,7 @@ impl AllowedPartialWave {
     }
 }
 
-fn validate_projection(spin: AngularMomentum, projection: Projection) -> LadduResult<()> {
+fn validate_projection(spin: J, projection: M) -> LadduResult<()> {
     if projection.value().unsigned_abs() > spin.value() {
         return Err(LadduError::Custom(
             "spin projection must satisfy -J <= m <= J".to_string(),

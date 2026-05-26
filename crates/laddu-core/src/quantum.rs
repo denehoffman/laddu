@@ -7,7 +7,10 @@ use serde::{Deserialize, Serialize};
 use crate::{quantum::types::Sign, LadduError};
 
 mod types;
-pub use types::{AngularMomentum, Charge, OrbitalAngularMomentum, Parity, Projection, Statistics};
+pub use types::{Charge, Parity, Statistics, J, L, M};
+
+/// Coupled intrinsic spin, represented by the same quantum-number type as total angular momentum.
+pub type S = J;
 
 mod state;
 pub use state::{AllowedPartialWave, Isospin, PartialWave, ParticleProperties, SpinState};
@@ -15,12 +18,66 @@ pub use state::{AllowedPartialWave, Isospin, PartialWave, ParticleProperties, Sp
 mod rules;
 pub use rules::{RuleSet, SelectionRules};
 
-/// Enumerate allowed projections for a spin.
-pub fn allowed_projections(spin: AngularMomentum) -> Vec<Projection> {
-    SpinState::allowed_projections(spin)
-        .into_iter()
-        .map(SpinState::projection)
-        .collect()
+/// Shorthand macro for constructing a total angular momentum [`J`].
+#[allow(unused_macros)]
+#[macro_export]
+macro_rules! j {
+    ($n:literal / 2) => {
+        $crate::quantum::J::half($n)
+    };
+    ($n:literal) => {
+        $crate::quantum::J::int($n)
+    };
+    ($($bad:tt)*) => {
+        compile_error!("expected j!(N) or j!(N/2) where N is an integer literal");
+    };
+}
+/// Shorthand macro for constructing a spin [`S`](`crate::quantum::J`).
+#[allow(unused_macros)]
+#[macro_export]
+macro_rules! s {
+    ($n:literal / 2) => {
+        $crate::quantum::S::half($n)
+    };
+    ($n:literal) => {
+        $crate::quantum::S::int($n)
+    };
+    ($($bad:tt)*) => {
+        compile_error!("expected s!(N) or s!(N/2) where N is an integer literal");
+    };
+}
+/// Shorthand macro for constructing an angular momentum projection [`M`].
+#[allow(unused_macros)]
+#[macro_export]
+macro_rules! m {
+    ($n:literal / 2) => {
+        $crate::quantum::M::half($n)
+    };
+    (- $n:literal / 2) => {
+        $crate::quantum::M::half(-$n)
+    };
+    ($n:literal) => {
+        $crate::quantum::M::int($n)
+    };
+    (- $n:literal) => {
+        $crate::quantum::M::int(-$n)
+    };
+    ($($bad:tt)*) => {
+        compile_error!(
+            "expected m!(N), m!(-N), m!(N/2), or m!(-N/2) where N is an integer literal"
+        );
+    };
+}
+/// Shorthand macro for constructing an orbital angular momentum [`L`].
+#[allow(unused_macros)]
+#[macro_export]
+macro_rules! l {
+    ($n:literal) => {
+        $crate::quantum::L::int($n)
+    };
+    ($($bad:tt)*) => {
+        compile_error!("expected l!(N) where N is an integer literal");
+    };
 }
 
 /// Standard reference frames for angular analyses.
@@ -103,9 +160,9 @@ pub(crate) fn parse_sign_value(s: &str, object: &str) -> Result<Sign, LadduError
     }
 }
 
-/// An enum for Mandelstam variables
+/// An enum for Mandelstam variables.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum Channel {
+pub enum MandelstamChannel {
     /// s-channel
     S,
     /// t-channel
@@ -114,17 +171,17 @@ pub enum Channel {
     U,
 }
 
-impl Display for Channel {
+impl Display for MandelstamChannel {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Channel::S => write!(f, "s"),
-            Channel::T => write!(f, "t"),
-            Channel::U => write!(f, "u"),
+            MandelstamChannel::S => write!(f, "s"),
+            MandelstamChannel::T => write!(f, "t"),
+            MandelstamChannel::U => write!(f, "u"),
         }
     }
 }
 
-impl FromStr for Channel {
+impl FromStr for MandelstamChannel {
     type Err = LadduError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
@@ -134,7 +191,7 @@ impl FromStr for Channel {
             "u" => Ok(Self::U),
             _ => Err(LadduError::ParseError {
                 name: s.to_string(),
-                object: "Channel".to_string(),
+                object: "MandelstamChannel".to_string(),
             }),
         }
     }
@@ -145,18 +202,31 @@ mod tests {
     use super::*;
 
     #[test]
+    fn check_angular_momentum_macros() {
+        assert_eq!(J::int(1), j!(1));
+        assert_eq!(J::half(1), j!(1 / 2));
+        assert_eq!(S::int(1), s!(1));
+        assert_eq!(S::half(1), s!(1 / 2));
+        assert_eq!(M::int(1), m!(1));
+        assert_eq!(M::half(1), m!(1 / 2));
+        assert_eq!(M::int(-1), m!(-1));
+        assert_eq!(M::half(-1), m!(-1 / 2));
+        assert_eq!(L::int(1), l!(1));
+    }
+
+    #[test]
     fn spin_state_accepts_integer_and_half_integer_values() {
-        let spin_one = AngularMomentum::integer(1);
-        let spin_half = AngularMomentum::half_integer(1);
+        let spin_one = j!(1);
+        let spin_half = j!(1 / 2);
         assert_eq!(
-            SpinState::new(spin_one, Projection::integer(0))
+            SpinState::new(spin_one, m!(0))
                 .unwrap()
                 .projection()
                 .value(),
             0
         );
         assert_eq!(
-            SpinState::new(spin_half, Projection::half_integer(-1))
+            SpinState::new(spin_half, m!(-1 / 2))
                 .unwrap()
                 .projection()
                 .value(),
@@ -166,60 +236,19 @@ mod tests {
 
     #[test]
     fn spin_state_rejects_invalid_projection() {
-        let spin_one = AngularMomentum::integer(1);
-        assert!(SpinState::new(spin_one, Projection::half_integer(4)).is_err());
-        assert!(SpinState::new(spin_one, Projection::half_integer(1)).is_err());
+        let spin_one = j!(1);
+        assert!(SpinState::new(spin_one, m!(4 / 2)).is_err());
+        assert!(SpinState::new(spin_one, m!(1 / 2)).is_err());
     }
 
     #[test]
-    fn spin_state_enumerates_allowed_projections() {
-        let spin_zero = SpinState::allowed_projections(AngularMomentum::integer(0));
+    fn angular_momenta_return_projection_values() {
+        assert_eq!(j!(1).projections(), vec![m!(-1), m!(0), m!(1)]);
         assert_eq!(
-            spin_zero
-                .iter()
-                .map(|state| state.projection().value())
-                .collect::<Vec<_>>(),
-            vec![0]
+            j!(3 / 2).projections(),
+            vec![m!(-3 / 2), m!(-1 / 2), m!(1 / 2), m!(3 / 2)]
         );
-
-        let spin_half = SpinState::allowed_projections(AngularMomentum::half_integer(1));
-        assert_eq!(
-            spin_half
-                .iter()
-                .map(|state| state.projection().value())
-                .collect::<Vec<_>>(),
-            vec![-1, 1]
-        );
-
-        let spin_one = SpinState::allowed_projections(AngularMomentum::integer(1));
-        assert_eq!(
-            spin_one
-                .iter()
-                .map(|state| state.projection().value())
-                .collect::<Vec<_>>(),
-            vec![-2, 0, 2]
-        );
-
-        let spin_three_halves = SpinState::allowed_projections(AngularMomentum::half_integer(3));
-        assert_eq!(
-            spin_three_halves
-                .iter()
-                .map(|state| state.projection().value())
-                .collect::<Vec<_>>(),
-            vec![-3, -1, 1, 3]
-        );
-    }
-
-    #[test]
-    fn allowed_projection_helper_returns_projection_values() {
-        assert_eq!(
-            allowed_projections(AngularMomentum::integer(1)),
-            vec![
-                Projection::integer(-1),
-                Projection::integer(0),
-                Projection::integer(1),
-            ]
-        );
+        assert_eq!(l!(1).projections(), j!(1).projections());
     }
 
     #[test]
@@ -229,9 +258,9 @@ mod tests {
         assert_eq!(format!("{}", Frame::Adair), "Adair");
         assert_eq!(format!("{}", Reflectivity::Positive), "+");
         assert_eq!(format!("{}", Reflectivity::Negative), "-");
-        assert_eq!(format!("{}", Channel::S), "s");
-        assert_eq!(format!("{}", Channel::T), "t");
-        assert_eq!(format!("{}", Channel::U), "u");
+        assert_eq!(format!("{}", MandelstamChannel::S), "s");
+        assert_eq!(format!("{}", MandelstamChannel::T), "t");
+        assert_eq!(format!("{}", MandelstamChannel::U), "u");
     }
 
     #[test]
@@ -279,11 +308,29 @@ mod tests {
             Reflectivity::from_str("Negative").unwrap(),
             Reflectivity::Negative
         );
-        assert_eq!(Channel::from_str("S").unwrap(), Channel::S);
-        assert_eq!(Channel::from_str("s").unwrap(), Channel::S);
-        assert_eq!(Channel::from_str("T").unwrap(), Channel::T);
-        assert_eq!(Channel::from_str("t").unwrap(), Channel::T);
-        assert_eq!(Channel::from_str("U").unwrap(), Channel::U);
-        assert_eq!(Channel::from_str("u").unwrap(), Channel::U);
+        assert_eq!(
+            MandelstamChannel::from_str("S").unwrap(),
+            MandelstamChannel::S
+        );
+        assert_eq!(
+            MandelstamChannel::from_str("s").unwrap(),
+            MandelstamChannel::S
+        );
+        assert_eq!(
+            MandelstamChannel::from_str("T").unwrap(),
+            MandelstamChannel::T
+        );
+        assert_eq!(
+            MandelstamChannel::from_str("t").unwrap(),
+            MandelstamChannel::T
+        );
+        assert_eq!(
+            MandelstamChannel::from_str("U").unwrap(),
+            MandelstamChannel::U
+        );
+        assert_eq!(
+            MandelstamChannel::from_str("u").unwrap(),
+            MandelstamChannel::U
+        );
     }
 }

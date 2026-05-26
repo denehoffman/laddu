@@ -1,23 +1,19 @@
-from fractions import Fraction
-from typing import TypeAlias
-
 from laddu.amplitude import Expression
+from laddu.quantum import JLike, LLike, MLike, QuantumNumber
 from laddu.reaction import Decay
 from laddu.variables import Angles, Polarization
 
-QuantumNumber: TypeAlias = int | float | Fraction
-
 def WignerD(
     *tags: str,
-    spin: QuantumNumber,
-    row_projection: QuantumNumber,
-    column_projection: QuantumNumber,
+    spin: JLike,
+    row_projection: MLike,
+    column_projection: MLike,
     angles: Angles,
 ) -> Expression: ...
 def BlattWeisskopf(
     *tags: str,
     decay: Decay,
-    l: QuantumNumber,
+    l: LLike,
     reference_mass: float,
     q_r: float = ...,
     sheet: str = ...,
@@ -25,21 +21,21 @@ def BlattWeisskopf(
 ) -> Expression: ...
 def ClebschGordan(
     *tags: str,
-    j1: QuantumNumber,
-    m1: QuantumNumber,
-    j2: QuantumNumber,
-    m2: QuantumNumber,
-    j: QuantumNumber,
-    m: QuantumNumber,
+    j1: JLike,
+    m1: MLike,
+    j2: JLike,
+    m2: MLike,
+    j: JLike,
+    m: MLike,
 ) -> Expression: ...
 def Wigner3j(
     *tags: str,
-    j1: QuantumNumber,
-    m1: QuantumNumber,
-    j2: QuantumNumber,
-    m2: QuantumNumber,
-    j3: QuantumNumber,
-    m3: QuantumNumber,
+    j1: JLike,
+    m1: MLike,
+    j2: JLike,
+    m2: MLike,
+    j3: JLike,
+    m3: MLike,
 ) -> Expression: ...
 def PhotonSDME(
     *tags: str,

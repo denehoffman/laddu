@@ -1,4 +1,5 @@
-from laddu.quantum import QuantumNumber, allowed_projections
+from laddu.quantum import JLike as QuantumNumber
+from laddu.quantum import allowed_projections
 
 __all__ = [
     'QuantumNumber',

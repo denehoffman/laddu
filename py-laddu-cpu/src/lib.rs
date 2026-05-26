@@ -4,6 +4,13 @@ use pyo3::prelude::*;
 #[cfg_attr(not(feature = "mpi"), pymodule(name = "laddu_cpu"))]
 mod laddu {
     use super::*;
+
+    #[pymodule_init]
+    fn init(module: &Bound<'_, PyModule>) -> PyResult<()> {
+        module.add("S", module.getattr("J")?)?;
+        Ok(())
+    }
+
     #[pyfunction]
     fn version() -> String {
         env!("CARGO_PKG_VERSION").to_string()
@@ -52,7 +59,7 @@ mod laddu {
         mpi::{finalize_mpi, get_rank, get_size, is_mpi_available, is_root, use_mpi, using_mpi},
         quantum::{
             angular_momentum::py_allowed_projections, py_allowed_partial_waves, py_coupled_spins,
-            PyAllowedPartialWave, PyCharge, PyIsospin, PyParity, PyPartialWave,
+            PyAllowedPartialWave, PyCharge, PyIsospin, PyJ, PyL, PyM, PyParity, PyPartialWave,
             PyParticleProperties, PyRuleSet, PySelectionRules, PyStatistics,
         },
         set_threads,

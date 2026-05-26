@@ -7,10 +7,14 @@ from laddu.laddu import (
     AllowedPartialWave,
     Charge,
     Isospin,
+    J,
+    L,
+    M,
     Parity,
     PartialWave,
     ParticleProperties,
     RuleSet,
+    S,
     SelectionRules,
     Statistics,
     allowed_partial_waves,
@@ -18,17 +22,29 @@ from laddu.laddu import (
     coupled_spins,
 )
 
-QuantumNumber: TypeAlias = int | float | Fraction
+ScalarQuantumNumber: TypeAlias = int | float | Fraction
+JLike: TypeAlias = ScalarQuantumNumber | J
+LLike: TypeAlias = ScalarQuantumNumber | L
+MLike: TypeAlias = ScalarQuantumNumber | M
+QuantumNumber: TypeAlias = ScalarQuantumNumber | J | L | M
 
 __all__ = [
     'AllowedPartialWave',
     'Charge',
     'Isospin',
+    'J',
+    'JLike',
+    'L',
+    'LLike',
+    'M',
+    'MLike',
     'Parity',
     'PartialWave',
     'ParticleProperties',
     'QuantumNumber',
     'RuleSet',
+    'S',
+    'ScalarQuantumNumber',
     'SelectionRules',
     'Statistics',
     'allowed_partial_waves',
