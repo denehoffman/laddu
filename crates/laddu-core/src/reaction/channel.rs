@@ -5,6 +5,45 @@ use serde::{Deserialize, Serialize};
 use super::{Particle, Reaction, Species};
 use crate::{vectors::Vec4, LadduError, LadduResult};
 
+/// Event-generation source for a channel particle's momentum.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub enum ChannelMomentumGenerator {
+    /// Generate a beam-like particle with fixed lab-frame energy.
+    FixedEnergy {
+        /// Generated lab-frame energy.
+        energy: f64,
+    },
+    /// Generate this particle at rest using its species mass.
+    Rest,
+}
+
+/// Event-generation source for a channel particle's mass.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub enum ChannelMassGenerator {
+    /// Generate a fixed mass.
+    Fixed {
+        /// Generated mass.
+        mass: f64,
+    },
+    /// Generate a uniformly sampled mass.
+    Uniform {
+        /// Inclusive lower mass bound.
+        low: f64,
+        /// Inclusive upper mass bound.
+        high: f64,
+    },
+}
+
+/// Event-generation source for a channel vertex.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub enum ChannelVertexGenerator {
+    /// Generate two-to-two production using an exponential Mandelstam-t distribution.
+    TExponential {
+        /// Exponential slope.
+        slope: f64,
+    },
+}
+
 /// The event-level source of a channel particle's four-momentum.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum ChannelP4Source {
@@ -28,6 +67,8 @@ pub struct ChannelParticle {
     name: String,
     species: Option<Species>,
     p4_source: Option<ChannelP4Source>,
+    momentum_generator: Option<ChannelMomentumGenerator>,
+    mass_generator: Option<ChannelMassGenerator>,
 }
 
 impl ChannelParticle {
@@ -45,6 +86,16 @@ impl ChannelParticle {
     pub const fn p4_source(&self) -> Option<&ChannelP4Source> {
         self.p4_source.as_ref()
     }
+
+    /// Return the optional event-generation momentum annotation.
+    pub const fn momentum_generator(&self) -> Option<&ChannelMomentumGenerator> {
+        self.momentum_generator.as_ref()
+    }
+
+    /// Return the optional event-generation mass annotation.
+    pub const fn mass_generator(&self) -> Option<&ChannelMassGenerator> {
+        self.mass_generator.as_ref()
+    }
 }
 
 /// A named directed channel vertex.
@@ -53,6 +104,7 @@ pub struct ChannelVertex {
     name: String,
     incoming: Vec<String>,
     outgoing: Vec<String>,
+    generator: Option<ChannelVertexGenerator>,
 }
 
 impl ChannelVertex {
@@ -69,6 +121,11 @@ impl ChannelVertex {
     /// Return ordered outgoing occurrence names.
     pub fn outgoing(&self) -> &[String] {
         &self.outgoing
+    }
+
+    /// Return the optional event-generation vertex annotation.
+    pub const fn generator(&self) -> Option<&ChannelVertexGenerator> {
+        self.generator.as_ref()
     }
 }
 
@@ -100,6 +157,8 @@ impl Channel {
             name: name.clone(),
             species: None,
             p4_source: None,
+            momentum_generator: None,
+            mass_generator: None,
         });
         self.particle_indices.insert(name, index);
         Ok(ChannelParticleEdit {
@@ -113,7 +172,7 @@ impl Channel {
         name: impl Into<String>,
         incoming: [&str; I],
         outgoing: [&str; O],
-    ) -> LadduResult<&ChannelVertex> {
+    ) -> LadduResult<ChannelVertexEdit<'_>> {
         let name = name.into();
         if self.vertex_indices.contains_key(&name) {
             return Err(LadduError::Custom(format!(
@@ -165,9 +224,22 @@ impl Channel {
             name: name.clone(),
             incoming,
             outgoing,
+            generator: None,
         });
         self.vertex_indices.insert(name, index);
-        Ok(&self.vertices[index])
+        Ok(ChannelVertexEdit {
+            vertex: &mut self.vertices[index],
+        })
+    }
+
+    /// Return declared particles in declaration order.
+    pub fn particles(&self) -> &[ChannelParticle] {
+        &self.particles
+    }
+
+    /// Return declared vertices in declaration order.
+    pub fn vertices(&self) -> &[ChannelVertex] {
+        &self.vertices
     }
 
     /// Return a declared particle occurrence.
@@ -311,6 +383,30 @@ impl ChannelParticleEdit<'_> {
         self.set_p4_source(ChannelP4Source::Missing)
     }
 
+    /// Attach an event-generation momentum source.
+    pub fn generate(&mut self, source: ChannelMomentumGenerator) -> LadduResult<&mut Self> {
+        if self.particle.momentum_generator.is_some() {
+            return Err(LadduError::Custom(format!(
+                "channel particle '{}' already has a momentum generator",
+                self.particle.name
+            )));
+        }
+        self.particle.momentum_generator = Some(source);
+        Ok(self)
+    }
+
+    /// Attach an event-generation mass source.
+    pub fn generate_mass(&mut self, source: ChannelMassGenerator) -> LadduResult<&mut Self> {
+        if self.particle.mass_generator.is_some() {
+            return Err(LadduError::Custom(format!(
+                "channel particle '{}' already has a mass generator",
+                self.particle.name
+            )));
+        }
+        self.particle.mass_generator = Some(source);
+        Ok(self)
+    }
+
     fn set_p4_source(&mut self, source: ChannelP4Source) -> LadduResult<&mut Self> {
         if self.particle.p4_source.is_some() {
             return Err(LadduError::Custom(format!(
@@ -319,6 +415,25 @@ impl ChannelParticleEdit<'_> {
             )));
         }
         self.particle.p4_source = Some(source);
+        Ok(self)
+    }
+}
+
+/// Mutable annotation builder returned by [`Channel::vertex`].
+pub struct ChannelVertexEdit<'a> {
+    vertex: &'a mut ChannelVertex,
+}
+
+impl ChannelVertexEdit<'_> {
+    /// Attach an event-generation source to this vertex.
+    pub fn generate(&mut self, source: ChannelVertexGenerator) -> LadduResult<&mut Self> {
+        if self.vertex.generator.is_some() {
+            return Err(LadduError::Custom(format!(
+                "channel vertex '{}' already has a generator",
+                self.vertex.name
+            )));
+        }
+        self.vertex.generator = Some(source);
         Ok(self)
     }
 }

@@ -6,6 +6,10 @@ use std::{
 use fastrand::Rng;
 use laddu_core::{
     math::{q_m, Histogram, Sheet},
+    reaction::{
+        Channel, ChannelMassGenerator, ChannelMomentumGenerator, ChannelP4Source,
+        ChannelVertexGenerator, ExternalId,
+    },
     Dataset, DatasetMetadata, Expression, LadduError, LadduResult, Particle, Reaction, Vec3, Vec4,
     PI,
 };
@@ -219,6 +223,13 @@ impl CompositeGenerator {
                 min: min_mass,
                 max: max_mass,
             },
+        }
+    }
+
+    /// Construct a composite mass generator with a fixed mass.
+    pub fn fixed(mass: f64) -> Self {
+        Self {
+            mass_distribution: SimpleDistribution::Fixed(mass),
         }
     }
 
@@ -785,6 +796,161 @@ pub struct GeneratedReaction {
     topology: GeneratedReactionTopology,
 }
 
+fn core_species_to_generated(species: &laddu_core::Species) -> ParticleSpecies {
+    species
+        .ids()
+        .first()
+        .map(|id| match id {
+            ExternalId::Code { namespace, value } => ParticleSpecies::Code {
+                id: *value,
+                namespace: Some(namespace.clone()),
+            },
+            ExternalId::Label { namespace, value } => {
+                ParticleSpecies::label(format!("{namespace}:{value}"))
+            }
+        })
+        .unwrap_or_else(|| ParticleSpecies::label(species.name()))
+}
+
+fn channel_particle_mass(channel: &Channel, particle: &str) -> LadduResult<f64> {
+    let info = channel.particle_info(particle)?;
+    match info.mass_generator() {
+        Some(ChannelMassGenerator::Fixed { mass }) => Ok(*mass),
+        Some(ChannelMassGenerator::Uniform { .. }) => Err(LadduError::Custom(format!(
+            "channel particle '{particle}' has a mass range where a fixed mass is required"
+        ))),
+        None => info
+            .species()
+            .and_then(laddu_core::Species::mass_value)
+            .ok_or_else(|| {
+                LadduError::Custom(format!(
+                    "channel particle '{particle}' needs a species mass or mass generator for generation"
+                ))
+            }),
+    }
+}
+
+fn channel_reconstruction(channel: &Channel, particle: &str) -> LadduResult<Reconstruction> {
+    let info = channel.particle_info(particle)?;
+    match info.p4_source() {
+        Some(ChannelP4Source::Stored { p4_name }) if p4_name == particle => {
+            Ok(Reconstruction::Stored)
+        }
+        Some(ChannelP4Source::Stored { p4_name }) => Err(LadduError::Custom(format!(
+            "channel-first generation does not yet support stored_as for particle '{particle}' using p4 column '{p4_name}'"
+        ))),
+        Some(ChannelP4Source::Fixed { p4 }) => Ok(Reconstruction::Fixed(*p4)),
+        Some(ChannelP4Source::Missing) => Ok(Reconstruction::Missing),
+        None => Ok(Reconstruction::Composite),
+    }
+}
+
+fn channel_decay_vertex<'a>(
+    channel: &'a Channel,
+    particle: &str,
+) -> LadduResult<Option<&'a laddu_core::ChannelVertex>> {
+    let decay_vertices = channel
+        .vertices()
+        .iter()
+        .filter(|vertex| vertex.incoming().len() == 1 && vertex.incoming()[0] == particle)
+        .collect::<Vec<_>>();
+    match decay_vertices.as_slice() {
+        [] => Ok(None),
+        [vertex] if vertex.outgoing().len() == 2 => Ok(Some(*vertex)),
+        [vertex] => Err(LadduError::Custom(format!(
+            "channel vertex '{}' is not a supported one-to-two decay for generated particle '{particle}'",
+            vertex.name()
+        ))),
+        _ => Err(LadduError::Custom(format!(
+            "channel particle '{particle}' has multiple decay vertices and cannot be generated"
+        ))),
+    }
+}
+
+fn channel_composite_generator(
+    channel: &Channel,
+    particle: &str,
+) -> LadduResult<CompositeGenerator> {
+    let info = channel.particle_info(particle)?;
+    match info.mass_generator() {
+        Some(ChannelMassGenerator::Fixed { mass }) => Ok(CompositeGenerator::fixed(*mass)),
+        Some(ChannelMassGenerator::Uniform { low, high }) => Ok(CompositeGenerator::new(*low, *high)),
+        None => info
+            .species()
+            .and_then(laddu_core::Species::mass_value)
+            .map(CompositeGenerator::fixed)
+            .ok_or_else(|| {
+                LadduError::Custom(format!(
+                    "generated composite particle '{particle}' needs generate_mass(...) or a species mass"
+                ))
+            }),
+    }
+}
+
+fn generated_particle_from_channel(
+    channel: &Channel,
+    particle: &str,
+    initial: bool,
+) -> LadduResult<GeneratedParticle> {
+    let info = channel.particle_info(particle)?;
+    let species = info.species().map(core_species_to_generated);
+    let generated = if initial {
+        let mass = channel_particle_mass(channel, particle)?;
+        let momentum = info.momentum_generator().ok_or_else(|| {
+            LadduError::Custom(format!(
+                "initial channel particle '{particle}' needs a momentum generator"
+            ))
+        })?;
+        let generator = match momentum {
+            ChannelMomentumGenerator::FixedEnergy { energy } => {
+                InitialGenerator::beam_with_fixed_energy(mass, *energy)
+            }
+            ChannelMomentumGenerator::Rest => InitialGenerator::target(mass),
+        };
+        GeneratedParticle::initial(
+            particle,
+            generator,
+            channel_reconstruction(channel, particle)?,
+        )
+    } else if let Some(decay) = channel_decay_vertex(channel, particle)? {
+        let daughter_1 = generated_particle_from_channel(channel, &decay.outgoing()[0], false)?;
+        let daughter_2 = generated_particle_from_channel(channel, &decay.outgoing()[1], false)?;
+        GeneratedParticle::composite(
+            particle,
+            channel_composite_generator(channel, particle)?,
+            (&daughter_1, &daughter_2),
+            channel_reconstruction(channel, particle)?,
+        )
+    } else {
+        GeneratedParticle::stable(
+            particle,
+            StableGenerator::new(channel_particle_mass(channel, particle)?),
+            channel_reconstruction(channel, particle)?,
+        )
+    };
+    Ok(match species {
+        Some(species) => generated.with_species(species),
+        None => generated,
+    })
+}
+
+fn channel_stored_particles(channel: &Channel) -> LadduResult<Vec<String>> {
+    channel
+        .particles()
+        .iter()
+        .filter_map(|particle| match particle.p4_source() {
+            Some(ChannelP4Source::Stored { p4_name }) if p4_name == particle.name() => {
+                Some(Ok(particle.name().to_string()))
+            }
+            Some(ChannelP4Source::Stored { p4_name }) => Some(Err(LadduError::Custom(format!(
+                "channel-first generation does not yet support stored_as for particle '{}' using p4 column '{p4_name}'",
+                particle.name()
+            )))),
+            _ => None,
+        })
+        .collect()
+}
+
 impl GeneratedReaction {
     /// Construct a generated two-to-two reaction.
     pub fn two_to_two(
@@ -799,6 +965,43 @@ impl GeneratedReaction {
                 p1, p2, p3, p4, tdist,
             )?),
         })
+    }
+
+    /// Construct a generated two-to-two reaction from an annotated channel.
+    ///
+    /// Returns the generated reaction plus the channel particles that should be stored by
+    /// default because they have `.stored()` p4 annotations.
+    pub fn from_channel(channel: &Channel) -> LadduResult<(Self, Vec<String>)> {
+        let generated_vertices = channel
+            .vertices()
+            .iter()
+            .filter(|vertex| vertex.generator().is_some())
+            .collect::<Vec<_>>();
+        let [production] = generated_vertices.as_slice() else {
+            return Err(LadduError::Custom(format!(
+                "channel generation requires exactly one generated production vertex, found {}",
+                generated_vertices.len()
+            )));
+        };
+        if production.incoming().len() != 2 || production.outgoing().len() != 2 {
+            return Err(LadduError::Custom(format!(
+                "generated channel vertex '{}' must be a two-to-two vertex",
+                production.name()
+            )));
+        }
+        let tdist = match production.generator().expect("filtered generated vertex") {
+            ChannelVertexGenerator::TExponential { slope } => {
+                MandelstamTDistribution::Exponential { slope: *slope }
+            }
+        };
+        let p1 = generated_particle_from_channel(channel, &production.incoming()[0], true)?;
+        let p2 = generated_particle_from_channel(channel, &production.incoming()[1], true)?;
+        let p3 = generated_particle_from_channel(channel, &production.outgoing()[0], false)?;
+        let p4 = generated_particle_from_channel(channel, &production.outgoing()[1], false)?;
+        Ok((
+            Self::two_to_two(p1, p2, p3, p4, tdist)?,
+            channel_stored_particles(channel)?,
+        ))
     }
 
     /// Return generated p4 labels.
@@ -1501,6 +1704,25 @@ impl EventGenerator {
         }
     }
 
+    /// Construct an event generator from an annotated channel.
+    ///
+    /// This is the channel-first generation path. The channel remains the source of truth for
+    /// topology, reconstruction p4 annotations, species masses, and generation annotations.
+    pub fn from_channel(
+        channel: Channel,
+        aux_generators: HashMap<String, Distribution>,
+        seed: Option<u64>,
+    ) -> LadduResult<Self> {
+        let (reaction, stored_particles) = GeneratedReaction::from_channel(&channel)?;
+        let storage = GeneratedStorage::only(stored_particles);
+        Ok(Self {
+            reaction,
+            aux_generators,
+            storage,
+            seed: seed.unwrap_or_else(|| fastrand::u64(..)),
+        })
+    }
+
     /// Return the generated p4 storage policy.
     pub fn storage(&self) -> &GeneratedStorage {
         &self.storage
@@ -1616,9 +1838,69 @@ impl EventGenerator {
 #[cfg(test)]
 mod tests {
     use approx::assert_relative_eq;
-    use laddu_core::{traits::Variable, Expression, Frame, MandelstamChannel};
+    use laddu_core::{traits::Variable, Channel, Expression, Frame, MandelstamChannel, Species};
 
     use super::*;
+
+    fn demo_channel() -> Channel {
+        let photon = Species::new("gamma").mass(0.0).unwrap();
+        let proton = Species::new("proton").mass(0.938272).unwrap();
+        let kshort = Species::new("K_S").mass(0.497611).unwrap();
+        let mut channel = Channel::new();
+        channel
+            .particle("beam")
+            .unwrap()
+            .species(photon)
+            .unwrap()
+            .stored()
+            .unwrap()
+            .generate(crate::gen::energy(8.0))
+            .unwrap();
+        channel
+            .particle("target")
+            .unwrap()
+            .species(proton.clone())
+            .unwrap()
+            .missing()
+            .unwrap()
+            .generate(crate::gen::rest())
+            .unwrap();
+        channel
+            .particle("kshort1")
+            .unwrap()
+            .species(kshort.clone())
+            .unwrap()
+            .stored()
+            .unwrap();
+        channel
+            .particle("kshort2")
+            .unwrap()
+            .species(kshort)
+            .unwrap()
+            .stored()
+            .unwrap();
+        channel
+            .particle("kk")
+            .unwrap()
+            .generate_mass(crate::gen::uniform(1.1, 1.6))
+            .unwrap();
+        channel
+            .particle("recoil")
+            .unwrap()
+            .species(proton)
+            .unwrap()
+            .stored()
+            .unwrap();
+        channel
+            .vertex("ksks", ["kk"], ["kshort1", "kshort2"])
+            .unwrap();
+        channel
+            .vertex("production", ["beam", "target"], ["kk", "recoil"])
+            .unwrap()
+            .generate(crate::gen::t_exponential(0.1))
+            .unwrap();
+        channel
+    }
 
     fn demo_reaction() -> GeneratedReaction {
         let beam = GeneratedParticle::initial(
@@ -1654,6 +1936,126 @@ mod tests {
         );
         let tdist = MandelstamTDistribution::Exponential { slope: 0.1 };
         GeneratedReaction::two_to_two(beam, target, kk, recoil, tdist).unwrap()
+    }
+
+    #[test]
+    fn channel_first_generation_uses_channel_annotations() {
+        let generator =
+            EventGenerator::from_channel(demo_channel(), HashMap::new(), Some(12345)).unwrap();
+        let batch = generator.generate_batch(4).unwrap();
+
+        assert_eq!(batch.dataset().n_events(), 4);
+        assert_eq!(
+            batch.dataset().p4_names(),
+            ["beam", "kshort1", "kshort2", "recoil"]
+        );
+        assert_eq!(
+            batch.layout().p4_labels(),
+            ["beam", "kshort1", "kshort2", "recoil"]
+        );
+        assert_eq!(
+            batch
+                .layout()
+                .particles()
+                .iter()
+                .map(GeneratedParticleLayout::id)
+                .collect::<Vec<_>>(),
+            ["beam", "target", "kk", "kshort1", "kshort2", "recoil"]
+        );
+        assert_eq!(
+            batch
+                .layout()
+                .particles()
+                .iter()
+                .map(GeneratedParticleLayout::p4_label)
+                .collect::<Vec<_>>(),
+            [
+                Some("beam"),
+                None,
+                None,
+                Some("kshort1"),
+                Some("kshort2"),
+                Some("recoil")
+            ]
+        );
+
+        let reaction = batch.reaction().reconstructed_reaction().unwrap();
+        assert_eq!(
+            reaction.decay("kk").unwrap().daughters(),
+            ["kshort1", "kshort2"]
+        );
+        let event = batch.dataset().event_local(0).unwrap();
+        assert!(reaction.p4(&event, "target").is_ok());
+        assert!(reaction.p4(&event, "kk").is_ok());
+    }
+
+    #[test]
+    fn channel_first_generation_can_store_extra_truth() {
+        let generator = EventGenerator::from_channel(demo_channel(), HashMap::new(), Some(12345))
+            .unwrap()
+            .with_storage(GeneratedStorage::only([
+                "beam", "kk", "kshort1", "kshort2", "recoil",
+            ]))
+            .unwrap();
+        let batch = generator.generate_batch(2).unwrap();
+
+        assert_eq!(
+            batch.dataset().p4_names(),
+            ["beam", "kk", "kshort1", "kshort2", "recoil"]
+        );
+        assert_eq!(
+            batch.layout().particle("kk").unwrap().p4_label(),
+            Some("kk")
+        );
+    }
+
+    #[test]
+    fn channel_first_generation_reports_missing_annotations_at_request_time() {
+        let proton = Species::new("proton").mass(0.938272).unwrap();
+        let photon = Species::new("gamma").mass(0.0).unwrap();
+        let pion = Species::new("pion").mass(0.13957).unwrap();
+        let mut channel = Channel::new();
+        channel
+            .particle("beam")
+            .unwrap()
+            .species(photon)
+            .unwrap()
+            .stored()
+            .unwrap();
+        channel
+            .particle("target")
+            .unwrap()
+            .species(proton.clone())
+            .unwrap()
+            .missing()
+            .unwrap()
+            .generate(crate::gen::rest())
+            .unwrap();
+        channel
+            .particle("pi")
+            .unwrap()
+            .species(pion)
+            .unwrap()
+            .stored()
+            .unwrap();
+        channel
+            .particle("recoil")
+            .unwrap()
+            .species(proton)
+            .unwrap()
+            .stored()
+            .unwrap();
+        channel
+            .vertex("production", ["beam", "target"], ["pi", "recoil"])
+            .unwrap()
+            .generate(crate::gen::t_exponential(0.1))
+            .unwrap();
+        let error = EventGenerator::from_channel(channel, HashMap::new(), Some(1))
+            .unwrap_err()
+            .to_string();
+
+        assert!(error.contains("beam"));
+        assert!(error.contains("momentum generator"));
     }
 
     #[test]

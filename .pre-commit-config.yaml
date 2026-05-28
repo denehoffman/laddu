@@ -18,7 +18,7 @@ repos:
         pass_filenames: false
       - id: ty
         name: ty
-        entry: uvx ty@latest check py-laddu --extra-search-path py-laddu
+        entry: ty check --project py-laddu --python .venv/bin/python py-laddu
         language: system
         pass_filenames: false
   - repo: https://github.com/astral-sh/ruff-pre-commit

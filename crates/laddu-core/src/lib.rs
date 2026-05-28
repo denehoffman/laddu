@@ -583,9 +583,10 @@ pub use crate::{
         S,
     },
     reaction::{
-        Channel, ChannelP4Source, ChannelParticle, ChannelVertex, Decay, ExternalId, Particle,
-        ParticleGraph, ParticleSource, Production, Reaction, ReactionTopology, ResolvedTwoToTwo,
-        Species, TwoToTwoReaction,
+        Channel, ChannelMassGenerator, ChannelMomentumGenerator, ChannelP4Source, ChannelParticle,
+        ChannelVertex, ChannelVertexGenerator, Decay, ExternalId, Particle, ParticleGraph,
+        ParticleSource, Production, Reaction, ReactionTopology, ResolvedTwoToTwo, Species,
+        TwoToTwoReaction,
     },
     resources::{
         Cache, ComplexMatrixID, ComplexScalarID, ComplexVectorID, MatrixID, Resources, ScalarID,
