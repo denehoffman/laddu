@@ -1,14 +1,7 @@
 use std::sync::Arc;
 
 use approx::assert_relative_eq;
-use laddu_core::{
-    amplitude::IntoTags,
-    data::test_dataset,
-    parameter,
-    reaction::{Particle, Reaction},
-    variables::Mass,
-    MandelstamChannel,
-};
+use laddu_core::{amplitude::IntoTags, data::test_dataset, parameter, MandelstamChannel};
 
 use super::{BreitWigner, BreitWignerNonRelativistic, Flatte, PhaseSpaceFactor, Voigt};
 
@@ -16,19 +9,11 @@ fn test_phase_space_expression(
     tags: impl IntoTags,
     channel: MandelstamChannel,
 ) -> laddu_core::Expression {
-    let beam = Particle::stored("beam");
-    let target = Particle::missing("target");
-    let kshort1 = Particle::stored("kshort1");
-    let kshort2 = Particle::stored("kshort2");
-    let kk = Particle::composite("kk", (&kshort1, &kshort2)).unwrap();
-    let proton = Particle::stored("proton");
-    let reaction = Reaction::two_to_two(&beam, &target, &kk, &proton).unwrap();
-    let decay = reaction.decay("kk").unwrap();
-    let recoil_mass = reaction.mass("proton");
-    let daughter_1_mass = decay.daughter_1_mass();
-    let daughter_2_mass = decay.daughter_2_mass();
-    let resonance_mass = decay.parent_mass();
-    let mandelstam_s = reaction.mandelstam(channel).unwrap();
+    let recoil_mass = crate::test_utils::mass("proton");
+    let daughter_1_mass = crate::test_utils::mass("kshort1");
+    let daughter_2_mass = crate::test_utils::mass("kshort2");
+    let resonance_mass = crate::test_utils::mass("kk");
+    let mandelstam_s = crate::test_utils::mandelstam(channel);
     PhaseSpaceFactor::new(
         tags,
         &recoil_mass,
@@ -43,9 +28,9 @@ fn test_phase_space_expression(
 #[test]
 fn test_bw_evaluation() {
     let dataset = Arc::new(test_dataset());
-    let daughter_1_mass = Mass::new(["kshort1"]);
-    let daughter_2_mass = Mass::new(["kshort2"]);
-    let resonance_mass = Mass::new(["kshort1", "kshort2"]);
+    let daughter_1_mass = crate::test_utils::mass("kshort1");
+    let daughter_2_mass = crate::test_utils::mass("kshort2");
+    let resonance_mass = crate::test_utils::mass("kk");
     let amp = BreitWigner::new(
         "bw",
         parameter!("mass"),
@@ -67,7 +52,7 @@ fn test_bw_evaluation() {
 #[test]
 fn test_bw_nonrel_evaluation() {
     let dataset = Arc::new(test_dataset());
-    let resonance_mass = Mass::new(["kshort1", "kshort2"]);
+    let resonance_mass = crate::test_utils::mass("kk");
     let amp = BreitWignerNonRelativistic::new(
         "bw",
         parameter!("mass"),
@@ -86,9 +71,9 @@ fn test_bw_nonrel_evaluation() {
 #[test]
 fn test_flatte_evaluation() {
     let dataset = Arc::new(test_dataset());
-    let daughter_1_mass = Mass::new(["kshort1"]);
-    let daughter_2_mass = Mass::new(["kshort2"]);
-    let resonance_mass = Mass::new(["kshort1", "kshort2"]);
+    let daughter_1_mass = crate::test_utils::mass("kshort1");
+    let daughter_2_mass = crate::test_utils::mass("kshort2");
+    let resonance_mass = crate::test_utils::mass("kk");
     let amp = Flatte::new(
         "flatte",
         parameter!("mass"),
@@ -110,7 +95,7 @@ fn test_flatte_evaluation() {
 #[test]
 fn test_voigt_sqrt_profile_evaluation() {
     let dataset = Arc::new(test_dataset());
-    let resonance_mass = Mass::new(["kshort1", "kshort2"]);
+    let resonance_mass = crate::test_utils::mass("kk");
     let amp = Voigt::new(
         "voigt",
         parameter!("mass"),

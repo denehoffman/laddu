@@ -1,5 +1,3 @@
-from typing import Any, cast
-
 import laddu as ld
 import laddu.amplitude
 import laddu.likelihood
@@ -22,75 +20,65 @@ def test_domain_modules_export_expected_core_types() -> None:
     assert ld.vectors.Vec4 is ld.Vec4
 
 
-def test_decay_exposes_enclosing_reaction() -> None:
-    beam = ld.Particle.stored('beam')
-    target = ld.Particle.missing('target')
-    recoil = ld.Particle.stored('recoil')
-    daughter_1 = ld.Particle.stored('d1')
-    daughter_2 = ld.Particle.stored('d2')
-    parent = ld.Particle.composite('x', (daughter_1, daughter_2))
-    reaction = ld.Reaction.two_to_two(beam, target, parent, recoil)
-
-    decay = reaction.decay('x')
-
-    assert isinstance(decay.reaction, ld.Reaction)
-    assert isinstance(decay.reaction.mass('x'), ld.Mass)
+def make_channel() -> ld.Channel:
+    channel = ld.Channel()
+    channel.create_production('production', ['beam', 'target'], ['x', 'recoil'])
+    channel.create_decay('x_decay', 'x', ['d1', 'd2'])
+    channel.edit_particle('beam', source=ld.ParticleSource.Stored)
+    channel.edit_particle('target', source=ld.ParticleSource.Missing)
+    channel.edit_particle('recoil', source=ld.ParticleSource.Stored)
+    channel.edit_particle('d1', source=ld.ParticleSource.Stored)
+    channel.edit_particle('d2', source=ld.ParticleSource.Stored)
+    return channel
 
 
-def test_production_exposes_two_to_two_roles() -> None:
-    beam = ld.Particle.stored('beam')
-    target = ld.Particle.missing('target')
-    daughter_1 = ld.Particle.stored('d1')
-    daughter_2 = ld.Particle.stored('d2')
-    x = ld.Particle.composite('x', (daughter_1, daughter_2))
-    recoil = ld.Particle.stored('recoil')
-    reaction = ld.Reaction.two_to_two(beam, target, x, recoil)
+def test_channel_creates_topology_variables() -> None:
+    channel = make_channel()
+    frame = ld.Frame(
+        'x_decay',
+        ld.Axes.from_y_z(
+            ld.Axis.normal('beam', 'recoil').at('production').flipped(),
+            ld.Axis.opposite('recoil').at('x_decay'),
+        ),
+    )
 
-    production = reaction.production()
-
-    assert isinstance(production.reaction, ld.Reaction)
-    assert production.produced == 'x'
-    assert production.recoil == 'recoil'
-    assert isinstance(production.angles(), ld.Angles)
-    assert 'Production' in repr(production)
-
-
-def test_reaction_rejects_invalid_particle_queries() -> None:
-    beam = ld.Particle.stored('beam')
-    target = ld.Particle.missing('target')
-    recoil = ld.Particle.stored('recoil')
-    daughter_1 = ld.Particle.stored('d1')
-    daughter_2 = ld.Particle.stored('d2')
-    parent = ld.Particle.composite('x', (daughter_1, daughter_2))
-    reaction = ld.Reaction.two_to_two(beam, target, parent, recoil)
-
-    with pytest.raises(RuntimeError, match="unknown reaction particle 'missing'"):
-        reaction.decay('missing')
-
-    with pytest.raises(RuntimeError, match='isobar decays must contain exactly two'):
-        reaction.decay('d1')
+    assert isinstance(channel.mass('x'), ld.Mass)
+    assert isinstance(channel.angles('d1', frame), ld.Angles)
+    assert isinstance(channel.mandelstam('production', 's'), ld.Mandelstam)
+    assert isinstance(channel.pol_angle('production', 'pol_angle'), ld.PolAngle)
+    assert isinstance(
+        channel.polarization(
+            'production', pol_magnitude='pol_magnitude', pol_angle='pol_angle'
+        ),
+        ld.Polarization,
+    )
+    assert 'Channel' in repr(channel)
 
 
-def test_composite_particles_require_two_daughters() -> None:
-    daughter_1 = ld.Particle.stored('d1')
-    daughter_2 = ld.Particle.stored('d2')
-    daughter_3 = ld.Particle.stored('d3')
+def test_channel_rejects_invalid_particle_queries() -> None:
+    channel = make_channel()
 
-    with pytest.raises(ValueError, match='exactly two ordered daughters'):
-        ld.Particle.composite('too_few', cast(Any, (daughter_1,)))
+    with pytest.raises(RuntimeError, match='Unknown particle'):
+        channel.mass('missing')
 
-    with pytest.raises(ValueError, match='exactly two ordered daughters'):
-        ld.Particle.composite('too_many', cast(Any, (daughter_1, daughter_2, daughter_3)))
-
-    with pytest.raises(TypeError):
-        ld.Particle.composite('list_input', cast(Any, [daughter_1, daughter_2]))
+    with pytest.raises(RuntimeError, match='Unknown particle'):
+        channel.angles(
+            'missing',
+            ld.Frame(
+                'x_decay',
+                ld.Axes.from_y_z(
+                    ld.Axis.normal('beam', 'recoil').at('production').flipped(),
+                    ld.Axis.opposite('recoil').at('x_decay'),
+                ),
+            ),
+        )
 
 
 def test_domain_modules_export_expected_analysis_types() -> None:
-    assert ld.reaction.Particle is ld.Particle
-    assert ld.reaction.Reaction is ld.Reaction
-    assert ld.reaction.Decay is ld.Decay
-    assert ld.reaction.Production is ld.Production
+    assert ld.reaction.Axis is ld.Axis
+    assert ld.reaction.Axes is ld.Axes
+    assert ld.reaction.Frame is ld.Frame
+    assert ld.reaction.Channel is ld.Channel
     assert ld.variables.Mass is ld.Mass
     assert ld.variables.CosTheta is ld.CosTheta
     assert ld.likelihood.NLL is ld.NLL
@@ -101,19 +89,10 @@ def test_domain_modules_export_expected_analysis_types() -> None:
 
 
 def test_user_facing_objects_have_readable_display() -> None:
-    beam = ld.Particle.stored('beam')
-    target = ld.Particle.missing('target')
-    recoil = ld.Particle.stored('recoil')
-    daughter_1 = ld.Particle.stored('d1')
-    daughter_2 = ld.Particle.stored('d2')
-    parent = ld.Particle.composite('x', (daughter_1, daughter_2))
-    reaction = ld.Reaction.two_to_two(beam, target, parent, recoil)
-
+    channel = make_channel()
     dataset = ld.Dataset.empty_local(p4_names=['beam', 'recoil', 'd1', 'd2'])
 
-    assert 'Reaction' in repr(reaction)
-    assert 'x' in str(reaction)
-    assert 'Decay' in repr(reaction.decay('x'))
-    assert 'x' in str(reaction.decay('x'))
+    assert 'Channel' in repr(channel)
+    assert 'production' in str(channel)
     assert 'Dataset' in repr(dataset)
     assert 'beam' in str(dataset)

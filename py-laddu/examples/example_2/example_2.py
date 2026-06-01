@@ -33,24 +33,32 @@ if TYPE_CHECKING:
     from numpy.typing import NDArray
 
 
-def reaction_variables() -> tuple[ld.Angles, ld.Polarization]:
-    beam = ld.Particle.stored('beam')
-    target = ld.Particle.missing('target')
-    kshort1 = ld.Particle.stored('kshort1')
-    kshort2 = ld.Particle.stored('kshort2')
-    kk = ld.Particle.composite('kk', (kshort1, kshort2))
-    proton = ld.Particle.stored('proton')
-    reaction = ld.Reaction.two_to_two(beam, target, kk, proton)
-    angles = reaction.decay('kk').angles('kshort1')
-    polarization = reaction.polarization(
-        pol_magnitude='pol_magnitude', pol_angle='pol_angle'
+def reaction_variables() -> tuple[ld.Mass, ld.Angles, ld.Polarization]:
+    channel = ld.Channel()
+    channel.create_production('production', ['beam', 'target'], ['kk', 'proton'])
+    channel.create_decay('kk_decay', 'kk', ['kshort1', 'kshort2'])
+    channel.edit_particle('beam', source=ld.ParticleSource.Stored)
+    channel.edit_particle('target', source=ld.ParticleSource.Missing)
+    channel.edit_particle('kshort1', source=ld.ParticleSource.Stored)
+    channel.edit_particle('kshort2', source=ld.ParticleSource.Stored)
+    channel.edit_particle('proton', source=ld.ParticleSource.Stored)
+    frame = ld.Frame(
+        'kk_decay',
+        ld.Axes.from_y_z(
+            ld.Axis.normal('beam', 'proton').at('production').flipped(),
+            ld.Axis.opposite('proton').at('kk_decay'),
+        ),
     )
-    return angles, polarization
+    angles = channel.angles('kshort1', frame)
+    polarization = channel.polarization(
+        'production', pol_magnitude='pol_magnitude', pol_angle='pol_angle'
+    )
+    return channel.mass('kk'), angles, polarization
 
 
 def get_measured_moment(data: ld.Dataset, *, i: int, l: int, m: int) -> complex:
     const = 2 * np.sqrt((4 * np.pi) / (2 * l + 1)) * (1 / 2 if i == 0 else 1)
-    angles, polarization = reaction_variables()
+    _, angles, polarization = reaction_variables()
     big_phi = data[polarization.pol_angle]
     p_gamma = data[polarization.pol_magnitude]
     pol_term = np.ones(data.n_events)
@@ -80,7 +88,7 @@ def get_norm_int_term(
     const = (
         8.0 * np.pi / n_gen * np.sqrt((2 * lp + 1) / (2 * l + 1)) * (1j if ip == 2 else 1)
     )
-    angles, polarization = reaction_variables()
+    _, angles, polarization = reaction_variables()
     big_phi = accmc[polarization.pol_angle]
     p_gamma = accmc[polarization.pol_magnitude]
     pol_term = np.ones(accmc.n_events)
@@ -191,7 +199,7 @@ if __name__ == '__main__':
             p4s=p4_columns,
             aux=aux_columns,
         )
-        mass = ld.Mass(['kshort1', 'kshort2'])
+        mass, _, _ = reaction_variables()
         data_binned = data.bin_by(mass, bins, (1.0, 2.0))
         accmc_binned = accmc.bin_by(mass, bins, (1.0, 2.0))
         binned_moments = []
@@ -248,7 +256,7 @@ if __name__ == '__main__':
     if not (script_dir / 'polarized_moments.pkl').exists():
         data = ld.io.read_parquet(data_file, p4s=p4_columns, aux=aux_columns)
         accmc = ld.io.read_parquet(accmc_file, p4s=p4_columns, aux=aux_columns)
-        mass = ld.Mass(['kshort1', 'kshort2'])
+        mass, _, _ = reaction_variables()
         data_binned = data.bin_by(mass, bins, (1.0, 2.0))
         accmc_binned = accmc.bin_by(mass, bins, (1.0, 2.0))
         binned_moments = []

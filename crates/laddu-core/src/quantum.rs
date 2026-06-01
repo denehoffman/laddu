@@ -13,7 +13,9 @@ pub use types::{Charge, Parity, Statistics, J, L, M};
 pub type S = J;
 
 mod state;
-pub use state::{AllowedPartialWave, Isospin, PartialWave, ParticleProperties, SpinState};
+pub use state::{
+    AllowedPartialWave, ExternalId, Isospin, PartialWave, ParticleProperties, SpinState,
+};
 
 mod rules;
 pub use rules::{RuleSet, SelectionRules};
@@ -78,47 +80,6 @@ macro_rules! l {
     ($($bad:tt)*) => {
         compile_error!("expected l!(N) where N is an integer literal");
     };
-}
-
-/// Standard reference frames for angular analyses.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum Frame {
-    /// The helicity frame, obtained by setting the $`z`$-axis equal to the boost direction from
-    /// the center-of-momentum to the rest frame of the resonance in question and the $`y`$-axis
-    /// perpendicular to the production plane.
-    Helicity,
-    /// The Gottfried-Jackson frame, obtained by setting the $`z`$-axis proportional to the beam's
-    /// direction in the rest frame of the resonance in question and the $`y`$-axis perpendicular
-    /// to the production plane.
-    GottfriedJackson,
-    /// The Adair frame.
-    Adair,
-}
-impl Display for Frame {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Frame::Helicity => write!(f, "Helicity"),
-            Frame::GottfriedJackson => write!(f, "Gottfried-Jackson"),
-            Frame::Adair => write!(f, "Adair"),
-        }
-    }
-}
-impl FromStr for Frame {
-    type Err = LadduError;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_lowercase().as_str() {
-            "helicity" | "hx" | "hel" => Ok(Self::Helicity),
-            "gottfriedjackson" | "gottfried jackson" | "gj" | "gottfried-jackson" => {
-                Ok(Self::GottfriedJackson)
-            }
-            "adair" => Ok(Self::Adair),
-            _ => Err(LadduError::ParseError {
-                name: s.to_string(),
-                object: "Frame".to_string(),
-            }),
-        }
-    }
 }
 
 /// A simple enum describing a binary sign.
@@ -253,9 +214,6 @@ mod tests {
 
     #[test]
     fn enum_displays() {
-        assert_eq!(format!("{}", Frame::Helicity), "Helicity");
-        assert_eq!(format!("{}", Frame::GottfriedJackson), "Gottfried-Jackson");
-        assert_eq!(format!("{}", Frame::Adair), "Adair");
         assert_eq!(format!("{}", Reflectivity::Positive), "+");
         assert_eq!(format!("{}", Reflectivity::Negative), "-");
         assert_eq!(format!("{}", MandelstamChannel::S), "s");
@@ -265,23 +223,6 @@ mod tests {
 
     #[test]
     fn enum_from_str() {
-        assert_eq!(Frame::from_str("Helicity").unwrap(), Frame::Helicity);
-        assert_eq!(Frame::from_str("HX").unwrap(), Frame::Helicity);
-        assert_eq!(Frame::from_str("HEL").unwrap(), Frame::Helicity);
-        assert_eq!(
-            Frame::from_str("GottfriedJackson").unwrap(),
-            Frame::GottfriedJackson
-        );
-        assert_eq!(Frame::from_str("GJ").unwrap(), Frame::GottfriedJackson);
-        assert_eq!(
-            Frame::from_str("Gottfried-Jackson").unwrap(),
-            Frame::GottfriedJackson
-        );
-        assert_eq!(
-            Frame::from_str("Gottfried Jackson").unwrap(),
-            Frame::GottfriedJackson
-        );
-        assert_eq!(Frame::from_str("Adair").unwrap(), Frame::Adair);
         assert_eq!(Reflectivity::from_str("+").unwrap(), Reflectivity::Positive);
         assert_eq!(
             Reflectivity::from_str("pos").unwrap(),

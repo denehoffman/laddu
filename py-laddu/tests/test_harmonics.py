@@ -1,6 +1,8 @@
 import pytest
-from laddu import Angles, Dataset, Event, Particle, Polarization, Reaction, Vec3, Ylm, Zlm
+from laddu import Angles, Channel, Dataset, Event, Vec3, Ylm, Zlm
 from laddu.amplitudes.angular import PolPhase
+
+from tests.channel_helpers import channel, helicity_frame
 
 P4_NAMES = ['beam', 'proton', 'kshort1', 'kshort2']
 AUX_NAMES = ['pol_magnitude', 'pol_angle']
@@ -26,15 +28,9 @@ def make_test_dataset() -> Dataset:
     return Dataset([make_test_event()], p4_names=P4_NAMES, aux_names=AUX_NAMES)
 
 
-def reaction_context() -> tuple[Reaction, Angles]:
-    beam = Particle.stored('beam')
-    target = Particle.missing('target')
-    kshort1 = Particle.stored('kshort1')
-    kshort2 = Particle.stored('kshort2')
-    kk = Particle.composite('kk', (kshort1, kshort2))
-    proton = Particle.stored('proton')
-    reaction = Reaction.two_to_two(beam, target, kk, proton)
-    return reaction, reaction.decay('kk').angles('kshort1', 'Helicity')
+def reaction_context() -> tuple[Channel, Angles]:
+    ch = channel()
+    return ch, ch.angles('kshort1', helicity_frame())
 
 
 def test_ylm_evaluation() -> None:
@@ -56,8 +52,8 @@ def test_ylm_gradient() -> None:
 
 def test_zlm_evaluation() -> None:
     reaction, angles = reaction_context()
-    polarization = Polarization(
-        reaction, pol_magnitude='pol_magnitude', pol_angle='pol_angle'
+    polarization = reaction.polarization(
+        'production', pol_magnitude='pol_magnitude', pol_angle='pol_angle'
     )
     result = (
         Zlm('zlm', l=1, m=1, r='+', angles=angles, polarization=polarization)
@@ -70,8 +66,8 @@ def test_zlm_evaluation() -> None:
 
 def test_zlm_gradient() -> None:
     reaction, angles = reaction_context()
-    polarization = Polarization(
-        reaction, pol_magnitude='pol_magnitude', pol_angle='pol_angle'
+    polarization = reaction.polarization(
+        'production', pol_magnitude='pol_magnitude', pol_angle='pol_angle'
     )
     result = (
         Zlm('zlm', l=1, m=1, r='+', angles=angles, polarization=polarization)
@@ -83,8 +79,8 @@ def test_zlm_gradient() -> None:
 
 def test_polphase_evaluation() -> None:
     reaction, _ = reaction_context()
-    polarization = Polarization(
-        reaction, pol_magnitude='pol_magnitude', pol_angle='pol_angle'
+    polarization = reaction.polarization(
+        'production', pol_magnitude='pol_magnitude', pol_angle='pol_angle'
     )
     result = (
         PolPhase('polphase', polarization=polarization)
@@ -97,8 +93,8 @@ def test_polphase_evaluation() -> None:
 
 def test_polphase_gradient() -> None:
     reaction, _ = reaction_context()
-    polarization = Polarization(
-        reaction, pol_magnitude='pol_magnitude', pol_angle='pol_angle'
+    polarization = reaction.polarization(
+        'production', pol_magnitude='pol_magnitude', pol_angle='pol_angle'
     )
     result = (
         PolPhase('polphase', polarization=polarization)

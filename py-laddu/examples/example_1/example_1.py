@@ -40,19 +40,30 @@ from rich.table import Table
 from uncertainties import ufloat
 
 
-def reaction_variables() -> tuple[ld.Mass, ld.Angles, ld.Polarization]:
-    beam = ld.Particle.stored('beam')
-    target = ld.Particle.missing('target')
-    kshort1 = ld.Particle.stored('kshort1')
-    kshort2 = ld.Particle.stored('kshort2')
-    kk = ld.Particle.composite('kk', (kshort1, kshort2))
-    proton = ld.Particle.stored('proton')
-    reaction = ld.Reaction.two_to_two(beam, target, kk, proton)
-    decay = reaction.decay('kk')
+def reaction_variables() -> tuple[ld.Mass, ld.Mass, ld.Mass, ld.Angles, ld.Polarization]:
+    channel = ld.Channel()
+    channel.create_production('production', ['beam', 'target'], ['kk', 'proton'])
+    channel.create_decay('kk_decay', 'kk', ['kshort1', 'kshort2'])
+    channel.edit_particle('beam', source=ld.ParticleSource.Stored)
+    channel.edit_particle('target', source=ld.ParticleSource.Missing)
+    channel.edit_particle('kshort1', source=ld.ParticleSource.Stored)
+    channel.edit_particle('kshort2', source=ld.ParticleSource.Stored)
+    channel.edit_particle('proton', source=ld.ParticleSource.Stored)
+    frame = ld.Frame(
+        'kk_decay',
+        ld.Axes.from_y_z(
+            ld.Axis.normal('beam', 'proton').at('production').flipped(),
+            ld.Axis.opposite('proton').at('kk_decay'),
+        ),
+    )
     return (
-        decay.parent_mass(),
-        decay.angles('kshort1'),
-        reaction.polarization(pol_magnitude='pol_magnitude', pol_angle='pol_angle'),
+        channel.mass('kk'),
+        channel.mass('kshort1'),
+        channel.mass('kshort2'),
+        channel.angles('kshort1', frame),
+        channel.polarization(
+            'production', pol_magnitude='pol_magnitude', pol_angle='pol_angle'
+        ),
     )
 
 
@@ -129,7 +140,7 @@ def main(bins: int, niters: int, nboot: int) -> None:
     )
     pprint(table)
 
-    res_mass = ld.Mass(['kshort1', 'kshort2'])
+    res_mass, _, _, _, _ = reaction_variables()
     m_data = res_mass.value_on(data_ds)
     m_accmc = res_mass.value_on(accmc_ds)
     m_genmc = res_mass.value_on(genmc_ds)
@@ -351,7 +362,7 @@ def fit_binned(
     np.ndarray,
 ]:
     logger.info('Starting Binned Fit')
-    res_mass, angles, polarization = reaction_variables()
+    res_mass, _, _, angles, polarization = reaction_variables()
     data_ds_binned = data_ds.bin_by(res_mass, bins, (1.0, 2.0))
     accmc_ds_binned = accmc_ds.bin_by(res_mass, bins, (1.0, 2.0))
     genmc_ds_binned = genmc_ds.bin_by(res_mass, bins, (1.0, 2.0))
@@ -507,7 +518,7 @@ def fit_unbinned(
     tuple[str, ...],
 ]:
     logger.info('Starting Unbinned Fit')
-    res_mass, angles, polarization = reaction_variables()
+    res_mass, kshort1_mass, kshort2_mass, angles, polarization = reaction_variables()
     z00p = ld.Zlm(
         'S0+', 'Z00+', l=0, m=0, r='+', angles=angles, polarization=polarization
     )
@@ -520,8 +531,8 @@ def fit_unbinned(
         mass=ld.parameter('f0_mass', 1.506),
         width=ld.parameter('f0_width'),
         l=0,
-        daughter_1_mass=ld.Mass(['kshort1']),
-        daughter_2_mass=ld.Mass(['kshort2']),
+        daughter_1_mass=kshort1_mass,
+        daughter_2_mass=kshort2_mass,
         resonance_mass=res_mass,
     )
     bw_f21525 = ld.BreitWigner(
@@ -530,8 +541,8 @@ def fit_unbinned(
         mass=ld.parameter('f2_mass', 1.517),
         width=ld.parameter('f2_width'),
         l=2,
-        daughter_1_mass=ld.Mass(['kshort1']),
-        daughter_2_mass=ld.Mass(['kshort2']),
+        daughter_1_mass=kshort1_mass,
+        daughter_2_mass=kshort2_mass,
         resonance_mass=res_mass,
     )
     s0p = ld.Scalar('S0+', value=ld.parameter('S0+ re'))

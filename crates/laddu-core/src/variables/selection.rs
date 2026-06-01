@@ -2,10 +2,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::{data::DatasetMetadata, LadduError, LadduResult};
 
-fn names_to_string(names: &[String]) -> String {
-    names.join(", ")
-}
-
 /// A reusable selection that may span one or more four-momentum names.
 ///
 /// Instances are constructed from metadata-facing identifiers and later bound to
@@ -166,8 +162,4 @@ impl AuxSelection {
     pub(crate) fn name(&self) -> &str {
         &self.name
     }
-}
-
-pub(crate) fn format_names(names: &[String]) -> String {
-    names_to_string(names)
 }

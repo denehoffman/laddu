@@ -33,7 +33,7 @@ use crate::{
     quantum::angular_momentum::{
         parse_angular_momentum, parse_orbital_angular_momentum, parse_projection,
     },
-    variables::{PyAngles, PyDecay, PyMandelstam, PyMass, PyPolarization, PyVariable},
+    variables::{PyAngles, PyMandelstam, PyMass, PyPolarization, PyVariable},
 };
 
 type LookupInputs = (Vec<Box<dyn Variable>>, Vec<LookupAxis>);
@@ -420,10 +420,13 @@ pub fn py_wigner_d(
 }
 
 /// Construct a Blatt-Weisskopf amplitude.
-#[pyfunction(name = "BlattWeisskopf", signature = (*tags, decay, l, reference_mass, q_r = QR_DEFAULT, sheet = "physical", kind = "full"))]
+#[allow(clippy::too_many_arguments)]
+#[pyfunction(name = "BlattWeisskopf", signature = (*tags, parent_mass, daughter_1_mass, daughter_2_mass, l, reference_mass, q_r = QR_DEFAULT, sheet = "physical", kind = "full"))]
 pub fn py_blatt_weisskopf(
     tags: &Bound<'_, PyTuple>,
-    decay: &PyDecay,
+    parent_mass: &PyMass,
+    daughter_1_mass: &PyMass,
+    daughter_2_mass: &PyMass,
     l: &Bound<'_, PyAny>,
     reference_mass: f64,
     q_r: f64,
@@ -448,7 +451,9 @@ pub fn py_blatt_weisskopf(
     };
     Ok(PyExpression(BlattWeisskopf::new(
         py_tags(tags)?,
-        &decay.0,
+        &parent_mass.0,
+        &daughter_1_mass.0,
+        &daughter_2_mass.0,
         parse_orbital_angular_momentum(l)?,
         reference_mass,
         q_r,

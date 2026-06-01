@@ -202,14 +202,14 @@ mod tests {
     use std::sync::Arc;
 
     use approx::assert_relative_eq;
-    use laddu_core::{data::test_dataset, parameter, Mass};
+    use laddu_core::{data::test_dataset, parameter};
 
     use super::*;
 
     #[test]
     fn test_pi1_evaluation() {
         let dataset = Arc::new(test_dataset());
-        let res_mass = Mass::new(["kshort1", "kshort2"]);
+        let res_mass = crate::test_utils::mass("kk");
         let expr = KopfKMatrixPi1::new(
             "pi1",
             [[parameter!("p0"), parameter!("p1")]],
@@ -228,7 +228,7 @@ mod tests {
     #[test]
     fn test_pi1_gradient() {
         let dataset = Arc::new(test_dataset());
-        let res_mass = Mass::new(["kshort1", "kshort2"]);
+        let res_mass = crate::test_utils::mass("kk");
         let expr = KopfKMatrixPi1::new(
             "pi1",
             [[parameter!("p0"), parameter!("p1")]],

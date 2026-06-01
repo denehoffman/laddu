@@ -3,49 +3,28 @@ use std::fmt::Display;
 use serde::{Deserialize, Serialize};
 
 use super::Variable;
-use crate::{
-    data::{DatasetMetadata, EventLike},
-    quantum::MandelstamChannel,
-    reaction::Reaction,
-    LadduResult,
-};
+use crate::{data::EventLike, quantum::MandelstamChannel, reaction::MandelstamEvaluator};
 
 /// A struct used to calculate Mandelstam variables (`s`, `t`, or `u`).
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Mandelstam {
-    reaction: Reaction,
-    channel: MandelstamChannel,
+    pub(crate) evaluator: MandelstamEvaluator,
+    pub(crate) mandelstam_channel: MandelstamChannel,
 }
 
 impl Display for Mandelstam {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Mandelstam(channel={})", self.channel)
-    }
-}
-
-impl Mandelstam {
-    /// Constructs the Mandelstam variable for the given `channel` using the supplied [`Reaction`].
-    pub fn new(reaction: Reaction, channel: MandelstamChannel) -> Self {
-        Self { reaction, channel }
+        write!(f, "Mandelstam(channel={})", self.mandelstam_channel)
     }
 }
 
 #[typetag::serde]
 impl Variable for Mandelstam {
-    fn bind(&mut self, metadata: &DatasetMetadata) -> LadduResult<()> {
-        let _ = metadata;
-        Ok(())
-    }
-
     fn value(&self, event: &dyn EventLike) -> f64 {
-        let resolved = self
-            .reaction
-            .resolve_two_to_two(event)
-            .unwrap_or_else(|err| panic!("failed to evaluate reaction Mandelstam: {err}"));
-        match self.channel {
-            MandelstamChannel::S => resolved.s(),
-            MandelstamChannel::T => resolved.t(),
-            MandelstamChannel::U => resolved.u(),
+        match self.mandelstam_channel {
+            MandelstamChannel::S => self.evaluator.s(event).expect("TODO"),
+            MandelstamChannel::T => self.evaluator.t(event).expect("TODO"),
+            MandelstamChannel::U => self.evaluator.u(event).expect("TODO"),
         }
     }
 }

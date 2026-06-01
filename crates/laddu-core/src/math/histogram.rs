@@ -181,13 +181,16 @@ mod tests {
     use std::sync::Arc;
 
     use super::{get_bin_index, histogram, Histogram};
-    use crate::{data::test_dataset, traits::Variable, Mass};
+    use crate::{data::test_dataset, traits::Variable, Channel};
 
     #[test]
     fn test_binning() {
-        let mut v = Mass::new(["kshort1"]);
+        let mut channel = Channel::new();
+        channel
+            .create_decay("decay", "kk", ["kshort1", "kshort2"])
+            .unwrap();
+        let v = channel.mass("kshort1").unwrap();
         let dataset = Arc::new(test_dataset());
-        v.bind(dataset.metadata()).unwrap();
         let values = v.value_on(&dataset).unwrap();
         let bin_index = get_bin_index(values[0], 3, (0.0, 1.0));
         assert_eq!(bin_index, Some(1));

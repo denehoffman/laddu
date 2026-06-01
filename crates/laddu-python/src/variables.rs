@@ -1,27 +1,29 @@
-use std::fmt::{Debug, Display};
+use std::{
+    cell::RefCell,
+    fmt::{Debug, Display},
+    rc::Rc,
+};
 
-use laddu_amplitudes::{DecayAmplitudeExt, ProductionAmplitudeExt};
+pub use laddu_core::variables::IntoP4Selection;
 use laddu_core::{
     data::{Dataset, DatasetMetadata, EventLike, OwnedEvent},
-    reaction::{Decay, Particle, Production, Reaction},
+    kinematics::{Axes, Axis, Frame},
+    reaction::Channel,
     traits::Variable,
     variables::{
-        Angles, CosTheta, IntoP4Selection, Mandelstam, Mass, P4Selection, Phi, PolAngle,
-        PolMagnitude, Polarization, VariableExpression,
+        Angles, CosTheta, Mandelstam, Mass, Phi, PolAngle, PolMagnitude, Polarization,
+        VariableExpression,
     },
     LadduResult,
 };
 use numpy::PyArray1;
-use pyo3::{exceptions::PyValueError, prelude::*, types::PyTuple};
+use pyo3::{exceptions::PyValueError, prelude::*};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    amplitudes::{py_tags, PyExpression},
     data::{PyDataset, PyEvent},
-    quantum::angular_momentum::{
-        parse_angular_momentum, parse_orbital_angular_momentum, parse_projection,
-    },
-    vectors::PyVec4,
+    generation::{PyMassSampler, PyMomentumSource, PyVertexGenerator},
+    quantum::PyParticleProperties,
 };
 
 #[derive(FromPyObject, Clone, Serialize, Deserialize)]
@@ -109,382 +111,323 @@ impl PyVariableExpression {
     }
 }
 
-#[derive(Clone, FromPyObject)]
-pub enum PyP4SelectionInput {
-    #[pyo3(transparent)]
-    Name(String),
-    #[pyo3(transparent)]
-    Names(Vec<String>),
-}
-
-impl PyP4SelectionInput {
-    fn into_selection(self) -> P4Selection {
-        match self {
-            PyP4SelectionInput::Name(name) => name.into_selection(),
-            PyP4SelectionInput::Names(names) => names.into_selection(),
-        }
-    }
-}
-
-/// A kinematic particle used to define reaction-aware variables.
-#[pyclass(name = "Particle", module = "laddu", from_py_object)]
+#[pyclass(name = "Axis", module = "laddu", from_py_object)]
 #[derive(Clone, Serialize, Deserialize)]
-pub struct PyParticle(pub Particle);
+pub struct PyAxis(pub Axis);
 
 #[pymethods]
-impl PyParticle {
-    /// Construct a stored particle from a dataset p4 column name.
+impl PyAxis {
     #[staticmethod]
-    fn stored(id: &str) -> Self {
-        Self(Particle::stored(id))
+    fn particle(particle: &str) -> Self {
+        Self(Axis::particle(particle))
     }
 
-    /// Construct a particle with fixed event-independent four-momentum.
     #[staticmethod]
-    fn fixed(label: &str, p4: &PyVec4) -> Self {
-        Self(Particle::fixed(label, p4.0))
+    fn opposite(particle: &str) -> Self {
+        Self(Axis::opposite(particle))
     }
 
-    /// Construct a missing particle solved by the reaction topology.
     #[staticmethod]
-    fn missing(label: &str) -> Self {
-        Self(Particle::missing(label))
+    fn normal(a: &str, b: &str) -> Self {
+        Self(Axis::normal(a, b))
     }
 
-    /// Construct a composite particle from daughter particles.
-    #[staticmethod]
-    fn composite(label: &str, daughters: &Bound<'_, PyTuple>) -> PyResult<Self> {
-        if daughters.len() != 2 {
-            return Err(PyValueError::new_err(
-                "composite particles require exactly two ordered daughters",
-            ));
-        }
-        let daughter_1 = daughters.get_item(0)?.extract::<PyParticle>()?;
-        let daughter_2 = daughters.get_item(1)?.extract::<PyParticle>()?;
-        Ok(Self(Particle::composite(
-            label,
-            (&daughter_1.0, &daughter_2.0),
-        )?))
+    fn at(&self, vertex: &str) -> Self {
+        Self(self.0.clone().at(vertex))
     }
 
-    /// The particle label.
-    #[getter]
-    fn label(&self) -> String {
-        self.0.label().to_string()
+    fn flipped(&self) -> Self {
+        Self(self.0.clone().flipped())
     }
 
     fn __repr__(&self) -> String {
         format!("{:?}", self.0)
     }
+}
 
-    fn __str__(&self) -> String {
-        self.0.to_string()
+#[pyclass(name = "Axes", module = "laddu", from_py_object)]
+#[derive(Clone, Serialize, Deserialize)]
+pub struct PyAxes(pub Axes);
+
+#[pymethods]
+impl PyAxes {
+    #[staticmethod]
+    fn from_y_z(y: &PyAxis, z: &PyAxis) -> Self {
+        Self(Axes::from_y_z(y.0.clone(), z.0.clone()))
+    }
+
+    fn __repr__(&self) -> String {
+        format!("{:?}", self.0)
     }
 }
 
-/// A reaction topology with direct particle definitions.
-#[pyclass(name = "Reaction", module = "laddu", from_py_object)]
+#[pyclass(name = "Frame", module = "laddu", from_py_object)]
 #[derive(Clone, Serialize, Deserialize)]
-pub struct PyReaction(pub Reaction);
+pub struct PyFrame(pub Frame);
 
 #[pymethods]
-impl PyReaction {
-    /// Construct a two-to-two reaction from `p1, p2, p3, p4`.
-    #[staticmethod]
-    fn two_to_two(
-        p1: &PyParticle,
-        p2: &PyParticle,
-        p3: &PyParticle,
-        p4: &PyParticle,
-    ) -> PyResult<Self> {
-        Ok(Self(Reaction::two_to_two(&p1.0, &p2.0, &p3.0, &p4.0)?))
+impl PyFrame {
+    #[new]
+    fn new(origin: &str, axes: &PyAxes) -> PyResult<Self> {
+        Ok(Self(Frame::new(origin, axes.0.clone())?))
     }
 
-    /// Construct a particle mass variable.
-    fn mass(&self, particle: &str) -> PyMass {
-        PyMass(self.0.mass(particle))
+    #[getter]
+    fn origin(&self) -> String {
+        self.0.origin().to_string()
     }
 
-    /// Construct an isobar decay view.
-    fn decay(&self, parent: &str) -> PyResult<PyDecay> {
-        Ok(PyDecay(self.0.decay(parent)?))
+    fn __repr__(&self) -> String {
+        format!("{:?}", self.0)
+    }
+}
+
+#[pyclass(name = "Channel", module = "laddu", from_py_object, unsendable)]
+#[derive(Clone)]
+pub struct PyChannel {
+    pub(crate) inner: Rc<RefCell<Channel>>,
+}
+
+impl PyChannel {
+    pub(crate) fn channel(&self) -> Channel {
+        self.inner.borrow().clone()
+    }
+}
+
+#[pyclass(eq, eq_int, name = "ParticleSource", module = "laddu", from_py_object)]
+#[derive(Clone, Copy, PartialEq)]
+pub enum PyParticleSource {
+    Inferred = 0,
+    Stored = 1,
+    Missing = 2,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn apply_particle_edits(
+    channel: &mut Channel,
+    particle: &str,
+    source: Option<PyParticleSource>,
+    properties: Option<&PyParticleProperties>,
+    mass: Option<f64>,
+    momentum: Option<&PyMomentumSource>,
+    mass_sampler: Option<&PyMassSampler>,
+    name: Option<String>,
+    species: Option<String>,
+    self_conjugate: Option<bool>,
+) -> PyResult<()> {
+    let mut edit = channel.edit_particle(particle)?;
+    if let Some(properties) = properties {
+        edit.properties(properties.0.clone());
+    }
+    if let Some(mass) = mass {
+        edit.mass(mass);
+    }
+    if let Some(momentum) = momentum {
+        edit.momentum(momentum.0.clone());
+    }
+    if let Some(mass_sampler) = mass_sampler {
+        edit.mass_sampler(mass_sampler.0.clone());
+    }
+    if let Some(name) = name {
+        edit.name(name);
+    }
+    if let Some(species) = species {
+        edit.species(species);
+    }
+    if let Some(self_conjugate) = self_conjugate {
+        edit.self_conjugate(self_conjugate);
+    }
+    if let Some(source) = source {
+        match source {
+            PyParticleSource::Inferred => {
+                edit.inferred();
+            }
+            PyParticleSource::Stored => {
+                edit.stored();
+            }
+            PyParticleSource::Missing => {
+                edit.missing()?;
+            }
+        }
+    }
+    Ok(())
+}
+
+#[pymethods]
+impl PyChannel {
+    #[new]
+    fn new() -> Self {
+        Self {
+            inner: Rc::new(RefCell::new(Channel::new())),
+        }
     }
 
-    /// Construct a two-to-two production view.
-    fn production(&self) -> PyResult<PyProduction> {
-        Ok(PyProduction(self.0.production()?))
+    #[pyo3(signature=(label, incoming, outgoing, *, generator=None))]
+    fn create_vertex(
+        &mut self,
+        label: &str,
+        incoming: Vec<String>,
+        outgoing: Vec<String>,
+        generator: Option<&PyVertexGenerator>,
+    ) -> PyResult<()> {
+        match (incoming.len(), outgoing.len()) {
+            (1, 2) => {
+                self.inner.borrow_mut().create_vertex(
+                    label,
+                    [incoming[0].as_str()],
+                    [outgoing[0].as_str(), outgoing[1].as_str()],
+                )?;
+            }
+            (2, 2) => {
+                self.inner.borrow_mut().create_vertex(
+                    label,
+                    [incoming[0].as_str(), incoming[1].as_str()],
+                    [outgoing[0].as_str(), outgoing[1].as_str()],
+                )?;
+            }
+            _ => {
+                return Err(PyValueError::new_err(
+                    "Python Channel.create_vertex currently supports 1->2 and 2->2 vertices",
+                ));
+            }
+        }
+        if let Some(generator) = generator {
+            self.inner
+                .borrow_mut()
+                .edit_vertex(label)?
+                .generate(generator.0.clone());
+        }
+        Ok(())
     }
 
-    /// Construct a Mandelstam variable.
-    fn mandelstam(&self, channel: &str) -> PyResult<PyMandelstam> {
-        Ok(PyMandelstam(self.0.mandelstam(channel.parse()?)?))
-    }
-
-    /// Construct a polarization-angle variable.
-    fn pol_angle(&self, angle_aux: String) -> PyPolAngle {
-        PyPolAngle(self.0.pol_angle(angle_aux))
-    }
-
-    /// Construct polarization variables.
-    #[pyo3(signature=(*, pol_magnitude, pol_angle))]
-    fn polarization(&self, pol_magnitude: String, pol_angle: String) -> PyResult<PyPolarization> {
-        if pol_magnitude == pol_angle {
+    #[pyo3(signature=(label, parent, daughters, *, generator=None))]
+    fn create_decay(
+        &mut self,
+        label: &str,
+        parent: &str,
+        daughters: Vec<String>,
+        generator: Option<&PyVertexGenerator>,
+    ) -> PyResult<()> {
+        if daughters.len() != 2 {
             return Err(PyValueError::new_err(
-                "`pol_magnitude` and `pol_angle` must reference distinct auxiliary columns",
+                "decays require exactly two daughters",
             ));
         }
-        Ok(PyPolarization(
-            self.0.polarization(pol_magnitude, pol_angle),
+        self.inner.borrow_mut().create_decay(
+            label,
+            parent,
+            [daughters[0].as_str(), daughters[1].as_str()],
+        )?;
+        if let Some(generator) = generator {
+            self.inner
+                .borrow_mut()
+                .edit_vertex(label)?
+                .generate(generator.0.clone());
+        }
+        Ok(())
+    }
+
+    #[pyo3(signature=(label, incoming, outgoing, *, generator=None))]
+    fn create_production(
+        &mut self,
+        label: &str,
+        incoming: Vec<String>,
+        outgoing: Vec<String>,
+        generator: Option<&PyVertexGenerator>,
+    ) -> PyResult<()> {
+        if incoming.len() != 2 || outgoing.len() != 2 {
+            return Err(PyValueError::new_err(
+                "production vertices require exactly two incoming and two outgoing particles",
+            ));
+        }
+        self.inner.borrow_mut().create_production(
+            label,
+            [incoming[0].as_str(), incoming[1].as_str()],
+            [outgoing[0].as_str(), outgoing[1].as_str()],
+        )?;
+        if let Some(generator) = generator {
+            self.inner
+                .borrow_mut()
+                .edit_vertex(label)?
+                .generate(generator.0.clone());
+        }
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature=(particle, *, source=None, properties=None, mass=None, momentum=None, mass_sampler=None, name=None, species=None, self_conjugate=None))]
+    fn edit_particle(
+        &self,
+        particle: &str,
+        source: Option<PyParticleSource>,
+        properties: Option<&PyParticleProperties>,
+        mass: Option<f64>,
+        momentum: Option<&PyMomentumSource>,
+        mass_sampler: Option<&PyMassSampler>,
+        name: Option<String>,
+        species: Option<String>,
+        self_conjugate: Option<bool>,
+    ) -> PyResult<()> {
+        apply_particle_edits(
+            &mut self.inner.borrow_mut(),
+            particle,
+            source,
+            properties,
+            mass,
+            momentum,
+            mass_sampler,
+            name,
+            species,
+            self_conjugate,
+        )
+    }
+
+    #[pyo3(signature=(vertex, *, generator))]
+    fn edit_vertex(&self, vertex: &str, generator: &PyVertexGenerator) -> PyResult<()> {
+        let mut channel = self.inner.borrow_mut();
+        let mut edit = channel.edit_vertex(vertex)?;
+        edit.generate(generator.0.clone());
+        Ok(())
+    }
+
+    fn mass(&self, particle: &str) -> PyResult<PyMass> {
+        Ok(PyMass(self.inner.borrow().mass(particle)?))
+    }
+
+    fn angles(&self, particle: &str, frame: &PyFrame) -> PyResult<PyAngles> {
+        Ok(PyAngles(
+            self.inner.borrow().angles(particle, frame.0.clone())?,
         ))
     }
 
-    fn __repr__(&self) -> String {
-        format!("{:?}", self.0)
+    fn mandelstam(&self, vertex: &str, channel: &str) -> PyResult<PyMandelstam> {
+        Ok(PyMandelstam(
+            self.inner.borrow().mandelstam(vertex, channel.parse()?)?,
+        ))
     }
 
-    fn __str__(&self) -> String {
-        format!("{:?}", self.0)
-    }
-}
-
-/// A reaction-aware isobar decay view.
-#[pyclass(name = "Decay", module = "laddu", from_py_object)]
-#[derive(Clone, Serialize, Deserialize)]
-pub struct PyDecay(pub Decay);
-
-#[pymethods]
-impl PyDecay {
-    /// The enclosing reaction.
-    #[getter]
-    fn reaction(&self) -> PyReaction {
-        PyReaction(self.0.reaction().clone())
+    fn pol_angle(&self, vertex: &str, angle_aux: String) -> PyResult<PyPolAngle> {
+        Ok(PyPolAngle(
+            self.inner.borrow().pol_angle(vertex, angle_aux)?,
+        ))
     }
 
-    /// The parent particle.
-    #[getter]
-    fn parent(&self) -> String {
-        self.0.parent().to_string()
-    }
-
-    /// The first daughter particle identifier.
-    #[getter]
-    fn daughter_1(&self) -> String {
-        self.0.daughter_1().to_string()
-    }
-
-    /// The second daughter particle identifier.
-    #[getter]
-    fn daughter_2(&self) -> String {
-        self.0.daughter_2().to_string()
-    }
-
-    /// Ordered daughter particle identifiers.
-    fn daughters(&self) -> Vec<String> {
-        self.0.daughters().into_iter().map(str::to_string).collect()
-    }
-
-    /// Parent mass variable.
-    fn mass(&self) -> PyMass {
-        PyMass(self.0.mass())
-    }
-
-    /// Parent mass variable.
-    fn parent_mass(&self) -> PyMass {
-        PyMass(self.0.parent_mass())
-    }
-
-    /// First daughter mass variable.
-    fn daughter_1_mass(&self) -> PyMass {
-        PyMass(self.0.daughter_1_mass())
-    }
-
-    /// Second daughter mass variable.
-    fn daughter_2_mass(&self) -> PyMass {
-        PyMass(self.0.daughter_2_mass())
-    }
-
-    /// Mass variable for a selected daughter.
-    fn daughter_mass(&self, daughter: &str) -> PyResult<PyMass> {
-        Ok(PyMass(self.0.daughter_mass(daughter)?))
-    }
-
-    /// Decay costheta variable for the selected frame.
-    #[pyo3(signature=(daughter, frame="Helicity"))]
-    fn costheta(&self, daughter: &str, frame: &str) -> PyResult<PyCosTheta> {
-        Ok(PyCosTheta(self.0.costheta(daughter, frame.parse()?)?))
-    }
-
-    /// Decay phi variable for the selected frame.
-    #[pyo3(signature=(daughter, frame="Helicity"))]
-    fn phi(&self, daughter: &str, frame: &str) -> PyResult<PyPhi> {
-        Ok(PyPhi(self.0.phi(daughter, frame.parse()?)?))
-    }
-
-    /// Decay angle variables for the selected frame.
-    #[pyo3(signature=(daughter, frame="Helicity"))]
-    fn angles(&self, daughter: &str, frame: &str) -> PyResult<PyAngles> {
-        Ok(PyAngles(self.0.angles(daughter, frame.parse()?)?))
-    }
-
-    /// Construct the helicity-basis angular factor for one explicit helicity term.
-    #[pyo3(signature=(*tags, spin, projection, daughter, lambda_1, lambda_2, frame="Helicity"))]
-    #[allow(clippy::too_many_arguments)]
-    fn helicity_factor(
+    #[pyo3(signature=(vertex, *, pol_magnitude, pol_angle))]
+    fn polarization(
         &self,
-        tags: &Bound<'_, PyTuple>,
-        spin: &Bound<'_, PyAny>,
-        projection: &Bound<'_, PyAny>,
-        daughter: &str,
-        lambda_1: &Bound<'_, PyAny>,
-        lambda_2: &Bound<'_, PyAny>,
-        frame: &str,
-    ) -> PyResult<PyExpression> {
-        Ok(PyExpression(self.0.helicity_factor(
-            py_tags(tags)?,
-            parse_angular_momentum(spin)?,
-            parse_projection(projection)?,
-            daughter,
-            parse_projection(lambda_1)?,
-            parse_projection(lambda_2)?,
-            frame.parse()?,
-        )?))
-    }
-
-    /// Construct the canonical-basis spin-angular factor for one explicit LS/helicity term.
-    #[pyo3(signature=(*tags, spin, projection, orbital_l, coupled_spin, daughter, daughter_1_spin, daughter_2_spin, lambda_1, lambda_2, frame="Helicity"))]
-    #[allow(clippy::too_many_arguments)]
-    fn canonical_factor(
-        &self,
-        tags: &Bound<'_, PyTuple>,
-        spin: &Bound<'_, PyAny>,
-        projection: &Bound<'_, PyAny>,
-        orbital_l: &Bound<'_, PyAny>,
-        coupled_spin: &Bound<'_, PyAny>,
-        daughter: &str,
-        daughter_1_spin: &Bound<'_, PyAny>,
-        daughter_2_spin: &Bound<'_, PyAny>,
-        lambda_1: &Bound<'_, PyAny>,
-        lambda_2: &Bound<'_, PyAny>,
-        frame: &str,
-    ) -> PyResult<PyExpression> {
-        Ok(PyExpression(self.0.canonical_factor(
-            py_tags(tags)?,
-            parse_angular_momentum(spin)?,
-            parse_projection(projection)?,
-            parse_orbital_angular_momentum(orbital_l)?,
-            parse_angular_momentum(coupled_spin)?,
-            daughter,
-            parse_angular_momentum(daughter_1_spin)?,
-            parse_angular_momentum(daughter_2_spin)?,
-            parse_projection(lambda_1)?,
-            parse_projection(lambda_2)?,
-            frame.parse()?,
+        vertex: &str,
+        pol_magnitude: String,
+        pol_angle: String,
+    ) -> PyResult<PyPolarization> {
+        Ok(PyPolarization(self.inner.borrow().polarization(
+            vertex,
+            pol_magnitude,
+            pol_angle,
         )?))
     }
 
     fn __repr__(&self) -> String {
-        format!("{:?}", self.0)
-    }
-
-    fn __str__(&self) -> String {
-        format!("{:?}", self.0)
-    }
-}
-
-/// A reaction-aware two-to-two production view.
-#[pyclass(name = "Production", module = "laddu", from_py_object)]
-#[derive(Clone, Serialize, Deserialize)]
-pub struct PyProduction(pub Production);
-
-#[pymethods]
-impl PyProduction {
-    /// The enclosing reaction.
-    #[getter]
-    fn reaction(&self) -> PyReaction {
-        PyReaction(self.0.reaction().clone())
-    }
-
-    /// The produced-system particle.
-    #[getter]
-    fn produced(&self) -> String {
-        self.0.produced().to_string()
-    }
-
-    /// The recoil particle.
-    #[getter]
-    fn recoil(&self) -> String {
-        self.0.recoil().to_string()
-    }
-
-    /// Production costheta variable.
-    fn costheta(&self) -> PyResult<PyCosTheta> {
-        Ok(PyCosTheta(self.0.costheta()?))
-    }
-
-    /// Production phi variable.
-    fn phi(&self) -> PyResult<PyPhi> {
-        Ok(PyPhi(self.0.phi()?))
-    }
-
-    /// Production angle variables.
-    fn angles(&self) -> PyResult<PyAngles> {
-        Ok(PyAngles(self.0.angles()?))
-    }
-
-    /// Construct the helicity-basis production angular factor for one explicit helicity term.
-    #[pyo3(signature=(*tags, spin, projection, lambda_produced, lambda_recoil))]
-    #[allow(clippy::too_many_arguments)]
-    fn helicity_factor(
-        &self,
-        tags: &Bound<'_, PyTuple>,
-        spin: &Bound<'_, PyAny>,
-        projection: &Bound<'_, PyAny>,
-        lambda_produced: &Bound<'_, PyAny>,
-        lambda_recoil: &Bound<'_, PyAny>,
-    ) -> PyResult<PyExpression> {
-        Ok(PyExpression(self.0.helicity_factor(
-            py_tags(tags)?,
-            parse_angular_momentum(spin)?,
-            parse_projection(projection)?,
-            parse_projection(lambda_produced)?,
-            parse_projection(lambda_recoil)?,
-        )?))
-    }
-
-    /// Construct the canonical-basis production spin-angular factor for one LS/helicity term.
-    #[pyo3(signature=(*tags, spin, projection, orbital_l, coupled_spin, produced_spin, recoil_spin, lambda_produced, lambda_recoil))]
-    #[allow(clippy::too_many_arguments)]
-    fn canonical_factor(
-        &self,
-        tags: &Bound<'_, PyTuple>,
-        spin: &Bound<'_, PyAny>,
-        projection: &Bound<'_, PyAny>,
-        orbital_l: &Bound<'_, PyAny>,
-        coupled_spin: &Bound<'_, PyAny>,
-        produced_spin: &Bound<'_, PyAny>,
-        recoil_spin: &Bound<'_, PyAny>,
-        lambda_produced: &Bound<'_, PyAny>,
-        lambda_recoil: &Bound<'_, PyAny>,
-    ) -> PyResult<PyExpression> {
-        Ok(PyExpression(self.0.canonical_factor(
-            py_tags(tags)?,
-            parse_angular_momentum(spin)?,
-            parse_projection(projection)?,
-            parse_orbital_angular_momentum(orbital_l)?,
-            parse_angular_momentum(coupled_spin)?,
-            parse_angular_momentum(produced_spin)?,
-            parse_angular_momentum(recoil_spin)?,
-            parse_projection(lambda_produced)?,
-            parse_projection(lambda_recoil)?,
-        )?))
-    }
-
-    fn __repr__(&self) -> String {
-        format!("{:?}", self.0)
-    }
-
-    fn __str__(&self) -> String {
-        format!("{:?}", self.0)
+        format!("{:?}", self.inner.borrow())
     }
 }
 
@@ -508,10 +451,6 @@ pub struct PyMass(pub Mass);
 
 #[pymethods]
 impl PyMass {
-    #[new]
-    fn new(constituents: PyP4SelectionInput) -> Self {
-        Self(Mass::new(constituents.into_selection()))
-    }
     /// The value of this Variable for the given Event
     ///
     /// Parameters
@@ -872,10 +811,6 @@ pub struct PyPolAngle(pub PolAngle);
 
 #[pymethods]
 impl PyPolAngle {
-    #[new]
-    fn new(reaction: PyReaction, pol_angle: String) -> Self {
-        Self(PolAngle::new(reaction.0.clone(), pol_angle))
-    }
     /// The value of this Variable for the given Event
     ///
     /// Parameters
@@ -1054,17 +989,6 @@ impl PyPolMagnitude {
 pub struct PyPolarization(pub Polarization);
 #[pymethods]
 impl PyPolarization {
-    #[new]
-    #[pyo3(signature=(reaction, *, pol_magnitude, pol_angle))]
-    fn new(reaction: PyReaction, pol_magnitude: String, pol_angle: String) -> PyResult<Self> {
-        if pol_magnitude == pol_angle {
-            return Err(PyValueError::new_err(
-                "`pol_magnitude` and `pol_angle` must reference distinct auxiliary columns",
-            ));
-        }
-        let polarization = Polarization::new(reaction.0.clone(), pol_magnitude, pol_angle);
-        Ok(PyPolarization(polarization))
-    }
     /// The Variable representing the magnitude of the polarization vector
     ///
     /// Returns
@@ -1127,10 +1051,6 @@ pub struct PyMandelstam(pub Mandelstam);
 
 #[pymethods]
 impl PyMandelstam {
-    #[new]
-    fn new(reaction: PyReaction, channel: &str) -> PyResult<Self> {
-        Ok(Self(reaction.0.mandelstam(channel.parse()?)?))
-    }
     /// The value of this Variable for the given Event
     ///
     /// Parameters

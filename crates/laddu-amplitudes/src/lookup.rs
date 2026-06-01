@@ -712,12 +712,12 @@ mod tests {
     use std::sync::Arc;
 
     use approx::assert_relative_eq;
-    use laddu_core::{data::test_dataset, parameter, Mass};
+    use laddu_core::{data::test_dataset, parameter};
 
     use super::*;
 
     fn mass(name: &str) -> Box<dyn Variable> {
-        Box::new(Mass::new([name]))
+        Box::new(crate::test_utils::mass(name))
     }
 
     #[test]
@@ -748,7 +748,7 @@ mod tests {
     fn test_lookup_table_2d_row_major() {
         let expr = LookupTable::new(
             "lookup",
-            vec![mass("kshort1"), Box::new(Mass::new(["kshort1", "kshort2"]))],
+            vec![mass("kshort1"), Box::new(crate::test_utils::mass("kk"))],
             vec![
                 LookupAxis::new(vec![0.0, 1.0, 2.0]).unwrap(),
                 LookupAxis::new(vec![0.0, 1.0, 2.0]).unwrap(),
@@ -776,7 +776,7 @@ mod tests {
     fn test_lookup_table_zero_boundary() {
         let expr = LookupTable::new(
             "lookup",
-            vec![Box::new(Mass::new(["kshort1", "kshort2"]))],
+            vec![Box::new(crate::test_utils::mass("kk"))],
             vec![LookupAxis::new(vec![0.0, 0.5, 1.0]).unwrap()],
             vec![Complex64::new(1.0, 0.0), Complex64::new(2.0, 0.0)],
             LookupInterpolation::Nearest,
@@ -795,7 +795,7 @@ mod tests {
     fn test_lookup_table_clamp_boundary() {
         let expr = LookupTable::new(
             "lookup",
-            vec![Box::new(Mass::new(["kshort1", "kshort2"]))],
+            vec![Box::new(crate::test_utils::mass("kk"))],
             vec![LookupAxis::new(vec![0.0, 0.5, 1.0]).unwrap()],
             vec![Complex64::new(1.0, 0.0), Complex64::new(2.0, 0.0)],
             LookupInterpolation::Nearest,
@@ -863,7 +863,7 @@ mod tests {
     fn test_lookup_table_linear_clamp_boundary() {
         let expr = LookupTable::new(
             "lookup",
-            vec![Box::new(Mass::new(["kshort1", "kshort2"]))],
+            vec![Box::new(crate::test_utils::mass("kk"))],
             vec![LookupAxis::new(vec![0.0, 1.0]).unwrap()],
             vec![Complex64::new(1.0, 0.0), Complex64::new(3.0, 0.0)],
             LookupInterpolation::Linear,
@@ -883,7 +883,7 @@ mod tests {
     fn test_lookup_table_linear_zero_boundary() {
         let expr = LookupTable::new(
             "lookup",
-            vec![Box::new(Mass::new(["kshort1", "kshort2"]))],
+            vec![Box::new(crate::test_utils::mass("kk"))],
             vec![LookupAxis::new(vec![0.0, 1.0]).unwrap()],
             vec![Complex64::new(1.0, 0.0), Complex64::new(3.0, 0.0)],
             LookupInterpolation::Linear,
@@ -1011,7 +1011,7 @@ mod tests {
     fn test_lookup_table_linear_zero_boundary_has_zero_gradient() {
         let expr = LookupTable::new_scalar(
             "lookup",
-            vec![Box::new(Mass::new(["kshort1", "kshort2"]))],
+            vec![Box::new(crate::test_utils::mass("kk"))],
             vec![LookupAxis::new(vec![0.0, 1.0]).unwrap()],
             vec![parameter!("p0"), parameter!("p1")],
             LookupInterpolation::Linear,

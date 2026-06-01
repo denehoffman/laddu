@@ -1,7 +1,7 @@
 use std::{f64, sync::Arc};
 
 use approx::assert_relative_eq;
-use laddu_core::{data::test_dataset, parameter, traits::Variable, variables::Mass, PI};
+use laddu_core::{data::test_dataset, parameter, traits::Variable, PI};
 
 use super::{
     components::{ComplexScalar, PolarComplexScalar, Scalar},
@@ -39,7 +39,7 @@ fn test_scalar_gradient() {
 #[test]
 fn test_variable_scalar_evaluation() {
     let dataset = Arc::new(test_dataset());
-    let mut variable = Mass::new(["kshort1", "kshort2"]);
+    let mut variable = crate::test_utils::mass("kk");
     variable.bind(dataset.metadata()).unwrap();
     let expected = variable.value(&dataset.event_local(0).unwrap());
 
@@ -54,7 +54,7 @@ fn test_variable_scalar_evaluation() {
 #[test]
 fn test_variable_scalar_has_no_parameters() {
     let dataset = Arc::new(test_dataset());
-    let variable = Mass::new(["kshort1", "kshort2"]);
+    let variable = crate::test_utils::mass("kk");
     let expr = VariableScalar::new("mass", &variable).unwrap();
     let evaluator = expr.load(&dataset).unwrap();
 
@@ -66,7 +66,7 @@ fn test_variable_scalar_has_no_parameters() {
 #[test]
 fn test_variable_as_expression() {
     let dataset = Arc::new(test_dataset());
-    let mut variable = Mass::new(["kshort1", "kshort2"]);
+    let mut variable = crate::test_utils::mass("kk");
     variable.bind(dataset.metadata()).unwrap();
     let expected = variable.value(&dataset.event_local(0).unwrap());
 

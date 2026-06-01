@@ -1,13 +1,15 @@
 import pickle
 
 import pytest
-from laddu import Dataset, Event, Mass, Scalar, Vec3, parameter
+from laddu import Dataset, Event, Scalar, Vec3, parameter
 from laddu.amplitudes.kmatrix import (
     KopfKMatrixF0,
     KopfKMatrixF0Channel,
     KopfKMatrixF2,
     KopfKMatrixF2Channel,
 )
+
+from tests.channel_helpers import mass as make_mass
 
 P4_NAMES = ['beam', 'proton', 'kshort1', 'kshort2']
 AUX_NAMES = ['pol_magnitude', 'pol_angle']
@@ -34,7 +36,7 @@ def make_test_dataset() -> Dataset:
 
 
 def test_serde() -> None:
-    res_mass = Mass(['kshort1', 'kshort2'])
+    res_mass = make_mass(['kshort1', 'kshort2'])
     f0 = KopfKMatrixF0(
         'f0',
         couplings=(

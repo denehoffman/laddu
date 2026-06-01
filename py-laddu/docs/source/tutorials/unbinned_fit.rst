@@ -79,19 +79,29 @@ Let's further assume that there are only two resonances present in our data, an 
 
 .. code:: python
 
-   # the mass of the combination of particles 2 and 3, the kaons
-   res_mass = ld.Mass(['kshort1', 'kshort2'])
+   channel = ld.Channel()
+   channel.create_production('production', ['beam', 'target'], ['kk', 'proton'])
+   channel.create_decay('kk_decay', 'kk', ['kshort1', 'kshort2'])
+   channel.edit_particle('beam', source=ld.ParticleSource.Stored)
+   channel.edit_particle('target', source=ld.ParticleSource.Missing)
+   channel.edit_particle('kshort1', source=ld.ParticleSource.Stored)
+   channel.edit_particle('kshort2', source=ld.ParticleSource.Stored)
+   channel.edit_particle('proton', source=ld.ParticleSource.Stored)
+
+   # the mass of the kaon pair
+   res_mass = channel.mass('kk')
+   kshort1_mass = channel.mass('kshort1')
+   kshort2_mass = channel.mass('kshort2')
 
    # the decay angles in the helicity frame
-   beam = ld.Particle.stored('beam')
-   target = ld.Particle.missing('target')
-   kshort1 = ld.Particle.stored('kshort1')
-   kshort2 = ld.Particle.stored('kshort2')
-   kk = ld.Particle.composite('kk', [kshort1, kshort2])
-   proton = ld.Particle.stored('proton')
-   reaction = ld.Reaction.two_to_two(beam, target, kk, proton)
-   decay = reaction.decay('kk')
-   angles = decay.angles('kshort1')
+   frame = ld.Frame(
+       'kk_decay',
+       ld.Axes.from_y_z(
+           ld.Axis.normal('beam', 'proton').at('production').flipped(),
+           ld.Axis.opposite('proton').at('kk_decay'),
+       ),
+   )
+   angles = channel.angles('kshort1', frame)
 
 So far, these angles just represent particles in a generic dataset by index and provide an appropriate method to calculate the corresponding observable. Before we fit anything, we might want to just see what the dataset looks like:
 
@@ -124,11 +134,11 @@ Next, let's come up with a model. ``laddu`` models are formed by combining indiv
    + &\left| [f_0(1500)] BW_0(m; m_{f_0}, \Gamma_{f_0}) \Im\left[Z_{0}^{0(+)}(\theta, \varphi, P_\gamma, \Phi)\right]\right.\\
    &\left. + [f_2'(1525)] BW_2(m; m_{f_2'}, \Gamma_{f_2'}) \Im\left[Z_{2}^{2(+)}(\theta, \varphi, P_\gamma, \Phi)\right]\right|^2
 
-where :math:`BW_{L}(m, m_\alpha, \Gamma_\alpha)` is the Breit-Wigner amplitude for a spin-:math:`L` particle with mass :math:`m_\alpha` and width :math:`\Gamma_\alpha` and :math:`Z_{L}^{M}(\theta, \varphi, P_\gamma, \Phi)` describes the angular distribution of a spin-:math:`L` particle with decay angles :math:`\theta` and :math:`\varphi`, photoproduction polarization fraction :math:`P_\gamma` and angle :math:`\Phi`, and angular moment :math:`M`. The terms with particle names in square brackets represent the production coefficients. While these are technically both allowed to be complex values, in practice we set one to be real in each sum since the norm-squared of a complex value is invariant up to a total phase. The exact form of these amplitudes is not important for this tutorial. Instead, we will demonstrate how they can be created and combined with simple operations. First, we create a ``Polarization`` object which grabs polarization information from the dataset using the names of the beam, recoil proton, and auxiliary polarization columns:
+where :math:`BW_{L}(m, m_\alpha, \Gamma_\alpha)` is the Breit-Wigner amplitude for a spin-:math:`L` particle with mass :math:`m_\alpha` and width :math:`\Gamma_\alpha` and :math:`Z_{L}^{M}(\theta, \varphi, P_\gamma, \Phi)` describes the angular distribution of a spin-:math:`L` particle with decay angles :math:`\theta` and :math:`\varphi`, photoproduction polarization fraction :math:`P_\gamma` and angle :math:`\Phi`, and angular moment :math:`M`. The terms with particle names in square brackets represent the production coefficients. While these are technically both allowed to be complex values, in practice we set one to be real in each sum since the norm-squared of a complex value is invariant up to a total phase. The exact form of these amplitudes is not important for this tutorial. Instead, we will demonstrate how they can be created and combined with simple operations. First, we create a ``Polarization`` object which grabs polarization information from the production topology and auxiliary polarization columns:
 
 .. code:: python
 
-   polarization = reaction.polarization(pol_magnitude='pol_magnitude', pol_angle='pol_angle')
+   polarization = channel.polarization('production', pol_magnitude='pol_magnitude', pol_angle='pol_angle')
 
 Next, we can create ``Zlm`` amplitudes:
 
@@ -148,8 +158,8 @@ Finally, we can register the Breit-Wigners. These have two free parameters, the 
 
 .. code:: python
 
-   bw0 = ld.BreitWigner("BW_0", mass=ld.parameter(1.506), width=ld.parameter("f_0 width"), l=0, daughter_1_mass=ld.Mass(['kshort1']), daughter_2_mass=ld.Mass(['kshort2']), resonance_mass=res_mass)
-   bw2 = ld.BreitWigner("BW_2", mass=ld.parameter(1.517), width=ld.parameter("f_2 width"), l=0, daughter_1_mass=ld.Mass(['kshort1']), daughter_2_mass=ld.Mass(['kshort2']), resonance_mass=res_mass)
+   bw0 = ld.BreitWigner("BW_0", mass=ld.parameter(1.506), width=ld.parameter("f_0 width"), l=0, daughter_1_mass=kshort1_mass, daughter_2_mass=kshort2_mass, resonance_mass=res_mass)
+   bw2 = ld.BreitWigner("BW_2", mass=ld.parameter(1.517), width=ld.parameter("f_2 width"), l=0, daughter_1_mass=kshort1_mass, daughter_2_mass=kshort2_mass, resonance_mass=res_mass)
 
 As you can see, these amplitudes also take additional parameters like the masses of each decay product.
 

@@ -212,14 +212,14 @@ mod tests {
     use std::sync::Arc;
 
     use approx::assert_relative_eq;
-    use laddu_core::{data::test_dataset, parameter, Mass};
+    use laddu_core::{data::test_dataset, parameter};
 
     use super::*;
 
     #[test]
     fn test_rho_evaluation() {
         let dataset = Arc::new(test_dataset());
-        let res_mass = Mass::new(["kshort1", "kshort2"]);
+        let res_mass = crate::test_utils::mass("kk");
         let expr = KopfKMatrixRho::new(
             "rho",
             [
@@ -241,7 +241,7 @@ mod tests {
     #[test]
     fn test_rho_gradient() {
         let dataset = Arc::new(test_dataset());
-        let res_mass = Mass::new(["kshort1", "kshort2"]);
+        let res_mass = crate::test_utils::mass("kk");
         let expr = KopfKMatrixRho::new(
             "rho",
             [

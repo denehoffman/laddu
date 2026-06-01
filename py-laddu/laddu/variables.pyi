@@ -1,14 +1,8 @@
-from collections.abc import Sequence
-from typing import Literal, TypeAlias
-
 import numpy as np
 import numpy.typing as npt
 
 from laddu.amplitude import Expression
 from laddu.data import Dataset, Event
-from laddu.reaction import Reaction as Reaction
-
-_P4Selection: TypeAlias = str | Sequence[str]
 
 class VariableExpression:
     def __and__(self, rhs: VariableExpression) -> VariableExpression: ...
@@ -16,7 +10,6 @@ class VariableExpression:
     def __invert__(self) -> VariableExpression: ...
 
 class Mass:
-    def __init__(self, constituents: _P4Selection) -> None: ...
     def as_expression(self, *tags: str) -> Expression: ...
     def value(self, event: Event) -> float: ...
     def value_on(self, dataset: Dataset) -> npt.NDArray[np.float64]: ...
@@ -51,7 +44,6 @@ class Angles:
     phi: Phi
 
 class PolAngle:
-    def __init__(self, reaction: Reaction, pol_angle: str) -> None: ...
     def as_expression(self, *tags: str) -> Expression: ...
     def value(self, event: Event) -> float: ...
     def value_on(self, dataset: Dataset) -> npt.NDArray[np.float64]: ...
@@ -76,18 +68,7 @@ class Polarization:
     pol_magnitude: PolMagnitude
     pol_angle: PolAngle
 
-    def __init__(
-        self,
-        reaction: Reaction,
-        *,
-        pol_magnitude: str,
-        pol_angle: str,
-    ) -> None: ...
-
 class Mandelstam:
-    def __init__(
-        self, reaction: Reaction, channel: Literal['s', 't', 'u', 'S', 'T', 'U']
-    ) -> None: ...
     def as_expression(self, *tags: str) -> Expression: ...
     def value(self, event: Event) -> float: ...
     def value_on(self, dataset: Dataset) -> npt.NDArray[np.float64]: ...

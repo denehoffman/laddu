@@ -1,7 +1,7 @@
 from typing import Any
 
 import pytest
-from laddu import Dataset, Event, Mass, Particle, Reaction, Vec3, parameter
+from laddu import Dataset, Event, Mass, Vec3, parameter
 from laddu.amplitude import Expression
 from laddu.amplitudes.kmatrix import (
     KopfKMatrixA0,
@@ -17,6 +17,8 @@ from laddu.amplitudes.kmatrix import (
     KopfKMatrixRho,
     KopfKMatrixRhoChannel,
 )
+
+from tests.channel_helpers import mass
 
 P4_NAMES = ['beam', 'proton', 'kshort1', 'kshort2']
 AUX_NAMES = ['pol_magnitude', 'pol_angle']
@@ -43,14 +45,7 @@ def make_test_dataset() -> Dataset:
 
 
 def make_reaction_mass() -> Mass:
-    beam = Particle.stored('beam')
-    target = Particle.missing('target')
-    recoil = Particle.stored('proton')
-    ks1 = Particle.stored('kshort1')
-    ks2 = Particle.stored('kshort2')
-    x = Particle.composite('x', (ks1, ks2))
-    reaction = Reaction.two_to_two(beam, target, x, recoil)
-    return reaction.mass('x')
+    return mass(['kshort1', 'kshort2'])
 
 
 def kopf_f0(
@@ -86,7 +81,7 @@ def kopf_pi1(tag: str, couplings: Any, channel: Any, mass: Mass) -> Expression:
 
 
 def test_f0_evaluation() -> None:
-    res_mass = Mass(['kshort1', 'kshort2'])
+    res_mass = mass(['kshort1', 'kshort2'])
     amp = kopf_f0(
         'f0',
         (
@@ -129,7 +124,7 @@ def test_f0_accepts_reaction_mass_variable() -> None:
 
 
 def test_f0_gradient() -> None:
-    res_mass = Mass(['kshort1', 'kshort2'])
+    res_mass = mass(['kshort1', 'kshort2'])
     amp = kopf_f0(
         'f0',
         (
@@ -170,7 +165,7 @@ def test_f0_gradient() -> None:
 
 
 def test_f0_rejects_integer_channel() -> None:
-    res_mass = Mass(['kshort1', 'kshort2'])
+    res_mass = mass(['kshort1', 'kshort2'])
     with pytest.raises(TypeError):
         kopf_f0(
             'f0',
@@ -187,7 +182,7 @@ def test_f0_rejects_integer_channel() -> None:
 
 
 def test_f2_evaluation() -> None:
-    res_mass = Mass(['kshort1', 'kshort2'])
+    res_mass = mass(['kshort1', 'kshort2'])
     amp = kopf_f2(
         'f2',
         (
@@ -207,7 +202,7 @@ def test_f2_evaluation() -> None:
 
 
 def test_f2_gradient() -> None:
-    res_mass = Mass(['kshort1', 'kshort2'])
+    res_mass = mass(['kshort1', 'kshort2'])
     amp = kopf_f2(
         'f2',
         (
@@ -241,7 +236,7 @@ def test_f2_gradient() -> None:
 
 
 def test_a0_evaluation() -> None:
-    res_mass = Mass(['kshort1', 'kshort2'])
+    res_mass = mass(['kshort1', 'kshort2'])
     amp = kopf_a0(
         'a0',
         (
@@ -259,7 +254,7 @@ def test_a0_evaluation() -> None:
 
 
 def test_a0_gradient() -> None:
-    res_mass = Mass(['kshort1', 'kshort2'])
+    res_mass = mass(['kshort1', 'kshort2'])
     amp = kopf_a0(
         'a0',
         (
@@ -283,7 +278,7 @@ def test_a0_gradient() -> None:
 
 
 def test_a2_evaluation() -> None:
-    res_mass = Mass(['kshort1', 'kshort2'])
+    res_mass = mass(['kshort1', 'kshort2'])
     amp = kopf_a2(
         'a2',
         (
@@ -301,7 +296,7 @@ def test_a2_evaluation() -> None:
 
 
 def test_a2_gradient() -> None:
-    res_mass = Mass(['kshort1', 'kshort2'])
+    res_mass = mass(['kshort1', 'kshort2'])
     amp = kopf_a2(
         'a2',
         (
@@ -325,7 +320,7 @@ def test_a2_gradient() -> None:
 
 
 def test_rho_evaluation() -> None:
-    res_mass = Mass(['kshort1', 'kshort2'])
+    res_mass = mass(['kshort1', 'kshort2'])
     amp = kopf_rho(
         'rho',
         (
@@ -343,7 +338,7 @@ def test_rho_evaluation() -> None:
 
 
 def test_rho_gradient() -> None:
-    res_mass = Mass(['kshort1', 'kshort2'])
+    res_mass = mass(['kshort1', 'kshort2'])
     amp = kopf_rho(
         'rho',
         (
@@ -367,7 +362,7 @@ def test_rho_gradient() -> None:
 
 
 def test_pi1_evaluation() -> None:
-    res_mass = Mass(['kshort1', 'kshort2'])
+    res_mass = mass(['kshort1', 'kshort2'])
     amp = kopf_pi1(
         'pi1',
         ((parameter('p0'), parameter('p1')),),
@@ -382,7 +377,7 @@ def test_pi1_evaluation() -> None:
 
 
 def test_pi1_gradient() -> None:
-    res_mass = Mass(['kshort1', 'kshort2'])
+    res_mass = mass(['kshort1', 'kshort2'])
     amp = kopf_pi1(
         'pi1',
         ((parameter('p0'), parameter('p1')),),

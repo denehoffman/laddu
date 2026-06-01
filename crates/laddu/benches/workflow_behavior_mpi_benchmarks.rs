@@ -10,18 +10,16 @@ mod mpi_benches {
                 KopfKMatrixA0, KopfKMatrixA0Channel, KopfKMatrixA2, KopfKMatrixA2Channel,
                 KopfKMatrixF0, KopfKMatrixF0Channel, KopfKMatrixF2, KopfKMatrixF2Channel,
             },
-            parameter,
         },
         data::{Dataset, DatasetReadOptions},
         extensions::NLL,
         io,
         mpi::{finalize_mpi, get_world, use_mpi},
+        parameter,
+        quantum::Reflectivity,
         traits::LikelihoodTerm,
-        utils::{
-            enums::{Frame, Reflectivity},
-            variables::Mass,
-        },
-        RngSubsetExtension,
+        variables::Mass,
+        Axes, Axis, Frame, RngSubsetExtension,
     };
     use mpi::{
         collective::SystemOperation,
@@ -34,20 +32,31 @@ mod mpi_benches {
     const KMATRIX_DATASET_SEED: u64 = 71;
 
     fn reaction_variables() -> (laddu::Angles, laddu::Polarization, Mass) {
-        let beam = laddu::Particle::stored("beam");
-        let target = laddu::Particle::missing("target");
-        let kshort1 = laddu::Particle::stored("kshort1");
-        let kshort2 = laddu::Particle::stored("kshort2");
-        let kk = laddu::Particle::composite("kk", (&kshort1, &kshort2)).unwrap();
-        let proton = laddu::Particle::stored("proton");
-        let reaction = laddu::Reaction::two_to_two(&beam, &target, &kk, &proton).unwrap();
-        let angles = reaction
-            .decay("kk")
-            .unwrap()
-            .angles("kshort1", Frame::Helicity)
+        let mut channel = laddu::Channel::new();
+        channel
+            .create_production("production", ["beam", "target"], ["kk", "proton"])
             .unwrap();
-        let polarization = reaction.polarization("pol_magnitude", "pol_angle");
-        let resonance_mass = reaction.mass("kk");
+        channel
+            .create_decay("kk_decay", "kk", ["kshort1", "kshort2"])
+            .unwrap();
+        channel.edit_particle("beam").unwrap().stored();
+        channel.edit_particle("target").unwrap().missing().unwrap();
+        channel.edit_particle("kshort1").unwrap().stored();
+        channel.edit_particle("kshort2").unwrap().stored();
+        channel.edit_particle("proton").unwrap().stored();
+        let frame = Frame::new(
+            "kk_decay",
+            Axes::from_y_z(
+                Axis::normal("beam", "proton").at("production").flipped(),
+                Axis::opposite("proton").at("kk_decay"),
+            ),
+        )
+        .unwrap();
+        let angles = channel.angles("kshort1", frame).unwrap();
+        let polarization = channel
+            .polarization("production", "pol_magnitude", "pol_angle")
+            .unwrap();
+        let resonance_mass = channel.mass("kk").unwrap();
         (angles, polarization, resonance_mass)
     }
 
@@ -111,17 +120,14 @@ mod mpi_benches {
         let f0p = KopfKMatrixF0::new(
             "f0+",
             [
+                [parameter!("f0+ c00 re", 0.0), parameter!("f0+ c00 im", 0.0)],
                 [
-                    laddu::constant("f0+ c00 re", 0.0),
-                    laddu::constant("f0+ c00 im", 0.0),
+                    parameter!("f0(980)+ re"),
+                    parameter!("f0(980)+ im_fix", 0.0),
                 ],
-                [
-                    parameter("f0(980)+ re"),
-                    laddu::constant("f0(980)+ im_fix", 0.0),
-                ],
-                [parameter("f0(1370)+ re"), parameter("f0(1370)+ im")],
-                [parameter("f0(1500)+ re"), parameter("f0(1500)+ im")],
-                [parameter("f0(1710)+ re"), parameter("f0(1710)+ im")],
+                [parameter!("f0(1370)+ re"), parameter!("f0(1370)+ im")],
+                [parameter!("f0(1500)+ re"), parameter!("f0(1500)+ im")],
+                [parameter!("f0(1710)+ re"), parameter!("f0(1710)+ im")],
             ],
             KopfKMatrixF0Channel::PiPi,
             &resonance_mass,
@@ -131,8 +137,8 @@ mod mpi_benches {
         let a0p = KopfKMatrixA0::new(
             "a0+",
             [
-                [parameter("a0(980)+ re"), parameter("a0(980)+ im")],
-                [parameter("a0(1450)+ re"), parameter("a0(1450)+ im")],
+                [parameter!("a0(980)+ re"), parameter!("a0(980)+ im")],
+                [parameter!("a0(1450)+ re"), parameter!("a0(1450)+ im")],
             ],
             KopfKMatrixA0Channel::PiEta,
             &resonance_mass,
@@ -142,17 +148,14 @@ mod mpi_benches {
         let f0n = KopfKMatrixF0::new(
             "f0-",
             [
+                [parameter!("f0- c00 re", 0.0), parameter!("f0- c00 im", 0.0)],
                 [
-                    laddu::constant("f0- c00 re", 0.0),
-                    laddu::constant("f0- c00 im", 0.0),
+                    parameter!("f0(980)- re"),
+                    parameter!("f0(980)- im_fix", 0.0),
                 ],
-                [
-                    parameter("f0(980)- re"),
-                    laddu::constant("f0(980)- im_fix", 0.0),
-                ],
-                [parameter("f0(1370)- re"), parameter("f0(1370)- im")],
-                [parameter("f0(1500)- re"), parameter("f0(1500)- im")],
-                [parameter("f0(1710)- re"), parameter("f0(1710)- im")],
+                [parameter!("f0(1370)- re"), parameter!("f0(1370)- im")],
+                [parameter!("f0(1500)- re"), parameter!("f0(1500)- im")],
+                [parameter!("f0(1710)- re"), parameter!("f0(1710)- im")],
             ],
             KopfKMatrixF0Channel::PiPi,
             &resonance_mass,
@@ -162,8 +165,8 @@ mod mpi_benches {
         let a0n = KopfKMatrixA0::new(
             "a0-",
             [
-                [parameter("a0(980)- re"), parameter("a0(980)- im")],
-                [parameter("a0(1450)- re"), parameter("a0(1450)- im")],
+                [parameter!("a0(980)- re"), parameter!("a0(980)- im")],
+                [parameter!("a0(1450)- re"), parameter!("a0(1450)- im")],
             ],
             KopfKMatrixA0Channel::PiEta,
             &resonance_mass,
@@ -173,10 +176,10 @@ mod mpi_benches {
         let f2 = KopfKMatrixF2::new(
             "f2",
             [
-                [parameter("f2(1270) re"), parameter("f2(1270) im")],
-                [parameter("f2(1525) re"), parameter("f2(1525) im")],
-                [parameter("f2(1850) re"), parameter("f2(1850) im")],
-                [parameter("f2(1910) re"), parameter("f2(1910) im")],
+                [parameter!("f2(1270) re"), parameter!("f2(1270) im")],
+                [parameter!("f2(1525) re"), parameter!("f2(1525) im")],
+                [parameter!("f2(1850) re"), parameter!("f2(1850) im")],
+                [parameter!("f2(1910) re"), parameter!("f2(1910) im")],
             ],
             KopfKMatrixF2Channel::KKbar,
             &resonance_mass,
@@ -186,8 +189,8 @@ mod mpi_benches {
         let a2 = KopfKMatrixA2::new(
             "a2",
             [
-                [parameter("a2(1320) re"), parameter("a2(1320) im")],
-                [parameter("a2(1700) re"), parameter("a2(1700) im")],
+                [parameter!("a2(1320) re"), parameter!("a2(1320) im")],
+                [parameter!("a2(1700) re"), parameter!("a2(1700) im")],
             ],
             KopfKMatrixA2Channel::PiEtaPrime,
             &resonance_mass,
@@ -203,7 +206,7 @@ mod mpi_benches {
         let neg_re = (&s0n * z00n.real()).norm_sqr();
         let neg_im = (&s0n * z00n.imag()).norm_sqr();
         let expr = pos_re + pos_im + neg_re + neg_im;
-        NLL::new(&expr, &ds_data, &ds_mc).expect("k-matrix NLL should build")
+        NLL::new(&expr, &ds_data, &ds_mc, None).expect("k-matrix NLL should build")
     }
 
     fn kmatrix_nll_mpi_rank_parameterized_benchmarks(c: &mut Criterion) {

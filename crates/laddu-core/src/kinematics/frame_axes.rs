@@ -1,15 +1,168 @@
 use serde::{Deserialize, Serialize};
 
-use super::{
-    decay_angles::DecayAngles,
-    rest_frame::RestFrame,
-    support::{checked_boost_vector, unit_vector},
-};
-use crate::{
-    quantum::Frame,
-    vectors::{Vec3, Vec4},
-    LadduError, LadduResult,
-};
+use super::support::unit_vector;
+use crate::{vectors::Vec3, LadduError, LadduResult};
+
+/// A symbolic angular frame definition.
+///
+/// A [`Frame`] declares the vertex rest frame where a momentum is measured and the symbolic axes
+/// used to project that momentum. Event-specific numeric axes are represented by [`FrameAxes`].
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Frame {
+    origin: String,
+    axes: Axes,
+}
+
+impl Frame {
+    /// Construct a symbolic frame at `origin` from symbolic axes.
+    pub fn new(origin: impl Into<String>, axes: Axes) -> LadduResult<Self> {
+        let origin = origin.into();
+        if origin.trim().is_empty() {
+            return Err(LadduError::Custom(
+                "frame origin cannot be empty".to_string(),
+            ));
+        }
+        Ok(Self { origin, axes })
+    }
+
+    /// Return the vertex where measured momenta are projected.
+    pub fn origin(&self) -> &str {
+        &self.origin
+    }
+
+    /// Return the symbolic axes for this frame.
+    pub fn axes(&self) -> &Axes {
+        &self.axes
+    }
+}
+
+/// Symbolic axis definitions used to construct a frame basis.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Axes {
+    y: Axis,
+    z: Axis,
+}
+
+impl Axes {
+    /// Construct axes from a `y` axis recipe and a `z` axis recipe.
+    pub fn from_y_z(y: Axis, z: Axis) -> Self {
+        Self { y, z }
+    }
+
+    /// Return the symbolic `y` axis recipe.
+    pub fn y(&self) -> &Axis {
+        &self.y
+    }
+
+    /// Return the symbolic `z` axis recipe.
+    pub fn z(&self) -> &Axis {
+        &self.z
+    }
+}
+
+/// A symbolic axis recipe.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Axis {
+    source: AxisSource,
+    at: String,
+    sign: AxisSign,
+}
+
+impl Axis {
+    /// Construct an axis along a particle momentum.
+    pub fn particle(particle: impl Into<String>) -> Self {
+        Self {
+            source: AxisSource::Particle(particle.into()),
+            at: String::new(),
+            sign: AxisSign::Along,
+        }
+    }
+
+    /// Construct an axis opposite a particle momentum.
+    pub fn opposite(particle: impl Into<String>) -> Self {
+        Self::particle(particle).flipped()
+    }
+
+    /// Construct an axis normal to the plane spanned by two particle momenta.
+    ///
+    /// The primitive convention is `a x b`. Use [`Axis::flipped`] to reverse this orientation.
+    pub fn normal(a: impl Into<String>, b: impl Into<String>) -> Self {
+        Self {
+            source: AxisSource::Normal {
+                a: a.into(),
+                b: b.into(),
+            },
+            at: String::new(),
+            sign: AxisSign::Along,
+        }
+    }
+
+    /// Set the vertex frame where this axis source is evaluated.
+    pub fn at(mut self, vertex: impl Into<String>) -> Self {
+        self.at = vertex.into();
+        self
+    }
+
+    /// Return a copy with the axis orientation reversed.
+    pub fn flipped(mut self) -> Self {
+        self.sign = self.sign.flipped();
+        self
+    }
+
+    /// Return the axis source.
+    pub fn source(&self) -> &AxisSource {
+        &self.source
+    }
+
+    /// Return the vertex frame where this axis is evaluated.
+    pub fn frame(&self) -> &str {
+        &self.at
+    }
+
+    /// Return the axis orientation sign.
+    pub fn sign(&self) -> AxisSign {
+        self.sign
+    }
+}
+
+/// The source of a symbolic axis.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AxisSource {
+    /// A single particle momentum.
+    Particle(String),
+    /// The cross product of two particle momenta.
+    Normal {
+        /// First particle in `a x b`.
+        a: String,
+        /// Second particle in `a x b`.
+        b: String,
+    },
+}
+
+/// Whether a symbolic axis points along or opposite its source.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AxisSign {
+    /// Point along the source direction.
+    Along,
+    /// Point opposite the source direction.
+    Opposite,
+}
+
+impl AxisSign {
+    fn flipped(self) -> Self {
+        match self {
+            Self::Along => Self::Opposite,
+            Self::Opposite => Self::Along,
+        }
+    }
+
+    pub(crate) fn apply(self, vector: Vec3) -> Vec3 {
+        match self {
+            Self::Along => vector,
+            Self::Opposite => -vector,
+        }
+    }
+}
 
 /// Orthonormal axes used to project decay momenta into an angular-analysis frame.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -55,53 +208,11 @@ impl FrameAxes {
     }
 
     /// Construct right-handed axes from a `z` axis and a plane normal.
-    pub fn from_z_and_plane_normal(z: Vec3, plane_normal: Vec3) -> LadduResult<Self> {
+    pub fn from_y_z(y: Vec3, z: Vec3) -> LadduResult<Self> {
         let z = unit_vector(z, "z axis")?;
-        let plane_normal = unit_vector(plane_normal, "frame-plane normal")?;
-        let x = unit_vector(plane_normal.cross(&z), "x axis")?;
-        let y = unit_vector(z.cross(&x), "y axis")?;
+        let y = unit_vector(y, "y axis")?;
+        let x = unit_vector(y.cross(&z), "x axis")?;
         Self::new(x, y, z)
-    }
-
-    /// Construct decay-frame axes for a reaction root from caller-selected production momenta.
-    ///
-    /// `reference`, `parent`, and `spectator` are lab-frame four-momenta. `system_boost` is the
-    /// boost into the frame where the production plane is defined. This keeps named event topology
-    /// handling outside the frame helper while still sharing the convention-sensitive geometry.
-    pub fn from_decay_frame(
-        frame: Frame,
-        reference: Vec4,
-        parent: Vec4,
-        spectator: Vec4,
-        system_boost: Vec3,
-    ) -> LadduResult<Self> {
-        checked_boost_vector(system_boost, "production system")?;
-        let reference = reference.boost(&system_boost);
-        let parent = parent.boost(&system_boost);
-        let spectator = spectator.boost(&system_boost);
-
-        let parent_rest = RestFrame::new(parent)?;
-        let reference_in_parent = parent_rest.transform(reference).vec3();
-        let spectator_in_parent = parent_rest.transform(spectator).vec3();
-
-        let plane_normal = unit_vector(
-            reference_in_parent.cross(&(-spectator_in_parent)),
-            "production-plane normal",
-        )?;
-
-        let z = match frame {
-            Frame::Helicity => unit_vector(-spectator_in_parent, "decay-frame z axis")?,
-            Frame::GottfriedJackson => {
-                unit_vector(reference_in_parent, "Gottfried-Jackson z axis")?
-            }
-            Frame::Adair => {
-                return Err(LadduError::Custom(
-                    "Adair frame construction is not implemented yet".to_string(),
-                ));
-            }
-        };
-
-        Self::from_z_and_plane_normal(z, plane_normal)
     }
 
     /// Construct daughter axes in the current rest frame.
@@ -115,26 +226,26 @@ impl FrameAxes {
         if plane_normal.mag2() <= f64::EPSILON * f64::EPSILON {
             plane_normal = self.y;
         }
-        Self::from_z_and_plane_normal(z, plane_normal)
+        Self::from_y_z(plane_normal, z)
     }
 
     /// Return the unit `x` axis.
-    pub const fn x(self) -> Vec3 {
+    pub const fn x(&self) -> Vec3 {
         self.x
     }
 
     /// Return the unit `y` axis.
-    pub const fn y(self) -> Vec3 {
+    pub const fn y(&self) -> Vec3 {
         self.y
     }
 
     /// Return the unit `z` axis.
-    pub const fn z(self) -> Vec3 {
+    pub const fn z(&self) -> Vec3 {
         self.z
     }
 
     /// Project a vector onto these frame axes.
-    pub fn components(self, vector: Vec3) -> Vec3 {
+    pub fn components(&self, vector: &Vec3) -> Vec3 {
         Vec3::new(
             vector.dot(&self.x),
             vector.dot(&self.y),
@@ -142,10 +253,19 @@ impl FrameAxes {
         )
     }
 
-    /// Compute spherical decay angles for a vector expressed in the same rest frame as the axes.
-    pub fn angles(self, vector: Vec3) -> LadduResult<DecayAngles> {
-        let components = self.components(vector);
-        DecayAngles::from_components(components)
+    /// Return the cosine of the polar angle of `vector` in these axes.
+    pub fn costheta(&self, vector: &Vec3) -> f64 {
+        self.components(vector).costheta()
+    }
+
+    /// Return the azimuthal angle of `vector` in these axes.
+    pub fn phi(&self, vector: &Vec3) -> f64 {
+        self.components(vector).phi()
+    }
+
+    /// Return the polar angle of `vector` in these axes.
+    pub fn theta(&self, vector: &Vec3) -> f64 {
+        self.costheta(vector).acos()
     }
 }
 
@@ -155,19 +275,6 @@ mod tests {
 
     use super::*;
 
-    fn transverse_momenta() -> (Vec4, Vec4, Vec4) {
-        (
-            Vec4::new(0.0, 0.0, 5.0, 5.0),
-            Vec4::new(1.0, 0.0, 0.0, 2.0),
-            Vec4::new(-1.0, 0.0, 0.0, 2.0),
-        )
-    }
-
-    fn transverse_axes(frame: Frame) -> FrameAxes {
-        let (reference, parent, spectator) = transverse_momenta();
-        FrameAxes::from_decay_frame(frame, reference, parent, spectator, Vec3::zero()).unwrap()
-    }
-
     fn assert_vec3_close(actual: Vec3, expected: Vec3) {
         assert_relative_eq!(actual.x, expected.x);
         assert_relative_eq!(actual.y, expected.y);
@@ -175,32 +282,20 @@ mod tests {
     }
 
     #[test]
-    fn helicity_frame_axes_are_fixed_for_transverse_production() {
-        let axes = transverse_axes(Frame::Helicity);
+    fn symbolic_frame_keeps_axis_recipes() {
+        let frame = Frame::new(
+            "rho_decay",
+            Axes::from_y_z(
+                Axis::normal("beam", "spectator").at("production").flipped(),
+                Axis::opposite("spectator").at("rho_decay"),
+            ),
+        )
+        .unwrap();
 
-        assert_vec3_close(axes.x(), Vec3::new(0.0, 0.0, -1.0));
-        assert_vec3_close(axes.y(), Vec3::new(0.0, 1.0, 0.0));
-        assert_vec3_close(axes.z(), Vec3::new(1.0, 0.0, 0.0));
-    }
-
-    #[test]
-    fn gottfried_jackson_frame_uses_boosted_reference_axis() {
-        let axes = transverse_axes(Frame::GottfriedJackson);
-        let sqrt_three_over_two = 3.0_f64.sqrt() / 2.0;
-
-        assert_vec3_close(axes.x(), Vec3::new(sqrt_three_over_two, 0.0, 0.5));
-        assert_vec3_close(axes.y(), Vec3::new(0.0, 1.0, 0.0));
-        assert_vec3_close(axes.z(), Vec3::new(-0.5, 0.0, sqrt_three_over_two));
-    }
-
-    #[test]
-    fn rest_frame_boosts_parent_to_zero_momentum() {
-        let parent = Vec4::new(1.0, 2.0, 3.0, 5.0);
-        let rest_parent = RestFrame::new(parent).unwrap().transform(parent);
-
-        assert_relative_eq!(rest_parent.px(), 0.0);
-        assert_relative_eq!(rest_parent.py(), 0.0);
-        assert_relative_eq!(rest_parent.pz(), 0.0);
+        assert_eq!(frame.origin(), "rho_decay");
+        assert_eq!(frame.axes().y().frame(), "production");
+        assert_eq!(frame.axes().z().frame(), "rho_decay");
+        assert_eq!(frame.axes().y().sign(), AxisSign::Opposite);
     }
 
     #[test]
@@ -216,22 +311,17 @@ mod tests {
 
     #[test]
     fn projected_decay_angles_pin_azimuth_sign() {
-        let axes = transverse_axes(Frame::Helicity);
-        let angles = axes.angles(Vec3::new(0.0, 0.0, 1.0)).unwrap();
+        let axes = FrameAxes::from_y_z(Vec3::y(), Vec3::x()).unwrap();
+        let costheta = axes.costheta(&Vec3::new(0.0, 0.0, 1.0));
+        let phi = axes.phi(&Vec3::new(0.0, 0.0, 1.0));
 
-        assert_relative_eq!(angles.costheta(), 0.0);
-        assert_relative_eq!(angles.phi(), std::f64::consts::PI);
+        assert_relative_eq!(costheta, 0.0);
+        assert_relative_eq!(phi, std::f64::consts::PI);
     }
 
     #[test]
-    fn frame_axes_reject_degenerate_production_plane() {
-        let err = FrameAxes::from_decay_frame(
-            Frame::Helicity,
-            Vec4::new(0.0, 0.0, 5.0, 5.0),
-            Vec4::new(0.0, 0.0, 1.0, 2.0),
-            Vec4::new(0.0, 0.0, -1.0, 2.0),
-            Vec3::zero(),
-        );
+    fn frame_axes_reject_degenerate_plane() {
+        let err = FrameAxes::from_y_z(Vec3::zero(), Vec3::z());
 
         assert!(err.is_err());
     }

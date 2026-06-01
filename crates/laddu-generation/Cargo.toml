@@ -12,10 +12,8 @@ rust-version.workspace = true
 
 [dependencies]
 fastrand = { workspace = true }
-fastrand-contrib = { workspace = true }
 laddu-core = { workspace = true }
 serde = { workspace = true }
 
 [dev-dependencies]
 approx = { workspace = true }
-laddu = { workspace = true }

@@ -45,7 +45,11 @@ def run_analysis() -> Summary:
     # The default Python Dataset interface remains global under MPI.
     # Indexing, iteration, weights, and event counts keep their full-dataset
     # semantics unless a `*_local` accessor is requested explicitly.
-    mass_variable = ld.Mass(['kshort1', 'kshort2'])
+    channel = ld.Channel()
+    channel.create_decay('kk_decay', 'kk', ['kshort1', 'kshort2'])
+    channel.edit_particle('kshort1', source=ld.ParticleSource.Stored)
+    channel.edit_particle('kshort2', source=ld.ParticleSource.Stored)
+    mass_variable = channel.mass('kk')
     masses = mass_variable.value_on(dataset)
 
     weighted_mean = float(np.average(masses, weights=dataset.weights))

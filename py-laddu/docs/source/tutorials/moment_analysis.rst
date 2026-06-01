@@ -52,14 +52,22 @@ To implement this in code, we could imagine a function like
 
    def get_moment(data: ld.Dataset, *, l: int, m: int) -> complex:
        n_l = np.sqrt((2 * l + 1) / (4 * np.pi))
-       beam = ld.Particle.stored('beam')
-       target = ld.Particle.missing('target')
-       kshort1 = ld.Particle.stored('kshort1')
-       kshort2 = ld.Particle.stored('kshort2')
-       kk = ld.Particle.composite('kk', [kshort1, kshort2])
-       proton = ld.Particle.stored('proton')
-       reaction = ld.Reaction.two_to_two(beam, target, kk, proton)
-       angles = reaction.decay('kk').angles('kshort1')
+       channel = ld.Channel()
+       channel.create_production('production', ['beam', 'target'], ['kk', 'proton'])
+       channel.create_decay('kk_decay', 'kk', ['kshort1', 'kshort2'])
+       channel.edit_particle('beam', source=ld.ParticleSource.Stored)
+       channel.edit_particle('target', source=ld.ParticleSource.Missing)
+       channel.edit_particle('kshort1', source=ld.ParticleSource.Stored)
+       channel.edit_particle('kshort2', source=ld.ParticleSource.Stored)
+       channel.edit_particle('proton', source=ld.ParticleSource.Stored)
+       frame = ld.Frame(
+           'kk_decay',
+           ld.Axes.from_y_z(
+               ld.Axis.normal('beam', 'proton').at('production').flipped(),
+               ld.Axis.opposite('proton').at('kk_decay'),
+           ),
+       )
+       angles = channel.angles('kshort1', frame)
        ylm = ld.Ylm('ylm', l=l, m=m, angles=angles)
        model = ylm.conj() # take the conjugate
        evaluator = model.load(data)
@@ -129,14 +137,22 @@ Again, we can write this in code in a rather simple way:
    ) -> complex:
        n_l = np.sqrt((2 * l + 1) / (4 * np.pi))
        n_l_prime = np.sqrt((2 * l_prime + 1) / (4 * np.pi))
-       beam = ld.Particle.stored('beam')
-       target = ld.Particle.missing('target')
-       kshort1 = ld.Particle.stored('kshort1')
-       kshort2 = ld.Particle.stored('kshort2')
-       kk = ld.Particle.composite('kk', [kshort1, kshort2])
-       proton = ld.Particle.stored('proton')
-       reaction = ld.Reaction.two_to_two(beam, target, kk, proton)
-       angles = reaction.decay('kk').angles('kshort1')
+       channel = ld.Channel()
+       channel.create_production('production', ['beam', 'target'], ['kk', 'proton'])
+       channel.create_decay('kk_decay', 'kk', ['kshort1', 'kshort2'])
+       channel.edit_particle('beam', source=ld.ParticleSource.Stored)
+       channel.edit_particle('target', source=ld.ParticleSource.Missing)
+       channel.edit_particle('kshort1', source=ld.ParticleSource.Stored)
+       channel.edit_particle('kshort2', source=ld.ParticleSource.Stored)
+       channel.edit_particle('proton', source=ld.ParticleSource.Stored)
+       frame = ld.Frame(
+           'kk_decay',
+           ld.Axes.from_y_z(
+               ld.Axis.normal('beam', 'proton').at('production').flipped(),
+               ld.Axis.opposite('proton').at('kk_decay'),
+           ),
+       )
+       angles = channel.angles('kshort1', frame)
        ylm = ld.Ylm('ylm', l=l, m=m, angles=angles)
        ylm_prime = ld.Ylm('ylm_prime', l=l_prime, m=m_prime, angles=angles)
        model = ylm.conj() * ylm_prime.real()

@@ -263,32 +263,48 @@ mod tests {
     use approx::assert_relative_eq;
     use laddu_core::{
         data::test_dataset,
-        reaction::{Channel, Particle, Reaction},
-        Frame,
+        kinematics::{Axes, Axis, Frame},
+        reaction::Channel,
     };
 
     use super::*;
 
-    fn reaction_context() -> (Reaction, Angles) {
-        let beam = Particle::stored("beam");
-        let target = Particle::missing("target");
-        let kshort1 = Particle::stored("kshort1");
-        let kshort2 = Particle::stored("kshort2");
-        let kk = Particle::composite("kk", (&kshort1, &kshort2)).unwrap();
-        let proton = Particle::stored("proton");
-        let reaction = Reaction::two_to_two(&beam, &target, &kk, &proton).unwrap();
-        let angles = reaction
-            .decay("kk")
-            .unwrap()
-            .angles("kshort1", Frame::Helicity)
+    fn channel() -> Channel {
+        let mut channel = Channel::new();
+        channel
+            .create_production("production", ["beam", "target"], ["kk", "proton"])
             .unwrap();
-        (reaction, angles)
+        channel
+            .create_decay("kk_decay", "kk", ["kshort1", "kshort2"])
+            .unwrap();
+        channel.edit_particle("beam").unwrap().stored();
+        channel.edit_particle("target").unwrap().missing().unwrap();
+        channel.edit_particle("kshort1").unwrap().stored();
+        channel.edit_particle("kshort2").unwrap().stored();
+        channel.edit_particle("proton").unwrap().stored();
+        channel
+    }
+
+    fn helicity_like_frame() -> Frame {
+        Frame::new(
+            "kk_decay",
+            Axes::from_y_z(
+                Axis::normal("beam", "proton").at("production").flipped(),
+                Axis::opposite("proton").at("kk_decay"),
+            ),
+        )
+        .unwrap()
+    }
+
+    fn angles(channel: &Channel) -> Angles {
+        channel.angles("kshort1", helicity_like_frame()).unwrap()
     }
 
     #[test]
     fn test_ylm_evaluation() {
         let dataset = Arc::new(test_dataset());
-        let (_, angles) = reaction_context();
+        let channel = channel();
+        let angles = angles(&channel);
         let expr = Ylm::new("ylm", 1, 1, &angles).unwrap();
         let evaluator = expr.load(&dataset).unwrap();
         let result = evaluator.evaluate(&[]).unwrap();
@@ -298,7 +314,8 @@ mod tests {
 
     #[test]
     fn test_ylm_m_zero_reports_real_valued_hint() {
-        let (_, angles) = reaction_context();
+        let channel = channel();
+        let angles = angles(&channel);
         let real_ylm = Ylm {
             tags: Tags::empty(),
             l: 1,
@@ -320,38 +337,11 @@ mod tests {
     #[test]
     fn test_zlm_evaluation() {
         let dataset = Arc::new(test_dataset());
-        let (reaction, angles) = reaction_context();
-        let polarization = reaction.polarization("pol_magnitude", "pol_angle");
-        let expr = Zlm::new("zlm", 1, 1, Reflectivity::Positive, &angles, &polarization).unwrap();
-        let evaluator = expr.load(&dataset).unwrap();
-        let result = evaluator.evaluate(&[]).unwrap();
-        assert_relative_eq!(result[0].re, 0.042841277808013944);
-        assert_relative_eq!(result[0].im, -0.23859639139484332);
-    }
-
-    #[test]
-    fn test_zlm_evaluation_from_channel_adapter() {
-        let dataset = Arc::new(test_dataset());
-        let mut channel = Channel::new();
-        channel.particle("beam").unwrap().stored().unwrap();
-        channel.particle("target").unwrap().missing().unwrap();
-        channel.particle("kk").unwrap();
-        channel.particle("kshort1").unwrap().stored().unwrap();
-        channel.particle("kshort2").unwrap().stored().unwrap();
-        channel.particle("proton").unwrap().stored().unwrap();
-        channel
-            .vertex("ksks", ["kk"], ["kshort1", "kshort2"])
+        let channel = channel();
+        let angles = angles(&channel);
+        let polarization = channel
+            .polarization("production", "pol_magnitude", "pol_angle")
             .unwrap();
-        channel
-            .vertex("production", ["beam", "target"], ["kk", "proton"])
-            .unwrap();
-        let reaction = channel.two_to_two_reaction("production").unwrap();
-        let angles = reaction
-            .decay("kk")
-            .unwrap()
-            .angles("kshort1", Frame::Helicity)
-            .unwrap();
-        let polarization = reaction.polarization("pol_magnitude", "pol_angle");
         let expr = Zlm::new("zlm", 1, 1, Reflectivity::Positive, &angles, &polarization).unwrap();
         let evaluator = expr.load(&dataset).unwrap();
         let result = evaluator.evaluate(&[]).unwrap();
@@ -362,8 +352,10 @@ mod tests {
     #[test]
     fn test_polphase_evaluation() {
         let dataset = Arc::new(test_dataset());
-        let (reaction, _) = reaction_context();
-        let polarization = reaction.polarization("pol_magnitude", "pol_angle");
+        let channel = channel();
+        let polarization = channel
+            .polarization("production", "pol_magnitude", "pol_angle")
+            .unwrap();
         let expr = PolPhase::new("polphase", &polarization).unwrap();
         let evaluator = expr.load(&dataset).unwrap();
         let result = evaluator.evaluate(&[]).unwrap();

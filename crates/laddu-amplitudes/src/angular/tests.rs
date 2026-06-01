@@ -3,41 +3,64 @@ use std::sync::Arc;
 use approx::assert_relative_eq;
 use laddu_core::{
     data::test_dataset,
+    kinematics::{Axes, Axis, Frame},
     math::{BarrierKind, WignerDMatrix, QR_DEFAULT},
-    parameter,
-    reaction::{Particle, Reaction},
+    reaction::Channel,
     traits::Variable,
-    Frame,
+    variables::{Angles, Mass},
 };
 
 use super::{
     barrier::BlattWeisskopf,
     constants::ClebschGordan,
     sdme::{PhotonHelicity, PhotonPolarization, PhotonSDME},
-    wigner::{DecayAmplitudeExt, WignerD},
+    wigner::WignerD,
 };
-use crate::scalar::Scalar;
 
-fn reaction_context() -> (Reaction, Particle, Particle) {
-    let beam = Particle::stored("beam");
-    let target = Particle::missing("target");
-    let kshort1 = Particle::stored("kshort1");
-    let kshort2 = Particle::stored("kshort2");
-    let kk = Particle::composite("kk", (&kshort1, &kshort2)).unwrap();
-    let proton = Particle::stored("proton");
+fn channel() -> Channel {
+    let mut channel = Channel::new();
+    channel
+        .create_production("production", ["beam", "target"], ["kk", "proton"])
+        .unwrap();
+    channel
+        .create_decay("kk_decay", "kk", ["kshort1", "kshort2"])
+        .unwrap();
+    channel.edit_particle("beam").unwrap().stored();
+    channel.edit_particle("target").unwrap().missing().unwrap();
+    channel.edit_particle("kshort1").unwrap().stored();
+    channel.edit_particle("kshort2").unwrap().stored();
+    channel.edit_particle("proton").unwrap().stored();
+    channel
+}
+
+fn helicity_like_frame() -> Frame {
+    Frame::new(
+        "kk_decay",
+        Axes::from_y_z(
+            Axis::normal("beam", "proton").at("production").flipped(),
+            Axis::opposite("proton").at("kk_decay"),
+        ),
+    )
+    .unwrap()
+}
+
+fn angles(channel: &Channel) -> Angles {
+    channel.angles("kshort1", helicity_like_frame()).unwrap()
+}
+
+fn masses(channel: &Channel) -> (Mass, Mass, Mass) {
     (
-        Reaction::two_to_two(&beam, &target, &kk, &proton).unwrap(),
-        kk,
-        kshort1,
+        channel.mass("kk").unwrap(),
+        channel.mass("kshort1").unwrap(),
+        channel.mass("kshort2").unwrap(),
     )
 }
 
 #[test]
 fn wigner_d_matches_core_function() {
     let dataset = Arc::new(test_dataset());
-    let (reaction, _, _) = reaction_context();
-    let decay = reaction.decay("kk").unwrap();
-    let angles = decay.angles("kshort1", Frame::Helicity).unwrap();
+    let channel = channel();
+    let angles = angles(&channel);
     let expr = WignerD::new(
         "d",
         laddu_core::J::half(2),
@@ -112,17 +135,13 @@ fn photon_sdme_unpolarized_is_diagonal() {
 
 #[test]
 fn blatt_weisskopf_accepts_reaction_decay_context() {
-    let beam = laddu_core::Particle::stored("beam");
-    let target = laddu_core::Particle::stored("target");
-    let k1 = laddu_core::Particle::stored("kshort1");
-    let k2 = laddu_core::Particle::stored("kshort2");
-    let x = laddu_core::Particle::composite("x", (&k1, &k2)).unwrap();
-    let recoil = laddu_core::Particle::stored("proton");
-    let reaction = laddu_core::Reaction::two_to_two(&beam, &target, &x, &recoil).unwrap();
-    let decay = reaction.decay("x").unwrap();
+    let channel = channel();
+    let (parent_mass, daughter_1_mass, daughter_2_mass) = masses(&channel);
     let expr = BlattWeisskopf::new(
         "b",
-        &decay,
+        &parent_mass,
+        &daughter_1_mass,
+        &daughter_2_mass,
         laddu_core::L::int(2),
         1.5,
         QR_DEFAULT,
@@ -156,132 +175,24 @@ fn blatt_weisskopf_accepts_reaction_decay_context() {
 }
 
 #[test]
-fn helicity_factor_matches_conjugated_wigner_d() {
+fn wigner_d_with_matching_names_deduplicates() {
     let dataset = Arc::new(test_dataset());
-    let (reaction, _, _) = reaction_context();
-    let decay = reaction.decay("kk").unwrap();
-    let factor = DecayAmplitudeExt::helicity_factor(
-        &decay,
-        "h",
-        laddu_core::J::int(2),
-        laddu_core::M::int(1),
-        "kshort1",
-        laddu_core::M::int(1),
+    let channel = channel();
+    let angles = angles(&channel);
+    let factor_1 = WignerD::new(
+        "rho.d",
+        laddu_core::J::int(1),
         laddu_core::M::int(0),
-        Frame::Helicity,
-    )
-    .unwrap();
-    let angles = decay.angles("kshort1", Frame::Helicity).unwrap();
-    let explicit = WignerD::new(
-        "d",
-        laddu_core::J::int(2),
-        laddu_core::M::int(1),
-        laddu_core::M::int(1),
+        laddu_core::M::int(0),
         &angles,
     )
-    .unwrap()
-    .conj();
-
-    let factor_value = factor.load(&dataset).unwrap().evaluate(&[]).unwrap()[0];
-    let explicit_value = explicit.load(&dataset).unwrap().evaluate(&[]).unwrap()[0];
-
-    assert_relative_eq!(factor_value.re, explicit_value.re);
-    assert_relative_eq!(factor_value.im, explicit_value.im);
-}
-
-#[test]
-fn canonical_factor_matches_explicit_product() {
-    let dataset = Arc::new(test_dataset());
-    let (reaction, _, _) = reaction_context();
-    let decay = reaction.decay("kk").unwrap();
-    let factor = DecayAmplitudeExt::canonical_factor(
-        &decay,
-        "c",
-        laddu_core::J::int(2),
-        laddu_core::M::int(0),
-        laddu_core::L::int(2),
-        laddu_core::S::int(0),
-        "kshort1",
-        laddu_core::J::int(0),
-        laddu_core::J::int(0),
-        laddu_core::M::int(0),
-        laddu_core::M::int(0),
-        Frame::Helicity,
-    )
     .unwrap();
-    let explicit = Scalar::new("norm", parameter!("norm.value", 5.0_f64.sqrt())).unwrap()
-        * ClebschGordan::new(
-            "orbital_spin",
-            laddu_core::J::int(2),
-            laddu_core::M::int(0),
-            laddu_core::S::int(0),
-            laddu_core::M::int(0),
-            laddu_core::J::int(2),
-            laddu_core::M::int(0),
-        )
-        .unwrap()
-        * ClebschGordan::new(
-            "daughter_spin",
-            laddu_core::J::int(0),
-            laddu_core::M::int(0),
-            laddu_core::J::int(0),
-            laddu_core::M::int(0),
-            laddu_core::S::int(0),
-            laddu_core::M::int(0),
-        )
-        .unwrap()
-        * DecayAmplitudeExt::helicity_factor(
-            &decay,
-            "d",
-            laddu_core::J::int(2),
-            laddu_core::M::int(0),
-            "kshort1",
-            laddu_core::M::int(0),
-            laddu_core::M::int(0),
-            Frame::Helicity,
-        )
-        .unwrap();
-
-    let factor_value = factor.load(&dataset).unwrap().evaluate(&[]).unwrap()[0];
-    let explicit_value = explicit.load(&dataset).unwrap().evaluate(&[]).unwrap()[0];
-
-    assert_relative_eq!(factor_value.re, explicit_value.re);
-    assert_relative_eq!(factor_value.im, explicit_value.im);
-}
-
-#[test]
-fn decay_factors_with_matching_names_deduplicate() {
-    let dataset = Arc::new(test_dataset());
-    let (reaction, _, _) = reaction_context();
-    let decay = reaction.decay("kk").unwrap();
-    let factor_1 = DecayAmplitudeExt::canonical_factor(
-        &decay,
-        "rho.factor",
+    let factor_2 = WignerD::new(
+        "rho.d",
         laddu_core::J::int(1),
         laddu_core::M::int(0),
-        laddu_core::L::int(1),
-        laddu_core::S::int(0),
-        "kshort1",
-        laddu_core::J::int(0),
-        laddu_core::J::int(0),
         laddu_core::M::int(0),
-        laddu_core::M::int(0),
-        Frame::Helicity,
-    )
-    .unwrap();
-    let factor_2 = DecayAmplitudeExt::canonical_factor(
-        &decay,
-        "rho.factor",
-        laddu_core::J::int(1),
-        laddu_core::M::int(0),
-        laddu_core::L::int(1),
-        laddu_core::S::int(0),
-        "kshort1",
-        laddu_core::J::int(0),
-        laddu_core::J::int(0),
-        laddu_core::M::int(0),
-        laddu_core::M::int(0),
-        Frame::Helicity,
+        &angles,
     )
     .unwrap();
 

@@ -9,14 +9,13 @@
 #     "tqdm",
 # ]
 # ///
-"""Compare mass-binned Zlm and explicit production-vertex fits."""
+"""Compare mass-binned Zlm and explicit helicity-basis fits."""
 
 from __future__ import annotations
 
 import argparse
 import os
 from dataclasses import dataclass
-from fractions import Fraction
 from pathlib import Path
 
 import ganesh
@@ -27,15 +26,8 @@ from tqdm import trange
 
 P4_COLUMNS = ['beam', 'proton', 'kshort1', 'kshort2']
 AUX_COLUMNS = ['pol_magnitude', 'pol_angle']
-FRAME = 'GottfriedJackson'
 PHOTON_HELICITIES = (-1, 1)
 K_SECTORS = (0, 1)
-PRODUCTION_SPIN_SECTORS = (
-    (Fraction(1, 2), Fraction(1, 2)),
-    (Fraction(-1, 2), Fraction(-1, 2)),
-)
-PHOTON = ld.ParticleProperties('gamma', spin=1)
-PROTON = ld.ParticleProperties('proton', spin=Fraction(1, 2))
 KSHORT = ld.ParticleProperties('K_S', spin=0)
 
 
@@ -43,18 +35,26 @@ def RESONANCE(spin: int) -> ld.ParticleProperties:
     return ld.ParticleProperties(f'X{spin}', spin=spin)
 
 
-REACTION = ld.Reaction.two_to_two(
-    ld.Particle.stored('beam'),
-    ld.Particle.missing('target'),
-    ld.Particle.composite(
-        'kk', (ld.Particle.stored('kshort1'), ld.Particle.stored('kshort2'))
+CHANNEL = ld.Channel()
+CHANNEL.create_production('production', ['beam', 'target'], ['kk', 'proton'])
+CHANNEL.create_decay('kk_decay', 'kk', ['kshort1', 'kshort2'])
+CHANNEL.edit_particle('beam', source=ld.ParticleSource.Stored)
+CHANNEL.edit_particle('target', source=ld.ParticleSource.Missing)
+CHANNEL.edit_particle('kshort1', source=ld.ParticleSource.Stored)
+CHANNEL.edit_particle('kshort2', source=ld.ParticleSource.Stored)
+CHANNEL.edit_particle('proton', source=ld.ParticleSource.Stored)
+FRAME = ld.Frame(
+    'kk_decay',
+    ld.Axes.from_y_z(
+        ld.Axis.normal('beam', 'proton').at('production').flipped(),
+        ld.Axis.particle('beam').at('kk_decay'),
     ),
-    ld.Particle.stored('proton'),
 )
-PRODUCTION = REACTION.production()
-DECAY = REACTION.decay('kk')
-POLARIZATION = REACTION.polarization(pol_magnitude='pol_magnitude', pol_angle='pol_angle')
-MASS = REACTION.mass('kk')
+ANGLES = CHANNEL.angles('kshort1', FRAME)
+POLARIZATION = CHANNEL.polarization(
+    'production', pol_magnitude='pol_magnitude', pol_angle='pol_angle'
+)
+MASS = CHANNEL.mass('kk')
 
 
 @dataclass(frozen=True)
@@ -92,62 +92,6 @@ def complex_coupling(
     return coupling
 
 
-def allowed_production_waves(
-    decay_wave: DecayWave,
-    max_l: int,
-) -> list[ld.PartialWave]:
-    waves = []
-    for j_initial in ld.coupled_spins(PHOTON.spin, PROTON.spin):
-        parent = ld.ParticleProperties(f'gamma_p_J{j_initial}', spin=j_initial)
-        allowed_waves = ld.allowed_partial_waves(
-            parent,
-            RESONANCE(decay_wave.j),
-            PROTON,
-            max_l=max_l,
-            rules=ld.RuleSet.angular(),
-        )
-        waves.extend([allowed.wave for allowed in allowed_waves])
-    return waves
-
-
-def decay_factor(decay_wave: DecayWave) -> ld.Expression:
-    return DECAY.canonical_factor(
-        spin=decay_wave.j,
-        projection=decay_wave.m,
-        orbital_l=decay_wave.l,
-        coupled_spin=0,
-        daughter='kshort1',
-        daughter_1_spin=KSHORT.spin,
-        daughter_2_spin=KSHORT.spin,
-        lambda_1=0,
-        lambda_2=0,
-        frame=FRAME,
-    )
-
-
-def production_factor(
-    photon_helicity: int,
-    target_spin: Fraction,
-    recoil_spin: Fraction,
-    decay_wave: DecayWave,
-    production_wave: ld.PartialWave,
-) -> ld.Expression | None:
-    projection = photon_helicity + target_spin
-    lambda_total = decay_wave.m - recoil_spin
-    if abs(projection) > production_wave.j or abs(lambda_total) > production_wave.j:
-        return None
-    return PRODUCTION.canonical_factor(
-        spin=production_wave.j,
-        projection=projection,
-        orbital_l=production_wave.l,
-        coupled_spin=production_wave.s,
-        produced_spin=decay_wave.j,
-        recoil_spin=PROTON.spin,
-        lambda_produced=decay_wave.m,
-        lambda_recoil=recoil_spin,
-    )
-
-
 def helicity_parameter_name(
     decay_wave: DecayWave,
     photon_helicity: int,
@@ -163,55 +107,6 @@ def decay_waves_for_helicity(photon_helicity: int) -> list[DecayWave]:
     return waves
 
 
-def production_amplitudes(
-    target_spin: Fraction,
-    recoil_spin: Fraction,
-    max_l: int,
-) -> dict[int, ld.Expression]:
-    amplitudes = {}
-    for helicity in PHOTON_HELICITIES:
-        terms = []
-        for decay_wave in decay_waves_for_helicity(helicity):
-            decay = decay_factor(decay_wave)
-            for production_wave in allowed_production_waves(decay_wave, max_l):
-                prod = production_factor(
-                    helicity,
-                    target_spin,
-                    recoil_spin,
-                    decay_wave,
-                    production_wave,
-                )
-                if prod is None:
-                    continue
-                coupling = complex_coupling(
-                    helicity_parameter_name(decay_wave, helicity),
-                    decay_wave.label,
-                    anchor=decay_wave.label == 'S0',
-                )
-                terms.append(coupling * prod * decay)
-        amplitudes[helicity] = ld.expr_sum(terms) if terms else ld.Zero()
-    return amplitudes
-
-
-def full_physics_model(max_l: int = 0) -> ld.Expression:
-    terms = []
-    for target_spin, recoil_spin in PRODUCTION_SPIN_SECTORS:
-        amps = production_amplitudes(
-            target_spin,
-            recoil_spin,
-            max_l,
-        )
-        for helicity in PHOTON_HELICITIES:
-            for helicity_prime in PHOTON_HELICITIES:
-                rho = ld.PhotonSDME(
-                    helicity=helicity,
-                    helicity_prime=helicity_prime,
-                    polarization=POLARIZATION,
-                )
-                terms.append((rho * amps[helicity] * amps[helicity_prime].conj()).real())
-    return ld.expr_sum(terms)
-
-
 def helicity_t_parameter_name(
     wave: DecayWave,
     photon_helicity: int,
@@ -220,7 +115,6 @@ def helicity_t_parameter_name(
 
 
 def helicity_t_model() -> ld.Expression:
-    angles = DECAY.angles('kshort1', FRAME)
     terms = []
     for _ in K_SECTORS:
         amps = {}
@@ -231,7 +125,7 @@ def helicity_t_model() -> ld.Expression:
                 ylm = ld.Ylm(
                     l=wave.j,
                     m=m,
-                    angles=angles,
+                    angles=ANGLES,
                 )
                 t_wave = DecayWave(wave.label, wave.j, m, wave.l)
                 coupling = complex_coupling(
@@ -258,7 +152,6 @@ def zlm_parameter_name(wave: DecayWave, reflectivity: str) -> str:
 
 
 def zlm_model() -> ld.Expression:
-    angles = DECAY.angles('kshort1', FRAME)
     sectors = []
     for _ in K_SECTORS:
         for reflectivity in ('+', '-'):
@@ -269,7 +162,7 @@ def zlm_model() -> ld.Expression:
                     l=wave.j,
                     m=wave.m,
                     r=reflectivity,
-                    angles=angles,
+                    angles=ANGLES,
                     polarization=POLARIZATION,
                 )
                 coupling = complex_coupling(
@@ -323,25 +216,20 @@ def project_fit_counts(
 
 def print_fit_quality(rows: list[dict[str, float]]) -> None:
     print('\nFit quality')
-    print(
-        'bin  mass range       zlm NLL        helicity-T NLL  production NLL  '
-        'Delta T    Delta prod'
-    )
+    print('bin  mass range       zlm NLL        helicity-T NLL  Delta T')
     for row in rows:
         print(
             f'{int(row["bin"]):>3}  '
             f'{row["mass_low"]:.3f}-{row["mass_high"]:.3f}  '
             f'{row["zlm_nll"]:>13.6g}  '
             f'{row["helicity_t_nll"]:>14.6g}  '
-            f'{row["production_nll"]:>14.6g}  '
-            f'{row["helicity_t_delta_nll"]:>8.3g}  '
-            f'{row["production_delta_nll"]:>10.3g}'
+            f'{row["helicity_t_delta_nll"]:>8.3g}'
         )
 
 
 def print_projection_summary(rows: list[dict[str, float | str]]) -> None:
     print('\nProjected wave yields')
-    print('bin  component  data       zlm        helicity-T  production')
+    print('bin  component  data       zlm        helicity-T')
     by_bin_component: dict[tuple[int, str], dict[str, float | str]] = {}
     for row in rows:
         key = (int(row['bin']), str(row['component']))
@@ -361,14 +249,12 @@ def print_projection_summary(rows: list[dict[str, float | str]]) -> None:
         row = by_bin_component[key]
         zlm = float(row.get('zlm', float('nan')))
         helicity_t = float(row.get('helicity_t', float('nan')))
-        production = float(row.get('production', float('nan')))
         print(
             f'{int(row["bin"]):>3}  '
             f'{row["component"]!s:<9}  '
             f'{row["data_count"]:>7.0f}  '
             f'{zlm:>9.3g}  '
-            f'{helicity_t:>10.3g}  '
-            f'{production:>10.3g}'
+            f'{helicity_t:>10.3g}'
         )
 
 
@@ -380,7 +266,7 @@ def plot_wave_projections(
 ) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    models = ['zlm', 'helicity_t', 'production']
+    models = ['zlm', 'helicity_t']
     components = [
         ('total', 'total'),
         ('S0', 'S0'),
@@ -393,11 +279,10 @@ def plot_wave_projections(
         sharex=True,
     )
     axes_flat = np.ravel(axes)
-    offsets = {'zlm': -0.006, 'helicity_t': 0.0, 'production': 0.006}
+    offsets = {'zlm': -0.004, 'helicity_t': 0.004}
     colors = {
         'zlm': '#000000',
         'helicity_t': '#0072B2',
-        'production': '#D55E00',
     }
     for ax, (component, title) in zip(axes_flat, components, strict=False):
         ax.stairs(data_counts, mass_edges, color='#555555', label='data')
@@ -447,7 +332,6 @@ def fit_bins(
     accmc_bins = accmc.bin_by(MASS, nbins, (1.0, 2.0))
     z_model = zlm_model()
     t_model = helicity_t_model()
-    production_model = full_physics_model()
     fit_rows = []
     projection_rows = []
     for ibin in trange(nbins):
@@ -456,9 +340,6 @@ def fit_bins(
         mass_center = 0.5 * (mass_low + mass_high)
         z_nll, z_fit = best_fit(z_model, data_bins[ibin], accmc_bins[ibin], niters)
         t_nll, t_fit = best_fit(t_model, data_bins[ibin], accmc_bins[ibin], niters)
-        prod_nll, prod_fit = best_fit(
-            production_model, data_bins[ibin], accmc_bins[ibin], niters
-        )
         fit_rows.append(
             {
                 'bin': ibin,
@@ -466,15 +347,12 @@ def fit_bins(
                 'mass_high': mass_high,
                 'zlm_nll': z_fit.fx,
                 'helicity_t_nll': t_fit.fx,
-                'production_nll': prod_fit.fx,
                 'helicity_t_delta_nll': t_fit.fx - z_fit.fx,
-                'production_delta_nll': prod_fit.fx - z_fit.fx,
             }
         )
         projections_by_model = {
             'zlm': project_fit_counts(z_nll, z_fit),
             'helicity_t': project_fit_counts(t_nll, t_fit),
-            'production': project_fit_counts(prod_nll, prod_fit),
         }
         for model_name, projections in projections_by_model.items():
             for component, projected_count in projections.items():

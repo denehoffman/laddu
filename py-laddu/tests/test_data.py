@@ -9,7 +9,9 @@ import numpy as np
 import pandas as pd
 import polars as pl
 import pytest
-from laddu import Dataset, Event, Mass, Vec3, Vec4
+from laddu import Dataset, Event, Vec3, Vec4
+
+from tests.channel_helpers import mass as make_mass
 
 P4_NAMES = ['beam', 'proton', 'kshort1', 'kshort2']
 AUX_NAMES = ['pol_magnitude', 'pol_angle']
@@ -225,14 +227,14 @@ def test_dataset_alias_requires_metadata() -> None:
 
 def test_event_evaluate() -> None:
     event = make_test_event()
-    mass = Mass(['proton'])
+    mass = make_mass(['proton'])
     assert event.evaluate(mass) == 1.007
 
 
 def test_mass_accepts_string_input() -> None:
     dataset = make_test_dataset()
-    mass_list = Mass(['proton'])
-    mass_str = Mass('proton')
+    mass_list = make_mass(['proton'])
+    mass_str = make_mass('proton')
     assert mass_list.value(dataset[0]) == mass_str.value(dataset[0])
 
 
@@ -242,7 +244,7 @@ def test_event_evaluate_without_metadata() -> None:
         [],
         1.0,
     )
-    mass = Mass(['particle'])
+    mass = make_mass(['particle'])
     with pytest.raises(
         ValueError, match='Event has no associated metadata for name-based operations'
     ):
@@ -470,7 +472,9 @@ def test_io_from_columns_explicit_metadata() -> None:
     assert pytest.approx(dataset[1].p4('beam').pz) == 9.0
     assert pytest.approx(dataset[0].p4('target').px) == 0.1
     assert pytest.approx(dataset[1].aux['pol_angle']) == 0.5
-    assert np.allclose(dataset.evaluate(Mass(['target'])), dataset[Mass(['target'])])
+    assert np.allclose(
+        dataset.evaluate(make_mass(['target'])), dataset[make_mass(['target'])]
+    )
 
 
 def test_io_from_columns_infers_metadata_and_default_weights() -> None:
@@ -881,7 +885,7 @@ def test_dataset_filtering() -> None:
         p4_names=['p'],
         aux_names=[],
     )
-    mass = Mass(['p'])
+    mass = make_mass(['p'])
     expression = (mass > 0.0) & (mass < 1.0)
 
     filtered = dataset.filter(expression)
@@ -896,14 +900,14 @@ def test_dataset_filtering() -> None:
 
 def test_dataset_evaluate() -> None:
     dataset = make_test_dataset()
-    mass = Mass(['proton'])
+    mass = make_mass(['proton'])
     assert dataset.evaluate(mass)[0] == 1.007
 
 
 def test_dataset_index() -> None:
     dataset = make_test_dataset()
     assert isinstance(dataset[0], Event)
-    mass = Mass(['proton'])
+    mass = make_mass(['proton'])
     assert isinstance(dataset[mass], np.ndarray)
     proton_vec = dataset[0].p4s['proton']
     assert isinstance(proton_vec, Vec4)
@@ -932,7 +936,7 @@ def test_binned_dataset() -> None:
         aux_names=[],
     )
 
-    mass = Mass(['p'])
+    mass = make_mass(['p'])
     binned = dataset.bin_by(mass, 2, (0.0, 3.0))
 
     assert binned.n_bins == 2
@@ -967,7 +971,7 @@ def test_binned_dataset_bin_io_roundtrip(tmp_path: Path) -> None:
         aux_names=[],
     )
 
-    mass = Mass(['p'])
+    mass = make_mass(['p'])
     binned = dataset.bin_by(mass, 2, (0.0, 3.0))
 
     for idx in range(binned.n_bins):
@@ -1303,8 +1307,8 @@ def test_mass_uses_alias_string() -> None:
         DATA_F32_PARQUET,
         aliases={'resonance': ['kshort1', 'kshort2']},
     )
-    mass_alias = Mass('resonance')
-    mass_direct = Mass(['kshort1', 'kshort2'])
+    mass_alias = make_mass('resonance')
+    mass_direct = make_mass(['kshort1', 'kshort2'])
     alias_values = mass_alias.value_on(dataset)
     direct_values = mass_direct.value_on(dataset)
     np.testing.assert_allclose(alias_values, direct_values)

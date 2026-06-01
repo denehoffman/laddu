@@ -7,7 +7,8 @@ use laddu_core::{
     math::{blatt_weisskopf_m, BarrierKind, Sheet},
     resources::{Cache, ComplexScalarID, Parameters, Resources, ScalarID},
     traits::Variable,
-    Decay, LadduResult, L,
+    variables::Mass,
+    LadduResult, L,
 };
 use nalgebra::DVector;
 use num::complex::Complex64;
@@ -34,9 +35,12 @@ pub struct BlattWeisskopf {
 
 impl BlattWeisskopf {
     /// Construct a new Blatt-Weisskopf barrier-factor amplitude.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         tags: impl IntoTags,
-        decay: &Decay,
+        parent_mass: &Mass,
+        daughter_1_mass: &Mass,
+        daughter_2_mass: &Mass,
         l: L,
         reference_mass: f64,
         q_r: f64,
@@ -45,15 +49,10 @@ impl BlattWeisskopf {
     ) -> LadduResult<Expression> {
         Self {
             tags: tags.into_tags(),
-            decay_key: format!(
-                "{} -> {} {}",
-                decay.parent(),
-                decay.daughter_1(),
-                decay.daughter_2()
-            ),
-            parent_mass: Box::new(decay.parent_mass()),
-            daughter_1_mass: Box::new(decay.daughter_1_mass()),
-            daughter_2_mass: Box::new(decay.daughter_2_mass()),
+            decay_key: format!("{parent_mass} -> {daughter_1_mass} {daughter_2_mass}"),
+            parent_mass: Box::new(parent_mass.clone()),
+            daughter_1_mass: Box::new(daughter_1_mass.clone()),
+            daughter_2_mass: Box::new(daughter_2_mass.clone()),
             l,
             reference_mass,
             q_r,

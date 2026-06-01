@@ -14,27 +14,39 @@ use laddu::{
     data::DatasetReadOptions,
     extensions::NLL,
     io, parameter,
-    quantum::{Frame, Reflectivity},
+    quantum::Reflectivity,
     traits::LikelihoodTerm,
     variables::Mass,
+    Axes, Axis, Frame,
 };
 use rayon::{prelude::*, ThreadPoolBuilder};
 
 fn reaction_variables() -> (laddu::Angles, laddu::Polarization, Mass) {
-    let beam = laddu::Particle::stored("beam");
-    let target = laddu::Particle::missing("target");
-    let kshort1 = laddu::Particle::stored("kshort1");
-    let kshort2 = laddu::Particle::stored("kshort2");
-    let kk = laddu::Particle::composite("kk", (&kshort1, &kshort2)).unwrap();
-    let proton = laddu::Particle::stored("proton");
-    let reaction = laddu::Reaction::two_to_two(&beam, &target, &kk, &proton).unwrap();
-    let angles = reaction
-        .decay("kk")
-        .unwrap()
-        .angles("kshort1", Frame::Helicity)
+    let mut channel = laddu::Channel::new();
+    channel
+        .create_production("production", ["beam", "target"], ["kk", "proton"])
         .unwrap();
-    let polarization = reaction.polarization("pol_magnitude", "pol_angle");
-    let resonance_mass = reaction.mass("kk");
+    channel
+        .create_decay("kk_decay", "kk", ["kshort1", "kshort2"])
+        .unwrap();
+    channel.edit_particle("beam").unwrap().stored();
+    channel.edit_particle("target").unwrap().missing().unwrap();
+    channel.edit_particle("kshort1").unwrap().stored();
+    channel.edit_particle("kshort2").unwrap().stored();
+    channel.edit_particle("proton").unwrap().stored();
+    let frame = Frame::new(
+        "kk_decay",
+        Axes::from_y_z(
+            Axis::normal("beam", "proton").at("production").flipped(),
+            Axis::opposite("proton").at("kk_decay"),
+        ),
+    )
+    .unwrap();
+    let angles = channel.angles("kshort1", frame).unwrap();
+    let polarization = channel
+        .polarization("production", "pol_magnitude", "pol_angle")
+        .unwrap();
+    let resonance_mass = channel.mass("kk").unwrap();
     (angles, polarization, resonance_mass)
 }
 

@@ -19,7 +19,7 @@ use super::*;
 #[cfg(feature = "mpi")]
 use crate::mpi::{finalize_mpi, get_world, use_mpi, LadduMPI};
 use crate::{
-    traits::Variable, variables::IntoP4Selection, vectors::Vec3, LadduError, LadduResult, Mass,
+    traits::Variable, variables::IntoP4Selection, vectors::Vec3, Channel, LadduError, LadduResult,
     Vec4,
 };
 
@@ -449,8 +449,11 @@ fn test_event_boost() {
 fn test_event_view_evaluate() {
     let dataset = test_dataset();
     let event = dataset.event_local(0).unwrap();
-    let mut mass = Mass::new(["proton"]);
-    mass.bind(dataset.metadata()).unwrap();
+    let mut channel = Channel::new();
+    channel
+        .create_production("production", ["beam", "target"], ["kk", "proton"])
+        .unwrap();
+    let mass = channel.mass("proton").unwrap();
     assert_relative_eq!(event.evaluate(&mass), 1.007);
 }
 
@@ -696,8 +699,11 @@ fn test_dataset_push_event_mpi_rejects_mixed_local_and_global_layouts() {
 #[test]
 fn test_dataset_events_local_evaluate_without_event_clone() {
     let dataset = test_dataset();
-    let mut mass = Mass::new(["proton"]);
-    mass.bind(dataset.metadata()).unwrap();
+    let mut channel = Channel::new();
+    channel
+        .create_production("production", ["beam", "target"], ["kk", "proton"])
+        .unwrap();
+    let mass = channel.mass("proton").unwrap();
     let values = dataset
         .events_local()
         .map(|event| event.evaluate(&mass))
@@ -752,9 +758,11 @@ fn test_dataset_filtering() {
     ];
     let dataset = Dataset::new_with_metadata(events, metadata);
 
-    let metadata = dataset.metadata_arc();
-    let mut mass = Mass::new(["beam"]);
-    mass.bind(metadata.as_ref()).unwrap();
+    let mut channel = Channel::new();
+    channel
+        .create_production("production", ["beam", "target"], ["kk", "proton"])
+        .unwrap();
+    let mass = channel.mass("beam").unwrap();
     let expression = mass.gt(0.0).and(&mass.lt(1.0));
 
     let filtered = dataset.filter(&expression).unwrap();
@@ -817,7 +825,11 @@ fn test_event_view() {
 #[test]
 fn test_dataset_evaluate() {
     let dataset = test_dataset();
-    let mass = Mass::new(["proton"]);
+    let mut channel = Channel::new();
+    channel
+        .create_production("production", ["beam", "target"], ["kk", "proton"])
+        .unwrap();
+    let mass = channel.mass("proton").unwrap();
     assert_relative_eq!(dataset.evaluate(&mass).unwrap()[0], 1.007);
 }
 
@@ -1096,7 +1108,13 @@ fn test_weight_cache_recomputed_for_dataset_transforms() {
     );
     assert_weight_cache_matches_local_events(&dataset);
 
-    let filtered = dataset.filter(&Mass::new(["beam"]).gt(0.0)).unwrap();
+    let mut channel = Channel::new();
+    channel
+        .create_production("production", ["beam", "target"], ["kk", "proton"])
+        .unwrap();
+    let mass = channel.mass("beam").unwrap();
+
+    let filtered = dataset.filter(&mass.gt(0.0)).unwrap();
     assert_weight_cache_matches_local_events(&filtered);
 
     let bootstrapped = dataset.bootstrap(7);
@@ -1463,8 +1481,14 @@ fn test_add_columns_global_mpi_canonical_dataset() {
         assert_relative_eq!(global_p4[index].e(), event.p4("rank_p4").unwrap().e());
     }
 
+    let mut channel = Channel::new();
+    channel
+        .create_production("production", ["beam", "target"], ["kk", "proton"])
+        .unwrap();
+    let mass = channel.mass("beam").unwrap();
+
     let derived = dataset
-        .filter(&Mass::new(["beam"]).gt(-1.0))
+        .filter(&mass.gt(-1.0))
         .expect("filtered MPI dataset should be valid");
     let derived_aux = derived
         .aux_column_global("rank_aux")

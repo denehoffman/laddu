@@ -1,7 +1,6 @@
 from laddu.amplitude import Expression
 from laddu.quantum import JLike, LLike, MLike, QuantumNumber
-from laddu.reaction import Decay
-from laddu.variables import Angles, Polarization
+from laddu.variables import Angles, Mass, Polarization
 
 def WignerD(
     *tags: str,
@@ -12,7 +11,9 @@ def WignerD(
 ) -> Expression: ...
 def BlattWeisskopf(
     *tags: str,
-    decay: Decay,
+    parent_mass: Mass,
+    daughter_1_mass: Mass,
+    daughter_2_mass: Mass,
     l: LLike,
     reference_mass: float,
     q_r: float = ...,

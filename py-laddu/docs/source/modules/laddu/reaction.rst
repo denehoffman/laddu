@@ -1,9 +1,8 @@
 reaction
 ========
 
-Reaction and decay topology helpers are currently exposed from
-``laddu.utils.variables`` in Python.
+Channel topology and frame helpers.
 
-.. automodule:: laddu.utils.variables
+.. automodule:: laddu.reaction
    :members:
    :undoc-members:

@@ -161,7 +161,7 @@
 //! ### Calculating a Likelihood
 //! We could then write some code to use this amplitude. For demonstration purposes, let's just calculate an extended unbinned negative log-likelihood, assuming we have some data and Monte Carlo in the proper [parquet format](#data-format):
 //! ```rust,no_run
-//! use laddu::{Scalar, Dataset, DatasetReadOptions, Mass, NLL, parameter};
+//! use laddu::{Channel, Scalar, Dataset, DatasetReadOptions, Mass, NLL, parameter};
 //! # use laddu::{
 //! #    AmplitudeID, Cache, DatasetMetadata, Expression, LadduResult,
 //! #    ParameterID, Parameter, Parameters, Resources,
@@ -264,9 +264,13 @@
 //! let ds_data = laddu::io::read_parquet("test_data/data.parquet", &options).unwrap();
 //! let ds_mc = laddu::io::read_parquet("test_data/mc.parquet", &options).unwrap();
 //!
-//! let resonance_mass = Mass::new(["kshort1", "kshort2"]);
-//! let p1_mass = Mass::new(["kshort1"]);
-//! let p2_mass = Mass::new(["kshort2"]);
+//! let mut channel = Channel::new();
+//! channel.create_decay("ksks", "ksks", ["kshort1", "kshort2"]).unwrap();
+//! channel.edit_particle("kshort1").unwrap().stored();
+//! channel.edit_particle("kshort2").unwrap().stored();
+//! let resonance_mass = channel.mass("ksks").unwrap();
+//! let p1_mass = channel.mass("kshort1").unwrap();
+//! let p2_mass = channel.mass("kshort2").unwrap();
 //! let bw = MyBreitWigner::new(
 //!     "bw",
 //!     parameter!("mass"),
@@ -438,18 +442,18 @@ pub use laddu_core::{
         BinnedDataset, Dataset, DatasetMetadata, DatasetReadOptions, DatasetWriteOptions, Event,
         EventData, OwnedEvent,
     },
-    j, l, m, parameter,
+    j,
+    kinematics::{Axes, Axis, AxisSign, AxisSource, Frame},
+    l, m, parameter,
     parameters::{ParameterID, Parameters},
     quantum::{
-        AllowedPartialWave, Charge, Frame, Isospin, MandelstamChannel, Parity, PartialWave,
+        AllowedPartialWave, Charge, Isospin, MandelstamChannel, Parity, PartialWave,
         ParticleProperties, Reflectivity, RuleSet, SelectionRules, SpinState, Statistics, J, L, M,
         S,
     },
     reaction::{
-        Channel, ChannelMassGenerator, ChannelMomentumGenerator, ChannelP4Source, ChannelParticle,
-        ChannelVertex, ChannelVertexGenerator, Decay, ExternalId, Particle, ParticleGraph,
-        ParticleSource, Production, Reaction, ReactionTopology, ResolvedTwoToTwo, Species,
-        TwoToTwoReaction,
+        Channel, MassSampler, MomentumSource, Particle, ParticleGeneration, ParticleSource,
+        VertexGenerator,
     },
     resources::{Cache, Resources},
     s,

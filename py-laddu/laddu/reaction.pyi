@@ -1,126 +1,83 @@
-from typing import Literal, TypeAlias
+from collections.abc import Sequence
+from enum import Enum
+from typing import Literal
 
-from laddu.amplitude import Expression
-from laddu.quantum import JLike, LLike, MLike
-from laddu.variables import (
-    Angles,
-    CosTheta,
-    Mandelstam,
-    Mass,
-    Phi,
-    PolAngle,
-    Polarization,
-)
-from laddu.vectors import Vec4
+from laddu.generation import MassSampler, MomentumSource, VertexGenerator
+from laddu.quantum import ParticleProperties
+from laddu.variables import Angles, Mandelstam, Mass, PolAngle, Polarization
 
-_Frame: TypeAlias = Literal[
-    'Helicity',
-    'HX',
-    'HEL',
-    'GottfriedJackson',
-    'Gottfried Jackson',
-    'GJ',
-    'Gottfried-Jackson',
-    'Canonical',
-    'CanonicalHelicity',
-    'CH',
-    'Adair',
-    'AD',
-]
-
-class Particle:
-    label: str
-
+class Axis:
     @staticmethod
-    def stored(id: str) -> Particle: ...
+    def particle(particle: str) -> Axis: ...
     @staticmethod
-    def fixed(label: str, p4: Vec4) -> Particle: ...
+    def opposite(particle: str) -> Axis: ...
     @staticmethod
-    def missing(label: str) -> Particle: ...
-    @staticmethod
-    def composite(label: str, daughters: tuple[Particle, Particle]) -> Particle: ...
+    def normal(a: str, b: str) -> Axis: ...
+    def at(self, vertex: str) -> Axis: ...
+    def flipped(self) -> Axis: ...
 
-class Decay:
-    reaction: Reaction
-    parent: str
-    daughter_1: str
-    daughter_2: str
+class Axes:
+    @staticmethod
+    def from_y_z(y: Axis, z: Axis) -> Axes: ...
 
-    def daughters(self) -> list[str]: ...
-    def mass(self) -> Mass: ...
-    def parent_mass(self) -> Mass: ...
-    def daughter_1_mass(self) -> Mass: ...
-    def daughter_2_mass(self) -> Mass: ...
-    def daughter_mass(self, daughter: str) -> Mass: ...
-    def costheta(self, daughter: str, frame: _Frame = 'Helicity') -> CosTheta: ...
-    def phi(self, daughter: str, frame: _Frame = 'Helicity') -> Phi: ...
-    def angles(self, daughter: str, frame: _Frame = 'Helicity') -> Angles: ...
-    def helicity_factor(
+class Frame:
+    origin: str
+
+    def __init__(self, origin: str, axes: Axes) -> None: ...
+
+class ParticleSource(Enum):
+    Inferred = 0
+    Stored = 1
+    Missing = 2
+
+class Channel:
+    def __init__(self) -> None: ...
+    def create_vertex(
         self,
-        *tags: str,
-        spin: JLike,
-        projection: MLike,
-        daughter: str,
-        lambda_1: MLike,
-        lambda_2: MLike,
-        frame: _Frame = 'Helicity',
-    ) -> Expression: ...
-    def canonical_factor(
+        label: str,
+        incoming: Sequence[str],
+        outgoing: Sequence[str],
+        *,
+        generator: VertexGenerator | None = None,
+    ) -> None: ...
+    def create_decay(
         self,
-        *tags: str,
-        spin: JLike,
-        projection: MLike,
-        orbital_l: LLike,
-        coupled_spin: JLike,
-        daughter: str,
-        daughter_1_spin: JLike,
-        daughter_2_spin: JLike,
-        lambda_1: MLike,
-        lambda_2: MLike,
-        frame: _Frame = 'Helicity',
-    ) -> Expression: ...
-
-class Production:
-    reaction: Reaction
-    produced: str
-    recoil: str
-
-    def costheta(self) -> CosTheta: ...
-    def phi(self) -> Phi: ...
-    def angles(self) -> Angles: ...
-    def helicity_factor(
+        label: str,
+        parent: str,
+        daughters: Sequence[str],
+        *,
+        generator: VertexGenerator | None = None,
+    ) -> None: ...
+    def create_production(
         self,
-        *tags: str,
-        spin: JLike,
-        projection: MLike,
-        lambda_produced: MLike,
-        lambda_recoil: MLike,
-    ) -> Expression: ...
-    def canonical_factor(
+        label: str,
+        incoming: Sequence[str],
+        outgoing: Sequence[str],
+        *,
+        generator: VertexGenerator | None = None,
+    ) -> None: ...
+    def edit_particle(
         self,
-        *tags: str,
-        spin: JLike,
-        projection: MLike,
-        orbital_l: LLike,
-        coupled_spin: JLike,
-        produced_spin: JLike,
-        recoil_spin: JLike,
-        lambda_produced: MLike,
-        lambda_recoil: MLike,
-    ) -> Expression: ...
-
-class Reaction:
-    @staticmethod
-    def two_to_two(
-        p1: Particle, p2: Particle, p3: Particle, p4: Particle
-    ) -> Reaction: ...
+        particle: str,
+        *,
+        source: ParticleSource | None = None,
+        properties: ParticleProperties | None = None,
+        mass: float | None = None,
+        momentum: MomentumSource | None = None,
+        mass_sampler: MassSampler | None = None,
+        name: str | None = None,
+        species: str | None = None,
+        self_conjugate: bool | None = None,
+    ) -> None: ...
+    def edit_vertex(self, vertex: str, *, generator: VertexGenerator) -> None: ...
     def mass(self, particle: str) -> Mass: ...
-    def decay(self, parent: str) -> Decay: ...
-    def production(self) -> Production: ...
+    def angles(self, particle: str, frame: Frame) -> Angles: ...
     def mandelstam(
-        self, channel: Literal['s', 't', 'u', 'S', 'T', 'U']
+        self, vertex: str, channel: Literal['s', 't', 'u', 'S', 'T', 'U']
     ) -> Mandelstam: ...
-    def pol_angle(self, pol_angle: str) -> PolAngle: ...
-    def polarization(self, *, pol_magnitude: str, pol_angle: str) -> Polarization: ...
+    def pol_angle(self, vertex: str, angle_aux: str) -> PolAngle: ...
+    def polarization(
+        self, vertex: str, *, pol_magnitude: str, pol_angle: str
+    ) -> Polarization: ...
 
-__all__ = ['Decay', 'Particle', 'Production', 'Reaction']
+__all__ = ['Axes', 'Axis', 'Channel', 'Frame', 'ParticleSource']

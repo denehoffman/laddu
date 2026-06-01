@@ -16,10 +16,10 @@ use laddu::{
     data::{Dataset, DatasetReadOptions},
     extensions::NLL,
     io, parameter,
-    quantum::{Frame, Reflectivity},
+    quantum::Reflectivity,
     traits::{LikelihoodTerm, Variable},
     variables::{Mass, PolMagnitude},
-    RngSubsetExtension,
+    Axes, Axis, Frame, RngSubsetExtension,
 };
 use nalgebra::{DMatrix, DVector};
 use num::complex::Complex64;
@@ -44,30 +44,45 @@ const PARTIAL_WAVE_BIN_COUNT: usize = 8;
 const MOMENT_COMPACT_BASIS_MAX_L: usize = 2;
 
 fn reaction_variables() -> (
-    laddu::Reaction,
     laddu::Angles,
     laddu::Polarization,
+    laddu::PolAngle,
     Mass,
     Mass,
     Mass,
 ) {
-    let beam = laddu::Particle::stored("beam");
-    let target = laddu::Particle::missing("target");
-    let kshort1 = laddu::Particle::stored("kshort1");
-    let kshort2 = laddu::Particle::stored("kshort2");
-    let kk = laddu::Particle::composite("kk", (&kshort1, &kshort2)).unwrap();
-    let proton = laddu::Particle::stored("proton");
-    let reaction = laddu::Reaction::two_to_two(&beam, &target, &kk, &proton).unwrap();
-    let decay = reaction.decay("kk").unwrap();
-    let angles = decay.angles("kshort1", Frame::Helicity).unwrap();
-    let polarization = reaction.polarization("pol_magnitude", "pol_angle");
-    let resonance_mass = decay.parent_mass();
-    let daughter_1_mass = decay.daughter_1_mass();
-    let daughter_2_mass = decay.daughter_2_mass();
+    let mut channel = laddu::Channel::new();
+    channel
+        .create_production("production", ["beam", "target"], ["kk", "proton"])
+        .unwrap();
+    channel
+        .create_decay("kk_decay", "kk", ["kshort1", "kshort2"])
+        .unwrap();
+    channel.edit_particle("beam").unwrap().stored();
+    channel.edit_particle("target").unwrap().missing().unwrap();
+    channel.edit_particle("kshort1").unwrap().stored();
+    channel.edit_particle("kshort2").unwrap().stored();
+    channel.edit_particle("proton").unwrap().stored();
+    let frame = Frame::new(
+        "kk_decay",
+        Axes::from_y_z(
+            Axis::normal("beam", "proton").at("production").flipped(),
+            Axis::opposite("proton").at("kk_decay"),
+        ),
+    )
+    .unwrap();
+    let angles = channel.angles("kshort1", frame).unwrap();
+    let polarization = channel
+        .polarization("production", "pol_magnitude", "pol_angle")
+        .unwrap();
+    let pol_angle = channel.pol_angle("production", "pol_angle").unwrap();
+    let resonance_mass = channel.mass("kk").unwrap();
+    let daughter_1_mass = channel.mass("kshort1").unwrap();
+    let daughter_2_mass = channel.mass("kshort2").unwrap();
     (
-        reaction,
         angles,
         polarization,
+        pol_angle,
         resonance_mass,
         daughter_1_mass,
         daughter_2_mass,
@@ -130,7 +145,7 @@ fn kmatrix_max_events_from_env() -> Option<usize> {
 }
 
 fn build_breit_wigner_partial_wave_model() -> laddu::Expression {
-    let (_, angles, polarization, resonance_mass, daughter_1_mass, daughter_2_mass) =
+    let (angles, polarization, _, resonance_mass, daughter_1_mass, daughter_2_mass) =
         reaction_variables();
 
     let z00p = Zlm::new("Z00+", 0, 0, Reflectivity::Positive, &angles, &polarization)
@@ -313,7 +328,7 @@ fn breit_wigner_partial_wave_benchmarks(c: &mut Criterion) {
     }
     subset_group.finish();
 
-    let mass = Mass::new(["kshort1", "kshort2"]);
+    let (_, _, _, mass, _, _) = reaction_variables();
     let data_binned = ds_data
         .bin_by(mass.clone(), PARTIAL_WAVE_BIN_COUNT, (1.0, 2.0))
         .expect("binned data should build");
@@ -376,8 +391,7 @@ fn moment_analysis_benchmarks(c: &mut Criterion) {
     let dataset = read_benchmark_dataset();
     let ds_data = sample_dataset(&dataset, MOMENT_DATA_SEED, MOMENT_DATA_SAMPLE_EVENTS);
     let ds_accmc = sample_dataset(&dataset, MOMENT_ACCMC_SEED, MOMENT_ACCMC_SAMPLE_EVENTS);
-    let (reaction, angles, _, _, _, _) = reaction_variables();
-    let pol_angle = reaction.pol_angle("pol_angle");
+    let (angles, _, pol_angle, _, _, _) = reaction_variables();
     let pol_magnitude = PolMagnitude::new("pol_magnitude");
     let big_phi = pol_angle
         .value_on(&ds_data)
@@ -404,7 +418,7 @@ fn moment_analysis_benchmarks(c: &mut Criterion) {
                     .expect("measured moment evaluation should succeed");
                 let mut sum = Complex64::new(0.0, 0.0);
                 for index in 0..values.len() {
-                    let pol_term = (2.0 * big_phi[index]).cos() / p_gamma[index];
+                    let pol_term = (2.0_f64 * big_phi[index]).cos() / p_gamma[index];
                     sum += values[index] * (weights[index] * pol_term);
                 }
                 black_box(sum)
@@ -425,7 +439,7 @@ fn moment_analysis_benchmarks(c: &mut Criterion) {
                 let mut value_sum = Complex64::new(0.0, 0.0);
                 let mut gradient_sum = Complex64::new(0.0, 0.0);
                 for index in 0..values.len() {
-                    let pol_term = (2.0 * big_phi[index]).cos() / p_gamma[index];
+                    let pol_term = (2.0_f64 * big_phi[index]).cos() / p_gamma[index];
                     let weighted = weights[index] * pol_term;
                     value_sum += values[index] * weighted;
                     if let Some(first) = gradients[index].get(0) {
@@ -546,7 +560,7 @@ fn build_kmatrix_nll() -> Box<NLL> {
     } else {
         (dataset.clone(), dataset)
     };
-    let (_, angles, polarization, resonance_mass, _, _) = reaction_variables();
+    let (angles, polarization, _, resonance_mass, _, _) = reaction_variables();
     let z00p = Zlm::new("Z00+", 0, 0, Reflectivity::Positive, &angles, &polarization)
         .expect("z00+ should construct");
     let z00n = Zlm::new("Z00-", 0, 0, Reflectivity::Negative, &angles, &polarization)

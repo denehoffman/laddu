@@ -5,15 +5,14 @@ use serde::{Deserialize, Serialize};
 use super::{AuxSelection, Variable};
 use crate::{
     data::{DatasetMetadata, EventLike},
-    reaction::Reaction,
-    vectors::Vec3,
+    reaction::PolarizationAngleEvaluator,
     LadduResult,
 };
 
 /// A struct defining the polarization angle for a beam relative to the production plane.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PolAngle {
-    reaction: Reaction,
+    evaluator: PolarizationAngleEvaluator,
     angle_aux: AuxSelection,
 }
 
@@ -21,22 +20,24 @@ impl Display for PolAngle {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "PolAngle(reaction={:?}, angle_aux={})",
-            self.reaction.topology(),
-            self.angle_aux.name(),
+            "PolAngle(vertex={}, reference={}, spectator={}, angle_aux={})",
+            self.evaluator.vertex(),
+            self.evaluator.reference(),
+            self.evaluator.spectator(),
+            self.angle_aux.name()
         )
     }
 }
 
 impl PolAngle {
-    /// Constructs the polarization angle given a [`Reaction`] describing the production plane and
-    /// the auxiliary column storing the precomputed angle.
-    pub fn new<A>(reaction: Reaction, angle_aux: A) -> Self
+    /// Constructs the polarization angle given a topology-backed evaluator and the auxiliary
+    /// column storing the precomputed lab-frame polarization angle.
+    pub fn new<A>(evaluator: PolarizationAngleEvaluator, angle_aux: A) -> Self
     where
         A: Into<String>,
     {
         Self {
-            reaction,
+            evaluator,
             angle_aux: AuxSelection::new(angle_aux.into()),
         }
     }
@@ -45,24 +46,13 @@ impl PolAngle {
 #[typetag::serde]
 impl Variable for PolAngle {
     fn bind(&mut self, metadata: &DatasetMetadata) -> LadduResult<()> {
-        let _ = metadata;
         self.angle_aux.bind(metadata)?;
         Ok(())
     }
 
     fn value(&self, event: &dyn EventLike) -> f64 {
-        let resolved = self
-            .reaction
-            .resolve_two_to_two(event)
-            .unwrap_or_else(|err| panic!("failed to evaluate polarization angle: {err}"));
-        let beam = resolved.p1();
-        let recoil = resolved.p4();
         let pol_angle = event.aux_at(self.angle_aux.index());
-        let polarization = Vec3::new(pol_angle.cos(), pol_angle.sin(), 0.0);
-        let y = beam.vec3().cross(&-recoil.vec3()).unit();
-        let numerator = y.dot(&polarization);
-        let denominator = beam.vec3().unit().dot(&polarization.cross(&y));
-        f64::atan2(numerator, denominator)
+        self.evaluator.angle(event, pol_angle).expect("TODO")
     }
 }
 
@@ -77,7 +67,7 @@ impl Display for PolMagnitude {
         write!(
             f,
             "PolMagnitude(magnitude_aux={})",
-            self.magnitude_aux.name(),
+            self.magnitude_aux.name()
         )
     }
 }
@@ -116,8 +106,10 @@ impl Display for Polarization {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "Polarization(reaction={:?}, magnitude_aux={}, angle_aux={})",
-            self.pol_angle.reaction.topology(),
+            "Polarization(vertex={}, reference={}, spectator={}, magnitude_aux={}, angle_aux={})",
+            self.pol_angle.evaluator.vertex(),
+            self.pol_angle.evaluator.reference(),
+            self.pol_angle.evaluator.spectator(),
             self.pol_magnitude.magnitude_aux.name(),
             self.pol_angle.angle_aux.name(),
         )
@@ -125,13 +117,13 @@ impl Display for Polarization {
 }
 
 impl Polarization {
-    /// Constructs the polarization angle and magnitude given a [`Reaction`] and distinct
-    /// auxiliary columns for magnitude and angle.
+    /// Constructs the polarization angle and magnitude given a topology-backed angle evaluator and
+    /// distinct auxiliary columns for magnitude and angle.
     ///
     /// # Panics
     ///
     /// Panics if `magnitude_aux` and `angle_aux` refer to the same auxiliary column name.
-    pub fn new<M, A>(reaction: Reaction, magnitude_aux: M, angle_aux: A) -> Self
+    pub fn new<M, A>(evaluator: PolarizationAngleEvaluator, magnitude_aux: M, angle_aux: A) -> Self
     where
         M: Into<String>,
         A: Into<String>,
@@ -144,7 +136,7 @@ impl Polarization {
         );
         Self {
             pol_magnitude: PolMagnitude::new(magnitude_aux),
-            pol_angle: PolAngle::new(reaction, angle_aux),
+            pol_angle: PolAngle::new(evaluator, angle_aux),
         }
     }
 }

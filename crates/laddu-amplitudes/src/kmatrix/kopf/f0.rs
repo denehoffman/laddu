@@ -311,14 +311,14 @@ mod tests {
     use std::sync::Arc;
 
     use approx::assert_relative_eq;
-    use laddu_core::{data::test_dataset, parameter, Mass};
+    use laddu_core::{data::test_dataset, parameter};
 
     use super::*;
 
     #[test]
     fn test_f0_evaluation() {
         let dataset = Arc::new(test_dataset());
-        let res_mass = Mass::new(["kshort1", "kshort2"]);
+        let res_mass = crate::test_utils::mass("kk");
         let expr = KopfKMatrixF0::new(
             "f0",
             [
@@ -346,7 +346,7 @@ mod tests {
     #[test]
     fn test_f0_gradient() {
         let dataset = Arc::new(test_dataset());
-        let res_mass = Mass::new(["kshort1", "kshort2"]);
+        let res_mass = crate::test_utils::mass("kk");
         let expr = KopfKMatrixF0::new(
             "f0",
             [
@@ -390,7 +390,7 @@ mod tests {
     }
     #[test]
     fn test_f0_resample() {
-        let res_mass = Mass::new(["kshort1", "kshort2"]);
+        let res_mass = crate::test_utils::mass("kk");
         let _amp = KopfKMatrixF0::new(
             "f0",
             [

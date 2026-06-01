@@ -23,6 +23,14 @@ from corner import corner
 from loguru import logger
 
 
+def resonance_mass() -> ld.Mass:
+    channel = ld.Channel()
+    channel.create_decay('kk_decay', 'kk', ['kshort1', 'kshort2'])
+    channel.edit_particle('kshort1', source=ld.ParticleSource.Stored)
+    channel.edit_particle('kshort2', source=ld.ParticleSource.Stored)
+    return channel.mass('kk')
+
+
 # This custom terminator differs from the one provided by `laddu`. Rather than tracing the
 # walker positions and calculating the IAT, this first projects the current walker positions
 # onto the two constituent waves and uses those to calculate a different IAT. This converges
@@ -116,7 +124,7 @@ def main() -> None:
     logger.info('Opening AccMC file...')
     accmc_ds = ld.io.read_parquet(accmc_file, p4s=p4_columns, aux=aux_columns)
 
-    res_mass = ld.Mass(['kshort1', 'kshort2'])
+    res_mass = resonance_mass()
     m_data = res_mass.value_on(data_ds)
 
     font = {'family': 'DejaVu Sans', 'weight': 'normal', 'size': 22}

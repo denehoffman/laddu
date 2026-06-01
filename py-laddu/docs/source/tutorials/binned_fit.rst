@@ -21,7 +21,16 @@ Like before, we begin by loading each dataset, but this time we can chain a meth
 
    import laddu as ld
 
-   res_mass = ld.Mass(['kshort1', 'kshort2'])
+   channel = ld.Channel()
+   channel.create_production('production', ['beam', 'target'], ['kk', 'proton'])
+   channel.create_decay('kk_decay', 'kk', ['kshort1', 'kshort2'])
+   channel.edit_particle('beam', source=ld.ParticleSource.Stored)
+   channel.edit_particle('target', source=ld.ParticleSource.Missing)
+   channel.edit_particle('kshort1', source=ld.ParticleSource.Stored)
+   channel.edit_particle('kshort2', source=ld.ParticleSource.Stored)
+   channel.edit_particle('proton', source=ld.ParticleSource.Stored)
+
+   res_mass = channel.mass('kk')
    bins = 50
    mass_range = (1.0, 2.0)
 
@@ -46,16 +55,15 @@ where the terms with particle names in square brackets still represent the produ
 
 .. code-block:: python
 
-   beam = ld.Particle.stored('beam')
-   target = ld.Particle.missing('target')
-   kshort1 = ld.Particle.stored('kshort1')
-   kshort2 = ld.Particle.stored('kshort2')
-   kk = ld.Particle.composite('kk', [kshort1, kshort2])
-   proton = ld.Particle.stored('proton')
-   reaction = ld.Reaction.two_to_two(beam, target, kk, proton)
-   decay = reaction.decay('kk')
-   angles = decay.angles('kshort1')
-   polarization = reaction.polarization(pol_magnitude='pol_magnitude', pol_angle='pol_angle')
+   frame = ld.Frame(
+       'kk_decay',
+       ld.Axes.from_y_z(
+           ld.Axis.normal('beam', 'proton').at('production').flipped(),
+           ld.Axis.opposite('proton').at('kk_decay'),
+       ),
+   )
+   angles = channel.angles('kshort1', frame)
+   polarization = channel.polarization('production', pol_magnitude='pol_magnitude', pol_angle='pol_angle')
 
    z00p = ld.Zlm("Z00+", l=0, m=0, r="+", angles=angles, polarization=polarization)
    z22p = ld.Zlm("Z22+", l=2, m=2, r="+", angles=angles, polarization=polarization)

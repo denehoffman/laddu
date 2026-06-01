@@ -556,6 +556,8 @@ pub mod quantum;
 pub mod reaction;
 /// Structures for manipulating the cache and free parameters.
 pub mod resources;
+/// Random sampling primitives shared by generation and user code.
+pub mod sampling;
 /// Event variables derived from reactions and particle selections.
 pub mod variables;
 /// Three- and four-vector types used throughout the library.
@@ -575,23 +577,22 @@ pub use crate::{
     },
     execution::ThreadPoolManager,
     expression::{CompiledExpression, CompiledExpressionNode, Evaluator, Expression},
-    kinematics::{DecayAngles, FrameAxes, RestFrame},
+    kinematics::{Axes, Axis, AxisSign, AxisSource, Frame, FrameAxes, RestFrame},
     parameters::{Parameter, ParameterID, ParameterMap, Parameters},
     quantum::{
-        AllowedPartialWave, Charge, Frame, Isospin, MandelstamChannel, Parity, PartialWave,
+        AllowedPartialWave, Charge, ExternalId, Isospin, MandelstamChannel, Parity, PartialWave,
         ParticleProperties, Reflectivity, RuleSet, SelectionRules, SpinState, Statistics, J, L, M,
         S,
     },
     reaction::{
-        Channel, ChannelMassGenerator, ChannelMomentumGenerator, ChannelP4Source, ChannelParticle,
-        ChannelVertex, ChannelVertexGenerator, Decay, ExternalId, Particle, ParticleGraph,
-        ParticleSource, Production, Reaction, ReactionTopology, ResolvedTwoToTwo, Species,
-        TwoToTwoReaction,
+        Channel, MassSampler, MomentumSource, Particle, ParticleEdit, ParticleGeneration,
+        ParticleSource, VertexEdit, VertexGenerator,
     },
     resources::{
         Cache, ComplexMatrixID, ComplexScalarID, ComplexVectorID, MatrixID, Resources, ScalarID,
         VectorID,
     },
+    sampling::{HistogramSampler, LadduRngExt, ScalarDistribution},
     variables::{
         Angles, CosTheta, IntoP4Selection, Mandelstam, Mass, P4Selection, Phi, PolAngle,
         PolMagnitude, Polarization,

@@ -4,6 +4,48 @@ use serde::{Deserialize, Serialize};
 
 use crate::{quantum::types::Statistics, Charge, LadduError, LadduResult, Parity, J, L, M, S};
 
+/// An external identifier associated with a physical particle species.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub enum ExternalId {
+    /// A numeric identifier in a named namespace, such as a PDG code.
+    Code {
+        /// Identifier namespace.
+        namespace: String,
+        /// Identifier value.
+        value: i64,
+    },
+    /// A textual identifier in a named namespace.
+    Label {
+        /// Identifier namespace.
+        namespace: String,
+        /// Identifier value.
+        value: String,
+    },
+}
+
+impl ExternalId {
+    /// Construct a numeric identifier in an arbitrary namespace.
+    pub fn new(namespace: impl Into<String>, value: i64) -> Self {
+        Self::Code {
+            namespace: namespace.into(),
+            value,
+        }
+    }
+
+    /// Construct a PDG identifier.
+    pub fn pdg(value: i64) -> Self {
+        Self::new("pdg", value)
+    }
+
+    /// Construct a textual identifier in an arbitrary namespace.
+    pub fn label(namespace: impl Into<String>, value: impl Into<String>) -> Self {
+        Self::Label {
+            namespace: namespace.into(),
+            value: value.into(),
+        }
+    }
+}
+
 /// A validated spin state with spin and projection stored as doubled quantum numbers.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
 pub struct SpinState {
@@ -65,7 +107,7 @@ impl Isospin {
 }
 
 /// The set of properties which define the quantum state of a particle.
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct ParticleProperties {
     /// The name of the particle, if known.
     pub name: Option<String>,
@@ -105,6 +147,11 @@ pub struct ParticleProperties {
     pub tau_lepton_number: Option<i32>,
     /// The particle's statistical nature, if known.
     pub statistics: Option<Statistics>,
+
+    /// The nominal particle mass, if known.
+    pub mass: Option<f64>,
+    /// External identifiers for this particle.
+    pub ids: Vec<ExternalId>,
 }
 
 impl ParticleProperties {
@@ -291,6 +338,13 @@ impl ParticleProperties {
             })
             .clone()
     }
+    /// Get the particle's mass.
+    ///
+    /// Returns an error if this property is not known.
+    pub fn mass(&self) -> LadduResult<f64> {
+        self.mass
+            .ok_or_else(|| LadduError::MissingParticleProperty { property: "mass" })
+    }
 
     /// Construct a particle with no specified properties.
     pub fn unknown() -> Self {
@@ -420,6 +474,11 @@ impl ParticleProperties {
         }
         self.statistics = Some(s);
         Ok(self)
+    }
+    /// Set the particle's mass.
+    pub fn with_mass(mut self, mass: f64) -> Self {
+        self.mass = Some(mass);
+        self
     }
 
     /// Returns true if `self` is the antiparticle of `other`.

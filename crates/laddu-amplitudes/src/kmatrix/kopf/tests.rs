@@ -1,13 +1,13 @@
 use std::sync::Arc;
 
 use approx::assert_relative_eq;
-use laddu_core::{data::test_dataset, parameter, variables::Mass};
+use laddu_core::{data::test_dataset, parameter};
 
 use super::{KopfKMatrixA0, KopfKMatrixA0Channel};
 
 #[test]
 fn test_resampled_evaluation() {
-    let res_mass = Mass::new(["kshort1", "kshort2"]);
+    let res_mass = crate::test_utils::mass("kk");
     let expr = KopfKMatrixA0::new(
         "a0",
         [
@@ -31,7 +31,7 @@ fn test_resampled_evaluation() {
 
 #[test]
 fn test_resampled_gradient() {
-    let res_mass = Mass::new(["kshort1", "kshort2"]);
+    let res_mass = crate::test_utils::mass("kk");
     let expr = KopfKMatrixA0::new(
         "a0",
         [
