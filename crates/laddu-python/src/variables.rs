@@ -516,39 +516,37 @@ impl PyMass {
     }
 }
 
-/// The cosine of the polar decay angle in the rest frame of the given `resonance`
+/// The cosine of the polar angle for a channel particle in a symbolic frame.
 ///
-/// This Variable is calculated by forming the given frame (helicity or Gottfried-Jackson) and
-/// calculating the spherical angles according to one of the decaying `daughter` particles.
+/// Build this variable with ``Channel.angles(particle, frame).costheta``. The frame specifies an
+/// origin vertex and two symbolic axes. Each axis names the vertex where it is evaluated, so the
+/// same particle labels can be used to define frames for production vertices or sequential decay
+/// vertices without relying on fixed beam, target, recoil, or resonance names.
 ///
-/// The helicity frame is defined in terms of the following Cartesian axes in the rest frame of
-/// the `resonance`:
+/// Example
+/// -------
+/// .. code-block:: python
 ///
-/// .. math:: \hat{z} \propto -\vec{p}'_{\text{recoil}}
-/// .. math:: \hat{y} \propto \vec{p}_{\text{beam}} \times (-\vec{p}_{\text{recoil}})
-/// .. math:: \hat{x} = \hat{y} \times \hat{z}
-///
-/// where primed vectors are in the rest frame of the `resonance` and unprimed vectors are in
-/// the center-of-momentum frame.
-///
-/// The Gottfried-Jackson frame differs only in the definition of :math:`\hat{z}`:
-///
-/// .. math:: \hat{z} \propto \vec{p}'_{\text{beam}}
+///    frame = laddu.Frame(
+///        "rho_decay",
+///        laddu.Axes.from_y_z(
+///            laddu.Axis.normal("beam", "spectator").at("production").flipped(),
+///            laddu.Axis.opposite("spectator").at("rho_decay"),
+///        ),
+///    )
+///    costheta = channel.angles("pi+", frame).costheta
 ///
 /// Parameters
 /// ----------
-/// reaction : laddu.Reaction
-///     Reaction describing the production kinematics and decay roots.
-/// daughter : list of str
-///     Names of particles which are combined to form one of the decay products of the
-///     resonance associated with the decay parent.
-/// frame : {'Helicity', 'HX', 'HEL', 'GottfriedJackson', 'Gottfried Jackson', 'GJ', 'Gottfried-Jackson'}
-///     The frame to use in the  calculation
+/// particle : str
+///     Name of the particle whose direction is measured.
+/// frame : laddu.Frame
+///     Symbolic frame that defines the origin vertex and Cartesian axes.
 ///
 /// Raises
 /// ------
 /// ValueError
-///     If `frame` is not one of the valid options
+///     If the frame origin, axis vertices, or particle labels do not exist in the channel.
 ///
 /// See Also
 /// --------
@@ -625,39 +623,36 @@ impl PyCosTheta {
     }
 }
 
-/// The aziumuthal decay angle in the rest frame of the given `resonance`
+/// The azimuthal angle for a channel particle in a symbolic frame.
 ///
-/// This Variable is calculated by forming the given frame (helicity or Gottfried-Jackson) and
-/// calculating the spherical angles according to one of the decaying `daughter` particles.
+/// Build this variable with ``Channel.angles(particle, frame).phi``. The frame specifies an origin
+/// vertex and two symbolic axes. Each axis names the vertex where it is evaluated, so users define
+/// the physical frame directly with their own channel labels.
 ///
-/// The helicity frame is defined in terms of the following Cartesian axes in the rest frame of
-/// the `resonance`:
+/// Example
+/// -------
+/// .. code-block:: python
 ///
-/// .. math:: \hat{z} \propto -\vec{p}'_{\text{recoil}}
-/// .. math:: \hat{y} \propto \vec{p}_{\text{beam}} \times (-\vec{p}_{\text{recoil}})
-/// .. math:: \hat{x} = \hat{y} \times \hat{z}
-///
-/// where primed vectors are in the rest frame of the `resonance` and unprimed vectors are in
-/// the center-of-momentum frame.
-///
-/// The Gottfried-Jackson frame differs only in the definition of :math:`\hat{z}`:
-///
-/// .. math:: \hat{z} \propto \vec{p}'_{\text{beam}}
+///    frame = laddu.Frame(
+///        "rho_decay",
+///        laddu.Axes.from_y_z(
+///            laddu.Axis.normal("beam", "spectator").at("production").flipped(),
+///            laddu.Axis.opposite("spectator").at("rho_decay"),
+///        ),
+///    )
+///    phi = channel.angles("pi+", frame).phi
 ///
 /// Parameters
 /// ----------
-/// reaction : laddu.Reaction
-///     Reaction describing the production kinematics and decay roots.
-/// daughter : list of str
-///     Names of particles which are combined to form one of the decay products of the
-///     resonance associated with the decay parent.
-/// frame : {'Helicity', 'HX', 'HEL', 'GottfriedJackson', 'Gottfried Jackson', 'GJ', 'Gottfried-Jackson'}
-///     The frame to use in the  calculation
+/// particle : str
+///     Name of the particle whose direction is measured.
+/// frame : laddu.Frame
+///     Symbolic frame that defines the origin vertex and Cartesian axes.
 ///
 /// Raises
 /// ------
 /// ValueError
-///     If `frame` is not one of the valid options
+///     If the frame origin, axis vertices, or particle labels do not exist in the channel.
 ///
 ///
 /// See Also
@@ -735,25 +730,22 @@ impl PyPhi {
     }
 }
 
-/// A Variable used to define both spherical decay angles in the given frame
+/// A pair of Variables for the spherical angles of a channel particle in a symbolic frame.
 ///
 /// This class combines ``laddu.CosTheta`` and ``laddu.Phi`` into a single
 /// object
 ///
 /// Parameters
 /// ----------
-/// reaction : laddu.Reaction
-///     Reaction describing the production kinematics and decay roots.
-/// daughter : list of str
-///     Names of particles which are combined to form one of the decay products of the
-///     resonance associated with the decay parent.
-/// frame : {'Helicity', 'HX', 'HEL', 'GottfriedJackson', 'Gottfried Jackson', 'GJ', 'Gottfried-Jackson'}
-///     The frame to use in the  calculation
+/// particle : str
+///     Name of the particle whose direction is measured.
+/// frame : laddu.Frame
+///     Symbolic frame that defines the origin vertex and Cartesian axes.
 ///
 /// Raises
 /// ------
 /// ValueError
-///     If `frame` is not one of the valid options
+///     If the frame origin, axis vertices, or particle labels do not exist in the channel.
 ///
 /// See Also
 /// --------
@@ -800,8 +792,8 @@ impl PyAngles {
 ///
 /// Parameters
 /// ----------
-/// reaction : laddu.Reaction
-///     Reaction describing the production kinematics and decay roots.
+/// channel : laddu.Channel
+///     Channel containing the production vertex used to define the production plane.
 /// pol_angle : str
 ///     Name of the auxiliary scalar column storing the polarization angle in radians
 ///
@@ -972,8 +964,8 @@ impl PyPolMagnitude {
 ///
 /// Parameters
 /// ----------
-/// reaction : laddu.Reaction
-///     Reaction describing the production kinematics and decay roots.
+/// channel : laddu.Channel
+///     Channel containing the production vertex used to define the production plane.
 /// pol_magnitude : str
 ///     Name of the auxiliary scalar storing the polarization magnitude
 /// pol_angle : str
@@ -1030,8 +1022,8 @@ impl PyPolarization {
 ///
 /// Parameters
 /// ----------
-/// reaction : laddu.Reaction
-///     Reaction describing the two-to-two kinematics whose Mandelstam channels should be evaluated.
+/// channel : laddu.Channel
+///     Channel containing the two-to-two vertex whose Mandelstam channel should be evaluated.
 /// channel: {'s', 't', 'u', 'S', 'T', 'U'}
 ///     The Mandelstam channel to calculate
 ///

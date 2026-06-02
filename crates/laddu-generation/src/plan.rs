@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use laddu_core::{
     reaction::Endpoint, Channel, LadduError, LadduResult, MassSampler, MomentumSource, Particle,
     ScalarDistribution, VertexGenerator,
@@ -45,6 +47,7 @@ impl GenerationPlan {
             DecayParticlePlan::from_channel(channel, outgoing[0])?,
             DecayParticlePlan::from_channel(channel, outgoing[1])?,
         ];
+        validate_supported_topology(channel, production_vertex.label())?;
 
         Ok(Self {
             production: ProductionPlan {
@@ -60,6 +63,54 @@ impl GenerationPlan {
     pub fn production(&self) -> &ProductionPlan {
         &self.production
     }
+}
+
+fn validate_supported_topology(channel: &Channel, production_vertex: &str) -> LadduResult<()> {
+    let mut vertices = HashSet::new();
+    let mut particles = HashSet::new();
+    collect_generated_topology(channel, production_vertex, &mut vertices, &mut particles)?;
+
+    if let Some(vertex) = channel
+        .vertices()
+        .iter()
+        .find(|vertex| !vertices.contains(vertex.label()))
+    {
+        return Err(LadduError::Custom(format!(
+            "generation does not support unused or disconnected vertex '{}'",
+            vertex.label()
+        )));
+    }
+    if let Some(particle) = channel
+        .particles()
+        .iter()
+        .find(|particle| !particles.contains(particle.label()))
+    {
+        return Err(LadduError::Custom(format!(
+            "generation does not support unused or disconnected particle '{}'",
+            particle.label()
+        )));
+    }
+    Ok(())
+}
+
+fn collect_generated_topology(
+    channel: &Channel,
+    vertex: &str,
+    vertices: &mut HashSet<String>,
+    particles: &mut HashSet<String>,
+) -> LadduResult<()> {
+    vertices.insert(vertex.to_string());
+    let incoming = channel.incoming_particles(vertex)?;
+    let outgoing = channel.outgoing_particles(vertex)?;
+    for particle in incoming.iter().chain(outgoing.iter()) {
+        particles.insert(particle.label().to_string());
+    }
+    for particle in outgoing {
+        for decay in channel.decay_vertices(particle.label())? {
+            collect_generated_topology(channel, decay.label(), vertices, particles)?;
+        }
+    }
+    Ok(())
 }
 
 /// A validated two-to-two production vertex.
@@ -261,5 +312,200 @@ impl DecayPlan {
     /// Return the daughter particle plans.
     pub fn daughters(&self) -> &[DecayParticlePlan; 2] {
         &self.daughters
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use laddu_core::{Channel, ParticleProperties};
+
+    use super::*;
+
+    fn generator() -> VertexGenerator {
+        VertexGenerator::TwoToTwo {
+            t: ScalarDistribution::Exponential { slope: 0.1 },
+        }
+    }
+
+    fn base_channel() -> Channel {
+        let mut channel = Channel::new();
+        channel
+            .create_production("production", ["beam", "target"], ["res", "recoil"])
+            .unwrap()
+            .generate(generator());
+        channel
+            .create_decay("res_decay", "res", ["a", "b"])
+            .unwrap();
+        channel
+            .edit_particle("beam")
+            .unwrap()
+            .mass(0.0)
+            .momentum(MomentumSource::FromEnergy(ScalarDistribution::Fixed(8.0)));
+        channel
+            .edit_particle("target")
+            .unwrap()
+            .mass(0.938272)
+            .momentum(MomentumSource::AtRest);
+        channel
+            .edit_particle("res")
+            .unwrap()
+            .mass_sampler(MassSampler::Sampled(ScalarDistribution::Uniform {
+                min: 1.1,
+                max: 1.6,
+            }));
+        for label in ["a", "b"] {
+            channel.edit_particle(label).unwrap().mass(0.497611);
+        }
+        channel.edit_particle("recoil").unwrap().mass(0.938272);
+        channel
+    }
+
+    fn plan_error(channel: &Channel) -> String {
+        GenerationPlan::from_channel(channel)
+            .expect_err("channel should be rejected")
+            .to_string()
+    }
+
+    #[test]
+    fn accepts_single_generated_production_with_binary_decay_chain() {
+        let plan = GenerationPlan::from_channel(&base_channel()).unwrap();
+        assert_eq!(plan.production().vertex(), "production");
+        assert_eq!(plan.production().incoming()[0].label(), "beam");
+        assert_eq!(plan.production().outgoing()[0].label(), "res");
+        assert_eq!(
+            plan.production().outgoing()[0].decay().unwrap().daughters()[0].label(),
+            "a"
+        );
+    }
+
+    #[test]
+    fn rejects_missing_generated_production_annotation() {
+        let mut channel = Channel::new();
+        channel
+            .create_production("production", ["beam", "target"], ["res", "recoil"])
+            .unwrap();
+
+        let err = plan_error(&channel);
+        assert!(err.contains("exactly one generated production vertex"));
+    }
+
+    #[test]
+    fn rejects_multiple_generated_vertices() {
+        let mut channel = base_channel();
+        channel
+            .edit_vertex("res_decay")
+            .unwrap()
+            .generate(generator());
+
+        let err = plan_error(&channel);
+        assert!(err.contains("exactly one generated production vertex"));
+    }
+
+    #[test]
+    fn rejects_generated_vertex_that_is_not_two_to_two() {
+        let mut channel = Channel::new();
+        channel
+            .create_decay("bad", "res", ["a", "b"])
+            .unwrap()
+            .generate(generator());
+
+        let err = plan_error(&channel);
+        assert!(err.contains("must be a two-to-two vertex"));
+    }
+
+    #[test]
+    fn rejects_non_binary_decay_downstream() {
+        let mut channel = Channel::new();
+        channel
+            .create_production("production", ["beam", "target"], ["res", "recoil"])
+            .unwrap()
+            .generate(generator());
+        channel
+            .create_vertex("res_decay", ["res"], ["a", "b", "c"])
+            .unwrap();
+        channel
+            .edit_particle("beam")
+            .unwrap()
+            .mass(0.0)
+            .momentum(MomentumSource::FromEnergy(ScalarDistribution::Fixed(8.0)));
+        channel
+            .edit_particle("target")
+            .unwrap()
+            .mass(0.938272)
+            .momentum(MomentumSource::AtRest);
+        channel
+            .edit_particle("res")
+            .unwrap()
+            .mass_sampler(MassSampler::Sampled(ScalarDistribution::Uniform {
+                min: 1.1,
+                max: 1.6,
+            }));
+        channel.edit_particle("recoil").unwrap().mass(0.938272);
+
+        let err = plan_error(&channel);
+        assert!(err.contains("must be one-to-two"));
+    }
+
+    #[test]
+    fn rejects_disconnected_topology() {
+        let mut channel = base_channel();
+        channel
+            .create_decay("unused_decay", "unused_parent", ["unused_a", "unused_b"])
+            .unwrap();
+
+        let err = plan_error(&channel);
+        assert!(err.contains("unused or disconnected vertex 'unused_decay'"));
+    }
+
+    #[test]
+    fn rejects_initial_sampled_mass() {
+        let mut channel = base_channel();
+        channel
+            .edit_particle("beam")
+            .unwrap()
+            .mass_sampler(MassSampler::Sampled(ScalarDistribution::Uniform {
+                min: 0.0,
+                max: 1.0,
+            }));
+
+        let err = plan_error(&channel);
+        assert!(err.contains("initial particle 'beam' must use its ParticleProperties mass"));
+    }
+
+    #[test]
+    fn rejects_initial_particle_without_mass() {
+        let mut channel = base_channel();
+        channel
+            .edit_particle("beam")
+            .unwrap()
+            .properties(ParticleProperties::unknown())
+            .momentum(MomentumSource::FromEnergy(ScalarDistribution::Fixed(8.0)));
+
+        let err = plan_error(&channel);
+        assert!(err.contains("initial particle 'beam' needs a ParticleProperties mass"));
+    }
+
+    #[test]
+    fn rejects_initial_particle_without_momentum_source() {
+        let mut channel = base_channel();
+        channel
+            .edit_particle("beam")
+            .unwrap()
+            .generation(laddu_core::ParticleGeneration::default());
+
+        let err = plan_error(&channel);
+        assert!(err.contains("initial particle 'beam' needs a momentum source"));
+    }
+
+    #[test]
+    fn rejects_generated_particle_without_mass_or_sampler() {
+        let mut channel = base_channel();
+        channel
+            .edit_particle("recoil")
+            .unwrap()
+            .properties(ParticleProperties::unknown());
+
+        let err = plan_error(&channel);
+        assert!(err.contains("generated particle 'recoil' needs a ParticleProperties mass"));
     }
 }

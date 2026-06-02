@@ -10,6 +10,7 @@ This is the main API documentation for ``laddu``.
    laddu/amplitudes/index
    laddu/data
    laddu/io
+   laddu/gen
    laddu/generation
    laddu/likelihood
    laddu/optimize
