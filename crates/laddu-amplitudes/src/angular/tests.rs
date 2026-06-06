@@ -12,7 +12,6 @@ use laddu_core::{
 
 use super::{
     barrier::BlattWeisskopf,
-    constants::ClebschGordan,
     sdme::{PhotonHelicity, PhotonPolarization, PhotonSDME},
     wigner::WignerD,
 };
@@ -84,25 +83,6 @@ fn wigner_d_matches_core_function() {
 
     assert_relative_eq!(value.re, expected.re);
     assert_relative_eq!(value.im, expected.im);
-}
-
-#[test]
-fn clebsch_gordan_constant_matches_core_function() {
-    let dataset = Arc::new(test_dataset());
-    let expr = ClebschGordan::new(
-        "cg",
-        laddu_core::J::half(1),
-        laddu_core::M::half(1),
-        laddu_core::J::half(1),
-        laddu_core::M::half(-1),
-        laddu_core::J::half(2),
-        laddu_core::M::half(0),
-    )
-    .unwrap();
-    let value = expr.load(&dataset).unwrap().evaluate(&[]).unwrap()[0];
-
-    assert_relative_eq!(value.re, 1.0 / 2.0_f64.sqrt());
-    assert_relative_eq!(value.im, 0.0);
 }
 
 #[test]

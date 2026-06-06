@@ -9,7 +9,7 @@ mod tests;
 mod wigner;
 
 pub use barrier::BlattWeisskopf;
-pub use constants::{ClebschGordan, Wigner3j};
+pub use constants::Wigner3j;
 pub use harmonics::{PolPhase, Ylm, Zlm};
 pub use sdme::{PhotonHelicity, PhotonPolarization, PhotonSDME};
 pub use wigner::WignerD;

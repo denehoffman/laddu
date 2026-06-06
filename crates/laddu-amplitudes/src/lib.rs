@@ -21,8 +21,8 @@ pub use lookup::{LookupAxis, LookupBoundaryMode, LookupInterpolation, LookupTabl
 /// Angular, barrier, and density-matrix factor amplitudes.
 pub mod angular;
 pub use angular::{
-    BlattWeisskopf, ClebschGordan, PhotonHelicity, PhotonPolarization, PhotonSDME, PolPhase,
-    Wigner3j, WignerD, Ylm, Zlm,
+    BlattWeisskopf, PhotonHelicity, PhotonPolarization, PhotonSDME, PolPhase, Wigner3j, WignerD,
+    Ylm, Zlm,
 };
 
 /// Resonance line shapes and related factors.

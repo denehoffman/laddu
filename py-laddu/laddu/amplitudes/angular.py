@@ -2,7 +2,6 @@
 
 from laddu.laddu import (
     BlattWeisskopf,
-    ClebschGordan,
     PhotonSDME,
     PolPhase,
     Wigner3j,
@@ -14,7 +13,6 @@ from laddu.quantum import QuantumNumber
 
 __all__ = [
     'BlattWeisskopf',
-    'ClebschGordan',
     'PhotonSDME',
     'PolPhase',
     'QuantumNumber',

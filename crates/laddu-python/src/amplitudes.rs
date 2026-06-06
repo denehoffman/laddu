@@ -2,8 +2,8 @@ use std::{array, collections::HashMap};
 
 use laddu_amplitudes::{
     angular::{
-        BlattWeisskopf, ClebschGordan, PhotonHelicity, PhotonPolarization, PhotonSDME, PolPhase,
-        Wigner3j, WignerD, Ylm, Zlm,
+        BlattWeisskopf, PhotonHelicity, PhotonPolarization, PhotonSDME, PolPhase, Wigner3j,
+        WignerD, Ylm, Zlm,
     },
     kmatrix::{
         KopfKMatrixA0, KopfKMatrixA0Channel, KopfKMatrixA2, KopfKMatrixA2Channel, KopfKMatrixF0,
@@ -459,28 +459,6 @@ pub fn py_blatt_weisskopf(
         q_r,
         sheet,
         kind,
-    )?))
-}
-
-/// Construct a Clebsch-Gordan constant expression.
-#[pyfunction(name = "ClebschGordan", signature = (*tags, j1, m1, j2, m2, j, m))]
-pub fn py_clebsch_gordan(
-    tags: &Bound<'_, PyTuple>,
-    j1: &Bound<'_, PyAny>,
-    m1: &Bound<'_, PyAny>,
-    j2: &Bound<'_, PyAny>,
-    m2: &Bound<'_, PyAny>,
-    j: &Bound<'_, PyAny>,
-    m: &Bound<'_, PyAny>,
-) -> PyResult<PyExpression> {
-    Ok(PyExpression(ClebschGordan::new(
-        py_tags(tags)?,
-        parse_angular_momentum(j1)?,
-        parse_projection(m1)?,
-        parse_angular_momentum(j2)?,
-        parse_projection(m2)?,
-        parse_angular_momentum(j)?,
-        parse_projection(m)?,
     )?))
 }
 

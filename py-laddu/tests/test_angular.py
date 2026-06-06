@@ -3,13 +3,11 @@ from fractions import Fraction
 import pytest
 from laddu import (
     BlattWeisskopf,
-    ClebschGordan,
     Dataset,
     Event,
     J,
     L,
     M,
-    PhotonSDME,
     Vec3,
     WignerD,
 )
@@ -61,23 +59,6 @@ def test_reaction_variables_feed_wigner_d_and_barrier() -> None:
     assert value.imag == pytest.approx(value.imag)
 
 
-def test_clebsch_gordan_and_photon_sdme_are_expression_terms() -> None:
-    cg = ClebschGordan(
-        'cg',
-        j1=Fraction(1, 2),
-        m1=Fraction(1, 2),
-        j2=Fraction(1, 2),
-        m2=Fraction(-1, 2),
-        j=1,
-        m=0,
-    )
-    rho = PhotonSDME('rho', helicity=1, helicity_prime=1)
-    value = (cg * rho).load(make_test_dataset()).evaluate([])[0]
-
-    assert value.real == pytest.approx(0.5 / 2.0**0.5)
-    assert value.imag == pytest.approx(0.0)
-
-
 def test_half_integer_quantum_numbers_accept_fraction_and_float() -> None:
     dataset = make_test_dataset()
     ch = channel('x')
@@ -92,17 +73,8 @@ def test_half_integer_quantum_numbers_accept_fraction_and_float() -> None:
     d_float = WignerD(
         'd_float', spin=1.5, row_projection=0.5, column_projection=-0.5, angles=angles
     )
-    cg = ClebschGordan(
-        'cg_half',
-        j1=Fraction(1, 2),
-        m1=Fraction(1, 2),
-        j2=1,
-        m2=0,
-        j=1.5,
-        m=0.5,
-    )
 
-    values = (d_fraction + d_float + cg).load(dataset).evaluate([])
+    values = (d_fraction + d_float).load(dataset).evaluate([])
 
     assert values[0].real == pytest.approx(values[0].real)
     assert values[0].imag == pytest.approx(values[0].imag)
@@ -142,9 +114,6 @@ def test_quantum_number_inputs_reject_invalid_values() -> None:
         WignerD(
             'bad_float', spin=1.25, row_projection=0, column_projection=0, angles=angles
         ).load(dataset)
-
-    with pytest.raises(RuntimeError, match='integer or half-integer'):
-        ClebschGordan('bad_fraction', j1=Fraction(1, 3), m1=0, j2=1, m2=0, j=1, m=0)
 
     with pytest.raises(RuntimeError, match='orbital angular momentum must be integer'):
         BlattWeisskopf(

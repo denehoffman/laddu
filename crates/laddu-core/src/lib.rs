@@ -586,7 +586,7 @@ pub use crate::{
     },
     reaction::{
         Channel, MassSampler, MomentumSource, Particle, ParticleEdit, ParticleGeneration,
-        ParticleSource, VertexEdit, VertexGenerator,
+        ParticleSource, TwoBodyCoupling, VertexEdit, VertexGenerator,
     },
     resources::{
         Cache, ComplexMatrixID, ComplexScalarID, ComplexVectorID, MatrixID, Resources, ScalarID,

@@ -34,7 +34,6 @@ from .amplitude import (
 )
 from .amplitudes.angular import (
     BlattWeisskopf,
-    ClebschGordan,
     PhotonSDME,
     PolPhase,
     Wigner3j,
@@ -153,7 +152,6 @@ __all__ = [
     'BreitWignerNonRelativistic',
     'Channel',
     'Charge',
-    'ClebschGordan',
     'CompiledExpression',
     'ComplexScalar',
     'ControlFlow',

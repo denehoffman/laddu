@@ -7,10 +7,15 @@ use crate::{
     data::{Dataset, DatasetMetadata, EventData},
     kinematics::{Axes, Axis, Frame},
     vectors::Vec3,
+    Charge, Parity, ParticleProperties, RuleSet, Statistics, J, L,
 };
 
 fn labels(channel: &Channel) -> Vec<&str> {
     channel.particles().iter().map(Particle::label).collect()
+}
+
+fn wave_quantum_numbers(couplings: &[TwoBodyCoupling]) -> Vec<(J, L, J)> {
+    couplings.iter().map(|c| (c.j(), c.l(), c.s())).collect()
 }
 
 #[test]
@@ -57,6 +62,125 @@ fn vertex_created_particles_can_be_annotated() {
             .unwrap(),
         0.775
     );
+}
+
+#[test]
+fn unannotated_two_body_couplings_apply_only_angular_rules() {
+    let mut channel = Channel::new();
+    channel.create_decay("decay", "x", ["a", "b"]).unwrap();
+    channel.edit_particle("a").unwrap().spin(J::int(0));
+    channel.edit_particle("b").unwrap().spin(J::int(0));
+
+    let couplings = channel
+        .two_body_couplings("decay", J::int(2), L::int(2))
+        .unwrap();
+
+    assert_eq!(
+        wave_quantum_numbers(&couplings),
+        vec![
+            (J::int(0), L::int(0), J::int(0)),
+            (J::int(1), L::int(1), J::int(0)),
+            (J::int(2), L::int(2), J::int(0)),
+        ]
+    );
+}
+
+#[test]
+fn strong_two_body_couplings_filter_identical_ksks_waves() {
+    let mut channel = Channel::new();
+    channel
+        .create_decay("x_decay", "x", ["ks1", "ks2"])
+        .unwrap()
+        .rules(RuleSet::strong());
+    let ks = ParticleProperties::jp(J::int(0), Parity::Negative)
+        .with_species("K_S")
+        .with_charge(Charge::integer(0))
+        .with_strangeness(0)
+        .with_baryon_number(0)
+        .with_statistics(Statistics::Boson)
+        .unwrap();
+    channel.edit_particle("ks1").unwrap().properties(ks.clone());
+    channel.edit_particle("ks2").unwrap().properties(ks);
+
+    let couplings = channel
+        .two_body_couplings("x_decay", J::int(2), L::int(2))
+        .unwrap();
+
+    assert_eq!(
+        wave_quantum_numbers(&couplings),
+        vec![
+            (J::int(0), L::int(0), J::int(0)),
+            (J::int(2), L::int(2), J::int(0)),
+        ]
+    );
+    assert_eq!(
+        couplings
+            .iter()
+            .map(|c| c.parent_properties().parity)
+            .collect::<Vec<_>>(),
+        vec![Some(Parity::Positive), Some(Parity::Positive)]
+    );
+}
+
+#[test]
+fn two_body_couplings_enumerate_nonzero_daughter_spin_channel_spins() {
+    let mut channel = Channel::new();
+    channel.create_decay("decay", "x", ["v1", "v2"]).unwrap();
+    channel.edit_particle("v1").unwrap().spin(J::int(1));
+    channel.edit_particle("v2").unwrap().spin(J::int(1));
+
+    let couplings = channel
+        .two_body_couplings("decay", J::int(1), L::int(1))
+        .unwrap();
+
+    assert!(couplings
+        .iter()
+        .any(|c| c.j() == J::int(1) && c.l() == L::int(0) && c.s() == J::int(1)));
+    assert!(couplings
+        .iter()
+        .any(|c| c.j() == J::int(1) && c.l() == L::int(1) && c.s() == J::int(0)));
+    assert!(couplings
+        .iter()
+        .any(|c| c.j() == J::int(1) && c.l() == L::int(1) && c.s() == J::int(1)));
+    assert!(couplings
+        .iter()
+        .any(|c| c.j() == J::int(1) && c.l() == L::int(1) && c.s() == J::int(2)));
+}
+
+#[test]
+fn known_parent_spin_is_restricted_by_j_max() {
+    let mut channel = Channel::new();
+    channel.create_decay("decay", "x", ["a", "b"]).unwrap();
+    channel.edit_particle("x").unwrap().spin(J::int(2));
+    channel.edit_particle("a").unwrap().spin(J::int(0));
+    channel.edit_particle("b").unwrap().spin(J::int(0));
+
+    assert!(channel
+        .two_body_couplings("decay", J::int(1), L::int(4))
+        .unwrap()
+        .is_empty());
+    assert_eq!(
+        wave_quantum_numbers(
+            &channel
+                .two_body_couplings("decay", J::int(2), L::int(4))
+                .unwrap()
+        ),
+        vec![(J::int(2), L::int(2), J::int(0))]
+    );
+}
+
+#[test]
+fn missing_daughter_spin_is_rejected_for_two_body_couplings() {
+    let mut channel = Channel::new();
+    channel.create_decay("decay", "x", ["a", "b"]).unwrap();
+    channel.edit_particle("a").unwrap().spin(J::int(0));
+
+    let error = channel
+        .two_body_couplings("decay", J::int(2), L::int(2))
+        .unwrap_err()
+        .to_string();
+
+    assert!(error.contains("particle 'b' has no spin property"));
 }
 
 #[test]

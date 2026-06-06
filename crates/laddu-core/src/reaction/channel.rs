@@ -9,11 +9,11 @@ use super::{MassSampler, MomentumSource, Particle, ParticleGeneration, ParticleS
 use crate::{
     data::EventLike,
     kinematics::{Axis, AxisSource, Frame, FrameAxes},
-    quantum::{ExternalId, Isospin, Statistics},
+    quantum::{ExternalId, Isospin, SelectionRules, Statistics},
     variables::{Angles, CosTheta, Phi, PolAngle, Polarization},
     vectors::{Vec3, Vec4},
-    Charge, LadduError, LadduResult, Mandelstam, MandelstamChannel, Mass, Parity,
-    ParticleProperties, ScalarDistribution, J,
+    AllowedPartialWave, Charge, LadduError, LadduResult, Mandelstam, MandelstamChannel, Mass,
+    Parity, PartialWave, ParticleProperties, RuleSet, ScalarDistribution, J, L, S,
 };
 
 /// Stable index for a particle edge in a [`Channel`].
@@ -30,6 +30,8 @@ pub struct Vertex {
     /// User-facing vertex label.
     pub label: String,
     #[serde(default)]
+    rules: RuleSet,
+    #[serde(default)]
     generation: Option<VertexGenerator>,
 }
 impl Display for Vertex {
@@ -44,6 +46,11 @@ impl Vertex {
         &self.label
     }
 
+    /// Return the selection rules attached to this vertex.
+    pub fn rules(&self) -> &RuleSet {
+        &self.rules
+    }
+
     /// Return the generation annotation for this vertex, if one is configured.
     pub fn generation(&self) -> Option<&VertexGenerator> {
         self.generation.as_ref()
@@ -52,6 +59,12 @@ impl Vertex {
     /// Set the generation annotation for this vertex.
     pub fn with_generation(mut self, generation: VertexGenerator) -> Self {
         self.generation = Some(generation);
+        self
+    }
+
+    /// Set the selection rules attached to this vertex.
+    pub fn with_rules(mut self, rules: RuleSet) -> Self {
+        self.rules = rules;
         self
     }
 }
@@ -64,6 +77,44 @@ pub enum VertexGenerator {
         /// Distribution used to sample Mandelstam t.
         t: ScalarDistribution,
     },
+}
+
+/// A validated two-body coupling candidate for one channel decay vertex.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct TwoBodyCoupling {
+    parent: ParticleProperties,
+    wave: PartialWave,
+}
+
+impl TwoBodyCoupling {
+    fn new(parent: ParticleProperties, wave: PartialWave) -> Self {
+        Self { parent, wave }
+    }
+
+    /// Return the candidate parent-state properties.
+    pub fn parent_properties(&self) -> &ParticleProperties {
+        &self.parent
+    }
+
+    /// Return the validated partial wave for this vertex coupling.
+    pub fn wave(&self) -> &PartialWave {
+        &self.wave
+    }
+
+    /// Return the candidate parent spin, `J`.
+    pub fn j(&self) -> J {
+        self.wave.j
+    }
+
+    /// Return the relative orbital angular momentum, `L`.
+    pub fn l(&self) -> L {
+        self.wave.l
+    }
+
+    /// Return the coupled daughter spin, `S`.
+    pub fn s(&self) -> S {
+        self.wave.s
+    }
 }
 
 /// One endpoint of a particle edge in the channel topology.
@@ -184,6 +235,7 @@ impl Channel {
         let vid = VertexId(self.vertices.len());
         self.vertices.push(Vertex {
             label: label.to_string(),
+            rules: RuleSet::angular(),
             generation: None,
         });
         self.vertex_by_name.insert(label.to_string(), vid);
@@ -537,6 +589,341 @@ impl Channel {
             .into_iter()
             .map(|pid| &self.particles[pid.0])
             .collect())
+    }
+
+    /// Enumerate validated two-body coupling candidates for a one-to-two decay vertex.
+    pub fn two_body_couplings(
+        &self,
+        vertex: &str,
+        j_max: J,
+        l_max: L,
+    ) -> LadduResult<Vec<TwoBodyCoupling>> {
+        let vid = self.vid(vertex)?;
+        let incoming = self.incoming_to_vertex(vid);
+        let outgoing = self.outgoing_from_vertex(vid);
+        if incoming.len() != 1 || outgoing.len() != 2 {
+            return Err(LadduError::Custom(format!(
+                "Vertex {vertex} is not a one-to-two decay"
+            )));
+        }
+
+        let parent = &self.particles[incoming[0].0];
+        let daughter_a = &self.particles[outgoing[0].0];
+        let daughter_b = &self.particles[outgoing[1].0];
+
+        Self::enumerate_two_body_couplings(
+            parent.label(),
+            parent.properties(),
+            (daughter_a.label(), daughter_a.properties()),
+            (daughter_b.label(), daughter_b.properties()),
+            j_max,
+            l_max,
+            self.vertices[vid.0].rules(),
+        )
+    }
+
+    fn enumerate_two_body_couplings(
+        parent_label: &str,
+        parent: &ParticleProperties,
+        daughter_a: (&str, &ParticleProperties),
+        daughter_b: (&str, &ParticleProperties),
+        j_max: J,
+        l_max: L,
+        rules: &RuleSet,
+    ) -> LadduResult<Vec<TwoBodyCoupling>> {
+        let daughter_a_spin = daughter_a.1.spin.ok_or_else(|| {
+            LadduError::Custom(format!(
+                "cannot enumerate two-body couplings for '{parent_label} -> {} {}': particle '{}' has no spin property",
+                daughter_a.0, daughter_b.0, daughter_a.0
+            ))
+        })?;
+        let daughter_b_spin = daughter_b.1.spin.ok_or_else(|| {
+            LadduError::Custom(format!(
+                "cannot enumerate two-body couplings for '{parent_label} -> {} {}': particle '{}' has no spin property",
+                daughter_a.0, daughter_b.0, daughter_b.0
+            ))
+        })?;
+
+        let candidate_js: Vec<J> = if let Some(j) = parent.spin {
+            if j <= j_max {
+                vec![j]
+            } else {
+                Vec::new()
+            }
+        } else {
+            (0..=j_max.value()).map(J::half).collect()
+        };
+
+        let mut out = Vec::new();
+        for j in candidate_js {
+            for s in SelectionRules::coupled_spins(daughter_a_spin, daughter_b_spin) {
+                for l_raw in 0..=l_max.value() {
+                    let l = L::int(l_raw);
+                    let Ok(wave) = PartialWave::new(j, l, s) else {
+                        continue;
+                    };
+                    let candidate_parent = parent.clone().with_spin(j);
+                    for candidate_parent in Self::expand_two_body_parent_properties(
+                        candidate_parent.clone(),
+                        (daughter_a.1, daughter_b.1),
+                        l,
+                        s,
+                        rules,
+                    )? {
+                        if Self::check_identical_exchange(
+                            &candidate_parent,
+                            (daughter_a.1, daughter_b.1),
+                            l,
+                            s,
+                            rules,
+                        ) {
+                            out.push(TwoBodyCoupling::new(candidate_parent, wave.clone()));
+                        }
+                    }
+                }
+            }
+        }
+        Ok(out)
+    }
+
+    fn expand_two_body_parent_properties(
+        mut parent: ParticleProperties,
+        daughters: (&ParticleProperties, &ParticleProperties),
+        l: L,
+        s: S,
+        rules: &RuleSet,
+    ) -> LadduResult<Vec<ParticleProperties>> {
+        if rules.parity {
+            let Some(parity) = AllowedPartialWave::infer_parity(daughters, l) else {
+                return Self::expand_isospin(parent, daughters, rules);
+            };
+            if !Self::set_or_check(&mut parent.parity, parity) {
+                return Ok(Vec::new());
+            }
+        }
+
+        if rules.c_parity {
+            if let Some(c_parity) = AllowedPartialWave::infer_c_parity(daughters, l, s) {
+                if !Self::set_or_check(&mut parent.c_parity, c_parity) {
+                    return Ok(Vec::new());
+                }
+            }
+        }
+
+        if rules.g_parity {
+            if let (Some(g_a), Some(g_b)) = (daughters.0.g_parity, daughters.1.g_parity) {
+                let g_value = g_a.value() * g_b.value();
+                let g_parity = if g_value == 1 {
+                    Parity::Positive
+                } else {
+                    Parity::Negative
+                };
+                if !Self::set_or_check(&mut parent.g_parity, g_parity) {
+                    return Ok(Vec::new());
+                }
+            }
+        }
+
+        if rules.charge {
+            if let (Some(a), Some(b)) = (daughters.0.charge, daughters.1.charge) {
+                if !Self::set_or_check(
+                    &mut parent.charge,
+                    Charge::third_integer(a.value() + b.value()),
+                ) {
+                    return Ok(Vec::new());
+                }
+            }
+        }
+
+        macro_rules! infer_additive {
+            ($enabled:expr, $field:ident) => {
+                if $enabled {
+                    if let (Some(a), Some(b)) = (daughters.0.$field, daughters.1.$field) {
+                        if !Self::set_or_check(&mut parent.$field, a + b) {
+                            return Ok(Vec::new());
+                        }
+                    }
+                }
+            };
+        }
+
+        infer_additive!(rules.strangeness, strangeness);
+        infer_additive!(rules.charm, charm);
+        infer_additive!(rules.bottomness, bottomness);
+        infer_additive!(rules.topness, topness);
+        infer_additive!(rules.baryon_number, baryon_number);
+        infer_additive!(rules.electron_lepton_number, electron_lepton_number);
+        infer_additive!(rules.muon_lepton_number, muon_lepton_number);
+        infer_additive!(rules.tau_lepton_number, tau_lepton_number);
+
+        if rules.lepton_number {
+            let families = [
+                (
+                    parent.electron_lepton_number,
+                    daughters.0.electron_lepton_number,
+                    daughters.1.electron_lepton_number,
+                ),
+                (
+                    parent.muon_lepton_number,
+                    daughters.0.muon_lepton_number,
+                    daughters.1.muon_lepton_number,
+                ),
+                (
+                    parent.tau_lepton_number,
+                    daughters.0.tau_lepton_number,
+                    daughters.1.tau_lepton_number,
+                ),
+            ];
+            if families
+                .iter()
+                .all(|(p, a, b)| p.is_some() && a.is_some() && b.is_some())
+            {
+                let parent_total: i32 = families.iter().map(|(p, _, _)| p.unwrap()).sum();
+                let daughter_total: i32 = families
+                    .iter()
+                    .map(|(_, a, b)| a.unwrap() + b.unwrap())
+                    .sum();
+                if parent_total != daughter_total {
+                    return Ok(Vec::new());
+                }
+            }
+        }
+
+        Self::expand_isospin(parent, daughters, rules)
+    }
+
+    fn expand_isospin(
+        parent: ParticleProperties,
+        daughters: (&ParticleProperties, &ParticleProperties),
+        rules: &RuleSet,
+    ) -> LadduResult<Vec<ParticleProperties>> {
+        let mut parents = vec![parent];
+
+        if rules.isospin {
+            if let (Some(i_a), Some(i_b)) = (daughters.0.isospin, daughters.1.isospin) {
+                let mut expanded = Vec::new();
+                for parent in parents {
+                    if let Some(i_parent) = parent.isospin {
+                        if i_parent
+                            .isospin()
+                            .can_couple_to(i_a.isospin(), i_b.isospin())
+                        {
+                            expanded.push(parent);
+                        }
+                    } else {
+                        let min = i_a.isospin().value().abs_diff(i_b.isospin().value());
+                        let max = i_a.isospin().value() + i_b.isospin().value();
+                        for i_raw in (min..=max).step_by(2) {
+                            let mut candidate = parent.clone();
+                            candidate.isospin = Some(Isospin::new(J::half(i_raw), None)?);
+                            expanded.push(candidate);
+                        }
+                    }
+                }
+                parents = expanded;
+            }
+        }
+
+        if rules.isospin_projection {
+            if let (Some(i3_a), Some(i3_b)) = (
+                daughters.0.isospin.and_then(|i| i.projection),
+                daughters.1.isospin.and_then(|i| i.projection),
+            ) {
+                let target = crate::quantum::M::half(i3_a.value() + i3_b.value());
+                let mut expanded = Vec::new();
+                for mut parent in parents {
+                    if let Some(mut i_parent) = parent.isospin {
+                        if let Some(i3_parent) = i_parent.projection {
+                            if i3_parent.value() == target.value() {
+                                expanded.push(parent);
+                            }
+                        } else if crate::quantum::SpinState::new(i_parent.isospin(), target).is_ok()
+                        {
+                            i_parent.projection = Some(target);
+                            parent.isospin = Some(i_parent);
+                            expanded.push(parent);
+                        }
+                    } else {
+                        expanded.push(parent);
+                    }
+                }
+                parents = expanded;
+            }
+        }
+
+        Ok(parents)
+    }
+
+    fn check_identical_exchange(
+        parent: &ParticleProperties,
+        daughters: (&ParticleProperties, &ParticleProperties),
+        l: L,
+        s: S,
+        rules: &RuleSet,
+    ) -> bool {
+        if !rules.identical_particle_symmetry {
+            return true;
+        }
+        let (Some(species_a), Some(species_b)) =
+            (daughters.0.species.as_ref(), daughters.1.species.as_ref())
+        else {
+            return true;
+        };
+        if species_a != species_b {
+            return true;
+        }
+        let (Some(stats_a), Some(stats_b)) = (daughters.0.statistics, daughters.1.statistics)
+        else {
+            return true;
+        };
+        if stats_a != stats_b {
+            return false;
+        }
+
+        let required_phase = match stats_a {
+            Statistics::Boson => 1,
+            Statistics::Fermion => -1,
+        };
+
+        let (Some(spin_a), Some(spin_b)) = (daughters.0.spin, daughters.1.spin) else {
+            return true;
+        };
+        if spin_a != spin_b || !s.value().is_multiple_of(2) {
+            return false;
+        }
+
+        let mut phase = if l.value().is_multiple_of(2) { 1 } else { -1 };
+        let spin_exponent = spin_a.value() as i32 - (s.value() / 2) as i32;
+        if spin_exponent % 2 != 0 {
+            phase *= -1;
+        }
+
+        if rules.isospin {
+            if let (Some(i_a), Some(i_b), Some(i_parent)) =
+                (daughters.0.isospin, daughters.1.isospin, parent.isospin)
+            {
+                if i_a.isospin() != i_b.isospin() || !i_parent.isospin().value().is_multiple_of(2) {
+                    return false;
+                }
+                let isospin_exponent =
+                    i_a.isospin().value() as i32 - (i_parent.isospin().value() / 2) as i32;
+                if isospin_exponent % 2 != 0 {
+                    phase *= -1;
+                }
+            }
+        }
+
+        phase == required_phase
+    }
+
+    fn set_or_check<T: Copy + PartialEq>(slot: &mut Option<T>, value: T) -> bool {
+        match slot {
+            Some(existing) => *existing == value,
+            None => {
+                *slot = Some(value);
+                true
+            }
+        }
     }
 
     /// Return decay vertices for a particle, defined as vertices with that particle as input.
@@ -928,6 +1315,12 @@ pub struct VertexEdit<'a> {
 }
 
 impl VertexEdit<'_> {
+    /// Set the selection rules attached to this vertex.
+    pub fn rules(&mut self, rules: RuleSet) -> &mut Self {
+        self.vertex.rules = rules;
+        self
+    }
+
     /// Set the generation annotation.
     pub fn generate(&mut self, generation: VertexGenerator) -> &mut Self {
         self.vertex.generation = Some(generation);

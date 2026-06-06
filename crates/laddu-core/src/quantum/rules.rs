@@ -1,3 +1,5 @@
+use serde::{Deserialize, Serialize};
+
 use crate::{
     quantum::{PartialWave, ParticleProperties},
     AllowedPartialWave, Parity, Statistics, J, L, S,
@@ -13,7 +15,7 @@ use crate::{
 ///
 /// The purely angular-momentum constraints are not represented here. Those are
 /// handled separately when constructing candidate partial waves.
-#[derive(Clone, Debug, Eq, Hash, PartialEq, Default)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq, Default, Serialize, Deserialize)]
 pub struct RuleSet {
     /// Enforce intrinsic parity conservation.
     ///

@@ -20,15 +20,6 @@ def BlattWeisskopf(
     sheet: str = ...,
     kind: str = ...,
 ) -> Expression: ...
-def ClebschGordan(
-    *tags: str,
-    j1: JLike,
-    m1: MLike,
-    j2: JLike,
-    m2: MLike,
-    j: JLike,
-    m: MLike,
-) -> Expression: ...
 def Wigner3j(
     *tags: str,
     j1: JLike,
@@ -60,7 +51,6 @@ def PolPhase(
 
 __all__ = [
     'BlattWeisskopf',
-    'ClebschGordan',
     'PhotonSDME',
     'PolPhase',
     'QuantumNumber',
