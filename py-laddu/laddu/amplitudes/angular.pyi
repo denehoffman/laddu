@@ -20,15 +20,6 @@ def BlattWeisskopf(
     sheet: str = ...,
     kind: str = ...,
 ) -> Expression: ...
-def Wigner3j(
-    *tags: str,
-    j1: JLike,
-    m1: MLike,
-    j2: JLike,
-    m2: MLike,
-    j3: JLike,
-    m3: MLike,
-) -> Expression: ...
 def PhotonSDME(
     *tags: str,
     helicity: int,
@@ -54,7 +45,6 @@ __all__ = [
     'PhotonSDME',
     'PolPhase',
     'QuantumNumber',
-    'Wigner3j',
     'WignerD',
     'Ylm',
     'Zlm',

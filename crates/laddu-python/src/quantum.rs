@@ -27,7 +27,7 @@ pub mod angular_momentum {
             return Ok(Ratio::from_integer(value));
         }
         if let Ok(value) = input.extract::<f64>() {
-            let twice = M::try_from(value)?.value();
+            let twice = M::try_from(value)?.doubled();
             return Ok(Ratio::new(twice, 2));
         }
         let numerator = input
@@ -67,7 +67,7 @@ pub mod angular_momentum {
         py: Python<'_>,
         angular_momentum: J,
     ) -> PyResult<PyQuantumNumber> {
-        let twice = angular_momentum.value() as i32;
+        let twice = angular_momentum.doubled() as i32;
         if twice % 2 == 0 {
             Ok((twice / 2).into_bound_py_any(py)?.unbind())
         } else {
@@ -78,7 +78,7 @@ pub mod angular_momentum {
     }
 
     pub fn projection_to_python(py: Python<'_>, projection: M) -> PyResult<PyQuantumNumber> {
-        let twice = projection.value();
+        let twice = projection.doubled();
         if twice % 2 == 0 {
             Ok((twice / 2).into_bound_py_any(py)?.unbind())
         } else {
@@ -184,6 +184,10 @@ impl PyL {
         self.0.projections().into_iter().map(PyM).collect()
     }
 
+    fn orbital_parity(&self) -> PyParity {
+        PyParity(self.0.orbital_parity())
+    }
+
     fn __repr__(&self) -> String {
         format!("L({})", self.0.value())
     }
@@ -225,6 +229,26 @@ impl PyM {
 
     fn __str__(&self) -> String {
         self.0.to_string()
+    }
+
+    fn __add__(&self, other: &Bound<'_, PyAny>) -> PyResult<Self> {
+        Ok(Self(self.0 + parse_projection(other)?))
+    }
+
+    fn __radd__(&self, other: &Bound<'_, PyAny>) -> PyResult<Self> {
+        Ok(Self(parse_projection(other)? + self.0))
+    }
+
+    fn __sub__(&self, other: &Bound<'_, PyAny>) -> PyResult<Self> {
+        Ok(Self(self.0 - parse_projection(other)?))
+    }
+
+    fn __rsub__(&self, other: &Bound<'_, PyAny>) -> PyResult<Self> {
+        Ok(Self(parse_projection(other)? - self.0))
+    }
+
+    fn __neg__(&self) -> Self {
+        Self(-self.0)
     }
 }
 
@@ -297,7 +321,7 @@ fn parse_charge_input(input: &Bound<'_, PyAny>) -> PyResult<Charge> {
 }
 
 fn charge_to_python(py: Python<'_>, charge: Charge) -> PyResult<PyQuantumNumber> {
-    let thirds = charge.value();
+    let thirds = charge.tripled();
     if thirds % 3 == 0 {
         Ok((thirds / 3).into_bound_py_any(py)?.unbind())
     } else {
@@ -314,8 +338,8 @@ pub struct PyParity(pub Parity);
 #[pymethods]
 impl PyParity {
     #[new]
-    fn new(value: &str) -> PyResult<Self> {
-        Ok(Self(value.parse()?))
+    fn new(value: &Bound<'_, PyAny>) -> PyResult<Self> {
+        Ok(Self(parse_parity(value)?))
     }
 
     #[staticmethod]
@@ -339,6 +363,18 @@ impl PyParity {
 
     fn __str__(&self) -> String {
         self.0.to_string()
+    }
+
+    fn __mul__(&self, other: &Bound<'_, PyAny>) -> PyResult<Self> {
+        Ok(Self(self.0 * parse_parity(other)?))
+    }
+
+    fn __rmul__(&self, other: &Bound<'_, PyAny>) -> PyResult<Self> {
+        Ok(Self(parse_parity(other)? * self.0))
+    }
+
+    fn __neg__(&self) -> Self {
+        Self(-self.0)
     }
 }
 
@@ -389,6 +425,26 @@ impl PyCharge {
 
     fn __str__(&self) -> String {
         self.0.to_string()
+    }
+
+    fn __add__(&self, other: &Bound<'_, PyAny>) -> PyResult<Self> {
+        Ok(Self(self.0 + parse_charge_input(other)?))
+    }
+
+    fn __radd__(&self, other: &Bound<'_, PyAny>) -> PyResult<Self> {
+        Ok(Self(parse_charge_input(other)? + self.0))
+    }
+
+    fn __sub__(&self, other: &Bound<'_, PyAny>) -> PyResult<Self> {
+        Ok(Self(self.0 - parse_charge_input(other)?))
+    }
+
+    fn __rsub__(&self, other: &Bound<'_, PyAny>) -> PyResult<Self> {
+        Ok(Self(parse_charge_input(other)? - self.0))
+    }
+
+    fn __neg__(&self) -> Self {
+        Self(-self.0)
     }
 }
 

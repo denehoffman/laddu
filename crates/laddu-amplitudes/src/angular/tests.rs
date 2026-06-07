@@ -3,7 +3,9 @@ use std::sync::Arc;
 use approx::assert_relative_eq;
 use laddu_core::{
     data::test_dataset,
+    j,
     kinematics::{Axes, Axis, Frame},
+    m,
     math::{BarrierKind, WignerDMatrix, QR_DEFAULT},
     reaction::Channel,
     traits::Variable,
@@ -74,7 +76,7 @@ fn wigner_d_matches_core_function() {
     let mut phi = angles.phi.clone();
     costheta.bind(dataset.metadata()).unwrap();
     phi.bind(dataset.metadata()).unwrap();
-    let expected = WignerDMatrix::new(2, 2, 0).D(
+    let expected = WignerDMatrix::new(j!(1), m!(1), m!(0)).unwrap().D(
         event.evaluate(&phi),
         event.evaluate(&costheta).clamp(-1.0, 1.0).acos(),
         0.0,

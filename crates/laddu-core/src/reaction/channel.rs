@@ -651,7 +651,7 @@ impl Channel {
                 Vec::new()
             }
         } else {
-            (0..=j_max.value()).map(J::half).collect()
+            (0..=j_max.doubled()).map(J::half).collect()
         };
 
         let mut out = Vec::new();
@@ -726,10 +726,8 @@ impl Channel {
 
         if rules.charge {
             if let (Some(a), Some(b)) = (daughters.0.charge, daughters.1.charge) {
-                if !Self::set_or_check(
-                    &mut parent.charge,
-                    Charge::third_integer(a.value() + b.value()),
-                ) {
+                if !Self::set_or_check(&mut parent.charge, Charge::third(a.tripled() + b.tripled()))
+                {
                     return Ok(Vec::new());
                 }
             }
@@ -811,8 +809,8 @@ impl Channel {
                             expanded.push(parent);
                         }
                     } else {
-                        let min = i_a.isospin().value().abs_diff(i_b.isospin().value());
-                        let max = i_a.isospin().value() + i_b.isospin().value();
+                        let min = i_a.isospin().doubled().abs_diff(i_b.isospin().doubled());
+                        let max = i_a.isospin().doubled() + i_b.isospin().doubled();
                         for i_raw in (min..=max).step_by(2) {
                             let mut candidate = parent.clone();
                             candidate.isospin = Some(Isospin::new(J::half(i_raw), None)?);
@@ -829,12 +827,12 @@ impl Channel {
                 daughters.0.isospin.and_then(|i| i.projection),
                 daughters.1.isospin.and_then(|i| i.projection),
             ) {
-                let target = crate::quantum::M::half(i3_a.value() + i3_b.value());
+                let target = crate::quantum::M::half(i3_a.doubled() + i3_b.doubled());
                 let mut expanded = Vec::new();
                 for mut parent in parents {
                     if let Some(mut i_parent) = parent.isospin {
                         if let Some(i3_parent) = i_parent.projection {
-                            if i3_parent.value() == target.value() {
+                            if i3_parent.doubled() == target.doubled() {
                                 expanded.push(parent);
                             }
                         } else if crate::quantum::SpinState::new(i_parent.isospin(), target).is_ok()
@@ -888,12 +886,12 @@ impl Channel {
         let (Some(spin_a), Some(spin_b)) = (daughters.0.spin, daughters.1.spin) else {
             return true;
         };
-        if spin_a != spin_b || !s.value().is_multiple_of(2) {
+        if spin_a != spin_b || !s.doubled().is_multiple_of(2) {
             return false;
         }
 
         let mut phase = if l.value().is_multiple_of(2) { 1 } else { -1 };
-        let spin_exponent = spin_a.value() as i32 - (s.value() / 2) as i32;
+        let spin_exponent = spin_a.doubled() as i32 - (s.doubled() / 2) as i32;
         if spin_exponent % 2 != 0 {
             phase *= -1;
         }
@@ -902,11 +900,12 @@ impl Channel {
             if let (Some(i_a), Some(i_b), Some(i_parent)) =
                 (daughters.0.isospin, daughters.1.isospin, parent.isospin)
             {
-                if i_a.isospin() != i_b.isospin() || !i_parent.isospin().value().is_multiple_of(2) {
+                if i_a.isospin() != i_b.isospin() || !i_parent.isospin().doubled().is_multiple_of(2)
+                {
                     return false;
                 }
                 let isospin_exponent =
-                    i_a.isospin().value() as i32 - (i_parent.isospin().value() / 2) as i32;
+                    i_a.isospin().doubled() as i32 - (i_parent.isospin().doubled() / 2) as i32;
                 if isospin_exponent % 2 != 0 {
                     phase *= -1;
                 }

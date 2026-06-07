@@ -189,7 +189,7 @@ fn helicity_amplitude(
 }
 
 fn dynamics_for(j: J, l: L, mass: &laddu::Mass) -> LadduResult<Vec<(String, Expression)>> {
-    match j.value() {
+    match j.doubled() {
         0 => Ok(vec![
             (
                 "f0".to_string(),
@@ -271,7 +271,7 @@ fn coefficient_for(
 }
 
 fn projection_label(projection: M) -> String {
-    match projection.value() {
+    match projection.doubled() {
         value if value < 0 => format!("m{}", value.abs()),
         value => format!("p{value}"),
     }

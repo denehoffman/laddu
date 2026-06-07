@@ -86,9 +86,9 @@ def test_angular_terms_accept_typed_quantum_numbers() -> None:
     angles = ch.angles('kshort1', helicity_frame('x'))
     d = WignerD(
         'd_typed',
-        spin=J.int(2),
-        row_projection=M.int(0),
-        column_projection=M.int(0),
+        spin=J(2),
+        row_projection=M(0),
+        column_projection=M(0),
         angles=angles,
     )
     b = BlattWeisskopf(
@@ -96,7 +96,7 @@ def test_angular_terms_accept_typed_quantum_numbers() -> None:
         parent_mass=ch.mass('x'),
         daughter_1_mass=ch.mass('kshort1'),
         daughter_2_mass=ch.mass('kshort2'),
-        l=L.int(2),
+        l=L(2),
         reference_mass=1.5,
     )
 

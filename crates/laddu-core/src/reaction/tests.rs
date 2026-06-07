@@ -94,7 +94,7 @@ fn strong_two_body_couplings_filter_identical_ksks_waves() {
         .rules(RuleSet::strong());
     let ks = ParticleProperties::jp(J::int(0), Parity::Negative)
         .with_species("K_S")
-        .with_charge(Charge::integer(0))
+        .with_charge(Charge::int(0))
         .with_strangeness(0)
         .with_baryon_number(0)
         .with_statistics(Statistics::Boson)

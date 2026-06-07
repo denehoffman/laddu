@@ -518,14 +518,14 @@ impl PartialWave {
     /// Get the spectroscopic label for the wave in the form {2s+1}{l}{j} where l is represented by
     /// its spectroscopic letter equivalent (`S` for `0`, `P` for `1`, etc.).
     pub fn label(&self) -> String {
-        let multiplicity = self.s.value() + 1;
+        let multiplicity = self.s.doubled() + 1;
         format!("{}{}{}", multiplicity, self.l, self.j)
     }
     /// Validate the set of angular momentum quantum numbers which define a partial wave.
     pub fn validate_coupling(j: J, l: L, s: S) -> LadduResult<()> {
         let l_twice = 2 * l.value();
-        let s_twice = s.value();
-        let j_twice = j.value();
+        let s_twice = s.doubled();
+        let j_twice = j.doubled();
         let min = l_twice.abs_diff(s_twice);
         let max = l_twice + s_twice;
         if j_twice >= min && j_twice <= max && (j_twice - min).is_multiple_of(2) {
@@ -592,7 +592,7 @@ impl AllowedPartialWave {
             return None;
         }
 
-        let exp_twice = 2 * l.value() + s.value();
+        let exp_twice = 2 * l.value() + s.doubled();
 
         if !exp_twice.is_multiple_of(2) {
             return None;
@@ -607,7 +607,7 @@ impl AllowedPartialWave {
 }
 
 fn validate_projection(spin: J, projection: M) -> LadduResult<()> {
-    if projection.value().unsigned_abs() > spin.value() {
+    if projection.doubled().unsigned_abs() > spin.doubled() {
         return Err(LadduError::Custom(
             "spin projection must satisfy -J <= m <= J".to_string(),
         ));

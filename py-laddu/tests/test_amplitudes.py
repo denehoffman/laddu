@@ -500,10 +500,12 @@ def test_parameter_initial_values_and_bounds_helpers() -> None:
     default_initial = parameter('default_initial')
     fixed_parameter = parameter('fixed_parameter', 3.0)
 
+    assert fixed_initial.initial is not None
     assert fixed_initial.initial == InitialValue.fixed(2.0)
     assert fixed_initial.initial.kind == 'fixed'
     assert fixed_initial.initial.value == 2.0
     assert fixed_initial.initial.range is None
+    assert uniform_initial.initial is not None
     assert uniform_initial.initial == InitialValue.uniform(10.0, 20.0)
     assert uniform_initial.initial.kind == 'uniform'
     assert uniform_initial.initial.value is None

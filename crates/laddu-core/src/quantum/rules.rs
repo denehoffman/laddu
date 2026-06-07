@@ -259,7 +259,7 @@ impl RuleSet {
         let i3_parent = i_parent.projection?;
         let i3_a = i_a.projection?;
         let i3_b = i_b.projection?;
-        Some(i3_parent.value() == i3_a.value() + i3_b.value())
+        Some(i3_parent.doubled() == i3_a.doubled() + i3_b.doubled())
     }
     fn check_c_parity(
         parent: &ParticleProperties,
@@ -271,7 +271,7 @@ impl RuleSet {
         if !daughters.0.is_antiparticle_of(daughters.1) {
             return None;
         }
-        let exp_twice = 2 * l.value() + s.value();
+        let exp_twice = 2 * l.value() + s.doubled();
         if !exp_twice.is_multiple_of(2) {
             return Some(false);
         }
@@ -318,9 +318,9 @@ impl RuleSet {
 
         check_conserved!(
             self.charge,
-            parent.charge.map(|q| q.value()),
-            daughters.0.charge.map(|q| q.value()),
-            daughters.1.charge.map(|q| q.value())
+            parent.charge.map(|q| q.tripled()),
+            daughters.0.charge.map(|q| q.tripled()),
+            daughters.1.charge.map(|q| q.tripled())
         );
 
         check_conserved!(
@@ -438,8 +438,8 @@ impl RuleSet {
             return Some(false);
         }
         if stats_a == Statistics::Boson
-            && daughters.0.spin.map(|x| x.value()) == Some(0)
-            && daughters.1.spin.map(|x| x.value()) == Some(0)
+            && daughters.0.spin.map(|x| x.doubled()) == Some(0)
+            && daughters.1.spin.map(|x| x.doubled()) == Some(0)
         {
             if l.value().is_multiple_of(2) {
                 return Some(true);
@@ -495,8 +495,8 @@ impl SelectionRules {
     /// Internally angular momenta are stored as doubled values, so the returned
     /// sequence advances by two in the doubled representation.
     pub fn coupled_spins(a: J, b: J) -> Vec<S> {
-        let min = a.value().abs_diff(b.value());
-        let max = a.value() + b.value();
+        let min = a.doubled().abs_diff(b.doubled());
+        let max = a.doubled() + b.doubled();
         (min..=max).step_by(2).map(J::half).collect()
     }
     /// Generate all allowed two-body partial waves for a parent and two
@@ -563,7 +563,7 @@ mod tests {
     }
 
     fn q(thirds: i32) -> Charge {
-        Charge::third_integer(thirds)
+        Charge::third(thirds)
     }
 
     fn labels(waves: &[AllowedPartialWave]) -> Vec<String> {

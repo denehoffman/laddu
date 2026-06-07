@@ -1,5 +1,6 @@
 use std::{fmt::Display, str::FromStr};
 
+use auto_ops::impl_op_ex;
 use num::rational::Ratio;
 use serde::{Deserialize, Serialize};
 
@@ -41,7 +42,7 @@ impl J {
     }
 
     /// Return the doubled integer value.
-    pub const fn value(self) -> u32 {
+    pub const fn doubled(self) -> u32 {
         self.0
     }
 
@@ -58,14 +59,14 @@ impl J {
     /// Return whether this angular momentum has the same integer/half-integer parity as
     /// `projection`.
     pub(crate) const fn has_same_parity_as(self, projection: M) -> bool {
-        (self.0 & 1) as i32 == projection.value() & 1
+        (self.0 & 1) as i32 == projection.doubled() & 1
     }
 
     /// Returns true if the given angular momenta can couple to produce this one.
     pub(crate) fn can_couple_to(&self, j1: Self, j2: Self) -> bool {
-        let min = j1.value().abs_diff(j2.value());
-        let max = j1.value() + j2.value();
-        self.value() >= min && self.value() <= max && (self.value() - min).is_multiple_of(2)
+        let min = j1.doubled().abs_diff(j2.doubled());
+        let max = j1.doubled() + j2.doubled();
+        self.doubled() >= min && self.doubled() <= max && (self.doubled() - min).is_multiple_of(2)
     }
 }
 
@@ -114,9 +115,9 @@ impl TryFrom<f64> for J {
 impl Display for J {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if self.is_integer() {
-            write!(f, "{}", self.value() / 2)
+            write!(f, "{}", self.doubled() / 2)
         } else {
-            write!(f, "{}/2", self.value())
+            write!(f, "{}/2", self.doubled())
         }
     }
 }
@@ -144,6 +145,15 @@ impl L {
     /// Return the orbital angular momentum as a total angular momentum.
     pub const fn as_j(self) -> J {
         J::int(self.0)
+    }
+
+    /// Returns the parity derived from the orbital angular momentum, $`(-1)^{\ell}`$
+    pub const fn orbital_parity(self) -> Parity {
+        if self.value().is_multiple_of(2) {
+            Parity::Positive
+        } else {
+            Parity::Negative
+        }
     }
 }
 
@@ -223,7 +233,7 @@ impl M {
     }
 
     /// Return the doubled integer value.
-    pub const fn value(self) -> i32 {
+    pub const fn doubled(self) -> i32 {
         self.0
     }
 
@@ -274,9 +284,9 @@ impl TryFrom<f64> for M {
 impl Display for M {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if self.is_integer() {
-            write!(f, "{}", self.value() / 2)
+            write!(f, "{}", self.doubled() / 2)
         } else {
-            write!(f, "{}/2", self.value())
+            write!(f, "{}/2", self.doubled())
         }
     }
 }
@@ -332,17 +342,17 @@ pub struct Charge(i32);
 
 impl Charge {
     /// Construct a signed charge.
-    pub const fn integer(value: i32) -> Self {
+    pub const fn int(value: i32) -> Self {
         Self(3 * value)
     }
 
     /// Construct a signed charge from a numerator over three.
-    pub const fn third_integer(value: i32) -> Self {
+    pub const fn third(value: i32) -> Self {
         Self(value)
     }
 
     /// Return the tripled integer value.
-    pub const fn value(self) -> i32 {
+    pub const fn tripled(self) -> i32 {
         self.0
     }
 
@@ -354,9 +364,9 @@ impl Charge {
 impl Display for Charge {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if self.is_integer() {
-            write!(f, "{}", self.value() / 3)
+            write!(f, "{}", self.tripled() / 3)
         } else {
-            write!(f, "{}/3", self.value())
+            write!(f, "{}/3", self.tripled())
         }
     }
 }
@@ -420,6 +430,38 @@ impl TryFrom<f64> for Charge {
     }
 }
 
+// Operations
+impl_op_ex!(+ |m1: &M, m2: &M| -> M { M::half(m1.doubled() + m2.doubled()) });
+impl_op_ex!(-|m1: &M, m2: &M| -> M { M::half(m1.doubled() - m2.doubled()) });
+impl_op_ex!(-|m: &M| -> M { M::half(-m.doubled()) });
+impl_op_ex!(+= |m1: &mut M, m2: &M| { *m1 = *m1 + m2 });
+impl_op_ex!(-= |m1: &mut M, m2: &M| { *m1 = *m1 - m2 });
+
+impl_op_ex!(+ |c1: &Charge, c2: &Charge| -> Charge { Charge::third(c1.tripled() + c2.tripled()) });
+impl_op_ex!(-|c1: &Charge, c2: &Charge| -> Charge { Charge::third(c1.tripled() - c2.tripled()) });
+impl_op_ex!(-|c: &Charge| -> Charge { Charge::third(-c.tripled()) });
+impl_op_ex!(+= |c1: &mut Charge, c2: &Charge| { *c1 = *c1 + c2 });
+impl_op_ex!(-= |c1: &mut Charge, c2: &Charge| { *c1 = *c1 - c2 });
+
+impl_op_ex!(*|p1: &Parity, p2: &Parity| -> Parity {
+    match (p1, p2) {
+        (Parity::Positive, Parity::Positive) | (Parity::Negative, Parity::Negative) => {
+            Parity::Positive
+        }
+        (Parity::Positive, Parity::Negative) | (Parity::Negative, Parity::Positive) => {
+            Parity::Negative
+        }
+    }
+});
+impl_op_ex!(*= |p1: &mut Parity, p2: &Parity| { *p1 = *p1 * p2});
+impl_op_ex!(-|p: &Parity| -> Parity {
+    if matches!(p, Parity::Positive) {
+        Parity::Negative
+    } else {
+        Parity::Positive
+    }
+});
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -432,10 +474,10 @@ mod tests {
 
     #[test]
     fn angular_momentum_accepts_ratio_and_float_physical_values() {
-        assert_eq!(J::try_from(Ratio::new(3, 2)).unwrap().value(), 3);
-        assert_eq!(J::try_from(1.5).unwrap().value(), 3);
-        assert_eq!(M::try_from(Ratio::new(-1, 2)).unwrap().value(), -1);
-        assert_eq!(M::try_from(-0.5).unwrap().value(), -1);
+        assert_eq!(J::try_from(Ratio::new(3, 2)).unwrap().doubled(), 3);
+        assert_eq!(J::try_from(1.5).unwrap().doubled(), 3);
+        assert_eq!(M::try_from(Ratio::new(-1, 2)).unwrap().doubled(), -1);
+        assert_eq!(M::try_from(-0.5).unwrap().doubled(), -1);
         assert!(J::try_from(Ratio::new(1, 3)).is_err());
         assert!(M::try_from(0.25).is_err());
     }
@@ -456,9 +498,9 @@ mod tests {
 
     #[test]
     fn charge_accepts_integer_ratio_and_float_values() {
-        assert_eq!(Charge::try_from(Ratio::new(3, 1)).unwrap().value(), 9);
-        assert_eq!(Charge::try_from(2.0).unwrap().value(), 6);
-        assert_eq!(Charge::try_from(Ratio::new(2, 3)).unwrap().value(), 2);
+        assert_eq!(Charge::try_from(Ratio::new(3, 1)).unwrap().tripled(), 9);
+        assert_eq!(Charge::try_from(2.0).unwrap().tripled(), 6);
+        assert_eq!(Charge::try_from(Ratio::new(2, 3)).unwrap().tripled(), 2);
         assert!(Charge::try_from(Ratio::new(3, 2)).is_err());
         assert!(Charge::try_from(1.5).is_err());
     }

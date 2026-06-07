@@ -3,9 +3,13 @@
 //! Ported from <https://github.com/0382/WignerSymbol> to Rust by N. D. Hoffman, 2026.
 
 use num::complex::Complex64;
+use serde::{Deserialize, Serialize};
 
 use self::utils::{binomial, const_imax, const_umin};
-use crate::quantum::{J, M};
+use crate::{
+    quantum::{J, M},
+    LadduError, LadduResult,
+};
 
 mod utils {
     const MAX_BINOMIAL: u64 = 67;
@@ -136,12 +140,12 @@ const fn check_coupling(dj1: i64, dj2: i64, dj3: i64) -> bool {
 /// ```
 pub fn clebsch_gordan(j1: J, m1: M, j2: J, m2: M, j: J, m: M) -> f64 {
     clebsch_gordan_doubled(
-        j1.value() as u64,
-        j2.value() as u64,
-        j.value() as u64,
-        m1.value() as i64,
-        m2.value() as i64,
-        m.value() as i64,
+        j1.doubled() as u64,
+        j2.doubled() as u64,
+        j.doubled() as u64,
+        m1.doubled() as i64,
+        m2.doubled() as i64,
+        m.doubled() as i64,
     )
 }
 
@@ -198,23 +202,14 @@ fn clebsch_gordan_doubled(dj1: u64, dj2: u64, dj3: u64, dm1: i64, dm2: i64, dm3:
 ///
 /// # Parameters
 ///
-/// All quantum numbers are passed in doubled form:
-/// - `dj1 = 2*j₁`
-/// - `dj2 = 2*j₂`
-/// - `dj3 = 2*j₃`
-/// - `dm1 = 2*m₁`
-/// - `dm2 = 2*m₂`
-/// - `dm3 = 2*m₃`
-///
-/// This representation supports both integer and half-integer values
-/// without using floating-point input.
+/// All angular momenta and projections are passed as strongly typed quantum numbers.
 ///
 /// # Returns
 ///
 /// Returns the Wigner 3-j symbol as `f64`.
 ///
 /// The function returns `0.0` when any selection rule fails:
-/// - `(dj, dm)` is invalid for any input pair
+/// - `(j, m)` is invalid for any input pair
 /// - `j₁`, `j₂`, and `j₃` violate the triangle condition
 /// - `m₁ + m₂ + m₃ != 0`
 ///
@@ -227,16 +222,18 @@ fn clebsch_gordan_doubled(dj1: u64, dj2: u64, dj3: u64, dm1: i64, dm2: i64, dm3:
 /// Integer angular momentum:
 ///
 /// ```rust
+/// # use laddu_core::{j, m};
 /// # use laddu_core::math::wigner_3j;
-/// let w = wigner_3j(2, 2, 2, 2, -2, 0); // (1 1 1; 1 -1 0)
+/// let w = wigner_3j(j!(1), m!(1), j!(1), m!(-1), j!(1), m!(0)); // (1 1 1; 1 -1 0)
 /// assert_eq!(w, f64::sqrt(1.0 / 6.0))
 /// ```
 ///
 /// Half-integer angular momentum:
 ///
 /// ```rust
+/// # use laddu_core::{j, m};
 /// # use laddu_core::math::wigner_3j;
-/// let w = wigner_3j(1, 1, 2, 1, -1, 0); // (1/2 1/2 1; 1/2 -1/2 0)
+/// let w = wigner_3j(j!(1/2), m!(1/2), j!(1/2), m!(-1/2), j!(1), m!(0)); // (1/2 1/2 1; 1/2 -1/2 0)
 /// assert_eq!(w, f64::sqrt(1.0 / 6.0))
 /// ```
 ///
@@ -245,7 +242,18 @@ fn clebsch_gordan_doubled(dj1: u64, dj2: u64, dj3: u64, dm1: i64, dm2: i64, dm3:
 /// This symbol is related to the Clebsch–Gordon coefficient by
 ///
 /// $`\begin{pmatrix} j_1 & j_2 & j_3 \\ m_1 & m_2 & m_3 \end{pmatrix} = (-1)^{j_1 - j_2 - m_3} \sqrt{2j_3 + 1} \langle j_1 m_1; j_2 m_2 | j_3, -m_3\rangle`$
-pub fn wigner_3j(dj1: u64, dj2: u64, dj3: u64, dm1: i64, dm2: i64, dm3: i64) -> f64 {
+pub fn wigner_3j(j1: J, m1: M, j2: J, m2: M, j3: J, m3: M) -> f64 {
+    wigner_3j_doubled(
+        j1.doubled() as u64,
+        j2.doubled() as u64,
+        j3.doubled() as u64,
+        m1.doubled() as i64,
+        m2.doubled() as i64,
+        m3.doubled() as i64,
+    )
+}
+
+fn wigner_3j_doubled(dj1: u64, dj2: u64, dj3: u64, dm1: i64, dm2: i64, dm3: i64) -> f64 {
     if !(check_jm(dj1 as i64, dm1) && check_jm(dj2 as i64, dm2) && check_jm(dj3 as i64, dm3)) {
         return 0.0;
     }
@@ -288,14 +296,6 @@ pub fn wigner_3j(dj1: u64, dj2: u64, dj3: u64, dm1: i64, dm2: i64, dm3: i64) -> 
 ///
 /// $`d^j_{m' m}(\beta)`$ and $`D^j_{m' m}(\alpha,\beta,\gamma)`$.
 ///
-/// # Convention
-///
-/// Doubled quantum numbers:
-///
-/// - $`dj = 2j`$
-/// - $`dmp = 2m'`$
-/// - $`dm = 2m`$
-///
 /// # Definitions
 ///
 /// $`D^j_{m' m}(\alpha,\beta,\gamma) = e^{-i m' \alpha} d^j_{m' m}(\beta) e^{-i m \gamma}`$
@@ -303,6 +303,7 @@ pub fn wigner_3j(dj1: u64, dj2: u64, dj3: u64, dm1: i64, dm2: i64, dm3: i64) -> 
 /// # Notes
 ///
 /// Designed for reuse across many angle evaluations.
+#[derive(Copy, Clone, Serialize, Deserialize)]
 pub struct WignerDMatrix {
     dj: i64,    // 2 * j
     dmp: i64,   // 2 * m'
@@ -321,22 +322,16 @@ impl WignerDMatrix {
     /// Constructs a Wigner small-$`d`$/full-$`D`$ matrix element helper for fixed
     /// quantum numbers $`j`$, $`m'`$, and $`m`$.
     ///
-    /// All angular-momentum quantum numbers are passed in doubled form:
-    /// - `dj = 2*j`
-    /// - `dmp = 2*m'`
-    /// - `dm = 2*m`
-    ///
-    /// This allows both integer and half-integer values to be represented
-    /// exactly using integer types.
+    /// All angular momenta and projections are passed as strongly typed quantum numbers.
     ///
     /// The constructed value precomputes the combinatorial factors and
     /// summation bounds needed for repeated evaluation of:
     /// - the reduced Wigner matrix element $`d^j_{m' m}(\beta)`$, and
     /// - the full Wigner matrix element $`D^j_{m' m}(\alpha,\beta,\gamma)`$.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if:
+    /// This method will return an error result if:
     /// - `|m'| > j`
     /// - `|m| > j`
     /// - `j` and `m'` do not have matching integer/half-integer parity
@@ -354,42 +349,48 @@ impl WignerDMatrix {
     /// Integer angular momentum:
     ///
     /// ```rust
-    /// use laddu_core::math::WignerDMatrix;
-    /// let w = WignerDMatrix::new(2, 2, 0); // j = 1, m' = 1, m = 0
+    /// # use laddu_core::{j, m};
+    /// # use laddu_core::math::WignerDMatrix;
+    /// let w = WignerDMatrix::new(j!(1), m!(1), m!(0)).unwrap(); // j = 1, m' = 1, m = 0
     /// ```
     ///
     /// Half-integer angular momentum:
     ///
     /// ```rust
-    /// use laddu_core::math::WignerDMatrix;
-    /// let w = WignerDMatrix::new(1, 1, -1); // j = 1/2, m' = 1/2, m = -1/2
+    /// # use laddu_core::{j, m};
+    /// # use laddu_core::math::WignerDMatrix;
+    /// let w = WignerDMatrix::new(j!(1/2), m!(1/2), m!(-1/2)).unwrap(); // j = 1/2, m' = 1/2, m = -1/2
     /// ```
-    pub fn new(dj: u64, dmp: i64, dm: i64) -> Self {
+    pub fn new(j: J, mp: M, m: M) -> LadduResult<Self> {
+        Self::new_doubled(j.doubled() as u64, mp.doubled() as i64, m.doubled() as i64)
+    }
+
+    fn new_doubled(dj: u64, dmp: i64, dm: i64) -> LadduResult<Self> {
         let dj = dj as i64;
-        assert!(
-            dmp.abs() <= dj,
-            "|m'| > j is not allowed! (2*j = {}, 2*m' = {})",
-            dj,
-            dmp
-        );
-        assert!(
-            dm.abs() <= dj,
-            "|m| > j is not allowed! (2*j = {}, 2*m = {})",
-            dj,
-            dm
-        );
-        assert!(
-            check_parity(dj, dmp),
-            "j and m' must either both be integers or both be half-integers! (2*j = {}, 2*m' = {})",
-            dj,
-            dmp
-        );
-        assert!(
-            check_parity(dj, dm),
-            "j and m must either both be integers or both be half-integers! (2*j = {}, 2*m = {})",
-            dj,
-            dm
-        );
+        if dmp.abs() > dj {
+            return Err(LadduError::Custom(format!(
+                "|m'| > j is not allowed! (2*j = {}, 2*m' = {})",
+                dj, dmp
+            )));
+        }
+        if dm.abs() > dj {
+            return Err(LadduError::Custom(format!(
+                "|m| > j is not allowed! (2*j = {}, 2*m = {})",
+                dj, dm
+            )));
+        }
+        if !check_parity(dj, dmp) {
+            return Err(LadduError::Custom(format!(
+                "j and m' must either both be integers or both be half-integers! (2*j = {}, 2*m' = {})",
+                dj, dmp
+            )));
+        }
+        if !check_parity(dj, dm) {
+            return Err(LadduError::Custom(format!(
+                "j and m must either both be integers or both be half-integers! (2*j = {}, 2*m = {})",
+                dj, dm
+            )));
+        }
         let jpmp = (dj + dmp) / 2;
         let jmmp = (dj - dmp) / 2;
         let jpm = (dj + dm) / 2;
@@ -422,7 +423,7 @@ impl WignerDMatrix {
         } else {
             -1.0
         };
-        Self {
+        Ok(Self {
             dj,
             dmp,
             dm,
@@ -435,7 +436,7 @@ impl WignerDMatrix {
             p_s0,
             amp0,
             sign0,
-        }
+        })
     }
     #[inline(always)]
     fn d_half(&self, ch: f64, sh: f64) -> f64 {
@@ -488,7 +489,8 @@ impl WignerDMatrix {
     /// ```rust
     /// # use laddu_core::math::WignerDMatrix;
     /// # use approx::assert_relative_eq;
-    /// let w = WignerDMatrix::new(2, 2, 0); // j = 1, m' = 1, m = 0
+    /// # use laddu_core::{j, m};
+    /// let w = WignerDMatrix::new(j!(1), m!(1), m!(0)).unwrap(); // j = 1, m' = 1, m = 0
     /// let val = w.d(std::f64::consts::FRAC_PI_2);
     /// assert_relative_eq!(val, -std::f64::consts::FRAC_1_SQRT_2);
     /// ```
@@ -525,7 +527,8 @@ impl WignerDMatrix {
     /// # use laddu_core::math::WignerDMatrix;
     /// # use approx::assert_relative_eq;
     /// # use num::complex::Complex64;
-    /// let w = WignerDMatrix::new(2, 2, 0); // j = 1, m' = 1, m = 0
+    /// # use laddu_core::{j, m};
+    /// let w = WignerDMatrix::new(j!(1), m!(1), m!(0)).unwrap(); // j = 1, m' = 1, m = 0
     /// let val = w.D(0.1, 0.2, 0.3);
     /// let truth =  Complex64::cis(-0.1) * -std::f64::consts::FRAC_1_SQRT_2 * f64::sin(0.2);
     /// assert_relative_eq!(val.re, truth.re);
@@ -548,6 +551,7 @@ mod tests {
     use num::complex::Complex64;
 
     use super::*;
+    use crate::{j, m};
     #[test]
     fn test_phase() {
         assert_eq!(phase(0), 1);
@@ -577,25 +581,11 @@ mod tests {
     #[test]
     fn typed_clebsch_gordan_matches_doubled_helper() {
         assert_relative_eq!(
-            clebsch_gordan(
-                crate::j!(1 / 2),
-                crate::m!(1 / 2),
-                crate::j!(1 / 2),
-                crate::m!(-1 / 2),
-                crate::j!(1),
-                crate::m!(0)
-            ),
+            clebsch_gordan(j!(1 / 2), m!(1 / 2), j!(1 / 2), m!(-1 / 2), j!(1), m!(0)),
             clebsch_gordan_doubled(1, 1, 2, 1, -1, 0)
         );
         assert_eq!(
-            clebsch_gordan(
-                crate::j!(1 / 2),
-                crate::m!(1 / 2),
-                crate::j!(1 / 2),
-                crate::m!(1 / 2),
-                crate::j!(1),
-                crate::m!(0)
-            ),
+            clebsch_gordan(j!(1 / 2), m!(1 / 2), j!(1 / 2), m!(1 / 2), j!(1), m!(0)),
             0.0
         );
     }
@@ -664,60 +654,60 @@ mod tests {
     #[test]
     fn two_spin_half_cases() {
         // (1/2 1/2 1 ; 1/2 1/2 -1) = -1/sqrt(3)
-        assert_relative_eq!(wigner_3j(1, 1, 2, 1, 1, -2), -1.0 / 3.0_f64.sqrt());
+        assert_relative_eq!(wigner_3j_doubled(1, 1, 2, 1, 1, -2), -1.0 / 3.0_f64.sqrt());
 
         // (1/2 1/2 0 ; 1/2 -1/2 0) = 1/sqrt(2)
-        assert_relative_eq!(wigner_3j(1, 1, 0, 1, -1, 0), FRAC_1_SQRT_2);
+        assert_relative_eq!(wigner_3j_doubled(1, 1, 0, 1, -1, 0), FRAC_1_SQRT_2);
 
         // (1/2 1/2 0 ; -1/2 1/2 0) = -1/sqrt(2)
-        assert_relative_eq!(wigner_3j(1, 1, 0, -1, 1, 0), -FRAC_1_SQRT_2);
+        assert_relative_eq!(wigner_3j_doubled(1, 1, 0, -1, 1, 0), -FRAC_1_SQRT_2);
     }
 
     #[test]
     fn spin_one_cases() {
         // (1 1 0 ; 0 0 0) = -1/sqrt(3)
-        assert_relative_eq!(wigner_3j(2, 2, 0, 0, 0, 0), -1.0 / 3.0_f64.sqrt());
+        assert_relative_eq!(wigner_3j_doubled(2, 2, 0, 0, 0, 0), -1.0 / 3.0_f64.sqrt());
 
         // (1 1 2 ; 1 -1 0) = 1/sqrt(30)
-        assert_relative_eq!(wigner_3j(2, 2, 4, 2, -2, 0), 1.0 / 30.0_f64.sqrt());
+        assert_relative_eq!(wigner_3j_doubled(2, 2, 4, 2, -2, 0), 1.0 / 30.0_f64.sqrt());
 
         // (1 1 2 ; 0 0 0) = sqrt(2/15)
-        assert_relative_eq!(wigner_3j(2, 2, 4, 0, 0, 0), (2.0 / 15.0_f64).sqrt());
+        assert_relative_eq!(wigner_3j_doubled(2, 2, 4, 0, 0, 0), (2.0 / 15.0_f64).sqrt());
     }
 
     #[test]
     fn selection_rule_failures_return_zero() {
         // m1 + m2 + m3 != 0
-        assert_eq!(wigner_3j(1, 1, 0, 1, -1, 1), 0.0);
+        assert_eq!(wigner_3j_doubled(1, 1, 0, 1, -1, 1), 0.0);
 
         // triangle rule fails: 1/2 + 1/2 cannot couple to 2
-        assert_eq!(wigner_3j(1, 1, 4, 1, -1, 0), 0.0);
+        assert_eq!(wigner_3j_doubled(1, 1, 4, 1, -1, 0), 0.0);
 
         // invalid m for j = 1/2
-        assert_eq!(wigner_3j(1, 1, 0, 3, -1, -2), 0.0);
+        assert_eq!(wigner_3j_doubled(1, 1, 0, 3, -1, -2), 0.0);
     }
 
     #[test]
     fn odd_j_sum_with_all_zero_ms_vanishes() {
         // For integer j's, (j1 j2 j3; 0 0 0) vanishes if j1+j2+j3 is odd.
         // Here 1+1+1 = 3 is odd.
-        assert_eq!(wigner_3j(2, 2, 2, 0, 0, 0), 0.0);
+        assert_eq!(wigner_3j_doubled(2, 2, 2, 0, 0, 0), 0.0);
     }
 
     #[test]
     fn column_swap_symmetry_even_case() {
         // Swapping first two columns gives factor (-1)^(j1+j2+j3).
         // Here 1+1+2 = 4 is even, so unchanged.
-        let a = wigner_3j(2, 2, 4, 2, -2, 0);
-        let b = wigner_3j(2, 2, 4, -2, 2, 0);
+        let a = wigner_3j_doubled(2, 2, 4, 2, -2, 0);
+        let b = wigner_3j_doubled(2, 2, 4, -2, 2, 0);
         assert_relative_eq!(a, b);
     }
 
     #[test]
     fn column_swap_symmetry_odd_case() {
         // Here 1/2 + 1/2 + 0 = 1 is odd, so swap picks up a minus sign.
-        let a = wigner_3j(1, 1, 0, 1, -1, 0);
-        let b = wigner_3j(1, 1, 0, -1, 1, 0);
+        let a = wigner_3j_doubled(1, 1, 0, 1, -1, 0);
+        let b = wigner_3j_doubled(1, 1, 0, -1, 1, 0);
         assert_relative_eq!(a, -b);
     }
 
@@ -725,14 +715,40 @@ mod tests {
     fn sign_flip_symmetry() {
         // (j1 j2 j3; -m1 -m2 -m3) = (-1)^(j1+j2+j3) (j1 j2 j3; m1 m2 m3)
         // For j1=j2=1/2, j3=0, total is odd => minus sign.
-        let a = wigner_3j(1, 1, 0, 1, -1, 0);
-        let b = wigner_3j(1, 1, 0, -1, 1, 0);
+        let a = wigner_3j_doubled(1, 1, 0, 1, -1, 0);
+        let b = wigner_3j_doubled(1, 1, 0, -1, 1, 0);
         assert_relative_eq!(b, -a);
 
         // For j1=j2=1, j3=2, total is even => same sign.
-        let c = wigner_3j(2, 2, 4, 2, -2, 0);
-        let d = wigner_3j(2, 2, 4, -2, 2, 0);
+        let c = wigner_3j_doubled(2, 2, 4, 2, -2, 0);
+        let d = wigner_3j_doubled(2, 2, 4, -2, 2, 0);
         assert_relative_eq!(d, c);
+    }
+
+    #[test]
+    fn typed_wigner_3j_matches_doubled_helper() {
+        assert_relative_eq!(
+            wigner_3j(
+                crate::j!(1 / 2),
+                crate::m!(1 / 2),
+                crate::j!(1 / 2),
+                crate::m!(-1 / 2),
+                crate::j!(1),
+                crate::m!(0)
+            ),
+            wigner_3j_doubled(1, 1, 2, 1, -1, 0)
+        );
+        assert_eq!(
+            wigner_3j(
+                crate::j!(1 / 2),
+                crate::m!(1 / 2),
+                crate::j!(1 / 2),
+                crate::m!(1 / 2),
+                crate::j!(1),
+                crate::m!(0)
+            ),
+            0.0
+        );
     }
 
     #[test]
@@ -745,57 +761,57 @@ mod tests {
         // <1/2,1/2; 1/2,-1/2 | 0,0> = 1/sqrt(2)
         // => (1/2 1/2 0 ; 1/2 -1/2 0) = 1/sqrt(2)
         let cg = clebsch_gordan_doubled(1, 1, 0, 1, -1, 0);
-        let w3j = wigner_3j(1, 1, 0, 1, -1, 0);
+        let w3j = wigner_3j_doubled(1, 1, 0, 1, -1, 0);
         assert_relative_eq!(w3j, cg);
 
         // <1,1; 1,-1 | 2,0> = 1/sqrt(6)
         // => (1 1 2 ; 1 -1 0) = 1/sqrt(30)
         let cg = clebsch_gordan_doubled(2, 2, 4, 2, -2, 0);
         let expected = cg / 5.0_f64.sqrt(); // sqrt(2j3+1)=sqrt(5)
-        let w3j = wigner_3j(2, 2, 4, 2, -2, 0);
+        let w3j = wigner_3j_doubled(2, 2, 4, 2, -2, 0);
         assert_relative_eq!(w3j, expected);
     }
 
     #[test]
     fn construct_integer_case() {
-        let _ = WignerDMatrix::new(2, 2, 0); // j = 1, m' = 1, m = 0
+        let _ = WignerDMatrix::new(j!(1), m!(1), m!(0)).unwrap(); // j = 1, m' = 1, m = 0
     }
 
     #[test]
     fn construct_half_integer_case() {
-        let _ = WignerDMatrix::new(1, 1, -1); // j = 1/2, m' = 1/2, m = -1/2
+        let _ = WignerDMatrix::new(j!(1 / 2), m!(1 / 2), m!(-1 / 2)).unwrap(); // j = 1/2, m' = 1/2, m = -1/2
     }
 
     #[test]
     #[should_panic]
     fn panic_when_mp_out_of_range() {
-        let _ = WignerDMatrix::new(2, 4, 0);
+        let _ = WignerDMatrix::new(j!(1), m!(2), m!(0)).unwrap();
     }
 
     #[test]
     #[should_panic]
     fn panic_when_m_out_of_range() {
-        let _ = WignerDMatrix::new(2, 0, 4);
+        let _ = WignerDMatrix::new(j!(1), m!(0), m!(2)).unwrap();
     }
 
     #[test]
     #[should_panic]
     fn panic_when_parity_mismatch_mp() {
-        let _ = WignerDMatrix::new(2, 1, 0);
+        let _ = WignerDMatrix::new(j!(1), m!(1 / 2), m!(0)).unwrap();
     }
 
     #[test]
     #[should_panic]
     fn panic_when_parity_mismatch_m() {
-        let _ = WignerDMatrix::new(2, 0, 1);
+        let _ = WignerDMatrix::new(j!(1), m!(0), m!(1 / 2)).unwrap();
     }
 
     #[test]
     fn d_beta_zero_is_identity_integer_j() {
-        let vals = [-2, 0, 2];
+        let vals = [m!(-1), m!(0), m!(1)];
         for &mp in &vals {
             for &m in &vals {
-                let w = WignerDMatrix::new(2, mp, m);
+                let w = WignerDMatrix::new(j!(1), mp, m).unwrap();
                 let expected = if mp == m { 1.0 } else { 0.0 };
                 assert_relative_eq!(w.d(0.0), expected);
             }
@@ -804,10 +820,10 @@ mod tests {
 
     #[test]
     fn d_beta_zero_is_identity_half_integer_j() {
-        let vals = [-1, 1];
+        let vals = [m!(-1 / 2), m!(1 / 2)];
         for &mp in &vals {
             for &m in &vals {
-                let w = WignerDMatrix::new(1, mp, m);
+                let w = WignerDMatrix::new(j!(1 / 2), mp, m).unwrap();
                 let expected = if mp == m { 1.0 } else { 0.0 };
                 assert_relative_eq!(w.d(0.0), expected);
             }
@@ -816,12 +832,12 @@ mod tests {
 
     #[test]
     fn d_beta_pi_selection_rule_j_one() {
-        let vals = [-2, 0, 2];
+        let vals = [m!(-1), m!(0), m!(1)];
         for &mp in &vals {
             for &m in &vals {
-                let w = WignerDMatrix::new(2, mp, m);
+                let w = WignerDMatrix::new(j!(1), mp, m).unwrap();
                 let expected = if mp == -m {
-                    let jm = (2 + m) / 2; // j + m with j=1
+                    let jm = (2 + m.doubled()) / 2; // j + m with j=1
                     if (jm & 1) == 0 {
                         1.0
                     } else {
@@ -841,10 +857,10 @@ mod tests {
         let c = f64::cos(beta / 2.0);
         let s = f64::sin(beta / 2.0);
 
-        let w_pp = WignerDMatrix::new(1, 1, 1);
-        let w_pm = WignerDMatrix::new(1, 1, -1);
-        let w_mp = WignerDMatrix::new(1, -1, 1);
-        let w_mm = WignerDMatrix::new(1, -1, -1);
+        let w_pp = WignerDMatrix::new(j!(1 / 2), m!(1 / 2), m!(1 / 2)).unwrap();
+        let w_pm = WignerDMatrix::new(j!(1 / 2), m!(1 / 2), m!(-1 / 2)).unwrap();
+        let w_mp = WignerDMatrix::new(j!(1 / 2), m!(-1 / 2), m!(1 / 2)).unwrap();
+        let w_mm = WignerDMatrix::new(j!(1 / 2), m!(-1 / 2), m!(-1 / 2)).unwrap();
 
         assert_relative_eq!(w_pp.d(beta), c);
         assert_relative_eq!(w_pm.d(beta), -s);
@@ -858,15 +874,15 @@ mod tests {
         let cb = f64::cos(beta);
         let sb = f64::sin(beta);
 
-        let w_11 = WignerDMatrix::new(2, 2, 2);
-        let w_10 = WignerDMatrix::new(2, 2, 0);
-        let w_1m1 = WignerDMatrix::new(2, 2, -2);
-        let w_00 = WignerDMatrix::new(2, 0, 0);
-        let w_01 = WignerDMatrix::new(2, 0, 2);
-        let w_0m1 = WignerDMatrix::new(2, 0, -2);
-        let w_m11 = WignerDMatrix::new(2, -2, 2);
-        let w_m10 = WignerDMatrix::new(2, -2, 0);
-        let w_m1m1 = WignerDMatrix::new(2, -2, -2);
+        let w_11 = WignerDMatrix::new(j!(1), m!(1), m!(1)).unwrap();
+        let w_10 = WignerDMatrix::new(j!(1), m!(1), m!(0)).unwrap();
+        let w_1m1 = WignerDMatrix::new(j!(1), m!(1), m!(-1)).unwrap();
+        let w_00 = WignerDMatrix::new(j!(1), m!(0), m!(0)).unwrap();
+        let w_01 = WignerDMatrix::new(j!(1), m!(0), m!(1)).unwrap();
+        let w_0m1 = WignerDMatrix::new(j!(1), m!(0), m!(-1)).unwrap();
+        let w_m11 = WignerDMatrix::new(j!(1), m!(-1), m!(1)).unwrap();
+        let w_m10 = WignerDMatrix::new(j!(1), m!(-1), m!(0)).unwrap();
+        let w_m1m1 = WignerDMatrix::new(j!(1), m!(-1), m!(-1)).unwrap();
 
         assert_relative_eq!(w_11.d(beta), 0.5 * (1.0 + cb));
         assert_relative_eq!(w_10.d(beta), -FRAC_1_SQRT_2 * sb);
@@ -883,7 +899,7 @@ mod tests {
 
     #[test]
     fn d_j_one_special_value() {
-        let w = WignerDMatrix::new(2, 2, 0);
+        let w = WignerDMatrix::new(j!(1), m!(1), m!(0)).unwrap();
         assert_relative_eq!(w.d(FRAC_PI_2), -FRAC_1_SQRT_2);
     }
 
@@ -893,7 +909,7 @@ mod tests {
         let beta = 0.82;
         let gamma = -0.47;
 
-        let w = WignerDMatrix::new(3, 1, -1); // j = 3/2, m' = 1/2, m = -1/2
+        let w = WignerDMatrix::new(j!(3 / 2), m!(1 / 2), m!(-1 / 2)).unwrap(); // j = 3/2, m' = 1/2, m = -1/2
         let d = w.d(beta);
         let expected_phase = Complex64::cis(-0.5 * (alpha - gamma));
         let expected = expected_phase * d;
@@ -905,7 +921,7 @@ mod tests {
 
     #[test]
     fn full_d_has_no_gamma_dependence_when_m_zero() {
-        let w = WignerDMatrix::new(2, 2, 0); // j=1, m'=1, m=0
+        let w = WignerDMatrix::new(j!(1), m!(1), m!(0)).unwrap(); // j=1, m'=1, m=0
         let a = w.D(0.2, 0.7, 0.0);
         let b = w.D(0.2, 0.7, 1.3);
 
@@ -915,7 +931,7 @@ mod tests {
 
     #[test]
     fn full_d_has_no_alpha_dependence_when_mp_zero() {
-        let w = WignerDMatrix::new(2, 0, 2); // j=1, m'=0, m=1
+        let w = WignerDMatrix::new(j!(1), m!(0), m!(1)).unwrap(); // j=1, m'=0, m=1
         let a = w.D(0.0, 0.7, 0.2);
         let b = w.D(1.3, 0.7, 0.2);
 
@@ -926,8 +942,8 @@ mod tests {
     #[test]
     fn d_symmetry_minus_indices() {
         let beta = 0.91;
-        let w1 = WignerDMatrix::new(4, 2, -2); // j=2, m'=1, m=-1
-        let w2 = WignerDMatrix::new(4, -2, 2); // j=2, m'=-1, m=1
+        let w1 = WignerDMatrix::new(j!(2), m!(1), m!(-1)).unwrap(); // j=2, m'=1, m=-1
+        let w2 = WignerDMatrix::new(j!(2), m!(-1), m!(1)).unwrap(); // j=2, m'=-1, m=1
 
         let lhs = w1.d(beta);
         let rhs = w2.d(beta);
@@ -940,8 +956,8 @@ mod tests {
     #[test]
     fn d_symmetry_transpose_relation() {
         let beta = 0.64;
-        let w1 = WignerDMatrix::new(3, 1, -1); // j=3/2, m'=1/2, m=-1/2
-        let w2 = WignerDMatrix::new(3, -1, 1); // swapped
+        let w1 = WignerDMatrix::new(j!(3 / 2), m!(1 / 2), m!(-1 / 2)).unwrap(); // j=3/2, m'=1/2, m=-1/2
+        let w2 = WignerDMatrix::new(j!(3 / 2), m!(-1 / 2), m!(1 / 2)).unwrap(); // swapped
 
         let lhs = w1.d(beta);
         let rhs = w2.d(beta);
@@ -953,14 +969,14 @@ mod tests {
 
     #[test]
     fn d_is_real_for_real_beta() {
-        let w = WignerDMatrix::new(6, 2, -4); // j=3, m'=1, m=-2
+        let w = WignerDMatrix::new(j!(3), m!(1), m!(-2)).unwrap(); // j=3, m'=1, m=-2
         let d = w.d(0.37);
         assert!(d.is_finite());
     }
 
     #[test]
     fn full_d_magnitude_equals_abs_small_d() {
-        let w = WignerDMatrix::new(5, 1, -3); // j=5/2, m'=1/2, m=-3/2
+        let w = WignerDMatrix::new(j!(5 / 2), m!(1 / 2), m!(-3 / 2)).unwrap(); // j=5/2, m'=1/2, m=-3/2
         let d = w.d(1.23).abs();
         #[allow(non_snake_case)]
         let D = w.D(0.4, 1.23, -0.9).norm();

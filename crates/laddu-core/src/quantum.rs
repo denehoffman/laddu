@@ -183,14 +183,14 @@ mod tests {
             SpinState::new(spin_one, m!(0))
                 .unwrap()
                 .projection()
-                .value(),
+                .doubled(),
             0
         );
         assert_eq!(
             SpinState::new(spin_half, m!(-1 / 2))
                 .unwrap()
                 .projection()
-                .value(),
+                .doubled(),
             -1
         );
     }
