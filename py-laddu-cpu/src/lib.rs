@@ -64,7 +64,7 @@ mod laddu {
         set_threads,
         variables::{
             PyAngles, PyAxes, PyAxis, PyChannel, PyCosTheta, PyFrame, PyMandelstam, PyMass,
-            PyParticleSource, PyPhi, PyPolAngle, PyPolMagnitude, PyPolarization,
+            PyParticleSource, PyPhi, PyPolAngle, PyPolMagnitude, PyPolarization, PyTwoBodyCoupling,
             PyVariableExpression,
         },
         vectors::{PyVec3, PyVec4},

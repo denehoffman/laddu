@@ -140,7 +140,6 @@ class PartialWave:
         j: JLike,
         l: LLike,
         s: JLike,
-        label: str | None = None,
     ) -> None: ...
 
 class AllowedPartialWave:

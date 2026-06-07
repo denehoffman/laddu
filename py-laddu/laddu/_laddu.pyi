@@ -126,7 +126,7 @@ from laddu.quantum import (
     allowed_projections,
     coupled_spins,
 )
-from laddu.reaction import Axes, Axis, Channel, Frame, ParticleSource
+from laddu.reaction import Axes, Axis, Channel, Frame, ParticleSource, TwoBodyCoupling
 from laddu.variables import (
     Angles,
     CosTheta,
@@ -232,6 +232,7 @@ __all__ = [
     'StochasticNLL',
     'SwarmStatus',
     'TestAmplitude',
+    'TwoBodyCoupling',
     'VariableExpression',
     'VariableScalar',
     'Vec3',

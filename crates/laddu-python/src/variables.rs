@@ -8,7 +8,7 @@ pub use laddu_core::variables::IntoP4Selection;
 use laddu_core::{
     data::{Dataset, DatasetMetadata, EventLike, OwnedEvent},
     kinematics::{Axes, Axis, Frame},
-    reaction::Channel,
+    reaction::{Channel, TwoBodyCoupling},
     traits::Variable,
     variables::{
         Angles, CosTheta, Mandelstam, Mass, Phi, PolAngle, PolMagnitude, Polarization,
@@ -23,8 +23,15 @@ use serde::{Deserialize, Serialize};
 use crate::{
     data::{PyDataset, PyEvent},
     generation::{PyMassSampler, PyMomentumSource, PyVertexGenerator},
-    quantum::PyParticleProperties,
+    quantum::{
+        angular_momentum::{
+            angular_momentum_to_python, parse_angular_momentum, parse_orbital_angular_momentum,
+        },
+        parse_rules, PyPartialWave, PyParticleProperties,
+    },
 };
+
+type PyQuantumNumber = Py<PyAny>;
 
 #[derive(FromPyObject, Clone, Serialize, Deserialize)]
 pub enum PyVariable {
@@ -262,13 +269,14 @@ impl PyChannel {
         }
     }
 
-    #[pyo3(signature=(label, incoming, outgoing, *, generator=None))]
+    #[pyo3(signature=(label, incoming, outgoing, *, generator=None, rules=None))]
     fn create_vertex(
         &mut self,
         label: &str,
         incoming: Vec<String>,
         outgoing: Vec<String>,
         generator: Option<&PyVertexGenerator>,
+        rules: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<()> {
         match (incoming.len(), outgoing.len()) {
             (1, 2) => {
@@ -297,16 +305,23 @@ impl PyChannel {
                 .edit_vertex(label)?
                 .generate(generator.0.clone());
         }
+        if rules.is_some() {
+            self.inner
+                .borrow_mut()
+                .edit_vertex(label)?
+                .rules(parse_rules(rules)?);
+        }
         Ok(())
     }
 
-    #[pyo3(signature=(label, parent, daughters, *, generator=None))]
+    #[pyo3(signature=(label, parent, daughters, *, generator=None, rules=None))]
     fn create_decay(
         &mut self,
         label: &str,
         parent: &str,
         daughters: Vec<String>,
         generator: Option<&PyVertexGenerator>,
+        rules: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<()> {
         if daughters.len() != 2 {
             return Err(PyValueError::new_err(
@@ -324,16 +339,23 @@ impl PyChannel {
                 .edit_vertex(label)?
                 .generate(generator.0.clone());
         }
+        if rules.is_some() {
+            self.inner
+                .borrow_mut()
+                .edit_vertex(label)?
+                .rules(parse_rules(rules)?);
+        }
         Ok(())
     }
 
-    #[pyo3(signature=(label, incoming, outgoing, *, generator=None))]
+    #[pyo3(signature=(label, incoming, outgoing, *, generator=None, rules=None))]
     fn create_production(
         &mut self,
         label: &str,
         incoming: Vec<String>,
         outgoing: Vec<String>,
         generator: Option<&PyVertexGenerator>,
+        rules: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<()> {
         if incoming.len() != 2 || outgoing.len() != 2 {
             return Err(PyValueError::new_err(
@@ -350,6 +372,12 @@ impl PyChannel {
                 .borrow_mut()
                 .edit_vertex(label)?
                 .generate(generator.0.clone());
+        }
+        if rules.is_some() {
+            self.inner
+                .borrow_mut()
+                .edit_vertex(label)?
+                .rules(parse_rules(rules)?);
         }
         Ok(())
     }
@@ -382,12 +410,42 @@ impl PyChannel {
         )
     }
 
-    #[pyo3(signature=(vertex, *, generator))]
-    fn edit_vertex(&self, vertex: &str, generator: &PyVertexGenerator) -> PyResult<()> {
+    #[pyo3(signature=(vertex, *, generator=None, rules=None))]
+    fn edit_vertex(
+        &self,
+        vertex: &str,
+        generator: Option<&PyVertexGenerator>,
+        rules: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<()> {
         let mut channel = self.inner.borrow_mut();
         let mut edit = channel.edit_vertex(vertex)?;
-        edit.generate(generator.0.clone());
+        if let Some(generator) = generator {
+            edit.generate(generator.0.clone());
+        }
+        if rules.is_some() {
+            edit.rules(parse_rules(rules)?);
+        }
         Ok(())
+    }
+
+    #[pyo3(signature=(vertex, *, j_max, l_max))]
+    fn two_body_couplings(
+        &self,
+        vertex: &str,
+        j_max: &Bound<'_, PyAny>,
+        l_max: &Bound<'_, PyAny>,
+    ) -> PyResult<Vec<PyTwoBodyCoupling>> {
+        Ok(self
+            .inner
+            .borrow()
+            .two_body_couplings(
+                vertex,
+                parse_angular_momentum(j_max)?,
+                parse_orbital_angular_momentum(l_max)?,
+            )?
+            .into_iter()
+            .map(PyTwoBodyCoupling)
+            .collect())
     }
 
     fn mass(&self, particle: &str) -> PyResult<PyMass> {
@@ -428,6 +486,42 @@ impl PyChannel {
 
     fn __repr__(&self) -> String {
         format!("{:?}", self.inner.borrow())
+    }
+}
+
+#[pyclass(name = "TwoBodyCoupling", module = "laddu", from_py_object)]
+#[derive(Clone)]
+pub struct PyTwoBodyCoupling(pub TwoBodyCoupling);
+
+#[pymethods]
+impl PyTwoBodyCoupling {
+    #[getter]
+    fn parent_properties(&self) -> PyParticleProperties {
+        PyParticleProperties(self.0.parent_properties().clone())
+    }
+
+    #[getter]
+    fn wave(&self) -> PyPartialWave {
+        PyPartialWave(*self.0.wave())
+    }
+
+    #[getter]
+    fn j(&self, py: Python<'_>) -> PyResult<PyQuantumNumber> {
+        angular_momentum_to_python(py, self.0.j())
+    }
+
+    #[getter]
+    fn l(&self) -> u32 {
+        self.0.l().value()
+    }
+
+    #[getter]
+    fn s(&self, py: Python<'_>) -> PyResult<PyQuantumNumber> {
+        angular_momentum_to_python(py, self.0.s())
+    }
+
+    fn __repr__(&self) -> String {
+        format!("{:?}", self.0)
     }
 }
 

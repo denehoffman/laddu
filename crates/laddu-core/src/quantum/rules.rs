@@ -567,7 +567,7 @@ mod tests {
     }
 
     fn labels(waves: &[AllowedPartialWave]) -> Vec<String> {
-        waves.iter().map(|w| w.wave.label.clone()).collect()
+        waves.iter().map(|w| w.wave.label().clone()).collect()
     }
 
     #[test]

@@ -1,9 +1,10 @@
 from collections.abc import Sequence
 from enum import Enum
+from fractions import Fraction
 from typing import Literal
 
 from laddu.generation import MassSampler, MomentumSource, VertexGenerator
-from laddu.quantum import ParticleProperties
+from laddu.quantum import JLike, LLike, PartialWave, ParticleProperties, RuleSet
 from laddu.variables import Angles, Mandelstam, Mass, PolAngle, Polarization
 
 class Axis:
@@ -30,6 +31,13 @@ class ParticleSource(Enum):
     Stored = 1
     Missing = 2
 
+class TwoBodyCoupling:
+    parent_properties: ParticleProperties
+    wave: PartialWave
+    j: int | Fraction
+    l: int
+    s: int | Fraction
+
 class Channel:
     def __init__(self) -> None: ...
     def create_vertex(
@@ -39,6 +47,7 @@ class Channel:
         outgoing: Sequence[str],
         *,
         generator: VertexGenerator | None = None,
+        rules: RuleSet | str | None = None,
     ) -> None: ...
     def create_decay(
         self,
@@ -47,6 +56,7 @@ class Channel:
         daughters: Sequence[str],
         *,
         generator: VertexGenerator | None = None,
+        rules: RuleSet | str | None = None,
     ) -> None: ...
     def create_production(
         self,
@@ -55,6 +65,7 @@ class Channel:
         outgoing: Sequence[str],
         *,
         generator: VertexGenerator | None = None,
+        rules: RuleSet | str | None = None,
     ) -> None: ...
     def edit_particle(
         self,
@@ -69,7 +80,16 @@ class Channel:
         species: str | None = None,
         self_conjugate: bool | None = None,
     ) -> None: ...
-    def edit_vertex(self, vertex: str, *, generator: VertexGenerator) -> None: ...
+    def edit_vertex(
+        self,
+        vertex: str,
+        *,
+        generator: VertexGenerator | None = None,
+        rules: RuleSet | str | None = None,
+    ) -> None: ...
+    def two_body_couplings(
+        self, vertex: str, *, j_max: JLike, l_max: LLike
+    ) -> list[TwoBodyCoupling]: ...
     def mass(self, particle: str) -> Mass: ...
     def angles(self, particle: str, frame: Frame) -> Angles: ...
     def mandelstam(
@@ -80,4 +100,4 @@ class Channel:
         self, vertex: str, *, pol_magnitude: str, pol_angle: str
     ) -> Polarization: ...
 
-__all__ = ['Axes', 'Axis', 'Channel', 'Frame', 'ParticleSource']
+__all__ = ['Axes', 'Axis', 'Channel', 'Frame', 'ParticleSource', 'TwoBodyCoupling']

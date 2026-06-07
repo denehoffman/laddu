@@ -2,6 +2,7 @@ from fractions import Fraction
 
 import pytest
 from laddu import (
+    Channel,
     Charge,
     Isospin,
     J,
@@ -98,3 +99,28 @@ def test_allowed_partial_waves_for_one_plus_to_rho_pi() -> None:
         ('3D1', 2),
     ]
     assert [str(allowed.parity) for allowed in waves] == ['+', '+']
+
+
+def test_channel_two_body_couplings_for_identical_ksks() -> None:
+    channel = Channel()
+    channel.create_decay('x_decay', 'X', ['Ks1', 'Ks2'], rules='strong')
+    kshort = ParticleProperties(
+        'K_S',
+        species='K_S',
+        spin=0,
+        parity='-',
+        charge=Charge(0),
+        strangeness=0,
+        baryon_number=0,
+        statistics='boson',
+    )
+    channel.edit_particle('Ks1', properties=kshort)
+    channel.edit_particle('Ks2', properties=kshort)
+
+    couplings = channel.two_body_couplings('x_decay', j_max=2, l_max=2)
+
+    assert [coupling.wave.label for coupling in couplings] == ['1S0', '1D2']
+    assert [(coupling.j, coupling.l, coupling.s) for coupling in couplings] == [
+        (0, 0, 0),
+        (2, 2, 0),
+    ]

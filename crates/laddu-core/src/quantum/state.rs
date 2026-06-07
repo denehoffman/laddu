@@ -500,7 +500,7 @@ impl ParticleProperties {
 
 /// A partial wave defined by a total angular momentum, `J`, an orbital angular momentum, `L`, and
 /// and intrinsic spin, `S`.
-#[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
+#[derive(Copy, Clone, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
 pub struct PartialWave {
     /// The total angular momentum of the wave
     pub j: J,
@@ -508,25 +508,18 @@ pub struct PartialWave {
     pub l: L,
     /// The spin of the wave
     pub s: S,
-    /// The spectroscopic label of the wave
-    pub label: String,
 }
 impl PartialWave {
     /// Construct a new partial wave from the given angular momentum quantum numbers.
     pub fn new(j: J, l: L, s: S) -> LadduResult<Self> {
         PartialWave::validate_coupling(j, l, s)?;
-        let multiplicity = s.value() + 1;
-        Ok(Self {
-            j,
-            l,
-            s,
-            label: format!("{}{}{}", multiplicity, l, j),
-        })
+        Ok(Self { j, l, s })
     }
-    /// Set the spectroscopic label of the wave.
-    pub fn with_label(mut self, label: impl Into<String>) -> Self {
-        self.label = label.into();
-        self
+    /// Get the spectroscopic label for the wave in the form {2s+1}{l}{j} where l is represented by
+    /// its spectroscopic letter equivalent (`S` for `0`, `P` for `1`, etc.).
+    pub fn label(&self) -> String {
+        let multiplicity = self.s.value() + 1;
+        format!("{}{}{}", multiplicity, self.l, self.j)
     }
     /// Validate the set of angular momentum quantum numbers which define a partial wave.
     pub fn validate_coupling(j: J, l: L, s: S) -> LadduResult<()> {
@@ -547,7 +540,7 @@ impl PartialWave {
 
 impl Display for PartialWave {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.label)
+        write!(f, "{}", self.label())
     }
 }
 

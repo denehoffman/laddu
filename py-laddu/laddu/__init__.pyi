@@ -120,7 +120,7 @@ from .quantum import (
     allowed_projections,
     coupled_spins,
 )
-from .reaction import Axes, Axis, Channel, Frame, ParticleSource
+from .reaction import Axes, Axis, Channel, Frame, ParticleSource, TwoBodyCoupling
 from .variables import (
     Angles,
     CosTheta,
@@ -227,6 +227,7 @@ __all__ = [
     'Statistics',
     'StochasticNLL',
     'TestAmplitude',
+    'TwoBodyCoupling',
     'VariableScalar',
     'Vec3',
     'Vec4',

@@ -677,7 +677,7 @@ impl Channel {
                             s,
                             rules,
                         ) {
-                            out.push(TwoBodyCoupling::new(candidate_parent, wave.clone()));
+                            out.push(TwoBodyCoupling::new(candidate_parent, wave));
                         }
                     }
                 }

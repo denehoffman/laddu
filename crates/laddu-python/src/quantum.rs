@@ -729,22 +729,13 @@ pub struct PyPartialWave(pub PartialWave);
 #[pymethods]
 impl PyPartialWave {
     #[new]
-    #[pyo3(signature = (*, j, l, s, label=None))]
-    fn new(
-        j: &Bound<'_, PyAny>,
-        l: &Bound<'_, PyAny>,
-        s: &Bound<'_, PyAny>,
-        label: Option<String>,
-    ) -> PyResult<Self> {
-        let wave = PartialWave::new(
+    #[pyo3(signature = (*, j, l, s))]
+    fn new(j: &Bound<'_, PyAny>, l: &Bound<'_, PyAny>, s: &Bound<'_, PyAny>) -> PyResult<Self> {
+        Ok(Self(PartialWave::new(
             parse_angular_momentum(j)?,
             parse_orbital_angular_momentum(l)?,
             parse_angular_momentum(s)?,
-        )?;
-        Ok(Self(match label {
-            Some(label) => wave.with_label(label),
-            None => wave,
-        }))
+        )?))
     }
 
     #[getter]
@@ -764,11 +755,11 @@ impl PyPartialWave {
 
     #[getter]
     fn label(&self) -> String {
-        self.0.label.clone()
+        self.0.label().clone()
     }
 
     fn __repr__(&self) -> String {
-        format!("PartialWave('{}')", self.0.label)
+        format!("PartialWave('{}')", self.0)
     }
 
     fn __str__(&self) -> String {
@@ -784,7 +775,7 @@ pub struct PyAllowedPartialWave(pub AllowedPartialWave);
 impl PyAllowedPartialWave {
     #[getter]
     fn wave(&self) -> PyPartialWave {
-        PyPartialWave(self.0.wave.clone())
+        PyPartialWave(self.0.wave)
     }
 
     #[getter]
@@ -838,7 +829,7 @@ impl PyRuleSet {
     }
 }
 
-fn parse_rules(rules: Option<&Bound<'_, PyAny>>) -> PyResult<RuleSet> {
+pub(crate) fn parse_rules(rules: Option<&Bound<'_, PyAny>>) -> PyResult<RuleSet> {
     let Some(rules) = rules else {
         return Ok(RuleSet::strong());
     };
