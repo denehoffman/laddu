@@ -128,7 +128,7 @@ def helicity_amplitude(
 ) -> ld.Expression:
     coherent_sum = ld.Zero()
     for coupling in couplings:
-        daughter_spin_cg = 1.0
+        daughter_spin_cg = ld.clebsch_gordan(0, 0, 0, 0, 0, 0)
         for x_projection in ld.allowed_projections(coupling.j):
             production = ld.WignerD(
                 (

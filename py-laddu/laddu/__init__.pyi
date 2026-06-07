@@ -87,7 +87,7 @@ from .likelihood import (
     likelihood_product,
     likelihood_sum,
 )
-from .math import Histogram
+from .math import Histogram, clebsch_gordan
 from .optimize import (
     ControlFlow,
     EnsembleStatus,
@@ -243,6 +243,7 @@ __all__ = [
     'allowed_projections',
     'amplitude',
     'amplitudes',
+    'clebsch_gordan',
     'coupled_spins',
     'data',
     'experimental',

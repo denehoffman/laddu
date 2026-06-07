@@ -1,10 +1,12 @@
-use laddu_core::{math::Histogram, LadduError};
+use laddu_core::{math, math::Histogram, LadduError};
 use numpy::{PyArray1, PyReadonlyArray1};
 use pyo3::{
     exceptions::PyValueError,
     prelude::*,
     types::{PyBytes, PyTuple},
 };
+
+use crate::quantum::angular_momentum::{parse_angular_momentum, parse_projection};
 
 fn extract_f64_vec(value: &Bound<'_, PyAny>, name: &str) -> PyResult<Vec<f64>> {
     if let Ok(array) = value.extract::<PyReadonlyArray1<'_, f64>>() {
@@ -98,4 +100,28 @@ impl PyHistogram {
     fn __str__(&self) -> String {
         self.__repr__()
     }
+}
+
+/// Evaluate a Clebsch-Gordan coefficient.
+///
+/// Parameters follow the convention
+/// ``<j1, m1; j2, m2 | j, m>`` and may be typed quantum numbers, integers,
+/// floats, or ``fractions.Fraction`` values.
+#[pyfunction(name = "clebsch_gordan")]
+pub fn py_clebsch_gordan(
+    j1: &Bound<'_, PyAny>,
+    m1: &Bound<'_, PyAny>,
+    j2: &Bound<'_, PyAny>,
+    m2: &Bound<'_, PyAny>,
+    j: &Bound<'_, PyAny>,
+    m: &Bound<'_, PyAny>,
+) -> PyResult<f64> {
+    Ok(math::clebsch_gordan(
+        parse_angular_momentum(j1)?,
+        parse_projection(m1)?,
+        parse_angular_momentum(j2)?,
+        parse_projection(m2)?,
+        parse_angular_momentum(j)?,
+        parse_projection(m)?,
+    ))
 }

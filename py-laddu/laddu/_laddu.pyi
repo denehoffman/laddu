@@ -96,7 +96,7 @@ from laddu.likelihood import (
     likelihood_product,
     likelihood_sum,
 )
-from laddu.math import Histogram
+from laddu.math import Histogram, clebsch_gordan
 from laddu.optimize import (
     ControlFlow,
     EnsembleStatus,
@@ -247,6 +247,7 @@ __all__ = [
     'allowed_partial_waves',
     'allowed_projections',
     'available_parallelism',
+    'clebsch_gordan',
     'coupled_spins',
     'energy',
     'expr_product',

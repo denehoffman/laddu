@@ -54,7 +54,7 @@ mod laddu {
             PyProductionPlan, PyVertexGenerator,
         },
         get_threads,
-        math::PyHistogram,
+        math::{py_clebsch_gordan, PyHistogram},
         mpi::{finalize_mpi, get_rank, get_size, is_mpi_available, is_root, use_mpi, using_mpi},
         quantum::{
             angular_momentum::py_allowed_projections, py_allowed_partial_waves, py_coupled_spins,

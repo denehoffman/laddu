@@ -1,4 +1,5 @@
 import pickle
+from fractions import Fraction
 
 import laddu as ld
 import numpy as np
@@ -30,3 +31,14 @@ def test_histogram_validation() -> None:
 
     hist = math.Histogram([0.0, 1.0, 2.0], [1.0, 1.0])
     assert hist.total_weight == 2.0
+
+
+def test_clebsch_gordan() -> None:
+    assert ld.clebsch_gordan is math.clebsch_gordan
+    assert math.clebsch_gordan(
+        Fraction(1, 2), Fraction(1, 2), 0.5, -0.5, 1, 0
+    ) == pytest.approx(2.0**-0.5)
+    assert (
+        math.clebsch_gordan(ld.J(0), ld.M(0), ld.J(0), ld.M(0), ld.J(0), ld.M(0)) == 1.0
+    )
+    assert math.clebsch_gordan(Fraction(1, 2), Fraction(1, 2), 0.5, 0.5, 1, 0) == 0.0

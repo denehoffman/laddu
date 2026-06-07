@@ -5,6 +5,7 @@
 use num::complex::Complex64;
 
 use self::utils::{binomial, const_imax, const_umin};
+use crate::quantum::{J, M};
 
 mod utils {
     const MAX_BINOMIAL: u64 = 67;
@@ -110,54 +111,41 @@ const fn check_coupling(dj1: i64, dj2: i64, dj3: i64) -> bool {
         && (dj3 <= (dj1 + dj2))
 }
 
-/// Computes the Clebsch–Gordon coefficient $`\langle j_1 m_1; j_2 m_2 \mid j_3 m_3\rangle`$ using the doubled-quantum-number convention.
+/// Computes the Clebsch–Gordan coefficient $`\langle j_1 m_1; j_2 m_2 \mid j m\rangle`$.
 ///
 /// # Parameters
 ///
-/// All angular-momentum values are represented in doubled form:
-/// - `dj1 = 2*j₁`
-/// - `dj2 = 2*j₂`
-/// - `dj3 = 2*j₃`
-/// - `dm1 = 2*m₁`
-/// - `dm2 = 2*m₂`
-/// - `dm3 = 2*m₃`
-///
-/// This lets the function work with both integer and half-integer quantum numbers
-/// using integer arithmetic.
+/// All angular momenta and projections are passed as strongly typed quantum numbers.
 ///
 /// # Returns
 ///
-/// Returns the Clebsch–Gordon coefficient as `f64`.
+/// Returns the Clebsch–Gordan coefficient as `f64`.
 ///
 /// The function returns `0.0` when any standard selection rule is violated:
-/// - `(dj, dm)` is not a valid angular-momentum projection pair
-/// - `j₁`, `j₂`, and `j₃` do not satisfy the triangle relation
-/// - `m₁ + m₂ != m₃`
+/// - `(j, m)` is not a valid angular-momentum projection pair
+/// - `j₁`, `j₂`, and `j` do not satisfy the triangle relation
+/// - `m₁ + m₂ != m`
 ///
 /// # Examples
 ///
-/// Integer angular momentum:
-///
 /// ```rust
-/// # use laddu_core::math::clebsch_gordon;
-/// let cg = clebsch_gordon(2, 2, 2, 2, -2, 0); // ⟨1,1; 1,-1 | 1,0⟩
+/// # use laddu_core::{j, m};
+/// # use laddu_core::math::clebsch_gordan;
+/// let cg = clebsch_gordan(j!(1), m!(1), j!(1), m!(-1), j!(1), m!(0));
 /// assert_eq!(cg, f64::sqrt(1.0 / 2.0));
 /// ```
-///
-/// Half-integer angular momentum:
-///
-/// ```rust
-/// # use laddu_core::math::clebsch_gordon;
-/// let cg = clebsch_gordon(1, 1, 2, 1, -1, 0); // ⟨1/2,1/2; 1/2,-1/2 | 1,0⟩
-/// assert_eq!(cg, f64::sqrt(1.0 / 2.0));
-/// ```
-///
-/// # Convention
-///
-/// This coefficient is related to the Wigner 3-j symbol by
-///
-/// $`\langle j_1 m_1; j_2 m_2 \mid j_3 m_3\rangle = (-1)^{j_1 - j_2 + m_3} \sqrt{2j_3 + 1}\begin{pmatrix}j_1 & j_2 & j_3\\m_1 & m_2 & -m_3\end{pmatrix}`$
-pub fn clebsch_gordon(dj1: u64, dj2: u64, dj3: u64, dm1: i64, dm2: i64, dm3: i64) -> f64 {
+pub fn clebsch_gordan(j1: J, m1: M, j2: J, m2: M, j: J, m: M) -> f64 {
+    clebsch_gordan_doubled(
+        j1.value() as u64,
+        j2.value() as u64,
+        j.value() as u64,
+        m1.value() as i64,
+        m2.value() as i64,
+        m.value() as i64,
+    )
+}
+
+fn clebsch_gordan_doubled(dj1: u64, dj2: u64, dj3: u64, dm1: i64, dm2: i64, dm3: i64) -> f64 {
     if !(check_jm(dj1 as i64, dm1) && check_jm(dj2 as i64, dm2) && check_jm(dj3 as i64, dm3)) {
         return 0.0;
     }
@@ -571,64 +559,96 @@ mod tests {
     #[test]
     fn singlet_triplet_for_two_spin_half() {
         // <1/2,1/2; 1/2,1/2 | 1,1> = 1
-        assert_relative_eq!(clebsch_gordon(1, 1, 2, 1, 1, 2), 1.0);
+        assert_relative_eq!(clebsch_gordan_doubled(1, 1, 2, 1, 1, 2), 1.0);
 
         // <1/2,1/2; 1/2,-1/2 | 1,0> = 1/sqrt(2)
-        assert_relative_eq!(clebsch_gordon(1, 1, 2, 1, -1, 0), FRAC_1_SQRT_2);
+        assert_relative_eq!(clebsch_gordan_doubled(1, 1, 2, 1, -1, 0), FRAC_1_SQRT_2);
 
         // <1/2,-1/2; 1/2,1/2 | 1,0> = 1/sqrt(2)
-        assert_relative_eq!(clebsch_gordon(1, 1, 2, -1, 1, 0), FRAC_1_SQRT_2);
+        assert_relative_eq!(clebsch_gordan_doubled(1, 1, 2, -1, 1, 0), FRAC_1_SQRT_2);
 
         // <1/2,1/2; 1/2,-1/2 | 0,0> = 1/sqrt(2)
-        assert_relative_eq!(clebsch_gordon(1, 1, 0, 1, -1, 0), FRAC_1_SQRT_2);
+        assert_relative_eq!(clebsch_gordan_doubled(1, 1, 0, 1, -1, 0), FRAC_1_SQRT_2);
 
         // <1/2,-1/2; 1/2,1/2 | 0,0> = -1/sqrt(2)
-        assert_relative_eq!(clebsch_gordon(1, 1, 0, -1, 1, 0), -FRAC_1_SQRT_2);
+        assert_relative_eq!(clebsch_gordan_doubled(1, 1, 0, -1, 1, 0), -FRAC_1_SQRT_2);
+    }
+
+    #[test]
+    fn typed_clebsch_gordan_matches_doubled_helper() {
+        assert_relative_eq!(
+            clebsch_gordan(
+                crate::j!(1 / 2),
+                crate::m!(1 / 2),
+                crate::j!(1 / 2),
+                crate::m!(-1 / 2),
+                crate::j!(1),
+                crate::m!(0)
+            ),
+            clebsch_gordan_doubled(1, 1, 2, 1, -1, 0)
+        );
+        assert_eq!(
+            clebsch_gordan(
+                crate::j!(1 / 2),
+                crate::m!(1 / 2),
+                crate::j!(1 / 2),
+                crate::m!(1 / 2),
+                crate::j!(1),
+                crate::m!(0)
+            ),
+            0.0
+        );
     }
 
     #[test]
     fn highest_weight_state_is_one() {
         // <1,1; 1,1 | 2,2> = 1
         // doubled notation: j1=j2=1 -> dj1=dj2=2, m1=m2=1 -> dm1=dm2=2
-        assert_relative_eq!(clebsch_gordon(2, 2, 4, 2, 2, 4), 1.0);
+        assert_relative_eq!(clebsch_gordan_doubled(2, 2, 4, 2, 2, 4), 1.0);
     }
 
     #[test]
     fn known_spin_one_couplings() {
         // <1,1; 1,0 | 2,1> = 1/sqrt(2)
-        assert_relative_eq!(clebsch_gordon(2, 2, 4, 2, 0, 2), FRAC_1_SQRT_2);
+        assert_relative_eq!(clebsch_gordan_doubled(2, 2, 4, 2, 0, 2), FRAC_1_SQRT_2);
 
         // <1,0; 1,0 | 2,0> = sqrt(2/3)
-        assert_relative_eq!(clebsch_gordon(2, 2, 4, 0, 0, 0), (2.0 / 3.0_f64).sqrt());
+        assert_relative_eq!(
+            clebsch_gordan_doubled(2, 2, 4, 0, 0, 0),
+            (2.0 / 3.0_f64).sqrt()
+        );
 
         // <1,0; 1,0 | 0,0> = -1/sqrt(3)
-        assert_relative_eq!(clebsch_gordon(2, 2, 0, 0, 0, 0), -1.0 / 3.0_f64.sqrt());
+        assert_relative_eq!(
+            clebsch_gordan_doubled(2, 2, 0, 0, 0, 0),
+            -1.0 / 3.0_f64.sqrt()
+        );
     }
 
     #[test]
     fn zero_when_m_sum_fails() {
         // dm1 + dm2 != dm3
-        assert_eq!(clebsch_gordon(1, 1, 2, 1, 1, 0), 0.0);
+        assert_eq!(clebsch_gordan_doubled(1, 1, 2, 1, 1, 0), 0.0);
     }
 
     #[test]
     fn zero_when_triangle_rule_fails() {
         // 1/2 + 1/2 cannot couple to j=2
-        assert_eq!(clebsch_gordon(1, 1, 4, 1, 1, 2), 0.0);
+        assert_eq!(clebsch_gordan_doubled(1, 1, 4, 1, 1, 2), 0.0);
     }
 
     #[test]
     fn zero_when_m_out_of_range() {
         // For dj=1 (j=1/2), dm must be ±1 only
-        assert_eq!(clebsch_gordon(1, 1, 2, 3, -1, 2), 0.0);
+        assert_eq!(clebsch_gordan_doubled(1, 1, 2, 3, -1, 2), 0.0);
     }
 
     #[test]
     fn normalization_for_fixed_jm() {
         // For j1=j2=1/2 and total J=1, M=0:
         // |<+,-|1,0>|^2 + |<-,+|1,0>|^2 = 1
-        let c1 = clebsch_gordon(1, 1, 2, 1, -1, 0);
-        let c2 = clebsch_gordon(1, 1, 2, -1, 1, 0);
+        let c1 = clebsch_gordan_doubled(1, 1, 2, 1, -1, 0);
+        let c2 = clebsch_gordan_doubled(1, 1, 2, -1, 1, 0);
         assert_relative_eq!(c1 * c1 + c2 * c2, 1.0);
     }
 
@@ -636,8 +656,8 @@ mod tests {
     fn normalization_for_singlet() {
         // For j1=j2=1/2 and total J=0, M=0:
         // |<+,-|0,0>|^2 + |<-,+|0,0>|^2 = 1
-        let c1 = clebsch_gordon(1, 1, 0, 1, -1, 0);
-        let c2 = clebsch_gordon(1, 1, 0, -1, 1, 0);
+        let c1 = clebsch_gordan_doubled(1, 1, 0, 1, -1, 0);
+        let c2 = clebsch_gordan_doubled(1, 1, 0, -1, 1, 0);
         assert_relative_eq!(c1 * c1 + c2 * c2, 1.0);
     }
 
@@ -724,13 +744,13 @@ mod tests {
 
         // <1/2,1/2; 1/2,-1/2 | 0,0> = 1/sqrt(2)
         // => (1/2 1/2 0 ; 1/2 -1/2 0) = 1/sqrt(2)
-        let cg = clebsch_gordon(1, 1, 0, 1, -1, 0);
+        let cg = clebsch_gordan_doubled(1, 1, 0, 1, -1, 0);
         let w3j = wigner_3j(1, 1, 0, 1, -1, 0);
         assert_relative_eq!(w3j, cg);
 
         // <1,1; 1,-1 | 2,0> = 1/sqrt(6)
         // => (1 1 2 ; 1 -1 0) = 1/sqrt(30)
-        let cg = clebsch_gordon(2, 2, 4, 2, -2, 0);
+        let cg = clebsch_gordan_doubled(2, 2, 4, 2, -2, 0);
         let expected = cg / 5.0_f64.sqrt(); // sqrt(2j3+1)=sqrt(5)
         let w3j = wigner_3j(2, 2, 4, 2, -2, 0);
         assert_relative_eq!(w3j, expected);

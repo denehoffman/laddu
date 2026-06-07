@@ -16,7 +16,8 @@ use laddu::{
         },
         scalar::ComplexScalar,
     },
-    math::clebsch_gordon,
+    j, m,
+    math::clebsch_gordan,
     parameter,
     reaction::TwoBodyCoupling,
     Axes, Axis, Channel, Expression, Frame, LadduResult, Parameter, Parity, ParticleProperties,
@@ -138,7 +139,7 @@ fn helicity_amplitude(
 ) -> LadduResult<Expression> {
     let mut coherent_sum = Expression::zero();
     for coupling in couplings {
-        let daughter_spin_cg = clebsch_gordon(0, 0, 0, 0, 0, 0);
+        let daughter_spin_cg = clebsch_gordan(j!(0), m!(0), j!(0), m!(0), j!(0), m!(0));
         for x_projection in coupling.j().projections() {
             let production = WignerD::new(
                 format!(
