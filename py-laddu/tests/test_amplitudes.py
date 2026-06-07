@@ -3,6 +3,7 @@ from laddu import (
     ComplexScalar,
     Dataset,
     Event,
+    InitialValue,
     Scalar,
     Vec3,
     parameter,
@@ -486,6 +487,59 @@ def test_parameter_registration() -> None:
     assert 'ParameterMap' in str(parameters)
     with pytest.raises(IndexError):
         _ = parameters[1]
+
+
+def test_parameter_initial_values_and_bounds_helpers() -> None:
+    fixed_initial = parameter('fixed_initial', initial=2.0, bounds=(0.0, 4.0))
+    uniform_initial = parameter(
+        'uniform_initial', initial=(10.0, 20.0), bounds=(None, 30.0)
+    )
+    explicit_uniform = parameter(
+        'explicit_uniform', initial=InitialValue.uniform(-1.0, 1.0)
+    )
+    default_initial = parameter('default_initial')
+    fixed_parameter = parameter('fixed_parameter', 3.0)
+
+    assert fixed_initial.initial == InitialValue.fixed(2.0)
+    assert fixed_initial.initial.kind == 'fixed'
+    assert fixed_initial.initial.value == 2.0
+    assert fixed_initial.initial.range is None
+    assert uniform_initial.initial == InitialValue.uniform(10.0, 20.0)
+    assert uniform_initial.initial.kind == 'uniform'
+    assert uniform_initial.initial.value is None
+    assert uniform_initial.initial.range == (10.0, 20.0)
+    assert fixed_parameter.initial == InitialValue.fixed(3.0)
+
+    expr = (
+        Scalar('a', value=fixed_initial)
+        + Scalar('b', value=uniform_initial)
+        + Scalar('c', value=explicit_uniform)
+        + Scalar('d', value=default_initial)
+        + Scalar('e', value=fixed_parameter)
+    )
+    parameters = expr.parameters
+
+    assert parameters.bounds() == [
+        (0.0, 4.0),
+        (None, 30.0),
+        (None, None),
+        (None, None),
+        (None, None),
+    ]
+    assert parameters.free.bounds() == [
+        (0.0, 4.0),
+        (None, 30.0),
+        (None, None),
+        (None, None),
+    ]
+
+    values = parameters.free.initial_values(seed=1234)
+    repeated = parameters.free.initial_values(seed=1234)
+    assert values == repeated
+    assert values[0] == 2.0
+    assert 10.0 <= values[1] <= 20.0
+    assert -1.0 <= values[2] <= 1.0
+    assert values[3] == 1.0
 
 
 def test_expression_fix_updates_metadata_and_evaluator() -> None:

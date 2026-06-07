@@ -18,7 +18,7 @@ use laddu_core::{
     amplitude::{Evaluator, Expression, Parameter, ParameterMap, TestAmplitude},
     math::{BarrierKind, Sheet, QR_DEFAULT},
     traits::Variable,
-    CompiledExpression, LadduError, LadduResult, ThreadPoolManager,
+    CompiledExpression, InitialValue, LadduError, LadduResult, ThreadPoolManager,
 };
 use num::complex::Complex64;
 use numpy::{PyArray1, PyArray2};
@@ -1387,11 +1387,86 @@ impl PyParameterMap {
             .ok_or_else(|| PyValueError::new_err(format!("parameter not found: {name}")))
     }
 
+    fn bounds(&self) -> Vec<(Option<f64>, Option<f64>)> {
+        self.0.bounds()
+    }
+
+    #[pyo3(signature = (*, seed=None))]
+    fn initial_values(&self, seed: Option<u64>) -> PyResult<Vec<f64>> {
+        let mut rng = seed.map_or_else(fastrand::Rng::new, fastrand::Rng::with_seed);
+        Ok(self.0.initial_values(&mut rng)?)
+    }
+
     fn __iter__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyIterator>> {
         let params: Vec<PyParameter> = self.0.clone().into_iter().map(PyParameter).collect();
         let list = PyList::new(py, params)?;
         PyIterator::from_object(&list)
     }
+}
+
+#[pyclass(eq, name = "InitialValue", module = "laddu", from_py_object)]
+#[derive(Clone, PartialEq)]
+pub struct PyInitialValue(pub InitialValue);
+
+#[pymethods]
+impl PyInitialValue {
+    #[staticmethod]
+    fn fixed(value: f64) -> Self {
+        Self(InitialValue::Fixed(value))
+    }
+
+    #[staticmethod]
+    fn uniform(min: f64, max: f64) -> Self {
+        Self(InitialValue::Uniform { min, max })
+    }
+
+    #[getter]
+    fn kind(&self) -> &'static str {
+        match self.0 {
+            InitialValue::Fixed(_) => "fixed",
+            InitialValue::Uniform { .. } => "uniform",
+        }
+    }
+
+    #[getter]
+    fn value(&self) -> Option<f64> {
+        match self.0 {
+            InitialValue::Fixed(value) => Some(value),
+            InitialValue::Uniform { .. } => None,
+        }
+    }
+
+    #[getter]
+    fn range(&self) -> Option<(f64, f64)> {
+        match self.0 {
+            InitialValue::Fixed(_) => None,
+            InitialValue::Uniform { min, max } => Some((min, max)),
+        }
+    }
+
+    fn __repr__(&self) -> String {
+        match self.0 {
+            InitialValue::Fixed(value) => format!("InitialValue.fixed({value:?})"),
+            InitialValue::Uniform { min, max } => {
+                format!("InitialValue.uniform({min:?}, {max:?})")
+            }
+        }
+    }
+}
+
+fn parse_initial_value(value: &Bound<'_, PyAny>) -> PyResult<InitialValue> {
+    if let Ok(initial) = value.extract::<PyInitialValue>() {
+        return Ok(initial.0);
+    }
+    if let Ok(fixed) = value.extract::<f64>() {
+        return Ok(InitialValue::Fixed(fixed));
+    }
+    if let Ok((min, max)) = value.extract::<(f64, f64)>() {
+        return Ok(InitialValue::Uniform { min, max });
+    }
+    Err(PyTypeError::new_err(
+        "initial must be a float, a (min, max) tuple, or an InitialValue",
+    ))
 }
 
 #[pyclass(name = "Parameter", module = "laddu", from_py_object)]
@@ -1409,8 +1484,8 @@ impl PyParameter {
         self.0.fixed()
     }
     #[getter]
-    fn initial(&self) -> Option<f64> {
-        self.0.initial()
+    fn initial(&self) -> Option<PyInitialValue> {
+        self.0.initial().map(PyInitialValue)
     }
     #[getter]
     fn bounds(&self) -> (Option<f64>, Option<f64>) {
@@ -1438,8 +1513,8 @@ impl PyParameter {
 ///     The name of the free parameter
 /// fixed : float, optional
 ///     If specified, the parameter will be fixed to this value
-/// initial : float, optional
-///     If specified, the parameter will always be initialized to this value
+/// initial : float or tuple of (float, float) or InitialValue, optional
+///     If specified, the parameter will be initialized from this specification
 /// bounds : tuple of (float or None, float or None)
 ///     Specify the lower and upper bounds for the parameter (None corresponds to no bound)
 /// unit : str, optional
@@ -1465,15 +1540,15 @@ impl PyParameter {
 pub fn py_parameter(
     name: &str,
     fixed: Option<f64>,
-    initial: Option<f64>,
+    initial: Option<&Bound<'_, PyAny>>,
     bounds: (Option<f64>, Option<f64>),
     unit: Option<&str>,
     latex: Option<&str>,
     description: Option<&str>,
-) -> PyParameter {
+) -> PyResult<PyParameter> {
     let par = Parameter::new(name);
     if let Some(value) = initial {
-        par.set_initial(value);
+        par.set_initial(parse_initial_value(value)?);
     }
     if let Some(value) = fixed {
         par.set_fixed_value(Some(value)); // TODO: make this all consistent
@@ -1488,7 +1563,7 @@ pub fn py_parameter(
     if let Some(description) = description {
         par.set_description(description);
     }
-    PyParameter(par)
+    Ok(PyParameter(par))
 }
 
 /// An amplitude used only for internal testing which evaluates `(p0 + i * p1) * event.p4s\[0\].e`.

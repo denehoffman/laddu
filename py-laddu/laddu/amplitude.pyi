@@ -1,15 +1,27 @@
 from collections.abc import Iterator, Mapping, Sequence
-from typing import overload
+from typing import Literal, TypeAlias, overload
 
 import numpy as np
 import numpy.typing as npt
 
 from laddu.data import Dataset
 
+class InitialValue:
+    kind: Literal['fixed', 'uniform']
+    value: float | None
+    range: tuple[float, float] | None
+
+    @staticmethod
+    def fixed(value: float) -> InitialValue: ...
+    @staticmethod
+    def uniform(min: float, max: float) -> InitialValue: ...
+
+InitialValueLike: TypeAlias = float | tuple[float, float] | InitialValue
+
 class Parameter:
     name: str
     fixed: float | None
-    initial: float | None
+    initial: InitialValue | None
     bounds: tuple[float | None, float | None]
     unit: str | None
     latex: str | None
@@ -20,6 +32,8 @@ class ParameterMap:
     free: ParameterMap
     fixed: ParameterMap
 
+    def bounds(self) -> list[tuple[float | None, float | None]]: ...
+    def initial_values(self, *, seed: int | None = None) -> list[float]: ...
     def contains(self, name: str) -> bool: ...
     def __contains__(self, name: str) -> bool: ...
     def __len__(self) -> int: ...
@@ -72,7 +86,7 @@ def parameter(
     name: str,
     fixed: float | None = None,
     *,
-    initial: float | None = None,
+    initial: InitialValueLike | None = None,
     bounds: tuple[float | None, float | None] = (None, None),
     unit: str | None = None,
     latex: str | None = None,
@@ -133,6 +147,8 @@ __all__ = [
     'CompiledExpression',
     'Evaluator',
     'Expression',
+    'InitialValue',
+    'InitialValueLike',
     'One',
     'Parameter',
     'ParameterMap',

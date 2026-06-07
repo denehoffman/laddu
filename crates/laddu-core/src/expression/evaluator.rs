@@ -3963,7 +3963,7 @@ mod tests {
         amplitude::{AmplitudeID, Tags, TestAmplitude},
         data::{test_dataset, test_event, DatasetMetadata, Event, EventData},
         parameter,
-        parameters::Parameter,
+        parameters::{InitialValue, Parameter},
         resources::{Cache, ParameterID, Parameters, Resources, ScalarID},
         vectors::Vec4,
     };
@@ -6712,7 +6712,7 @@ mod tests {
 
         assert_eq!(p.name(), "width");
         assert_eq!(p.fixed(), Some(0.15));
-        assert_eq!(p.initial(), Some(0.15));
+        assert_eq!(p.initial(), Some(InitialValue::Fixed(0.15)));
         assert!(p.is_fixed());
         assert!(!p.is_free());
     }
@@ -6723,9 +6723,19 @@ mod tests {
 
         assert_eq!(p.name(), "alpha");
         assert_eq!(p.fixed(), None);
-        assert_eq!(p.initial(), Some(1.25));
+        assert_eq!(p.initial(), Some(InitialValue::Fixed(1.25)));
         assert_eq!(p.bounds(), (None, None));
         assert!(p.is_free());
+    }
+
+    #[test]
+    fn keyword_initial_accepts_uniform_range() {
+        let p = parameter!("alpha", initial: (0.0, 2.0));
+
+        assert_eq!(
+            p.initial(),
+            Some(InitialValue::Uniform { min: 0.0, max: 2.0 })
+        );
     }
 
     #[test]
@@ -6734,7 +6744,7 @@ mod tests {
 
         assert_eq!(p.name(), "beta");
         assert_eq!(p.fixed(), Some(2.5));
-        assert_eq!(p.initial(), Some(2.5));
+        assert_eq!(p.initial(), Some(InitialValue::Fixed(2.5)));
         assert!(p.is_fixed());
     }
 
@@ -6788,7 +6798,7 @@ mod tests {
 
         assert_eq!(p.name(), "gamma");
         assert_eq!(p.fixed(), None);
-        assert_eq!(p.initial(), Some(1.0));
+        assert_eq!(p.initial(), Some(InitialValue::Fixed(1.0)));
         assert_eq!(p.bounds(), (Some(0.0), Some(5.0)));
         assert_eq!(p.unit().as_deref(), Some("GeV"));
         assert_eq!(p.latex().as_deref(), Some(r"\gamma"));
@@ -6806,7 +6816,7 @@ mod tests {
 
         assert_eq!(p.name(), "delta");
         assert_eq!(p.fixed(), Some(3.0));
-        assert_eq!(p.initial(), Some(3.0));
+        assert_eq!(p.initial(), Some(InitialValue::Fixed(3.0)));
         assert_eq!(p.bounds(), (Some(0.0), Some(10.0)));
         assert_eq!(p.unit().as_deref(), Some("rad"));
     }
@@ -6820,9 +6830,59 @@ mod tests {
             unit: "arb",
         );
 
-        assert_eq!(p.initial(), Some(0.5));
+        assert_eq!(p.initial(), Some(InitialValue::Fixed(0.5)));
         assert_eq!(p.bounds(), (None, Some(1.0)));
         assert_eq!(p.unit().as_deref(), Some("arb"));
+    }
+
+    #[test]
+    fn parameter_map_reports_bounds_and_initial_values_in_map_order() {
+        let mut map = ParameterMap::default();
+        map.insert(parameter!("free_a", initial: 2.0, bounds: (0.0, 4.0)));
+        map.insert(parameter!("fixed_b", 3.0));
+        map.insert(parameter!("free_c", initial: (10.0, 20.0), bounds: (None, 30.0)));
+        map.insert(parameter!("free_d"));
+
+        assert_eq!(
+            map.bounds(),
+            vec![
+                (Some(0.0), Some(4.0)),
+                (None, None),
+                (None, Some(30.0)),
+                (None, None)
+            ]
+        );
+        assert_eq!(
+            map.free().bounds(),
+            vec![(Some(0.0), Some(4.0)), (None, Some(30.0)), (None, None)]
+        );
+
+        let mut rng = fastrand::Rng::with_seed(1234);
+        let values = map.free().initial_values(&mut rng).unwrap();
+        assert_eq!(values.len(), 3);
+        assert_eq!(values[0], 2.0);
+        assert!((10.0..=20.0).contains(&values[1]));
+        assert_eq!(values[2], 1.0);
+    }
+
+    #[test]
+    fn parameter_map_serde_preserves_initial_value_specs() {
+        let mut map = ParameterMap::default();
+        map.insert(parameter!("fixed", initial: 2.0));
+        map.insert(parameter!("uniform", initial: (0.0, 1.0)));
+
+        let serialized = serde_pickle::to_vec(&map, serde_pickle::SerOptions::new()).unwrap();
+        let deserialized: ParameterMap =
+            serde_pickle::from_slice(&serialized, serde_pickle::DeOptions::new()).unwrap();
+
+        assert_eq!(
+            deserialized["fixed"].initial(),
+            Some(InitialValue::Fixed(2.0))
+        );
+        assert_eq!(
+            deserialized["uniform"].initial(),
+            Some(InitialValue::Uniform { min: 0.0, max: 1.0 })
+        );
     }
 
     #[test]

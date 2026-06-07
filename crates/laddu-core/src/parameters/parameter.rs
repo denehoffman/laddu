@@ -2,6 +2,7 @@
 
 use std::{hash::Hash, sync::Arc};
 
+use fastrand_contrib::RngExt;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 
@@ -11,9 +12,9 @@ struct ParameterMetadata {
     name: String,
     /// If `Some`, this parameter is fixed to the given value. If `None`, it is free.
     fixed: Option<f64>,
-    /// If `Some`, this is used for the initial value of the parameter in fits. If `None`, the user
-    /// must provide the initial value on their own.
-    initial: Option<f64>,
+    /// If `Some`, this is used to generate initial values for fits. If `None`, map-level helpers
+    /// use their documented default.
+    initial: Option<InitialValue>,
     /// Optional bounds which may be automatically used by optimizers. `None` represents no bound
     /// in the given direction.
     bounds: (Option<f64>, Option<f64>),
@@ -38,6 +39,67 @@ impl Eq for Parameter {}
 impl Hash for Parameter {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.0.lock().name.hash(state);
+    }
+}
+
+/// A serializable specification for generating a parameter's initial fit value.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub enum InitialValue {
+    /// Always use the same initial value.
+    Fixed(f64),
+    /// Sample uniformly from the closed interval `[min, max]`.
+    Uniform {
+        /// Lower end of the interval.
+        min: f64,
+        /// Upper end of the interval.
+        max: f64,
+    },
+}
+
+impl InitialValue {
+    /// Construct a fixed initial value.
+    pub fn fixed(value: f64) -> Self {
+        Self::Fixed(value)
+    }
+
+    /// Construct a uniform initial value.
+    pub fn uniform(min: f64, max: f64) -> Self {
+        Self::Uniform { min, max }
+    }
+
+    /// Sample an initial value from this specification.
+    pub fn sample(self, rng: &mut fastrand::Rng) -> f64 {
+        match self {
+            Self::Fixed(value) => value,
+            Self::Uniform { min, max } => rng.f64_range(min..=max),
+        }
+    }
+}
+
+/// Helper trait to convert values into [`InitialValue`] specifications.
+pub trait IntoInitialValue {
+    /// Convert to an initial-value specification.
+    fn into_initial_value(self) -> InitialValue;
+}
+
+impl IntoInitialValue for f64 {
+    fn into_initial_value(self) -> InitialValue {
+        InitialValue::Fixed(self)
+    }
+}
+
+impl IntoInitialValue for (f64, f64) {
+    fn into_initial_value(self) -> InitialValue {
+        InitialValue::Uniform {
+            min: self.0,
+            max: self.1,
+        }
+    }
+}
+
+impl IntoInitialValue for InitialValue {
+    fn into_initial_value(self) -> InitialValue {
+        self
     }
 }
 
@@ -71,6 +133,7 @@ impl Parameter {
         Self(Arc::new(Mutex::new(ParameterMetadata {
             name: name.into(),
             fixed: Some(value),
+            initial: Some(InitialValue::Fixed(value)),
             ..Default::default()
         })))
     }
@@ -86,7 +149,7 @@ impl Parameter {
     }
 
     /// Return the current initial value, if one is set.
-    pub fn initial(&self) -> Option<f64> {
+    pub fn initial(&self) -> Option<InitialValue> {
         self.0.lock().initial
     }
 
@@ -120,7 +183,7 @@ impl Parameter {
         let mut guard = self.0.lock();
         if let Some(value) = value {
             guard.fixed = Some(value);
-            guard.initial = Some(value);
+            guard.initial = Some(InitialValue::Fixed(value));
         } else {
             guard.fixed = None;
         }
@@ -131,12 +194,12 @@ impl Parameter {
     /// # Panics
     ///
     /// This method panics if the parameter is fixed.
-    pub fn set_initial(&self, value: f64) {
+    pub fn set_initial<I: IntoInitialValue>(&self, value: I) {
         assert!(
             self.is_free(),
             "cannot manually set `initial` on a fixed parameter"
         );
-        self.0.lock().initial = Some(value);
+        self.0.lock().initial = Some(value.into_initial_value());
     }
 
     /// Helper method to set the bounds of a parameter.

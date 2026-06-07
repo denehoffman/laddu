@@ -578,7 +578,7 @@ pub use crate::{
     execution::ThreadPoolManager,
     expression::{CompiledExpression, CompiledExpressionNode, Evaluator, Expression},
     kinematics::{Axes, Axis, AxisSign, AxisSource, Frame, FrameAxes, RestFrame},
-    parameters::{Parameter, ParameterID, ParameterMap, Parameters},
+    parameters::{InitialValue, Parameter, ParameterID, ParameterMap, Parameters},
     quantum::{
         AllowedPartialWave, Charge, ExternalId, Isospin, MandelstamChannel, Parity, PartialWave,
         ParticleProperties, Reflectivity, RuleSet, SelectionRules, SpinState, Statistics, J, L, M,

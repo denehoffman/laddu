@@ -236,6 +236,26 @@ impl ParameterMap {
         self.parameters.iter().map(Parameter::name).collect()
     }
 
+    /// Get all parameter bounds in map order.
+    pub fn bounds(&self) -> Vec<(Option<f64>, Option<f64>)> {
+        self.parameters.iter().map(Parameter::bounds).collect()
+    }
+
+    /// Generate initial values for all parameters in map order.
+    ///
+    /// Parameters without an explicit initial-value specification use `1.0`.
+    pub fn initial_values(&self, rng: &mut fastrand::Rng) -> LadduResult<Vec<f64>> {
+        Ok(self
+            .parameters
+            .iter()
+            .map(|parameter| {
+                parameter
+                    .initial()
+                    .map_or(1.0, |initial| initial.sample(rng))
+            })
+            .collect())
+    }
+
     /// Filter the parameter set by a predicate.
     pub fn filter(&self, predicate: impl Fn(&Parameter) -> bool) -> Self {
         Self::from_parameters(
