@@ -431,19 +431,30 @@ impl TryFrom<f64> for Charge {
 }
 
 // Operations
+#[rustfmt::skip]
 impl_op_ex!(+ |m1: &M, m2: &M| -> M { M::half(m1.doubled() + m2.doubled()) });
-impl_op_ex!(-|m1: &M, m2: &M| -> M { M::half(m1.doubled() - m2.doubled()) });
-impl_op_ex!(-|m: &M| -> M { M::half(-m.doubled()) });
+#[rustfmt::skip]
+impl_op_ex!(- |m1: &M, m2: &M| -> M { M::half(m1.doubled() - m2.doubled()) });
+#[rustfmt::skip]
+impl_op_ex!(- |m: &M| -> M { M::half(-m.doubled()) });
+#[rustfmt::skip]
 impl_op_ex!(+= |m1: &mut M, m2: &M| { *m1 = *m1 + m2 });
+#[rustfmt::skip]
 impl_op_ex!(-= |m1: &mut M, m2: &M| { *m1 = *m1 - m2 });
 
+#[rustfmt::skip]
 impl_op_ex!(+ |c1: &Charge, c2: &Charge| -> Charge { Charge::third(c1.tripled() + c2.tripled()) });
-impl_op_ex!(-|c1: &Charge, c2: &Charge| -> Charge { Charge::third(c1.tripled() - c2.tripled()) });
-impl_op_ex!(-|c: &Charge| -> Charge { Charge::third(-c.tripled()) });
+#[rustfmt::skip]
+impl_op_ex!(- |c1: &Charge, c2: &Charge| -> Charge { Charge::third(c1.tripled() - c2.tripled()) });
+#[rustfmt::skip]
+impl_op_ex!(- |c: &Charge| -> Charge { Charge::third(-c.tripled()) });
+#[rustfmt::skip]
 impl_op_ex!(+= |c1: &mut Charge, c2: &Charge| { *c1 = *c1 + c2 });
+#[rustfmt::skip]
 impl_op_ex!(-= |c1: &mut Charge, c2: &Charge| { *c1 = *c1 - c2 });
 
-impl_op_ex!(*|p1: &Parity, p2: &Parity| -> Parity {
+#[rustfmt::skip]
+impl_op_ex!(* |p1: &Parity, p2: &Parity| -> Parity {
     match (p1, p2) {
         (Parity::Positive, Parity::Positive) | (Parity::Negative, Parity::Negative) => {
             Parity::Positive
@@ -453,8 +464,10 @@ impl_op_ex!(*|p1: &Parity, p2: &Parity| -> Parity {
         }
     }
 });
+#[rustfmt::skip]
 impl_op_ex!(*= |p1: &mut Parity, p2: &Parity| { *p1 = *p1 * p2});
-impl_op_ex!(-|p: &Parity| -> Parity {
+#[rustfmt::skip]
+impl_op_ex!(- |p: &Parity| -> Parity {
     if matches!(p, Parity::Positive) {
         Parity::Negative
     } else {
