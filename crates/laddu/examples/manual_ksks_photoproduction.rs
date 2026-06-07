@@ -113,7 +113,7 @@ fn main() -> LadduResult<()> {
                     PhotonHelicity::new(photon_helicity)?,
                     PhotonHelicity::new(photon_helicity_prime)?,
                 )?;
-                intensity = intensity + (rho * amp.clone() * amp_prime.conj()).real();
+                intensity += (rho * amp.clone() * amp_prime.conj()).real();
             }
         }
     }
@@ -176,12 +176,8 @@ fn helicity_amplitude(
                     photon_helicity,
                     x_projection,
                 )?;
-                coherent_sum = coherent_sum
-                    + daughter_spin_cg
-                        * coefficient
-                        * dynamics
-                        * production.clone()
-                        * decay.clone();
+                coherent_sum +=
+                    daughter_spin_cg * coefficient * dynamics * production.clone() * decay.clone();
             }
         }
     }

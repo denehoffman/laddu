@@ -887,8 +887,16 @@ impl_op_ex!(+ |a: &Expression, b: &Expression| -> Expression {
     Expression::binary_op(a, b, ExpressionNode::Add)
 });
 #[rustfmt::skip]
+impl_op_ex!(+= |a: &mut Expression, b: &Expression| {
+    *a = &*a + b
+});
+#[rustfmt::skip]
 impl_op_ex!(+ |a: &Expression, b: &f64| -> Expression {
     Expression::binary_op(a, &Expression::from(b), ExpressionNode::Add)
+});
+#[rustfmt::skip]
+impl_op_ex!(+= |a: &mut Expression, b: &f64| {
+    *a = &*a + b
 });
 #[rustfmt::skip]
 impl_op_ex!(+ |a: &f64, b: &Expression| -> Expression {
@@ -897,6 +905,10 @@ impl_op_ex!(+ |a: &f64, b: &Expression| -> Expression {
 #[rustfmt::skip]
 impl_op_ex!(+ |a: &Expression, b: &Complex64| -> Expression {
     Expression::binary_op(a, &Expression::from(b), ExpressionNode::Add)
+});
+#[rustfmt::skip]
+impl_op_ex!(+= |a: &mut Expression, b: &Complex64| {
+    *a = &*a + b
 });
 #[rustfmt::skip]
 impl_op_ex!(+ |a: &Complex64, b: &Expression| -> Expression {
@@ -908,8 +920,16 @@ impl_op_ex!(- |a: &Expression, b: &Expression| -> Expression {
     Expression::binary_op(a, b, ExpressionNode::Sub)
 });
 #[rustfmt::skip]
+impl_op_ex!(-= |a: &mut Expression, b: &Expression| {
+    *a = &*a - b
+});
+#[rustfmt::skip]
 impl_op_ex!(- |a: &Expression, b: &f64| -> Expression {
     Expression::binary_op(a, &Expression::from(b), ExpressionNode::Sub)
+});
+#[rustfmt::skip]
+impl_op_ex!(-= |a: &mut Expression, b: &f64| {
+    *a = &*a - b
 });
 #[rustfmt::skip]
 impl_op_ex!(- |a: &f64, b: &Expression| -> Expression {
@@ -918,6 +938,10 @@ impl_op_ex!(- |a: &f64, b: &Expression| -> Expression {
 #[rustfmt::skip]
 impl_op_ex!(- |a: &Expression, b: &Complex64| -> Expression {
     Expression::binary_op(a, &Expression::from(b), ExpressionNode::Sub)
+});
+#[rustfmt::skip]
+impl_op_ex!(-= |a: &mut Expression, b: &Complex64| {
+    *a = &*a - b
 });
 #[rustfmt::skip]
 impl_op_ex!(- |a: &Complex64, b: &Expression| -> Expression {
@@ -929,8 +953,16 @@ impl_op_ex!(* |a: &Expression, b: &Expression| -> Expression {
     Expression::binary_op(a, b, ExpressionNode::Mul)
 });
 #[rustfmt::skip]
+impl_op_ex!(*= |a: &mut Expression, b: &Expression| {
+    *a = &*a * b
+});
+#[rustfmt::skip]
 impl_op_ex!(* |a: &Expression, b: &f64| -> Expression {
     Expression::binary_op(a, &Expression::from(b), ExpressionNode::Mul)
+});
+#[rustfmt::skip]
+impl_op_ex!(*= |a: &mut Expression, b: &f64| {
+    *a = &*a * b
 });
 #[rustfmt::skip]
 impl_op_ex!(* |a: &f64, b: &Expression| -> Expression {
@@ -939,6 +971,10 @@ impl_op_ex!(* |a: &f64, b: &Expression| -> Expression {
 #[rustfmt::skip]
 impl_op_ex!(* |a: &Expression, b: &Complex64| -> Expression {
     Expression::binary_op(a, &Expression::from(b), ExpressionNode::Mul)
+});
+#[rustfmt::skip]
+impl_op_ex!(*= |a: &mut Expression, b: &Complex64| {
+    *a = &*a * b
 });
 #[rustfmt::skip]
 impl_op_ex!(* |a: &Complex64, b: &Expression| -> Expression {
@@ -950,8 +986,16 @@ impl_op_ex!(/ |a: &Expression, b: &Expression| -> Expression {
     Expression::binary_op(a, b, ExpressionNode::Div)
 });
 #[rustfmt::skip]
+impl_op_ex!(/= |a: &mut Expression, b: &Expression| {
+    *a = &*a / b
+});
+#[rustfmt::skip]
 impl_op_ex!(/ |a: &Expression, b: &f64| -> Expression {
     Expression::binary_op(a, &Expression::from(b), ExpressionNode::Div)
+});
+#[rustfmt::skip]
+impl_op_ex!(/= |a: &mut Expression, b: &f64| {
+    *a = &*a / b
 });
 #[rustfmt::skip]
 impl_op_ex!(/ |a: &f64, b: &Expression| -> Expression {
@@ -962,6 +1006,10 @@ impl_op_ex!(/ |a: &Expression, b: &Complex64| -> Expression {
     Expression::binary_op(a, &Expression::from(b), ExpressionNode::Div)
 });
 #[rustfmt::skip]
+impl_op_ex!(/= |a: &mut Expression, b: &Complex64| {
+    *a = &*a / b
+});
+#[rustfmt::skip]
 impl_op_ex!(/ |a: &Complex64, b: &Expression| -> Expression {
     Expression::binary_op(&Expression::from(a), b, ExpressionNode::Div)
 });
@@ -970,7 +1018,6 @@ impl_op_ex!(/ |a: &Complex64, b: &Expression| -> Expression {
 impl_op_ex!(- |a: &Expression| -> Expression {
     Expression::unary_op(a, ExpressionNode::Neg)
 });
-// NOTE: no need to add an impl for negating f64 or complex!
 
 #[derive(Clone, Debug)]
 #[doc(hidden)]

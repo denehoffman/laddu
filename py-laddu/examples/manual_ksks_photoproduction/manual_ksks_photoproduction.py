@@ -157,10 +157,10 @@ def helicity_amplitude(
                     photon_helicity,
                     x_projection,
                 )
-                coherent_sum = (
-                    coherent_sum
-                    + daughter_spin_cg * coefficient * dynamics * production * decay
+                coherent_sum += (
+                    daughter_spin_cg * coefficient * dynamics * production * decay
                 )
+
     return coherent_sum
 
 

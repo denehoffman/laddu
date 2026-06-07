@@ -165,7 +165,7 @@ pub fn py_expr_sum(terms: Vec<Bound<'_, PyAny>>) -> PyResult<PyExpression> {
         let PyExpression(expr) = term
             .extract::<PyExpression>()
             .map_err(|_| PyTypeError::new_err("Elements must be PyExpression"))?;
-        summation = summation + expr;
+        summation += expr;
     }
     Ok(PyExpression(summation))
 }
@@ -195,7 +195,7 @@ pub fn py_expr_product(terms: Vec<Bound<'_, PyAny>>) -> PyResult<PyExpression> {
         let PyExpression(expr) = term
             .extract::<PyExpression>()
             .map_err(|_| PyTypeError::new_err("Elements must be PyExpression"))?;
-        product = product * expr;
+        product *= expr;
     }
     Ok(PyExpression(product))
 }
