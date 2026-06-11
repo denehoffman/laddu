@@ -1,15 +1,21 @@
 //! Event generation from validated channel generation plans.
 
-use std::sync::Arc;
+use std::time::Instant;
 
 use fastrand::Rng;
 use laddu_core::{
-    data::{Dataset, DatasetMetadata, EventData},
     vectors::{Vec3, Vec4},
     LadduError, LadduResult, LadduRngExt, MomentumSource, ScalarDistribution,
 };
 
-use crate::plan::{DecayParticlePlan, GenerationPlan, PlannedMass};
+use crate::{
+    plan::{DecayParticlePlan, GenerationPlan, PlannedMass},
+    sink::{
+        GeneratedBatchView, GeneratedLayout, GeneratedParticleInfo, GeneratedParticleRole,
+        GeneratedRecord, GeneratedSink, GenerationMode, GenerationModeKind, GenerationOptions,
+        GenerationResult, GenerationStats,
+    },
+};
 
 const MAX_EVENT_ATTEMPTS: usize = 10_000;
 const MAX_SAMPLE_ATTEMPTS: usize = 10_000;
@@ -71,25 +77,99 @@ impl EventGenerator {
             .unwrap_or_else(|| LadduError::Custom("failed to generate event".to_string())))
     }
 
-    /// Generate a dataset with generated p4 columns and unit weights.
-    pub fn generate_dataset(&self, n_events: usize) -> LadduResult<Dataset> {
-        let metadata = Arc::new(DatasetMetadata::new(
-            self.p4_labels.clone(),
-            Vec::<String>::new(),
-        )?);
-        let mut rng = self.rng();
-        let mut events = Vec::with_capacity(n_events);
-        for _ in 0..n_events {
-            events.push(Arc::new(self.generate_event_data(&mut rng)?));
+    /// Generate records into a sink.
+    pub fn generate<S>(
+        &self,
+        target_events: usize,
+        sink: S,
+        mode: GenerationMode,
+        options: GenerationOptions,
+    ) -> LadduResult<GenerationResult<S::Output>>
+    where
+        S: GeneratedSink,
+    {
+        if options.batch_size == 0 {
+            return Err(LadduError::Custom(
+                "generation batch size must be greater than zero".to_string(),
+            ));
         }
-        Ok(Dataset::new_with_metadata(events, metadata))
+        match mode {
+            GenerationMode::Raw => self.generate_raw(target_events, sink, options),
+        }
     }
 
-    fn rng(&self) -> Rng {
-        match self.seed {
+    fn rng_with_options(&self, options: &GenerationOptions) -> Rng {
+        match options.seed.or(self.seed) {
             Some(seed) => Rng::with_seed(seed),
             None => Rng::new(),
         }
+    }
+
+    fn generate_raw<S>(
+        &self,
+        target_events: usize,
+        mut sink: S,
+        options: GenerationOptions,
+    ) -> LadduResult<GenerationResult<S::Output>>
+    where
+        S: GeneratedSink,
+    {
+        let started = Instant::now();
+        let layout = generated_layout(&self.plan);
+        sink.begin(&layout)?;
+        let mut rng = self.rng_with_options(&options);
+        let mut records = Vec::with_capacity(options.batch_size.min(target_events));
+        let mut batches_written = 0_u64;
+        let mut sum_weights = 0.0;
+        let mut min_weight = None::<f64>;
+        let mut max_weight = None::<f64>;
+
+        for local_index in 0..target_events {
+            let event = self.generate_event(&mut rng)?;
+            let record = self.record_from_event(local_index as u64, event, 1.0)?;
+            sum_weights += record.weight;
+            min_weight = Some(min_weight.map_or(record.weight, |value| value.min(record.weight)));
+            max_weight = Some(max_weight.map_or(record.weight, |value| value.max(record.weight)));
+            records.push(record);
+            if records.len() == options.batch_size {
+                sink.push_batch(GeneratedBatchView {
+                    layout: &layout,
+                    records: &records,
+                })?;
+                batches_written += 1;
+                records.clear();
+            }
+        }
+        if !records.is_empty() {
+            sink.push_batch(GeneratedBatchView {
+                layout: &layout,
+                records: &records,
+            })?;
+            batches_written += 1;
+        }
+
+        let output = sink.finish()?;
+        let target_events = target_events as u64;
+        Ok(GenerationResult {
+            output,
+            stats: GenerationStats {
+                mode: GenerationModeKind::Raw,
+                target_events,
+                written_events: target_events,
+                proposed_events: target_events,
+                accepted_events: target_events,
+                rejected_events: 0,
+                acceptance_rate: None,
+                envelope: None,
+                envelope_violations: 0,
+                sum_weights,
+                min_weight,
+                max_weight,
+                batches_written,
+                elapsed: started.elapsed(),
+                seed: options.seed.or(self.seed),
+            },
+        })
     }
 
     fn try_generate_event(&self, rng: &mut Rng) -> LadduResult<GeneratedEvent> {
@@ -111,8 +191,12 @@ impl EventGenerator {
         Ok(GeneratedEvent { p4s })
     }
 
-    fn generate_event_data(&self, rng: &mut Rng) -> LadduResult<EventData> {
-        let event = self.generate_event(rng)?;
+    fn record_from_event(
+        &self,
+        local_index: u64,
+        event: GeneratedEvent,
+        weight: f64,
+    ) -> LadduResult<GeneratedRecord> {
         let p4s = self
             .p4_labels
             .iter()
@@ -122,10 +206,11 @@ impl EventGenerator {
                 })
             })
             .collect::<LadduResult<Vec<_>>>()?;
-        Ok(EventData {
+        Ok(GeneratedRecord {
+            local_index,
+            global_index: Some(local_index),
+            weight,
             p4s,
-            aux: Vec::new(),
-            weight: 1.0,
         })
     }
 }
@@ -178,6 +263,56 @@ fn collect_decay_labels(particle: &DecayParticlePlan, labels: &mut Vec<String>) 
 fn push_label(labels: &mut Vec<String>, label: &str) {
     if !labels.iter().any(|existing| existing == label) {
         labels.push(label.to_string());
+    }
+}
+
+fn generated_layout(plan: &GenerationPlan) -> GeneratedLayout {
+    let mut particles = Vec::new();
+    for particle in plan.production().incoming() {
+        push_particle_info(
+            &mut particles,
+            GeneratedParticleInfo::new(
+                particle.label(),
+                GeneratedParticleRole::Initial,
+                particle.properties().clone(),
+            ),
+        );
+    }
+    for particle in plan.production().outgoing() {
+        collect_decay_particle_info(particle, &mut particles);
+    }
+    for (index, particle) in particles.iter_mut().enumerate() {
+        particle.output_index = Some(index);
+    }
+    GeneratedLayout::new(particles)
+}
+
+fn collect_decay_particle_info(
+    particle: &DecayParticlePlan,
+    particles: &mut Vec<GeneratedParticleInfo>,
+) {
+    let role = if particle.decay().is_some() {
+        GeneratedParticleRole::Intermediate
+    } else {
+        GeneratedParticleRole::Final
+    };
+    push_particle_info(
+        particles,
+        GeneratedParticleInfo::new(particle.label(), role, particle.properties().clone()),
+    );
+    if let Some(decay) = particle.decay() {
+        for daughter in decay.daughters() {
+            collect_decay_particle_info(daughter, particles);
+        }
+    }
+}
+
+fn push_particle_info(particles: &mut Vec<GeneratedParticleInfo>, particle: GeneratedParticleInfo) {
+    if !particles
+        .iter()
+        .any(|existing| existing.label == particle.label)
+    {
+        particles.push(particle);
     }
 }
 
@@ -340,6 +475,7 @@ mod tests {
     use laddu_core::{Channel, ParticleProperties, VertexGenerator};
 
     use super::*;
+    use crate::{DatasetSink, NullSink};
 
     fn demo_generator() -> EventGenerator {
         let mut channel = Channel::new();
@@ -384,7 +520,15 @@ mod tests {
     #[test]
     fn generates_named_dataset() {
         let generator = demo_generator();
-        let dataset = generator.generate_dataset(4).unwrap();
+        let dataset = generator
+            .generate(
+                4,
+                DatasetSink::new(),
+                GenerationMode::Raw,
+                GenerationOptions::default(),
+            )
+            .unwrap()
+            .output;
         assert_eq!(dataset.n_events(), 4);
         assert_eq!(
             dataset.p4_names(),
@@ -395,8 +539,24 @@ mod tests {
     #[test]
     fn seeded_generation_is_deterministic() {
         let generator = demo_generator();
-        let first = generator.generate_dataset(2).unwrap();
-        let second = generator.generate_dataset(2).unwrap();
+        let first = generator
+            .generate(
+                2,
+                DatasetSink::new(),
+                GenerationMode::Raw,
+                GenerationOptions::default(),
+            )
+            .unwrap()
+            .output;
+        let second = generator
+            .generate(
+                2,
+                DatasetSink::new(),
+                GenerationMode::Raw,
+                GenerationOptions::default(),
+            )
+            .unwrap()
+            .output;
         assert_eq!(
             first.event_local(0).unwrap().p4_at(0),
             second.event_local(0).unwrap().p4_at(0)
@@ -405,5 +565,61 @@ mod tests {
             first.event_local(1).unwrap().p4_at(2),
             second.event_local(1).unwrap().p4_at(2)
         );
+    }
+
+    #[test]
+    fn raw_generation_can_write_dataset_sink_with_stats() {
+        let generator = demo_generator();
+        let result = generator
+            .generate(
+                4,
+                DatasetSink::new(),
+                GenerationMode::Raw,
+                GenerationOptions::default().batch_size(2),
+            )
+            .unwrap();
+        assert_eq!(result.output.n_events(), 4);
+        assert_eq!(
+            result.output.p4_names(),
+            ["beam", "target", "res", "a", "b", "recoil"]
+        );
+        assert_eq!(result.stats.target_events, 4);
+        assert_eq!(result.stats.written_events, 4);
+        assert_eq!(result.stats.proposed_events, 4);
+        assert_eq!(result.stats.rejected_events, 0);
+        assert_eq!(result.stats.batches_written, 2);
+        assert_eq!(result.stats.sum_weights, 4.0);
+        assert!(result.stats.audit().contains("Generation audit"));
+    }
+
+    #[test]
+    fn null_sink_counts_generated_records() {
+        let generator = demo_generator();
+        let result = generator
+            .generate(
+                5,
+                NullSink::new(),
+                GenerationMode::Raw,
+                GenerationOptions::default().batch_size(3),
+            )
+            .unwrap();
+        assert_eq!(result.output, 5);
+        assert_eq!(result.stats.batches_written, 2);
+        assert_eq!(result.stats.accepted_events, 5);
+    }
+
+    #[test]
+    fn dataset_sink_can_select_final_state() {
+        let generator = demo_generator();
+        let dataset = generator
+            .generate(
+                2,
+                DatasetSink::new().output(crate::GenerationOutput::final_state()),
+                GenerationMode::Raw,
+                GenerationOptions::default(),
+            )
+            .unwrap()
+            .output;
+        assert_eq!(dataset.p4_names(), ["a", "b", "recoil"]);
     }
 }

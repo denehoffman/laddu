@@ -2,8 +2,9 @@ use std::{cell::RefCell, rc::Rc, sync::Arc};
 
 use laddu_core::{MassSampler, MomentumSource, VertexGenerator};
 use laddu_generation::{
-    gen, DecayParticlePlan, DecayPlan, EventGenerator, GeneratedEvent, GenerationPlan,
-    InitialParticlePlan, PlannedMass, ProductionPlan,
+    gen, DatasetSink, DecayParticlePlan, DecayPlan, EventGenerator, GeneratedEvent, GenerationMode,
+    GenerationOptions, GenerationPlan, GenerationResult, GenerationStats, InitialParticlePlan,
+    PlannedMass, ProductionPlan,
 };
 use pyo3::prelude::*;
 
@@ -39,6 +40,161 @@ pub struct PyVertexGenerator(pub VertexGenerator);
 impl PyVertexGenerator {
     fn __repr__(&self) -> String {
         format!("{:?}", self.0)
+    }
+}
+
+#[pyclass(name = "Raw", module = "laddu", from_py_object)]
+#[derive(Clone, Copy, Default)]
+pub struct PyRaw(pub GenerationMode);
+
+#[pymethods]
+impl PyRaw {
+    #[new]
+    fn new() -> Self {
+        Self(GenerationMode::Raw)
+    }
+
+    fn __repr__(&self) -> &'static str {
+        "Raw()"
+    }
+}
+
+#[pyclass(name = "GenerationOptions", module = "laddu", from_py_object)]
+#[derive(Clone)]
+pub struct PyGenerationOptions(pub GenerationOptions);
+
+#[pymethods]
+impl PyGenerationOptions {
+    #[new]
+    #[pyo3(signature=(*, batch_size=10_000, max_trials=None, seed=None))]
+    fn new(batch_size: usize, max_trials: Option<u64>, seed: Option<u64>) -> Self {
+        Self(GenerationOptions {
+            batch_size,
+            max_trials,
+            seed,
+        })
+    }
+
+    #[getter]
+    fn batch_size(&self) -> usize {
+        self.0.batch_size
+    }
+
+    #[getter]
+    fn max_trials(&self) -> Option<u64> {
+        self.0.max_trials
+    }
+
+    #[getter]
+    fn seed(&self) -> Option<u64> {
+        self.0.seed
+    }
+
+    fn __repr__(&self) -> String {
+        format!("{:?}", self.0)
+    }
+}
+
+#[pyclass(name = "DatasetSink", module = "laddu", from_py_object)]
+#[derive(Clone, Default)]
+pub struct PyDatasetSink(pub DatasetSink);
+
+#[pymethods]
+impl PyDatasetSink {
+    #[new]
+    fn new() -> Self {
+        Self(DatasetSink::new())
+    }
+
+    fn __repr__(&self) -> &'static str {
+        "DatasetSink()"
+    }
+}
+
+#[pyclass(name = "GenerationStats", module = "laddu", skip_from_py_object)]
+#[derive(Clone)]
+pub struct PyGenerationStats(pub GenerationStats);
+
+#[pymethods]
+impl PyGenerationStats {
+    #[getter]
+    fn target_events(&self) -> u64 {
+        self.0.target_events
+    }
+
+    #[getter]
+    fn written_events(&self) -> u64 {
+        self.0.written_events
+    }
+
+    #[getter]
+    fn proposed_events(&self) -> u64 {
+        self.0.proposed_events
+    }
+
+    #[getter]
+    fn accepted_events(&self) -> u64 {
+        self.0.accepted_events
+    }
+
+    #[getter]
+    fn rejected_events(&self) -> u64 {
+        self.0.rejected_events
+    }
+
+    #[getter]
+    fn acceptance_rate(&self) -> Option<f64> {
+        self.0.acceptance_rate
+    }
+
+    #[getter]
+    fn envelope(&self) -> Option<f64> {
+        self.0.envelope
+    }
+
+    #[getter]
+    fn envelope_violations(&self) -> u64 {
+        self.0.envelope_violations
+    }
+
+    #[getter]
+    fn batches_written(&self) -> u64 {
+        self.0.batches_written
+    }
+
+    fn audit(&self) -> String {
+        self.0.audit()
+    }
+
+    fn __repr__(&self) -> String {
+        format!("{:?}", self.0)
+    }
+}
+
+#[pyclass(name = "GenerationResult", module = "laddu", skip_from_py_object)]
+#[derive(Clone)]
+pub struct PyGenerationResult(pub GenerationResult<laddu_core::Dataset>);
+
+impl From<GenerationResult<laddu_core::Dataset>> for PyGenerationResult {
+    fn from(result: GenerationResult<laddu_core::Dataset>) -> Self {
+        Self(result)
+    }
+}
+
+#[pymethods]
+impl PyGenerationResult {
+    #[getter]
+    fn output(&self) -> PyDataset {
+        PyDataset(Arc::new(self.0.output.clone()))
+    }
+
+    #[getter]
+    fn stats(&self) -> PyGenerationStats {
+        PyGenerationStats(self.0.stats.clone())
+    }
+
+    fn __repr__(&self) -> String {
+        format!("{:?}", self.0.stats)
     }
 }
 
@@ -296,10 +452,20 @@ impl PyEventGenerator {
         ))
     }
 
-    fn generate_dataset(&self, n_events: usize) -> PyResult<PyDataset> {
-        Ok(PyDataset(Arc::new(
-            self.generator.generate_dataset(n_events)?,
-        )))
+    #[pyo3(signature=(target_events, sink, *, mode=None, options=None))]
+    fn generate(
+        &self,
+        target_events: usize,
+        sink: &PyDatasetSink,
+        mode: Option<&PyRaw>,
+        options: Option<&PyGenerationOptions>,
+    ) -> PyResult<PyGenerationResult> {
+        let mode = mode.map(|mode| mode.0).unwrap_or_default();
+        let options = options.map(|options| options.0.clone()).unwrap_or_default();
+        Ok(self
+            .generator
+            .generate(target_events, sink.0.clone(), mode, options)?
+            .into())
     }
 
     fn __repr__(&self) -> String {

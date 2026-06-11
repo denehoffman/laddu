@@ -7,7 +7,7 @@
 //!
 //! ```rust
 //! use laddu_core::{Channel, ParticleProperties};
-//! use laddu_generation::{gen, EventGenerator};
+//! use laddu_generation::{gen, DatasetSink, EventGenerator, GenerationMode, GenerationOptions};
 //!
 //! let mut channel = Channel::new();
 //! channel
@@ -36,12 +36,14 @@
 //!
 //! let dataset = EventGenerator::from_channel(&channel)?
 //!     .with_seed(12345)
-//!     .generate_dataset(10)?;
+//!     .generate(10, DatasetSink::new(), GenerationMode::Raw, GenerationOptions::default())?
+//!     .output;
 //! # Ok::<_, laddu_core::LadduError>(())
 //! ```
 
 pub mod generator;
 pub mod plan;
+pub mod sink;
 
 /// Channel generation annotation constructors.
 pub mod gen {
@@ -101,4 +103,9 @@ pub mod gen {
 pub use generator::{EventGenerator, GeneratedEvent};
 pub use plan::{
     DecayParticlePlan, DecayPlan, GenerationPlan, InitialParticlePlan, PlannedMass, ProductionPlan,
+};
+pub use sink::{
+    DatasetSink, GeneratedBatchView, GeneratedLayout, GeneratedParticleInfo, GeneratedParticleRole,
+    GeneratedRecord, GeneratedSink, GenerationMode, GenerationModeKind, GenerationOptions,
+    GenerationOutput, GenerationResult, GenerationStats, NullSink, SinkMpiSupport,
 };

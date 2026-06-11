@@ -65,16 +65,21 @@ from .amplitudes.resonance import (
 from .amplitudes.scalar import ComplexScalar, PolarComplexScalar, Scalar, VariableScalar
 from .data import BinnedDataset, Dataset, Event
 from .generation import (
+    DatasetSink,
     DecayParticlePlan,
     DecayPlan,
     EventGenerator,
     GeneratedEvent,
+    GenerationOptions,
     GenerationPlan,
+    GenerationResult,
+    GenerationStats,
     InitialParticlePlan,
     MassSampler,
     MomentumSource,
     PlannedMass,
     ProductionPlan,
+    Raw,
     VertexGenerator,
 )
 from .likelihood import (
@@ -167,6 +172,7 @@ __all__ = [
     'ControlFlow',
     'CosTheta',
     'Dataset',
+    'DatasetSink',
     'DecayParticlePlan',
     'DecayPlan',
     'EnsembleStatus',
@@ -177,7 +183,10 @@ __all__ = [
     'Flatte',
     'Frame',
     'GeneratedEvent',
+    'GenerationOptions',
     'GenerationPlan',
+    'GenerationResult',
+    'GenerationStats',
     'GradientFreeStatus',
     'GradientStatus',
     'Histogram',
@@ -232,6 +241,7 @@ __all__ = [
     'PolarComplexScalar',
     'Polarization',
     'ProductionPlan',
+    'Raw',
     'Reflectivity',
     'RuleSet',
     'S',

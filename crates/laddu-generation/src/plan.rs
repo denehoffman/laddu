@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use laddu_core::{
     reaction::Endpoint, Channel, LadduError, LadduResult, MassSampler, MomentumSource, Particle,
-    ScalarDistribution, VertexGenerator,
+    ParticleProperties, ScalarDistribution, VertexGenerator,
 };
 
 /// A validated channel topology that can be used by the current generator.
@@ -150,6 +150,7 @@ pub struct InitialParticlePlan {
     label: String,
     mass: f64,
     momentum: MomentumSource,
+    properties: ParticleProperties,
 }
 
 impl InitialParticlePlan {
@@ -182,6 +183,7 @@ impl InitialParticlePlan {
             label: particle.label().to_string(),
             mass,
             momentum,
+            properties: particle.properties().clone(),
         })
     }
 
@@ -199,6 +201,11 @@ impl InitialParticlePlan {
     pub fn momentum(&self) -> &MomentumSource {
         &self.momentum
     }
+
+    /// Return the particle properties.
+    pub fn properties(&self) -> &ParticleProperties {
+        &self.properties
+    }
 }
 
 /// A validated generated particle downstream of production.
@@ -206,6 +213,7 @@ impl InitialParticlePlan {
 pub struct DecayParticlePlan {
     label: String,
     mass: PlannedMass,
+    properties: ParticleProperties,
     decay: Option<Box<DecayPlan>>,
 }
 
@@ -249,6 +257,7 @@ impl DecayParticlePlan {
         Ok(Self {
             label: particle.label().to_string(),
             mass,
+            properties: particle.properties().clone(),
             decay,
         })
     }
@@ -261,6 +270,11 @@ impl DecayParticlePlan {
     /// Return the planned mass source.
     pub fn mass(&self) -> &PlannedMass {
         &self.mass
+    }
+
+    /// Return the particle properties.
+    pub fn properties(&self) -> &ParticleProperties {
+        &self.properties
     }
 
     /// Return the one-to-two decay plan, if this particle decays.

@@ -26,7 +26,8 @@ plans. Channel annotation constructors live in :mod:`laddu.gen`.
    channel.edit_particle("pi-", mass=0.13957)
 
    generator = generation.EventGenerator(channel, seed=12345)
-   dataset = generator.generate_dataset(1000)
+   result = generator.generate(1000, generation.DatasetSink())
+   dataset = result.output
 
 .. automodule:: laddu.generation
    :members:

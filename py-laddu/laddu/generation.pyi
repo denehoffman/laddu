@@ -5,6 +5,38 @@ from laddu.vectors import Vec4
 class MomentumSource: ...
 class MassSampler: ...
 class VertexGenerator: ...
+class Raw: ...
+
+class GenerationOptions:
+    batch_size: int
+    max_trials: int | None
+    seed: int | None
+
+    def __init__(
+        self,
+        *,
+        batch_size: int = 10_000,
+        max_trials: int | None = None,
+        seed: int | None = None,
+    ) -> None: ...
+
+class DatasetSink: ...
+
+class GenerationStats:
+    target_events: int
+    written_events: int
+    proposed_events: int
+    accepted_events: int
+    rejected_events: int
+    acceptance_rate: float | None
+    envelope: float | None
+    envelope_violations: int
+    batches_written: int
+    def audit(self) -> str: ...
+
+class GenerationResult:
+    output: Dataset
+    stats: GenerationStats
 
 class PlannedMass:
     kind: str
@@ -50,18 +82,30 @@ class EventGenerator:
     def with_seed(self, seed: int) -> EventGenerator: ...
     def p4_labels(self) -> list[str]: ...
     def generate_event(self) -> GeneratedEvent: ...
-    def generate_dataset(self, n_events: int) -> Dataset: ...
+    def generate(
+        self,
+        target_events: int,
+        sink: DatasetSink,
+        *,
+        mode: Raw | None = None,
+        options: GenerationOptions | None = None,
+    ) -> GenerationResult: ...
 
 __all__ = [
+    'DatasetSink',
     'DecayParticlePlan',
     'DecayPlan',
     'EventGenerator',
     'GeneratedEvent',
+    'GenerationOptions',
     'GenerationPlan',
+    'GenerationResult',
+    'GenerationStats',
     'InitialParticlePlan',
     'MassSampler',
     'MomentumSource',
     'PlannedMass',
     'ProductionPlan',
+    'Raw',
     'VertexGenerator',
 ]

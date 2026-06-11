@@ -35,9 +35,11 @@ def test_generation_module_exports_event_generator() -> None:
 def test_generation_smoke() -> None:
     channel = make_generation_channel()
     generator = generation.EventGenerator(channel, seed=12345)
-    dataset = generator.generate_dataset(4)
+    result = generator.generate(4, generation.DatasetSink())
+    dataset = result.output
 
     assert dataset.n_events == 4
+    assert result.stats.written_events == 4
     assert dataset.p4_names == ['beam', 'target', 'kk', 'kshort1', 'kshort2', 'recoil']
     assert generator.p4_labels() == dataset.p4_names
 
@@ -64,7 +66,7 @@ def test_generation_smoke() -> None:
     assert generated_event.p4('missing') is None
     assert [label for label, _ in generated_event.p4s()] == dataset.p4_names
 
-    repeated = generator.generate_dataset(4)
+    repeated = generator.generate(4, generation.DatasetSink()).output
     for left, right in zip(dataset.events_global, repeated.events_global, strict=True):
         for name in dataset.p4_names:
             assert left.p4(name).e == right.p4(name).e
@@ -107,7 +109,11 @@ def test_histogram_generation_annotations() -> None:
         generator=ld.gen.t_histogram(ld.Histogram([-0.4, -0.1, 0.0], [1.0, 1.0])),
     )
 
-    dataset = generation.EventGenerator(channel, seed=12345).generate_dataset(3)
+    dataset = (
+        generation.EventGenerator(channel, seed=12345)
+        .generate(3, generation.DatasetSink())
+        .output
+    )
     assert dataset.n_events == 3
     assert np.all(np.isfinite(dataset.p4_column_global('kk')))
 
