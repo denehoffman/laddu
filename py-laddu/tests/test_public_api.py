@@ -55,6 +55,38 @@ def test_channel_creates_topology_variables() -> None:
     assert 'Channel' in repr(channel)
 
 
+def test_channel_exposes_particle_and_vertex_snapshots() -> None:
+    channel = make_channel()
+
+    particles = channel.particles()
+    vertices = channel.vertices()
+    x = channel.particle('x')
+    production = channel.vertex('production')
+
+    assert [particle.label for particle in particles] == [
+        'beam',
+        'target',
+        'x',
+        'recoil',
+        'd1',
+        'd2',
+    ]
+    assert [vertex.label for vertex in vertices] == ['production', 'x_decay']
+    assert x.from_endpoint == 'production'
+    assert x.to_endpoint == 'x_decay'
+    assert x.source is ld.ParticleSource.Inferred
+    assert production.label == 'production'
+    assert [particle.label for particle in channel.incoming_particles('production')] == [
+        'beam',
+        'target',
+    ]
+    assert [particle.label for particle in channel.outgoing_particles('x_decay')] == [
+        'd1',
+        'd2',
+    ]
+    assert [vertex.label for vertex in channel.decay_vertices('x')] == ['x_decay']
+
+
 def test_channel_rejects_invalid_particle_queries() -> None:
     channel = make_channel()
 
@@ -79,6 +111,8 @@ def test_domain_modules_export_expected_analysis_types() -> None:
     assert ld.reaction.Axes is ld.Axes
     assert ld.reaction.Frame is ld.Frame
     assert ld.reaction.Channel is ld.Channel
+    assert ld.reaction.Particle is ld.Particle
+    assert ld.reaction.Vertex is ld.Vertex
     assert ld.variables.Mass is ld.Mass
     assert ld.variables.CosTheta is ld.CosTheta
     assert ld.likelihood.NLL is ld.NLL
@@ -86,6 +120,7 @@ def test_domain_modules_export_expected_analysis_types() -> None:
     assert ld.quantum.allowed_projections is ld.allowed_projections
     assert ld.quantum.allowed_partial_waves is ld.allowed_partial_waves
     assert ld.quantum.ParticleProperties is ld.ParticleProperties
+    assert ld.quantum.Reflectivity is ld.Reflectivity
 
 
 def test_user_facing_objects_have_readable_display() -> None:

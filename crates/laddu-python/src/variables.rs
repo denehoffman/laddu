@@ -8,7 +8,7 @@ pub use laddu_core::variables::IntoP4Selection;
 use laddu_core::{
     data::{Dataset, DatasetMetadata, EventLike, OwnedEvent},
     kinematics::{Axes, Axis, Frame},
-    reaction::{Channel, TwoBodyCoupling},
+    reaction::{Channel, Endpoint, Particle, ParticleSource, TwoBodyCoupling, Vertex},
     traits::Variable,
     variables::{
         Angles, CosTheta, Mandelstam, Mass, Phi, PolAngle, PolMagnitude, Polarization,
@@ -27,7 +27,8 @@ use crate::{
         angular_momentum::{
             angular_momentum_to_python, parse_angular_momentum, parse_orbital_angular_momentum,
         },
-        parse_rules, PyPartialWave, PyParticleProperties,
+        parse_charge, parse_parity, parse_rules, parse_statistics, PyIsospin, PyPartialWave,
+        PyParticleProperties, PyRuleSet,
     },
 };
 
@@ -201,6 +202,103 @@ impl PyChannel {
     }
 }
 
+#[pyclass(name = "Particle", module = "laddu", skip_from_py_object)]
+#[derive(Clone)]
+pub struct PyParticle {
+    particle: Particle,
+    from_endpoint: String,
+    to_endpoint: String,
+}
+
+#[pymethods]
+impl PyParticle {
+    #[getter]
+    fn label(&self) -> String {
+        self.particle.label().to_string()
+    }
+
+    #[getter]
+    fn source(&self) -> PyParticleSource {
+        PyParticleSource::from(self.particle.source())
+    }
+
+    #[allow(clippy::wrong_self_convention)]
+    #[getter]
+    fn from_endpoint(&self) -> String {
+        self.from_endpoint.clone()
+    }
+
+    #[getter]
+    fn to_endpoint(&self) -> String {
+        self.to_endpoint.clone()
+    }
+
+    #[getter]
+    fn properties(&self) -> PyParticleProperties {
+        PyParticleProperties(self.particle.properties().clone())
+    }
+
+    #[getter]
+    fn mass_sampler(&self) -> PyMassSampler {
+        PyMassSampler(self.particle.generation().mass().clone())
+    }
+
+    #[getter]
+    fn momentum(&self) -> Option<PyMomentumSource> {
+        self.particle
+            .generation()
+            .momentum()
+            .cloned()
+            .map(PyMomentumSource)
+    }
+
+    fn __repr__(&self) -> String {
+        format!("{:?}", self.particle)
+    }
+}
+
+#[pyclass(name = "Vertex", module = "laddu", skip_from_py_object)]
+#[derive(Clone)]
+pub struct PyVertex(pub Vertex);
+
+#[pymethods]
+impl PyVertex {
+    #[getter]
+    fn label(&self) -> String {
+        self.0.label().to_string()
+    }
+
+    #[getter]
+    fn rules(&self) -> PyRuleSet {
+        PyRuleSet(self.0.rules().clone())
+    }
+
+    #[getter]
+    fn generation(&self) -> Option<PyVertexGenerator> {
+        self.0.generation().cloned().map(PyVertexGenerator)
+    }
+
+    fn __repr__(&self) -> String {
+        format!("{:?}", self.0)
+    }
+}
+
+fn endpoint_label(channel: &Channel, endpoint: Endpoint) -> String {
+    match endpoint {
+        Endpoint::ExternalIn => "external_in".to_string(),
+        Endpoint::ExternalOut => "external_out".to_string(),
+        Endpoint::Vertex(vertex_id) => channel.vertices()[vertex_id.0].label().to_string(),
+    }
+}
+
+fn py_particle(channel: &Channel, particle: &Particle) -> PyParticle {
+    PyParticle {
+        particle: particle.clone(),
+        from_endpoint: endpoint_label(channel, particle.from()),
+        to_endpoint: endpoint_label(channel, particle.to()),
+    }
+}
+
 #[pyclass(eq, eq_int, name = "ParticleSource", module = "laddu", from_py_object)]
 #[derive(Clone, Copy, PartialEq)]
 pub enum PyParticleSource {
@@ -209,55 +307,14 @@ pub enum PyParticleSource {
     Missing = 2,
 }
 
-#[allow(clippy::too_many_arguments)]
-fn apply_particle_edits(
-    channel: &mut Channel,
-    particle: &str,
-    source: Option<PyParticleSource>,
-    properties: Option<&PyParticleProperties>,
-    mass: Option<f64>,
-    momentum: Option<&PyMomentumSource>,
-    mass_sampler: Option<&PyMassSampler>,
-    name: Option<String>,
-    species: Option<String>,
-    self_conjugate: Option<bool>,
-) -> PyResult<()> {
-    let mut edit = channel.edit_particle(particle)?;
-    if let Some(properties) = properties {
-        edit.properties(properties.0.clone());
-    }
-    if let Some(mass) = mass {
-        edit.mass(mass);
-    }
-    if let Some(momentum) = momentum {
-        edit.momentum(momentum.0.clone());
-    }
-    if let Some(mass_sampler) = mass_sampler {
-        edit.mass_sampler(mass_sampler.0.clone());
-    }
-    if let Some(name) = name {
-        edit.name(name);
-    }
-    if let Some(species) = species {
-        edit.species(species);
-    }
-    if let Some(self_conjugate) = self_conjugate {
-        edit.self_conjugate(self_conjugate);
-    }
-    if let Some(source) = source {
+impl From<&ParticleSource> for PyParticleSource {
+    fn from(source: &ParticleSource) -> Self {
         match source {
-            PyParticleSource::Inferred => {
-                edit.inferred();
-            }
-            PyParticleSource::Stored => {
-                edit.stored();
-            }
-            PyParticleSource::Missing => {
-                edit.missing()?;
-            }
+            ParticleSource::Inferred => Self::Inferred,
+            ParticleSource::Stored => Self::Stored,
+            ParticleSource::Missing => Self::Missing,
         }
     }
-    Ok(())
 }
 
 #[pymethods]
@@ -383,31 +440,121 @@ impl PyChannel {
     }
 
     #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature=(particle, *, source=None, properties=None, mass=None, momentum=None, mass_sampler=None, name=None, species=None, self_conjugate=None))]
+    #[pyo3(signature=(particle, *, source=None, name=None, species=None, antiparticle_species=None, self_conjugate=None, mass=None, spin=None, parity=None, c_parity=None, g_parity=None, charge=None, isospin=None, strangeness=None, charm=None, bottomness=None, topness=None, baryon_number=None, electron_lepton_number=None, muon_lepton_number=None, tau_lepton_number=None, statistics=None, momentum=None, mass_sampler=None, properties=None))]
     fn edit_particle(
         &self,
         particle: &str,
         source: Option<PyParticleSource>,
-        properties: Option<&PyParticleProperties>,
-        mass: Option<f64>,
-        momentum: Option<&PyMomentumSource>,
-        mass_sampler: Option<&PyMassSampler>,
         name: Option<String>,
         species: Option<String>,
+        antiparticle_species: Option<String>,
         self_conjugate: Option<bool>,
+        mass: Option<f64>,
+        spin: Option<&Bound<'_, PyAny>>,
+        parity: Option<&Bound<'_, PyAny>>,
+        c_parity: Option<&Bound<'_, PyAny>>,
+        g_parity: Option<&Bound<'_, PyAny>>,
+        charge: Option<&Bound<'_, PyAny>>,
+        isospin: Option<PyIsospin>,
+        strangeness: Option<i32>,
+        charm: Option<i32>,
+        bottomness: Option<i32>,
+        topness: Option<i32>,
+        baryon_number: Option<i32>,
+        electron_lepton_number: Option<i32>,
+        muon_lepton_number: Option<i32>,
+        tau_lepton_number: Option<i32>,
+        statistics: Option<&Bound<'_, PyAny>>,
+        momentum: Option<&PyMomentumSource>,
+        mass_sampler: Option<&PyMassSampler>,
+        properties: Option<&PyParticleProperties>,
     ) -> PyResult<()> {
-        apply_particle_edits(
-            &mut self.inner.borrow_mut(),
-            particle,
-            source,
-            properties,
-            mass,
-            momentum,
-            mass_sampler,
-            name,
-            species,
-            self_conjugate,
-        )
+        let mut channel = self.inner.borrow_mut();
+        let mut edit = channel.edit_particle(particle)?;
+        if let Some(source) = source {
+            match source {
+                PyParticleSource::Inferred => {
+                    edit.inferred();
+                }
+                PyParticleSource::Stored => {
+                    edit.stored();
+                }
+                PyParticleSource::Missing => {
+                    edit.missing()?;
+                }
+            }
+        }
+        if let Some(properties) = properties {
+            // other arguments can override these properties
+            edit.properties(properties.0.clone());
+        }
+        if let Some(name) = name {
+            edit.name(name);
+        }
+        if let Some(species) = species {
+            edit.species(species);
+        }
+        if let Some(antiparticle_species) = antiparticle_species {
+            edit.antiparticle_species(antiparticle_species);
+        }
+        if let Some(self_conjugate) = self_conjugate {
+            edit.self_conjugate(self_conjugate);
+        }
+        if let Some(mass) = mass {
+            edit.mass(mass);
+        }
+        if let Some(spin) = spin {
+            edit.spin(parse_angular_momentum(spin)?);
+        }
+        if let Some(parity) = parity {
+            edit.parity(parse_parity(parity)?);
+        }
+        if let Some(c_parity) = c_parity {
+            edit.c_parity(parse_parity(c_parity)?);
+        }
+        if let Some(g_parity) = g_parity {
+            edit.g_parity(parse_parity(g_parity)?);
+        }
+        if let Some(charge) = charge {
+            edit.charge(parse_charge(charge)?);
+        }
+        if let Some(isospin) = isospin {
+            edit.isospin(isospin.0);
+        }
+        if let Some(strangeness) = strangeness {
+            edit.strangeness(strangeness);
+        }
+        if let Some(charm) = charm {
+            edit.charm(charm);
+        }
+        if let Some(bottomness) = bottomness {
+            edit.bottomness(bottomness);
+        }
+        if let Some(topness) = topness {
+            edit.topness(topness);
+        }
+        if let Some(baryon_number) = baryon_number {
+            edit.baryon_number(baryon_number);
+        }
+        if let Some(electron_lepton_number) = electron_lepton_number {
+            edit.electron_lepton_number(electron_lepton_number);
+        }
+        if let Some(muon_lepton_number) = muon_lepton_number {
+            edit.muon_lepton_number(muon_lepton_number);
+        }
+        if let Some(tau_lepton_number) = tau_lepton_number {
+            edit.tau_lepton_number(tau_lepton_number);
+        }
+        if let Some(statistics) = statistics {
+            edit.statistics(parse_statistics(statistics)?)?;
+        }
+        if let Some(momentum) = momentum {
+            edit.momentum(momentum.0.clone());
+        }
+        if let Some(mass_sampler) = mass_sampler {
+            edit.mass_sampler(mass_sampler.0.clone());
+        }
+        Ok(())
     }
 
     #[pyo3(signature=(vertex, *, generator=None, rules=None))]
@@ -445,6 +592,63 @@ impl PyChannel {
             )?
             .into_iter()
             .map(PyTwoBodyCoupling)
+            .collect())
+    }
+
+    fn particles(&self) -> Vec<PyParticle> {
+        let channel = self.inner.borrow();
+        channel
+            .particles()
+            .iter()
+            .map(|particle| py_particle(&channel, particle))
+            .collect()
+    }
+
+    fn vertices(&self) -> Vec<PyVertex> {
+        self.inner
+            .borrow()
+            .vertices()
+            .iter()
+            .cloned()
+            .map(PyVertex)
+            .collect()
+    }
+
+    fn particle(&self, particle: &str) -> PyResult<PyParticle> {
+        let channel = self.inner.borrow();
+        Ok(py_particle(&channel, channel.particle(particle)?))
+    }
+
+    fn vertex(&self, vertex: &str) -> PyResult<PyVertex> {
+        Ok(PyVertex(self.inner.borrow().vertex(vertex)?.clone()))
+    }
+
+    fn incoming_particles(&self, vertex: &str) -> PyResult<Vec<PyParticle>> {
+        let channel = self.inner.borrow();
+        Ok(channel
+            .incoming_particles(vertex)?
+            .into_iter()
+            .map(|particle| py_particle(&channel, particle))
+            .collect())
+    }
+
+    fn outgoing_particles(&self, vertex: &str) -> PyResult<Vec<PyParticle>> {
+        let channel = self.inner.borrow();
+        Ok(channel
+            .outgoing_particles(vertex)?
+            .into_iter()
+            .map(|particle| py_particle(&channel, particle))
+            .collect())
+    }
+
+    fn decay_vertices(&self, particle: &str) -> PyResult<Vec<PyVertex>> {
+        Ok(self
+            .inner
+            .borrow()
+            .decay_vertices(particle)?
+            .into_iter()
+            .cloned()
+            .map(PyVertex)
             .collect())
     }
 

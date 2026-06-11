@@ -112,6 +112,7 @@ from .quantum import (
     Parity,
     PartialWave,
     ParticleProperties,
+    Reflectivity,
     RuleSet,
     S,
     SelectionRules,
@@ -120,7 +121,16 @@ from .quantum import (
     allowed_projections,
     coupled_spins,
 )
-from .reaction import Axes, Axis, Channel, Frame, ParticleSource, TwoBodyCoupling
+from .reaction import (
+    Axes,
+    Axis,
+    Channel,
+    Frame,
+    Particle,
+    ParticleSource,
+    TwoBodyCoupling,
+    Vertex,
+)
 from .variables import (
     Angles,
     CosTheta,
@@ -209,6 +219,7 @@ __all__ = [
     'ParameterMap',
     'Parity',
     'PartialWave',
+    'Particle',
     'ParticleProperties',
     'ParticleSource',
     'PhaseSpaceFactor',
@@ -221,6 +232,7 @@ __all__ = [
     'PolarComplexScalar',
     'Polarization',
     'ProductionPlan',
+    'Reflectivity',
     'RuleSet',
     'S',
     'Scalar',
@@ -232,6 +244,7 @@ __all__ = [
     'VariableScalar',
     'Vec3',
     'Vec4',
+    'Vertex',
     'VertexGenerator',
     'Voigt',
     'WignerD',

@@ -17,7 +17,7 @@ use laddu_core::{
     amplitude::{Evaluator, Expression, Parameter, ParameterMap, TestAmplitude},
     math::{BarrierKind, Sheet, QR_DEFAULT},
     traits::Variable,
-    CompiledExpression, InitialValue, LadduError, LadduResult, ThreadPoolManager,
+    CompiledExpression, InitialValue, LadduError, LadduResult, ThreadPoolManager, L,
 };
 use num::complex::Complex64;
 use numpy::{PyArray1, PyArray2};
@@ -29,8 +29,11 @@ use pyo3::{
 
 use crate::{
     data::PyDataset,
-    quantum::angular_momentum::{
-        parse_angular_momentum, parse_orbital_angular_momentum, parse_projection,
+    quantum::{
+        angular_momentum::{
+            parse_angular_momentum, parse_orbital_angular_momentum, parse_projection,
+        },
+        parse_reflectivity,
     },
     variables::{PyAngles, PyMandelstam, PyMass, PyPolarization, PyVariable},
 };
@@ -116,6 +119,37 @@ pub(crate) fn py_tags(tags: &Bound<'_, PyTuple>) -> PyResult<Vec<String>> {
     tags.iter()
         .map(|tag| tag.extract::<String>())
         .collect::<PyResult<Vec<_>>>()
+}
+
+fn parse_integer_projection(input: &Bound<'_, PyAny>, name: &str) -> PyResult<isize> {
+    let projection = parse_projection(input)?;
+    if !projection.is_integer() {
+        return Err(PyValueError::new_err(format!(
+            "{name} must be an integer projection"
+        )));
+    }
+    Ok((projection.doubled() / 2) as isize)
+}
+
+fn validate_harmonic_projection(l: L, m: isize) -> PyResult<()> {
+    if m.unsigned_abs() > l.value() as usize {
+        return Err(PyValueError::new_err(format!(
+            "|m| must be less than or equal to l, got l={} and m={m}",
+            l.value()
+        )));
+    }
+    Ok(())
+}
+
+fn parse_photon_helicity(input: &Bound<'_, PyAny>, name: &str) -> PyResult<PhotonHelicity> {
+    let projection = parse_projection(input)?;
+    if !projection.is_integer() {
+        return Err(PyValueError::new_err(format!(
+            "{name} must be an integer photon helicity"
+        )));
+    }
+    let helicity = projection.doubled() / 2;
+    PhotonHelicity::new(helicity).map_err(PyErr::from)
 }
 
 /// A mathematical expression formed from amplitudes.
@@ -361,28 +395,39 @@ pub fn py_voigt(
 #[pyfunction(name = "Ylm", signature = (*tags, l, m, angles))]
 pub fn py_ylm(
     tags: &Bound<'_, PyTuple>,
-    l: usize,
-    m: isize,
+    l: &Bound<'_, PyAny>,
+    m: &Bound<'_, PyAny>,
     angles: &PyAngles,
 ) -> PyResult<PyExpression> {
-    Ok(PyExpression(Ylm::new(py_tags(tags)?, l, m, &angles.0)?))
+    let l = parse_orbital_angular_momentum(l)?;
+    let m = parse_integer_projection(m, "m")?;
+    validate_harmonic_projection(l, m)?;
+    Ok(PyExpression(Ylm::new(
+        py_tags(tags)?,
+        l.value() as usize,
+        m,
+        &angles.0,
+    )?))
 }
 
 /// Construct a polarized spherical-harmonic amplitude.
 #[pyfunction(name = "Zlm", signature = (*tags, l, m, r, angles, polarization))]
 pub fn py_zlm(
     tags: &Bound<'_, PyTuple>,
-    l: usize,
-    m: isize,
-    r: &str,
+    l: &Bound<'_, PyAny>,
+    m: &Bound<'_, PyAny>,
+    r: &Bound<'_, PyAny>,
     angles: &PyAngles,
     polarization: &PyPolarization,
 ) -> PyResult<PyExpression> {
+    let l = parse_orbital_angular_momentum(l)?;
+    let m = parse_integer_projection(m, "m")?;
+    validate_harmonic_projection(l, m)?;
     Ok(PyExpression(Zlm::new(
         py_tags(tags)?,
-        l,
+        l.value() as usize,
         m,
-        r.parse()?,
+        parse_reflectivity(r)?,
         &angles.0,
         &polarization.0,
     )?))
@@ -465,8 +510,8 @@ pub fn py_blatt_weisskopf(
 #[pyfunction(name = "PhotonSDME", signature = (*tags, helicity, helicity_prime, polarization = None))]
 pub fn py_photon_sdme(
     tags: &Bound<'_, PyTuple>,
-    helicity: i32,
-    helicity_prime: i32,
+    helicity: &Bound<'_, PyAny>,
+    helicity_prime: &Bound<'_, PyAny>,
     polarization: Option<&PyPolarization>,
 ) -> PyResult<PyExpression> {
     let polarization = polarization
@@ -475,8 +520,8 @@ pub fn py_photon_sdme(
     Ok(PyExpression(PhotonSDME::new(
         py_tags(tags)?,
         polarization,
-        PhotonHelicity::new(helicity)?,
-        PhotonHelicity::new(helicity_prime)?,
+        parse_photon_helicity(helicity, "helicity")?,
+        parse_photon_helicity(helicity_prime, "helicity_prime")?,
     )?))
 }
 

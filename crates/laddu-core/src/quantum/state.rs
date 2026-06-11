@@ -496,6 +496,26 @@ impl ParticleProperties {
             _ => false,
         }
     }
+
+    /// External identifiers for the particle
+    pub fn ids(&self) -> &[ExternalId] {
+        &self.ids
+    }
+
+    /// Append an external identifier.
+    pub fn with_id(&mut self, id: ExternalId) -> &mut Self {
+        self.ids.push(id);
+        self
+    }
+
+    /// Replace external identifiers.
+    pub fn with_ids<I>(&mut self, ids: I) -> &mut Self
+    where
+        I: IntoIterator<Item = ExternalId>,
+    {
+        self.ids = ids.into_iter().collect();
+        self
+    }
 }
 
 /// A partial wave defined by a total angular momentum, `J`, an orbital angular momentum, `L`, and

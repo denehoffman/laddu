@@ -118,6 +118,7 @@ from laddu.quantum import (
     Parity,
     PartialWave,
     ParticleProperties,
+    Reflectivity,
     RuleSet,
     S,
     SelectionRules,
@@ -126,7 +127,16 @@ from laddu.quantum import (
     allowed_projections,
     coupled_spins,
 )
-from laddu.reaction import Axes, Axis, Channel, Frame, ParticleSource, TwoBodyCoupling
+from laddu.reaction import (
+    Axes,
+    Axis,
+    Channel,
+    Frame,
+    Particle,
+    ParticleSource,
+    TwoBodyCoupling,
+    Vertex,
+)
 from laddu.variables import (
     Angles,
     CosTheta,
@@ -212,6 +222,7 @@ __all__ = [
     'ParquetBatchWriter',
     'ParquetChunkIter',
     'PartialWave',
+    'Particle',
     'ParticleProperties',
     'ParticleSource',
     'PhaseSpaceFactor',
@@ -224,6 +235,7 @@ __all__ = [
     'PolarComplexScalar',
     'Polarization',
     'ProductionPlan',
+    'Reflectivity',
     'Regularizer',
     'RuleSet',
     'S',
@@ -238,6 +250,7 @@ __all__ = [
     'VariableScalar',
     'Vec3',
     'Vec4',
+    'Vertex',
     'VertexGenerator',
     'Voigt',
     'WignerD',

@@ -11,6 +11,7 @@ from laddu import (
     Parity,
     PartialWave,
     ParticleProperties,
+    Reflectivity,
     RuleSet,
     S,
     SelectionRules,
@@ -25,6 +26,10 @@ def test_sign_like_quantum_numbers_parse_consistent_aliases() -> None:
     assert str(Parity('neg')) == '-'
     assert Parity.positive().value == 1
     assert Parity.negative().value == -1
+    assert str(Reflectivity('+')) == '+'
+    assert str(Reflectivity('negative')) == '-'
+    assert Reflectivity.positive().value == 1
+    assert Reflectivity.negative().value == -1
 
 
 def test_charge_and_isospin_use_physical_values() -> None:

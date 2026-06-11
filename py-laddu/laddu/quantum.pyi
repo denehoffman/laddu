@@ -51,6 +51,14 @@ class Parity:
     def __rmul__(self, other: Sign | Parity) -> Parity: ...
     def __neg__(self) -> Parity: ...
 
+class Reflectivity:
+    value: int
+    def __init__(self, value: Sign | Reflectivity) -> None: ...
+    @staticmethod
+    def positive() -> Reflectivity: ...
+    @staticmethod
+    def negative() -> Reflectivity: ...
+
 class Statistics:
     Boson: Statistics
     Fermion: Statistics
@@ -79,6 +87,8 @@ class ParticleProperties:
     antiparticle_species_unchecked: str | None
     self_conjugate: bool
     self_conjugate_unchecked: bool | None
+    mass: float
+    mass_unchecked: float | None
     spin: int | Fraction
     spin_unchecked: int | Fraction | None
     parity: Parity
@@ -116,6 +126,7 @@ class ParticleProperties:
         species: str | None = None,
         antiparticle_species: str | None = None,
         self_conjugate: bool | None = None,
+        mass: float | None = None,
         spin: JLike | None = None,
         parity: Parity | Sign | None = None,
         c_parity: Parity | Sign | None = None,
@@ -198,6 +209,7 @@ __all__ = [
     'PartialWave',
     'ParticleProperties',
     'QuantumNumber',
+    'Reflectivity',
     'RuleSet',
     'S',
     'ScalarQuantumNumber',

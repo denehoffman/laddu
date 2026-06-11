@@ -8,8 +8,12 @@ from laddu import (
     J,
     L,
     M,
+    PhotonSDME,
+    Reflectivity,
     Vec3,
     WignerD,
+    Ylm,
+    Zlm,
 )
 
 from tests.channel_helpers import channel, helicity_frame
@@ -105,10 +109,38 @@ def test_angular_terms_accept_typed_quantum_numbers() -> None:
     assert value.real == pytest.approx(value.real)
 
 
+def test_harmonics_and_sdmes_accept_typed_integer_quantum_numbers() -> None:
+    dataset = make_test_dataset()
+    ch = channel('x')
+    angles = ch.angles('kshort1', helicity_frame('x'))
+    polarization = ch.polarization(
+        'production', pol_magnitude='pol_magnitude', pol_angle='pol_angle'
+    )
+    y = Ylm('y_typed', l=L(1), m=M(1), angles=angles)
+    z = Zlm(
+        'z_typed',
+        l=L(1),
+        m=M(1),
+        r=Reflectivity.positive(),
+        angles=angles,
+        polarization=polarization,
+    )
+    rho = PhotonSDME(
+        'rho', helicity=M(1), helicity_prime=M(-1), polarization=polarization
+    )
+
+    values = (y + z + rho).load(dataset).evaluate([])
+
+    assert values[0].real == pytest.approx(values[0].real)
+
+
 def test_quantum_number_inputs_reject_invalid_values() -> None:
     dataset = make_test_dataset()
     ch = channel('x')
     angles = ch.angles('kshort1', helicity_frame('x'))
+    polarization = ch.polarization(
+        'production', pol_magnitude='pol_magnitude', pol_angle='pol_angle'
+    )
 
     with pytest.raises(RuntimeError, match='integer or half-integer'):
         WignerD(
@@ -124,3 +156,15 @@ def test_quantum_number_inputs_reject_invalid_values() -> None:
             l=1.5,
             reference_mass=1.5,
         )
+
+    with pytest.raises(ValueError, match='integer projection'):
+        Ylm('bad_m', l=L(1), m=M(1 / 2), angles=angles)
+
+    with pytest.raises(ValueError, match=r'less than or equal to l'):
+        Zlm('bad_abs_m', l=L(1), m=M(2), r='+', angles=angles, polarization=polarization)
+
+    with pytest.raises(ValueError, match='integer photon helicity'):
+        PhotonSDME('bad_helicity', helicity=M(1 / 2), helicity_prime=M(1))
+
+    with pytest.raises(RuntimeError, match='photon helicities'):
+        PhotonSDME('bad_physical_helicity', helicity=M(0), helicity_prime=M(1))

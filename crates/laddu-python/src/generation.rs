@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{cell::RefCell, rc::Rc, sync::Arc};
 
 use laddu_core::{MassSampler, MomentumSource, VertexGenerator};
 use laddu_generation::{
@@ -236,9 +236,27 @@ impl PyGeneratedEvent {
     }
 }
 
-#[pyclass(name = "EventGenerator", module = "laddu", skip_from_py_object)]
+#[pyclass(
+    name = "EventGenerator",
+    module = "laddu",
+    skip_from_py_object,
+    unsendable
+)]
 #[derive(Clone)]
-pub struct PyEventGenerator(pub EventGenerator);
+pub struct PyEventGenerator {
+    generator: EventGenerator,
+    rng: Rc<RefCell<fastrand::Rng>>,
+}
+
+impl PyEventGenerator {
+    fn new_inner(generator: EventGenerator, seed: Option<u64>) -> Self {
+        let rng = seed.map_or_else(fastrand::Rng::new, fastrand::Rng::with_seed);
+        Self {
+            generator,
+            rng: Rc::new(RefCell::new(rng)),
+        }
+    }
+}
 
 #[pymethods]
 impl PyEventGenerator {
@@ -246,10 +264,11 @@ impl PyEventGenerator {
     #[pyo3(signature = (channel, *, seed=None))]
     fn new(channel: &PyChannel, seed: Option<u64>) -> PyResult<Self> {
         let generator = EventGenerator::from_channel(&channel.channel())?;
-        Ok(Self(match seed {
+        let generator = match seed {
             Some(seed) => generator.with_seed(seed),
             None => generator,
-        }))
+        };
+        Ok(Self::new_inner(generator, seed))
     }
 
     #[staticmethod]
@@ -259,29 +278,32 @@ impl PyEventGenerator {
     }
 
     fn with_seed(&self, seed: u64) -> Self {
-        Self(self.0.clone().with_seed(seed))
+        Self::new_inner(self.generator.clone().with_seed(seed), Some(seed))
     }
 
     #[getter]
     fn plan(&self) -> PyGenerationPlan {
-        PyGenerationPlan(self.0.plan().clone())
+        PyGenerationPlan(self.generator.plan().clone())
     }
 
     fn p4_labels(&self) -> Vec<String> {
-        self.0.p4_labels().to_vec()
+        self.generator.p4_labels().to_vec()
     }
 
     fn generate_event(&self) -> PyResult<PyGeneratedEvent> {
-        let mut rng = fastrand::Rng::new();
-        Ok(PyGeneratedEvent(self.0.generate_event(&mut rng)?))
+        Ok(PyGeneratedEvent(
+            self.generator.generate_event(&mut self.rng.borrow_mut())?,
+        ))
     }
 
     fn generate_dataset(&self, n_events: usize) -> PyResult<PyDataset> {
-        Ok(PyDataset(Arc::new(self.0.generate_dataset(n_events)?)))
+        Ok(PyDataset(Arc::new(
+            self.generator.generate_dataset(n_events)?,
+        )))
     }
 
     fn __repr__(&self) -> String {
-        format!("{:?}", self.0)
+        format!("{:?}", self.generator)
     }
 }
 

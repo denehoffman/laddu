@@ -73,6 +73,28 @@ def test_generation_smoke() -> None:
             assert left.p4(name).pz == right.p4(name).pz
 
 
+def test_seeded_generate_event_is_deterministic_and_stateful() -> None:
+    channel = make_generation_channel()
+    first_generator = generation.EventGenerator(channel, seed=12345)
+    second_generator = generation.EventGenerator(channel, seed=12345)
+
+    first_event = first_generator.generate_event()
+    repeated_first_event = second_generator.generate_event()
+    second_event = first_generator.generate_event()
+
+    for label, first_p4 in first_event.p4s():
+        repeated_p4 = repeated_first_event.p4(label)
+        assert repeated_p4 is not None
+        assert first_p4.e == repeated_p4.e
+        assert first_p4.px == repeated_p4.px
+        assert first_p4.py == repeated_p4.py
+        assert first_p4.pz == repeated_p4.pz
+
+    first_p4s = dict(first_event.p4s())
+    second_p4s = dict(second_event.p4s())
+    assert any(first_p4s[label].pz != second_p4s[label].pz for label in first_p4s)
+
+
 def test_histogram_generation_annotations() -> None:
     channel = make_generation_channel()
     histogram = ld.Histogram([1.1, 1.3, 1.6], [1.0, 2.0])

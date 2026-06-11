@@ -1,5 +1,5 @@
 from laddu.amplitude import Expression
-from laddu.quantum import JLike, LLike, MLike, QuantumNumber
+from laddu.quantum import JLike, LLike, MLike, QuantumNumber, Reflectivity, Sign
 from laddu.variables import Angles, Mass, Polarization
 
 def WignerD(
@@ -22,16 +22,16 @@ def BlattWeisskopf(
 ) -> Expression: ...
 def PhotonSDME(
     *tags: str,
-    helicity: int,
-    helicity_prime: int,
+    helicity: MLike,
+    helicity_prime: MLike,
     polarization: Polarization | None = ...,
 ) -> Expression: ...
-def Ylm(*tags: str, l: int, m: int, angles: Angles) -> Expression: ...
+def Ylm(*tags: str, l: LLike, m: MLike, angles: Angles) -> Expression: ...
 def Zlm(
     *tags: str,
-    l: int,
-    m: int,
-    r: str,
+    l: LLike,
+    m: MLike,
+    r: Reflectivity | Sign,
     angles: Angles,
     polarization: Polarization,
 ) -> Expression: ...

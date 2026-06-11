@@ -59,13 +59,13 @@ mod laddu {
         quantum::{
             angular_momentum::py_allowed_projections, py_allowed_partial_waves, py_coupled_spins,
             PyAllowedPartialWave, PyCharge, PyIsospin, PyJ, PyL, PyM, PyParity, PyPartialWave,
-            PyParticleProperties, PyRuleSet, PySelectionRules, PyStatistics,
+            PyParticleProperties, PyReflectivity, PyRuleSet, PySelectionRules, PyStatistics,
         },
         set_threads,
         variables::{
             PyAngles, PyAxes, PyAxis, PyChannel, PyCosTheta, PyFrame, PyMandelstam, PyMass,
-            PyParticleSource, PyPhi, PyPolAngle, PyPolMagnitude, PyPolarization, PyTwoBodyCoupling,
-            PyVariableExpression,
+            PyParticle, PyParticleSource, PyPhi, PyPolAngle, PyPolMagnitude, PyPolarization,
+            PyTwoBodyCoupling, PyVariableExpression, PyVertex,
         },
         vectors::{PyVec3, PyVec4},
     };

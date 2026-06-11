@@ -104,7 +104,7 @@ pub mod angular_momentum {
 
 use laddu_core::{
     AllowedPartialWave, Charge, Isospin, LadduError, Parity, PartialWave, ParticleProperties,
-    RuleSet, SelectionRules, Statistics, L,
+    Reflectivity, RuleSet, SelectionRules, Statistics, L,
 };
 use pyo3::{
     exceptions::PyTypeError,
@@ -129,16 +129,6 @@ impl PyJ {
     #[new]
     fn new(value: &Bound<'_, PyAny>) -> PyResult<Self> {
         Ok(Self(parse_angular_momentum(value)?))
-    }
-
-    #[staticmethod]
-    fn int(value: u32) -> Self {
-        Self(laddu_core::J::int(value))
-    }
-
-    #[staticmethod]
-    fn half(value: u32) -> Self {
-        Self(laddu_core::J::half(value))
     }
 
     #[getter]
@@ -168,11 +158,6 @@ impl PyL {
     #[new]
     fn new(value: &Bound<'_, PyAny>) -> PyResult<Self> {
         Ok(Self(parse_orbital_angular_momentum(value)?))
-    }
-
-    #[staticmethod]
-    fn int(value: u32) -> Self {
-        Self(laddu_core::L::int(value))
     }
 
     #[getter]
@@ -206,16 +191,6 @@ impl PyM {
     #[new]
     fn new(value: &Bound<'_, PyAny>) -> PyResult<Self> {
         Ok(Self(parse_projection(value)?))
-    }
-
-    #[staticmethod]
-    fn int(value: i32) -> Self {
-        Self(laddu_core::M::int(value))
-    }
-
-    #[staticmethod]
-    fn half(value: i32) -> Self {
-        Self(laddu_core::M::half(value))
     }
 
     #[getter]
@@ -252,7 +227,7 @@ impl PyM {
     }
 }
 
-fn parse_parity(input: &Bound<'_, PyAny>) -> PyResult<Parity> {
+pub fn parse_parity(input: &Bound<'_, PyAny>) -> PyResult<Parity> {
     if let Ok(value) = input.extract::<PyParity>() {
         return Ok(value.0);
     }
@@ -264,7 +239,19 @@ fn parse_parity(input: &Bound<'_, PyAny>) -> PyResult<Parity> {
     ))
 }
 
-fn parse_statistics(input: &Bound<'_, PyAny>) -> PyResult<Statistics> {
+pub fn parse_reflectivity(input: &Bound<'_, PyAny>) -> PyResult<Reflectivity> {
+    if let Ok(value) = input.extract::<PyReflectivity>() {
+        return Ok(value.0);
+    }
+    if let Ok(value) = input.extract::<String>() {
+        return Ok(value.parse()?);
+    }
+    Err(PyTypeError::new_err(
+        "reflectivity must be a Reflectivity or sign string",
+    ))
+}
+
+pub fn parse_statistics(input: &Bound<'_, PyAny>) -> PyResult<Statistics> {
     if let Ok(value) = input.extract::<PyStatistics>() {
         return Ok(value.into());
     }
@@ -284,7 +271,7 @@ fn parse_statistics(input: &Bound<'_, PyAny>) -> PyResult<Statistics> {
     ))
 }
 
-fn parse_charge_input(input: &Bound<'_, PyAny>) -> PyResult<Charge> {
+pub fn parse_charge(input: &Bound<'_, PyAny>) -> PyResult<Charge> {
     if let Ok(value) = input.extract::<PyCharge>() {
         return Ok(value.0);
     }
@@ -378,6 +365,44 @@ impl PyParity {
     }
 }
 
+#[pyclass(eq, name = "Reflectivity", module = "laddu", from_py_object)]
+#[derive(Clone, Copy, PartialEq)]
+pub struct PyReflectivity(pub Reflectivity);
+
+#[pymethods]
+impl PyReflectivity {
+    #[new]
+    fn new(value: &Bound<'_, PyAny>) -> PyResult<Self> {
+        Ok(Self(parse_reflectivity(value)?))
+    }
+
+    #[staticmethod]
+    fn positive() -> Self {
+        Self(Reflectivity::Positive)
+    }
+
+    #[staticmethod]
+    fn negative() -> Self {
+        Self(Reflectivity::Negative)
+    }
+
+    #[getter]
+    fn value(&self) -> i32 {
+        match self.0 {
+            Reflectivity::Positive => 1,
+            Reflectivity::Negative => -1,
+        }
+    }
+
+    fn __repr__(&self) -> String {
+        format!("Reflectivity('{}')", self.0)
+    }
+
+    fn __str__(&self) -> String {
+        self.0.to_string()
+    }
+}
+
 #[pyclass(eq, eq_int, name = "Statistics", module = "laddu", from_py_object)]
 #[derive(Clone, Copy, PartialEq)]
 pub enum PyStatistics {
@@ -411,7 +436,7 @@ pub struct PyCharge(pub Charge);
 impl PyCharge {
     #[new]
     fn new(value: &Bound<'_, PyAny>) -> PyResult<Self> {
-        Ok(Self(parse_charge_input(value)?))
+        Ok(Self(parse_charge(value)?))
     }
 
     #[getter]
@@ -428,19 +453,19 @@ impl PyCharge {
     }
 
     fn __add__(&self, other: &Bound<'_, PyAny>) -> PyResult<Self> {
-        Ok(Self(self.0 + parse_charge_input(other)?))
+        Ok(Self(self.0 + parse_charge(other)?))
     }
 
     fn __radd__(&self, other: &Bound<'_, PyAny>) -> PyResult<Self> {
-        Ok(Self(parse_charge_input(other)? + self.0))
+        Ok(Self(parse_charge(other)? + self.0))
     }
 
     fn __sub__(&self, other: &Bound<'_, PyAny>) -> PyResult<Self> {
-        Ok(Self(self.0 - parse_charge_input(other)?))
+        Ok(Self(self.0 - parse_charge(other)?))
     }
 
     fn __rsub__(&self, other: &Bound<'_, PyAny>) -> PyResult<Self> {
-        Ok(Self(parse_charge_input(other)? - self.0))
+        Ok(Self(parse_charge(other)? - self.0))
     }
 
     fn __neg__(&self) -> Self {
@@ -496,13 +521,14 @@ pub struct PyParticleProperties(pub ParticleProperties);
 #[pymethods]
 impl PyParticleProperties {
     #[new]
-    #[pyo3(signature = (name=None, *, species=None, antiparticle_species=None, self_conjugate=None, spin=None, parity=None, c_parity=None, g_parity=None, charge=None, isospin=None, strangeness=None, charm=None, bottomness=None, topness=None, baryon_number=None, electron_lepton_number=None, muon_lepton_number=None, tau_lepton_number=None, statistics=None))]
+    #[pyo3(signature = (name=None, *, species=None, antiparticle_species=None, self_conjugate=None, mass=None, spin=None, parity=None, c_parity=None, g_parity=None, charge=None, isospin=None, strangeness=None, charm=None, bottomness=None, topness=None, baryon_number=None, electron_lepton_number=None, muon_lepton_number=None, tau_lepton_number=None, statistics=None))]
     #[allow(clippy::too_many_arguments)]
     fn new(
         name: Option<String>,
         species: Option<String>,
         antiparticle_species: Option<String>,
         self_conjugate: Option<bool>,
+        mass: Option<f64>,
         spin: Option<&Bound<'_, PyAny>>,
         parity: Option<&Bound<'_, PyAny>>,
         c_parity: Option<&Bound<'_, PyAny>>,
@@ -518,6 +544,7 @@ impl PyParticleProperties {
         muon_lepton_number: Option<i32>,
         tau_lepton_number: Option<i32>,
         statistics: Option<&Bound<'_, PyAny>>,
+        // TODO: ids
     ) -> PyResult<Self> {
         let mut properties = ParticleProperties::unknown();
         if let Some(name) = name {
@@ -532,6 +559,9 @@ impl PyParticleProperties {
         if let Some(self_conjugate) = self_conjugate {
             properties = properties.with_self_conjugate(self_conjugate);
         }
+        if let Some(mass) = mass {
+            properties = properties.with_mass(mass);
+        }
         if let Some(spin) = spin {
             properties = properties.with_spin(parse_angular_momentum(spin)?);
         }
@@ -545,7 +575,7 @@ impl PyParticleProperties {
             properties = properties.with_g_parity(parse_parity(g_parity)?);
         }
         if let Some(charge) = charge {
-            properties = properties.with_charge(parse_charge_input(charge)?);
+            properties = properties.with_charge(parse_charge(charge)?);
         }
         if let Some(isospin) = isospin {
             properties = properties.with_isospin(isospin.0);
@@ -618,6 +648,16 @@ impl PyParticleProperties {
     #[getter]
     fn self_conjugate_unchecked(&self) -> Option<bool> {
         self.0.self_conjugate
+    }
+
+    #[getter]
+    fn mass(&self) -> PyResult<f64> {
+        Ok(self.0.mass()?)
+    }
+
+    #[getter]
+    fn mass_unchecked(&self) -> Option<f64> {
+        self.0.mass
     }
 
     #[getter]
