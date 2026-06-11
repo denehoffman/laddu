@@ -7,6 +7,16 @@ class MassSampler: ...
 class VertexGenerator: ...
 class Raw: ...
 
+class GenerationOutput:
+    @staticmethod
+    def all() -> GenerationOutput: ...
+    @staticmethod
+    def final_state() -> GenerationOutput: ...
+    @staticmethod
+    def only(labels: list[str]) -> GenerationOutput: ...
+    @staticmethod
+    def exclude(labels: list[str]) -> GenerationOutput: ...
+
 class GenerationOptions:
     batch_size: int
     max_trials: int | None
@@ -20,7 +30,8 @@ class GenerationOptions:
         seed: int | None = None,
     ) -> None: ...
 
-class DatasetSink: ...
+class DatasetSink:
+    def __init__(self, *, output: GenerationOutput | None = None) -> None: ...
 
 class GenerationStats:
     target_events: int
@@ -98,6 +109,7 @@ __all__ = [
     'EventGenerator',
     'GeneratedEvent',
     'GenerationOptions',
+    'GenerationOutput',
     'GenerationPlan',
     'GenerationResult',
     'GenerationStats',

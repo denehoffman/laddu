@@ -3,8 +3,8 @@ use std::{cell::RefCell, rc::Rc, sync::Arc};
 use laddu_core::{MassSampler, MomentumSource, VertexGenerator};
 use laddu_generation::{
     gen, DatasetSink, DecayParticlePlan, DecayPlan, EventGenerator, GeneratedEvent, GenerationMode,
-    GenerationOptions, GenerationPlan, GenerationResult, GenerationStats, InitialParticlePlan,
-    PlannedMass, ProductionPlan,
+    GenerationOptions, GenerationOutput, GenerationPlan, GenerationResult, GenerationStats,
+    InitialParticlePlan, PlannedMass, ProductionPlan,
 };
 use pyo3::prelude::*;
 
@@ -95,6 +95,37 @@ impl PyGenerationOptions {
     }
 }
 
+#[pyclass(name = "GenerationOutput", module = "laddu", from_py_object)]
+#[derive(Clone)]
+pub struct PyGenerationOutput(pub GenerationOutput);
+
+#[pymethods]
+impl PyGenerationOutput {
+    #[staticmethod]
+    fn all() -> Self {
+        Self(GenerationOutput::all())
+    }
+
+    #[staticmethod]
+    fn final_state() -> Self {
+        Self(GenerationOutput::final_state())
+    }
+
+    #[staticmethod]
+    fn only(labels: Vec<String>) -> Self {
+        Self(GenerationOutput::only(labels))
+    }
+
+    #[staticmethod]
+    fn exclude(labels: Vec<String>) -> Self {
+        Self(GenerationOutput::exclude(labels))
+    }
+
+    fn __repr__(&self) -> String {
+        format!("{:?}", self.0)
+    }
+}
+
 #[pyclass(name = "DatasetSink", module = "laddu", from_py_object)]
 #[derive(Clone, Default)]
 pub struct PyDatasetSink(pub DatasetSink);
@@ -102,12 +133,16 @@ pub struct PyDatasetSink(pub DatasetSink);
 #[pymethods]
 impl PyDatasetSink {
     #[new]
-    fn new() -> Self {
-        Self(DatasetSink::new())
+    #[pyo3(signature=(*, output=None))]
+    fn new(output: Option<&PyGenerationOutput>) -> Self {
+        let sink = output.map_or_else(DatasetSink::new, |output| {
+            DatasetSink::new().output(output.0.clone())
+        });
+        Self(sink)
     }
 
-    fn __repr__(&self) -> &'static str {
-        "DatasetSink()"
+    fn __repr__(&self) -> String {
+        format!("{:?}", self.0)
     }
 }
 

@@ -97,6 +97,31 @@ def test_seeded_generate_event_is_deterministic_and_stateful() -> None:
     assert any(first_p4s[label].pz != second_p4s[label].pz for label in first_p4s)
 
 
+def test_dataset_sink_output_selection() -> None:
+    channel = make_generation_channel()
+    generator = generation.EventGenerator(channel, seed=12345)
+
+    final_state = generator.generate(
+        2,
+        generation.DatasetSink(output=generation.GenerationOutput.final_state()),
+    ).output
+    assert final_state.p4_names == ['kshort1', 'kshort2', 'recoil']
+
+    only = generator.generate(
+        2,
+        generation.DatasetSink(
+            output=generation.GenerationOutput.only(['beam', 'kk', 'recoil'])
+        ),
+    ).output
+    assert only.p4_names == ['beam', 'kk', 'recoil']
+
+    exclude = generator.generate(
+        2,
+        generation.DatasetSink(output=generation.GenerationOutput.exclude(['kk'])),
+    ).output
+    assert exclude.p4_names == ['beam', 'target', 'kshort1', 'kshort2', 'recoil']
+
+
 def test_histogram_generation_annotations() -> None:
     channel = make_generation_channel()
     histogram = ld.Histogram([1.1, 1.3, 1.6], [1.0, 2.0])
