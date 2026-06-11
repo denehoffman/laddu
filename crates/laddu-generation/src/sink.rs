@@ -286,11 +286,18 @@ impl GeneratedSink for NullSink {
 }
 
 /// Generation mode.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default)]
 pub enum GenerationMode {
     /// Generate raw phase-space proposal events with unit weights.
     #[default]
     Raw,
+    /// Generate proposal events and assign weights from the real part of an expression.
+    Weighted {
+        /// Expression evaluated on generated events.
+        expression: Box<laddu_core::Expression>,
+        /// Free-parameter values passed to the expression evaluator.
+        parameters: Vec<f64>,
+    },
 }
 
 /// Options controlling generation execution.
@@ -339,6 +346,8 @@ impl GenerationOptions {
 pub enum GenerationModeKind {
     /// Raw phase-space proposal generation.
     Raw,
+    /// Weighted proposal generation.
+    Weighted,
 }
 
 /// Statistics for a generation run.

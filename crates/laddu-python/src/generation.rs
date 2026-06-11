@@ -44,7 +44,7 @@ impl PyVertexGenerator {
 }
 
 #[pyclass(name = "Raw", module = "laddu", from_py_object)]
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Default)]
 pub struct PyRaw(pub GenerationMode);
 
 #[pymethods]
@@ -495,7 +495,7 @@ impl PyEventGenerator {
         mode: Option<&PyRaw>,
         options: Option<&PyGenerationOptions>,
     ) -> PyResult<PyGenerationResult> {
-        let mode = mode.map(|mode| mode.0).unwrap_or_default();
+        let mode = mode.map(|mode| mode.0.clone()).unwrap_or_default();
         let options = options.map(|options| options.0.clone()).unwrap_or_default();
         Ok(self
             .generator

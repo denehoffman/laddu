@@ -1,11 +1,12 @@
 //! Event generation from validated channel generation plans.
 
-use std::time::Instant;
+use std::{sync::Arc, time::Instant};
 
 use fastrand::Rng;
 use laddu_core::{
+    data::{Dataset, DatasetMetadata, EventData},
     vectors::{Vec3, Vec4},
-    LadduError, LadduResult, LadduRngExt, MomentumSource, ScalarDistribution,
+    Expression, LadduError, LadduResult, LadduRngExt, MomentumSource, ScalarDistribution,
 };
 
 use crate::{
@@ -95,6 +96,10 @@ impl EventGenerator {
         }
         match mode {
             GenerationMode::Raw => self.generate_raw(target_events, sink, options),
+            GenerationMode::Weighted {
+                expression,
+                parameters,
+            } => self.generate_weighted(target_events, sink, options, *expression, parameters),
         }
     }
 
@@ -172,6 +177,70 @@ impl EventGenerator {
         })
     }
 
+    fn generate_weighted<S>(
+        &self,
+        target_events: usize,
+        mut sink: S,
+        options: GenerationOptions,
+        expression: Expression,
+        parameters: Vec<f64>,
+    ) -> LadduResult<GenerationResult<S::Output>>
+    where
+        S: GeneratedSink,
+    {
+        let started = Instant::now();
+        let layout = generated_layout(&self.plan);
+        sink.begin(&layout)?;
+        let mut rng = self.rng_with_options(&options);
+        let mut records = Vec::with_capacity(options.batch_size.min(target_events));
+        let mut stats = WeightStats::default();
+
+        for local_index in 0..target_events {
+            let event = self.generate_event(&mut rng)?;
+            records.push(self.record_from_event(local_index as u64, event, 1.0)?);
+            if records.len() == options.batch_size {
+                evaluate_record_weights(&layout, &mut records, &expression, &parameters)?;
+                stats.observe_batch(&records);
+                sink.push_batch(GeneratedBatchView {
+                    layout: &layout,
+                    records: &records,
+                })?;
+                records.clear();
+            }
+        }
+        if !records.is_empty() {
+            evaluate_record_weights(&layout, &mut records, &expression, &parameters)?;
+            stats.observe_batch(&records);
+            sink.push_batch(GeneratedBatchView {
+                layout: &layout,
+                records: &records,
+            })?;
+        }
+
+        let output = sink.finish()?;
+        let target_events = target_events as u64;
+        Ok(GenerationResult {
+            output,
+            stats: GenerationStats {
+                mode: GenerationModeKind::Weighted,
+                target_events,
+                written_events: target_events,
+                proposed_events: target_events,
+                accepted_events: target_events,
+                rejected_events: 0,
+                acceptance_rate: None,
+                envelope: None,
+                envelope_violations: 0,
+                sum_weights: stats.sum_weights,
+                min_weight: stats.min_weight,
+                max_weight: stats.max_weight,
+                batches_written: stats.batches_written,
+                elapsed: started.elapsed(),
+                seed: options.seed.or(self.seed),
+            },
+        })
+    }
+
     fn try_generate_event(&self, rng: &mut Rng) -> LadduResult<GeneratedEvent> {
         let production = self.plan.production();
         let incoming = production.incoming();
@@ -238,6 +307,76 @@ impl GeneratedEvent {
     pub fn p4s(&self) -> &[(String, Vec4)] {
         &self.p4s
     }
+}
+
+#[derive(Default)]
+struct WeightStats {
+    sum_weights: f64,
+    min_weight: Option<f64>,
+    max_weight: Option<f64>,
+    batches_written: u64,
+}
+
+impl WeightStats {
+    fn observe_batch(&mut self, records: &[GeneratedRecord]) {
+        self.batches_written += 1;
+        for record in records {
+            self.sum_weights += record.weight;
+            self.min_weight = Some(
+                self.min_weight
+                    .map_or(record.weight, |value| value.min(record.weight)),
+            );
+            self.max_weight = Some(
+                self.max_weight
+                    .map_or(record.weight, |value| value.max(record.weight)),
+            );
+        }
+    }
+}
+
+fn evaluate_record_weights(
+    layout: &GeneratedLayout,
+    records: &mut [GeneratedRecord],
+    expression: &Expression,
+    parameters: &[f64],
+) -> LadduResult<()> {
+    if records.is_empty() {
+        return Ok(());
+    }
+    let dataset = Arc::new(records_dataset(layout, records)?);
+    let values = expression.load(&dataset)?.evaluate(parameters)?;
+    if values.len() != records.len() {
+        return Err(LadduError::Custom(format!(
+            "weighted generation expected {} weights but expression returned {}",
+            records.len(),
+            values.len()
+        )));
+    }
+    for (record, value) in records.iter_mut().zip(values) {
+        if !value.re.is_finite() {
+            return Err(LadduError::Custom(format!(
+                "weighted generation produced a non-finite event weight {}",
+                value.re
+            )));
+        }
+        record.weight = value.re;
+    }
+    Ok(())
+}
+
+fn records_dataset(layout: &GeneratedLayout, records: &[GeneratedRecord]) -> LadduResult<Dataset> {
+    let metadata = Arc::new(DatasetMetadata::new(layout.labels(), Vec::<String>::new())?);
+    let events = records
+        .iter()
+        .map(|record| {
+            Arc::new(EventData {
+                p4s: record.p4s.clone(),
+                aux: Vec::new(),
+                weight: 1.0,
+            })
+        })
+        .collect();
+    Ok(Dataset::new_with_metadata(events, metadata))
 }
 
 fn p4_labels(plan: &GenerationPlan) -> Vec<String> {
@@ -472,7 +611,7 @@ fn direction_from_angles(costheta: f64, phi: f64) -> Vec3 {
 
 #[cfg(test)]
 mod tests {
-    use laddu_core::{Channel, ParticleProperties, VertexGenerator};
+    use laddu_core::{Channel, Expression, ParticleProperties, VertexGenerator};
 
     use super::*;
     use crate::{DatasetSink, NullSink};
@@ -621,5 +760,32 @@ mod tests {
             .unwrap()
             .output;
         assert_eq!(dataset.p4_names(), ["a", "b", "recoil"]);
+    }
+
+    #[test]
+    fn weighted_generation_assigns_expression_weights() {
+        let generator = demo_generator();
+        let result = generator
+            .generate(
+                4,
+                DatasetSink::new(),
+                GenerationMode::Weighted {
+                    expression: Box::new(Expression::one() * 2.5),
+                    parameters: Vec::new(),
+                },
+                GenerationOptions::default().batch_size(2),
+            )
+            .unwrap();
+        assert_eq!(result.output.n_events(), 4);
+        assert_eq!(result.stats.mode, GenerationModeKind::Weighted);
+        assert_eq!(result.stats.proposed_events, 4);
+        assert_eq!(result.stats.accepted_events, 4);
+        assert_eq!(result.stats.batches_written, 2);
+        assert_eq!(result.stats.sum_weights, 10.0);
+        assert_eq!(result.stats.min_weight, Some(2.5));
+        assert_eq!(result.stats.max_weight, Some(2.5));
+        for event in result.output.events_global() {
+            assert_eq!(event.weight(), 2.5);
+        }
     }
 }
