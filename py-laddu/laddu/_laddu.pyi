@@ -79,6 +79,7 @@ from laddu.generation import (
     DecayPlan,
     EventGenerator,
     GeneratedEvent,
+    GenerationMode,
     GenerationOptions,
     GenerationOutput,
     GenerationPlan,
@@ -89,7 +90,6 @@ from laddu.generation import (
     MomentumSource,
     PlannedMass,
     ProductionPlan,
-    Raw,
     VertexGenerator,
 )
 from laddu.likelihood import (
@@ -185,6 +185,7 @@ __all__ = [
     'Flatte',
     'Frame',
     'GeneratedEvent',
+    'GenerationMode',
     'GenerationOptions',
     'GenerationOutput',
     'GenerationPlan',
@@ -246,7 +247,6 @@ __all__ = [
     'PolarComplexScalar',
     'Polarization',
     'ProductionPlan',
-    'Raw',
     'Reflectivity',
     'Regularizer',
     'RuleSet',

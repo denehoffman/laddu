@@ -6,6 +6,7 @@ from laddu.laddu import (
     DecayPlan,
     EventGenerator,
     GeneratedEvent,
+    GenerationMode,
     GenerationOptions,
     GenerationOutput,
     GenerationPlan,
@@ -16,7 +17,6 @@ from laddu.laddu import (
     MomentumSource,
     PlannedMass,
     ProductionPlan,
-    Raw,
     VertexGenerator,
 )
 
@@ -26,6 +26,7 @@ __all__ = [
     'DecayPlan',
     'EventGenerator',
     'GeneratedEvent',
+    'GenerationMode',
     'GenerationOptions',
     'GenerationOutput',
     'GenerationPlan',
@@ -36,6 +37,5 @@ __all__ = [
     'MomentumSource',
     'PlannedMass',
     'ProductionPlan',
-    'Raw',
     'VertexGenerator',
 ]

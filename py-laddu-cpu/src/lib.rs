@@ -49,10 +49,10 @@ mod laddu {
         generation::{
             py_energy, py_histogram_energy, py_histogram_mass, py_mass_from_properties, py_rest,
             py_t_exponential, py_t_histogram, py_uniform_energy, py_uniform_mass, PyDatasetSink,
-            PyDecayParticlePlan, PyDecayPlan, PyEventGenerator, PyGeneratedEvent,
+            PyDecayParticlePlan, PyDecayPlan, PyEventGenerator, PyGeneratedEvent, PyGenerationMode,
             PyGenerationOptions, PyGenerationOutput, PyGenerationPlan, PyGenerationResult,
             PyGenerationStats, PyInitialParticlePlan, PyMassSampler, PyMomentumSource,
-            PyPlannedMass, PyProductionPlan, PyRaw, PyVertexGenerator,
+            PyPlannedMass, PyProductionPlan, PyVertexGenerator,
         },
         get_threads,
         math::{py_clebsch_gordan, PyHistogram},

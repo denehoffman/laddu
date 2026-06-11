@@ -122,6 +122,28 @@ def test_dataset_sink_output_selection() -> None:
     assert exclude.p4_names == ['beam', 'target', 'kshort1', 'kshort2', 'recoil']
 
 
+def test_weighted_generation_mode() -> None:
+    channel = make_generation_channel()
+    generator = generation.EventGenerator(channel, seed=12345)
+    weight = ld.Scalar('weight', value=ld.parameter('weight', 2.5))
+
+    result = generator.generate(
+        4,
+        generation.DatasetSink(),
+        mode=generation.GenerationMode.weighted(weight, []),
+        options=generation.GenerationOptions(batch_size=2),
+    )
+
+    assert result.stats.written_events == 4
+    assert result.stats.proposed_events == 4
+    assert result.stats.accepted_events == 4
+    assert result.stats.batches_written == 2
+    assert result.stats.sum_weights == 10.0
+    assert result.stats.min_weight == 2.5
+    assert result.stats.max_weight == 2.5
+    assert [event.weight for event in result.output.events_global] == [2.5] * 4
+
+
 def test_histogram_generation_annotations() -> None:
     channel = make_generation_channel()
     histogram = ld.Histogram([1.1, 1.3, 1.6], [1.0, 2.0])

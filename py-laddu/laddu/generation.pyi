@@ -1,3 +1,4 @@
+from laddu.amplitude import Expression
 from laddu.data import Dataset
 from laddu.reaction import Channel
 from laddu.vectors import Vec4
@@ -5,7 +6,12 @@ from laddu.vectors import Vec4
 class MomentumSource: ...
 class MassSampler: ...
 class VertexGenerator: ...
-class Raw: ...
+
+class GenerationMode:
+    @staticmethod
+    def raw() -> GenerationMode: ...
+    @staticmethod
+    def weighted(expression: Expression, parameters: list[float]) -> GenerationMode: ...
 
 class GenerationOutput:
     @staticmethod
@@ -42,6 +48,9 @@ class GenerationStats:
     acceptance_rate: float | None
     envelope: float | None
     envelope_violations: int
+    sum_weights: float
+    min_weight: float | None
+    max_weight: float | None
     batches_written: int
     def audit(self) -> str: ...
 
@@ -98,7 +107,7 @@ class EventGenerator:
         target_events: int,
         sink: DatasetSink,
         *,
-        mode: Raw | None = None,
+        mode: GenerationMode | None = None,
         options: GenerationOptions | None = None,
     ) -> GenerationResult: ...
 
@@ -108,6 +117,7 @@ __all__ = [
     'DecayPlan',
     'EventGenerator',
     'GeneratedEvent',
+    'GenerationMode',
     'GenerationOptions',
     'GenerationOutput',
     'GenerationPlan',
@@ -118,6 +128,5 @@ __all__ = [
     'MomentumSource',
     'PlannedMass',
     'ProductionPlan',
-    'Raw',
     'VertexGenerator',
 ]

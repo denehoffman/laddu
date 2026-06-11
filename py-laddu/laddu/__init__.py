@@ -76,6 +76,7 @@ from .generation import (
     DecayPlan,
     EventGenerator,
     GeneratedEvent,
+    GenerationMode,
     GenerationOptions,
     GenerationOutput,
     GenerationPlan,
@@ -86,7 +87,6 @@ from .generation import (
     MomentumSource,
     PlannedMass,
     ProductionPlan,
-    Raw,
     VertexGenerator,
 )
 from .likelihood import (
@@ -216,6 +216,7 @@ __all__ = [
     'Flatte',
     'Frame',
     'GeneratedEvent',
+    'GenerationMode',
     'GenerationOptions',
     'GenerationOutput',
     'GenerationPlan',
@@ -275,7 +276,6 @@ __all__ = [
     'PolarComplexScalar',
     'Polarization',
     'ProductionPlan',
-    'Raw',
     'Reflectivity',
     'RuleSet',
     'S',

@@ -2,13 +2,16 @@ use std::{cell::RefCell, rc::Rc, sync::Arc};
 
 use laddu_core::{MassSampler, MomentumSource, VertexGenerator};
 use laddu_generation::{
-    gen, DatasetSink, DecayParticlePlan, DecayPlan, EventGenerator, GeneratedEvent, GenerationMode,
-    GenerationOptions, GenerationOutput, GenerationPlan, GenerationResult, GenerationStats,
-    InitialParticlePlan, PlannedMass, ProductionPlan,
+    gen, DatasetSink, DecayParticlePlan, DecayPlan, EventGenerator, GeneratedEvent,
+    GenerationMode as RustGenerationMode, GenerationOptions, GenerationOutput, GenerationPlan,
+    GenerationResult, GenerationStats, InitialParticlePlan, PlannedMass, ProductionPlan,
 };
 use pyo3::prelude::*;
 
-use crate::{data::PyDataset, math::PyHistogram, variables::PyChannel, vectors::PyVec4};
+use crate::{
+    amplitudes::PyExpression, data::PyDataset, math::PyHistogram, variables::PyChannel,
+    vectors::PyVec4,
+};
 
 #[pyclass(name = "MomentumSource", module = "laddu", from_py_object)]
 #[derive(Clone)]
@@ -43,19 +46,27 @@ impl PyVertexGenerator {
     }
 }
 
-#[pyclass(name = "Raw", module = "laddu", from_py_object)]
+#[pyclass(name = "GenerationMode", module = "laddu", from_py_object)]
 #[derive(Clone, Default)]
-pub struct PyRaw(pub GenerationMode);
+pub struct PyGenerationMode(pub RustGenerationMode);
 
 #[pymethods]
-impl PyRaw {
-    #[new]
-    fn new() -> Self {
-        Self(GenerationMode::Raw)
+impl PyGenerationMode {
+    #[staticmethod]
+    fn raw() -> Self {
+        Self(RustGenerationMode::Raw)
     }
 
-    fn __repr__(&self) -> &'static str {
-        "Raw()"
+    #[staticmethod]
+    fn weighted(expression: &PyExpression, parameters: Vec<f64>) -> Self {
+        Self(RustGenerationMode::Weighted {
+            expression: Box::new(expression.0.clone()),
+            parameters,
+        })
+    }
+
+    fn __repr__(&self) -> String {
+        format!("{:?}", self.0)
     }
 }
 
@@ -190,6 +201,21 @@ impl PyGenerationStats {
     #[getter]
     fn envelope_violations(&self) -> u64 {
         self.0.envelope_violations
+    }
+
+    #[getter]
+    fn sum_weights(&self) -> f64 {
+        self.0.sum_weights
+    }
+
+    #[getter]
+    fn min_weight(&self) -> Option<f64> {
+        self.0.min_weight
+    }
+
+    #[getter]
+    fn max_weight(&self) -> Option<f64> {
+        self.0.max_weight
     }
 
     #[getter]
@@ -492,7 +518,7 @@ impl PyEventGenerator {
         &self,
         target_events: usize,
         sink: &PyDatasetSink,
-        mode: Option<&PyRaw>,
+        mode: Option<&PyGenerationMode>,
         options: Option<&PyGenerationOptions>,
     ) -> PyResult<PyGenerationResult> {
         let mode = mode.map(|mode| mode.0.clone()).unwrap_or_default();
