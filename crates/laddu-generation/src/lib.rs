@@ -105,7 +105,8 @@ pub use plan::{
     DecayParticlePlan, DecayPlan, GenerationPlan, InitialParticlePlan, PlannedMass, ProductionPlan,
 };
 pub use sink::{
-    DatasetSink, GeneratedBatchView, GeneratedLayout, GeneratedParticleInfo, GeneratedParticleRole,
-    GeneratedRecord, GeneratedSink, GenerationMode, GenerationModeKind, GenerationOptions,
-    GenerationOutput, GenerationResult, GenerationStats, NullSink, SinkMpiSupport,
+    DatasetSink, Envelope, EnvelopeStats, EnvelopeViolationPolicy, GeneratedBatchView,
+    GeneratedLayout, GeneratedParticleInfo, GeneratedParticleRole, GeneratedRecord, GeneratedSink,
+    GenerationMode, GenerationModeKind, GenerationOptions, GenerationOutput, GenerationResult,
+    GenerationStats, NullSink, SinkMpiSupport,
 };

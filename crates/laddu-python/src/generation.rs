@@ -2,11 +2,12 @@ use std::{cell::RefCell, rc::Rc, sync::Arc};
 
 use laddu_core::{MassSampler, MomentumSource, VertexGenerator};
 use laddu_generation::{
-    gen, DatasetSink, DecayParticlePlan, DecayPlan, EventGenerator, GeneratedEvent,
-    GenerationMode as RustGenerationMode, GenerationOptions, GenerationOutput, GenerationPlan,
-    GenerationResult, GenerationStats, InitialParticlePlan, PlannedMass, ProductionPlan,
+    gen, DatasetSink, DecayParticlePlan, DecayPlan, Envelope, EnvelopeStats,
+    EnvelopeViolationPolicy, EventGenerator, GeneratedEvent, GenerationMode as RustGenerationMode,
+    GenerationOptions, GenerationOutput, GenerationPlan, GenerationResult, GenerationStats,
+    InitialParticlePlan, PlannedMass, ProductionPlan,
 };
-use pyo3::prelude::*;
+use pyo3::{exceptions::PyTypeError, prelude::*};
 
 use crate::{
     amplitudes::PyExpression, data::PyDataset, math::PyHistogram, variables::PyChannel,
@@ -67,16 +68,82 @@ impl PyGenerationMode {
 
     #[staticmethod]
     #[pyo3(signature=(expression, parameters, *, envelope))]
-    fn accepted(expression: &PyExpression, parameters: Vec<f64>, envelope: f64) -> Self {
-        Self(RustGenerationMode::Accepted {
+    fn accepted(
+        expression: &PyExpression,
+        parameters: Vec<f64>,
+        envelope: &Bound<'_, PyAny>,
+    ) -> PyResult<Self> {
+        Ok(Self(RustGenerationMode::Accepted {
             expression: Box::new(expression.0.clone()),
             parameters,
-            envelope,
-        })
+            envelope: py_envelope_arg(envelope)?,
+        }))
     }
 
     fn __repr__(&self) -> String {
         format!("{:?}", self.0)
+    }
+}
+
+#[pyclass(name = "Envelope", module = "laddu", from_py_object)]
+#[derive(Clone, Copy)]
+pub struct PyEnvelope(pub Envelope);
+
+#[pymethods]
+impl PyEnvelope {
+    #[staticmethod]
+    fn initial(value: f64) -> Self {
+        Self(Envelope::initial(value))
+    }
+
+    fn __repr__(&self) -> String {
+        format!("{:?}", self.0)
+    }
+}
+
+fn py_envelope_arg(arg: &Bound<'_, PyAny>) -> PyResult<Envelope> {
+    if let Ok(envelope) = arg.extract::<PyEnvelope>() {
+        return Ok(envelope.0);
+    }
+    if let Ok(value) = arg.extract::<f64>() {
+        return Ok(Envelope::initial(value));
+    }
+    Err(PyTypeError::new_err(
+        "expected envelope to be an Envelope or float",
+    ))
+}
+
+#[pyclass(
+    eq,
+    eq_int,
+    name = "EnvelopeViolationPolicy",
+    module = "laddu",
+    from_py_object
+)]
+#[derive(Clone, Copy, PartialEq)]
+pub enum PyEnvelopeViolationPolicy {
+    Error = 0,
+    WarnAndContinue = 1,
+    Grow = 2,
+}
+
+impl From<PyEnvelopeViolationPolicy> for EnvelopeViolationPolicy {
+    fn from(policy: PyEnvelopeViolationPolicy) -> Self {
+        match policy {
+            PyEnvelopeViolationPolicy::Error => Self::Error,
+            PyEnvelopeViolationPolicy::WarnAndContinue => Self::WarnAndContinue,
+            PyEnvelopeViolationPolicy::Grow => Self::Grow,
+        }
+    }
+}
+
+impl From<EnvelopeViolationPolicy> for PyEnvelopeViolationPolicy {
+    fn from(policy: EnvelopeViolationPolicy) -> Self {
+        match policy {
+            EnvelopeViolationPolicy::Error => Self::Error,
+            EnvelopeViolationPolicy::WarnAndContinue => Self::WarnAndContinue,
+            EnvelopeViolationPolicy::Grow => Self::Grow,
+        }
     }
 }
 
@@ -87,12 +154,19 @@ pub struct PyGenerationOptions(pub GenerationOptions);
 #[pymethods]
 impl PyGenerationOptions {
     #[new]
-    #[pyo3(signature=(*, batch_size=10_000, max_trials=None, seed=None))]
-    fn new(batch_size: usize, max_trials: Option<u64>, seed: Option<u64>) -> Self {
+    #[pyo3(signature=(*, batch_size=10_000, max_trials=None, seed=None, envelope_violation_policy=None))]
+    fn new(
+        batch_size: usize,
+        max_trials: Option<u64>,
+        seed: Option<u64>,
+        envelope_violation_policy: Option<PyEnvelopeViolationPolicy>,
+    ) -> Self {
         Self(GenerationOptions {
             batch_size,
             max_trials,
             seed,
+            envelope_violation_policy: envelope_violation_policy
+                .map_or(EnvelopeViolationPolicy::Error, Into::into),
         })
     }
 
@@ -109,6 +183,11 @@ impl PyGenerationOptions {
     #[getter]
     fn seed(&self) -> Option<u64> {
         self.0.seed
+    }
+
+    #[getter]
+    fn envelope_violation_policy(&self) -> PyEnvelopeViolationPolicy {
+        self.0.envelope_violation_policy.into()
     }
 
     fn __repr__(&self) -> String {
@@ -167,6 +246,47 @@ impl PyDatasetSink {
     }
 }
 
+#[pyclass(name = "EnvelopeStats", module = "laddu", skip_from_py_object)]
+#[derive(Clone)]
+pub struct PyEnvelopeStats(pub EnvelopeStats);
+
+#[pymethods]
+impl PyEnvelopeStats {
+    #[getter]
+    fn configured_max(&self) -> Option<f64> {
+        self.0.configured_max
+    }
+
+    #[getter]
+    fn observed_max(&self) -> Option<f64> {
+        self.0.observed_max
+    }
+
+    #[getter]
+    fn violations(&self) -> u64 {
+        self.0.violations
+    }
+
+    #[getter]
+    fn largest_violation_ratio(&self) -> Option<f64> {
+        self.0.largest_violation_ratio
+    }
+
+    #[getter]
+    fn updates(&self) -> u64 {
+        self.0.updates
+    }
+
+    #[getter]
+    fn final_max(&self) -> Option<f64> {
+        self.0.final_max
+    }
+
+    fn __repr__(&self) -> String {
+        format!("{:?}", self.0)
+    }
+}
+
 #[pyclass(name = "GenerationStats", module = "laddu", skip_from_py_object)]
 #[derive(Clone)]
 pub struct PyGenerationStats(pub GenerationStats);
@@ -205,12 +325,17 @@ impl PyGenerationStats {
 
     #[getter]
     fn envelope(&self) -> Option<f64> {
-        self.0.envelope
+        self.0.envelope()
     }
 
     #[getter]
     fn envelope_violations(&self) -> u64 {
-        self.0.envelope_violations
+        self.0.envelope_violations()
+    }
+
+    #[getter]
+    fn envelope_stats(&self) -> Option<PyEnvelopeStats> {
+        self.0.envelope_stats.clone().map(PyEnvelopeStats)
     }
 
     #[getter]

@@ -152,7 +152,9 @@ def test_accepted_generation_mode() -> None:
     result = generator.generate(
         4,
         generation.DatasetSink(),
-        mode=generation.GenerationMode.accepted(weight, [], envelope=1.0),
+        mode=generation.GenerationMode.accepted(
+            weight, [], envelope=generation.Envelope.initial(1.0)
+        ),
         options=generation.GenerationOptions(batch_size=2),
     )
 
@@ -163,6 +165,11 @@ def test_accepted_generation_mode() -> None:
     assert result.stats.acceptance_rate == 1.0
     assert result.stats.envelope == 1.0
     assert result.stats.envelope_violations == 0
+    assert result.stats.envelope_stats is not None
+    assert result.stats.envelope_stats.configured_max == 1.0
+    assert result.stats.envelope_stats.observed_max == 1.0
+    assert result.stats.envelope_stats.final_max == 1.0
+    assert result.stats.envelope_stats.violations == 0
     assert [event.weight for event in result.output.events_global] == [1.0] * 4
 
 

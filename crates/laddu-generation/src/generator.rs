@@ -12,9 +12,9 @@ use laddu_core::{
 use crate::{
     plan::{DecayParticlePlan, GenerationPlan, PlannedMass},
     sink::{
-        GeneratedBatchView, GeneratedLayout, GeneratedParticleInfo, GeneratedParticleRole,
-        GeneratedRecord, GeneratedSink, GenerationMode, GenerationModeKind, GenerationOptions,
-        GenerationResult, GenerationStats,
+        Envelope, EnvelopeStats, EnvelopeViolationPolicy, GeneratedBatchView, GeneratedLayout,
+        GeneratedParticleInfo, GeneratedParticleRole, GeneratedRecord, GeneratedSink,
+        GenerationMode, GenerationModeKind, GenerationOptions, GenerationResult, GenerationStats,
     },
 };
 
@@ -177,8 +177,7 @@ impl EventGenerator {
                 accepted_events: target_events,
                 rejected_events: 0,
                 acceptance_rate: None,
-                envelope: None,
-                envelope_violations: 0,
+                envelope_stats: None,
                 sum_weights,
                 min_weight,
                 max_weight,
@@ -241,8 +240,7 @@ impl EventGenerator {
                 accepted_events: target_events,
                 rejected_events: 0,
                 acceptance_rate: None,
-                envelope: None,
-                envelope_violations: 0,
+                envelope_stats: None,
                 sum_weights: stats.sum_weights,
                 min_weight: stats.min_weight,
                 max_weight: stats.max_weight,
@@ -260,16 +258,13 @@ impl EventGenerator {
         options: GenerationOptions,
         expression: Expression,
         parameters: Vec<f64>,
-        envelope: f64,
+        envelope: Envelope,
     ) -> LadduResult<GenerationResult<S::Output>>
     where
         S: GeneratedSink,
     {
-        if !envelope.is_finite() || envelope <= 0.0 {
-            return Err(LadduError::Custom(format!(
-                "rejection envelope must be finite and positive, got {envelope}"
-            )));
-        }
+        let mut active_envelope = envelope.initial_value()?;
+        let mut envelope_stats = EnvelopeStats::initial(active_envelope);
         let started = Instant::now();
         let layout = generated_layout(&self.plan);
         sink.begin(&layout)?;
@@ -280,7 +275,6 @@ impl EventGenerator {
         let mut proposed_events = 0_u64;
         let mut accepted_events = 0_u64;
         let mut rejected_events = 0_u64;
-        let mut envelope_violations = 0_u64;
         let max_trials = options.max_trials.unwrap_or(u64::MAX);
 
         while accepted_events < target_events as u64 {
@@ -297,13 +291,14 @@ impl EventGenerator {
                     layout: &layout,
                     expression: &expression,
                     parameters: &parameters,
-                    envelope,
+                    active_envelope: &mut active_envelope,
+                    envelope_stats: &mut envelope_stats,
+                    envelope_violation_policy: options.envelope_violation_policy,
                     rng: &mut rng,
                     accepted_batch: &mut accepted_batch,
                     stats: &mut stats,
                     accepted_events: &mut accepted_events,
                     rejected_events: &mut rejected_events,
-                    envelope_violations: &mut envelope_violations,
                     target_events: target_events as u64,
                     sink: &mut sink,
                 }
@@ -315,13 +310,14 @@ impl EventGenerator {
                 layout: &layout,
                 expression: &expression,
                 parameters: &parameters,
-                envelope,
+                active_envelope: &mut active_envelope,
+                envelope_stats: &mut envelope_stats,
+                envelope_violation_policy: options.envelope_violation_policy,
                 rng: &mut rng,
                 accepted_batch: &mut accepted_batch,
                 stats: &mut stats,
                 accepted_events: &mut accepted_events,
                 rejected_events: &mut rejected_events,
-                envelope_violations: &mut envelope_violations,
                 target_events: target_events as u64,
                 sink: &mut sink,
             }
@@ -342,8 +338,7 @@ impl EventGenerator {
                 rejected_events,
                 acceptance_rate: (proposed_events > 0)
                     .then_some(accepted_events as f64 / proposed_events as f64),
-                envelope: Some(envelope),
-                envelope_violations,
+                envelope_stats: Some(envelope_stats),
                 sum_weights: stats.sum_weights,
                 min_weight: stats.min_weight,
                 max_weight: stats.max_weight,
@@ -451,13 +446,14 @@ struct AcceptedBatchContext<'a, S> {
     layout: &'a GeneratedLayout,
     expression: &'a Expression,
     parameters: &'a [f64],
-    envelope: f64,
+    active_envelope: &'a mut f64,
+    envelope_stats: &'a mut EnvelopeStats,
+    envelope_violation_policy: EnvelopeViolationPolicy,
     rng: &'a mut Rng,
     accepted_batch: &'a mut Vec<GeneratedRecord>,
     stats: &'a mut WeightStats,
     accepted_events: &'a mut u64,
     rejected_events: &'a mut u64,
-    envelope_violations: &'a mut u64,
     target_events: u64,
     sink: &'a mut S,
 }
@@ -483,18 +479,27 @@ where
                     "accepted generation produced a negative event weight {weight}"
                 )));
             }
-            if weight > self.envelope {
-                *self.envelope_violations += 1;
-                return Err(LadduError::Custom(format!(
-                    "accepted generation weight {weight} exceeded envelope {}",
-                    self.envelope
-                )));
+            self.envelope_stats.observe(weight, *self.active_envelope);
+            if weight > *self.active_envelope {
+                match self.envelope_violation_policy {
+                    EnvelopeViolationPolicy::Error => {
+                        return Err(LadduError::Custom(format!(
+                            "accepted generation weight {weight} exceeded envelope {}",
+                            *self.active_envelope
+                        )));
+                    }
+                    EnvelopeViolationPolicy::WarnAndContinue => {}
+                    EnvelopeViolationPolicy::Grow => {
+                        *self.active_envelope = weight;
+                        self.envelope_stats.update_final_max(weight);
+                    }
+                }
             }
             if *self.accepted_events >= self.target_events {
                 *self.rejected_events += 1;
                 continue;
             }
-            if self.rng.f64() * self.envelope < weight {
+            if self.rng.f64() * *self.active_envelope < weight {
                 record.weight = 1.0;
                 self.accepted_batch.push(record);
                 *self.accepted_events += 1;
@@ -992,7 +997,7 @@ mod tests {
                 GenerationMode::Accepted {
                     expression: Box::new(Expression::one()),
                     parameters: Vec::new(),
-                    envelope: 1.0,
+                    envelope: Envelope::initial(1.0),
                 },
                 GenerationOptions::default().batch_size(2),
             )
@@ -1004,8 +1009,13 @@ mod tests {
         assert_eq!(result.stats.accepted_events, 4);
         assert_eq!(result.stats.rejected_events, 0);
         assert_eq!(result.stats.acceptance_rate, Some(1.0));
-        assert_eq!(result.stats.envelope, Some(1.0));
-        assert_eq!(result.stats.envelope_violations, 0);
+        assert_eq!(result.stats.envelope(), Some(1.0));
+        assert_eq!(result.stats.envelope_violations(), 0);
+        let envelope_stats = result.stats.envelope_stats.as_ref().unwrap();
+        assert_eq!(envelope_stats.configured_max, Some(1.0));
+        assert_eq!(envelope_stats.final_max, Some(1.0));
+        assert_eq!(envelope_stats.observed_max, Some(1.0));
+        assert_eq!(envelope_stats.violations, 0);
         assert_eq!(result.stats.sum_weights, 4.0);
         for event in result.output.events_global() {
             assert_eq!(event.weight(), 1.0);
@@ -1022,11 +1032,59 @@ mod tests {
                 GenerationMode::Accepted {
                     expression: Box::new(Expression::one() * 2.0),
                     parameters: Vec::new(),
-                    envelope: 1.0,
+                    envelope: Envelope::initial(1.0),
                 },
                 GenerationOptions::default().batch_size(1),
             )
             .unwrap_err();
         assert!(err.to_string().contains("exceeded envelope"));
+    }
+
+    #[test]
+    fn accepted_generation_can_continue_after_envelope_violation() {
+        let generator = demo_generator();
+        let result = generator
+            .generate(
+                1,
+                NullSink::new(),
+                GenerationMode::Accepted {
+                    expression: Box::new(Expression::one() * 2.0),
+                    parameters: Vec::new(),
+                    envelope: Envelope::initial(1.0),
+                },
+                GenerationOptions::default()
+                    .batch_size(1)
+                    .envelope_violation_policy(EnvelopeViolationPolicy::WarnAndContinue),
+            )
+            .unwrap();
+        let envelope_stats = result.stats.envelope_stats.as_ref().unwrap();
+        assert_eq!(result.stats.accepted_events, 1);
+        assert_eq!(envelope_stats.violations, 1);
+        assert_eq!(envelope_stats.final_max, Some(1.0));
+        assert_eq!(envelope_stats.largest_violation_ratio, Some(2.0));
+    }
+
+    #[test]
+    fn accepted_generation_can_grow_envelope_after_violation() {
+        let generator = demo_generator();
+        let result = generator
+            .generate(
+                1,
+                NullSink::new(),
+                GenerationMode::Accepted {
+                    expression: Box::new(Expression::one() * 2.0),
+                    parameters: Vec::new(),
+                    envelope: Envelope::initial(1.0),
+                },
+                GenerationOptions::default()
+                    .batch_size(1)
+                    .envelope_violation_policy(EnvelopeViolationPolicy::Grow),
+            )
+            .unwrap();
+        let envelope_stats = result.stats.envelope_stats.as_ref().unwrap();
+        assert_eq!(result.stats.accepted_events, 1);
+        assert_eq!(envelope_stats.violations, 1);
+        assert_eq!(envelope_stats.updates, 1);
+        assert_eq!(envelope_stats.final_max, Some(2.0));
     }
 }

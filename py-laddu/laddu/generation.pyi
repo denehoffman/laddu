@@ -7,6 +7,15 @@ class MomentumSource: ...
 class MassSampler: ...
 class VertexGenerator: ...
 
+class Envelope:
+    @staticmethod
+    def initial(value: float) -> Envelope: ...
+
+class EnvelopeViolationPolicy:
+    Error: EnvelopeViolationPolicy
+    WarnAndContinue: EnvelopeViolationPolicy
+    Grow: EnvelopeViolationPolicy
+
 class GenerationMode:
     @staticmethod
     def raw() -> GenerationMode: ...
@@ -14,7 +23,7 @@ class GenerationMode:
     def weighted(expression: Expression, parameters: list[float]) -> GenerationMode: ...
     @staticmethod
     def accepted(
-        expression: Expression, parameters: list[float], envelope: float
+        expression: Expression, parameters: list[float], envelope: Envelope | float
     ) -> GenerationMode: ...
 
 class GenerationOutput:
@@ -31,6 +40,7 @@ class GenerationOptions:
     batch_size: int
     max_trials: int | None
     seed: int | None
+    envelope_violation_policy: EnvelopeViolationPolicy
 
     def __init__(
         self,
@@ -38,10 +48,19 @@ class GenerationOptions:
         batch_size: int = 10_000,
         max_trials: int | None = None,
         seed: int | None = None,
+        envelope_violation_policy: EnvelopeViolationPolicy | None = None,
     ) -> None: ...
 
 class DatasetSink:
     def __init__(self, *, output: GenerationOutput | None = None) -> None: ...
+
+class EnvelopeStats:
+    configured_max: float | None
+    observed_max: float | None
+    violations: int
+    largest_violation_ratio: float | None
+    updates: int
+    final_max: float | None
 
 class GenerationStats:
     target_events: int
@@ -52,6 +71,7 @@ class GenerationStats:
     acceptance_rate: float | None
     envelope: float | None
     envelope_violations: int
+    envelope_stats: EnvelopeStats | None
     sum_weights: float
     min_weight: float | None
     max_weight: float | None
@@ -119,6 +139,9 @@ __all__ = [
     'DatasetSink',
     'DecayParticlePlan',
     'DecayPlan',
+    'Envelope',
+    'EnvelopeStats',
+    'EnvelopeViolationPolicy',
     'EventGenerator',
     'GeneratedEvent',
     'GenerationMode',

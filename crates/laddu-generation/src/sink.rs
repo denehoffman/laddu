@@ -285,6 +285,99 @@ impl GeneratedSink for NullSink {
     }
 }
 
+/// Rejection-envelope configuration.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Envelope {
+    /// Start rejection sampling from this maximum event weight.
+    Initial(f64),
+}
+
+impl Envelope {
+    /// Construct an initial rejection envelope.
+    pub fn initial(value: f64) -> Self {
+        Self::Initial(value)
+    }
+
+    /// Return the initial active envelope value.
+    pub fn initial_value(self) -> LadduResult<f64> {
+        match self {
+            Self::Initial(value) => {
+                if !value.is_finite() || value <= 0.0 {
+                    return Err(LadduError::Custom(format!(
+                        "rejection envelope must be finite and positive, got {value}"
+                    )));
+                }
+                Ok(value)
+            }
+        }
+    }
+}
+
+impl From<f64> for Envelope {
+    fn from(value: f64) -> Self {
+        Self::initial(value)
+    }
+}
+
+/// Behavior when a rejection-sampling weight exceeds the active envelope.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum EnvelopeViolationPolicy {
+    /// Return an error immediately.
+    #[default]
+    Error,
+    /// Count the violation and accept the proposal with probability one.
+    WarnAndContinue,
+    /// Count the violation, grow the active envelope to the observed weight, and continue.
+    Grow,
+}
+
+/// Statistics about rejection-envelope usage.
+#[derive(Clone, Debug, Default)]
+pub struct EnvelopeStats {
+    /// Configured envelope value at the beginning of the run.
+    pub configured_max: Option<f64>,
+    /// Largest proposal weight observed by the run.
+    pub observed_max: Option<f64>,
+    /// Number of proposal weights that exceeded the active rejection envelope.
+    pub violations: u64,
+    /// Largest ratio of observed weight to active envelope for violating events.
+    pub largest_violation_ratio: Option<f64>,
+    /// Number of times the active envelope was updated.
+    pub updates: u64,
+    /// Active envelope value at the end of the run.
+    pub final_max: Option<f64>,
+}
+
+impl EnvelopeStats {
+    /// Construct envelope statistics for an initial envelope.
+    pub fn initial(value: f64) -> Self {
+        Self {
+            configured_max: Some(value),
+            final_max: Some(value),
+            ..Self::default()
+        }
+    }
+
+    pub(crate) fn observe(&mut self, weight: f64, active_envelope: f64) {
+        self.observed_max = Some(self.observed_max.map_or(weight, |value| value.max(weight)));
+        if weight > active_envelope {
+            self.violations += 1;
+            let ratio = weight / active_envelope;
+            self.largest_violation_ratio = Some(
+                self.largest_violation_ratio
+                    .map_or(ratio, |value| value.max(ratio)),
+            );
+        }
+    }
+
+    pub(crate) fn update_final_max(&mut self, value: f64) {
+        if self.final_max != Some(value) {
+            self.updates += 1;
+        }
+        self.final_max = Some(value);
+    }
+}
+
 /// Generation mode.
 #[derive(Clone, Debug, Default)]
 pub enum GenerationMode {
@@ -305,7 +398,7 @@ pub enum GenerationMode {
         /// Free-parameter values passed to the expression evaluator.
         parameters: Vec<f64>,
         /// Fixed rejection envelope.
-        envelope: f64,
+        envelope: Envelope,
     },
 }
 
@@ -318,6 +411,8 @@ pub struct GenerationOptions {
     pub max_trials: Option<u64>,
     /// Optional run seed overriding the generator's seed.
     pub seed: Option<u64>,
+    /// Behavior when rejection sampling observes weights above the active envelope.
+    pub envelope_violation_policy: EnvelopeViolationPolicy,
 }
 
 impl Default for GenerationOptions {
@@ -326,6 +421,7 @@ impl Default for GenerationOptions {
             batch_size: 10_000,
             max_trials: None,
             seed: None,
+            envelope_violation_policy: EnvelopeViolationPolicy::Error,
         }
     }
 }
@@ -346,6 +442,12 @@ impl GenerationOptions {
     /// Set a run seed overriding the generator seed.
     pub fn seed(mut self, seed: impl Into<Option<u64>>) -> Self {
         self.seed = seed.into();
+        self
+    }
+
+    /// Set envelope-violation behavior for rejection sampling.
+    pub fn envelope_violation_policy(mut self, policy: EnvelopeViolationPolicy) -> Self {
+        self.envelope_violation_policy = policy;
         self
     }
 }
@@ -378,10 +480,8 @@ pub struct GenerationStats {
     pub rejected_events: u64,
     /// Acceptance rate for modes with rejection.
     pub acceptance_rate: Option<f64>,
-    /// Envelope used by rejection modes, when applicable.
-    pub envelope: Option<f64>,
-    /// Number of proposal weights that exceeded the active rejection envelope.
-    pub envelope_violations: u64,
+    /// Envelope statistics for rejection modes, when applicable.
+    pub envelope_stats: Option<EnvelopeStats>,
     /// Sum of output weights.
     pub sum_weights: f64,
     /// Minimum output weight.
@@ -397,6 +497,20 @@ pub struct GenerationStats {
 }
 
 impl GenerationStats {
+    /// Return the final rejection envelope, when applicable.
+    pub fn envelope(&self) -> Option<f64> {
+        self.envelope_stats
+            .as_ref()
+            .and_then(|stats| stats.final_max)
+    }
+
+    /// Return the number of rejection-envelope violations.
+    pub fn envelope_violations(&self) -> u64 {
+        self.envelope_stats
+            .as_ref()
+            .map_or(0, |stats| stats.violations)
+    }
+
     /// Return a concise human-readable audit report.
     pub fn audit(&self) -> String {
         let acceptance_rate = self
@@ -411,9 +525,13 @@ impl GenerationStats {
             self.accepted_events,
             self.rejected_events,
             acceptance_rate,
-            self.envelope
+            self.envelope_stats
+                .as_ref()
+                .and_then(|stats| stats.final_max)
                 .map_or_else(|| "n/a".to_string(), |value| format!("{value:.6}")),
-            self.envelope_violations,
+            self.envelope_stats
+                .as_ref()
+                .map_or(0, |stats| stats.violations),
             self.sum_weights,
             self.min_weight
                 .map_or_else(|| "n/a".to_string(), |value| format!("{value:.6}")),
