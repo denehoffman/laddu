@@ -1,13 +1,14 @@
 use std::{cell::RefCell, rc::Rc, sync::Arc};
 
-use laddu_core::{MassSampler, MomentumSource, VertexGenerator};
+use laddu_core::{LadduError, LadduResult, MassSampler, MomentumSource, VertexGenerator};
 use laddu_generation::{
     gen, DatasetSink, DecayParticlePlan, DecayPlan, Envelope, EnvelopeStats,
-    EnvelopeViolationPolicy, EventGenerator, GeneratedEvent, GenerationMode as RustGenerationMode,
-    GenerationOptions, GenerationOutput, GenerationPlan, GenerationResult, GenerationStats,
-    InitialParticlePlan, PlannedMass, ProductionPlan,
+    EnvelopeViolationPolicy, EventGenerator, GeneratedBatchView, GeneratedEvent, GeneratedLayout,
+    GeneratedSink, GenerationMode as RustGenerationMode, GenerationOptions, GenerationOutput,
+    GenerationPlan, GenerationResult, GenerationStats, InitialParticlePlan, PlannedMass,
+    ProductionPlan, SinkMpiSupport,
 };
-use pyo3::{exceptions::PyTypeError, prelude::*};
+use pyo3::{exceptions::PyTypeError, prelude::*, IntoPyObjectExt};
 
 use crate::{
     amplitudes::PyExpression, data::PyDataset, math::PyHistogram, variables::PyChannel,
@@ -246,6 +247,144 @@ impl PyDatasetSink {
     }
 }
 
+/// Trait for native Rust-backed sinks exposed through Python.
+pub trait PyGeneratedSinkImpl: 'static {
+    /// Called once before records are pushed.
+    fn begin(&mut self, _layout: &GeneratedLayout) -> LadduResult<()> {
+        Ok(())
+    }
+
+    /// Push one batch of generated records.
+    fn push_batch(&mut self, batch: GeneratedBatchView<'_>) -> LadduResult<()>;
+
+    /// Finish output and return the Python-facing result object.
+    fn finish(self: Box<Self>, py: Python<'_>) -> LadduResult<Py<PyAny>>;
+
+    /// Return this sink's MPI output support.
+    fn mpi_support(&self) -> SinkMpiSupport {
+        SinkMpiSupport::RankLocal
+    }
+}
+
+/// Type-erased native sink wrapper used by Python generation.
+#[pyclass(
+    name = "GeneratedSink",
+    module = "laddu",
+    skip_from_py_object,
+    unsendable
+)]
+pub struct PyGeneratedSink {
+    inner: Rc<RefCell<Option<Box<dyn PyGeneratedSinkImpl>>>>,
+}
+
+impl PyGeneratedSink {
+    /// Wrap a native sink adapter so Python can pass it to `EventGenerator.generate`.
+    pub fn new<S>(sink: S) -> Self
+    where
+        S: PyGeneratedSinkImpl,
+    {
+        Self {
+            inner: Rc::new(RefCell::new(Some(Box::new(sink)))),
+        }
+    }
+}
+
+#[pymethods]
+impl PyGeneratedSink {
+    fn __repr__(&self) -> String {
+        "GeneratedSink()".to_string()
+    }
+}
+
+struct DatasetPySink {
+    sink: DatasetSink,
+}
+
+impl PyGeneratedSinkImpl for DatasetPySink {
+    fn begin(&mut self, layout: &GeneratedLayout) -> LadduResult<()> {
+        self.sink.begin(layout)
+    }
+
+    fn push_batch(&mut self, batch: GeneratedBatchView<'_>) -> LadduResult<()> {
+        self.sink.push_batch(batch)
+    }
+
+    fn finish(self: Box<Self>, py: Python<'_>) -> LadduResult<Py<PyAny>> {
+        PyDataset(Arc::new(self.sink.finish()?))
+            .into_bound_py_any(py)
+            .map(|object| object.unbind())
+            .map_err(|err| LadduError::Custom(err.to_string()))
+    }
+
+    fn mpi_support(&self) -> SinkMpiSupport {
+        self.sink.mpi_support()
+    }
+}
+
+struct AnyPySink {
+    inner: Rc<RefCell<Option<Box<dyn PyGeneratedSinkImpl>>>>,
+}
+
+impl GeneratedSink for AnyPySink {
+    type Output = Py<PyAny>;
+
+    fn begin(&mut self, layout: &GeneratedLayout) -> LadduResult<()> {
+        let mut inner = self.inner.borrow_mut();
+        inner
+            .as_mut()
+            .ok_or_else(|| LadduError::Custom("generated sink has already finished".to_string()))?
+            .begin(layout)
+    }
+
+    fn push_batch(&mut self, batch: GeneratedBatchView<'_>) -> LadduResult<()> {
+        let mut inner = self.inner.borrow_mut();
+        inner
+            .as_mut()
+            .ok_or_else(|| LadduError::Custom("generated sink has already finished".to_string()))?
+            .push_batch(batch)
+    }
+
+    fn finish(self) -> LadduResult<Self::Output> {
+        let inner =
+            self.inner.borrow_mut().take().ok_or_else(|| {
+                LadduError::Custom("generated sink has already finished".to_string())
+            })?;
+        Python::attach(|py| inner.finish(py))
+    }
+
+    fn mpi_support(&self) -> SinkMpiSupport {
+        let inner = self.inner.borrow();
+        inner
+            .as_ref()
+            .map_or(SinkMpiSupport::RankLocal, |sink| sink.mpi_support())
+    }
+}
+
+fn py_generated_sink_arg(sink: &Bound<'_, PyAny>) -> PyResult<AnyPySink> {
+    if let Ok(dataset_sink) = sink.extract::<PyDatasetSink>() {
+        return Ok(AnyPySink {
+            inner: PyGeneratedSink::new(DatasetPySink {
+                sink: dataset_sink.0,
+            })
+            .inner,
+        });
+    }
+    if let Ok(native_sink) = sink.extract::<PyRef<'_, PyGeneratedSink>>() {
+        return Ok(AnyPySink {
+            inner: Rc::clone(&native_sink.inner),
+        });
+    }
+    if let Ok(method) = sink.getattr("__laddu_sink__") {
+        let native_sink = method.call0()?.extract::<PyRef<'_, PyGeneratedSink>>()?;
+        return Ok(AnyPySink {
+            inner: Rc::clone(&native_sink.inner),
+        });
+    }
+    Err(PyTypeError::new_err(
+        "expected sink to be a DatasetSink, GeneratedSink, or object with __laddu_sink__()",
+    ))
+}
+
 #[pyclass(name = "EnvelopeStats", module = "laddu", skip_from_py_object)]
 #[derive(Clone)]
 pub struct PyEnvelopeStats(pub EnvelopeStats);
@@ -368,20 +507,13 @@ impl PyGenerationStats {
 }
 
 #[pyclass(name = "GenerationResult", module = "laddu", skip_from_py_object)]
-#[derive(Clone)]
-pub struct PyGenerationResult(pub GenerationResult<laddu_core::Dataset>);
-
-impl From<GenerationResult<laddu_core::Dataset>> for PyGenerationResult {
-    fn from(result: GenerationResult<laddu_core::Dataset>) -> Self {
-        Self(result)
-    }
-}
+pub struct PyGenerationResult(pub GenerationResult<Py<PyAny>>);
 
 #[pymethods]
 impl PyGenerationResult {
     #[getter]
-    fn output(&self) -> PyDataset {
-        PyDataset(Arc::new(self.0.output.clone()))
+    fn output(&self) -> Py<PyAny> {
+        Python::attach(|py| self.0.output.clone_ref(py))
     }
 
     #[getter]
@@ -652,16 +784,19 @@ impl PyEventGenerator {
     fn generate(
         &self,
         target_events: usize,
-        sink: &PyDatasetSink,
+        sink: &Bound<'_, PyAny>,
         mode: Option<&PyGenerationMode>,
         options: Option<&PyGenerationOptions>,
     ) -> PyResult<PyGenerationResult> {
         let mode = mode.map(|mode| mode.0.clone()).unwrap_or_default();
         let options = options.map(|options| options.0.clone()).unwrap_or_default();
-        Ok(self
-            .generator
-            .generate(target_events, sink.0.clone(), mode, options)?
-            .into())
+        let sink = py_generated_sink_arg(sink)?;
+        Ok(PyGenerationResult(self.generator.generate(
+            target_events,
+            sink,
+            mode,
+            options,
+        )?))
     }
 
     fn __repr__(&self) -> String {

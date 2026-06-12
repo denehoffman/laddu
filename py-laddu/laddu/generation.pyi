@@ -1,3 +1,5 @@
+from typing import overload
+
 from laddu.amplitude import Expression
 from laddu.data import Dataset
 from laddu.reaction import Channel
@@ -54,6 +56,8 @@ class GenerationOptions:
 class DatasetSink:
     def __init__(self, *, output: GenerationOutput | None = None) -> None: ...
 
+class GeneratedSink: ...
+
 class EnvelopeStats:
     configured_max: float | None
     observed_max: float | None
@@ -79,8 +83,11 @@ class GenerationStats:
     def audit(self) -> str: ...
 
 class GenerationResult:
-    output: Dataset
+    output: object
     stats: GenerationStats
+
+class DatasetGenerationResult(GenerationResult):
+    output: Dataset
 
 class PlannedMass:
     kind: str
@@ -126,10 +133,20 @@ class EventGenerator:
     def with_seed(self, seed: int) -> EventGenerator: ...
     def p4_labels(self) -> list[str]: ...
     def generate_event(self) -> GeneratedEvent: ...
+    @overload
     def generate(
         self,
         target_events: int,
         sink: DatasetSink,
+        *,
+        mode: GenerationMode | None = None,
+        options: GenerationOptions | None = None,
+    ) -> DatasetGenerationResult: ...
+    @overload
+    def generate(
+        self,
+        target_events: int,
+        sink: GeneratedSink,
         *,
         mode: GenerationMode | None = None,
         options: GenerationOptions | None = None,
@@ -144,6 +161,7 @@ __all__ = [
     'EnvelopeViolationPolicy',
     'EventGenerator',
     'GeneratedEvent',
+    'GeneratedSink',
     'GenerationMode',
     'GenerationOptions',
     'GenerationOutput',

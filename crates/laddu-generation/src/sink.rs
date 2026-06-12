@@ -285,6 +285,53 @@ impl GeneratedSink for NullSink {
     }
 }
 
+/// Sink that forwards each generated batch to a Rust callback.
+pub struct CallbackSink<F> {
+    callback: F,
+    count: usize,
+    mpi_support: SinkMpiSupport,
+}
+
+impl<F> CallbackSink<F>
+where
+    for<'a> F: FnMut(GeneratedBatchView<'a>) -> LadduResult<()>,
+{
+    /// Construct a callback sink.
+    pub fn new(callback: F) -> Self {
+        Self {
+            callback,
+            count: 0,
+            mpi_support: SinkMpiSupport::RankLocal,
+        }
+    }
+
+    /// Set this sink's MPI output support.
+    pub fn mpi_support(mut self, support: SinkMpiSupport) -> Self {
+        self.mpi_support = support;
+        self
+    }
+}
+
+impl<F> GeneratedSink for CallbackSink<F>
+where
+    for<'a> F: FnMut(GeneratedBatchView<'a>) -> LadduResult<()>,
+{
+    type Output = usize;
+
+    fn push_batch(&mut self, batch: GeneratedBatchView<'_>) -> LadduResult<()> {
+        self.count += batch.records.len();
+        (self.callback)(batch)
+    }
+
+    fn finish(self) -> LadduResult<Self::Output> {
+        Ok(self.count)
+    }
+
+    fn mpi_support(&self) -> SinkMpiSupport {
+        self.mpi_support
+    }
+}
+
 /// Rejection-envelope configuration.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Envelope {
@@ -391,7 +438,7 @@ pub enum GenerationMode {
         /// Free-parameter values passed to the expression evaluator.
         parameters: Vec<f64>,
     },
-    /// Rejection sample proposal events using a fixed envelope.
+    /// Rejection sample proposal events using a configured initial envelope.
     Accepted {
         /// Expression evaluated on generated proposal events.
         expression: Box<laddu_core::Expression>,

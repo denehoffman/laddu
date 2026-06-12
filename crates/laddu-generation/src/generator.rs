@@ -812,7 +812,7 @@ mod tests {
     use laddu_core::{Channel, Expression, ParticleProperties, VertexGenerator};
 
     use super::*;
-    use crate::{DatasetSink, NullSink};
+    use crate::{CallbackSink, DatasetSink, NullSink};
 
     fn demo_generator() -> EventGenerator {
         let mut channel = Channel::new();
@@ -943,6 +943,42 @@ mod tests {
         assert_eq!(result.output, 5);
         assert_eq!(result.stats.batches_written, 2);
         assert_eq!(result.stats.accepted_events, 5);
+    }
+
+    #[test]
+    fn callback_sink_receives_generated_batches() {
+        let generator = demo_generator();
+        let mut labels = Vec::new();
+        let mut batch_sizes = Vec::new();
+        let result = generator
+            .generate(
+                5,
+                CallbackSink::new(|batch| {
+                    labels = batch.layout.labels();
+                    batch_sizes.push(batch.records.len());
+                    Ok(())
+                }),
+                GenerationMode::Raw,
+                GenerationOptions::default().batch_size(2),
+            )
+            .unwrap();
+        assert_eq!(result.output, 5);
+        assert_eq!(batch_sizes, [2, 2, 1]);
+        assert_eq!(labels, ["beam", "target", "res", "a", "b", "recoil"]);
+    }
+
+    #[test]
+    fn callback_sink_errors_are_propagated() {
+        let generator = demo_generator();
+        let err = generator
+            .generate(
+                1,
+                CallbackSink::new(|_| Err(LadduError::Custom("callback failed".to_string()))),
+                GenerationMode::Raw,
+                GenerationOptions::default(),
+            )
+            .unwrap_err();
+        assert!(err.to_string().contains("callback failed"));
     }
 
     #[test]
