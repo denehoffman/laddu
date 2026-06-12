@@ -5,13 +5,20 @@ use laddu_generation::{
     gen, DatasetSink, DecayParticlePlan, DecayPlan, Envelope, EnvelopeStats,
     EnvelopeViolationPolicy, EventGenerator, GeneratedBatchView, GeneratedEvent, GeneratedLayout,
     GeneratedSink, GenerationMode as RustGenerationMode, GenerationOptions, GenerationOutput,
-    GenerationPlan, GenerationResult, GenerationStats, InitialParticlePlan, PlannedMass,
-    ProductionPlan, SinkMpiSupport,
+    GenerationPlan, GenerationResult, GenerationStats, InitialParticlePlan, ParquetSink,
+    PlannedMass, ProductionPlan, RootSink, SinkMpiSupport,
 };
-use pyo3::{exceptions::PyTypeError, prelude::*, IntoPyObjectExt};
+use pyo3::{
+    exceptions::{PyRuntimeError, PyTypeError},
+    prelude::*,
+    IntoPyObjectExt,
+};
 
 use crate::{
-    amplitudes::PyExpression, data::PyDataset, math::PyHistogram, variables::PyChannel,
+    amplitudes::PyExpression,
+    data::{dataset_write_options, PyDataset},
+    math::PyHistogram,
+    variables::PyChannel,
     vectors::PyVec4,
 };
 
@@ -249,6 +256,127 @@ impl PyDatasetSink {
 
     fn __repr__(&self) -> String {
         format!("{:?}", self.0)
+    }
+}
+
+impl PyGeneratedSinkImpl for ParquetSink {
+    fn begin(&mut self, layout: &GeneratedLayout) -> LadduResult<()> {
+        GeneratedSink::begin(self, layout)
+    }
+
+    fn push_batch(&mut self, batch: GeneratedBatchView<'_>) -> LadduResult<()> {
+        GeneratedSink::push_batch(self, batch)
+    }
+
+    fn finish(self: Box<Self>, py: Python<'_>) -> LadduResult<Py<PyAny>> {
+        GeneratedSink::finish(*self).and_then(|count| {
+            count
+                .into_bound_py_any(py)
+                .map(|object| object.unbind())
+                .map_err(|err| LadduError::Custom(err.to_string()))
+        })
+    }
+
+    fn mpi_support(&self) -> SinkMpiSupport {
+        GeneratedSink::mpi_support(self)
+    }
+}
+
+impl PyGeneratedSinkImpl for RootSink {
+    fn begin(&mut self, layout: &GeneratedLayout) -> LadduResult<()> {
+        GeneratedSink::begin(self, layout)
+    }
+
+    fn push_batch(&mut self, batch: GeneratedBatchView<'_>) -> LadduResult<()> {
+        GeneratedSink::push_batch(self, batch)
+    }
+
+    fn finish(self: Box<Self>, py: Python<'_>) -> LadduResult<Py<PyAny>> {
+        GeneratedSink::finish(*self).and_then(|count| {
+            count
+                .into_bound_py_any(py)
+                .map(|object| object.unbind())
+                .map_err(|err| LadduError::Custom(err.to_string()))
+        })
+    }
+
+    fn mpi_support(&self) -> SinkMpiSupport {
+        GeneratedSink::mpi_support(self)
+    }
+}
+
+#[pyclass(name = "ParquetSink", module = "laddu", unsendable)]
+pub struct PyParquetSink {
+    sink: Rc<RefCell<Option<ParquetSink>>>,
+}
+
+#[pymethods]
+impl PyParquetSink {
+    #[new]
+    #[pyo3(signature=(path, *, output=None, batch_size=10_000, precision=None))]
+    fn new(
+        path: String,
+        output: Option<&PyGenerationOutput>,
+        batch_size: usize,
+        precision: Option<&str>,
+    ) -> PyResult<Self> {
+        let mut sink = ParquetSink::with_options(
+            &path,
+            dataset_write_options(Some(batch_size), precision, None)?,
+        )?;
+        if let Some(output) = output {
+            sink = sink.output(output.0.clone());
+        }
+        Ok(Self {
+            sink: Rc::new(RefCell::new(Some(sink))),
+        })
+    }
+
+    fn __laddu_sink__(&self) -> PyResult<PyGeneratedSink> {
+        let sink = self
+            .sink
+            .borrow_mut()
+            .take()
+            .ok_or_else(|| PyRuntimeError::new_err("ParquetSink has already been used"))?;
+        Ok(PyGeneratedSink::new(sink))
+    }
+}
+
+#[pyclass(name = "RootSink", module = "laddu", unsendable)]
+pub struct PyRootSink {
+    sink: Rc<RefCell<Option<RootSink>>>,
+}
+
+#[pymethods]
+impl PyRootSink {
+    #[new]
+    #[pyo3(signature=(path, *, output=None, batch_size=10_000, precision=None, tree=None))]
+    fn new(
+        path: String,
+        output: Option<&PyGenerationOutput>,
+        batch_size: usize,
+        precision: Option<&str>,
+        tree: Option<String>,
+    ) -> PyResult<Self> {
+        let mut sink = RootSink::with_options(
+            path,
+            dataset_write_options(Some(batch_size), precision, tree)?,
+        );
+        if let Some(output) = output {
+            sink = sink.output(output.0.clone());
+        }
+        Ok(Self {
+            sink: Rc::new(RefCell::new(Some(sink))),
+        })
+    }
+
+    fn __laddu_sink__(&self) -> PyResult<PyGeneratedSink> {
+        let sink = self
+            .sink
+            .borrow_mut()
+            .take()
+            .ok_or_else(|| PyRuntimeError::new_err("RootSink has already been used"))?;
+        Ok(PyGeneratedSink::new(sink))
     }
 }
 

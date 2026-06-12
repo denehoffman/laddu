@@ -66,7 +66,7 @@ fn parse_dataset_path(path: Bound<'_, PyAny>) -> PyResult<String> {
     }
 }
 
-fn parse_precision_arg(value: Option<&str>) -> PyResult<FloatPrecision> {
+pub(crate) fn parse_precision_arg(value: Option<&str>) -> PyResult<FloatPrecision> {
     match value.map(|v| v.to_ascii_lowercase()) {
         None => Ok(FloatPrecision::F64),
         Some(name) if name == "f64" || name == "float64" || name == "double" => {
@@ -79,6 +79,20 @@ fn parse_precision_arg(value: Option<&str>) -> PyResult<FloatPrecision> {
             "Unsupported precision '{other}' (expected 'f64' or 'f32')"
         ))),
     }
+}
+
+pub(crate) fn dataset_write_options(
+    chunk_size: Option<usize>,
+    precision: Option<&str>,
+    tree: Option<String>,
+) -> PyResult<DatasetWriteOptions> {
+    let mut write_options = DatasetWriteOptions::default();
+    if let Some(size) = chunk_size {
+        write_options.batch_size = size.max(1);
+    }
+    write_options.precision = parse_precision_arg(precision)?;
+    write_options.tree = tree;
+    Ok(write_options)
 }
 
 fn extract_numeric_column(value: Bound<'_, PyAny>, name: &str) -> PyResult<Vec<f64>> {
@@ -1328,11 +1342,7 @@ pub fn write_parquet(
     precision: &str,
 ) -> PyResult<()> {
     let path_str = parse_dataset_path(path)?;
-    let mut write_options = DatasetWriteOptions::default();
-    if let Some(size) = chunk_size {
-        write_options.batch_size = size.max(1);
-    }
-    write_options.precision = parse_precision_arg(Some(precision))?;
+    let write_options = dataset_write_options(chunk_size, Some(precision), None)?;
     core_write_parquet(dataset.0.as_ref(), &path_str, &write_options).map_err(PyErr::from)
 }
 
@@ -1345,11 +1355,7 @@ pub fn open_parquet_writer(
     precision: &str,
 ) -> PyResult<PyParquetBatchWriter> {
     let path_str = parse_dataset_path(path)?;
-    let mut write_options = DatasetWriteOptions::default();
-    if let Some(size) = chunk_size {
-        write_options.batch_size = size.max(1);
-    }
-    write_options.precision = parse_precision_arg(Some(precision))?;
+    let write_options = dataset_write_options(chunk_size, Some(precision), None)?;
     Ok(PyParquetBatchWriter::new(ParquetBatchWriter::new(
         &path_str,
         write_options,
@@ -1367,14 +1373,7 @@ pub fn write_root(
     precision: &str,
 ) -> PyResult<()> {
     let path_str = parse_dataset_path(path)?;
-    let mut write_options = DatasetWriteOptions::default();
-    if let Some(name) = tree {
-        write_options.tree = Some(name);
-    }
-    if let Some(size) = chunk_size {
-        write_options.batch_size = size.max(1);
-    }
-    write_options.precision = parse_precision_arg(Some(precision))?;
+    let write_options = dataset_write_options(chunk_size, Some(precision), tree)?;
     core_write_root(dataset.0.as_ref(), &path_str, &write_options).map_err(PyErr::from)
 }
 

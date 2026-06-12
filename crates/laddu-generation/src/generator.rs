@@ -957,10 +957,26 @@ fn direction_from_angles(costheta: f64, phi: f64) -> Vec3 {
 
 #[cfg(test)]
 mod tests {
-    use laddu_core::{Channel, Expression, ParticleProperties, VertexGenerator};
+    use laddu_core::{
+        data::{read_parquet, read_root, DatasetReadOptions},
+        Channel, Expression, ParticleProperties, VertexGenerator,
+    };
 
     use super::*;
-    use crate::{CallbackSink, DatasetSink, NullSink};
+    use crate::{CallbackSink, DatasetSink, NullSink, ParquetSink, RootSink};
+
+    fn temp_output_path(extension: &str) -> String {
+        let name = format!(
+            "laddu-generation-test-{}-{}.{}",
+            std::process::id(),
+            fastrand::u64(..),
+            extension
+        );
+        std::env::temp_dir()
+            .join(name)
+            .to_string_lossy()
+            .into_owned()
+    }
 
     fn demo_generator() -> EventGenerator {
         let mut channel = Channel::new();
@@ -1127,6 +1143,47 @@ mod tests {
             )
             .unwrap_err();
         assert!(err.to_string().contains("callback failed"));
+    }
+
+    #[test]
+    fn parquet_sink_writes_generated_records() {
+        let generator = demo_generator();
+        let path = temp_output_path("parquet");
+        let result = generator
+            .generate(
+                3,
+                ParquetSink::new(&path).unwrap(),
+                GenerationMode::Raw,
+                GenerationOptions::default().batch_size(2),
+            )
+            .unwrap();
+        assert_eq!(result.output, 3);
+        let dataset = read_parquet(&path, &DatasetReadOptions::default()).unwrap();
+        assert_eq!(dataset.n_events(), 3);
+        assert_eq!(
+            dataset.p4_names(),
+            ["beam", "target", "res", "a", "b", "recoil"]
+        );
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn root_sink_writes_selected_generated_records() {
+        let generator = demo_generator();
+        let path = temp_output_path("root");
+        let result = generator
+            .generate(
+                3,
+                RootSink::new(&path).output(crate::GenerationOutput::final_state()),
+                GenerationMode::Raw,
+                GenerationOptions::default().batch_size(2),
+            )
+            .unwrap();
+        assert_eq!(result.output, 3);
+        let dataset = read_root(&path, &DatasetReadOptions::default()).unwrap();
+        assert_eq!(dataset.n_events(), 3);
+        assert_eq!(dataset.p4_names(), ["a", "b", "recoil"]);
+        let _ = std::fs::remove_file(path);
     }
 
     #[test]

@@ -1,4 +1,7 @@
+from pathlib import Path
+
 import laddu as ld
+import laddu.io as ldio
 import numpy as np
 import pytest
 from laddu import generation
@@ -120,6 +123,35 @@ def test_dataset_sink_output_selection() -> None:
         generation.DatasetSink(output=generation.GenerationOutput.exclude(['kk'])),
     ).output
     assert exclude.p4_names == ['beam', 'target', 'kshort1', 'kshort2', 'recoil']
+
+
+def test_generation_file_sinks(tmp_path: Path) -> None:
+    channel = make_generation_channel()
+    generator = generation.EventGenerator(channel, seed=12345)
+
+    parquet_path = tmp_path / 'generated.parquet'
+    parquet_result = generator.generate(
+        3,
+        generation.ParquetSink(str(parquet_path), batch_size=2),
+    )
+    assert parquet_result.output == 3
+    parquet = ldio.read_parquet(parquet_path)
+    assert parquet.n_events == 3
+    assert parquet.p4_names == ['beam', 'target', 'kk', 'kshort1', 'kshort2', 'recoil']
+
+    root_path = tmp_path / 'generated.root'
+    root_result = generator.generate(
+        3,
+        generation.RootSink(
+            str(root_path),
+            output=generation.GenerationOutput.final_state(),
+            batch_size=2,
+        ),
+    )
+    assert root_result.output == 3
+    root = ldio.read_root(root_path)
+    assert root.n_events == 3
+    assert root.p4_names == ['kshort1', 'kshort2', 'recoil']
 
 
 def test_weighted_generation_mode() -> None:

@@ -58,6 +58,27 @@ class GenerationOptions:
 class DatasetSink:
     def __init__(self, *, output: GenerationOutput | None = None) -> None: ...
 
+class ParquetSink:
+    def __init__(
+        self,
+        path: str,
+        *,
+        output: GenerationOutput | None = None,
+        batch_size: int = 10_000,
+        precision: str | None = None,
+    ) -> None: ...
+
+class RootSink:
+    def __init__(
+        self,
+        path: str,
+        *,
+        output: GenerationOutput | None = None,
+        batch_size: int = 10_000,
+        precision: str | None = None,
+        tree: str | None = None,
+    ) -> None: ...
+
 class GeneratedSink: ...
 
 class EnvelopeStats:
@@ -156,6 +177,15 @@ class EventGenerator:
         mode: GenerationMode | None = None,
         options: GenerationOptions | None = None,
     ) -> GenerationResult: ...
+    @overload
+    def generate(
+        self,
+        target_events: int,
+        sink: ParquetSink | RootSink,
+        *,
+        mode: GenerationMode | None = None,
+        options: GenerationOptions | None = None,
+    ) -> GenerationResult: ...
 
 __all__ = [
     'DatasetSink',
@@ -176,7 +206,9 @@ __all__ = [
     'InitialParticlePlan',
     'MassSampler',
     'MomentumSource',
+    'ParquetSink',
     'PlannedMass',
     'ProductionPlan',
+    'RootSink',
     'VertexGenerator',
 ]

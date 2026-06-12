@@ -92,8 +92,10 @@ from laddu.generation import (
     InitialParticlePlan,
     MassSampler,
     MomentumSource,
+    ParquetSink,
     PlannedMass,
     ProductionPlan,
+    RootSink,
     VertexGenerator,
 )
 from laddu.likelihood import (
@@ -241,6 +243,7 @@ __all__ = [
     'Parity',
     'ParquetBatchWriter',
     'ParquetChunkIter',
+    'ParquetSink',
     'PartialWave',
     'Particle',
     'ParticleProperties',
@@ -257,6 +260,7 @@ __all__ = [
     'ProductionPlan',
     'Reflectivity',
     'Regularizer',
+    'RootSink',
     'RuleSet',
     'S',
     'Scalar',

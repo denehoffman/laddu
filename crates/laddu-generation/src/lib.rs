@@ -127,5 +127,6 @@ pub use sink::{
     CallbackSink, DatasetSink, Envelope, EnvelopeStats, EnvelopeViolationPolicy,
     GeneratedBatchView, GeneratedLayout, GeneratedParticleInfo, GeneratedParticleRole,
     GeneratedRecord, GeneratedSink, GenerationMode, GenerationModeKind, GenerationOptions,
-    GenerationOutput, GenerationResult, GenerationStats, NullSink, SinkMpiSupport,
+    GenerationOutput, GenerationResult, GenerationStats, NullSink, ParquetSink, RootSink,
+    SinkMpiSupport,
 };

@@ -89,8 +89,10 @@ from .generation import (
     InitialParticlePlan,
     MassSampler,
     MomentumSource,
+    ParquetSink,
     PlannedMass,
     ProductionPlan,
+    RootSink,
     VertexGenerator,
 )
 from .likelihood import (
@@ -270,6 +272,7 @@ __all__ = [
     'Parameter',
     'ParameterMap',
     'Parity',
+    'ParquetSink',
     'PartialWave',
     'Particle',
     'ParticleProperties',
@@ -285,6 +288,7 @@ __all__ = [
     'Polarization',
     'ProductionPlan',
     'Reflectivity',
+    'RootSink',
     'RuleSet',
     'S',
     'Scalar',

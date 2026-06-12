@@ -19,8 +19,10 @@ from laddu.laddu import (
     InitialParticlePlan,
     MassSampler,
     MomentumSource,
+    ParquetSink,
     PlannedMass,
     ProductionPlan,
+    RootSink,
     VertexGenerator,
 )
 
@@ -43,7 +45,9 @@ __all__ = [
     'InitialParticlePlan',
     'MassSampler',
     'MomentumSource',
+    'ParquetSink',
     'PlannedMass',
     'ProductionPlan',
+    'RootSink',
     'VertexGenerator',
 ]

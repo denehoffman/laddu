@@ -1,7 +1,10 @@
 use std::{sync::Arc, time::Duration};
 
 use laddu_core::{
-    data::{Dataset, DatasetMetadata, EventData},
+    data::{
+        io::ParquetBatchWriter, write_root, Dataset, DatasetMetadata, DatasetWriteOptions,
+        EventData,
+    },
     vectors::Vec4,
     LadduError, LadduResult, ParticleProperties,
 };
@@ -256,6 +259,170 @@ impl GeneratedSink for DatasetSink {
             LadduError::Custom("dataset sink was not initialized before finish".to_string())
         })?;
         Ok(Dataset::new_with_metadata(self.events, metadata))
+    }
+}
+
+fn selected_p4_indices(layout: &GeneratedLayout, output: &GenerationOutput) -> Vec<usize> {
+    layout
+        .particles()
+        .iter()
+        .enumerate()
+        .filter_map(|(index, particle)| output.includes(particle).then_some(index))
+        .collect()
+}
+
+fn metadata_for_indices(
+    layout: &GeneratedLayout,
+    p4_indices: &[usize],
+) -> LadduResult<Arc<DatasetMetadata>> {
+    let labels = p4_indices
+        .iter()
+        .map(|index| layout.particles()[*index].label.clone())
+        .collect();
+    Ok(Arc::new(DatasetMetadata::new(
+        labels,
+        Vec::<String>::new(),
+    )?))
+}
+
+fn records_to_dataset(
+    records: &[GeneratedRecord],
+    p4_indices: &[usize],
+    metadata: Arc<DatasetMetadata>,
+) -> Dataset {
+    let events = records
+        .iter()
+        .map(|record| {
+            let p4s = p4_indices.iter().map(|index| record.p4s[*index]).collect();
+            Arc::new(EventData {
+                p4s,
+                aux: Vec::new(),
+                weight: record.weight,
+            })
+        })
+        .collect();
+    Dataset::new_local(events, metadata)
+}
+
+/// Sink that streams generated records directly to a Parquet file.
+pub struct ParquetSink {
+    writer: ParquetBatchWriter,
+    output: GenerationOutput,
+    metadata: Option<Arc<DatasetMetadata>>,
+    p4_indices: Vec<usize>,
+    count: usize,
+}
+
+impl ParquetSink {
+    /// Construct a Parquet sink with default write options.
+    pub fn new(file_path: &str) -> LadduResult<Self> {
+        Self::with_options(file_path, DatasetWriteOptions::default())
+    }
+
+    /// Construct a Parquet sink with explicit write options.
+    pub fn with_options(file_path: &str, options: DatasetWriteOptions) -> LadduResult<Self> {
+        Ok(Self {
+            writer: ParquetBatchWriter::new(file_path, options)?,
+            output: GenerationOutput::default(),
+            metadata: None,
+            p4_indices: Vec::new(),
+            count: 0,
+        })
+    }
+
+    /// Set which generated particles should appear in the output file.
+    pub fn output(mut self, output: GenerationOutput) -> Self {
+        self.output = output;
+        self
+    }
+}
+
+impl GeneratedSink for ParquetSink {
+    type Output = usize;
+
+    fn begin(&mut self, layout: &GeneratedLayout) -> LadduResult<()> {
+        self.p4_indices = selected_p4_indices(layout, &self.output);
+        self.metadata = Some(metadata_for_indices(layout, &self.p4_indices)?);
+        Ok(())
+    }
+
+    fn push_batch(&mut self, batch: GeneratedBatchView<'_>) -> LadduResult<()> {
+        if self.metadata.is_none() {
+            self.begin(batch.layout)?;
+        }
+        let metadata = self.metadata.as_ref().expect("metadata set above").clone();
+        let dataset = records_to_dataset(batch.records, &self.p4_indices, metadata);
+        self.writer.write(&dataset)?;
+        self.count += batch.records.len();
+        Ok(())
+    }
+
+    fn finish(mut self) -> LadduResult<Self::Output> {
+        self.writer.close()?;
+        Ok(self.count)
+    }
+}
+
+/// Sink that writes generated records to a ROOT file on finish.
+pub struct RootSink {
+    file_path: String,
+    options: DatasetWriteOptions,
+    output: GenerationOutput,
+    metadata: Option<Arc<DatasetMetadata>>,
+    p4_indices: Vec<usize>,
+    records: Vec<GeneratedRecord>,
+}
+
+impl RootSink {
+    /// Construct a ROOT sink with default write options.
+    pub fn new(file_path: impl Into<String>) -> Self {
+        Self::with_options(file_path, DatasetWriteOptions::default())
+    }
+
+    /// Construct a ROOT sink with explicit write options.
+    pub fn with_options(file_path: impl Into<String>, options: DatasetWriteOptions) -> Self {
+        Self {
+            file_path: file_path.into(),
+            options,
+            output: GenerationOutput::default(),
+            metadata: None,
+            p4_indices: Vec::new(),
+            records: Vec::new(),
+        }
+    }
+
+    /// Set which generated particles should appear in the output file.
+    pub fn output(mut self, output: GenerationOutput) -> Self {
+        self.output = output;
+        self
+    }
+}
+
+impl GeneratedSink for RootSink {
+    type Output = usize;
+
+    fn begin(&mut self, layout: &GeneratedLayout) -> LadduResult<()> {
+        self.p4_indices = selected_p4_indices(layout, &self.output);
+        self.metadata = Some(metadata_for_indices(layout, &self.p4_indices)?);
+        Ok(())
+    }
+
+    fn push_batch(&mut self, batch: GeneratedBatchView<'_>) -> LadduResult<()> {
+        if self.metadata.is_none() {
+            self.begin(batch.layout)?;
+        }
+        self.records.extend_from_slice(batch.records);
+        Ok(())
+    }
+
+    fn finish(self) -> LadduResult<Self::Output> {
+        let count = self.records.len();
+        let metadata = self.metadata.ok_or_else(|| {
+            LadduError::Custom("root sink was not initialized before finish".to_string())
+        })?;
+        let dataset = records_to_dataset(&self.records, &self.p4_indices, metadata);
+        write_root(&dataset, &self.file_path, &self.options)?;
+        Ok(count)
     }
 }
 
