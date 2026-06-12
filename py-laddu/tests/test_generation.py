@@ -144,6 +144,28 @@ def test_weighted_generation_mode() -> None:
     assert [event.weight for event in result.output.events_global] == [2.5] * 4
 
 
+def test_accepted_generation_mode() -> None:
+    channel = make_generation_channel()
+    generator = generation.EventGenerator(channel, seed=12345)
+    weight = ld.Scalar('weight', value=ld.parameter('weight', 1.0))
+
+    result = generator.generate(
+        4,
+        generation.DatasetSink(),
+        mode=generation.GenerationMode.accepted(weight, [], envelope=1.0),
+        options=generation.GenerationOptions(batch_size=2),
+    )
+
+    assert result.stats.written_events == 4
+    assert result.stats.proposed_events == 4
+    assert result.stats.accepted_events == 4
+    assert result.stats.rejected_events == 0
+    assert result.stats.acceptance_rate == 1.0
+    assert result.stats.envelope == 1.0
+    assert result.stats.envelope_violations == 0
+    assert [event.weight for event in result.output.events_global] == [1.0] * 4
+
+
 def test_histogram_generation_annotations() -> None:
     channel = make_generation_channel()
     histogram = ld.Histogram([1.1, 1.3, 1.6], [1.0, 2.0])

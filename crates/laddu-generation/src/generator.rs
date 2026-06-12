@@ -100,6 +100,18 @@ impl EventGenerator {
                 expression,
                 parameters,
             } => self.generate_weighted(target_events, sink, options, *expression, parameters),
+            GenerationMode::Accepted {
+                expression,
+                parameters,
+                envelope,
+            } => self.generate_accepted(
+                target_events,
+                sink,
+                options,
+                *expression,
+                parameters,
+                envelope,
+            ),
         }
     }
 
@@ -241,6 +253,107 @@ impl EventGenerator {
         })
     }
 
+    fn generate_accepted<S>(
+        &self,
+        target_events: usize,
+        mut sink: S,
+        options: GenerationOptions,
+        expression: Expression,
+        parameters: Vec<f64>,
+        envelope: f64,
+    ) -> LadduResult<GenerationResult<S::Output>>
+    where
+        S: GeneratedSink,
+    {
+        if !envelope.is_finite() || envelope <= 0.0 {
+            return Err(LadduError::Custom(format!(
+                "rejection envelope must be finite and positive, got {envelope}"
+            )));
+        }
+        let started = Instant::now();
+        let layout = generated_layout(&self.plan);
+        sink.begin(&layout)?;
+        let mut rng = self.rng_with_options(&options);
+        let mut proposal_batch = Vec::with_capacity(options.batch_size);
+        let mut accepted_batch = Vec::with_capacity(options.batch_size.min(target_events));
+        let mut stats = WeightStats::default();
+        let mut proposed_events = 0_u64;
+        let mut accepted_events = 0_u64;
+        let mut rejected_events = 0_u64;
+        let mut envelope_violations = 0_u64;
+        let max_trials = options.max_trials.unwrap_or(u64::MAX);
+
+        while accepted_events < target_events as u64 {
+            if proposed_events >= max_trials {
+                return Err(LadduError::Custom(format!(
+                    "accepted generation reached max_trials {max_trials} before writing {target_events} accepted events"
+                )));
+            }
+            let event = self.generate_event(&mut rng)?;
+            proposal_batch.push(self.record_from_event(proposed_events, event, 1.0)?);
+            proposed_events += 1;
+            if proposal_batch.len() == options.batch_size {
+                AcceptedBatchContext {
+                    layout: &layout,
+                    expression: &expression,
+                    parameters: &parameters,
+                    envelope,
+                    rng: &mut rng,
+                    accepted_batch: &mut accepted_batch,
+                    stats: &mut stats,
+                    accepted_events: &mut accepted_events,
+                    rejected_events: &mut rejected_events,
+                    envelope_violations: &mut envelope_violations,
+                    target_events: target_events as u64,
+                    sink: &mut sink,
+                }
+                .accept_weighted_batch(&mut proposal_batch)?;
+            }
+        }
+        if !proposal_batch.is_empty() {
+            AcceptedBatchContext {
+                layout: &layout,
+                expression: &expression,
+                parameters: &parameters,
+                envelope,
+                rng: &mut rng,
+                accepted_batch: &mut accepted_batch,
+                stats: &mut stats,
+                accepted_events: &mut accepted_events,
+                rejected_events: &mut rejected_events,
+                envelope_violations: &mut envelope_violations,
+                target_events: target_events as u64,
+                sink: &mut sink,
+            }
+            .accept_weighted_batch(&mut proposal_batch)?;
+        }
+        flush_records(&layout, &mut accepted_batch, &mut sink, &mut stats)?;
+
+        let output = sink.finish()?;
+        let target_events = target_events as u64;
+        Ok(GenerationResult {
+            output,
+            stats: GenerationStats {
+                mode: GenerationModeKind::Accepted,
+                target_events,
+                written_events: accepted_events,
+                proposed_events,
+                accepted_events,
+                rejected_events,
+                acceptance_rate: (proposed_events > 0)
+                    .then_some(accepted_events as f64 / proposed_events as f64),
+                envelope: Some(envelope),
+                envelope_violations,
+                sum_weights: stats.sum_weights,
+                min_weight: stats.min_weight,
+                max_weight: stats.max_weight,
+                batches_written: stats.batches_written,
+                elapsed: started.elapsed(),
+                seed: options.seed.or(self.seed),
+            },
+        })
+    }
+
     fn try_generate_event(&self, rng: &mut Rng) -> LadduResult<GeneratedEvent> {
         let production = self.plan.production();
         let incoming = production.incoming();
@@ -332,6 +445,86 @@ impl WeightStats {
             );
         }
     }
+}
+
+struct AcceptedBatchContext<'a, S> {
+    layout: &'a GeneratedLayout,
+    expression: &'a Expression,
+    parameters: &'a [f64],
+    envelope: f64,
+    rng: &'a mut Rng,
+    accepted_batch: &'a mut Vec<GeneratedRecord>,
+    stats: &'a mut WeightStats,
+    accepted_events: &'a mut u64,
+    rejected_events: &'a mut u64,
+    envelope_violations: &'a mut u64,
+    target_events: u64,
+    sink: &'a mut S,
+}
+
+impl<S> AcceptedBatchContext<'_, S>
+where
+    S: GeneratedSink,
+{
+    fn accept_weighted_batch(
+        &mut self,
+        proposal_batch: &mut Vec<GeneratedRecord>,
+    ) -> LadduResult<()> {
+        evaluate_record_weights(
+            self.layout,
+            proposal_batch,
+            self.expression,
+            self.parameters,
+        )?;
+        for mut record in proposal_batch.drain(..) {
+            let weight = record.weight;
+            if weight < 0.0 {
+                return Err(LadduError::Custom(format!(
+                    "accepted generation produced a negative event weight {weight}"
+                )));
+            }
+            if weight > self.envelope {
+                *self.envelope_violations += 1;
+                return Err(LadduError::Custom(format!(
+                    "accepted generation weight {weight} exceeded envelope {}",
+                    self.envelope
+                )));
+            }
+            if *self.accepted_events >= self.target_events {
+                *self.rejected_events += 1;
+                continue;
+            }
+            if self.rng.f64() * self.envelope < weight {
+                record.weight = 1.0;
+                self.accepted_batch.push(record);
+                *self.accepted_events += 1;
+                if self.accepted_batch.len() == self.accepted_batch.capacity() {
+                    flush_records(self.layout, self.accepted_batch, self.sink, self.stats)?;
+                }
+            } else {
+                *self.rejected_events += 1;
+            }
+        }
+        Ok(())
+    }
+}
+
+fn flush_records<S>(
+    layout: &GeneratedLayout,
+    records: &mut Vec<GeneratedRecord>,
+    sink: &mut S,
+    stats: &mut WeightStats,
+) -> LadduResult<()>
+where
+    S: GeneratedSink,
+{
+    if records.is_empty() {
+        return Ok(());
+    }
+    stats.observe_batch(records);
+    sink.push_batch(GeneratedBatchView { layout, records })?;
+    records.clear();
+    Ok(())
 }
 
 fn evaluate_record_weights(
@@ -787,5 +980,53 @@ mod tests {
         for event in result.output.events_global() {
             assert_eq!(event.weight(), 2.5);
         }
+    }
+
+    #[test]
+    fn accepted_generation_writes_target_unit_weight_events() {
+        let generator = demo_generator();
+        let result = generator
+            .generate(
+                4,
+                DatasetSink::new(),
+                GenerationMode::Accepted {
+                    expression: Box::new(Expression::one()),
+                    parameters: Vec::new(),
+                    envelope: 1.0,
+                },
+                GenerationOptions::default().batch_size(2),
+            )
+            .unwrap();
+        assert_eq!(result.output.n_events(), 4);
+        assert_eq!(result.stats.mode, GenerationModeKind::Accepted);
+        assert_eq!(result.stats.written_events, 4);
+        assert_eq!(result.stats.proposed_events, 4);
+        assert_eq!(result.stats.accepted_events, 4);
+        assert_eq!(result.stats.rejected_events, 0);
+        assert_eq!(result.stats.acceptance_rate, Some(1.0));
+        assert_eq!(result.stats.envelope, Some(1.0));
+        assert_eq!(result.stats.envelope_violations, 0);
+        assert_eq!(result.stats.sum_weights, 4.0);
+        for event in result.output.events_global() {
+            assert_eq!(event.weight(), 1.0);
+        }
+    }
+
+    #[test]
+    fn accepted_generation_rejects_envelope_violations() {
+        let generator = demo_generator();
+        let err = generator
+            .generate(
+                1,
+                NullSink::new(),
+                GenerationMode::Accepted {
+                    expression: Box::new(Expression::one() * 2.0),
+                    parameters: Vec::new(),
+                    envelope: 1.0,
+                },
+                GenerationOptions::default().batch_size(1),
+            )
+            .unwrap_err();
+        assert!(err.to_string().contains("exceeded envelope"));
     }
 }

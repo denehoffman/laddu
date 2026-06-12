@@ -12,6 +12,10 @@ class GenerationMode:
     def raw() -> GenerationMode: ...
     @staticmethod
     def weighted(expression: Expression, parameters: list[float]) -> GenerationMode: ...
+    @staticmethod
+    def accepted(
+        expression: Expression, parameters: list[float], envelope: float
+    ) -> GenerationMode: ...
 
 class GenerationOutput:
     @staticmethod

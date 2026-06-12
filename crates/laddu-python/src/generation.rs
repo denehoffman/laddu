@@ -65,6 +65,16 @@ impl PyGenerationMode {
         })
     }
 
+    #[staticmethod]
+    #[pyo3(signature=(expression, parameters, *, envelope))]
+    fn accepted(expression: &PyExpression, parameters: Vec<f64>, envelope: f64) -> Self {
+        Self(RustGenerationMode::Accepted {
+            expression: Box::new(expression.0.clone()),
+            parameters,
+            envelope,
+        })
+    }
+
     fn __repr__(&self) -> String {
         format!("{:?}", self.0)
     }

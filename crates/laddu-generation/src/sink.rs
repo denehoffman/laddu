@@ -298,6 +298,15 @@ pub enum GenerationMode {
         /// Free-parameter values passed to the expression evaluator.
         parameters: Vec<f64>,
     },
+    /// Rejection sample proposal events using a fixed envelope.
+    Accepted {
+        /// Expression evaluated on generated proposal events.
+        expression: Box<laddu_core::Expression>,
+        /// Free-parameter values passed to the expression evaluator.
+        parameters: Vec<f64>,
+        /// Fixed rejection envelope.
+        envelope: f64,
+    },
 }
 
 /// Options controlling generation execution.
@@ -348,6 +357,8 @@ pub enum GenerationModeKind {
     Raw,
     /// Weighted proposal generation.
     Weighted,
+    /// Accepted rejection sampling.
+    Accepted,
 }
 
 /// Statistics for a generation run.
