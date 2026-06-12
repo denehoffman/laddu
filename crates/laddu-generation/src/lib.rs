@@ -6,8 +6,10 @@
 //! mass sampler.
 //!
 //! ```rust
-//! use laddu_core::{Channel, ParticleProperties};
-//! use laddu_generation::{gen, DatasetSink, EventGenerator, GenerationMode, GenerationOptions};
+//! use laddu_core::{Channel, Expression, ParticleProperties};
+//! use laddu_generation::{
+//!     gen, CallbackSink, DatasetSink, Envelope, EventGenerator, GenerationMode, GenerationOptions,
+//! };
 //!
 //! let mut channel = Channel::new();
 //! channel
@@ -38,6 +40,23 @@
 //!     .with_seed(12345)
 //!     .generate(10, DatasetSink::new(), GenerationMode::Raw, GenerationOptions::default())?
 //!     .output;
+//!
+//! let accepted = EventGenerator::from_channel(&channel)?
+//!     .with_seed(12345)
+//!     .generate(
+//!         10,
+//!         CallbackSink::new(|batch| {
+//!             assert!(!batch.records.is_empty());
+//!             Ok(())
+//!         }),
+//!         GenerationMode::Accepted {
+//!             expression: Box::new(Expression::one()),
+//!             parameters: Vec::new(),
+//!             envelope: Envelope::estimate(10, 1.25),
+//!         },
+//!         GenerationOptions::default().batch_size(4),
+//!     )?;
+//! assert_eq!(accepted.stats.accepted_events, 10);
 //! # Ok::<_, laddu_core::LadduError>(())
 //! ```
 
