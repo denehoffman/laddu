@@ -12,6 +12,8 @@ class VertexGenerator: ...
 class Envelope:
     @staticmethod
     def initial(value: float) -> Envelope: ...
+    @staticmethod
+    def estimate(pilot_events: int, safety_factor: float) -> Envelope: ...
 
 class EnvelopeViolationPolicy:
     Error: EnvelopeViolationPolicy
@@ -60,6 +62,9 @@ class GeneratedSink: ...
 
 class EnvelopeStats:
     configured_max: float | None
+    pilot_events: int
+    pilot_observed_max: float | None
+    safety_factor: float | None
     observed_max: float | None
     violations: int
     largest_violation_ratio: float | None

@@ -97,6 +97,11 @@ impl PyEnvelope {
         Self(Envelope::initial(value))
     }
 
+    #[staticmethod]
+    fn estimate(pilot_events: usize, safety_factor: f64) -> Self {
+        Self(Envelope::estimate(pilot_events, safety_factor))
+    }
+
     fn __repr__(&self) -> String {
         format!("{:?}", self.0)
     }
@@ -394,6 +399,21 @@ impl PyEnvelopeStats {
     #[getter]
     fn configured_max(&self) -> Option<f64> {
         self.0.configured_max
+    }
+
+    #[getter]
+    fn pilot_events(&self) -> u64 {
+        self.0.pilot_events
+    }
+
+    #[getter]
+    fn pilot_observed_max(&self) -> Option<f64> {
+        self.0.pilot_observed_max
+    }
+
+    #[getter]
+    fn safety_factor(&self) -> Option<f64> {
+        self.0.safety_factor
     }
 
     #[getter]

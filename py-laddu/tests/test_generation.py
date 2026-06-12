@@ -173,6 +173,31 @@ def test_accepted_generation_mode() -> None:
     assert [event.weight for event in result.output.events_global] == [1.0] * 4
 
 
+def test_accepted_generation_can_estimate_envelope() -> None:
+    channel = make_generation_channel()
+    generator = generation.EventGenerator(channel, seed=12345)
+    weight = ld.Scalar('weight', value=ld.parameter('weight', 2.0))
+
+    result = generator.generate(
+        4,
+        generation.DatasetSink(),
+        mode=generation.GenerationMode.accepted(
+            weight, [], envelope=generation.Envelope.estimate(3, 1.0)
+        ),
+        options=generation.GenerationOptions(batch_size=2),
+    )
+
+    assert result.stats.proposed_events == 7
+    assert result.stats.accepted_events == 4
+    assert result.stats.acceptance_rate == 1.0
+    assert result.stats.envelope == 2.0
+    assert result.stats.envelope_stats is not None
+    assert result.stats.envelope_stats.pilot_events == 3
+    assert result.stats.envelope_stats.pilot_observed_max == 2.0
+    assert result.stats.envelope_stats.safety_factor == 1.0
+    assert result.stats.envelope_stats.configured_max == 2.0
+
+
 def test_histogram_generation_annotations() -> None:
     channel = make_generation_channel()
     histogram = ld.Histogram([1.1, 1.3, 1.6], [1.0, 2.0])

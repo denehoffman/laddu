@@ -12,9 +12,10 @@ use laddu_core::{
 use crate::{
     plan::{DecayParticlePlan, GenerationPlan, PlannedMass},
     sink::{
-        Envelope, EnvelopeStats, EnvelopeViolationPolicy, GeneratedBatchView, GeneratedLayout,
-        GeneratedParticleInfo, GeneratedParticleRole, GeneratedRecord, GeneratedSink,
-        GenerationMode, GenerationModeKind, GenerationOptions, GenerationResult, GenerationStats,
+        validate_envelope_value, Envelope, EnvelopeStats, EnvelopeViolationPolicy,
+        GeneratedBatchView, GeneratedLayout, GeneratedParticleInfo, GeneratedParticleRole,
+        GeneratedRecord, GeneratedSink, GenerationMode, GenerationModeKind, GenerationOptions,
+        GenerationResult, GenerationStats,
     },
 };
 
@@ -263,19 +264,35 @@ impl EventGenerator {
     where
         S: GeneratedSink,
     {
-        let mut active_envelope = envelope.initial_value()?;
-        let mut envelope_stats = EnvelopeStats::initial(active_envelope);
+        envelope.validate()?;
         let started = Instant::now();
         let layout = generated_layout(&self.plan);
-        sink.begin(&layout)?;
         let mut rng = self.rng_with_options(&options);
+        let max_trials = options.max_trials.unwrap_or(u64::MAX);
+        let EnvelopeConfiguration {
+            active_envelope,
+            envelope_stats,
+            proposed_events,
+        } = self.configure_envelope(
+            EnvelopeEstimationContext {
+                layout: &layout,
+                expression: &expression,
+                parameters: &parameters,
+                max_trials,
+                batch_size: options.batch_size,
+            },
+            envelope,
+            &mut rng,
+        )?;
+        sink.begin(&layout)?;
         let mut proposal_batch = Vec::with_capacity(options.batch_size);
         let mut accepted_batch = Vec::with_capacity(options.batch_size.min(target_events));
         let mut stats = WeightStats::default();
-        let mut proposed_events = 0_u64;
+        let mut active_envelope = active_envelope;
+        let mut envelope_stats = envelope_stats;
+        let mut proposed_events = proposed_events;
         let mut accepted_events = 0_u64;
         let mut rejected_events = 0_u64;
-        let max_trials = options.max_trials.unwrap_or(u64::MAX);
 
         while accepted_events < target_events as u64 {
             if proposed_events >= max_trials {
@@ -327,6 +344,8 @@ impl EventGenerator {
 
         let output = sink.finish()?;
         let target_events = target_events as u64;
+        let pilot_events = envelope_stats.pilot_events;
+        let sampled_proposals = proposed_events.saturating_sub(pilot_events);
         Ok(GenerationResult {
             output,
             stats: GenerationStats {
@@ -336,8 +355,8 @@ impl EventGenerator {
                 proposed_events,
                 accepted_events,
                 rejected_events,
-                acceptance_rate: (proposed_events > 0)
-                    .then_some(accepted_events as f64 / proposed_events as f64),
+                acceptance_rate: (sampled_proposals > 0)
+                    .then_some(accepted_events as f64 / sampled_proposals as f64),
                 envelope_stats: Some(envelope_stats),
                 sum_weights: stats.sum_weights,
                 min_weight: stats.min_weight,
@@ -347,6 +366,97 @@ impl EventGenerator {
                 seed: options.seed.or(self.seed),
             },
         })
+    }
+
+    fn configure_envelope(
+        &self,
+        context: EnvelopeEstimationContext<'_>,
+        envelope: Envelope,
+        rng: &mut Rng,
+    ) -> LadduResult<EnvelopeConfiguration> {
+        match envelope {
+            Envelope::Initial(value) => {
+                validate_envelope_value(value)?;
+                Ok(EnvelopeConfiguration {
+                    active_envelope: value,
+                    envelope_stats: EnvelopeStats::initial(value),
+                    proposed_events: 0,
+                })
+            }
+            Envelope::Estimate {
+                pilot_events,
+                safety_factor,
+            } => {
+                if pilot_events as u64 > context.max_trials {
+                    return Err(LadduError::Custom(format!(
+                        "envelope estimation requires {pilot_events} pilot events but max_trials is {}",
+                        context.max_trials
+                    )));
+                }
+                let pilot_observed_max = self.estimate_envelope_max(
+                    context.layout,
+                    context.expression,
+                    context.parameters,
+                    rng,
+                    pilot_events,
+                    context.batch_size,
+                )?;
+                let active_envelope = pilot_observed_max * safety_factor;
+                validate_envelope_value(active_envelope)?;
+                Ok(EnvelopeConfiguration {
+                    active_envelope,
+                    envelope_stats: EnvelopeStats::estimated(
+                        pilot_events as u64,
+                        pilot_observed_max,
+                        safety_factor,
+                        active_envelope,
+                    ),
+                    proposed_events: pilot_events as u64,
+                })
+            }
+        }
+    }
+
+    fn estimate_envelope_max(
+        &self,
+        layout: &GeneratedLayout,
+        expression: &Expression,
+        parameters: &[f64],
+        rng: &mut Rng,
+        pilot_events: usize,
+        batch_size: usize,
+    ) -> LadduResult<f64> {
+        let mut records = Vec::with_capacity(batch_size.min(pilot_events));
+        let mut observed_max = None::<f64>;
+        for local_index in 0..pilot_events {
+            let event = self.generate_event(rng)?;
+            records.push(self.record_from_event(local_index as u64, event, 1.0)?);
+            if records.len() == batch_size {
+                observe_estimation_batch(
+                    layout,
+                    &mut records,
+                    expression,
+                    parameters,
+                    &mut observed_max,
+                )?;
+            }
+        }
+        observe_estimation_batch(
+            layout,
+            &mut records,
+            expression,
+            parameters,
+            &mut observed_max,
+        )?;
+        let observed_max = observed_max.ok_or_else(|| {
+            LadduError::Custom("envelope estimation did not produce any pilot weights".to_string())
+        })?;
+        if observed_max <= 0.0 {
+            return Err(LadduError::Custom(format!(
+                "envelope estimation requires a positive pilot maximum, got {observed_max}"
+            )));
+        }
+        Ok(observed_max)
     }
 
     fn try_generate_event(&self, rng: &mut Rng) -> LadduResult<GeneratedEvent> {
@@ -458,6 +568,20 @@ struct AcceptedBatchContext<'a, S> {
     sink: &'a mut S,
 }
 
+struct EnvelopeConfiguration {
+    active_envelope: f64,
+    envelope_stats: EnvelopeStats,
+    proposed_events: u64,
+}
+
+struct EnvelopeEstimationContext<'a> {
+    layout: &'a GeneratedLayout,
+    expression: &'a Expression,
+    parameters: &'a [f64],
+    max_trials: u64,
+    batch_size: usize,
+}
+
 impl<S> AcceptedBatchContext<'_, S>
 where
     S: GeneratedSink,
@@ -512,6 +636,30 @@ where
         }
         Ok(())
     }
+}
+
+fn observe_estimation_batch(
+    layout: &GeneratedLayout,
+    records: &mut Vec<GeneratedRecord>,
+    expression: &Expression,
+    parameters: &[f64],
+    observed_max: &mut Option<f64>,
+) -> LadduResult<()> {
+    if records.is_empty() {
+        return Ok(());
+    }
+    evaluate_record_weights(layout, records, expression, parameters)?;
+    for record in records.iter() {
+        if record.weight < 0.0 {
+            return Err(LadduError::Custom(format!(
+                "envelope estimation produced a negative event weight {}",
+                record.weight
+            )));
+        }
+        *observed_max = Some(observed_max.map_or(record.weight, |value| value.max(record.weight)));
+    }
+    records.clear();
+    Ok(())
 }
 
 fn flush_records<S>(
@@ -1122,5 +1270,82 @@ mod tests {
         assert_eq!(envelope_stats.violations, 1);
         assert_eq!(envelope_stats.updates, 1);
         assert_eq!(envelope_stats.final_max, Some(2.0));
+    }
+
+    #[test]
+    fn accepted_generation_can_estimate_envelope_from_pilot_events() {
+        let generator = demo_generator();
+        let result = generator
+            .generate(
+                4,
+                NullSink::new(),
+                GenerationMode::Accepted {
+                    expression: Box::new(Expression::one() * 2.0),
+                    parameters: Vec::new(),
+                    envelope: Envelope::estimate(3, 1.0),
+                },
+                GenerationOptions::default().batch_size(2),
+            )
+            .unwrap();
+        let envelope_stats = result.stats.envelope_stats.as_ref().unwrap();
+        assert_eq!(result.output, 4);
+        assert_eq!(result.stats.proposed_events, 7);
+        assert_eq!(result.stats.accepted_events, 4);
+        assert_eq!(result.stats.acceptance_rate, Some(1.0));
+        assert_eq!(envelope_stats.pilot_events, 3);
+        assert_eq!(envelope_stats.pilot_observed_max, Some(2.0));
+        assert_eq!(envelope_stats.safety_factor, Some(1.0));
+        assert_eq!(envelope_stats.configured_max, Some(2.0));
+        assert_eq!(envelope_stats.final_max, Some(2.0));
+    }
+
+    #[test]
+    fn estimated_envelope_rejects_invalid_configuration() {
+        let generator = demo_generator();
+        let err = generator
+            .generate(
+                1,
+                NullSink::new(),
+                GenerationMode::Accepted {
+                    expression: Box::new(Expression::one()),
+                    parameters: Vec::new(),
+                    envelope: Envelope::estimate(0, 1.0),
+                },
+                GenerationOptions::default(),
+            )
+            .unwrap_err();
+        assert!(err.to_string().contains("at least one pilot event"));
+
+        let err = generator
+            .generate(
+                1,
+                NullSink::new(),
+                GenerationMode::Accepted {
+                    expression: Box::new(Expression::one()),
+                    parameters: Vec::new(),
+                    envelope: Envelope::estimate(2, 0.0),
+                },
+                GenerationOptions::default(),
+            )
+            .unwrap_err();
+        assert!(err.to_string().contains("safety factor"));
+    }
+
+    #[test]
+    fn estimated_envelope_respects_max_trials() {
+        let generator = demo_generator();
+        let err = generator
+            .generate(
+                1,
+                NullSink::new(),
+                GenerationMode::Accepted {
+                    expression: Box::new(Expression::one()),
+                    parameters: Vec::new(),
+                    envelope: Envelope::estimate(3, 1.0),
+                },
+                GenerationOptions::default().max_trials(2),
+            )
+            .unwrap_err();
+        assert!(err.to_string().contains("pilot events"));
     }
 }

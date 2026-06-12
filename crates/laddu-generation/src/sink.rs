@@ -337,6 +337,13 @@ where
 pub enum Envelope {
     /// Start rejection sampling from this maximum event weight.
     Initial(f64),
+    /// Estimate the starting envelope from a pilot sample.
+    Estimate {
+        /// Number of pilot proposal events used to estimate the envelope.
+        pilot_events: usize,
+        /// Factor multiplied into the largest observed pilot weight.
+        safety_factor: f64,
+    },
 }
 
 impl Envelope {
@@ -345,16 +352,32 @@ impl Envelope {
         Self::Initial(value)
     }
 
-    /// Return the initial active envelope value.
-    pub fn initial_value(self) -> LadduResult<f64> {
+    /// Construct an envelope estimated from a pilot sample.
+    pub fn estimate(pilot_events: usize, safety_factor: f64) -> Self {
+        Self::Estimate {
+            pilot_events,
+            safety_factor,
+        }
+    }
+
+    pub(crate) fn validate(self) -> LadduResult<()> {
         match self {
-            Self::Initial(value) => {
-                if !value.is_finite() || value <= 0.0 {
+            Self::Initial(value) => validate_envelope_value(value),
+            Self::Estimate {
+                pilot_events,
+                safety_factor,
+            } => {
+                if pilot_events == 0 {
+                    return Err(LadduError::Custom(
+                        "envelope estimation requires at least one pilot event".to_string(),
+                    ));
+                }
+                if !safety_factor.is_finite() || safety_factor <= 0.0 {
                     return Err(LadduError::Custom(format!(
-                        "rejection envelope must be finite and positive, got {value}"
+                        "envelope safety factor must be finite and positive, got {safety_factor}"
                     )));
                 }
-                Ok(value)
+                Ok(())
             }
         }
     }
@@ -383,6 +406,12 @@ pub enum EnvelopeViolationPolicy {
 pub struct EnvelopeStats {
     /// Configured envelope value at the beginning of the run.
     pub configured_max: Option<f64>,
+    /// Number of pilot proposal events used to estimate the envelope.
+    pub pilot_events: u64,
+    /// Largest event weight observed during envelope estimation.
+    pub pilot_observed_max: Option<f64>,
+    /// Safety factor applied to the pilot maximum.
+    pub safety_factor: Option<f64>,
     /// Largest proposal weight observed by the run.
     pub observed_max: Option<f64>,
     /// Number of proposal weights that exceeded the active rejection envelope.
@@ -401,6 +430,24 @@ impl EnvelopeStats {
         Self {
             configured_max: Some(value),
             final_max: Some(value),
+            ..Self::default()
+        }
+    }
+
+    /// Construct envelope statistics for an estimated envelope.
+    pub fn estimated(
+        pilot_events: u64,
+        pilot_observed_max: f64,
+        safety_factor: f64,
+        configured_max: f64,
+    ) -> Self {
+        Self {
+            configured_max: Some(configured_max),
+            pilot_events,
+            pilot_observed_max: Some(pilot_observed_max),
+            safety_factor: Some(safety_factor),
+            observed_max: Some(pilot_observed_max),
+            final_max: Some(configured_max),
             ..Self::default()
         }
     }
@@ -425,6 +472,15 @@ impl EnvelopeStats {
     }
 }
 
+pub(crate) fn validate_envelope_value(value: f64) -> LadduResult<()> {
+    if !value.is_finite() || value <= 0.0 {
+        return Err(LadduError::Custom(format!(
+            "rejection envelope must be finite and positive, got {value}"
+        )));
+    }
+    Ok(())
+}
+
 /// Generation mode.
 #[derive(Clone, Debug, Default)]
 pub enum GenerationMode {
@@ -444,7 +500,7 @@ pub enum GenerationMode {
         expression: Box<laddu_core::Expression>,
         /// Free-parameter values passed to the expression evaluator.
         parameters: Vec<f64>,
-        /// Fixed rejection envelope.
+        /// Rejection-envelope configuration.
         envelope: Envelope,
     },
 }
