@@ -1,4 +1,5 @@
-from typing import overload
+from collections.abc import Callable
+from typing import Any, overload
 
 from laddu.amplitude import Expression
 from laddu.data import Dataset
@@ -14,6 +15,8 @@ class Envelope:
     def initial(value: float) -> Envelope: ...
     @staticmethod
     def estimate(pilot_events: int, safety_factor: float) -> Envelope: ...
+    @staticmethod
+    def adaptive(initial: float, growth_factor: float) -> Envelope: ...
 
 class EnvelopeViolationPolicy:
     Error: EnvelopeViolationPolicy
@@ -58,6 +61,9 @@ class GenerationOptions:
 class DatasetSink:
     def __init__(self, *, output: GenerationOutput | None = None) -> None: ...
 
+class CallbackSink:
+    def __init__(self, callback: Callable[[list[dict[str, Any]]], object]) -> None: ...
+
 class ParquetSink:
     def __init__(
         self,
@@ -86,6 +92,7 @@ class EnvelopeStats:
     pilot_events: int
     pilot_observed_max: float | None
     safety_factor: float | None
+    growth_factor: float | None
     observed_max: float | None
     violations: int
     largest_violation_ratio: float | None
@@ -181,13 +188,14 @@ class EventGenerator:
     def generate(
         self,
         target_events: int,
-        sink: ParquetSink | RootSink,
+        sink: ParquetSink | RootSink | CallbackSink,
         *,
         mode: GenerationMode | None = None,
         options: GenerationOptions | None = None,
     ) -> GenerationResult: ...
 
 __all__ = [
+    'CallbackSink',
     'DatasetSink',
     'DecayParticlePlan',
     'DecayPlan',

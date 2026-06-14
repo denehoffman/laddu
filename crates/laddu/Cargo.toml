@@ -59,7 +59,7 @@ rayon = ["laddu-core/rayon"]
 python = [
   "laddu-core/python",
 ]
-mpi = ["laddu-core/mpi", "laddu-extensions/mpi", "dep:mpi"]
+mpi = ["laddu-core/mpi", "laddu-extensions/mpi", "laddu-generation/mpi", "dep:mpi"]
 execution-context-prototype = ["laddu-core/execution-context-prototype"]
 
 [package.metadata.docs.rs]

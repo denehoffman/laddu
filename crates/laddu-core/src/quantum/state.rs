@@ -1,5 +1,6 @@
 use std::fmt::Display;
 
+use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
 use crate::{quantum::types::Statistics, Charge, LadduError, LadduResult, Parity, J, L, M, S};
@@ -7,41 +8,65 @@ use crate::{quantum::types::Statistics, Charge, LadduError, LadduResult, Parity,
 /// An external identifier associated with a physical particle species.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum ExternalId {
-    /// A numeric identifier in a named namespace, such as a PDG code.
+    /// A numeric identifier, such as a PDG code.
     Code {
-        /// Identifier namespace.
-        namespace: String,
         /// Identifier value.
         value: i64,
     },
-    /// A textual identifier in a named namespace.
+    /// A textual identifier.
     Label {
-        /// Identifier namespace.
-        namespace: String,
         /// Identifier value.
         value: String,
     },
 }
 
-impl ExternalId {
-    /// Construct a numeric identifier in an arbitrary namespace.
-    pub fn new(namespace: impl Into<String>, value: i64) -> Self {
-        Self::Code {
-            namespace: namespace.into(),
-            value,
-        }
+impl From<&str> for ExternalId {
+    fn from(value: &str) -> Self {
+        Self::label(value)
     }
+}
+impl From<String> for ExternalId {
+    fn from(value: String) -> Self {
+        Self::label(value)
+    }
+}
+impl From<&String> for ExternalId {
+    fn from(value: &String) -> Self {
+        Self::label(value)
+    }
+}
+impl From<i64> for ExternalId {
+    fn from(value: i64) -> Self {
+        Self::code(value)
+    }
+}
 
-    /// Construct a PDG identifier.
-    pub fn pdg(value: i64) -> Self {
-        Self::new("pdg", value)
+impl ExternalId {
+    /// Construct a numeric identifier.
+    pub fn code(value: i64) -> Self {
+        Self::Code { value }
     }
 
     /// Construct a textual identifier in an arbitrary namespace.
-    pub fn label(namespace: impl Into<String>, value: impl Into<String>) -> Self {
+    pub fn label(value: impl Into<String>) -> Self {
         Self::Label {
-            namespace: namespace.into(),
             value: value.into(),
+        }
+    }
+
+    /// Return the numeric value, if this is a numeric identifier.
+    pub fn code_value(&self) -> Option<i64> {
+        match self {
+            Self::Code { value, .. } => Some(*value),
+            Self::Label { .. } => None,
+        }
+    }
+
+    /// Return the textual value, if this is a textual identifier.
+    pub fn label_value(&self) -> Option<&str> {
+        match self {
+            Self::Label { value, .. } => Some(value),
+            Self::Code { .. } => None,
         }
     }
 }
@@ -151,7 +176,7 @@ pub struct ParticleProperties {
     /// The nominal particle mass, if known.
     pub mass: Option<f64>,
     /// External identifiers for this particle.
-    pub ids: Vec<ExternalId>,
+    pub ids: IndexMap<String, ExternalId>,
 }
 
 impl ParticleProperties {
@@ -498,22 +523,32 @@ impl ParticleProperties {
     }
 
     /// External identifiers for the particle
-    pub fn ids(&self) -> &[ExternalId] {
+    pub fn ids(&self) -> &IndexMap<String, ExternalId> {
         &self.ids
     }
 
+    /// Return the first external identifier in the requested namespace.
+    pub fn id(&self, namespace: &str) -> Option<&ExternalId> {
+        self.ids.get(namespace)
+    }
+
     /// Append an external identifier.
-    pub fn with_id(&mut self, id: ExternalId) -> &mut Self {
-        self.ids.push(id);
+    pub fn with_id<Id: Into<ExternalId>>(mut self, namespace: &str, id: Id) -> Self {
+        self.ids.insert(namespace.to_string(), id.into());
         self
     }
 
     /// Replace external identifiers.
-    pub fn with_ids<I>(&mut self, ids: I) -> &mut Self
+    pub fn with_ids<I, S, Id>(mut self, ids: I) -> Self
     where
-        I: IntoIterator<Item = ExternalId>,
+        I: IntoIterator<Item = (S, Id)>,
+        S: AsRef<str>,
+        Id: Into<ExternalId>,
     {
-        self.ids = ids.into_iter().collect();
+        self.ids = ids
+            .into_iter()
+            .map(|(s, id)| (s.as_ref().to_string(), id.into()))
+            .collect();
         self
     }
 }
@@ -638,4 +673,34 @@ fn validate_projection(spin: J, projection: M) -> LadduResult<()> {
         ));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ExternalId, ParticleProperties};
+
+    #[test]
+    fn particle_properties_store_external_ids() {
+        let properties = ParticleProperties::unknown()
+            .with_id("pdg", ExternalId::code(310))
+            .with_id("gluex", ExternalId::label("ks-short"));
+
+        assert_eq!(properties.ids().len(), 2);
+        assert_eq!(
+            properties.id("pdg").and_then(ExternalId::code_value),
+            Some(310)
+        );
+        assert_eq!(
+            properties.id("gluex").and_then(ExternalId::label_value),
+            Some("ks-short")
+        );
+        assert_eq!(properties.id("missing"), None);
+
+        let replaced = properties.with_ids([("geant", ExternalId::code(16))]);
+        assert_eq!(replaced.ids().len(), 1);
+        assert_eq!(
+            replaced.id("geant").and_then(ExternalId::code_value),
+            Some(16)
+        );
+    }
 }

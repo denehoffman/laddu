@@ -1,6 +1,7 @@
 """Monte Carlo event-generation APIs."""
 
 from laddu.laddu import (
+    CallbackSink,
     DatasetSink,
     DecayParticlePlan,
     DecayPlan,
@@ -27,6 +28,7 @@ from laddu.laddu import (
 )
 
 __all__ = [
+    'CallbackSink',
     'DatasetSink',
     'DecayParticlePlan',
     'DecayPlan',

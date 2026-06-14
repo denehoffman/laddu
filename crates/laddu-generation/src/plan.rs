@@ -5,10 +5,13 @@ use laddu_core::{
     ParticleProperties, ScalarDistribution, VertexGenerator,
 };
 
+use crate::sink::GeneratedAuxInfo;
+
 /// A validated channel topology that can be used by the current generator.
 #[derive(Clone, Debug)]
 pub struct GenerationPlan {
     production: ProductionPlan,
+    aux: Vec<GeneratedAuxInfo>,
 }
 
 impl GenerationPlan {
@@ -56,12 +59,26 @@ impl GenerationPlan {
                 outgoing: final_state,
                 t: t.clone(),
             },
+            aux: Vec::default(),
         })
+    }
+
+    pub fn with_aux(mut self, label: &str, generator: ScalarDistribution) -> Self {
+        self.aux.push(GeneratedAuxInfo {
+            label: label.to_string(),
+            generator,
+        });
+        self
     }
 
     /// Return the validated production plan.
     pub fn production(&self) -> &ProductionPlan {
         &self.production
+    }
+
+    /// Return the validated aux plan.
+    pub fn aux_info(&self) -> &[GeneratedAuxInfo] {
+        &self.aux
     }
 }
 
@@ -328,6 +345,9 @@ impl DecayPlan {
         &self.daughters
     }
 }
+
+#[derive(Clone, Debug, Default)]
+pub struct AuxPlan {}
 
 #[cfg(test)]
 mod tests {

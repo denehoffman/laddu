@@ -196,3 +196,4 @@ perf.*
 *.pkl
 
 .bacon-locations
+.envrc

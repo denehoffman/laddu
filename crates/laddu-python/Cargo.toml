@@ -30,7 +30,7 @@ typetag = { workspace = true }
 
 [features]
 default = []
-mpi = ["laddu-core/mpi", "laddu-extensions/mpi"]
+mpi = ["laddu-core/mpi", "laddu-extensions/mpi", "laddu-generation/mpi"]
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = [

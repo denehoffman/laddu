@@ -8,25 +8,25 @@
 //! ```rust
 //! use laddu_core::{Channel, Expression, ParticleProperties};
 //! use laddu_generation::{
-//!     gen, CallbackSink, DatasetSink, Envelope, EventGenerator, GenerationMode, GenerationOptions,
+//!     samplers, CallbackSink, DatasetSink, Envelope, EventGenerator, GenerationMode, GenerationOptions,
 //! };
 //!
 //! let mut channel = Channel::new();
 //! channel
 //!     .create_production("production", ["beam", "target"], ["rho", "recoil"])?
-//!     .generate(gen::t_exponential(0.1));
+//!     .generate(samplers::t_exponential(0.1));
 //! channel.create_decay("rho_decay", "rho", ["pi+", "pi-"])?;
 //! channel
 //!     .edit_particle("beam")?
 //!     .properties(ParticleProperties::unknown().with_mass(0.0))
-//!     .momentum(gen::energy(8.0));
+//!     .momentum(samplers::energy(8.0));
 //! channel
 //!     .edit_particle("target")?
 //!     .properties(ParticleProperties::unknown().with_mass(0.938272))
-//!     .momentum(gen::rest());
+//!     .momentum(samplers::rest());
 //! channel
 //!     .edit_particle("rho")?
-//!     .mass_sampler(gen::uniform_mass(0.6, 0.9));
+//!     .mass_sampler(samplers::uniform_mass(0.6, 0.9));
 //! for label in ["pi+", "pi-"] {
 //!     channel
 //!         .edit_particle(label)?
@@ -65,7 +65,7 @@ pub mod plan;
 pub mod sink;
 
 /// Channel generation annotation constructors.
-pub mod gen {
+pub mod samplers {
     use laddu_core::{
         math::Histogram, MassSampler, MomentumSource, ScalarDistribution, VertexGenerator,
     };

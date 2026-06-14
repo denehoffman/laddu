@@ -457,6 +457,7 @@ pub use laddu_core::{
     },
     resources::{Cache, Resources},
     s,
+    sampling::{HistogramSampler, LadduRngExt, ScalarDistribution},
     variables::{
         Angles, CosTheta, IntoP4Selection, Mandelstam, Mass, P4Selection, Phi, PolAngle,
         PolMagnitude, Polarization,

@@ -6,6 +6,7 @@ from typing import TypeAlias
 from laddu.laddu import (
     AllowedPartialWave,
     Charge,
+    ExternalId,
     Isospin,
     J,
     L,
@@ -32,6 +33,7 @@ QuantumNumber: TypeAlias = ScalarQuantumNumber | J | L | M
 __all__ = [
     'AllowedPartialWave',
     'Charge',
+    'ExternalId',
     'Isospin',
     'J',
     'JLike',

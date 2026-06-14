@@ -1,8 +1,9 @@
 use std::{cell::RefCell, rc::Rc, sync::Arc};
 
+use fastrand::Rng;
 use laddu_core::{LadduError, LadduResult, MassSampler, MomentumSource, VertexGenerator};
 use laddu_generation::{
-    gen, DatasetSink, DecayParticlePlan, DecayPlan, Envelope, EnvelopeStats,
+    samplers, DatasetSink, DecayParticlePlan, DecayPlan, Envelope, EnvelopeStats,
     EnvelopeViolationPolicy, EventGenerator, GeneratedBatchView, GeneratedEvent, GeneratedLayout,
     GeneratedSink, GenerationMode as RustGenerationMode, GenerationOptions, GenerationOutput,
     GenerationPlan, GenerationResult, GenerationStats, InitialParticlePlan, ParquetSink,
@@ -11,6 +12,7 @@ use laddu_generation::{
 use pyo3::{
     exceptions::{PyRuntimeError, PyTypeError},
     prelude::*,
+    types::{PyDict, PyList},
     IntoPyObjectExt,
 };
 
@@ -107,6 +109,11 @@ impl PyEnvelope {
     #[staticmethod]
     fn estimate(pilot_events: usize, safety_factor: f64) -> Self {
         Self(Envelope::estimate(pilot_events, safety_factor))
+    }
+
+    #[staticmethod]
+    fn adaptive(initial: f64, growth_factor: f64) -> Self {
+        Self(Envelope::adaptive(initial, growth_factor))
     }
 
     fn __repr__(&self) -> String {
@@ -264,8 +271,8 @@ impl PyGeneratedSinkImpl for ParquetSink {
         GeneratedSink::begin(self, layout)
     }
 
-    fn push_batch(&mut self, batch: GeneratedBatchView<'_>) -> LadduResult<()> {
-        GeneratedSink::push_batch(self, batch)
+    fn push_batch(&mut self, batch: GeneratedBatchView<'_>, rng: &mut Rng) -> LadduResult<()> {
+        GeneratedSink::push_batch(self, batch, rng)
     }
 
     fn finish(self: Box<Self>, py: Python<'_>) -> LadduResult<Py<PyAny>> {
@@ -287,8 +294,8 @@ impl PyGeneratedSinkImpl for RootSink {
         GeneratedSink::begin(self, layout)
     }
 
-    fn push_batch(&mut self, batch: GeneratedBatchView<'_>) -> LadduResult<()> {
-        GeneratedSink::push_batch(self, batch)
+    fn push_batch(&mut self, batch: GeneratedBatchView<'_>, rng: &mut Rng) -> LadduResult<()> {
+        GeneratedSink::push_batch(self, batch, rng)
     }
 
     fn finish(self: Box<Self>, py: Python<'_>) -> LadduResult<Py<PyAny>> {
@@ -380,6 +387,86 @@ impl PyRootSink {
     }
 }
 
+struct CallbackPySink {
+    callback: Py<PyAny>,
+    count: usize,
+}
+
+impl PyGeneratedSinkImpl for CallbackPySink {
+    fn push_batch(&mut self, batch: GeneratedBatchView<'_>, _rng: &mut Rng) -> LadduResult<()> {
+        Python::attach(|py| {
+            let records = py_generated_records(py, batch)?;
+            self.callback
+                .call1(py, (records,))
+                .map_err(|err| LadduError::Custom(err.to_string()))?;
+            self.count += batch.records.len();
+            Ok(())
+        })
+    }
+
+    fn finish(self: Box<Self>, py: Python<'_>) -> LadduResult<Py<PyAny>> {
+        self.count
+            .into_bound_py_any(py)
+            .map(|object| object.unbind())
+            .map_err(|err| LadduError::Custom(err.to_string()))
+    }
+}
+
+#[pyclass(name = "CallbackSink", module = "laddu", unsendable)]
+pub struct PyCallbackSink {
+    sink: Rc<RefCell<Option<CallbackPySink>>>,
+}
+
+#[pymethods]
+impl PyCallbackSink {
+    #[new]
+    fn new(callback: &Bound<'_, PyAny>) -> PyResult<Self> {
+        if !callback.is_callable() {
+            return Err(PyTypeError::new_err("callback must be callable"));
+        }
+        Ok(Self {
+            sink: Rc::new(RefCell::new(Some(CallbackPySink {
+                callback: callback.clone().unbind(),
+                count: 0,
+            }))),
+        })
+    }
+
+    fn __laddu_sink__(&self) -> PyResult<PyGeneratedSink> {
+        let sink = self
+            .sink
+            .borrow_mut()
+            .take()
+            .ok_or_else(|| PyRuntimeError::new_err("CallbackSink has already been used"))?;
+        Ok(PyGeneratedSink::new(sink))
+    }
+}
+
+fn py_generated_records(py: Python<'_>, batch: GeneratedBatchView<'_>) -> LadduResult<Py<PyList>> {
+    let records = PyList::empty(py);
+    let labels = batch.layout.labels();
+    for record in batch.records {
+        let item = PyDict::new(py);
+        item.set_item("local_index", record.local_index)
+            .map_err(|err| LadduError::Custom(err.to_string()))?;
+        item.set_item("global_index", record.global_index)
+            .map_err(|err| LadduError::Custom(err.to_string()))?;
+        item.set_item("weight", record.weight)
+            .map_err(|err| LadduError::Custom(err.to_string()))?;
+        let p4s = PyDict::new(py);
+        for (label, p4) in labels.iter().zip(&record.p4s) {
+            p4s.set_item(label, PyVec4(*p4))
+                .map_err(|err| LadduError::Custom(err.to_string()))?;
+        }
+        item.set_item("p4s", p4s)
+            .map_err(|err| LadduError::Custom(err.to_string()))?;
+        records
+            .append(item)
+            .map_err(|err| LadduError::Custom(err.to_string()))?;
+    }
+    Ok(records.unbind())
+}
+
 /// Trait for native Rust-backed sinks exposed through Python.
 pub trait PyGeneratedSinkImpl: 'static {
     /// Called once before records are pushed.
@@ -388,7 +475,7 @@ pub trait PyGeneratedSinkImpl: 'static {
     }
 
     /// Push one batch of generated records.
-    fn push_batch(&mut self, batch: GeneratedBatchView<'_>) -> LadduResult<()>;
+    fn push_batch(&mut self, batch: GeneratedBatchView<'_>, rng: &mut Rng) -> LadduResult<()>;
 
     /// Finish output and return the Python-facing result object.
     fn finish(self: Box<Self>, py: Python<'_>) -> LadduResult<Py<PyAny>>;
@@ -438,8 +525,8 @@ impl PyGeneratedSinkImpl for DatasetPySink {
         self.sink.begin(layout)
     }
 
-    fn push_batch(&mut self, batch: GeneratedBatchView<'_>) -> LadduResult<()> {
-        self.sink.push_batch(batch)
+    fn push_batch(&mut self, batch: GeneratedBatchView<'_>, rng: &mut Rng) -> LadduResult<()> {
+        self.sink.push_batch(batch, rng)
     }
 
     fn finish(self: Box<Self>, py: Python<'_>) -> LadduResult<Py<PyAny>> {
@@ -469,12 +556,12 @@ impl GeneratedSink for AnyPySink {
             .begin(layout)
     }
 
-    fn push_batch(&mut self, batch: GeneratedBatchView<'_>) -> LadduResult<()> {
+    fn push_batch(&mut self, batch: GeneratedBatchView<'_>, rng: &mut Rng) -> LadduResult<()> {
         let mut inner = self.inner.borrow_mut();
         inner
             .as_mut()
             .ok_or_else(|| LadduError::Custom("generated sink has already finished".to_string()))?
-            .push_batch(batch)
+            .push_batch(batch, rng)
     }
 
     fn finish(self) -> LadduResult<Self::Output> {
@@ -542,6 +629,11 @@ impl PyEnvelopeStats {
     #[getter]
     fn safety_factor(&self) -> Option<f64> {
         self.0.safety_factor
+    }
+
+    #[getter]
+    fn growth_factor(&self) -> Option<f64> {
+        self.0.growth_factor
     }
 
     #[getter]
@@ -831,6 +923,9 @@ impl PyGenerationPlan {
         Self::new(channel)
     }
 
+    // TODO:
+    // fn with_aux(mut self, label: String, generator)
+
     #[getter]
     fn production(&self) -> PyProductionPlan {
         PyProductionPlan(self.0.production().clone())
@@ -954,34 +1049,36 @@ impl PyEventGenerator {
 
 #[pyfunction(name = "energy")]
 pub fn py_energy(value: f64) -> PyMomentumSource {
-    PyMomentumSource(gen::energy(value))
+    PyMomentumSource(samplers::energy(value))
 }
 
 #[pyfunction(name = "uniform_energy")]
 pub fn py_uniform_energy(min: f64, max: f64) -> PyMomentumSource {
-    PyMomentumSource(gen::uniform_energy(min, max))
+    PyMomentumSource(samplers::uniform_energy(min, max))
 }
 
 #[pyfunction(name = "histogram_energy")]
 pub fn py_histogram_energy(histogram: &PyHistogram) -> PyResult<PyMomentumSource> {
-    Ok(PyMomentumSource(gen::histogram_energy(
+    Ok(PyMomentumSource(samplers::histogram_energy(
         histogram.0.clone(),
     )?))
 }
 
 #[pyfunction(name = "rest")]
 pub fn py_rest() -> PyMomentumSource {
-    PyMomentumSource(gen::rest())
+    PyMomentumSource(samplers::rest())
 }
 
 #[pyfunction(name = "uniform_mass")]
 pub fn py_uniform_mass(min: f64, max: f64) -> PyMassSampler {
-    PyMassSampler(gen::uniform_mass(min, max))
+    PyMassSampler(samplers::uniform_mass(min, max))
 }
 
 #[pyfunction(name = "histogram_mass")]
 pub fn py_histogram_mass(histogram: &PyHistogram) -> PyResult<PyMassSampler> {
-    Ok(PyMassSampler(gen::histogram_mass(histogram.0.clone())?))
+    Ok(PyMassSampler(samplers::histogram_mass(
+        histogram.0.clone(),
+    )?))
 }
 
 #[pyfunction(name = "mass_from_properties")]
@@ -991,10 +1088,12 @@ pub fn py_mass_from_properties() -> PyMassSampler {
 
 #[pyfunction(name = "t_exponential")]
 pub fn py_t_exponential(slope: f64) -> PyVertexGenerator {
-    PyVertexGenerator(gen::t_exponential(slope))
+    PyVertexGenerator(samplers::t_exponential(slope))
 }
 
 #[pyfunction(name = "t_histogram")]
 pub fn py_t_histogram(histogram: &PyHistogram) -> PyResult<PyVertexGenerator> {
-    Ok(PyVertexGenerator(gen::t_histogram(histogram.0.clone())?))
+    Ok(PyVertexGenerator(samplers::t_histogram(
+        histogram.0.clone(),
+    )?))
 }

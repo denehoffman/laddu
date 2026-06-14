@@ -8,6 +8,8 @@ use laddu_core::{
     vectors::{Vec3, Vec4},
     Expression, LadduError, LadduResult, LadduRngExt, MomentumSource, ScalarDistribution,
 };
+#[cfg(feature = "mpi")]
+use mpi::traits::*;
 
 use crate::{
     plan::{DecayParticlePlan, GenerationPlan, PlannedMass},
@@ -95,12 +97,21 @@ impl EventGenerator {
                 "generation batch size must be greater than zero".to_string(),
             ));
         }
+        let runtime = GenerationRuntime::new(target_events, options.max_trials);
+        runtime.validate_sink(&sink)?;
         match mode {
-            GenerationMode::Raw => self.generate_raw(target_events, sink, options),
+            GenerationMode::Raw => self.generate_raw(target_events, sink, options, runtime),
             GenerationMode::Weighted {
                 expression,
                 parameters,
-            } => self.generate_weighted(target_events, sink, options, *expression, parameters),
+            } => self.generate_weighted(
+                target_events,
+                sink,
+                options,
+                runtime,
+                *expression,
+                parameters,
+            ),
             GenerationMode::Accepted {
                 expression,
                 parameters,
@@ -109,17 +120,13 @@ impl EventGenerator {
                 target_events,
                 sink,
                 options,
-                *expression,
-                parameters,
-                envelope,
+                AcceptedGenerationConfig {
+                    runtime,
+                    expression: *expression,
+                    parameters,
+                    envelope,
+                },
             ),
-        }
-    }
-
-    fn rng_with_options(&self, options: &GenerationOptions) -> Rng {
-        match options.seed.or(self.seed) {
-            Some(seed) => Rng::with_seed(seed),
-            None => Rng::new(),
         }
     }
 
@@ -128,6 +135,7 @@ impl EventGenerator {
         target_events: usize,
         mut sink: S,
         options: GenerationOptions,
+        runtime: GenerationRuntime,
     ) -> LadduResult<GenerationResult<S::Output>>
     where
         S: GeneratedSink,
@@ -135,58 +143,67 @@ impl EventGenerator {
         let started = Instant::now();
         let layout = generated_layout(&self.plan);
         sink.begin(&layout)?;
-        let mut rng = self.rng_with_options(&options);
-        let mut records = Vec::with_capacity(options.batch_size.min(target_events));
+        let mut rng = runtime.rng(self, &options);
+        let mut records = Vec::with_capacity(options.batch_size.min(runtime.local_target));
         let mut batches_written = 0_u64;
         let mut sum_weights = 0.0;
         let mut min_weight = None::<f64>;
         let mut max_weight = None::<f64>;
 
-        for local_index in 0..target_events {
+        for local_index in 0..runtime.local_target {
             let event = self.generate_event(&mut rng)?;
-            let record = self.record_from_event(local_index as u64, event, 1.0)?;
+            let record = self.record_from_event(
+                local_index as u64,
+                runtime.global_start + local_index as u64,
+                event,
+                1.0,
+            )?;
             sum_weights += record.weight;
             min_weight = Some(min_weight.map_or(record.weight, |value| value.min(record.weight)));
             max_weight = Some(max_weight.map_or(record.weight, |value| value.max(record.weight)));
             records.push(record);
             if records.len() == options.batch_size {
-                sink.push_batch(GeneratedBatchView {
-                    layout: &layout,
-                    records: &records,
-                })?;
+                sink.push_batch(
+                    GeneratedBatchView {
+                        layout: &layout,
+                        records: &records,
+                    },
+                    &mut rng,
+                )?;
                 batches_written += 1;
                 records.clear();
             }
         }
         if !records.is_empty() {
-            sink.push_batch(GeneratedBatchView {
-                layout: &layout,
-                records: &records,
-            })?;
+            sink.push_batch(
+                GeneratedBatchView {
+                    layout: &layout,
+                    records: &records,
+                },
+                &mut rng,
+            )?;
             batches_written += 1;
         }
 
         let output = sink.finish()?;
-        let target_events = target_events as u64;
-        Ok(GenerationResult {
-            output,
-            stats: GenerationStats {
-                mode: GenerationModeKind::Raw,
-                target_events,
-                written_events: target_events,
-                proposed_events: target_events,
-                accepted_events: target_events,
-                rejected_events: 0,
-                acceptance_rate: None,
-                envelope_stats: None,
-                sum_weights,
-                min_weight,
-                max_weight,
-                batches_written,
-                elapsed: started.elapsed(),
-                seed: options.seed.or(self.seed),
-            },
-        })
+        let local_target = runtime.local_target as u64;
+        let stats = runtime.reduce_stats(GenerationStats {
+            mode: GenerationModeKind::Raw,
+            target_events: target_events as u64,
+            written_events: local_target,
+            proposed_events: local_target,
+            accepted_events: local_target,
+            rejected_events: 0,
+            acceptance_rate: None,
+            envelope_stats: None,
+            sum_weights,
+            min_weight,
+            max_weight,
+            batches_written,
+            elapsed: started.elapsed(),
+            seed: options.seed.or(self.seed),
+        });
+        Ok(GenerationResult { output, stats })
     }
 
     fn generate_weighted<S>(
@@ -194,6 +211,7 @@ impl EventGenerator {
         target_events: usize,
         mut sink: S,
         options: GenerationOptions,
+        runtime: GenerationRuntime,
         expression: Expression,
         parameters: Vec<f64>,
     ) -> LadduResult<GenerationResult<S::Output>>
@@ -203,53 +221,62 @@ impl EventGenerator {
         let started = Instant::now();
         let layout = generated_layout(&self.plan);
         sink.begin(&layout)?;
-        let mut rng = self.rng_with_options(&options);
-        let mut records = Vec::with_capacity(options.batch_size.min(target_events));
+        let mut rng = runtime.rng(self, &options);
+        let mut records = Vec::with_capacity(options.batch_size.min(runtime.local_target));
         let mut stats = WeightStats::default();
 
-        for local_index in 0..target_events {
+        for local_index in 0..runtime.local_target {
             let event = self.generate_event(&mut rng)?;
-            records.push(self.record_from_event(local_index as u64, event, 1.0)?);
+            records.push(self.record_from_event(
+                local_index as u64,
+                runtime.global_start + local_index as u64,
+                event,
+                1.0,
+            )?);
             if records.len() == options.batch_size {
                 evaluate_record_weights(&layout, &mut records, &expression, &parameters)?;
                 stats.observe_batch(&records);
-                sink.push_batch(GeneratedBatchView {
-                    layout: &layout,
-                    records: &records,
-                })?;
+                sink.push_batch(
+                    GeneratedBatchView {
+                        layout: &layout,
+                        records: &records,
+                    },
+                    &mut rng,
+                )?;
                 records.clear();
             }
         }
         if !records.is_empty() {
             evaluate_record_weights(&layout, &mut records, &expression, &parameters)?;
             stats.observe_batch(&records);
-            sink.push_batch(GeneratedBatchView {
-                layout: &layout,
-                records: &records,
-            })?;
+            sink.push_batch(
+                GeneratedBatchView {
+                    layout: &layout,
+                    records: &records,
+                },
+                &mut rng,
+            )?;
         }
 
         let output = sink.finish()?;
-        let target_events = target_events as u64;
-        Ok(GenerationResult {
-            output,
-            stats: GenerationStats {
-                mode: GenerationModeKind::Weighted,
-                target_events,
-                written_events: target_events,
-                proposed_events: target_events,
-                accepted_events: target_events,
-                rejected_events: 0,
-                acceptance_rate: None,
-                envelope_stats: None,
-                sum_weights: stats.sum_weights,
-                min_weight: stats.min_weight,
-                max_weight: stats.max_weight,
-                batches_written: stats.batches_written,
-                elapsed: started.elapsed(),
-                seed: options.seed.or(self.seed),
-            },
-        })
+        let local_target = runtime.local_target as u64;
+        let stats = runtime.reduce_stats(GenerationStats {
+            mode: GenerationModeKind::Weighted,
+            target_events: target_events as u64,
+            written_events: local_target,
+            proposed_events: local_target,
+            accepted_events: local_target,
+            rejected_events: 0,
+            acceptance_rate: None,
+            envelope_stats: None,
+            sum_weights: stats.sum_weights,
+            min_weight: stats.min_weight,
+            max_weight: stats.max_weight,
+            batches_written: stats.batches_written,
+            elapsed: started.elapsed(),
+            seed: options.seed.or(self.seed),
+        });
+        Ok(GenerationResult { output, stats })
     }
 
     fn generate_accepted<S>(
@@ -257,18 +284,22 @@ impl EventGenerator {
         target_events: usize,
         mut sink: S,
         options: GenerationOptions,
-        expression: Expression,
-        parameters: Vec<f64>,
-        envelope: Envelope,
+        config: AcceptedGenerationConfig,
     ) -> LadduResult<GenerationResult<S::Output>>
     where
         S: GeneratedSink,
     {
+        let AcceptedGenerationConfig {
+            runtime,
+            expression,
+            parameters,
+            envelope,
+        } = config;
         envelope.validate()?;
         let started = Instant::now();
         let layout = generated_layout(&self.plan);
-        let mut rng = self.rng_with_options(&options);
-        let max_trials = options.max_trials.unwrap_or(u64::MAX);
+        let mut rng = runtime.rng(self, &options);
+        let max_trials = runtime.local_max_trials.unwrap_or(u64::MAX);
         let EnvelopeConfiguration {
             active_envelope,
             envelope_stats,
@@ -286,7 +317,7 @@ impl EventGenerator {
         )?;
         sink.begin(&layout)?;
         let mut proposal_batch = Vec::with_capacity(options.batch_size);
-        let mut accepted_batch = Vec::with_capacity(options.batch_size.min(target_events));
+        let mut accepted_batch = Vec::with_capacity(options.batch_size.min(runtime.local_target));
         let mut stats = WeightStats::default();
         let mut active_envelope = active_envelope;
         let mut envelope_stats = envelope_stats;
@@ -294,14 +325,19 @@ impl EventGenerator {
         let mut accepted_events = 0_u64;
         let mut rejected_events = 0_u64;
 
-        while accepted_events < target_events as u64 {
+        while accepted_events < runtime.local_target as u64 {
             if proposed_events >= max_trials {
                 return Err(LadduError::Custom(format!(
                     "accepted generation reached max_trials {max_trials} before writing {target_events} accepted events"
                 )));
             }
             let event = self.generate_event(&mut rng)?;
-            proposal_batch.push(self.record_from_event(proposed_events, event, 1.0)?);
+            proposal_batch.push(self.record_from_event(
+                proposed_events,
+                proposed_events,
+                event,
+                1.0,
+            )?);
             proposed_events += 1;
             if proposal_batch.len() == options.batch_size {
                 AcceptedBatchContext {
@@ -316,7 +352,8 @@ impl EventGenerator {
                     stats: &mut stats,
                     accepted_events: &mut accepted_events,
                     rejected_events: &mut rejected_events,
-                    target_events: target_events as u64,
+                    target_events: runtime.local_target as u64,
+                    global_start: runtime.global_start,
                     sink: &mut sink,
                 }
                 .accept_weighted_batch(&mut proposal_batch)?;
@@ -335,37 +372,41 @@ impl EventGenerator {
                 stats: &mut stats,
                 accepted_events: &mut accepted_events,
                 rejected_events: &mut rejected_events,
-                target_events: target_events as u64,
+                target_events: runtime.local_target as u64,
+                global_start: runtime.global_start,
                 sink: &mut sink,
             }
             .accept_weighted_batch(&mut proposal_batch)?;
         }
-        flush_records(&layout, &mut accepted_batch, &mut sink, &mut stats)?;
+        flush_records(
+            &layout,
+            &mut accepted_batch,
+            &mut sink,
+            &mut stats,
+            &mut rng,
+        )?;
 
         let output = sink.finish()?;
-        let target_events = target_events as u64;
         let pilot_events = envelope_stats.pilot_events;
         let sampled_proposals = proposed_events.saturating_sub(pilot_events);
-        Ok(GenerationResult {
-            output,
-            stats: GenerationStats {
-                mode: GenerationModeKind::Accepted,
-                target_events,
-                written_events: accepted_events,
-                proposed_events,
-                accepted_events,
-                rejected_events,
-                acceptance_rate: (sampled_proposals > 0)
-                    .then_some(accepted_events as f64 / sampled_proposals as f64),
-                envelope_stats: Some(envelope_stats),
-                sum_weights: stats.sum_weights,
-                min_weight: stats.min_weight,
-                max_weight: stats.max_weight,
-                batches_written: stats.batches_written,
-                elapsed: started.elapsed(),
-                seed: options.seed.or(self.seed),
-            },
-        })
+        let stats = runtime.reduce_stats(GenerationStats {
+            mode: GenerationModeKind::Accepted,
+            target_events: target_events as u64,
+            written_events: accepted_events,
+            proposed_events,
+            accepted_events,
+            rejected_events,
+            acceptance_rate: (sampled_proposals > 0)
+                .then_some(accepted_events as f64 / sampled_proposals as f64),
+            envelope_stats: Some(envelope_stats),
+            sum_weights: stats.sum_weights,
+            min_weight: stats.min_weight,
+            max_weight: stats.max_weight,
+            batches_written: stats.batches_written,
+            elapsed: started.elapsed(),
+            seed: options.seed.or(self.seed),
+        });
+        Ok(GenerationResult { output, stats })
     }
 
     fn configure_envelope(
@@ -414,6 +455,17 @@ impl EventGenerator {
                     proposed_events: pilot_events as u64,
                 })
             }
+            Envelope::Adaptive {
+                initial,
+                growth_factor,
+            } => {
+                validate_envelope_value(initial)?;
+                Ok(EnvelopeConfiguration {
+                    active_envelope: initial,
+                    envelope_stats: EnvelopeStats::adaptive(initial, growth_factor),
+                    proposed_events: 0,
+                })
+            }
         }
     }
 
@@ -430,7 +482,12 @@ impl EventGenerator {
         let mut observed_max = None::<f64>;
         for local_index in 0..pilot_events {
             let event = self.generate_event(rng)?;
-            records.push(self.record_from_event(local_index as u64, event, 1.0)?);
+            records.push(self.record_from_event(
+                local_index as u64,
+                local_index as u64,
+                event,
+                1.0,
+            )?);
             if records.len() == batch_size {
                 observe_estimation_batch(
                     layout,
@@ -461,6 +518,7 @@ impl EventGenerator {
 
     fn try_generate_event(&self, rng: &mut Rng) -> LadduResult<GeneratedEvent> {
         let production = self.plan.production();
+        let aux_info = self.plan.aux_info();
         let incoming = production.incoming();
         let outgoing = production.outgoing();
 
@@ -475,12 +533,17 @@ impl EventGenerator {
         p4s.push((incoming[1].label().to_string(), p2));
         generate_decay_chain(&outgoing[0], p3, &mut p4s, rng)?;
         generate_decay_chain(&outgoing[1], p4, &mut p4s, rng)?;
-        Ok(GeneratedEvent { p4s })
+        let aux = aux_info
+            .iter()
+            .map(|info| (info.label.clone(), info.generator.sample(rng)))
+            .collect();
+        Ok(GeneratedEvent { p4s, aux })
     }
 
     fn record_from_event(
         &self,
         local_index: u64,
+        global_index: u64,
         event: GeneratedEvent,
         weight: f64,
     ) -> LadduResult<GeneratedRecord> {
@@ -495,10 +558,95 @@ impl EventGenerator {
             .collect::<LadduResult<Vec<_>>>()?;
         Ok(GeneratedRecord {
             local_index,
-            global_index: Some(local_index),
+            global_index,
             weight,
             p4s,
+            aux: event.aux.iter().map(|(_, v)| *v).collect(),
         })
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct GenerationRuntime {
+    local_target: usize,
+    local_max_trials: Option<u64>,
+    global_start: u64,
+    rank: u64,
+}
+
+struct AcceptedGenerationConfig {
+    runtime: GenerationRuntime,
+    expression: Expression,
+    parameters: Vec<f64>,
+    envelope: Envelope,
+}
+
+impl GenerationRuntime {
+    fn new(target_events: usize, max_trials: Option<u64>) -> Self {
+        #[cfg(feature = "mpi")]
+        {
+            if let Some(world) = laddu_core::mpi::get_world() {
+                let size = world.size() as usize;
+                let rank = world.rank() as usize;
+                let partition = laddu_core::mpi::Partition::new(size, target_events);
+                let trial_partition = max_trials
+                    .map(|max_trials| laddu_core::mpi::Partition::new(size, max_trials as usize));
+                return Self {
+                    local_target: partition.len_for_rank(rank),
+                    local_max_trials: trial_partition
+                        .as_ref()
+                        .map(|partition| partition.len_for_rank(rank) as u64),
+                    global_start: partition.start_for_rank(rank) as u64,
+                    rank: rank as u64,
+                };
+            }
+        }
+        Self {
+            local_target: target_events,
+            local_max_trials: max_trials,
+            global_start: 0,
+            rank: 0,
+        }
+    }
+
+    fn validate_sink<S>(&self, sink: &S) -> LadduResult<()>
+    where
+        S: GeneratedSink,
+    {
+        #[cfg(feature = "mpi")]
+        {
+            if laddu_core::mpi::get_world().is_some()
+                && sink.mpi_support() != crate::sink::SinkMpiSupport::RankLocal
+            {
+                return Err(LadduError::Custom(
+                    "generation currently supports only rank-local sinks under MPI".to_string(),
+                ));
+            }
+        }
+        let _ = sink;
+        Ok(())
+    }
+
+    fn rng(&self, generator: &EventGenerator, options: &GenerationOptions) -> Rng {
+        match options.seed.or(generator.seed) {
+            Some(seed) => Rng::with_seed(seed.wrapping_add(self.rank)),
+            None => Rng::new(),
+        }
+    }
+
+    fn reduce_stats(&self, stats: GenerationStats) -> GenerationStats {
+        #[cfg(feature = "mpi")]
+        {
+            let mut stats = stats;
+            if let Some(world) = laddu_core::mpi::get_world() {
+                stats.reduce_mpi(&world);
+            }
+            stats
+        }
+        #[cfg(not(feature = "mpi"))]
+        {
+            stats
+        }
     }
 }
 
@@ -506,6 +654,7 @@ impl EventGenerator {
 #[derive(Clone, Debug)]
 pub struct GeneratedEvent {
     p4s: Vec<(String, Vec4)>,
+    aux: Vec<(String, f64)>,
 }
 
 impl GeneratedEvent {
@@ -565,6 +714,7 @@ struct AcceptedBatchContext<'a, S> {
     accepted_events: &'a mut u64,
     rejected_events: &'a mut u64,
     target_events: u64,
+    global_start: u64,
     sink: &'a mut S,
 }
 
@@ -607,10 +757,17 @@ where
             if weight > *self.active_envelope {
                 match self.envelope_violation_policy {
                     EnvelopeViolationPolicy::Error => {
-                        return Err(LadduError::Custom(format!(
-                            "accepted generation weight {weight} exceeded envelope {}",
-                            *self.active_envelope
-                        )));
+                        if let Some(growth_factor) = self.envelope_stats.growth_factor {
+                            while *self.active_envelope < weight {
+                                *self.active_envelope *= growth_factor;
+                            }
+                            self.envelope_stats.update_final_max(*self.active_envelope);
+                        } else {
+                            return Err(LadduError::Custom(format!(
+                                "accepted generation weight {weight} exceeded envelope {}",
+                                *self.active_envelope
+                            )));
+                        }
                     }
                     EnvelopeViolationPolicy::WarnAndContinue => {}
                     EnvelopeViolationPolicy::Grow => {
@@ -625,10 +782,17 @@ where
             }
             if self.rng.f64() * *self.active_envelope < weight {
                 record.weight = 1.0;
+                record.global_index = self.global_start + *self.accepted_events;
                 self.accepted_batch.push(record);
                 *self.accepted_events += 1;
                 if self.accepted_batch.len() == self.accepted_batch.capacity() {
-                    flush_records(self.layout, self.accepted_batch, self.sink, self.stats)?;
+                    flush_records(
+                        self.layout,
+                        self.accepted_batch,
+                        self.sink,
+                        self.stats,
+                        self.rng,
+                    )?;
                 }
             } else {
                 *self.rejected_events += 1;
@@ -667,6 +831,7 @@ fn flush_records<S>(
     records: &mut Vec<GeneratedRecord>,
     sink: &mut S,
     stats: &mut WeightStats,
+    rng: &mut Rng,
 ) -> LadduResult<()>
 where
     S: GeneratedSink,
@@ -675,7 +840,7 @@ where
         return Ok(());
     }
     stats.observe_batch(records);
-    sink.push_batch(GeneratedBatchView { layout, records })?;
+    sink.push_batch(GeneratedBatchView { layout, records }, rng)?;
     records.clear();
     Ok(())
 }
@@ -711,13 +876,20 @@ fn evaluate_record_weights(
 }
 
 fn records_dataset(layout: &GeneratedLayout, records: &[GeneratedRecord]) -> LadduResult<Dataset> {
-    let metadata = Arc::new(DatasetMetadata::new(layout.labels(), Vec::<String>::new())?);
+    let metadata = Arc::new(DatasetMetadata::new(
+        layout.labels(),
+        layout
+            .aux_info()
+            .iter()
+            .map(|info| info.label.clone())
+            .collect(),
+    )?);
     let events = records
         .iter()
         .map(|record| {
             Arc::new(EventData {
                 p4s: record.p4s.clone(),
-                aux: Vec::new(),
+                aux: record.aux.clone(),
                 weight: 1.0,
             })
         })
@@ -769,7 +941,7 @@ fn generated_layout(plan: &GenerationPlan) -> GeneratedLayout {
     for (index, particle) in particles.iter_mut().enumerate() {
         particle.output_index = Some(index);
     }
-    GeneratedLayout::new(particles)
+    GeneratedLayout::new(particles, plan.aux_info().to_vec())
 }
 
 fn collect_decay_particle_info(
@@ -957,10 +1129,16 @@ fn direction_from_angles(costheta: f64, phi: f64) -> Vec3 {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(feature = "mpi")]
+    use laddu_core::mpi::{finalize_mpi, get_world, use_mpi};
     use laddu_core::{
         data::{read_parquet, read_root, DatasetReadOptions},
         Channel, Expression, ParticleProperties, VertexGenerator,
     };
+    #[cfg(feature = "mpi")]
+    use mpi::traits::*;
+    #[cfg(feature = "mpi")]
+    use mpi_test::mpi_test;
 
     use super::*;
     use crate::{CallbackSink, DatasetSink, NullSink, ParquetSink, RootSink};
@@ -976,6 +1154,23 @@ mod tests {
             .join(name)
             .to_string_lossy()
             .into_owned()
+    }
+
+    #[cfg(feature = "mpi")]
+    fn mpi_ranked_test_path(file_path: &str, rank: i32) -> String {
+        let path = std::path::Path::new(file_path);
+        let stem = path
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .unwrap_or(file_path);
+        let file_name = match path.extension().and_then(|extension| extension.to_str()) {
+            Some(extension) => format!("{stem}.rank{rank}.{extension}"),
+            None => format!("{stem}.rank{rank}"),
+        };
+        match path.parent() {
+            Some(parent) => parent.join(file_name).to_string_lossy().into_owned(),
+            None => file_name,
+        }
     }
 
     fn demo_generator() -> EventGenerator {
@@ -1002,7 +1197,7 @@ mod tests {
         channel
             .edit_particle("res")
             .unwrap()
-            .mass_sampler(crate::gen::uniform_mass(1.1, 1.6));
+            .mass_sampler(crate::samplers::uniform_mass(1.1, 1.6));
         for label in ["a", "b"] {
             channel
                 .edit_particle(label)
@@ -1093,6 +1288,36 @@ mod tests {
         assert!(result.stats.audit().contains("Generation audit"));
     }
 
+    #[cfg(feature = "mpi")]
+    #[mpi_test(np = [2])]
+    fn mpi_raw_generation_partitions_events_and_reduces_stats() {
+        use_mpi(true);
+        let world = get_world().expect("MPI world should be initialized");
+        let rank = world.rank() as usize;
+        let expected_local =
+            laddu_core::mpi::Partition::new(world.size() as usize, 7).len_for_rank(rank);
+
+        let generator = demo_generator();
+        let result = generator
+            .generate(
+                7,
+                NullSink::new(),
+                GenerationMode::Raw,
+                GenerationOptions::default().batch_size(2),
+            )
+            .unwrap();
+
+        assert_eq!(result.output, expected_local);
+        assert_eq!(result.stats.target_events, 7);
+        assert_eq!(result.stats.written_events, 7);
+        assert_eq!(result.stats.proposed_events, 7);
+        assert_eq!(result.stats.accepted_events, 7);
+        assert_eq!(result.stats.rejected_events, 0);
+        assert_eq!(result.stats.sum_weights, 7.0);
+        assert_eq!(result.stats.batches_written, 4);
+        finalize_mpi();
+    }
+
     #[test]
     fn null_sink_counts_generated_records() {
         let generator = demo_generator();
@@ -1165,6 +1390,41 @@ mod tests {
             ["beam", "target", "res", "a", "b", "recoil"]
         );
         let _ = std::fs::remove_file(path);
+    }
+
+    #[cfg(feature = "mpi")]
+    #[mpi_test(np = [2])]
+    fn mpi_parquet_sink_writes_rank_local_files_with_global_stats() {
+        use_mpi(true);
+        let world = get_world().expect("MPI world should be initialized");
+        let rank = world.rank();
+        let expected_local =
+            laddu_core::mpi::Partition::new(world.size() as usize, 5).len_for_rank(rank as usize);
+        let path = temp_output_path("parquet");
+        let rank_path = mpi_ranked_test_path(&path, rank);
+
+        let generator = demo_generator();
+        let result = generator
+            .generate(
+                5,
+                ParquetSink::new(&path).unwrap(),
+                GenerationMode::Raw,
+                GenerationOptions::default().batch_size(2),
+            )
+            .unwrap();
+
+        assert_eq!(result.output, expected_local);
+        assert_eq!(result.stats.written_events, 5);
+        assert_eq!(result.stats.proposed_events, 5);
+        assert_eq!(result.stats.batches_written, 3);
+        finalize_mpi();
+        let dataset = read_parquet(&rank_path, &DatasetReadOptions::default()).unwrap();
+        assert_eq!(dataset.n_events(), expected_local);
+        assert_eq!(
+            dataset.p4_names(),
+            ["beam", "target", "res", "a", "b", "recoil"]
+        );
+        let _ = std::fs::remove_file(rank_path);
     }
 
     #[test]
@@ -1330,6 +1590,30 @@ mod tests {
     }
 
     #[test]
+    fn accepted_generation_can_use_adaptive_envelope() {
+        let generator = demo_generator();
+        let result = generator
+            .generate(
+                1,
+                NullSink::new(),
+                GenerationMode::Accepted {
+                    expression: Box::new(Expression::one() * 3.0),
+                    parameters: Vec::new(),
+                    envelope: Envelope::adaptive(1.0, 2.0),
+                },
+                GenerationOptions::default().batch_size(1),
+            )
+            .unwrap();
+        let envelope_stats = result.stats.envelope_stats.as_ref().unwrap();
+        assert_eq!(result.stats.accepted_events, 1);
+        assert_eq!(envelope_stats.configured_max, Some(1.0));
+        assert_eq!(envelope_stats.growth_factor, Some(2.0));
+        assert_eq!(envelope_stats.violations, 1);
+        assert_eq!(envelope_stats.updates, 1);
+        assert_eq!(envelope_stats.final_max, Some(4.0));
+    }
+
+    #[test]
     fn accepted_generation_can_estimate_envelope_from_pilot_events() {
         let generator = demo_generator();
         let result = generator
@@ -1386,6 +1670,20 @@ mod tests {
             )
             .unwrap_err();
         assert!(err.to_string().contains("safety factor"));
+
+        let err = generator
+            .generate(
+                1,
+                NullSink::new(),
+                GenerationMode::Accepted {
+                    expression: Box::new(Expression::one()),
+                    parameters: Vec::new(),
+                    envelope: Envelope::adaptive(1.0, 1.0),
+                },
+                GenerationOptions::default(),
+            )
+            .unwrap_err();
+        assert!(err.to_string().contains("growth factor"));
     }
 
     #[test]

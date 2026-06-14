@@ -1,3 +1,4 @@
+from collections.abc import Mapping
 from fractions import Fraction
 from typing import Literal, TypeAlias
 
@@ -78,6 +79,12 @@ class Isospin:
     projection_unchecked: int | Fraction | None
     def __init__(self, isospin: JLike, *, projection: MLike | None = None) -> None: ...
 
+class ExternalId:
+    code: int | None
+    label: str | None
+    value: int | str
+    def __init__(self, value: int | str) -> None: ...
+
 class ParticleProperties:
     name: str
     name_unchecked: str | None
@@ -119,6 +126,7 @@ class ParticleProperties:
     tau_lepton_number_unchecked: int | None
     statistics: Statistics
     statistics_unchecked: Statistics | None
+    ids: dict[str, ExternalId]
     def __init__(
         self,
         name: str | None = None,
@@ -142,7 +150,9 @@ class ParticleProperties:
         muon_lepton_number: int | None = None,
         tau_lepton_number: int | None = None,
         statistics: Statistics | str | None = None,
+        ids: Mapping[str, ExternalId | int | str] | None = None,
     ) -> None: ...
+    def id(self, namespace: str) -> ExternalId | None: ...
 
 class PartialWave:
     j: int | Fraction
@@ -198,6 +208,7 @@ def allowed_partial_waves(
 __all__ = [
     'AllowedPartialWave',
     'Charge',
+    'ExternalId',
     'Isospin',
     'J',
     'JLike',

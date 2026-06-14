@@ -4,6 +4,7 @@ import pytest
 from laddu import (
     Channel,
     Charge,
+    ExternalId,
     Isospin,
     J,
     L,
@@ -59,6 +60,25 @@ def test_particle_properties_accept_keyword_quantum_numbers() -> None:
     assert str(pi_plus.parity) == '-'
     assert pi_plus.charge_unchecked is not None
     assert pi_plus.charge.value == 1
+
+
+def test_particle_properties_external_ids() -> None:
+    properties = ParticleProperties(
+        'K_S',
+        ids={'pdg': ExternalId(310), 'gluex': ExternalId('ks-short')},
+    )
+
+    assert [(namespace, pid.value) for namespace, pid in properties.ids.items()] == [
+        ('pdg', 310),
+        ('gluex', 'ks-short'),
+    ]
+    pdg_code = properties.id('pdg')
+    assert pdg_code is not None
+    assert pdg_code.code == 310
+    gluex_label = properties.id('gluex')
+    assert gluex_label is not None
+    assert gluex_label.label == 'ks-short'
+    assert properties.id('missing') is None
 
 
 def test_coupled_spins_and_partial_wave_validation() -> None:

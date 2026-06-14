@@ -103,13 +103,13 @@ pub mod angular_momentum {
 }
 
 use laddu_core::{
-    AllowedPartialWave, Charge, Isospin, LadduError, Parity, PartialWave, ParticleProperties,
-    Reflectivity, RuleSet, SelectionRules, Statistics, L,
+    AllowedPartialWave, Charge, ExternalId, Isospin, LadduError, Parity, PartialWave,
+    ParticleProperties, Reflectivity, RuleSet, SelectionRules, Statistics, L,
 };
 use pyo3::{
     exceptions::PyTypeError,
     prelude::*,
-    types::{PyAny, PyBool},
+    types::{PyAny, PyBool, PyDict},
     IntoPyObjectExt,
 };
 
@@ -514,6 +514,68 @@ impl PyIsospin {
     }
 }
 
+fn parse_external_id(obj: &Bound<'_, PyAny>) -> PyResult<ExternalId> {
+    if let Ok(py_id) = obj.extract::<PyRef<'_, PyExternalId>>() {
+        return Ok(py_id.0.clone());
+    }
+
+    if let Ok(i) = obj.extract::<i64>() {
+        return Ok(ExternalId::code(i));
+    }
+
+    if let Ok(s) = obj.extract::<String>() {
+        return Ok(ExternalId::label(s));
+    }
+
+    Err(PyTypeError::new_err("expected int, str, or ExternalId"))
+}
+
+#[pyclass(name = "ExternalId", module = "laddu", from_py_object)]
+#[derive(Clone)]
+pub struct PyExternalId(pub ExternalId);
+
+#[pymethods]
+impl PyExternalId {
+    #[new]
+    fn new(value: &Bound<'_, PyAny>) -> PyResult<Self> {
+        if let Ok(value) = value.extract::<i64>() {
+            return Ok(Self(ExternalId::code(value)));
+        }
+        if let Ok(value) = value.extract::<String>() {
+            return Ok(Self(ExternalId::label(value)));
+        }
+        Err(PyTypeError::new_err(
+            "ExternalId value must be an int or str",
+        ))
+    }
+
+    #[getter]
+    fn code(&self) -> Option<i64> {
+        self.0.code_value()
+    }
+
+    #[getter]
+    fn label(&self) -> Option<&str> {
+        self.0.label_value()
+    }
+
+    #[getter]
+    fn value(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        match &self.0 {
+            ExternalId::Code { value, .. } => {
+                value.into_bound_py_any(py).map(|object| object.unbind())
+            }
+            ExternalId::Label { value, .. } => {
+                value.into_bound_py_any(py).map(|object| object.unbind())
+            }
+        }
+    }
+
+    fn __repr__(&self) -> String {
+        format!("{:?}", self.0)
+    }
+}
+
 #[pyclass(name = "ParticleProperties", module = "laddu", from_py_object)]
 #[derive(Clone)]
 pub struct PyParticleProperties(pub ParticleProperties);
@@ -521,7 +583,7 @@ pub struct PyParticleProperties(pub ParticleProperties);
 #[pymethods]
 impl PyParticleProperties {
     #[new]
-    #[pyo3(signature = (name=None, *, species=None, antiparticle_species=None, self_conjugate=None, mass=None, spin=None, parity=None, c_parity=None, g_parity=None, charge=None, isospin=None, strangeness=None, charm=None, bottomness=None, topness=None, baryon_number=None, electron_lepton_number=None, muon_lepton_number=None, tau_lepton_number=None, statistics=None))]
+    #[pyo3(signature = (name=None, *, species=None, antiparticle_species=None, self_conjugate=None, mass=None, spin=None, parity=None, c_parity=None, g_parity=None, charge=None, isospin=None, strangeness=None, charm=None, bottomness=None, topness=None, baryon_number=None, electron_lepton_number=None, muon_lepton_number=None, tau_lepton_number=None, statistics=None, ids=None))]
     #[allow(clippy::too_many_arguments)]
     fn new(
         name: Option<String>,
@@ -544,7 +606,7 @@ impl PyParticleProperties {
         muon_lepton_number: Option<i32>,
         tau_lepton_number: Option<i32>,
         statistics: Option<&Bound<'_, PyAny>>,
-        // TODO: ids
+        ids: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<Self> {
         let mut properties = ParticleProperties::unknown();
         if let Some(name) = name {
@@ -607,6 +669,13 @@ impl PyParticleProperties {
         if let Some(statistics) = statistics {
             properties = properties.with_statistics(parse_statistics(statistics)?)?;
         }
+        if let Some(ids) = ids {
+            for (key, value) in ids.iter() {
+                let key: String = key.extract()?;
+                let id = parse_external_id(&value)?;
+                properties = properties.with_id(&key, id);
+            }
+        }
         Ok(Self(properties))
     }
 
@@ -658,6 +727,19 @@ impl PyParticleProperties {
     #[getter]
     fn mass_unchecked(&self) -> Option<f64> {
         self.0.mass
+    }
+
+    #[getter]
+    fn ids<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        let dict = PyDict::new(py);
+        for (namespace, id) in self.0.ids().iter() {
+            dict.set_item(namespace, PyExternalId(id.clone()))?;
+        }
+        Ok(dict)
+    }
+
+    fn id(&self, namespace: &str) -> Option<PyExternalId> {
+        self.0.id(namespace).cloned().map(PyExternalId)
     }
 
     #[getter]

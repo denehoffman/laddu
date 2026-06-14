@@ -48,8 +48,8 @@ mod laddu {
         data::{PyBinnedDataset, PyDataset, PyEvent, PyParquetBatchWriter, PyParquetChunkIter},
         generation::{
             py_energy, py_histogram_energy, py_histogram_mass, py_mass_from_properties, py_rest,
-            py_t_exponential, py_t_histogram, py_uniform_energy, py_uniform_mass, PyDatasetSink,
-            PyDecayParticlePlan, PyDecayPlan, PyEnvelope, PyEnvelopeStats,
+            py_t_exponential, py_t_histogram, py_uniform_energy, py_uniform_mass, PyCallbackSink,
+            PyDatasetSink, PyDecayParticlePlan, PyDecayPlan, PyEnvelope, PyEnvelopeStats,
             PyEnvelopeViolationPolicy, PyEventGenerator, PyGeneratedEvent, PyGeneratedSink,
             PyGenerationMode, PyGenerationOptions, PyGenerationOutput, PyGenerationPlan,
             PyGenerationResult, PyGenerationStats, PyInitialParticlePlan, PyMassSampler,
@@ -61,8 +61,9 @@ mod laddu {
         mpi::{finalize_mpi, get_rank, get_size, is_mpi_available, is_root, use_mpi, using_mpi},
         quantum::{
             angular_momentum::py_allowed_projections, py_allowed_partial_waves, py_coupled_spins,
-            PyAllowedPartialWave, PyCharge, PyIsospin, PyJ, PyL, PyM, PyParity, PyPartialWave,
-            PyParticleProperties, PyReflectivity, PyRuleSet, PySelectionRules, PyStatistics,
+            PyAllowedPartialWave, PyCharge, PyExternalId, PyIsospin, PyJ, PyL, PyM, PyParity,
+            PyPartialWave, PyParticleProperties, PyReflectivity, PyRuleSet, PySelectionRules,
+            PyStatistics,
         },
         set_threads,
         variables::{

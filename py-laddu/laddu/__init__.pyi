@@ -6,7 +6,6 @@ from . import (
     data,
     experimental,
     extensions,
-    gen,
     generation,
     io,
     likelihood,
@@ -15,6 +14,7 @@ from . import (
     optimize,
     quantum,
     reaction,
+    samplers,
     utils,
     variables,
     vectors,
@@ -65,6 +65,7 @@ from .amplitudes.resonance import (
 from .amplitudes.scalar import ComplexScalar, PolarComplexScalar, Scalar, VariableScalar
 from .data import BinnedDataset, Dataset, Event
 from .generation import (
+    CallbackSink,
     DatasetSink,
     DecayParticlePlan,
     DecayPlan,
@@ -117,6 +118,7 @@ from .optimize import (
 from .quantum import (
     AllowedPartialWave,
     Charge,
+    ExternalId,
     Isospin,
     J,
     L,
@@ -172,6 +174,7 @@ __all__ = [
     'BlattWeisskopf',
     'BreitWigner',
     'BreitWignerNonRelativistic',
+    'CallbackSink',
     'Channel',
     'Charge',
     'CompiledExpression',
@@ -190,6 +193,7 @@ __all__ = [
     'Event',
     'EventGenerator',
     'Expression',
+    'ExternalId',
     'Flatte',
     'Frame',
     'GeneratedEvent',
@@ -287,7 +291,6 @@ __all__ = [
     'expr_product',
     'expr_sum',
     'extensions',
-    'gen',
     'generation',
     'get_threads',
     'integrated_autocorrelation_times',
@@ -301,6 +304,7 @@ __all__ = [
     'parameter',
     'quantum',
     'reaction',
+    'samplers',
     'set_threads',
     'threads',
     'utils',

@@ -62,18 +62,8 @@ from laddu.amplitudes.scalar import (
 )
 from laddu.data import BinnedDataset, Dataset, Event
 from laddu.experimental import BinnedGuideTerm, Regularizer
-from laddu.gen import (
-    energy,
-    histogram_energy,
-    histogram_mass,
-    mass_from_properties,
-    rest,
-    t_exponential,
-    t_histogram,
-    uniform_energy,
-    uniform_mass,
-)
 from laddu.generation import (
+    CallbackSink,
     DatasetSink,
     DecayParticlePlan,
     DecayPlan,
@@ -123,6 +113,7 @@ from laddu.optimize import (
 from laddu.quantum import (
     AllowedPartialWave,
     Charge,
+    ExternalId,
     Isospin,
     J,
     L,
@@ -149,6 +140,17 @@ from laddu.reaction import (
     TwoBodyCoupling,
     Vertex,
 )
+from laddu.samplers import (
+    energy,
+    histogram_energy,
+    histogram_mass,
+    mass_from_properties,
+    rest,
+    t_exponential,
+    t_histogram,
+    uniform_energy,
+    uniform_mass,
+)
 from laddu.variables import (
     Angles,
     CosTheta,
@@ -173,6 +175,7 @@ __all__ = [
     'BlattWeisskopf',
     'BreitWigner',
     'BreitWignerNonRelativistic',
+    'CallbackSink',
     'Channel',
     'Charge',
     'CompiledExpression',
@@ -191,6 +194,7 @@ __all__ = [
     'Event',
     'EventGenerator',
     'Expression',
+    'ExternalId',
     'Flatte',
     'Frame',
     'GeneratedEvent',

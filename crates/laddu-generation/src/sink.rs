@@ -1,13 +1,16 @@
 use std::{sync::Arc, time::Duration};
 
+use fastrand::Rng;
 use laddu_core::{
     data::{
         io::ParquetBatchWriter, write_root, Dataset, DatasetMetadata, DatasetWriteOptions,
         EventData,
     },
     vectors::Vec4,
-    LadduError, LadduResult, ParticleProperties,
+    LadduError, LadduResult, ParticleProperties, ScalarDistribution,
 };
+#[cfg(feature = "mpi")]
+use mpi::{collective::SystemOperation, topology::SimpleCommunicator, traits::*};
 
 /// Which generated particles should be passed to a sink.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -44,7 +47,8 @@ impl GenerationOutput {
         Self::Exclude(labels.into_iter().map(Into::into).collect())
     }
 
-    pub(crate) fn includes(&self, particle: &GeneratedParticleInfo) -> bool {
+    /// Check whether the output includes the given particle.
+    pub fn includes(&self, particle: &GeneratedParticleInfo) -> bool {
         match self {
             Self::All => true,
             Self::FinalState => matches!(particle.role, GeneratedParticleRole::Final),
@@ -52,23 +56,39 @@ impl GenerationOutput {
             Self::Exclude(labels) => !labels.iter().any(|label| label == &particle.label),
         }
     }
+
+    /// Get the indices corresponding to the particles selected by the [`GenerationOutput`].
+    pub fn selected_p4_indices(&self, layout: &GeneratedLayout) -> Vec<usize> {
+        layout
+            .particles()
+            .iter()
+            .enumerate()
+            .filter_map(|(index, particle)| self.includes(particle).then_some(index))
+            .collect()
+    }
 }
 
 /// Metadata describing the generated particles available to sinks.
 #[derive(Clone, Debug)]
 pub struct GeneratedLayout {
     particles: Vec<GeneratedParticleInfo>,
+    aux: Vec<GeneratedAuxInfo>,
 }
 
 impl GeneratedLayout {
     /// Construct a generated layout from particle metadata.
-    pub fn new(particles: Vec<GeneratedParticleInfo>) -> Self {
-        Self { particles }
+    pub fn new(particles: Vec<GeneratedParticleInfo>, aux: Vec<GeneratedAuxInfo>) -> Self {
+        Self { particles, aux }
     }
 
     /// Return the generated particle metadata in sink output order.
     pub fn particles(&self) -> &[GeneratedParticleInfo] {
         &self.particles
+    }
+
+    /// Return the generated auxiliary column metadata in sink output order.
+    pub fn aux_info(&self) -> &[GeneratedAuxInfo] {
+        &self.aux
     }
 
     /// Return the generated particle labels in sink output order.
@@ -92,7 +112,14 @@ impl GeneratedLayout {
                 particle
             })
             .collect();
-        Self { particles }
+        Self {
+            particles,
+            aux: self.aux.clone(),
+        }
+    }
+
+    pub fn particle(&self, label: &str) -> Option<&GeneratedParticleInfo> {
+        self.particles.iter().find(|p| p.label == label)
     }
 }
 
@@ -136,17 +163,25 @@ pub enum GeneratedParticleRole {
     Final,
 }
 
+#[derive(Clone, Debug)]
+pub struct GeneratedAuxInfo {
+    pub label: String,
+    pub generator: ScalarDistribution,
+}
+
 /// One generated record passed to sinks.
 #[derive(Clone, Debug)]
 pub struct GeneratedRecord {
     /// Rank-local generated record index.
     pub local_index: u64,
-    /// Global generated record index, if known.
-    pub global_index: Option<u64>,
+    /// Global generated record index.
+    pub global_index: u64,
     /// Event weight.
     pub weight: f64,
     /// Generated p4 values in layout order.
     pub p4s: Vec<Vec4>,
+    /// Generated aux values in layout order.
+    pub aux: Vec<f64>,
 }
 
 /// Borrowed batch passed to sinks.
@@ -180,7 +215,7 @@ pub trait GeneratedSink {
     }
 
     /// Push one batch of generated records.
-    fn push_batch(&mut self, batch: GeneratedBatchView<'_>) -> LadduResult<()>;
+    fn push_batch(&mut self, batch: GeneratedBatchView<'_>, rng: &mut Rng) -> LadduResult<()>;
 
     /// Finish output and return the sink-specific result.
     fn finish(self) -> LadduResult<Self::Output>;
@@ -228,14 +263,12 @@ impl GeneratedSink for DatasetSink {
             .iter()
             .map(|index| layout.particles()[*index].label.clone())
             .collect();
-        self.metadata = Some(Arc::new(DatasetMetadata::new(
-            labels,
-            Vec::<String>::new(),
-        )?));
+        let aux_labels = layout.aux.iter().map(|aux| aux.label.clone()).collect();
+        self.metadata = Some(Arc::new(DatasetMetadata::new(labels, aux_labels)?));
         Ok(())
     }
 
-    fn push_batch(&mut self, batch: GeneratedBatchView<'_>) -> LadduResult<()> {
+    fn push_batch(&mut self, batch: GeneratedBatchView<'_>, _rng: &mut Rng) -> LadduResult<()> {
         if self.metadata.is_none() {
             self.begin(batch.layout)?;
         }
@@ -247,7 +280,7 @@ impl GeneratedSink for DatasetSink {
                 .collect();
             self.events.push(Arc::new(EventData {
                 p4s,
-                aux: Vec::new(),
+                aux: record.aux.clone(),
                 weight: record.weight,
             }));
         }
@@ -262,15 +295,6 @@ impl GeneratedSink for DatasetSink {
     }
 }
 
-fn selected_p4_indices(layout: &GeneratedLayout, output: &GenerationOutput) -> Vec<usize> {
-    layout
-        .particles()
-        .iter()
-        .enumerate()
-        .filter_map(|(index, particle)| output.includes(particle).then_some(index))
-        .collect()
-}
-
 fn metadata_for_indices(
     layout: &GeneratedLayout,
     p4_indices: &[usize],
@@ -279,10 +303,8 @@ fn metadata_for_indices(
         .iter()
         .map(|index| layout.particles()[*index].label.clone())
         .collect();
-    Ok(Arc::new(DatasetMetadata::new(
-        labels,
-        Vec::<String>::new(),
-    )?))
+    let aux_labels = layout.aux.iter().map(|aux| aux.label.clone()).collect();
+    Ok(Arc::new(DatasetMetadata::new(labels, aux_labels)?))
 }
 
 fn records_to_dataset(
@@ -296,7 +318,7 @@ fn records_to_dataset(
             let p4s = p4_indices.iter().map(|index| record.p4s[*index]).collect();
             Arc::new(EventData {
                 p4s,
-                aux: Vec::new(),
+                aux: record.aux.clone(),
                 weight: record.weight,
             })
         })
@@ -321,8 +343,9 @@ impl ParquetSink {
 
     /// Construct a Parquet sink with explicit write options.
     pub fn with_options(file_path: &str, options: DatasetWriteOptions) -> LadduResult<Self> {
+        let file_path = mpi_ranked_path(file_path);
         Ok(Self {
-            writer: ParquetBatchWriter::new(file_path, options)?,
+            writer: ParquetBatchWriter::new(&file_path, options)?,
             output: GenerationOutput::default(),
             metadata: None,
             p4_indices: Vec::new(),
@@ -341,12 +364,12 @@ impl GeneratedSink for ParquetSink {
     type Output = usize;
 
     fn begin(&mut self, layout: &GeneratedLayout) -> LadduResult<()> {
-        self.p4_indices = selected_p4_indices(layout, &self.output);
+        self.p4_indices = self.output.selected_p4_indices(layout);
         self.metadata = Some(metadata_for_indices(layout, &self.p4_indices)?);
         Ok(())
     }
 
-    fn push_batch(&mut self, batch: GeneratedBatchView<'_>) -> LadduResult<()> {
+    fn push_batch(&mut self, batch: GeneratedBatchView<'_>, _rng: &mut Rng) -> LadduResult<()> {
         if self.metadata.is_none() {
             self.begin(batch.layout)?;
         }
@@ -382,7 +405,7 @@ impl RootSink {
     /// Construct a ROOT sink with explicit write options.
     pub fn with_options(file_path: impl Into<String>, options: DatasetWriteOptions) -> Self {
         Self {
-            file_path: file_path.into(),
+            file_path: mpi_ranked_path(file_path.into()),
             options,
             output: GenerationOutput::default(),
             metadata: None,
@@ -398,16 +421,40 @@ impl RootSink {
     }
 }
 
+fn mpi_ranked_path(file_path: impl AsRef<str>) -> String {
+    let file_path = file_path.as_ref();
+    #[cfg(feature = "mpi")]
+    {
+        if let Some(world) = laddu_core::mpi::get_world() {
+            let path = std::path::Path::new(file_path);
+            let rank = world.rank();
+            let stem = path
+                .file_stem()
+                .and_then(|stem| stem.to_str())
+                .unwrap_or(file_path);
+            let file_name = match path.extension().and_then(|extension| extension.to_str()) {
+                Some(extension) => format!("{stem}.rank{rank}.{extension}"),
+                None => format!("{stem}.rank{rank}"),
+            };
+            return match path.parent() {
+                Some(parent) => parent.join(file_name).to_string_lossy().into_owned(),
+                None => file_name,
+            };
+        }
+    }
+    file_path.to_string()
+}
+
 impl GeneratedSink for RootSink {
     type Output = usize;
 
     fn begin(&mut self, layout: &GeneratedLayout) -> LadduResult<()> {
-        self.p4_indices = selected_p4_indices(layout, &self.output);
+        self.p4_indices = self.output.selected_p4_indices(layout);
         self.metadata = Some(metadata_for_indices(layout, &self.p4_indices)?);
         Ok(())
     }
 
-    fn push_batch(&mut self, batch: GeneratedBatchView<'_>) -> LadduResult<()> {
+    fn push_batch(&mut self, batch: GeneratedBatchView<'_>, _rng: &mut Rng) -> LadduResult<()> {
         if self.metadata.is_none() {
             self.begin(batch.layout)?;
         }
@@ -442,7 +489,7 @@ impl NullSink {
 impl GeneratedSink for NullSink {
     type Output = usize;
 
-    fn push_batch(&mut self, batch: GeneratedBatchView<'_>) -> LadduResult<()> {
+    fn push_batch(&mut self, batch: GeneratedBatchView<'_>, _rng: &mut Rng) -> LadduResult<()> {
         self.count += batch.records.len();
         Ok(())
     }
@@ -485,7 +532,7 @@ where
 {
     type Output = usize;
 
-    fn push_batch(&mut self, batch: GeneratedBatchView<'_>) -> LadduResult<()> {
+    fn push_batch(&mut self, batch: GeneratedBatchView<'_>, _rng: &mut Rng) -> LadduResult<()> {
         self.count += batch.records.len();
         (self.callback)(batch)
     }
@@ -511,6 +558,13 @@ pub enum Envelope {
         /// Factor multiplied into the largest observed pilot weight.
         safety_factor: f64,
     },
+    /// Start from an initial envelope and grow it when violations are observed.
+    Adaptive {
+        /// Initial rejection envelope.
+        initial: f64,
+        /// Multiplicative factor used when growing the active envelope.
+        growth_factor: f64,
+    },
 }
 
 impl Envelope {
@@ -524,6 +578,14 @@ impl Envelope {
         Self::Estimate {
             pilot_events,
             safety_factor,
+        }
+    }
+
+    /// Construct an adaptive rejection envelope.
+    pub fn adaptive(initial: f64, growth_factor: f64) -> Self {
+        Self::Adaptive {
+            initial,
+            growth_factor,
         }
     }
 
@@ -542,6 +604,18 @@ impl Envelope {
                 if !safety_factor.is_finite() || safety_factor <= 0.0 {
                     return Err(LadduError::Custom(format!(
                         "envelope safety factor must be finite and positive, got {safety_factor}"
+                    )));
+                }
+                Ok(())
+            }
+            Self::Adaptive {
+                initial,
+                growth_factor,
+            } => {
+                validate_envelope_value(initial)?;
+                if !growth_factor.is_finite() || growth_factor <= 1.0 {
+                    return Err(LadduError::Custom(format!(
+                        "adaptive envelope growth factor must be finite and greater than one, got {growth_factor}"
                     )));
                 }
                 Ok(())
@@ -579,6 +653,8 @@ pub struct EnvelopeStats {
     pub pilot_observed_max: Option<f64>,
     /// Safety factor applied to the pilot maximum.
     pub safety_factor: Option<f64>,
+    /// Growth factor used by adaptive envelopes.
+    pub growth_factor: Option<f64>,
     /// Largest proposal weight observed by the run.
     pub observed_max: Option<f64>,
     /// Number of proposal weights that exceeded the active rejection envelope.
@@ -636,6 +712,16 @@ impl EnvelopeStats {
             self.updates += 1;
         }
         self.final_max = Some(value);
+    }
+
+    /// Construct envelope statistics for an adaptive envelope.
+    pub fn adaptive(initial: f64, growth_factor: f64) -> Self {
+        Self {
+            configured_max: Some(initial),
+            growth_factor: Some(growth_factor),
+            final_max: Some(initial),
+            ..Self::default()
+        }
     }
 }
 
@@ -811,6 +897,88 @@ impl GenerationStats {
             self.elapsed.as_secs_f64(),
         )
     }
+
+    #[cfg(feature = "mpi")]
+    pub(crate) fn reduce_mpi(&mut self, world: &SimpleCommunicator) {
+        self.written_events = mpi_sum_u64(world, self.written_events);
+        self.proposed_events = mpi_sum_u64(world, self.proposed_events);
+        self.accepted_events = mpi_sum_u64(world, self.accepted_events);
+        self.rejected_events = mpi_sum_u64(world, self.rejected_events);
+        self.sum_weights = mpi_sum_f64(world, self.sum_weights);
+        self.batches_written = mpi_sum_u64(world, self.batches_written);
+        self.elapsed = Duration::from_secs_f64(mpi_max_f64(world, self.elapsed.as_secs_f64()));
+
+        let global_min = mpi_min_f64(world, self.min_weight.unwrap_or(f64::INFINITY));
+        self.min_weight = global_min.is_finite().then_some(global_min);
+        let global_max = mpi_max_f64(world, self.max_weight.unwrap_or(f64::NEG_INFINITY));
+        self.max_weight = global_max.is_finite().then_some(global_max);
+
+        if let Some(envelope_stats) = &mut self.envelope_stats {
+            envelope_stats.reduce_mpi(world);
+        }
+        self.acceptance_rate = match self.mode {
+            GenerationModeKind::Accepted => {
+                let pilot_events = self
+                    .envelope_stats
+                    .as_ref()
+                    .map_or(0, |stats| stats.pilot_events);
+                let sampled_proposals = self.proposed_events.saturating_sub(pilot_events);
+                (sampled_proposals > 0)
+                    .then_some(self.accepted_events as f64 / sampled_proposals as f64)
+            }
+            GenerationModeKind::Raw | GenerationModeKind::Weighted => None,
+        };
+    }
+}
+
+#[cfg(feature = "mpi")]
+impl EnvelopeStats {
+    pub(crate) fn reduce_mpi(&mut self, world: &SimpleCommunicator) {
+        self.pilot_events = mpi_sum_u64(world, self.pilot_events);
+        self.violations = mpi_sum_u64(world, self.violations);
+        self.updates = mpi_sum_u64(world, self.updates);
+        self.configured_max = mpi_reduce_optional_max(world, self.configured_max);
+        self.pilot_observed_max = mpi_reduce_optional_max(world, self.pilot_observed_max);
+        self.safety_factor = mpi_reduce_optional_max(world, self.safety_factor);
+        self.growth_factor = mpi_reduce_optional_max(world, self.growth_factor);
+        self.observed_max = mpi_reduce_optional_max(world, self.observed_max);
+        self.largest_violation_ratio = mpi_reduce_optional_max(world, self.largest_violation_ratio);
+        self.final_max = mpi_reduce_optional_max(world, self.final_max);
+    }
+}
+
+#[cfg(feature = "mpi")]
+fn mpi_sum_u64(world: &SimpleCommunicator, value: u64) -> u64 {
+    let mut reduced = 0;
+    world.all_reduce_into(&value, &mut reduced, SystemOperation::sum());
+    reduced
+}
+
+#[cfg(feature = "mpi")]
+fn mpi_sum_f64(world: &SimpleCommunicator, value: f64) -> f64 {
+    let mut reduced = 0.0;
+    world.all_reduce_into(&value, &mut reduced, SystemOperation::sum());
+    reduced
+}
+
+#[cfg(feature = "mpi")]
+fn mpi_min_f64(world: &SimpleCommunicator, value: f64) -> f64 {
+    let mut reduced = f64::INFINITY;
+    world.all_reduce_into(&value, &mut reduced, SystemOperation::min());
+    reduced
+}
+
+#[cfg(feature = "mpi")]
+fn mpi_max_f64(world: &SimpleCommunicator, value: f64) -> f64 {
+    let mut reduced = f64::NEG_INFINITY;
+    world.all_reduce_into(&value, &mut reduced, SystemOperation::max());
+    reduced
+}
+
+#[cfg(feature = "mpi")]
+fn mpi_reduce_optional_max(world: &SimpleCommunicator, value: Option<f64>) -> Option<f64> {
+    let reduced = mpi_max_f64(world, value.unwrap_or(f64::NEG_INFINITY));
+    reduced.is_finite().then_some(reduced)
 }
 
 /// Result of a generation call.

@@ -13,13 +13,13 @@ def make_generation_channel() -> ld.Channel:
         'production',
         ['beam', 'target'],
         ['kk', 'recoil'],
-        generator=ld.gen.t_exponential(0.1),
+        generator=ld.samplers.t_exponential(0.1),
     )
     channel.create_decay('kk_decay', 'kk', ['kshort1', 'kshort2'])
 
-    channel.edit_particle('beam', mass=0.0, momentum=ld.gen.energy(8.0))
-    channel.edit_particle('target', mass=0.938272, momentum=ld.gen.rest())
-    channel.edit_particle('kk', mass_sampler=ld.gen.uniform_mass(1.1, 1.6))
+    channel.edit_particle('beam', mass=0.0, momentum=ld.samplers.energy(8.0))
+    channel.edit_particle('target', mass=0.938272, momentum=ld.samplers.rest())
+    channel.edit_particle('kk', mass_sampler=ld.samplers.uniform_mass(1.1, 1.6))
     channel.edit_particle('recoil', mass=0.938272)
     channel.edit_particle('kshort1', mass=0.497611)
     channel.edit_particle('kshort2', mass=0.497611)
@@ -230,16 +230,68 @@ def test_accepted_generation_can_estimate_envelope() -> None:
     assert result.stats.envelope_stats.configured_max == 2.0
 
 
+def test_accepted_generation_can_use_adaptive_envelope() -> None:
+    channel = make_generation_channel()
+    generator = generation.EventGenerator(channel, seed=12345)
+    weight = ld.Scalar('weight', value=ld.parameter('weight', 3.0))
+
+    result = generator.generate(
+        1,
+        generation.DatasetSink(),
+        mode=generation.GenerationMode.accepted(
+            weight, [], envelope=generation.Envelope.adaptive(1.0, 2.0)
+        ),
+        options=generation.GenerationOptions(batch_size=1),
+    )
+
+    assert result.stats.accepted_events == 1
+    assert result.stats.envelope_stats is not None
+    assert result.stats.envelope_stats.configured_max == 1.0
+    assert result.stats.envelope_stats.growth_factor == 2.0
+    assert result.stats.envelope_stats.violations == 1
+    assert result.stats.envelope_stats.updates == 1
+    assert result.stats.envelope_stats.final_max == 4.0
+
+
+def test_callback_sink_receives_batches() -> None:
+    channel = make_generation_channel()
+    generator = generation.EventGenerator(channel, seed=12345)
+    batch_sizes: list[int] = []
+    first_record: dict[str, object] = {}
+
+    def collect(records: list[dict[str, object]]) -> None:
+        nonlocal first_record
+        batch_sizes.append(len(records))
+        if not first_record:
+            first_record = records[0]
+
+    result = generator.generate(
+        5,
+        generation.CallbackSink(collect),
+        options=generation.GenerationOptions(batch_size=2),
+    )
+
+    assert result.output == 5
+    assert result.stats.written_events == 5
+    assert batch_sizes == [2, 2, 1]
+    assert first_record['local_index'] == 0
+    assert first_record['global_index'] == 0
+    assert first_record['weight'] == 1.0
+    p4s = first_record['p4s']
+    assert isinstance(p4s, dict)
+    assert list(p4s) == ['beam', 'target', 'kk', 'kshort1', 'kshort2', 'recoil']
+
+
 def test_histogram_generation_annotations() -> None:
     channel = make_generation_channel()
     histogram = ld.Histogram([1.1, 1.3, 1.6], [1.0, 2.0])
-    channel.edit_particle('kk', mass_sampler=ld.gen.histogram_mass(histogram))
+    channel.edit_particle('kk', mass_sampler=ld.samplers.histogram_mass(histogram))
     channel.edit_particle(
-        'beam', momentum=ld.gen.histogram_energy(ld.Histogram([8.0, 8.5], [1.0]))
+        'beam', momentum=ld.samplers.histogram_energy(ld.Histogram([8.0, 8.5], [1.0]))
     )
     channel.edit_vertex(
         'production',
-        generator=ld.gen.t_histogram(ld.Histogram([-0.4, -0.1, 0.0], [1.0, 1.0])),
+        generator=ld.samplers.t_histogram(ld.Histogram([-0.4, -0.1, 0.0], [1.0, 1.0])),
     )
 
     dataset = (
@@ -257,11 +309,11 @@ def test_generation_requires_particle_masses() -> None:
         'production',
         ['beam', 'target'],
         ['kk', 'recoil'],
-        generator=ld.gen.t_exponential(0.1),
+        generator=ld.samplers.t_exponential(0.1),
     )
     missing_mass_channel.create_decay('kk_decay', 'kk', ['kshort1', 'kshort2'])
-    missing_mass_channel.edit_particle('beam', momentum=ld.gen.energy(8.0))
-    missing_mass_channel.edit_particle('target', momentum=ld.gen.rest())
+    missing_mass_channel.edit_particle('beam', momentum=ld.samplers.energy(8.0))
+    missing_mass_channel.edit_particle('target', momentum=ld.samplers.rest())
 
     with pytest.raises(RuntimeError, match='ParticleProperties mass'):
         generation.EventGenerator(missing_mass_channel)

@@ -1283,17 +1283,25 @@ impl ParticleEdit<'_> {
     }
 
     /// Append an external identifier.
-    pub fn id(&mut self, id: ExternalId) -> &mut Self {
-        self.particle.properties.ids.push(id);
+    pub fn id<Id: Into<ExternalId>>(&mut self, namespace: &str, id: Id) -> &mut Self {
+        self.particle
+            .properties
+            .ids
+            .insert(namespace.to_string(), id.into());
         self
     }
 
     /// Replace external identifiers.
-    pub fn ids<I>(&mut self, ids: I) -> &mut Self
+    pub fn ids<I, S, Id>(&mut self, ids: I) -> &mut Self
     where
-        I: IntoIterator<Item = ExternalId>,
+        I: IntoIterator<Item = (S, Id)>,
+        S: AsRef<str>,
+        Id: Into<ExternalId>,
     {
-        self.particle.properties.ids = ids.into_iter().collect();
+        self.particle.properties.ids = ids
+            .into_iter()
+            .map(|(s, id)| (s.as_ref().to_string(), id.into()))
+            .collect();
         self
     }
 
