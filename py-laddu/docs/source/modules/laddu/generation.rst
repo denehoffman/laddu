@@ -2,7 +2,7 @@ generation
 ==========
 
 ``laddu.generation`` contains event generator objects and validated generation
-plans. Channel annotation constructors live in :mod:`laddu.gen`.
+plans. Channel annotation constructors live in :mod:`laddu.samplers`.
 
 .. code-block:: python
 
@@ -14,13 +14,13 @@ plans. Channel annotation constructors live in :mod:`laddu.gen`.
        "production",
        ["beam", "target"],
        ["rho", "spectator"],
-       generator=ld.gen.t_exponential(0.1),
+       generator=ld.samplers.t_exponential(0.1),
    )
    channel.create_decay("rho_decay", "rho", ["pi+", "pi-"])
 
-   channel.edit_particle("beam", mass=0.0, momentum=ld.gen.energy(8.0))
-   channel.edit_particle("target", mass=0.938272, momentum=ld.gen.rest())
-   channel.edit_particle("rho", mass_sampler=ld.gen.uniform_mass(0.6, 0.9))
+   channel.edit_particle("beam", mass=0.0, momentum=ld.samplers.energy(8.0))
+   channel.edit_particle("target", mass=0.938272, momentum=ld.samplers.rest())
+   channel.edit_particle("rho", mass_sampler=ld.samplers.uniform_mass(0.6, 0.9))
    channel.edit_particle("spectator", mass=0.938272)
    channel.edit_particle("pi+", mass=0.13957)
    channel.edit_particle("pi-", mass=0.13957)
