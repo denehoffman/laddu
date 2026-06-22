@@ -1,5 +1,5 @@
 [package]
-name = "laddu-amplitudes"
+name = "laddu-runtime"
 version = "0.1.0"
 authors.workspace = true
 edition.workspace = true
@@ -9,6 +9,8 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+laddu-autodiff = { path = "../laddu-autodiff" }
+laddu-compile = { path = "../laddu-compile" }
 laddu-expr = { path = "../laddu-expr" }
-laddu-kernel = { path = "../laddu-kernel" }
 laddu-params = { path = "../laddu-params" }
+num.workspace = true

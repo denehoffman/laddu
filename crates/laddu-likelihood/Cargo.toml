@@ -1,5 +1,5 @@
 [package]
-name = "laddu-amplitudes"
+name = "laddu-likelihood"
 version = "0.1.0"
 authors.workspace = true
 edition.workspace = true
@@ -9,6 +9,4 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-laddu-expr = { path = "../laddu-expr" }
-laddu-kernel = { path = "../laddu-kernel" }
-laddu-params = { path = "../laddu-params" }
+laddu-runtime = { path = "../laddu-runtime" }

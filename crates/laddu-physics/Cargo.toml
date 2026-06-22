@@ -1,0 +1,25 @@
+[package]
+name = "laddu-physics"
+version = "0.1.0"
+authors.workspace = true
+edition.workspace = true
+homepage.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+serde.workspace = true
+nalgebra.workspace = true
+thiserror.workspace = true
+num.workspace = true
+auto_ops.workspace = true
+approx.workspace = true
+factorial.workspace = true
+indexmap.workspace = true
+fastrand.workspace = true
+fastrand-contrib.workspace = true
+
+
+[dev-dependencies]
+criterion.workspace = true
