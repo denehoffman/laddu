@@ -81,23 +81,17 @@ impl OptimizationPass for CanonicalCsePass {
         let mut keys = HashMap::with_capacity(graph.nodes().len());
 
         for (old_index, node) in graph.nodes().iter().enumerate() {
-            let canonical = canonicalize_node(remap_node(node, &old_to_new));
-            let key = StructuralKey::from_node(&canonical);
-
-            if let Some(id) = keys.get(&key).copied() {
-                old_to_new.push(id);
-                continue;
-            }
-
             let old_id = ExprId::from_index(old_index).expect("graph too large");
-            let new_id = ExprId::from_index(nodes.len()).expect("graph too large");
-            keys.insert(key, new_id);
-            nodes.push(canonical);
-            metadata.push(
-                graph
-                    .metadata(old_id)
-                    .expect("graph metadata length is validated")
-                    .clone(),
+            let node_metadata = graph
+                .metadata(old_id)
+                .expect("graph metadata length is validated")
+                .clone();
+            let new_id = emit_canonical_node(
+                remap_node(node, &old_to_new),
+                node_metadata,
+                &mut nodes,
+                &mut metadata,
+                &mut keys,
             );
             old_to_new.push(new_id);
         }
@@ -124,6 +118,7 @@ impl RewritePass {
         Self::new("simplify")
             .with_rule(ConstantFoldScalarRule)
             .with_rule(AlgebraicIdentityRule)
+            .with_rule(ExponentialRule)
             .with_rule(ComplexFactRule)
     }
 
@@ -495,6 +490,74 @@ fn is_scalar_value(context: &RewriteContext<'_>, id: ExprId) -> bool {
 }
 
 #[derive(Copy, Clone, Debug, Default)]
+pub struct ExponentialRule;
+
+impl RewriteRule for ExponentialRule {
+    fn name(&self) -> &'static str {
+        "exponential"
+    }
+
+    fn rewrite(
+        &self,
+        node: &ExprNode,
+        metadata: &ExprMetadata,
+        context: &RewriteContext<'_>,
+    ) -> CompileResult<Rewrite> {
+        match node {
+            ExprNode::Unary {
+                op: UnaryOp::Exp,
+                input,
+            } if context.node(*input).is_some_and(ExprNode::is_zero) => Ok(Rewrite::Replace {
+                node: ExprNode::RealConst(1.0),
+                metadata: metadata.clone(),
+            }),
+            ExprNode::Binary {
+                op: BinaryOp::Mul,
+                lhs,
+                rhs,
+            } => {
+                let (Some(lhs_input), Some(rhs_input)) =
+                    (exp_input(context, *lhs), exp_input(context, *rhs))
+                else {
+                    return Ok(Rewrite::Keep);
+                };
+                let add_id = context.next_id();
+                Ok(Rewrite::ReplaceMany {
+                    nodes: vec![
+                        (
+                            ExprNode::Binary {
+                                op: BinaryOp::Add,
+                                lhs: lhs_input,
+                                rhs: rhs_input,
+                            },
+                            ExprMetadata::new(ExprSourceKind::Binary),
+                        ),
+                        (
+                            ExprNode::Unary {
+                                op: UnaryOp::Exp,
+                                input: add_id,
+                            },
+                            metadata.clone(),
+                        ),
+                    ],
+                })
+            }
+            _ => Ok(Rewrite::Keep),
+        }
+    }
+}
+
+fn exp_input(context: &RewriteContext<'_>, id: ExprId) -> Option<ExprId> {
+    match context.node(id) {
+        Some(ExprNode::Unary {
+            op: UnaryOp::Exp,
+            input,
+        }) => Some(*input),
+        _ => None,
+    }
+}
+
+#[derive(Copy, Clone, Debug, Default)]
 pub struct ComplexFactRule;
 
 impl RewriteRule for ComplexFactRule {
@@ -686,6 +749,120 @@ fn alias_or_preserve(
 ) -> Rewrite {
     let _ = context.node(alias).expect("valid alias");
     Rewrite::Alias(alias)
+}
+
+fn emit_canonical_node(
+    node: ExprNode,
+    node_metadata: ExprMetadata,
+    nodes: &mut Vec<ExprNode>,
+    metadata: &mut Vec<ExprMetadata>,
+    keys: &mut HashMap<StructuralKey, ExprId>,
+) -> ExprId {
+    match node {
+        ExprNode::Binary {
+            op: op @ (BinaryOp::Add | BinaryOp::Mul),
+            lhs,
+            rhs,
+        } => {
+            let mut operands = Vec::new();
+            collect_associative_operands(op, lhs, nodes, &mut operands);
+            collect_associative_operands(op, rhs, nodes, &mut operands);
+            operands.sort_by(|lhs, rhs| {
+                operand_sort_key(op, *lhs, nodes).cmp(&operand_sort_key(op, *rhs, nodes))
+            });
+
+            let operand_len = operands.len();
+            let mut operands = operands.into_iter().enumerate();
+            let (_, mut root) = operands.next().expect("binary node has operands");
+            for (index, operand) in operands {
+                let emitted_metadata = if index + 1 == operand_len {
+                    node_metadata.clone()
+                } else {
+                    ExprMetadata::new(ExprSourceKind::Binary)
+                };
+                root = intern_canonical_node(
+                    ExprNode::Binary {
+                        op,
+                        lhs: root,
+                        rhs: operand,
+                    },
+                    emitted_metadata,
+                    nodes,
+                    metadata,
+                    keys,
+                );
+            }
+            root
+        }
+        node => intern_canonical_node(node, node_metadata, nodes, metadata, keys),
+    }
+}
+
+fn intern_canonical_node(
+    node: ExprNode,
+    node_metadata: ExprMetadata,
+    nodes: &mut Vec<ExprNode>,
+    metadata: &mut Vec<ExprMetadata>,
+    keys: &mut HashMap<StructuralKey, ExprId>,
+) -> ExprId {
+    let canonical = canonicalize_node(node);
+    let key = StructuralKey::from_node(&canonical);
+    if let Some(id) = keys.get(&key).copied() {
+        return id;
+    }
+
+    let id = ExprId::from_index(nodes.len()).expect("graph too large");
+    keys.insert(key, id);
+    nodes.push(canonical);
+    metadata.push(node_metadata);
+    id
+}
+
+fn collect_associative_operands(
+    op: BinaryOp,
+    id: ExprId,
+    nodes: &[ExprNode],
+    operands: &mut Vec<ExprId>,
+) {
+    if let Some(ExprNode::Binary {
+        op: child_op,
+        lhs,
+        rhs,
+    }) = nodes.get(id.index())
+        && *child_op == op
+    {
+        collect_associative_operands(op, *lhs, nodes, operands);
+        collect_associative_operands(op, *rhs, nodes, operands);
+        return;
+    }
+    operands.push(id);
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct OperandSortKey {
+    category: u8,
+    structural: String,
+    id: usize,
+}
+
+fn operand_sort_key(op: BinaryOp, id: ExprId, nodes: &[ExprNode]) -> OperandSortKey {
+    let node = nodes
+        .get(id.index())
+        .expect("associative operands are emitted nodes");
+    let category = match (op, node) {
+        (
+            BinaryOp::Mul,
+            ExprNode::Unary {
+                op: UnaryOp::Exp, ..
+            },
+        ) => 0,
+        _ => 1,
+    };
+    OperandSortKey {
+        category,
+        structural: format!("{:?}", StructuralKey::from_node(node)),
+        id: id.index(),
+    }
 }
 
 fn canonicalize_node(node: ExprNode) -> ExprNode {

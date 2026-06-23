@@ -28,8 +28,8 @@ pub mod prelude {
     pub use laddu_compile::{
         AlgebraicIdentityRule, CanonicalCsePass, CompileError, CompileOptions, CompileResult,
         CompiledModel, ComplexFactRule, ConstantFoldScalarRule, DependencyFacts, EvaluationClass,
-        GraphFacts, NodeFacts, NumberClass, OptimizationPass, OptimizationPipeline, Rewrite,
-        RewriteContext, RewritePass, RewriteRule,
+        ExponentialRule, GraphFacts, NodeFacts, NumberClass, OptimizationPass,
+        OptimizationPipeline, Rewrite, RewriteContext, RewritePass, RewriteRule,
     };
     pub use laddu_expr::parameter;
     pub use laddu_expr::parameters::{

@@ -10,7 +10,8 @@ pub mod optimize;
 pub use facts::{DependencyFacts, EvaluationClass, GraphFacts, NodeFacts, NumberClass};
 pub use optimize::{
     AlgebraicIdentityRule, CanonicalCsePass, ComplexFactRule, ConstantFoldScalarRule,
-    OptimizationPass, OptimizationPipeline, Rewrite, RewriteContext, RewritePass, RewriteRule,
+    ExponentialRule, OptimizationPass, OptimizationPipeline, Rewrite, RewriteContext, RewritePass,
+    RewriteRule,
 };
 
 pub type CompileResult<T> = Result<T, CompileError>;
@@ -137,8 +138,8 @@ pub fn collect_params(graph: &ExprGraph) -> CompileResult<ParamLayout> {
 #[cfg(test)]
 mod tests {
     use laddu_expr::{
-        BinaryOp, Expr, ExprId, ExprMetadata, ValueKind, complex, event_scalar, matrix, parameter,
-        parameters::Parameter, vector,
+        BinaryOp, Expr, ExprId, ExprMetadata, UnaryOp, ValueKind, complex, event_scalar, matrix,
+        parameter, parameters::Parameter, polar_complex, vector,
     };
     use num::complex::Complex64;
 
@@ -175,6 +176,15 @@ mod tests {
             .nodes()
             .iter()
             .filter(|node| matches!(node, ExprNode::Binary { op: node_op, .. } if *node_op == op))
+            .count()
+    }
+
+    fn count_unary_op(compiled: &CompiledModel, op: UnaryOp) -> usize {
+        compiled
+            .graph()
+            .nodes()
+            .iter()
+            .filter(|node| matches!(node, ExprNode::Unary { op: node_op, .. } if *node_op == op))
             .count()
     }
 
@@ -302,10 +312,49 @@ mod tests {
     fn cse_canonicalizes_commutative_binary_operands() {
         let x = Expr::from(parameter!("x"));
         let y = Expr::from(parameter!("y"));
-        let model = (x.clone() + y.clone()) + (y + x);
+        let model = (x.clone() + y.clone()) * (y + x);
         let compiled = CompiledModel::from_expr(&model).unwrap();
 
+        assert_eq!(count_binary_op(&compiled, BinaryOp::Add), 1);
+        assert!(matches!(
+            compiled.graph().node(compiled.graph().root()),
+            Some(ExprNode::Binary {
+                op: BinaryOp::Mul,
+                lhs,
+                rhs,
+            }) if lhs == rhs
+        ));
+    }
+
+    #[test]
+    fn cse_canonicalizes_associative_addition_trees() {
+        let x = Expr::from(parameter!("x"));
+        let y = Expr::from(parameter!("y"));
+        let z = Expr::from(parameter!("z"));
+        let lhs = (x.clone() + y.clone()) + z.clone();
+        let rhs = x + (z + y);
+        let compiled = CompiledModel::from_expr(&(lhs * rhs)).unwrap();
+
+        assert!(matches!(
+            compiled.graph().node(compiled.graph().root()),
+            Some(ExprNode::Binary {
+                op: BinaryOp::Mul,
+                lhs,
+                rhs,
+            }) if lhs == rhs
+        ));
         assert_eq!(count_binary_op(&compiled, BinaryOp::Add), 2);
+    }
+
+    #[test]
+    fn cse_canonicalizes_associative_multiplication_trees() {
+        let x = Expr::from(parameter!("x"));
+        let y = Expr::from(parameter!("y"));
+        let z = Expr::from(parameter!("z"));
+        let lhs = (x.clone() * y.clone()) * z.clone();
+        let rhs = z * (y * x);
+        let compiled = CompiledModel::from_expr(&(lhs + rhs)).unwrap();
+
         assert!(matches!(
             compiled.graph().node(compiled.graph().root()),
             Some(ExprNode::Binary {
@@ -322,9 +371,9 @@ mod tests {
         let y = Expr::from(parameter!("y"));
         let lhs = (x.clone() + y.clone()).named("lhs");
         let rhs = (x + y).tagged("rhs");
-        let compiled = CompiledModel::from_expr(&(lhs + rhs)).unwrap();
+        let compiled = CompiledModel::from_expr(&(lhs * rhs)).unwrap();
 
-        assert_eq!(count_binary_op(&compiled, BinaryOp::Add), 2);
+        assert_eq!(count_binary_op(&compiled, BinaryOp::Add), 1);
     }
 
     #[test]
@@ -440,6 +489,25 @@ mod tests {
                 ..
             }
         )));
+    }
+
+    #[test]
+    fn exponential_products_merge_after_multiplication_reassociation() {
+        let a = event_scalar("a");
+        let b = event_scalar("b");
+        let scale = Expr::from(parameter!("scale"));
+        let compiled = CompiledModel::from_expr(&(a.exp() * scale * b.exp())).unwrap();
+
+        assert_eq!(count_unary_op(&compiled, laddu_expr::UnaryOp::Exp), 1);
+    }
+
+    #[test]
+    fn polar_complex_products_merge_exponential_phase_factors() {
+        let lhs = polar_complex(parameter!("m1"), event_scalar("p1"));
+        let rhs = polar_complex(parameter!("m2"), event_scalar("p2"));
+        let compiled = CompiledModel::from_expr(&(lhs * rhs)).unwrap();
+
+        assert_eq!(count_unary_op(&compiled, laddu_expr::UnaryOp::Exp), 1);
     }
 
     #[test]

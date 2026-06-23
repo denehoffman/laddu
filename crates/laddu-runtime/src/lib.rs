@@ -384,7 +384,7 @@ mod tests {
     use std::sync::Arc;
 
     use laddu_compile::{CompileOptions, CompiledModel};
-    use laddu_expr::{complex, dot, matrix, parameter, solve, vector};
+    use laddu_expr::{complex, dot, matrix, parameter, polar_complex, solve, vector};
 
     use super::*;
 
@@ -437,9 +437,17 @@ mod tests {
             parameter!("offset_re", initial: 1.5),
             parameter!("offset_im", initial: -0.5),
         );
+        let polar_product = polar_complex(
+            parameter!("mag1", initial: 2.0),
+            parameter!("phase1", initial: 0.25),
+        ) * polar_complex(
+            parameter!("mag2", initial: 3.0),
+            parameter!("phase2", initial: -0.5),
+        );
         let expr = ((laddu_expr::event_scalar("mass") + 0.0) * 1.0
             + dot(solved, vector([1.0, 1.0]))
             + complex_offset.conj().real()
+            + polar_product.real()
             + parameter!("unused", initial: 3.0) * 0.0)
             .norm_sqr();
         let no_optimization = CompileOptions::without_optimizations();
