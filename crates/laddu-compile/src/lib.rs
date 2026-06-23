@@ -10,8 +10,8 @@ pub mod optimize;
 pub use facts::{DependencyFacts, EvaluationClass, GraphFacts, NodeFacts, NumberClass};
 pub use optimize::{
     AlgebraicIdentityRule, CanonicalCsePass, ComplexFactRule, ConstantFoldScalarRule,
-    ExponentialRule, OptimizationPass, OptimizationPipeline, Rewrite, RewriteContext, RewritePass,
-    RewriteRule,
+    ExponentialRule, FactorCommonProductRule, OptimizationPass, OptimizationPipeline, Rewrite,
+    RewriteContext, RewritePass, RewriteRule,
 };
 
 pub type CompileResult<T> = Result<T, CompileError>;
@@ -353,7 +353,9 @@ mod tests {
         let z = Expr::from(parameter!("z"));
         let lhs = (x.clone() * y.clone()) * z.clone();
         let rhs = z * (y * x);
-        let compiled = CompiledModel::from_expr(&(lhs + rhs)).unwrap();
+        let options =
+            CompileOptions::with_pipeline(OptimizationPipeline::new().with_pass(CanonicalCsePass));
+        let compiled = CompiledModel::from_expr_with_options(&(lhs + rhs), &options).unwrap();
 
         assert!(matches!(
             compiled.graph().node(compiled.graph().root()),
@@ -508,6 +510,129 @@ mod tests {
         let compiled = CompiledModel::from_expr(&(lhs * rhs)).unwrap();
 
         assert_eq!(count_unary_op(&compiled, laddu_expr::UnaryOp::Exp), 1);
+    }
+
+    #[test]
+    fn common_complex_phase_factor_is_factored_from_sum() {
+        let p1 = event_scalar("p1");
+        let p2 = event_scalar("p2");
+        let compiled = CompiledModel::from_expr(&(Complex64::I * p1 + Complex64::I * p2)).unwrap();
+
+        assert!(matches!(
+            compiled.graph().node(compiled.graph().root()),
+            Some(ExprNode::Binary {
+                op: BinaryOp::Mul,
+                lhs,
+                rhs,
+            }) if matches!(compiled.graph().node(*lhs), Some(ExprNode::ComplexConst(value)) if *value == Complex64::I)
+                && matches!(
+                    compiled.graph().node(*rhs),
+                    Some(ExprNode::Binary {
+                        op: BinaryOp::Add,
+                        ..
+                    })
+                )
+        ));
+    }
+
+    #[test]
+    fn polar_complex_product_combines_phases_under_single_i_factor() {
+        let lhs = polar_complex(parameter!("m1"), event_scalar("p1"));
+        let rhs = polar_complex(parameter!("m2"), event_scalar("p2"));
+        let compiled = CompiledModel::from_expr(&(lhs * rhs)).unwrap();
+        let exp_input = compiled
+            .graph()
+            .nodes()
+            .iter()
+            .find_map(|node| match node {
+                ExprNode::Unary {
+                    op: UnaryOp::Exp,
+                    input,
+                } => Some(*input),
+                _ => None,
+            })
+            .unwrap();
+
+        assert!(matches!(
+            compiled.graph().node(exp_input),
+            Some(ExprNode::Binary {
+                op: BinaryOp::Mul,
+                lhs,
+                rhs,
+            }) if matches!(compiled.graph().node(*lhs), Some(ExprNode::ComplexConst(value)) if *value == Complex64::I)
+                && matches!(
+                    compiled.graph().node(*rhs),
+                    Some(ExprNode::Binary {
+                        op: BinaryOp::Add,
+                        ..
+                    })
+                )
+        ));
+    }
+
+    #[test]
+    fn fixed_point_pipeline_revisits_nodes_created_by_earlier_iterations() {
+        let expr =
+            (Complex64::I * event_scalar("p1")).exp() * (Complex64::I * event_scalar("p2")).exp();
+        let one_iteration = CompileOptions::with_pipeline(
+            OptimizationPipeline::new()
+                .with_pass(CanonicalCsePass)
+                .with_pass(RewritePass::factor_common_products())
+                .with_pass(RewritePass::exponential()),
+        );
+        let fixed_point = CompileOptions::with_pipeline(
+            OptimizationPipeline::new()
+                .with_pass(CanonicalCsePass)
+                .with_pass(RewritePass::factor_common_products())
+                .with_pass(RewritePass::exponential())
+                .with_max_iterations(4),
+        );
+        let one_iteration = CompiledModel::from_expr_with_options(&expr, &one_iteration).unwrap();
+        let fixed_point = CompiledModel::from_expr_with_options(&expr, &fixed_point).unwrap();
+
+        let ExprNode::Unary {
+            op: UnaryOp::Exp,
+            input: one_iteration_exp_input,
+        } = one_iteration
+            .graph()
+            .node(one_iteration.graph().root())
+            .unwrap()
+        else {
+            panic!("expected root exp node");
+        };
+        assert!(matches!(
+            one_iteration.graph().node(*one_iteration_exp_input),
+            Some(ExprNode::Binary {
+                op: BinaryOp::Add,
+                ..
+            })
+        ));
+
+        let ExprNode::Unary {
+            op: UnaryOp::Exp,
+            input: fixed_point_exp_input,
+        } = fixed_point
+            .graph()
+            .node(fixed_point.graph().root())
+            .unwrap()
+        else {
+            panic!("expected root exp node");
+        };
+        assert!(matches!(
+            fixed_point.graph().node(*fixed_point_exp_input),
+            Some(ExprNode::Binary {
+                op: BinaryOp::Mul,
+                lhs,
+                rhs,
+            }) if matches!(fixed_point.graph().node(*lhs), Some(ExprNode::ComplexConst(value)) if *value == Complex64::I)
+                && matches!(
+                    fixed_point.graph().node(*rhs),
+                    Some(ExprNode::Binary {
+                        op: BinaryOp::Add,
+                        ..
+                    })
+                )
+        ));
     }
 
     #[test]

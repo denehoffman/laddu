@@ -10,20 +10,29 @@ use crate::{
     facts::{NodeFacts, NumberClass},
 };
 
+const DEFAULT_MAX_ITERATIONS: usize = 16;
+
 pub struct OptimizationPipeline {
     passes: Vec<Box<dyn OptimizationPass>>,
+    max_iterations: usize,
 }
 
 impl OptimizationPipeline {
     pub fn new() -> Self {
-        Self { passes: Vec::new() }
+        Self {
+            passes: Vec::new(),
+            max_iterations: 1,
+        }
     }
 
     pub fn with_default_passes() -> Self {
         Self::new()
             .with_pass(RewritePass::simplify())
             .with_pass(CanonicalCsePass)
+            .with_pass(RewritePass::factor_common_products())
+            .with_pass(RewritePass::exponential())
             .with_pass(RewritePass::simplify())
+            .with_max_iterations(DEFAULT_MAX_ITERATIONS)
     }
 
     pub fn add_pass(&mut self, pass: impl OptimizationPass + 'static) {
@@ -35,9 +44,28 @@ impl OptimizationPipeline {
         self
     }
 
+    pub fn set_max_iterations(&mut self, max_iterations: usize) {
+        self.max_iterations = max_iterations.max(1);
+    }
+
+    pub fn with_max_iterations(mut self, max_iterations: usize) -> Self {
+        self.set_max_iterations(max_iterations);
+        self
+    }
+
+    pub fn max_iterations(&self) -> usize {
+        self.max_iterations
+    }
+
     pub fn run(&self, mut graph: ExprGraph) -> CompileResult<ExprGraph> {
-        for pass in &self.passes {
-            graph = pass.run(graph)?;
+        for _ in 0..self.max_iterations {
+            let previous = graph.clone();
+            for pass in &self.passes {
+                graph = pass.run(graph)?;
+            }
+            if graph_shape_eq(&previous, &graph) {
+                break;
+            }
         }
         Ok(graph)
     }
@@ -57,8 +85,13 @@ impl fmt::Debug for OptimizationPipeline {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("OptimizationPipeline")
             .field("passes", &self.passes.len())
+            .field("max_iterations", &self.max_iterations)
             .finish()
     }
+}
+
+fn graph_shape_eq(lhs: &ExprGraph, rhs: &ExprGraph) -> bool {
+    lhs.root() == rhs.root() && lhs.nodes() == rhs.nodes()
 }
 
 pub trait OptimizationPass: Send + Sync {
@@ -118,8 +151,15 @@ impl RewritePass {
         Self::new("simplify")
             .with_rule(ConstantFoldScalarRule)
             .with_rule(AlgebraicIdentityRule)
-            .with_rule(ExponentialRule)
             .with_rule(ComplexFactRule)
+    }
+
+    pub fn factor_common_products() -> Self {
+        Self::new("factor-common-products").with_rule(FactorCommonProductRule)
+    }
+
+    pub fn exponential() -> Self {
+        Self::new("exponential").with_rule(ExponentialRule)
     }
 
     pub fn add_rule(&mut self, rule: impl RewriteRule + 'static) {
@@ -490,6 +530,31 @@ fn is_scalar_value(context: &RewriteContext<'_>, id: ExprId) -> bool {
 }
 
 #[derive(Copy, Clone, Debug, Default)]
+pub struct FactorCommonProductRule;
+
+impl RewriteRule for FactorCommonProductRule {
+    fn name(&self) -> &'static str {
+        "factor-common-product"
+    }
+
+    fn rewrite(
+        &self,
+        node: &ExprNode,
+        metadata: &ExprMetadata,
+        context: &RewriteContext<'_>,
+    ) -> CompileResult<Rewrite> {
+        match node {
+            ExprNode::Binary {
+                op: BinaryOp::Add,
+                lhs,
+                rhs,
+            } => factor_common_product(*lhs, *rhs, metadata, context),
+            _ => Ok(Rewrite::Keep),
+        }
+    }
+}
+
+#[derive(Copy, Clone, Debug, Default)]
 pub struct ExponentialRule;
 
 impl RewriteRule for ExponentialRule {
@@ -544,6 +609,70 @@ impl RewriteRule for ExponentialRule {
             }
             _ => Ok(Rewrite::Keep),
         }
+    }
+}
+
+fn factor_common_product(
+    lhs: ExprId,
+    rhs: ExprId,
+    metadata: &ExprMetadata,
+    context: &RewriteContext<'_>,
+) -> CompileResult<Rewrite> {
+    let Some(nodes) = common_product_factor_nodes(lhs, rhs, metadata, context) else {
+        return Ok(Rewrite::Keep);
+    };
+    Ok(Rewrite::ReplaceMany { nodes })
+}
+
+fn common_product_factor_nodes(
+    lhs: ExprId,
+    rhs: ExprId,
+    metadata: &ExprMetadata,
+    context: &RewriteContext<'_>,
+) -> Option<Vec<(ExprNode, ExprMetadata)>> {
+    let (lhs_factor, lhs_term) = binary_product_terms(lhs, context)?;
+    let (rhs_factor, rhs_term) = binary_product_terms(rhs, context)?;
+    let (factor, lhs_term, rhs_term) = if lhs_factor == rhs_factor {
+        (lhs_factor, lhs_term, rhs_term)
+    } else if lhs_factor == rhs_term {
+        (lhs_factor, lhs_term, rhs_factor)
+    } else if lhs_term == rhs_factor {
+        (lhs_term, lhs_factor, rhs_term)
+    } else if lhs_term == rhs_term {
+        (lhs_term, lhs_factor, rhs_factor)
+    } else {
+        return None;
+    };
+    let sum_id = context.next_id();
+
+    Some(vec![
+        (
+            ExprNode::Binary {
+                op: BinaryOp::Add,
+                lhs: lhs_term,
+                rhs: rhs_term,
+            },
+            ExprMetadata::new(ExprSourceKind::Binary),
+        ),
+        (
+            ExprNode::Binary {
+                op: BinaryOp::Mul,
+                lhs: factor,
+                rhs: sum_id,
+            },
+            metadata.clone(),
+        ),
+    ])
+}
+
+fn binary_product_terms(id: ExprId, context: &RewriteContext<'_>) -> Option<(ExprId, ExprId)> {
+    match context.node(id) {
+        Some(ExprNode::Binary {
+            op: BinaryOp::Mul,
+            lhs,
+            rhs,
+        }) => Some((*lhs, *rhs)),
+        _ => None,
     }
 }
 
