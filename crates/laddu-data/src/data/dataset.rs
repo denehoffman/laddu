@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use laddu_physics::vectors::Vec4;
+use laddu_physics::vectors::RealVec4;
 use num::complex::Complex64;
 #[cfg(feature = "parallel")]
 use rayon::{ThreadPool, prelude::*};
@@ -765,7 +765,7 @@ fn materialize_batch(
             .iter()
             .any(|op| matches!(op, DatasetOp::Bootstrap { .. }));
 
-    let mut p4s: Vec<Vec<Vec4>> = (0..schema.n_p4s())
+    let mut p4s: Vec<Vec<RealVec4>> = (0..schema.n_p4s())
         .map(|_| Vec::with_capacity(batch.len()))
         .collect();
     let mut scalars: Vec<Vec<f64>> = (0..schema.n_scalars())
@@ -894,8 +894,8 @@ mod tests {
     use super::*;
     use crate::io::memory::MemorySink;
 
-    fn v(x: f64) -> Vec4 {
-        Vec4 {
+    fn v(x: f64) -> RealVec4 {
+        RealVec4 {
             x: x,
             y: x + 0.1,
             z: x + 0.2,

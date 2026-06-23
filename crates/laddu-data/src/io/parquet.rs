@@ -9,7 +9,7 @@ use arrow::{
     datatypes::{DataType, Field, Schema as ArrowSchema, SchemaRef},
     record_batch::RecordBatch,
 };
-use laddu_physics::vectors::Vec4;
+use laddu_physics::vectors::RealVec4;
 use parquet::{
     arrow::{ArrowWriter, ProjectionMask, arrow_reader::ParquetRecordBatchReaderBuilder},
     file::properties::WriterProperties,
@@ -388,8 +388,8 @@ fn record_batch_to_event_batch(
         let py = read_f64_column(&rb, &arrow_schema, &py_name, options)?;
         let pz = read_f64_column(&rb, &arrow_schema, &pz_name, options)?;
 
-        let col: Arc<[Vec4]> = (0..rb.num_rows())
-            .map(|i| Vec4 {
+        let col: Arc<[RealVec4]> = (0..rb.num_rows())
+            .map(|i| RealVec4 {
                 x: px[i],
                 y: py[i],
                 z: pz[i],
@@ -771,8 +771,8 @@ mod tests {
         ))
     }
 
-    fn v(x: f64) -> Vec4 {
-        Vec4 {
+    fn v(x: f64) -> RealVec4 {
+        RealVec4 {
             x: x,
             y: x + 0.1,
             z: x + 0.2,

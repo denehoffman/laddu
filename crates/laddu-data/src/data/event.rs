@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use laddu_physics::vectors::Vec4;
+use laddu_physics::vectors::RealVec4;
 
 use crate::{LadduDataError, LadduDataResult, schema::Schema};
 
@@ -8,7 +8,7 @@ use crate::{LadduDataError, LadduDataResult, schema::Schema};
 pub struct EventBatch {
     schema: Arc<Schema>,
     len: usize,
-    p4s: Arc<[Arc<[Vec4]>]>,
+    p4s: Arc<[Arc<[RealVec4]>]>,
     scalars: Arc<[Arc<[f64]>]>,
     weights: Option<Arc<[f64]>>,
 }
@@ -16,7 +16,7 @@ pub struct EventBatch {
 impl EventBatch {
     pub fn new(
         schema: Arc<Schema>,
-        p4s: Vec<Arc<[Vec4]>>,
+        p4s: Vec<Arc<[RealVec4]>>,
         scalars: Vec<Arc<[f64]>>,
         weights: Option<Arc<[f64]>>,
     ) -> LadduDataResult<Self> {
@@ -64,7 +64,7 @@ impl EventBatch {
         self.len == 0
     }
 
-    pub fn vec4_column(&self, index: usize) -> &[Vec4] {
+    pub fn vec4_column(&self, index: usize) -> &[RealVec4] {
         &self.p4s[index]
     }
 
@@ -76,7 +76,7 @@ impl EventBatch {
         self.weights.as_deref()
     }
 
-    pub fn vec4_column_named(&self, name: &str) -> Option<&[Vec4]> {
+    pub fn vec4_column_named(&self, name: &str) -> Option<&[RealVec4]> {
         let i = self.schema.p4_index(name)?;
         Some(self.vec4_column(i))
     }
@@ -86,7 +86,7 @@ impl EventBatch {
         Some(self.scalar_column(i))
     }
 
-    pub fn p4_at(&self, col: usize, row: usize) -> Vec4 {
+    pub fn p4_at(&self, col: usize, row: usize) -> RealVec4 {
         self.p4s[col][row]
     }
 
@@ -164,7 +164,7 @@ impl EventBatch {
         let p4s = self
             .p4s
             .iter()
-            .map(|col| Arc::<[Vec4]>::from(&col[start..end]))
+            .map(|col| Arc::<[RealVec4]>::from(&col[start..end]))
             .collect();
 
         let scalars = self
@@ -250,7 +250,7 @@ impl EventBatch {
 }
 
 fn infer_len(
-    vec4s: &[Arc<[Vec4]>],
+    vec4s: &[Arc<[RealVec4]>],
     scalars: &[Arc<[f64]>],
     weight: Option<&[f64]>,
 ) -> LadduDataResult<usize> {
@@ -301,7 +301,7 @@ impl<'a> BatchEvent<'a> {
         self.batch
     }
 
-    pub fn p4(&self, col: usize) -> Vec4 {
+    pub fn p4(&self, col: usize) -> RealVec4 {
         self.batch.p4_at(col, self.row)
     }
 
@@ -313,7 +313,7 @@ impl<'a> BatchEvent<'a> {
         self.batch.weights_at(self.row)
     }
 
-    pub fn p4_named(&self, name: &str) -> Option<Vec4> {
+    pub fn p4_named(&self, name: &str) -> Option<RealVec4> {
         let col = self.batch.schema.p4_index(name)?;
         Some(self.p4(col))
     }
@@ -336,7 +336,7 @@ impl<'a> Event<'a> {
         self.row
     }
 
-    pub fn p4(&self, col: usize) -> Vec4 {
+    pub fn p4(&self, col: usize) -> RealVec4 {
         self.batch.p4_at(col, self.row)
     }
 
@@ -348,7 +348,7 @@ impl<'a> Event<'a> {
         self.weight
     }
 
-    pub fn p4_named(&self, name: &str) -> Option<Vec4> {
+    pub fn p4_named(&self, name: &str) -> Option<RealVec4> {
         let col = self.batch.schema.p4_index(name)?;
         Some(self.p4(col))
     }
@@ -361,13 +361,13 @@ impl<'a> Event<'a> {
 
 #[derive(Clone, Debug)]
 pub struct OwnedEvent {
-    pub p4s: Vec<Vec4>,
+    pub p4s: Vec<RealVec4>,
     pub scalars: Vec<f64>,
     pub weight: Option<f64>,
 }
 
 impl OwnedEvent {
-    pub fn new(p4s: Vec<Vec4>, scalars: Vec<f64>) -> Self {
+    pub fn new(p4s: Vec<RealVec4>, scalars: Vec<f64>) -> Self {
         Self {
             p4s,
             scalars,
@@ -375,7 +375,7 @@ impl OwnedEvent {
         }
     }
 
-    pub fn weighted(p4s: Vec<Vec4>, scalars: Vec<f64>, weight: f64) -> Self {
+    pub fn weighted(p4s: Vec<RealVec4>, scalars: Vec<f64>, weight: f64) -> Self {
         Self {
             p4s,
             scalars,
@@ -386,7 +386,7 @@ impl OwnedEvent {
 
 pub struct EventBatchBuilder {
     schema: Arc<Schema>,
-    p4s: Vec<Vec<Vec4>>,
+    p4s: Vec<Vec<RealVec4>>,
     scalars: Vec<Vec<f64>>,
     weights: Option<Vec<f64>>,
     len: usize,
@@ -426,7 +426,7 @@ impl EventBatchBuilder {
 
     pub fn push<P, S>(&mut self, p4s: P, scalars: S) -> LadduDataResult<&mut Self>
     where
-        P: IntoIterator<Item = Vec4>,
+        P: IntoIterator<Item = RealVec4>,
         S: IntoIterator<Item = f64>,
     {
         self.push_event(OwnedEvent::new(
@@ -442,7 +442,7 @@ impl EventBatchBuilder {
         weight: f64,
     ) -> LadduDataResult<&mut Self>
     where
-        P: IntoIterator<Item = Vec4>,
+        P: IntoIterator<Item = RealVec4>,
         S: IntoIterator<Item = f64>,
     {
         self.push_event(OwnedEvent::weighted(
@@ -524,8 +524,8 @@ impl EventBatchBuilder {
 mod tests {
     use super::*;
 
-    fn v(x: f64) -> Vec4 {
-        Vec4 {
+    fn v(x: f64) -> RealVec4 {
+        RealVec4 {
             x: x,
             y: x + 0.1,
             z: x + 0.2,

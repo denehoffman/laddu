@@ -7,7 +7,7 @@ use std::{
     thread::{self, JoinHandle},
 };
 
-use laddu_physics::vectors::Vec4;
+use laddu_physics::vectors::RealVec4;
 use oxyroot::{Branch, ReaderTree, RootFile, WriterTree};
 
 use crate::{
@@ -503,7 +503,7 @@ impl<'a> RootColumnReaders<'a> {
             let mut col = Vec::with_capacity(len);
 
             for _ in 0..len {
-                col.push(Vec4 {
+                col.push(RealVec4 {
                     t: e.next_f64()?,
                     x: px.next_f64()?,
                     y: py.next_f64()?,
@@ -1019,8 +1019,8 @@ mod tests {
         ))
     }
 
-    fn v(x: f64) -> Vec4 {
-        Vec4 {
+    fn v(x: f64) -> RealVec4 {
+        RealVec4 {
             x: x,
             y: x + 0.1,
             z: x + 0.2,

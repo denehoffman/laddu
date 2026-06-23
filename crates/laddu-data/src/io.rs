@@ -748,8 +748,8 @@ mod tests {
         schema::Schema,
     };
 
-    fn v(x: f64) -> Vec4 {
-        Vec4 {
+    fn v(x: f64) -> RealVec4 {
+        RealVec4 {
             x: x,
             y: x,
             z: x,
@@ -904,7 +904,7 @@ mod tests {
         }
     }
 
-    use laddu_physics::vectors::Vec4;
+    use laddu_physics::vectors::RealVec4;
     #[cfg(feature = "mpi")]
     use mpi::traits::*;
     #[cfg(feature = "mpi")]

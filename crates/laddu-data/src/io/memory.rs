@@ -272,13 +272,13 @@ impl EventSink for MemorySink {
 
 #[cfg(test)]
 mod tests {
-    use laddu_physics::vectors::Vec4;
+    use laddu_physics::vectors::RealVec4;
 
     use super::*;
     use crate::data::EventBatchBuilder;
 
-    fn v(x: f64) -> Vec4 {
-        Vec4 {
+    fn v(x: f64) -> RealVec4 {
+        RealVec4 {
             x: x,
             y: x,
             z: x,

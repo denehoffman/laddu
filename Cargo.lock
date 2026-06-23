@@ -1012,7 +1012,6 @@ dependencies = [
  "laddu-expr",
  "laddu-kernel",
  "laddu-likelihood",
- "laddu-params",
  "laddu-physics",
  "laddu-runtime",
  "laddu-wgpu",
@@ -1022,18 +1021,14 @@ dependencies = [
 name = "laddu-amplitudes"
 version = "0.1.0"
 dependencies = [
- "laddu-expr",
  "laddu-kernel",
- "laddu-params",
 ]
 
 [[package]]
 name = "laddu-autodiff"
 version = "0.1.0"
 dependencies = [
- "laddu-expr",
- "laddu-params",
- "num",
+ "laddu-compile",
 ]
 
 [[package]]
@@ -1041,7 +1036,7 @@ name = "laddu-compile"
 version = "0.1.0"
 dependencies = [
  "laddu-expr",
- "laddu-params",
+ "num",
  "thiserror",
 ]
 
@@ -1072,7 +1067,7 @@ dependencies = [
 name = "laddu-expr"
 version = "0.1.0"
 dependencies = [
- "laddu-params",
+ "auto_ops",
  "num",
  "serde",
  "thiserror",
@@ -1083,7 +1078,6 @@ name = "laddu-kernel"
 version = "0.1.0"
 dependencies = [
  "laddu-expr",
- "laddu-params",
  "serde",
 ]
 
@@ -1092,14 +1086,6 @@ name = "laddu-likelihood"
 version = "0.1.0"
 dependencies = [
  "laddu-runtime",
-]
-
-[[package]]
-name = "laddu-params"
-version = "0.1.0"
-dependencies = [
- "serde",
- "thiserror",
 ]
 
 [[package]]
@@ -1113,6 +1099,9 @@ dependencies = [
  "fastrand",
  "fastrand-contrib",
  "indexmap",
+ "laddu-compile",
+ "laddu-expr",
+ "laddu-runtime",
  "nalgebra",
  "num",
  "serde",
@@ -1123,11 +1112,11 @@ dependencies = [
 name = "laddu-runtime"
 version = "0.1.0"
 dependencies = [
- "laddu-autodiff",
  "laddu-compile",
  "laddu-expr",
- "laddu-params",
+ "nalgebra",
  "num",
+ "thiserror",
 ]
 
 [[package]]

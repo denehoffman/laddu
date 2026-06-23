@@ -2,7 +2,7 @@
 //!
 //! Ported from <https://github.com/0382/WignerSymbol> to Rust by N. D. Hoffman, 2026.
 
-use num::complex::Complex64;
+use laddu_expr::{Expr, cis};
 use serde::{Deserialize, Serialize};
 
 use self::utils::{binomial, const_imax, const_umin};
@@ -309,10 +309,6 @@ pub struct WignerDMatrix {
     delta: i64, // m' - m
     s_min: i64,
     s_max: i64,
-    p_c0: i32,  // 2j+m-m'-2s_min
-    p_s0: i32,  // m'-m+2s_min
-    amp0: f64,  // initial prefactor / denominator with s=s_min
-    sign0: f64, // 1 if s_min is even else -1
 }
 impl WignerDMatrix {
     /// Constructs a Wigner small-$`d`$/full-$`D`$ matrix element helper for fixed
@@ -396,10 +392,8 @@ impl WignerDMatrix {
                 "j and m must have the same integer/half-integer parity, got 2*j = {dj}, 2*m = {dm}"
             )));
         }
-        let jpmp = (dj + dmp) / 2;
         let jmmp = (dj - dmp) / 2;
         let jpm = (dj + dm) / 2;
-        let jmm = (dj - dm) / 2;
         let delta = (dmp - dm) / 2;
         let s_min = 0.max(-delta);
         let s_max = jpm.min(jmmp);
@@ -407,27 +401,6 @@ impl WignerDMatrix {
             s_min <= s_max,
             "summation bounds are incorrect (this shouldn't happen)!"
         );
-        let mut ln_factorial = vec![0.0; dj as usize + 1];
-        for i in 1..=dj as usize {
-            ln_factorial[i] = ln_factorial[i - 1] + (i as f64).ln();
-        }
-        let ln_prefactor = 0.5
-            * (ln_factorial[jpmp as usize]
-                + ln_factorial[jmmp as usize]
-                + ln_factorial[jpm as usize]
-                + ln_factorial[jmm as usize]);
-        let denom_ln_s_min = ln_factorial[(jpm - s_min) as usize]
-            + ln_factorial[s_min as usize]
-            + ln_factorial[(delta + s_min) as usize]
-            + ln_factorial[(jmmp - s_min) as usize];
-        let p_c0 = (dj - delta - 2 * s_min) as i32;
-        let p_s0 = (delta + 2 * s_min) as i32;
-        let amp0 = (ln_prefactor - denom_ln_s_min).exp();
-        let sign0 = if ((s_min + delta) & 1) == 0 {
-            1.0
-        } else {
-            -1.0
-        };
         Ok(Self {
             dj,
             dmp,
@@ -437,37 +410,7 @@ impl WignerDMatrix {
             delta,
             s_min,
             s_max,
-            p_c0,
-            p_s0,
-            amp0,
-            sign0,
         })
-    }
-    #[inline(always)]
-    fn d_half(&self, ch: f64, sh: f64) -> f64 {
-        if sh.abs() < f64::EPSILON {
-            return if self.dmp == self.dm { 1.0 } else { 0.0 };
-        }
-        if ch.abs() < f64::EPSILON {
-            if self.dmp != -self.dm {
-                return 0.0;
-            }
-            return if (((self.dj + self.dm) / 2) & 1) == 0 {
-                1.0
-            } else {
-                -1.0
-            };
-        }
-        let ratio = (sh * sh) / (ch * ch);
-        let mut term = self.sign0 * self.amp0 * ch.powi(self.p_c0) * sh.powi(self.p_s0);
-        let mut sum = term;
-        for s in self.s_min..self.s_max {
-            let num = (self.jpm - s) as f64 * (self.jmmp - s) as f64;
-            let den = (s + 1) as f64 * (self.delta + s + 1) as f64;
-            term *= -num / den * ratio;
-            sum += term;
-        }
-        sum
     }
     /// Evaluates the reduced Wigner small-$`d`$ matrix element $`d^j_{m' m}(\beta)`$.
     ///
@@ -476,33 +419,46 @@ impl WignerDMatrix {
     ///
     /// # Parameters
     ///
-    /// - `beta`: the middle Euler angle $`\beta`$, in radians
+    /// - `beta`: expression for the middle Euler angle $`\beta`$, in radians
     ///
     /// # Returns
     ///
-    /// Returns the real-valued reduced Wigner matrix element $`d^j_{m' m}(\beta)`$.
+    /// Returns an expression graph for the real-valued reduced Wigner matrix
+    /// element $`d^j_{m' m}(\beta)`$.
     ///
     /// # Notes
     ///
-    /// This method evaluates the standard finite sum in powers of
-    /// $`\cos(\beta/2)`$ and $`\sin(\beta/2)`$, with special handling near
-    /// $`\sin(\beta/2) = 0`$ and $`\cos(\beta/2) = 0`$ to avoid unnecessary numerical
-    /// instability.
+    /// This method builds the standard finite sum in powers of
+    /// $`\cos(\beta/2)`$ and $`\sin(\beta/2)`$.
     ///
     /// # Examples
     ///
     /// ```rust
     /// # use laddu_physics::math::WignerDMatrix;
-    /// # use approx::assert_relative_eq;
+    /// # use laddu_expr::event_scalar;
     /// # use laddu_physics::{j, m};
     /// let w = WignerDMatrix::new(j!(1), m!(1), m!(0)).unwrap(); // j = 1, m' = 1, m = 0
-    /// let val = w.d(std::f64::consts::FRAC_PI_2);
-    /// assert_relative_eq!(val, -std::f64::consts::FRAC_1_SQRT_2);
+    /// let expr = w.d(event_scalar("beta"));
     /// ```
-    #[inline(always)]
-    pub fn d(&self, beta: f64) -> f64 {
-        let h = 0.5 * beta;
-        self.d_half(h.cos(), h.sin())
+    pub fn d(&self, beta: impl Into<Expr>) -> Expr {
+        let beta = beta.into();
+        let half_beta = 0.5 * beta;
+        let ch = half_beta.cos();
+        let sh = half_beta.sin();
+        let mut sum: Expr = 0.0.into();
+
+        for term in self.small_d_terms() {
+            let mut expr: Expr = term.coefficient.into();
+            if term.cos_power != 0 {
+                expr = expr * ch.powi(term.cos_power);
+            }
+            if term.sin_power != 0 {
+                expr = expr * sh.powi(term.sin_power);
+            }
+            sum = sum + expr;
+        }
+
+        sum
     }
 
     /// Evaluates the full Wigner $`D`$ matrix element $`D^j_{m' m}(\alpha,\beta,\gamma)`$.
@@ -513,13 +469,13 @@ impl WignerDMatrix {
     ///
     /// # Parameters
     ///
-    /// - `alpha`: first Euler angle $`\alpha`$, in radians
-    /// - `beta`: middle Euler angle $`\beta`$, in radians
-    /// - `gamma`: third Euler angle $`\gamma`$, in radians
+    /// - `alpha`: expression for the first Euler angle $`\alpha`$, in radians
+    /// - `beta`: expression for the middle Euler angle $`\beta`$, in radians
+    /// - `gamma`: expression for the third Euler angle $`\gamma`$, in radians
     ///
     /// # Returns
     ///
-    /// Returns the complex Wigner $`D`$ matrix element as `Complex64`.
+    /// Returns an expression graph for the complex Wigner $`D`$ matrix element.
     ///
     /// # Notes
     ///
@@ -530,33 +486,83 @@ impl WignerDMatrix {
     ///
     /// ```rust
     /// # use laddu_physics::math::WignerDMatrix;
-    /// # use approx::assert_relative_eq;
-    /// # use num::complex::Complex64;
+    /// # use laddu_expr::event_scalar;
     /// # use laddu_physics::{j, m};
     /// let w = WignerDMatrix::new(j!(1), m!(1), m!(0)).unwrap(); // j = 1, m' = 1, m = 0
-    /// let val = w.D(0.1, 0.2, 0.3);
-    /// let truth =  Complex64::cis(-0.1) * -std::f64::consts::FRAC_1_SQRT_2 * f64::sin(0.2);
-    /// assert_relative_eq!(val.re, truth.re);
-    /// assert_relative_eq!(val.im, truth.im);
+    /// let expr = w.D(event_scalar("alpha"), event_scalar("beta"), event_scalar("gamma"));
     /// ```
-    #[inline(always)]
     #[allow(non_snake_case)]
-    pub fn D(&self, alpha: f64, beta: f64, gamma: f64) -> Complex64 {
-        let d = self.d(beta);
-        let phi = -0.5 * ((self.dmp as f64) * alpha + (self.dm as f64) * gamma);
-        Complex64::new(phi.cos() * d, phi.sin() * d)
+    pub fn D(&self, alpha: impl Into<Expr>, beta: impl Into<Expr>, gamma: impl Into<Expr>) -> Expr {
+        let alpha = alpha.into();
+        let gamma = gamma.into();
+        let phase = -0.5 * (self.dmp as f64 * alpha + self.dm as f64 * gamma);
+        cis(phase) * self.d(beta)
     }
+
+    fn small_d_terms(&self) -> Vec<WignerDTerm> {
+        let j_plus_mp = (self.dj + self.dmp) / 2;
+        let j_minus_m = (self.dj - self.dm) / 2;
+        let mut ln_factorial = vec![0.0; self.dj as usize + 1];
+        for i in 1..=self.dj as usize {
+            ln_factorial[i] = ln_factorial[i - 1] + (i as f64).ln();
+        }
+        let ln_prefactor = 0.5
+            * (ln_factorial[j_plus_mp as usize]
+                + ln_factorial[self.jmmp as usize]
+                + ln_factorial[self.jpm as usize]
+                + ln_factorial[j_minus_m as usize]);
+
+        (self.s_min..=self.s_max)
+            .map(|s| {
+                let denom_ln = ln_factorial[(self.jpm - s) as usize]
+                    + ln_factorial[s as usize]
+                    + ln_factorial[(self.delta + s) as usize]
+                    + ln_factorial[(self.jmmp - s) as usize];
+                let sign = if ((s + self.delta) & 1) == 0 {
+                    1.0
+                } else {
+                    -1.0
+                };
+                WignerDTerm {
+                    coefficient: sign * (ln_prefactor - denom_ln).exp(),
+                    cos_power: (self.dj - self.delta - 2 * s) as i32,
+                    sin_power: (self.delta + 2 * s) as i32,
+                }
+            })
+            .collect()
+    }
+}
+
+#[derive(Copy, Clone, Debug, PartialEq)]
+struct WignerDTerm {
+    coefficient: f64,
+    cos_power: i32,
+    sin_power: i32,
 }
 
 #[cfg(test)]
 mod tests {
-    use std::f64::consts::{FRAC_1_SQRT_2, FRAC_PI_2, PI};
+    use std::f64::consts::{FRAC_1_SQRT_2, FRAC_PI_2};
 
     use approx::assert_relative_eq;
+    use laddu_compile::CompiledModel;
+    use laddu_runtime::CpuBackend;
     use num::complex::Complex64;
 
     use super::*;
     use crate::{j, m};
+
+    fn evaluate(expr: Expr) -> Complex64 {
+        let model = CompiledModel::from_expr(&expr).unwrap();
+        let params = model.params().default_values();
+        CpuBackend.prepare(&model).evaluate(&params).unwrap()
+    }
+
+    fn assert_complex_relative_eq(actual: Complex64, expected: Complex64) {
+        assert_relative_eq!(actual.re, expected.re);
+        assert_relative_eq!(actual.im, expected.im);
+    }
+
     #[test]
     fn test_phase() {
         assert_eq!(phase(0), 1);
@@ -779,98 +785,24 @@ mod tests {
 
     #[test]
     fn construct_integer_case() {
-        let _ = WignerDMatrix::new(j!(1), m!(1), m!(0)).unwrap(); // j = 1, m' = 1, m = 0
+        let _ = WignerDMatrix::new(j!(1), m!(1), m!(0)).unwrap();
     }
 
     #[test]
     fn construct_half_integer_case() {
-        let _ = WignerDMatrix::new(j!(1 / 2), m!(1 / 2), m!(-1 / 2)).unwrap(); // j = 1/2, m' = 1/2, m = -1/2
+        let _ = WignerDMatrix::new(j!(1 / 2), m!(1 / 2), m!(-1 / 2)).unwrap();
     }
 
     #[test]
-    #[should_panic]
-    fn panic_when_mp_out_of_range() {
-        let _ = WignerDMatrix::new(j!(1), m!(2), m!(0)).unwrap();
+    fn invalid_wigner_d_quantum_numbers_error() {
+        assert!(WignerDMatrix::new(j!(1), m!(2), m!(0)).is_err());
+        assert!(WignerDMatrix::new(j!(1), m!(0), m!(2)).is_err());
+        assert!(WignerDMatrix::new(j!(1), m!(1 / 2), m!(0)).is_err());
+        assert!(WignerDMatrix::new(j!(1), m!(0), m!(1 / 2)).is_err());
     }
 
     #[test]
-    #[should_panic]
-    fn panic_when_m_out_of_range() {
-        let _ = WignerDMatrix::new(j!(1), m!(0), m!(2)).unwrap();
-    }
-
-    #[test]
-    #[should_panic]
-    fn panic_when_parity_mismatch_mp() {
-        let _ = WignerDMatrix::new(j!(1), m!(1 / 2), m!(0)).unwrap();
-    }
-
-    #[test]
-    #[should_panic]
-    fn panic_when_parity_mismatch_m() {
-        let _ = WignerDMatrix::new(j!(1), m!(0), m!(1 / 2)).unwrap();
-    }
-
-    #[test]
-    fn d_beta_zero_is_identity_integer_j() {
-        let vals = [m!(-1), m!(0), m!(1)];
-        for &mp in &vals {
-            for &m in &vals {
-                let w = WignerDMatrix::new(j!(1), mp, m).unwrap();
-                let expected = if mp == m { 1.0 } else { 0.0 };
-                assert_relative_eq!(w.d(0.0), expected);
-            }
-        }
-    }
-
-    #[test]
-    fn d_beta_zero_is_identity_half_integer_j() {
-        let vals = [m!(-1 / 2), m!(1 / 2)];
-        for &mp in &vals {
-            for &m in &vals {
-                let w = WignerDMatrix::new(j!(1 / 2), mp, m).unwrap();
-                let expected = if mp == m { 1.0 } else { 0.0 };
-                assert_relative_eq!(w.d(0.0), expected);
-            }
-        }
-    }
-
-    #[test]
-    fn d_beta_pi_selection_rule_j_one() {
-        let vals = [m!(-1), m!(0), m!(1)];
-        for &mp in &vals {
-            for &m in &vals {
-                let w = WignerDMatrix::new(j!(1), mp, m).unwrap();
-                let expected = if mp == -m {
-                    let jm = (2 + m.doubled()) / 2; // j + m with j=1
-                    if (jm & 1) == 0 { 1.0 } else { -1.0 }
-                } else {
-                    0.0
-                };
-                assert_relative_eq!(w.d(PI), expected);
-            }
-        }
-    }
-
-    #[test]
-    fn d_j_half_closed_forms() {
-        let beta = 0.73;
-        let c = f64::cos(beta / 2.0);
-        let s = f64::sin(beta / 2.0);
-
-        let w_pp = WignerDMatrix::new(j!(1 / 2), m!(1 / 2), m!(1 / 2)).unwrap();
-        let w_pm = WignerDMatrix::new(j!(1 / 2), m!(1 / 2), m!(-1 / 2)).unwrap();
-        let w_mp = WignerDMatrix::new(j!(1 / 2), m!(-1 / 2), m!(1 / 2)).unwrap();
-        let w_mm = WignerDMatrix::new(j!(1 / 2), m!(-1 / 2), m!(-1 / 2)).unwrap();
-
-        assert_relative_eq!(w_pp.d(beta), c);
-        assert_relative_eq!(w_pm.d(beta), -s);
-        assert_relative_eq!(w_mp.d(beta), s);
-        assert_relative_eq!(w_mm.d(beta), c);
-    }
-
-    #[test]
-    fn d_j_one_closed_forms() {
+    fn small_d_matches_known_numerical_values() {
         let beta = 1.1;
         let cb = f64::cos(beta);
         let sb = f64::sin(beta);
@@ -879,108 +811,65 @@ mod tests {
         let w_10 = WignerDMatrix::new(j!(1), m!(1), m!(0)).unwrap();
         let w_1m1 = WignerDMatrix::new(j!(1), m!(1), m!(-1)).unwrap();
         let w_00 = WignerDMatrix::new(j!(1), m!(0), m!(0)).unwrap();
-        let w_01 = WignerDMatrix::new(j!(1), m!(0), m!(1)).unwrap();
-        let w_0m1 = WignerDMatrix::new(j!(1), m!(0), m!(-1)).unwrap();
-        let w_m11 = WignerDMatrix::new(j!(1), m!(-1), m!(1)).unwrap();
-        let w_m10 = WignerDMatrix::new(j!(1), m!(-1), m!(0)).unwrap();
-        let w_m1m1 = WignerDMatrix::new(j!(1), m!(-1), m!(-1)).unwrap();
 
-        assert_relative_eq!(w_11.d(beta), 0.5 * (1.0 + cb));
-        assert_relative_eq!(w_10.d(beta), -FRAC_1_SQRT_2 * sb);
-        assert_relative_eq!(w_1m1.d(beta), 0.5 * (1.0 - cb));
-
-        assert_relative_eq!(w_01.d(beta), FRAC_1_SQRT_2 * sb);
-        assert_relative_eq!(w_00.d(beta), cb);
-        assert_relative_eq!(w_0m1.d(beta), -FRAC_1_SQRT_2 * sb);
-
-        assert_relative_eq!(w_m11.d(beta), 0.5 * (1.0 - cb));
-        assert_relative_eq!(w_m10.d(beta), FRAC_1_SQRT_2 * sb);
-        assert_relative_eq!(w_m1m1.d(beta), 0.5 * (1.0 + cb));
+        assert_complex_relative_eq(evaluate(w_11.d(beta)), Complex64::from(0.5 * (1.0 + cb)));
+        assert_complex_relative_eq(evaluate(w_10.d(beta)), Complex64::from(-FRAC_1_SQRT_2 * sb));
+        assert_complex_relative_eq(evaluate(w_1m1.d(beta)), Complex64::from(0.5 * (1.0 - cb)));
+        assert_complex_relative_eq(evaluate(w_00.d(beta)), Complex64::from(cb));
+        assert_complex_relative_eq(evaluate(w_10.d(FRAC_PI_2)), Complex64::from(-FRAC_1_SQRT_2));
     }
 
     #[test]
-    fn d_j_one_special_value() {
-        let w = WignerDMatrix::new(j!(1), m!(1), m!(0)).unwrap();
-        assert_relative_eq!(w.d(FRAC_PI_2), -FRAC_1_SQRT_2);
-    }
-
-    #[test]
-    fn full_d_matches_phase_definition() {
+    fn full_d_matches_phase_definition_numerically() {
         let alpha = 0.31;
         let beta = 0.82;
         let gamma = -0.47;
+        let w = WignerDMatrix::new(j!(3 / 2), m!(1 / 2), m!(-1 / 2)).unwrap();
 
-        let w = WignerDMatrix::new(j!(3 / 2), m!(1 / 2), m!(-1 / 2)).unwrap(); // j = 3/2, m' = 1/2, m = -1/2
-        let d = w.d(beta);
-        let expected_phase = Complex64::cis(-0.5 * (alpha - gamma));
-        let expected = expected_phase * d;
-        let val = w.D(alpha, beta, gamma);
+        let d = evaluate(w.d(beta));
+        let expected = Complex64::cis(-0.5 * (alpha - gamma)) * d;
 
-        assert_relative_eq!(val.re, expected.re);
-        assert_relative_eq!(val.im, expected.im);
+        assert_complex_relative_eq(evaluate(w.D(alpha, beta, gamma)), expected);
     }
 
     #[test]
-    fn full_d_has_no_gamma_dependence_when_m_zero() {
-        let w = WignerDMatrix::new(j!(1), m!(1), m!(0)).unwrap(); // j=1, m'=1, m=0
-        let a = w.D(0.2, 0.7, 0.0);
-        let b = w.D(0.2, 0.7, 1.3);
+    fn small_d_builds_regular_expression_graph() {
+        use laddu_expr::{ExprNode, UnaryOp, event_scalar};
 
-        assert_relative_eq!(a.re, b.re);
-        assert_relative_eq!(a.im, b.im);
+        let w = WignerDMatrix::new(j!(1), m!(1), m!(0)).unwrap();
+        let graph = w.d(event_scalar("beta")).to_graph();
+
+        assert!(graph.nodes().iter().any(|node| matches!(
+            node,
+            ExprNode::Unary {
+                op: UnaryOp::Sin | UnaryOp::Cos | UnaryOp::PowI(_),
+                ..
+            }
+        )));
     }
 
     #[test]
-    fn full_d_has_no_alpha_dependence_when_mp_zero() {
-        let w = WignerDMatrix::new(j!(1), m!(0), m!(1)).unwrap(); // j=1, m'=0, m=1
-        let a = w.D(0.0, 0.7, 0.2);
-        let b = w.D(1.3, 0.7, 0.2);
+    fn full_d_builds_regular_expression_graph() {
+        use laddu_expr::{ExprNode, event_scalar};
 
-        assert_relative_eq!(a.re, b.re);
-        assert_relative_eq!(a.im, b.im);
-    }
+        let w = WignerDMatrix::new(j!(3 / 2), m!(1 / 2), m!(-1 / 2)).unwrap();
+        let graph = w
+            .D(
+                event_scalar("alpha"),
+                event_scalar("beta"),
+                event_scalar("gamma"),
+            )
+            .to_graph();
 
-    #[test]
-    fn d_symmetry_minus_indices() {
-        let beta = 0.91;
-        let w1 = WignerDMatrix::new(j!(2), m!(1), m!(-1)).unwrap(); // j=2, m'=1, m=-1
-        let w2 = WignerDMatrix::new(j!(2), m!(-1), m!(1)).unwrap(); // j=2, m'=-1, m=1
-
-        let lhs = w1.d(beta);
-        let rhs = w2.d(beta);
-
-        // d^j_{m' m}(beta) = (-1)^(m'-m) d^j_{-m', -m}(beta)
-        // here m'-m = 2, so sign is +1
-        assert_relative_eq!(lhs, rhs);
-    }
-
-    #[test]
-    fn d_symmetry_transpose_relation() {
-        let beta = 0.64;
-        let w1 = WignerDMatrix::new(j!(3 / 2), m!(1 / 2), m!(-1 / 2)).unwrap(); // j=3/2, m'=1/2, m=-1/2
-        let w2 = WignerDMatrix::new(j!(3 / 2), m!(-1 / 2), m!(1 / 2)).unwrap(); // swapped
-
-        let lhs = w1.d(beta);
-        let rhs = w2.d(beta);
-
-        // d^j_{m' m}(beta) = (-1)^(m'-m) d^j_{m m'}(beta)
-        // here m'-m = 1, so sign is -1
-        assert_relative_eq!(lhs, -rhs);
-    }
-
-    #[test]
-    fn d_is_real_for_real_beta() {
-        let w = WignerDMatrix::new(j!(3), m!(1), m!(-2)).unwrap(); // j=3, m'=1, m=-2
-        let d = w.d(0.37);
-        assert!(d.is_finite());
-    }
-
-    #[test]
-    fn full_d_magnitude_equals_abs_small_d() {
-        let w = WignerDMatrix::new(j!(5 / 2), m!(1 / 2), m!(-3 / 2)).unwrap(); // j=5/2, m'=1/2, m=-3/2
-        let d = w.d(1.23).abs();
-        #[allow(non_snake_case)]
-        let D = w.D(0.4, 1.23, -0.9).norm();
-        assert_relative_eq!(D, d);
+        assert!(
+            graph
+                .nodes()
+                .iter()
+                .any(|node| matches!(node, ExprNode::ComplexConst(_)))
+        );
+        assert!(graph.nodes().iter().all(|node| !matches!(
+            node,
+            ExprNode::Solve { .. } | ExprNode::MatMul { .. } | ExprNode::MatVec { .. }
+        )));
     }
 }

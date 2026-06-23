@@ -9,6 +9,7 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+laddu-expr = { path = "../laddu-expr" }
 serde.workspace = true
 nalgebra.workspace = true
 thiserror.workspace = true
@@ -22,4 +23,6 @@ fastrand-contrib.workspace = true
 
 
 [dev-dependencies]
+laddu-compile = { path = "../laddu-compile" }
+laddu-runtime = { path = "../laddu-runtime" }
 criterion.workspace = true
