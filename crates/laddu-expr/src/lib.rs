@@ -123,6 +123,12 @@ pub enum ExprNode {
         lhs: ExprId,
         rhs: ExprId,
     },
+    NaryAdd {
+        terms: Vec<ExprId>,
+    },
+    NaryMul {
+        factors: Vec<ExprId>,
+    },
     Complex {
         re: ExprId,
         im: ExprId,
@@ -794,6 +800,12 @@ impl ExprGraph {
             ExprNode::EventScalar(name) => format!("#{} EventScalar({name})", id.index()),
             ExprNode::Unary { op, .. } => format!("#{} Unary({op:?})", id.index()),
             ExprNode::Binary { op, .. } => format!("#{} Binary({op:?})", id.index()),
+            ExprNode::NaryAdd { terms } => {
+                format!("#{} NaryAdd(len={})", id.index(), terms.len())
+            }
+            ExprNode::NaryMul { factors } => {
+                format!("#{} NaryMul(len={})", id.index(), factors.len())
+            }
             ExprNode::Complex { .. } => format!("#{} Complex", id.index()),
             ExprNode::Vector { elements } => {
                 format!("#{} Vector(len={})", id.index(), elements.len())
@@ -864,6 +876,16 @@ fn node_children(node: &ExprNode) -> Vec<(String, ExprId)> {
         | ExprNode::EventScalar(_) => Vec::new(),
         ExprNode::Unary { input, .. } => vec![("input".into(), *input)],
         ExprNode::Binary { lhs, rhs, .. } => vec![("lhs".into(), *lhs), ("rhs".into(), *rhs)],
+        ExprNode::NaryAdd { terms } => terms
+            .iter()
+            .enumerate()
+            .map(|(index, id)| (format!("term[{index}]"), *id))
+            .collect(),
+        ExprNode::NaryMul { factors } => factors
+            .iter()
+            .enumerate()
+            .map(|(index, id)| (format!("factor[{index}]"), *id))
+            .collect(),
         ExprNode::Complex { re, im } => vec![("re".into(), *re), ("im".into(), *im)],
         ExprNode::Vector { elements } => elements
             .iter()

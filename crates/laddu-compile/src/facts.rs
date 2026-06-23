@@ -150,6 +150,26 @@ fn value_kind(node: &ExprNode, facts: &[NodeFacts]) -> ValueKind {
                 ValueKind::Complex
             }
         }
+        ExprNode::NaryAdd { terms } => {
+            if terms
+                .iter()
+                .all(|id| facts[id.index()].value_kind == ValueKind::Real)
+            {
+                ValueKind::Real
+            } else {
+                ValueKind::Complex
+            }
+        }
+        ExprNode::NaryMul { factors } => {
+            if factors
+                .iter()
+                .all(|id| facts[id.index()].value_kind == ValueKind::Real)
+            {
+                ValueKind::Real
+            } else {
+                ValueKind::Complex
+            }
+        }
         ExprNode::Vector { elements } => ValueKind::Vector {
             len: elements.len(),
         },
@@ -220,6 +240,20 @@ fn number_class(node: &ExprNode, facts: &[NodeFacts]) -> NumberClass {
                 },
             }
         }
+        ExprNode::NaryAdd { terms } => {
+            let mut classes = terms.iter().map(|id| facts[id.index()].number_class);
+            let Some(first) = classes.next() else {
+                return NumberClass::Real;
+            };
+            classes.fold(first, add_number_class)
+        }
+        ExprNode::NaryMul { factors } => {
+            let mut classes = factors.iter().map(|id| facts[id.index()].number_class);
+            let Some(first) = classes.next() else {
+                return NumberClass::Real;
+            };
+            classes.fold(first, mul_number_class)
+        }
         ExprNode::Vector { .. }
         | ExprNode::Matrix { .. }
         | ExprNode::Component { .. }
@@ -228,6 +262,27 @@ fn number_class(node: &ExprNode, facts: &[NodeFacts]) -> NumberClass {
         | ExprNode::MatVec { .. }
         | ExprNode::Dot { .. }
         | ExprNode::Solve { .. } => NumberClass::Unknown,
+    }
+}
+
+fn add_number_class(lhs: NumberClass, rhs: NumberClass) -> NumberClass {
+    use NumberClass::{Complex, Imaginary, Real, Unknown};
+    match (lhs, rhs) {
+        (Real, Real) => Real,
+        (Imaginary, Imaginary) => Imaginary,
+        (Complex, _) | (_, Complex) => Complex,
+        (Unknown, _) | (_, Unknown) => Unknown,
+        _ => Complex,
+    }
+}
+
+fn mul_number_class(lhs: NumberClass, rhs: NumberClass) -> NumberClass {
+    use NumberClass::{Complex, Imaginary, Real, Unknown};
+    match (lhs, rhs) {
+        (Real, Real) | (Imaginary, Imaginary) => Real,
+        (Real, Imaginary) | (Imaginary, Real) => Imaginary,
+        (Complex, _) | (_, Complex) => Complex,
+        (Unknown, _) | (_, Unknown) => Unknown,
     }
 }
 
@@ -248,6 +303,16 @@ fn dependency(node: &ExprNode, facts: &[NodeFacts]) -> DependencyFacts {
         ExprNode::Complex { re, im } => facts[re.index()]
             .dependency
             .union(facts[im.index()].dependency),
+        ExprNode::NaryAdd { terms } => terms
+            .iter()
+            .fold(DependencyFacts::per_compile(), |dependency, id| {
+                dependency.union(facts[id.index()].dependency)
+            }),
+        ExprNode::NaryMul { factors } => factors
+            .iter()
+            .fold(DependencyFacts::per_compile(), |dependency, id| {
+                dependency.union(facts[id.index()].dependency)
+            }),
         ExprNode::Binary { lhs, rhs, .. }
         | ExprNode::MatMul { lhs, rhs }
         | ExprNode::Dot { lhs, rhs } => facts[lhs.index()]

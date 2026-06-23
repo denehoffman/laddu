@@ -179,6 +179,24 @@ mod tests {
             .count()
     }
 
+    fn count_nary_add(compiled: &CompiledModel) -> usize {
+        compiled
+            .graph()
+            .nodes()
+            .iter()
+            .filter(|node| matches!(node, ExprNode::NaryAdd { .. }))
+            .count()
+    }
+
+    fn count_nary_mul(compiled: &CompiledModel) -> usize {
+        compiled
+            .graph()
+            .nodes()
+            .iter()
+            .filter(|node| matches!(node, ExprNode::NaryMul { .. }))
+            .count()
+    }
+
     fn count_unary_op(compiled: &CompiledModel, op: UnaryOp) -> usize {
         compiled
             .graph()
@@ -305,7 +323,7 @@ mod tests {
         let model = sum.clone() * sum;
         let compiled = CompiledModel::from_expr(&model).unwrap();
 
-        assert_eq!(count_binary_op(&compiled, BinaryOp::Add), 1);
+        assert_eq!(count_nary_add(&compiled), 1);
     }
 
     #[test]
@@ -315,14 +333,10 @@ mod tests {
         let model = (x.clone() + y.clone()) * (y + x);
         let compiled = CompiledModel::from_expr(&model).unwrap();
 
-        assert_eq!(count_binary_op(&compiled, BinaryOp::Add), 1);
+        assert_eq!(count_nary_add(&compiled), 1);
         assert!(matches!(
             compiled.graph().node(compiled.graph().root()),
-            Some(ExprNode::Binary {
-                op: BinaryOp::Mul,
-                lhs,
-                rhs,
-            }) if lhs == rhs
+            Some(ExprNode::NaryMul { factors }) if factors.len() == 2 && factors[0] == factors[1]
         ));
     }
 
@@ -337,13 +351,9 @@ mod tests {
 
         assert!(matches!(
             compiled.graph().node(compiled.graph().root()),
-            Some(ExprNode::Binary {
-                op: BinaryOp::Mul,
-                lhs,
-                rhs,
-            }) if lhs == rhs
+            Some(ExprNode::NaryMul { factors }) if factors.len() == 2 && factors[0] == factors[1]
         ));
-        assert_eq!(count_binary_op(&compiled, BinaryOp::Add), 2);
+        assert_eq!(count_nary_add(&compiled), 1);
     }
 
     #[test]
@@ -359,11 +369,7 @@ mod tests {
 
         assert!(matches!(
             compiled.graph().node(compiled.graph().root()),
-            Some(ExprNode::Binary {
-                op: BinaryOp::Add,
-                lhs,
-                rhs,
-            }) if lhs == rhs
+            Some(ExprNode::NaryAdd { terms }) if terms.len() == 2 && terms[0] == terms[1]
         ));
     }
 
@@ -375,7 +381,7 @@ mod tests {
         let rhs = (x + y).tagged("rhs");
         let compiled = CompiledModel::from_expr(&(lhs * rhs)).unwrap();
 
-        assert_eq!(count_binary_op(&compiled, BinaryOp::Add), 1);
+        assert_eq!(count_nary_add(&compiled), 1);
     }
 
     #[test]
@@ -388,7 +394,7 @@ mod tests {
         let compiled =
             CompiledModel::from_expr_with_options(&(sum.clone() * sum), &options).unwrap();
 
-        assert_eq!(count_binary_op(&compiled, BinaryOp::Add), 1);
+        assert_eq!(count_nary_add(&compiled), 1);
     }
 
     #[test]
@@ -504,6 +510,36 @@ mod tests {
     }
 
     #[test]
+    fn exponential_product_partition_keeps_non_exponential_factors() {
+        let a = event_scalar("a");
+        let b = event_scalar("b");
+        let scale = Expr::from(parameter!("scale"));
+        let compiled = CompiledModel::from_expr(&(a.exp() * b.exp() * scale)).unwrap();
+
+        assert_eq!(count_unary_op(&compiled, UnaryOp::Exp), 1);
+        assert_eq!(count_nary_mul(&compiled), 1);
+
+        let ExprNode::NaryMul { factors } = compiled
+            .graph()
+            .node(compiled.graph().root())
+            .expect("root node exists")
+        else {
+            panic!("expected n-ary product root");
+        };
+        assert!(factors.iter().any(|id| matches!(
+            compiled.graph().node(*id),
+            Some(ExprNode::ScalarParam(parameter)) if parameter.name() == "scale"
+        )));
+        assert!(factors.iter().any(|id| matches!(
+            compiled.graph().node(*id),
+            Some(ExprNode::Unary {
+                op: UnaryOp::Exp,
+                input,
+            }) if matches!(compiled.graph().node(*input), Some(ExprNode::NaryAdd { terms }) if terms.len() == 2)
+        )));
+    }
+
+    #[test]
     fn polar_complex_products_merge_exponential_phase_factors() {
         let lhs = polar_complex(parameter!("m1"), event_scalar("p1"));
         let rhs = polar_complex(parameter!("m2"), event_scalar("p2"));
@@ -520,19 +556,88 @@ mod tests {
 
         assert!(matches!(
             compiled.graph().node(compiled.graph().root()),
-            Some(ExprNode::Binary {
-                op: BinaryOp::Mul,
-                lhs,
-                rhs,
-            }) if matches!(compiled.graph().node(*lhs), Some(ExprNode::ComplexConst(value)) if *value == Complex64::I)
-                && matches!(
-                    compiled.graph().node(*rhs),
-                    Some(ExprNode::Binary {
-                        op: BinaryOp::Add,
-                        ..
-                    })
-                )
+            Some(ExprNode::NaryMul { factors }) if factors.len() == 2
+                && factors.iter().any(|id| matches!(compiled.graph().node(*id), Some(ExprNode::ComplexConst(value)) if *value == Complex64::I))
+                && factors.iter().any(|id| matches!(compiled.graph().node(*id), Some(ExprNode::NaryAdd { .. })))
         ));
+    }
+
+    #[test]
+    fn subtraction_normalizes_to_signed_nary_addition() {
+        let x = Expr::from(parameter!("x"));
+        let y = Expr::from(parameter!("y"));
+        let z = Expr::from(parameter!("z"));
+        let compiled = CompiledModel::from_expr(&(x + y - z)).unwrap();
+
+        assert!(compiled.graph().nodes().iter().all(|node| !matches!(
+            node,
+            ExprNode::Binary {
+                op: BinaryOp::Sub,
+                ..
+            }
+        )));
+        assert!(matches!(
+            compiled.graph().node(compiled.graph().root()),
+            Some(ExprNode::NaryAdd { terms }) if terms.len() == 3
+                && terms.iter().any(|id| matches!(
+                    compiled.graph().node(*id),
+                    Some(ExprNode::NaryMul { factors }) if factors.len() == 2
+                        && factors.iter().any(|factor| matches!(compiled.graph().node(*factor), Some(ExprNode::RealConst(-1.0))))
+                        && factors.iter().any(|factor| matches!(compiled.graph().node(*factor), Some(ExprNode::ScalarParam(parameter)) if parameter.name() == "z"))
+                ))
+        ));
+    }
+
+    #[test]
+    fn product_normalization_absorbs_negated_factors() {
+        let phi = Expr::from(parameter!("phi"));
+        let compiled = CompiledModel::from_expr(&(Expr::from(-2.0) * (0.0 - phi))).unwrap();
+
+        assert!(matches!(
+            compiled.graph().node(compiled.graph().root()),
+            Some(ExprNode::NaryMul { factors }) if factors.len() == 2
+                && factors.iter().any(|id| matches!(compiled.graph().node(*id), Some(ExprNode::RealConst(2.0))))
+                && factors.iter().any(|id| matches!(compiled.graph().node(*id), Some(ExprNode::ScalarParam(parameter)) if parameter.name() == "phi"))
+        ));
+    }
+
+    #[test]
+    fn common_product_factor_extraction_runs_before_coefficient_folding() {
+        let c = Expr::from(parameter!("c"));
+        let d = Expr::from(parameter!("d"));
+        let lhs =
+            Expr::from(-1.0) * -3.0 * 5.0 * 7.0 * c.clone() * c.clone() * d.clone() * d.clone();
+        let rhs = Expr::from(-1.0) * -3.0 * 5.0 * d.clone() * d.clone();
+        let compiled = CompiledModel::from_expr(&(lhs - rhs)).unwrap();
+
+        let Some(ExprNode::NaryMul { factors }) = compiled.graph().node(compiled.graph().root())
+        else {
+            panic!("expected factored product root");
+        };
+
+        assert!(
+            factors
+                .iter()
+                .any(|id| matches!(compiled.graph().node(*id), Some(ExprNode::RealConst(15.0))))
+        );
+        assert_eq!(
+            factors
+                .iter()
+                .filter(|id| matches!(compiled.graph().node(**id), Some(ExprNode::ScalarParam(parameter)) if parameter.name() == "d"))
+                .count(),
+            2
+        );
+        assert!(factors.iter().any(|id| matches!(
+            compiled.graph().node(*id),
+            Some(ExprNode::NaryAdd { terms }) if terms.len() == 2
+                && terms.iter().any(|term| matches!(compiled.graph().node(*term), Some(ExprNode::RealConst(-1.0))))
+                && terms.iter().any(|term| matches!(
+                    compiled.graph().node(*term),
+                    Some(ExprNode::NaryMul { factors }) if factors.len() == 3
+                        && factors.iter().any(|factor| matches!(compiled.graph().node(*factor), Some(ExprNode::RealConst(7.0))))
+                        && factors.iter().filter(|factor| matches!(compiled.graph().node(**factor), Some(ExprNode::ScalarParam(parameter)) if parameter.name() == "c")).count() == 2
+                ))
+        )));
     }
 
     #[test]
@@ -555,18 +660,9 @@ mod tests {
 
         assert!(matches!(
             compiled.graph().node(exp_input),
-            Some(ExprNode::Binary {
-                op: BinaryOp::Mul,
-                lhs,
-                rhs,
-            }) if matches!(compiled.graph().node(*lhs), Some(ExprNode::ComplexConst(value)) if *value == Complex64::I)
-                && matches!(
-                    compiled.graph().node(*rhs),
-                    Some(ExprNode::Binary {
-                        op: BinaryOp::Add,
-                        ..
-                    })
-                )
+            Some(ExprNode::NaryMul { factors }) if factors.len() == 2
+                && factors.iter().any(|id| matches!(compiled.graph().node(*id), Some(ExprNode::ComplexConst(value)) if *value == Complex64::I))
+                && factors.iter().any(|id| matches!(compiled.graph().node(*id), Some(ExprNode::NaryAdd { .. })))
         ));
     }
 
@@ -602,10 +698,7 @@ mod tests {
         };
         assert!(matches!(
             one_iteration.graph().node(*one_iteration_exp_input),
-            Some(ExprNode::Binary {
-                op: BinaryOp::Add,
-                ..
-            })
+            Some(ExprNode::NaryAdd { .. })
         ));
 
         let ExprNode::Unary {
@@ -620,18 +713,9 @@ mod tests {
         };
         assert!(matches!(
             fixed_point.graph().node(*fixed_point_exp_input),
-            Some(ExprNode::Binary {
-                op: BinaryOp::Mul,
-                lhs,
-                rhs,
-            }) if matches!(fixed_point.graph().node(*lhs), Some(ExprNode::ComplexConst(value)) if *value == Complex64::I)
-                && matches!(
-                    fixed_point.graph().node(*rhs),
-                    Some(ExprNode::Binary {
-                        op: BinaryOp::Add,
-                        ..
-                    })
-                )
+            Some(ExprNode::NaryMul { factors }) if factors.len() == 2
+                && factors.iter().any(|id| matches!(fixed_point.graph().node(*id), Some(ExprNode::ComplexConst(value)) if *value == Complex64::I))
+                && factors.iter().any(|id| matches!(fixed_point.graph().node(*id), Some(ExprNode::NaryAdd { .. })))
         ));
     }
 

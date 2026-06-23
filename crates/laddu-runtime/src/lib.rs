@@ -146,6 +146,20 @@ impl CpuPlan {
                     let rhs = scalar_at(&values, rhs.index())?;
                     Value::Scalar(eval_binary(*op, lhs, rhs))
                 }
+                ExprNode::NaryAdd { terms } => {
+                    let mut sum = Complex64::ZERO;
+                    for term in terms {
+                        sum += scalar_at(&values, term.index())?;
+                    }
+                    Value::Scalar(sum)
+                }
+                ExprNode::NaryMul { factors } => {
+                    let mut product = Complex64::ONE;
+                    for factor in factors {
+                        product *= scalar_at(&values, factor.index())?;
+                    }
+                    Value::Scalar(product)
+                }
                 ExprNode::Complex { re, im } => {
                     let re = scalar_at(&values, re.index())?;
                     let im = scalar_at(&values, im.index())?;
