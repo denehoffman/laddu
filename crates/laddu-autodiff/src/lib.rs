@@ -1,20 +1,30 @@
-pub use laddu_expr::{ExprError, ExprGraph, ExprResult};
-pub use num::complex::Complex64;
+use laddu_compile::CompiledModel;
 
-use laddu_expr::Expr;
-use laddu_params::ParamValues;
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct ForwardGradient {
-    pub value: Complex64,
-    pub gradient: Vec<Complex64>,
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub enum AutodiffMode {
+    Forward,
+    Reverse,
 }
 
-pub fn forward_gradient(
-    graph: &ExprGraph,
-    root: Expr,
-    params: &ParamValues,
-) -> ExprResult<ForwardGradient> {
-    let (value, gradient) = graph.evaluate_with_gradient(root, params)?;
-    Ok(ForwardGradient { value, gradient })
+#[derive(Clone, Debug)]
+pub struct AutodiffPlan {
+    mode: AutodiffMode,
+    parameter_count: usize,
+}
+
+impl AutodiffPlan {
+    pub fn from_model(model: &CompiledModel, mode: AutodiffMode) -> Self {
+        Self {
+            mode,
+            parameter_count: model.params().n_free(),
+        }
+    }
+
+    pub fn mode(&self) -> AutodiffMode {
+        self.mode
+    }
+
+    pub fn parameter_count(&self) -> usize {
+        self.parameter_count
+    }
 }

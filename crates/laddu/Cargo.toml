@@ -16,7 +16,6 @@ laddu-data = { path = "../laddu-data" }
 laddu-expr = { path = "../laddu-expr" }
 laddu-kernel = { path = "../laddu-kernel" }
 laddu-likelihood = { path = "../laddu-likelihood", optional = true }
-laddu-params = { path = "../laddu-params" }
 laddu-physics = { path = "../laddu-physics" }
 laddu-runtime = { path = "../laddu-runtime" }
 laddu-wgpu = { path = "../laddu-wgpu", optional = true }

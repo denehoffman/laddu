@@ -10,5 +10,5 @@ rust-version.workspace = true
 
 [dependencies]
 laddu-expr = { path = "../laddu-expr" }
-laddu-params = { path = "../laddu-params" }
 thiserror.workspace = true
+num.workspace = true

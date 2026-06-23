@@ -11,6 +11,8 @@ pub enum ParamError {
     EmptyName,
     #[error("duplicate parameter name: {0}")]
     DuplicateName(String),
+    #[error("parameter conflict for {name}: {reason}")]
+    ParameterConflict { name: String, reason: String },
     #[error("invalid parameter id #{id} for layout of size {len}")]
     InvalidParamId { id: usize, len: usize },
     #[error("invalid free parameter id #{id} for layout with {len} free parameters")]
@@ -108,7 +110,7 @@ impl Default for Bounds {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct ParamSpec {
+pub struct Parameter {
     name: Arc<str>,
     state: ParamState,
     initial: InitialSpec,
@@ -118,7 +120,7 @@ pub struct ParamSpec {
     description: Option<Arc<str>>,
 }
 
-impl ParamSpec {
+impl Parameter {
     pub fn free(name: impl Into<Arc<str>>) -> Self {
         Self {
             name: name.into(),
@@ -143,28 +145,58 @@ impl ParamSpec {
         }
     }
 
-    pub fn initial(mut self, initial: impl Into<InitialSpec>) -> Self {
+    pub fn set_fixed_value(&mut self, value: f64) {
+        self.state = ParamState::Fixed(value);
+        self.initial = InitialSpec::Value(value);
+    }
+
+    pub fn with_fixed_value(mut self, value: f64) -> Self {
+        self.set_fixed_value(value);
+        self
+    }
+
+    pub fn set_initial(&mut self, initial: impl Into<InitialSpec>) {
         self.initial = initial.into();
+    }
+
+    pub fn with_initial(mut self, initial: impl Into<InitialSpec>) -> Self {
+        self.set_initial(initial);
         self
     }
 
-    pub fn bounds(mut self, min: impl Into<Option<f64>>, max: impl Into<Option<f64>>) -> Self {
+    pub fn set_bounds(&mut self, min: impl Into<Option<f64>>, max: impl Into<Option<f64>>) {
         self.bounds = Bounds::new(min, max);
+    }
+
+    pub fn with_bounds(mut self, min: impl Into<Option<f64>>, max: impl Into<Option<f64>>) -> Self {
+        self.set_bounds(min, max);
         self
     }
 
-    pub fn unit(mut self, unit: impl Into<Arc<str>>) -> Self {
+    pub fn set_unit(&mut self, unit: impl Into<Arc<str>>) {
         self.unit = Some(unit.into());
+    }
+
+    pub fn with_unit(mut self, unit: impl Into<Arc<str>>) -> Self {
+        self.set_unit(unit);
         self
     }
 
-    pub fn latex(mut self, latex: impl Into<Arc<str>>) -> Self {
+    pub fn set_latex(&mut self, latex: impl Into<Arc<str>>) {
         self.latex = Some(latex.into());
+    }
+
+    pub fn with_latex(mut self, latex: impl Into<Arc<str>>) -> Self {
+        self.set_latex(latex);
         self
     }
 
-    pub fn description(mut self, description: impl Into<Arc<str>>) -> Self {
+    pub fn set_description(&mut self, description: impl Into<Arc<str>>) {
         self.description = Some(description.into());
+    }
+
+    pub fn with_description(mut self, description: impl Into<Arc<str>>) -> Self {
+        self.set_description(description);
         self
     }
 
@@ -219,7 +251,7 @@ impl From<(f64, f64)> for InitialSpec {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ParamLayout {
-    specs: Arc<[ParamSpec]>,
+    specs: Arc<[Parameter]>,
     names: Arc<HashMap<Arc<str>, ParamId>>,
     free_params: Arc<[ParamId]>,
     full_to_free: Arc<[Option<FreeParamId>]>,
@@ -227,8 +259,11 @@ pub struct ParamLayout {
 }
 
 impl ParamLayout {
-    pub fn new(specs: impl IntoIterator<Item = ParamSpec>) -> ParamResult<Self> {
-        let specs: Vec<_> = specs.into_iter().collect();
+    pub fn new<S>(specs: impl IntoIterator<Item = S>) -> ParamResult<Self>
+    where
+        S: Into<Parameter>,
+    {
+        let specs: Vec<_> = specs.into_iter().map(Into::into).collect();
         let mut names = HashMap::with_capacity(specs.len());
         let mut free_params = Vec::new();
         let mut full_to_free = Vec::with_capacity(specs.len());
@@ -264,7 +299,7 @@ impl ParamLayout {
         })
     }
 
-    pub fn specs(&self) -> &[ParamSpec] {
+    pub fn specs(&self) -> &[Parameter] {
         &self.specs
     }
 
@@ -289,7 +324,7 @@ impl ParamLayout {
         Ok(self.specs[id.index()].name())
     }
 
-    pub fn spec(&self, id: ParamId) -> ParamResult<&ParamSpec> {
+    pub fn spec(&self, id: ParamId) -> ParamResult<&Parameter> {
         self.check_id(id)?;
         Ok(&self.specs[id.index()])
     }
@@ -403,6 +438,51 @@ impl ParamLayout {
     }
 }
 
+#[derive(Clone, Debug, Default)]
+pub struct ParamRegistry {
+    specs: Vec<Parameter>,
+    names: HashMap<Arc<str>, ParamId>,
+}
+
+impl ParamRegistry {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn register<S>(&mut self, spec: S) -> ParamResult<ParamId>
+    where
+        S: Into<Parameter>,
+    {
+        let spec = spec.into();
+        if spec.name().is_empty() {
+            return Err(ParamError::EmptyName);
+        }
+        if let Some(id) = self.names.get(spec.name()).copied() {
+            let existing = &self.specs[id.index()];
+            if existing != &spec {
+                return Err(ParamError::ParameterConflict {
+                    name: spec.name().to_owned(),
+                    reason: "duplicate parameter name has incompatible metadata".into(),
+                });
+            }
+            return Ok(id);
+        }
+
+        let id = ParamId(self.specs.len() as u32);
+        self.names.insert(Arc::clone(&spec.name), id);
+        self.specs.push(spec);
+        Ok(id)
+    }
+
+    pub fn specs(&self) -> &[Parameter] {
+        &self.specs
+    }
+
+    pub fn layout(&self) -> ParamResult<ParamLayout> {
+        ParamLayout::new(self.specs.clone())
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct ParamValues {
     layout: Arc<ParamLayout>,
@@ -454,15 +534,7 @@ impl ParamValues {
     }
 }
 
-pub fn param(name: impl Into<Arc<str>>) -> ParamSpec {
-    ParamSpec::free(name)
-}
-
-pub fn fixed(name: impl Into<Arc<str>>, value: f64) -> ParamSpec {
-    ParamSpec::fixed(name, value)
-}
-
-fn default_value(spec: &ParamSpec) -> f64 {
+fn default_value(spec: &Parameter) -> f64 {
     match spec.state {
         ParamState::Fixed(value) => value,
         ParamState::Free => match spec.initial {
@@ -473,7 +545,7 @@ fn default_value(spec: &ParamSpec) -> f64 {
     }
 }
 
-fn validate_initial(spec: &ParamSpec) -> ParamResult<()> {
+fn validate_initial(spec: &Parameter) -> ParamResult<()> {
     match spec.state {
         ParamState::Fixed(value) => {
             if !spec.bounds.contains(value) {
@@ -514,6 +586,67 @@ fn validate_initial(spec: &ParamSpec) -> ParamResult<()> {
     Ok(())
 }
 
+/// Convenience macro for creating parameters. Usage:
+/// `parameter!("name")` for a free parameter, or `parameter!("name", 1.0)` for a fixed one.
+#[macro_export]
+macro_rules! parameter {
+    ($name:expr) => {{
+        $crate::parameters::Parameter::free($name)
+    }};
+
+    ($name:expr, $value:expr) => {{
+        let mut p = $crate::parameters::Parameter::free($name);
+        p.set_fixed_value(Some($value));
+        p
+    }};
+
+    ($name:expr, $($rest:tt)+) => {{
+        let mut p = $crate::parameters::Parameter::free($name);
+        $crate::parameter!(@parse p, [fixed = false, initial = false]; $($rest)+);
+        p
+    }};
+
+    (@parse $p:ident, [fixed = $f:tt, initial = $i:tt]; ) => {};
+
+    (@parse $p:ident, [fixed = false, initial = false]; fixed : $value:expr $(, $($rest:tt)*)?) => {{
+        $p.set_fixed_value(Some($value));
+        $crate::parameter!(@parse $p, [fixed = true, initial = false]; $($($rest)*)?);
+    }};
+
+    (@parse $p:ident, [fixed = false, initial = false]; initial : $value:expr $(, $($rest:tt)*)?) => {{
+        $p.set_initial($value);
+        $crate::parameter!(@parse $p, [fixed = false, initial = true]; $($($rest)*)?);
+    }};
+
+    (@parse $p:ident, [fixed = true, initial = false]; initial : $value:expr $(, $($rest:tt)*)?) => {
+        compile_error!("parameter!: cannot specify both `fixed` and `initial`");
+    };
+
+    (@parse $p:ident, [fixed = false, initial = true]; fixed : $value:expr $(, $($rest:tt)*)?) => {
+        compile_error!("parameter!: cannot specify both `fixed` and `initial`");
+    };
+
+    (@parse $p:ident, [fixed = $f:tt, initial = $i:tt]; bounds : ($min:expr, $max:expr) $(, $($rest:tt)*)?) => {{
+        $p.set_bounds($min, $max);
+        $crate::parameter!(@parse $p, [fixed = $f, initial = $i]; $($($rest)*)?);
+    }};
+
+    (@parse $p:ident, [fixed = $f:tt, initial = $i:tt]; unit : $value:expr $(, $($rest:tt)*)?) => {{
+        $p.set_unit($value);
+        $crate::parameter!(@parse $p, [fixed = $f, initial = $i]; $($($rest)*)?);
+    }};
+
+    (@parse $p:ident, [fixed = $f:tt, initial = $i:tt]; latex : $value:expr $(, $($rest:tt)*)?) => {{
+        $p.set_latex($value);
+        $crate::parameter!(@parse $p, [fixed = $f, initial = $i]; $($($rest)*)?);
+    }};
+
+    (@parse $p:ident, [fixed = $f:tt, initial = $i:tt]; description : $value:expr $(, $($rest:tt)*)?) => {{
+        $p.set_description($value);
+        $crate::parameter!(@parse $p, [fixed = $f, initial = $i]; $($($rest)*)?);
+    }};
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -521,9 +654,11 @@ mod tests {
     #[test]
     fn layout_tracks_free_and_fixed_values() {
         let layout = ParamLayout::new([
-            param("mass").initial(1.2).bounds(Some(0.0), Some(2.0)),
-            fixed("pi", std::f64::consts::PI),
-            param("width").initial((0.0, 1.0)),
+            Parameter::free("mass")
+                .with_initial(1.2)
+                .with_bounds(Some(0.0), Some(2.0)),
+            Parameter::fixed("pi", std::f64::consts::PI),
+            Parameter::free("width").with_initial((0.0, 1.0)),
         ])
         .unwrap();
 
@@ -549,13 +684,13 @@ mod tests {
 
     #[test]
     fn duplicate_names_are_rejected() {
-        let err = ParamLayout::new([param("x"), fixed("x", 1.0)]).unwrap_err();
+        let err = ParamLayout::new([Parameter::free("x"), Parameter::fixed("x", 1.0)]).unwrap_err();
         assert_eq!(err, ParamError::DuplicateName("x".into()));
     }
 
     #[test]
     fn free_length_is_checked() {
-        let layout = ParamLayout::new([param("x"), param("y")]).unwrap();
+        let layout = ParamLayout::new([Parameter::free("x"), Parameter::free("y")]).unwrap();
         let err = layout.expand_free_values(&[1.0]).unwrap_err();
         assert_eq!(
             err,
@@ -569,10 +704,10 @@ mod tests {
     #[test]
     fn full_and_free_vectors_round_trip_in_stable_order() {
         let layout = ParamLayout::new([
-            fixed("offset", -1.0),
-            param("mass").initial(1.2),
-            fixed("scale", 2.0),
-            param("width").initial(0.1),
+            Parameter::fixed("offset", -1.0),
+            Parameter::free("mass").with_initial(1.2),
+            Parameter::fixed("scale", 2.0),
+            Parameter::free("width").with_initial(0.1),
         ])
         .unwrap();
 
@@ -596,7 +731,12 @@ mod tests {
 
     #[test]
     fn values_can_be_mutated_by_full_or_free_id() {
-        let layout = ParamLayout::new([fixed("fixed", 1.0), param("x"), param("y")]).unwrap();
+        let layout = ParamLayout::new([
+            Parameter::fixed("fixed", 1.0),
+            Parameter::free("x"),
+            Parameter::free("y"),
+        ])
+        .unwrap();
         let fixed_id = layout.id("fixed").unwrap();
         let x_id = layout.id("x").unwrap();
         let y_id = layout.id("y").unwrap();
@@ -615,12 +755,12 @@ mod tests {
     #[test]
     fn invalid_specs_are_rejected() {
         assert_eq!(
-            ParamLayout::new([param("")]).unwrap_err(),
+            ParamLayout::new([Parameter::free("")]).unwrap_err(),
             ParamError::EmptyName
         );
 
         assert_eq!(
-            ParamLayout::new([param("x").bounds(Some(2.0), Some(1.0))]).unwrap_err(),
+            ParamLayout::new([Parameter::free("x").with_bounds(Some(2.0), Some(1.0))]).unwrap_err(),
             ParamError::InvalidBounds {
                 name: "x".into(),
                 min: 2.0,
@@ -629,7 +769,7 @@ mod tests {
         );
 
         assert_eq!(
-            ParamLayout::new([param("x").initial((2.0, 1.0))]).unwrap_err(),
+            ParamLayout::new([Parameter::free("x").with_initial((2.0, 1.0))]).unwrap_err(),
             ParamError::InvalidInitialRange {
                 name: "x".into(),
                 min: 2.0,
@@ -638,7 +778,10 @@ mod tests {
         );
 
         assert_eq!(
-            ParamLayout::new([param("x").initial(3.0).bounds(Some(0.0), Some(2.0))]).unwrap_err(),
+            ParamLayout::new([Parameter::free("x")
+                .with_initial(3.0)
+                .with_bounds(Some(0.0), Some(2.0))])
+            .unwrap_err(),
             ParamError::InitialOutOfBounds {
                 name: "x".into(),
                 value: 3.0
@@ -646,7 +789,8 @@ mod tests {
         );
 
         assert_eq!(
-            ParamLayout::new([fixed("x", 3.0).bounds(Some(0.0), Some(2.0))]).unwrap_err(),
+            ParamLayout::new([Parameter::fixed("x", 3.0).with_bounds(Some(0.0), Some(2.0))])
+                .unwrap_err(),
             ParamError::FixedValueOutOfBounds {
                 name: "x".into(),
                 value: 3.0
@@ -656,7 +800,12 @@ mod tests {
 
     #[test]
     fn vector_lengths_are_checked_for_both_directions() {
-        let layout = ParamLayout::new([fixed("a", 0.0), param("x"), param("y")]).unwrap();
+        let layout = ParamLayout::new([
+            Parameter::fixed("a", 0.0),
+            Parameter::free("x"),
+            Parameter::free("y"),
+        ])
+        .unwrap();
 
         assert_eq!(
             layout
@@ -694,5 +843,44 @@ mod tests {
                 actual: 1
             }
         );
+    }
+
+    #[test]
+    fn registry_merges_identical_parameters_in_first_seen_order() {
+        let mut registry = ParamRegistry::new();
+        let y = registry
+            .register(Parameter::free("y").with_initial(1.0).with_bounds(0.0, 2.0))
+            .unwrap();
+        let x = registry.register(Parameter::free("x")).unwrap();
+        let y_again = registry
+            .register(Parameter::free("y").with_initial(1.0).with_bounds(0.0, 2.0))
+            .unwrap();
+
+        assert_eq!(y.index(), 0);
+        assert_eq!(x.index(), 1);
+        assert_eq!(y_again, y);
+
+        let layout = registry.layout().unwrap();
+        assert_eq!(
+            layout
+                .specs()
+                .iter()
+                .map(Parameter::name)
+                .collect::<Vec<_>>(),
+            vec!["y", "x"]
+        );
+    }
+
+    #[test]
+    fn registry_rejects_incompatible_parameter_reuse() {
+        let mut registry = ParamRegistry::new();
+        registry
+            .register(Parameter::free("x").with_initial(1.0))
+            .unwrap();
+
+        assert!(matches!(
+            registry.register(Parameter::free("x").with_initial(2.0)),
+            Err(ParamError::ParameterConflict { name, .. }) if name == "x"
+        ));
     }
 }

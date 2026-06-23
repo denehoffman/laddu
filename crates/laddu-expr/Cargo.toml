@@ -9,7 +9,7 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-laddu-params = { path = "../laddu-params" }
 num.workspace = true
 serde.workspace = true
+auto_ops.workspace = true
 thiserror.workspace = true
