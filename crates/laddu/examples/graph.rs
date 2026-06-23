@@ -1,5 +1,6 @@
 use std::error::Error;
 
+use laddu::compile::CompiledModel;
 use laddu::parameter;
 use laddu_physics::math::{SphericalHarmonic, WignerDMatrix};
 
@@ -9,6 +10,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     let costheta = parameter!("costheta");
     let phi = parameter!("phi");
     let model = (w.D(&costheta, &phi, -&phi) * y.evaluate(&costheta, &phi)).norm_sqr();
-    println!("{}", model.to_graph());
+    println!("Raw graph:\n{}", model.to_graph());
+
+    let compiled = CompiledModel::from_expr(&model)?;
+    println!("Optimized graph:\n{}", compiled.graph());
     Ok(())
 }

@@ -25,7 +25,12 @@ pub use laddu_wgpu as wgpu;
 
 pub mod prelude {
     pub use laddu_autodiff::{AutodiffMode, AutodiffPlan};
-    pub use laddu_compile::{CompileError, CompileResult, CompiledModel};
+    pub use laddu_compile::{
+        AlgebraicIdentityRule, CanonicalCsePass, CompileError, CompileOptions, CompileResult,
+        CompiledModel, ComplexFactRule, ConstantFoldScalarRule, DependencyFacts, EvaluationClass,
+        GraphFacts, NodeFacts, NumberClass, OptimizationPass, OptimizationPipeline, Rewrite,
+        RewriteContext, RewritePass, RewriteRule,
+    };
     pub use laddu_expr::parameter;
     pub use laddu_expr::parameters::{
         Bounds, FreeParamId, InitialSpec, ParamError, ParamId, ParamLayout, ParamRegistry,

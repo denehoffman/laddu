@@ -2,6 +2,7 @@ use std::{fmt, sync::Arc};
 
 use num::complex::Complex64;
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
 
 use crate::parameters::Parameter;
 
@@ -11,9 +12,32 @@ pub mod parameters;
 pub struct ExprId(u32);
 
 impl ExprId {
+    pub fn from_index(index: usize) -> Option<Self> {
+        u32::try_from(index).ok().map(Self)
+    }
+
     pub fn index(self) -> usize {
         self.0 as usize
     }
+}
+
+#[derive(Clone, Debug, Error, PartialEq, Eq)]
+pub enum ExprGraphError {
+    #[error("graph metadata length {metadata_len} does not match node length {node_len}")]
+    MetadataLength {
+        node_len: usize,
+        metadata_len: usize,
+    },
+    #[error("graph root node #{root} is out of bounds for graph with {node_len} nodes")]
+    InvalidRoot { root: usize, node_len: usize },
+    #[error("graph node #{node} references missing child #{child}")]
+    InvalidChild { node: usize, child: usize },
+    #[error(
+        "graph node #{node} references child #{child}, but children must appear before parents"
+    )]
+    InvalidChildOrder { node: usize, child: usize },
+    #[error("graph is empty")]
+    Empty,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -39,12 +63,41 @@ pub enum UnaryOp {
     PowI(i32),
 }
 
+impl UnaryOp {
+    pub fn evaluate(&self, value: Complex64) -> Complex64 {
+        match self {
+            Self::Neg => -value,
+            Self::Real => Complex64::from(value.re),
+            Self::Imag => Complex64::from(value.im),
+            Self::Conj => value.conj(),
+            Self::NormSqr => Complex64::from(value.norm_sqr()),
+            Self::Sqrt => value.sqrt(),
+            Self::Exp => value.exp(),
+            Self::Sin => value.sin(),
+            Self::Cos => value.cos(),
+            Self::Log => value.ln(),
+            Self::PowI(power) => value.powi(*power),
+        }
+    }
+}
+
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum BinaryOp {
     Add,
     Sub,
     Mul,
     Div,
+}
+
+impl BinaryOp {
+    pub fn evaluate(&self, a: Complex64, b: Complex64) -> Complex64 {
+        match self {
+            Self::Add => a + b,
+            Self::Sub => a - b,
+            Self::Mul => a * b,
+            Self::Div => a / b,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -69,6 +122,10 @@ pub enum ExprNode {
         op: BinaryOp,
         lhs: ExprId,
         rhs: ExprId,
+    },
+    Complex {
+        re: ExprId,
+        im: ExprId,
     },
     Vector {
         elements: Vec<ExprId>,
@@ -105,6 +162,36 @@ pub enum ExprNode {
     },
 }
 
+impl From<Complex64> for ExprNode {
+    fn from(value: Complex64) -> Self {
+        if value.im == 0.0 {
+            Self::RealConst(value.re)
+        } else {
+            Self::ComplexConst(value)
+        }
+    }
+}
+
+impl ExprNode {
+    pub fn const_value(&self) -> Option<Complex64> {
+        match self {
+            ExprNode::RealConst(value) => Some(Complex64::from(*value)),
+            ExprNode::ComplexConst(value) => Some(*value),
+            _ => None,
+        }
+    }
+
+    pub fn is_zero(node: &ExprNode) -> bool {
+        node.const_value()
+            .is_some_and(|value| value == Complex64::ZERO)
+    }
+
+    pub fn is_one(node: &ExprNode) -> bool {
+        node.const_value()
+            .is_some_and(|value| value == Complex64::ONE)
+    }
+}
+
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ExprSourceKind {
     Const,
@@ -112,6 +199,7 @@ pub enum ExprSourceKind {
     Event,
     Unary,
     Binary,
+    Complex,
     Vector,
     Matrix,
     LinearAlgebra,
@@ -166,14 +254,6 @@ enum DagNodeKind {
     RealConst(f64),
     ComplexConst(Complex64),
     ScalarParam(Parameter),
-    ComplexScalarParam {
-        re: Parameter,
-        im: Parameter,
-    },
-    PolarComplexScalarParam {
-        mag: Parameter,
-        phase: Parameter,
-    },
     EventScalar(Arc<str>),
     Unary {
         op: UnaryOp,
@@ -183,6 +263,10 @@ enum DagNodeKind {
         op: BinaryOp,
         lhs: Expr,
         rhs: Expr,
+    },
+    Complex {
+        re: Expr,
+        im: Expr,
     },
     Vector {
         elements: Vec<Expr>,
@@ -509,18 +593,15 @@ pub fn cis(phase: Expr) -> Expr {
     phase.cos() + Complex64::I * phase.sin()
 }
 
-pub fn complex(re: impl Into<Parameter>, im: impl Into<Parameter>) -> Expr {
-    Expr::new(DagNodeKind::ComplexScalarParam {
+pub fn complex(re: impl Into<Expr>, im: impl Into<Expr>) -> Expr {
+    Expr::new(DagNodeKind::Complex {
         re: re.into(),
         im: im.into(),
     })
 }
 
-pub fn polar_complex(mag: impl Into<Parameter>, phase: impl Into<Parameter>) -> Expr {
-    Expr::new(DagNodeKind::PolarComplexScalarParam {
-        mag: mag.into(),
-        phase: phase.into(),
-    })
+pub fn polar_complex(mag: impl Into<Expr>, phase: impl Into<Expr>) -> Expr {
+    mag.into() * (Complex64::I * phase.into()).exp()
 }
 
 pub fn event_scalar(name: impl Into<Arc<str>>) -> Expr {
@@ -600,6 +681,49 @@ pub struct ExprGraph {
 }
 
 impl ExprGraph {
+    pub fn from_parts(
+        root: ExprId,
+        nodes: Vec<ExprNode>,
+        metadata: Vec<ExprMetadata>,
+    ) -> Result<Self, ExprGraphError> {
+        if nodes.is_empty() {
+            return Err(ExprGraphError::Empty);
+        }
+        if nodes.len() != metadata.len() {
+            return Err(ExprGraphError::MetadataLength {
+                node_len: nodes.len(),
+                metadata_len: metadata.len(),
+            });
+        }
+        if root.index() >= nodes.len() {
+            return Err(ExprGraphError::InvalidRoot {
+                root: root.index(),
+                node_len: nodes.len(),
+            });
+        }
+        for (index, node) in nodes.iter().enumerate() {
+            for child in node_child_ids(node) {
+                if child.index() >= nodes.len() {
+                    return Err(ExprGraphError::InvalidChild {
+                        node: index,
+                        child: child.index(),
+                    });
+                }
+                if child.index() >= index {
+                    return Err(ExprGraphError::InvalidChildOrder {
+                        node: index,
+                        child: child.index(),
+                    });
+                }
+            }
+        }
+        Ok(Self {
+            root,
+            nodes,
+            metadata,
+        })
+    }
+
     pub fn root(&self) -> ExprId {
         self.root
     }
@@ -670,6 +794,7 @@ impl ExprGraph {
             ExprNode::EventScalar(name) => format!("#{} EventScalar({name})", id.index()),
             ExprNode::Unary { op, .. } => format!("#{} Unary({op:?})", id.index()),
             ExprNode::Binary { op, .. } => format!("#{} Binary({op:?})", id.index()),
+            ExprNode::Complex { .. } => format!("#{} Complex", id.index()),
             ExprNode::Vector { elements } => {
                 format!("#{} Vector(len={})", id.index(), elements.len())
             }
@@ -739,6 +864,7 @@ fn node_children(node: &ExprNode) -> Vec<(String, ExprId)> {
         | ExprNode::EventScalar(_) => Vec::new(),
         ExprNode::Unary { input, .. } => vec![("input".into(), *input)],
         ExprNode::Binary { lhs, rhs, .. } => vec![("lhs".into(), *lhs), ("rhs".into(), *rhs)],
+        ExprNode::Complex { re, im } => vec![("re".into(), *re), ("im".into(), *im)],
         ExprNode::Vector { elements } => elements
             .iter()
             .enumerate()
@@ -760,6 +886,13 @@ fn node_children(node: &ExprNode) -> Vec<(String, ExprId)> {
         }
         ExprNode::Solve { matrix, rhs } => vec![("matrix".into(), *matrix), ("rhs".into(), *rhs)],
     }
+}
+
+fn node_child_ids(node: &ExprNode) -> Vec<ExprId> {
+    node_children(node)
+        .into_iter()
+        .map(|(_, child)| child)
+        .collect()
 }
 
 #[derive(Default)]
@@ -787,16 +920,6 @@ impl GraphBuilder {
             DagNodeKind::RealConst(value) => ExprNode::RealConst(*value),
             DagNodeKind::ComplexConst(value) => ExprNode::ComplexConst(*value),
             DagNodeKind::ScalarParam(parameter) => ExprNode::ScalarParam(parameter.clone()),
-            DagNodeKind::ComplexScalarParam { re, im } => ExprNode::ComplexScalarParam {
-                re: re.clone(),
-                im: im.clone(),
-            },
-            DagNodeKind::PolarComplexScalarParam { mag, phase } => {
-                ExprNode::PolarComplexScalarParam {
-                    mag: mag.clone(),
-                    phase: phase.clone(),
-                }
-            }
             DagNodeKind::EventScalar(name) => ExprNode::EventScalar(Arc::clone(name)),
             DagNodeKind::Unary { op, input } => {
                 let input = self.visit(input);
@@ -806,6 +929,11 @@ impl GraphBuilder {
                 let lhs = self.visit(lhs);
                 let rhs = self.visit(rhs);
                 ExprNode::Binary { op: *op, lhs, rhs }
+            }
+            DagNodeKind::Complex { re, im } => {
+                let re = self.visit(re);
+                let im = self.visit(im);
+                ExprNode::Complex { re, im }
             }
             DagNodeKind::Vector { elements } => ExprNode::Vector {
                 elements: elements.iter().map(|expr| self.visit(expr)).collect(),
@@ -866,12 +994,11 @@ impl GraphBuilder {
 fn source_kind(kind: &DagNodeKind) -> ExprSourceKind {
     match kind {
         DagNodeKind::RealConst(_) | DagNodeKind::ComplexConst(_) => ExprSourceKind::Const,
-        DagNodeKind::ScalarParam(_)
-        | DagNodeKind::ComplexScalarParam { .. }
-        | DagNodeKind::PolarComplexScalarParam { .. } => ExprSourceKind::Param,
+        DagNodeKind::ScalarParam(_) => ExprSourceKind::Param,
         DagNodeKind::EventScalar(_) => ExprSourceKind::Event,
         DagNodeKind::Unary { .. } => ExprSourceKind::Unary,
         DagNodeKind::Binary { .. } => ExprSourceKind::Binary,
+        DagNodeKind::Complex { .. } => ExprSourceKind::Complex,
         DagNodeKind::Vector { .. } | DagNodeKind::Component { .. } | DagNodeKind::Dot { .. } => {
             ExprSourceKind::Vector
         }
@@ -912,6 +1039,41 @@ mod tests {
     }
 
     #[test]
+    fn complex_constructor_builds_expression_node() {
+        let graph = complex(parameter!("re"), parameter!("im")).to_graph();
+
+        assert!(matches!(
+            graph.node(graph.root()),
+            Some(ExprNode::Complex { .. })
+        ));
+        assert!(
+            graph
+                .nodes()
+                .iter()
+                .all(|node| !matches!(node, ExprNode::ComplexScalarParam { .. }))
+        );
+    }
+
+    #[test]
+    fn polar_complex_lowers_to_expression_graph() {
+        let graph = polar_complex(parameter!("mag"), parameter!("phase")).to_graph();
+
+        assert!(graph.nodes().iter().any(|node| matches!(
+            node,
+            ExprNode::Unary {
+                op: UnaryOp::Exp,
+                ..
+            }
+        )));
+        assert!(
+            graph
+                .nodes()
+                .iter()
+                .all(|node| !matches!(node, ExprNode::PolarComplexScalarParam { .. }))
+        );
+    }
+
+    #[test]
     fn metadata_survives_graph_construction() {
         let graph = event_scalar("mass")
             .named("event mass")
@@ -938,6 +1100,49 @@ mod tests {
         assert!(display.contains("ScalarParam(x)"));
         assert!(display.contains("RealConst(1)"));
         assert!(display.contains("EventScalar(mass) tags=[data]"));
+    }
+
+    #[test]
+    fn graph_from_parts_validates_structure() {
+        let metadata = ExprMetadata::new(ExprSourceKind::Const);
+        let graph = ExprGraph::from_parts(
+            ExprId::from_index(1).unwrap(),
+            vec![
+                ExprNode::RealConst(1.0),
+                ExprNode::Unary {
+                    op: UnaryOp::Neg,
+                    input: ExprId::from_index(0).unwrap(),
+                },
+            ],
+            vec![metadata.clone(), metadata.clone()],
+        )
+        .unwrap();
+        assert!(matches!(
+            graph.node(graph.root()),
+            Some(ExprNode::Unary {
+                op: UnaryOp::Neg,
+                ..
+            })
+        ));
+
+        let err = ExprGraph::from_parts(
+            ExprId::from_index(0).unwrap(),
+            vec![ExprNode::RealConst(1.0)],
+            Vec::new(),
+        )
+        .unwrap_err();
+        assert!(matches!(err, ExprGraphError::MetadataLength { .. }));
+
+        let err = ExprGraph::from_parts(
+            ExprId::from_index(0).unwrap(),
+            vec![ExprNode::Unary {
+                op: UnaryOp::Neg,
+                input: ExprId::from_index(0).unwrap(),
+            }],
+            vec![metadata],
+        )
+        .unwrap_err();
+        assert!(matches!(err, ExprGraphError::InvalidChildOrder { .. }));
     }
 
     #[test]

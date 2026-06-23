@@ -146,6 +146,11 @@ impl CpuPlan {
                     let rhs = scalar_at(&values, rhs.index())?;
                     Value::Scalar(eval_binary(*op, lhs, rhs))
                 }
+                ExprNode::Complex { re, im } => {
+                    let re = scalar_at(&values, re.index())?;
+                    let im = scalar_at(&values, im.index())?;
+                    Value::Scalar(Complex64::new(re.re, im.re))
+                }
                 ExprNode::Vector { elements } => Value::Vector(
                     elements
                         .iter()
@@ -378,7 +383,7 @@ fn eval_binary(op: BinaryOp, lhs: Complex64, rhs: Complex64) -> Complex64 {
 mod tests {
     use std::sync::Arc;
 
-    use laddu_compile::CompiledModel;
+    use laddu_compile::{CompileOptions, CompiledModel};
     use laddu_expr::{complex, dot, matrix, parameter, solve, vector};
 
     use super::*;
@@ -423,5 +428,36 @@ mod tests {
         let expr = dot(&x, vector([1.0, 1.0]));
 
         assert_eq!(evaluate(&expr), Complex64::from(7.0));
+    }
+
+    #[test]
+    fn optimized_and_unoptimized_plans_evaluate_the_same_expression() {
+        let solved = solve(matrix([[2.0, 0.0], [0.0, 4.0]]), vector([8.0, 12.0]));
+        let complex_offset = complex(
+            parameter!("offset_re", initial: 1.5),
+            parameter!("offset_im", initial: -0.5),
+        );
+        let expr = ((laddu_expr::event_scalar("mass") + 0.0) * 1.0
+            + dot(solved, vector([1.0, 1.0]))
+            + complex_offset.conj().real()
+            + parameter!("unused", initial: 3.0) * 0.0)
+            .norm_sqr();
+        let no_optimization = CompileOptions::without_optimizations();
+        let optimized = CompiledModel::from_expr(&expr).unwrap();
+        let unoptimized = CompiledModel::from_expr_with_options(&expr, &no_optimization).unwrap();
+        let optimized_params = Arc::new(optimized.params().clone()).default_values();
+        let unoptimized_params = Arc::new(unoptimized.params().clone()).default_values();
+        let event = HashMap::from([("mass".to_owned(), Complex64::from(2.0))]);
+
+        assert_eq!(
+            CpuBackend
+                .prepare(&optimized)
+                .evaluate_with_event(&optimized_params, &event)
+                .unwrap(),
+            CpuBackend
+                .prepare(&unoptimized)
+                .evaluate_with_event(&unoptimized_params, &event)
+                .unwrap()
+        );
     }
 }
