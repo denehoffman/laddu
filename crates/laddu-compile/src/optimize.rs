@@ -502,6 +502,19 @@ impl RewriteRule for AlgebraicIdentityRule {
             ExprNode::Unary {
                 op: UnaryOp::PowI(outer_power),
                 input,
+            } if *outer_power == 2 => {
+                let Some(ExprNode::Unary {
+                    op: UnaryOp::Sqrt,
+                    input,
+                }) = context.node(*input)
+                else {
+                    return Ok(Rewrite::Keep);
+                };
+                Ok(alias_or_preserve(*input, metadata, context))
+            }
+            ExprNode::Unary {
+                op: UnaryOp::PowI(outer_power),
+                input,
             } => {
                 let Some(ExprNode::Unary {
                     op: UnaryOp::PowI(inner_power),
@@ -739,6 +752,16 @@ impl RewriteRule for TrigIdentityRule {
         context: &RewriteContext<'_>,
     ) -> CompileResult<Rewrite> {
         match node {
+            ExprNode::Unary {
+                op: op @ (UnaryOp::Sin | UnaryOp::Cos),
+                input,
+            } => Ok(self.normalize_parity(*op, *input, metadata, context)),
+            ExprNode::Unary {
+                op: UnaryOp::PowI(power),
+                input,
+            } if *power > 0 && *power % 2 == 0 => {
+                Ok(self.simplify_even_trig_power(*power, *input, metadata, context))
+            }
             ExprNode::Binary {
                 op: BinaryOp::Add,
                 lhs,
@@ -764,10 +787,328 @@ impl TrigIdentityRule {
         metadata: &ExprMetadata,
         context: &RewriteContext<'_>,
     ) -> Rewrite {
+        if let Some(rewrite) = self.simplify_affine_cos_pair(terms, metadata, context) {
+            return rewrite;
+        }
+        if let Some(rewrite) = self.simplify_half_angle_pair(terms, metadata, context) {
+            return rewrite;
+        }
         if let Some(rewrite) = self.simplify_sin_cos_pair(terms, metadata, context) {
             return rewrite;
         }
         self.simplify_one_minus_trig_square(terms, metadata, context)
+    }
+
+    fn normalize_parity(
+        &self,
+        op: UnaryOp,
+        input: ExprId,
+        metadata: &ExprMetadata,
+        context: &RewriteContext<'_>,
+    ) -> Rewrite {
+        let Some(positive_input) = self.negated_input(input, context) else {
+            return Rewrite::Keep;
+        };
+        match op {
+            UnaryOp::Cos => Rewrite::Replace {
+                node: ExprNode::Unary {
+                    op: UnaryOp::Cos,
+                    input: positive_input,
+                },
+                metadata: metadata.clone(),
+            },
+            UnaryOp::Sin => {
+                let mut builder = ReplacementFragment::new(context);
+                let sin = builder.push(
+                    ExprNode::Unary {
+                        op: UnaryOp::Sin,
+                        input: positive_input,
+                    },
+                    ExprMetadata::new(ExprSourceKind::Unary),
+                );
+                builder.push(
+                    ExprNode::Unary {
+                        op: UnaryOp::Neg,
+                        input: sin,
+                    },
+                    metadata.clone(),
+                );
+                builder.into_rewrite()
+            }
+            _ => Rewrite::Keep,
+        }
+    }
+
+    fn simplify_affine_cos_pair(
+        &self,
+        terms: &[ExprId],
+        metadata: &ExprMetadata,
+        context: &RewriteContext<'_>,
+    ) -> Option<Rewrite> {
+        for (lhs_index, lhs) in terms.iter().enumerate() {
+            let Some(lhs) = self.affine_cos_term(*lhs, context) else {
+                continue;
+            };
+            for (rhs_index, rhs) in terms.iter().enumerate().skip(lhs_index + 1) {
+                let Some(rhs) = self.affine_cos_term(*rhs, context) else {
+                    continue;
+                };
+                if lhs.input == rhs.input {
+                    return Some(self.replace_affine_cos_pair(
+                        terms, lhs_index, lhs, rhs_index, rhs, metadata, context,
+                    ));
+                }
+            }
+        }
+        None
+    }
+
+    fn replace_affine_cos_pair(
+        &self,
+        terms: &[ExprId],
+        lhs_index: usize,
+        lhs: AffineCosTerm,
+        rhs_index: usize,
+        rhs: AffineCosTerm,
+        metadata: &ExprMetadata,
+        context: &RewriteContext<'_>,
+    ) -> Rewrite {
+        let constant = lhs.constant + rhs.constant;
+        let cos_coefficient = lhs.cos_coefficient + rhs.cos_coefficient;
+
+        let mut builder = ReplacementFragment::new(context);
+        let mut replacement_terms = Vec::new();
+        if !ProductTerm::approx_eq(constant, 0.0) {
+            replacement_terms.push(builder.push(
+                ExprNode::RealConst(constant),
+                ExprMetadata::new(ExprSourceKind::Const),
+            ));
+        }
+        if !ProductTerm::approx_eq(cos_coefficient, 0.0) {
+            let cos = builder.push(
+                ExprNode::Unary {
+                    op: UnaryOp::Cos,
+                    input: lhs.input,
+                },
+                ExprMetadata::new(ExprSourceKind::Unary),
+            );
+            replacement_terms.push(ProductTerm::push_parts(
+                cos_coefficient,
+                &[PowerFactor {
+                    base: cos,
+                    exponent: 1,
+                }],
+                &mut builder,
+            ));
+        }
+
+        let replacement = match replacement_terms.as_slice() {
+            [] => builder.push(
+                ExprNode::RealConst(0.0),
+                ExprMetadata::new(ExprSourceKind::Const),
+            ),
+            [term] => *term,
+            _ => builder.push(
+                ExprNode::NaryAdd {
+                    terms: replacement_terms,
+                },
+                ExprMetadata::new(ExprSourceKind::Binary),
+            ),
+        };
+
+        let mut new_terms: Vec<_> = terms
+            .iter()
+            .enumerate()
+            .filter_map(|(index, term)| {
+                if index == lhs_index || index == rhs_index {
+                    None
+                } else {
+                    Some(*term)
+                }
+            })
+            .collect();
+        if new_terms.is_empty() {
+            builder.into_rewrite()
+        } else {
+            new_terms.push(replacement);
+            builder.push(ExprNode::NaryAdd { terms: new_terms }, metadata.clone());
+            builder.into_rewrite()
+        }
+    }
+
+    fn simplify_even_trig_power(
+        &self,
+        power: i32,
+        input: ExprId,
+        metadata: &ExprMetadata,
+        context: &RewriteContext<'_>,
+    ) -> Rewrite {
+        let Some((op, half_input)) = self
+            .trig_call(input, context)
+            .and_then(|(op, input)| self.half_angle_input(input, context).map(|half| (op, half)))
+        else {
+            return Rewrite::Keep;
+        };
+        self.replace_half_angle_power(op, half_input, power, metadata, context)
+    }
+
+    fn replace_half_angle_power(
+        &self,
+        op: TrigSquareOp,
+        input: ExprId,
+        power: i32,
+        metadata: &ExprMetadata,
+        context: &RewriteContext<'_>,
+    ) -> Rewrite {
+        let mut builder = ReplacementFragment::new(context);
+        let one = builder.push(
+            ExprNode::RealConst(1.0),
+            ExprMetadata::new(ExprSourceKind::Const),
+        );
+        let cos = builder.push(
+            ExprNode::Unary {
+                op: UnaryOp::Cos,
+                input,
+            },
+            ExprMetadata::new(ExprSourceKind::Unary),
+        );
+        let signed_cos = match op {
+            TrigSquareOp::Sin => builder.negated_term(cos),
+            TrigSquareOp::Cos => cos,
+        };
+        let sum = builder.push(
+            ExprNode::NaryAdd {
+                terms: vec![one, signed_cos],
+            },
+            ExprMetadata::new(ExprSourceKind::Binary),
+        );
+        let half = builder.push(
+            ExprNode::RealConst(0.5),
+            ExprMetadata::new(ExprSourceKind::Const),
+        );
+        let square = builder.push(
+            ExprNode::NaryMul {
+                factors: vec![half, sum],
+            },
+            if power == 2 {
+                metadata.clone()
+            } else {
+                ExprMetadata::new(ExprSourceKind::Binary)
+            },
+        );
+        if power == 2 {
+            return builder.into_rewrite();
+        }
+        builder.push(
+            ExprNode::Unary {
+                op: UnaryOp::PowI(power / 2),
+                input: square,
+            },
+            metadata.clone(),
+        );
+        builder.into_rewrite()
+    }
+
+    fn simplify_half_angle_pair(
+        &self,
+        terms: &[ExprId],
+        metadata: &ExprMetadata,
+        context: &RewriteContext<'_>,
+    ) -> Option<Rewrite> {
+        for (lhs_index, lhs) in terms.iter().enumerate() {
+            let Some(lhs) = self.half_angle_square_term(*lhs, context) else {
+                continue;
+            };
+            for (rhs_index, rhs) in terms.iter().enumerate().skip(lhs_index + 1) {
+                let Some(rhs) = self.half_angle_square_term(*rhs, context) else {
+                    continue;
+                };
+                if lhs.input == rhs.input && lhs.op.is_complement(rhs.op) {
+                    return Some(self.replace_half_angle_pair(
+                        terms, lhs_index, lhs, rhs_index, rhs, metadata, context,
+                    ));
+                }
+            }
+        }
+        None
+    }
+
+    fn replace_half_angle_pair(
+        &self,
+        terms: &[ExprId],
+        lhs_index: usize,
+        lhs: TrigSquareTerm,
+        rhs_index: usize,
+        rhs: TrigSquareTerm,
+        metadata: &ExprMetadata,
+        context: &RewriteContext<'_>,
+    ) -> Rewrite {
+        let (sin_coefficient, cos_coefficient) = match (lhs.op, rhs.op) {
+            (TrigSquareOp::Sin, TrigSquareOp::Cos) => (lhs.coefficient, rhs.coefficient),
+            (TrigSquareOp::Cos, TrigSquareOp::Sin) => (rhs.coefficient, lhs.coefficient),
+            _ => return Rewrite::Keep,
+        };
+        let constant = 0.5 * (sin_coefficient + cos_coefficient);
+        let cosine_coefficient = 0.5 * (cos_coefficient - sin_coefficient);
+
+        let mut builder = ReplacementFragment::new(context);
+        let mut replacement_terms = Vec::new();
+        if !ProductTerm::approx_eq(constant, 0.0) {
+            replacement_terms.push(builder.push(
+                ExprNode::RealConst(constant),
+                ExprMetadata::new(ExprSourceKind::Const),
+            ));
+        }
+        if !ProductTerm::approx_eq(cosine_coefficient, 0.0) {
+            let cos = builder.push(
+                ExprNode::Unary {
+                    op: UnaryOp::Cos,
+                    input: lhs.input,
+                },
+                ExprMetadata::new(ExprSourceKind::Unary),
+            );
+            replacement_terms.push(ProductTerm::push_parts(
+                cosine_coefficient,
+                &[PowerFactor {
+                    base: cos,
+                    exponent: 1,
+                }],
+                &mut builder,
+            ));
+        }
+
+        let replacement = match replacement_terms.as_slice() {
+            [] => builder.push(
+                ExprNode::RealConst(0.0),
+                ExprMetadata::new(ExprSourceKind::Const),
+            ),
+            [term] => *term,
+            _ => builder.push(
+                ExprNode::NaryAdd {
+                    terms: replacement_terms,
+                },
+                ExprMetadata::new(ExprSourceKind::Binary),
+            ),
+        };
+
+        let mut new_terms: Vec<_> = terms
+            .iter()
+            .enumerate()
+            .filter_map(|(index, term)| {
+                if index == lhs_index || index == rhs_index {
+                    None
+                } else {
+                    Some(*term)
+                }
+            })
+            .collect();
+        if new_terms.is_empty() {
+            builder.into_rewrite()
+        } else {
+            new_terms.push(replacement);
+            builder.push(ExprNode::NaryAdd { terms: new_terms }, metadata.clone());
+            builder.into_rewrite()
+        }
     }
 
     fn simplify_sin_cos_pair(
@@ -994,6 +1335,124 @@ impl TrigIdentityRule {
             _ => None,
         }
     }
+
+    fn half_angle_input(&self, id: ExprId, context: &RewriteContext<'_>) -> Option<ExprId> {
+        let term = ProductTerm::from_id(id, context);
+        if !ProductTerm::approx_eq(term.signed_coefficient(), 0.5) {
+            return None;
+        }
+        match term.sorted_factor_key().as_slice() {
+            [PowerFactor { base, exponent: 1 }] => Some(*base),
+            _ => None,
+        }
+    }
+
+    fn negated_input(&self, id: ExprId, context: &RewriteContext<'_>) -> Option<ExprId> {
+        let term = ProductTerm::from_id(id, context);
+        if !ProductTerm::approx_eq(term.signed_coefficient(), -1.0) {
+            return None;
+        }
+        match term.sorted_factor_key().as_slice() {
+            [PowerFactor { base, exponent: 1 }] => Some(*base),
+            _ => None,
+        }
+    }
+
+    fn half_angle_square_term(
+        &self,
+        id: ExprId,
+        context: &RewriteContext<'_>,
+    ) -> Option<TrigSquareTerm> {
+        let term = ProductTerm::from_id(id, context);
+        let factors = term.sorted_factor_key();
+        let mut square = None;
+        let mut remaining = Vec::new();
+        for factor in factors {
+            if square.is_none()
+                && factor.exponent == 1
+                && let Some((op, input)) =
+                    self.trig_square(factor.base, context)
+                        .and_then(|(op, input)| {
+                            self.half_angle_input(input, context).map(|half| (op, half))
+                        })
+            {
+                square = Some((op, input));
+            } else {
+                remaining.push(factor);
+            }
+        }
+        if !remaining.is_empty() {
+            return None;
+        }
+        let (op, input) = square?;
+        Some(TrigSquareTerm {
+            op,
+            input,
+            coefficient: term.signed_coefficient(),
+        })
+    }
+
+    fn affine_cos_term(&self, id: ExprId, context: &RewriteContext<'_>) -> Option<AffineCosTerm> {
+        let term = ProductTerm::from_id(id, context);
+        let mut scale = term.signed_coefficient();
+        let mut affine = None;
+        for factor in term.sorted_factor_key() {
+            if factor.exponent == 1
+                && affine.is_none()
+                && let Some(parsed) = self.affine_cos_sum(factor.base, context)
+            {
+                affine = Some(parsed);
+            } else {
+                return None;
+            }
+        }
+        let mut affine = affine?;
+        scale *= affine.scale;
+        affine.scale = 1.0;
+        Some(AffineCosTerm {
+            input: affine.input,
+            scale: 1.0,
+            constant: scale * affine.constant,
+            cos_coefficient: scale * affine.cos_coefficient,
+        })
+    }
+
+    fn affine_cos_sum(&self, id: ExprId, context: &RewriteContext<'_>) -> Option<AffineCosTerm> {
+        let Some(ExprNode::NaryAdd { terms }) = context.node(id) else {
+            return None;
+        };
+        let mut constant = 0.0;
+        let mut cos_coefficient = 0.0;
+        let mut input = None;
+        for term_id in terms {
+            let term = ProductTerm::from_id(*term_id, context);
+            let factors = term.sorted_factor_key();
+            match factors.as_slice() {
+                [] => constant += term.signed_coefficient(),
+                [PowerFactor { base, exponent: 1 }] => {
+                    let Some((TrigSquareOp::Cos, cos_input)) = self.trig_call(*base, context)
+                    else {
+                        return None;
+                    };
+                    if let Some(input) = input {
+                        if input != cos_input {
+                            return None;
+                        }
+                    } else {
+                        input = Some(cos_input);
+                    }
+                    cos_coefficient += term.signed_coefficient();
+                }
+                _ => return None,
+            }
+        }
+        Some(AffineCosTerm {
+            input: input?,
+            scale: 1.0,
+            constant,
+            cos_coefficient,
+        })
+    }
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -1020,6 +1479,21 @@ impl TrigSquareOp {
             Self::Cos => UnaryOp::Cos,
         }
     }
+}
+
+#[derive(Copy, Clone, Debug)]
+struct TrigSquareTerm {
+    op: TrigSquareOp,
+    input: ExprId,
+    coefficient: f64,
+}
+
+#[derive(Copy, Clone, Debug)]
+struct AffineCosTerm {
+    input: ExprId,
+    scale: f64,
+    constant: f64,
+    cos_coefficient: f64,
 }
 
 fn is_scalar_value(context: &RewriteContext<'_>, id: ExprId) -> bool {
@@ -1126,11 +1600,17 @@ impl NormalizeAddMulRule {
         metadata: &ExprMetadata,
         context: &RewriteContext<'_>,
     ) -> CompileResult<Rewrite> {
+        let mut builder = ReplacementFragment::new(context);
         let mut normalized = Vec::new();
         for term in terms {
             match context.node(*term) {
                 Some(ExprNode::NaryAdd { terms }) => normalized.extend(terms.iter().copied()),
                 Some(node) if ExprNode::is_zero(node) => {}
+                _ if let Some(scaled_terms) =
+                    self.scaled_sum_terms(*term, context, &mut builder) =>
+                {
+                    normalized.extend(scaled_terms);
+                }
                 _ => normalized.push(*term),
             }
         }
@@ -1140,13 +1620,54 @@ impl NormalizeAddMulRule {
                 node: ExprNode::RealConst(0.0),
                 metadata: metadata.clone(),
             },
-            [term] => alias_or_preserve(*term, metadata, context),
-            _ if normalized == terms => Rewrite::Keep,
-            _ => Rewrite::Replace {
+            [term] if builder.is_empty() => alias_or_preserve(*term, metadata, context),
+            [_] => builder.into_rewrite(),
+            _ if normalized == terms && builder.is_empty() => Rewrite::Keep,
+            _ if builder.is_empty() => Rewrite::Replace {
                 node: ExprNode::NaryAdd { terms: normalized },
                 metadata: metadata.clone(),
             },
+            _ => {
+                builder.push(ExprNode::NaryAdd { terms: normalized }, metadata.clone());
+                builder.into_rewrite()
+            }
         })
+    }
+
+    fn scaled_sum_terms(
+        &self,
+        id: ExprId,
+        context: &RewriteContext<'_>,
+        builder: &mut ReplacementFragment<'_>,
+    ) -> Option<Vec<ExprId>> {
+        let term = ProductTerm::from_id(id, context);
+        let coefficient = term.signed_coefficient();
+        let factors = term.sorted_factor_key();
+        let [PowerFactor { base, exponent: 1 }] = factors.as_slice() else {
+            return None;
+        };
+        let Some(ExprNode::NaryAdd { terms }) = context.node(*base) else {
+            return None;
+        };
+        Some(
+            terms
+                .iter()
+                .map(|term| {
+                    if ProductTerm::approx_eq(coefficient, 1.0) {
+                        *term
+                    } else {
+                        ProductTerm::push_parts(
+                            coefficient,
+                            &[PowerFactor {
+                                base: *term,
+                                exponent: 1,
+                            }],
+                            builder,
+                        )
+                    }
+                })
+                .collect(),
+        )
     }
 
     fn normalize_product(
@@ -1639,7 +2160,9 @@ impl ProductTerm {
                 op: UnaryOp::PowI(power),
                 input,
             }) if is_scalar_value(context, *input) => {
-                self.collect_power(*input, *power);
+                if !self.collect_powered_product(*input, *power, context) {
+                    self.collect_power(*input, *power);
+                }
             }
             Some(ExprNode::RealConst(-1.0)) => {
                 self.sign *= -1.0;
@@ -1668,6 +2191,32 @@ impl ProductTerm {
         }
 
         self.factors.push(PowerFactor { base, exponent });
+    }
+
+    fn collect_powered_product(
+        &mut self,
+        input: ExprId,
+        exponent: i32,
+        context: &RewriteContext<'_>,
+    ) -> bool {
+        if !matches!(context.node(input), Some(ExprNode::NaryMul { .. })) {
+            return false;
+        }
+        let inner = Self::from_id(input, context);
+        let coefficient = inner.signed_coefficient().powi(exponent);
+        if coefficient < 0.0 {
+            self.sign *= -1.0;
+            self.coefficient *= -coefficient;
+        } else {
+            self.coefficient *= coefficient;
+        }
+        for factor in inner.factors {
+            let Some(exponent) = factor.exponent.checked_mul(exponent) else {
+                return false;
+            };
+            self.collect_power(factor.base, exponent);
+        }
+        true
     }
 
     fn signed_coefficient(&self) -> f64 {
@@ -1902,6 +2451,9 @@ impl RewriteRule for ExponentialRule {
                 }
                 self.merge_product(exp_inputs, other_factors, metadata, context)
             }
+            ExprNode::NaryAdd { terms } if terms.len() >= 2 => {
+                Ok(self.rewrite_euler_sum(terms, metadata, context))
+            }
             _ => Ok(Rewrite::Keep),
         }
     }
@@ -1915,6 +2467,12 @@ impl ExponentialRule {
         metadata: &ExprMetadata,
         context: &RewriteContext<'_>,
     ) -> CompileResult<Rewrite> {
+        if let Some(rewrite) =
+            self.merge_imaginary_phase_product(&exp_inputs, &other_factors, metadata, context)
+        {
+            return Ok(rewrite);
+        }
+
         let mut builder = ReplacementFragment::new(context);
         let add_id = builder.push(
             ExprNode::NaryAdd { terms: exp_inputs },
@@ -1944,6 +2502,147 @@ impl ExponentialRule {
         Ok(builder.into_rewrite())
     }
 
+    fn rewrite_euler_sum(
+        &self,
+        terms: &[ExprId],
+        metadata: &ExprMetadata,
+        context: &RewriteContext<'_>,
+    ) -> Rewrite {
+        for (lhs_index, lhs) in terms.iter().enumerate() {
+            let Some(lhs) = self.trig_product(*lhs, context) else {
+                continue;
+            };
+            for (rhs_index, rhs) in terms.iter().enumerate().skip(lhs_index + 1) {
+                let Some(rhs) = self.trig_product(*rhs, context) else {
+                    continue;
+                };
+                let Some(euler) = lhs.euler_with(&rhs) else {
+                    continue;
+                };
+                return self
+                    .replace_euler_pair(terms, lhs_index, rhs_index, euler, metadata, context);
+            }
+        }
+        Rewrite::Keep
+    }
+
+    fn replace_euler_pair(
+        &self,
+        terms: &[ExprId],
+        lhs_index: usize,
+        rhs_index: usize,
+        euler: EulerProduct,
+        metadata: &ExprMetadata,
+        context: &RewriteContext<'_>,
+    ) -> Rewrite {
+        let mut builder = ReplacementFragment::new(context);
+        let phase = self.emit_imaginary_phase(euler.phase_sign, euler.input, &mut builder);
+        let exp = builder.push(
+            ExprNode::Unary {
+                op: UnaryOp::Exp,
+                input: phase,
+            },
+            ExprMetadata::new(ExprSourceKind::Unary),
+        );
+        let euler_term = euler.emit_with_exp(exp, &mut builder);
+        let mut new_terms: Vec<_> = terms
+            .iter()
+            .enumerate()
+            .filter_map(|(index, term)| {
+                if index == lhs_index || index == rhs_index {
+                    None
+                } else {
+                    Some(*term)
+                }
+            })
+            .collect();
+        if new_terms.is_empty() {
+            builder.into_rewrite()
+        } else {
+            new_terms.push(euler_term);
+            builder.push(ExprNode::NaryAdd { terms: new_terms }, metadata.clone());
+            builder.into_rewrite()
+        }
+    }
+
+    fn merge_imaginary_phase_product(
+        &self,
+        exp_inputs: &[ExprId],
+        other_factors: &[ExprId],
+        metadata: &ExprMetadata,
+        context: &RewriteContext<'_>,
+    ) -> Option<Rewrite> {
+        let phases: Vec<_> = exp_inputs
+            .iter()
+            .map(|input| self.imaginary_phase(*input, context))
+            .collect::<Option<_>>()?;
+        let mut builder = ReplacementFragment::new(context);
+        let phase_terms = phases
+            .into_iter()
+            .map(|phase| phase.emit(&mut builder))
+            .collect();
+        let phase_sum = builder.push(
+            ExprNode::NaryAdd { terms: phase_terms },
+            ExprMetadata::new(ExprSourceKind::Binary),
+        );
+        let exp_input = self.emit_imaginary_phase(1.0, phase_sum, &mut builder);
+        let exp = builder.push(
+            ExprNode::Unary {
+                op: UnaryOp::Exp,
+                input: exp_input,
+            },
+            if other_factors.is_empty() {
+                metadata.clone()
+            } else {
+                ExprMetadata::new(ExprSourceKind::Unary)
+            },
+        );
+
+        if other_factors.is_empty() {
+            return Some(builder.into_rewrite());
+        }
+
+        let mut factors = other_factors.to_vec();
+        factors.push(exp);
+        builder.push(ExprNode::NaryMul { factors }, metadata.clone());
+        Some(builder.into_rewrite())
+    }
+
+    fn emit_imaginary_phase(
+        &self,
+        sign: f64,
+        input: ExprId,
+        builder: &mut ReplacementFragment<'_>,
+    ) -> ExprId {
+        let i = builder.push(
+            ExprNode::ComplexConst(Complex64::I),
+            ExprMetadata::new(ExprSourceKind::Const),
+        );
+        let phase = if ProductTerm::approx_eq(sign, 1.0) {
+            input
+        } else {
+            builder.negated_term(input)
+        };
+        builder.push(
+            ExprNode::NaryMul {
+                factors: vec![i, phase],
+            },
+            ExprMetadata::new(ExprSourceKind::Binary),
+        )
+    }
+
+    fn trig_product(&self, id: ExprId, context: &RewriteContext<'_>) -> Option<TrigProduct> {
+        let mut product = TrigProduct::new();
+        product.collect(id, context)?;
+        product.into_normalized()
+    }
+
+    fn imaginary_phase(&self, id: ExprId, context: &RewriteContext<'_>) -> Option<PhaseProduct> {
+        let mut product = PhaseProduct::new();
+        product.collect(id, context)?;
+        product.into_normalized(context)
+    }
+
     fn exp_input(&self, context: &RewriteContext<'_>, id: ExprId) -> Option<ExprId> {
         match context.node(id) {
             Some(ExprNode::Unary {
@@ -1952,6 +2651,219 @@ impl ExponentialRule {
             }) => Some(*input),
             _ => None,
         }
+    }
+}
+
+#[derive(Clone, Debug)]
+struct TrigProduct {
+    coefficient: Complex64,
+    factors: Vec<PowerFactor>,
+    trig: Option<(TrigSquareOp, ExprId)>,
+}
+
+impl TrigProduct {
+    fn new() -> Self {
+        Self {
+            coefficient: Complex64::ONE,
+            factors: Vec::new(),
+            trig: None,
+        }
+    }
+
+    fn collect(&mut self, id: ExprId, context: &RewriteContext<'_>) -> Option<()> {
+        match context.node(id)? {
+            ExprNode::NaryMul { factors } => {
+                for factor in factors {
+                    self.collect(*factor, context)?;
+                }
+            }
+            ExprNode::Binary {
+                op: BinaryOp::Mul,
+                lhs,
+                rhs,
+            } => {
+                self.collect(*lhs, context)?;
+                self.collect(*rhs, context)?;
+            }
+            ExprNode::Unary {
+                op: UnaryOp::Neg,
+                input,
+            } => {
+                self.coefficient = -self.coefficient;
+                self.collect(*input, context)?;
+            }
+            ExprNode::RealConst(value) => {
+                self.coefficient *= *value;
+            }
+            ExprNode::ComplexConst(value) => {
+                self.coefficient *= *value;
+            }
+            ExprNode::Unary { op, input } if matches!(op, UnaryOp::Sin | UnaryOp::Cos) => {
+                if self.trig.is_some() {
+                    return None;
+                }
+                let op = match op {
+                    UnaryOp::Sin => TrigSquareOp::Sin,
+                    UnaryOp::Cos => TrigSquareOp::Cos,
+                    _ => unreachable!("matched trig ops"),
+                };
+                self.trig = Some((op, *input));
+            }
+            ExprNode::Unary {
+                op: UnaryOp::PowI(power),
+                input,
+            } if is_scalar_value(context, *input) => {
+                self.factors.push(PowerFactor {
+                    base: *input,
+                    exponent: *power,
+                });
+            }
+            _ if is_scalar_value(context, id) => {
+                self.factors.push(PowerFactor {
+                    base: id,
+                    exponent: 1,
+                });
+            }
+            _ => return None,
+        }
+        Some(())
+    }
+
+    fn into_normalized(mut self) -> Option<Self> {
+        let _ = self.trig?;
+        self.factors
+            .sort_by_key(|factor| (factor.base.index(), factor.exponent));
+        Some(self)
+    }
+
+    fn euler_with(&self, other: &Self) -> Option<EulerProduct> {
+        let (self_op, self_input) = self.trig?;
+        let (other_op, other_input) = other.trig?;
+        if self_input != other_input || self_op == other_op || self.factors != other.factors {
+            return None;
+        }
+
+        let (cos, sin) = match (self_op, other_op) {
+            (TrigSquareOp::Cos, TrigSquareOp::Sin) => (self, other),
+            (TrigSquareOp::Sin, TrigSquareOp::Cos) => (other, self),
+            _ => return None,
+        };
+        if !ProductTerm::approx_eq(cos.coefficient.im, 0.0)
+            || !ProductTerm::approx_eq(sin.coefficient.re, 0.0)
+            || !ProductTerm::approx_eq(cos.coefficient.re.abs(), sin.coefficient.im.abs())
+        {
+            return None;
+        }
+        let phase_sign = if (sin.coefficient.im / cos.coefficient.re).is_sign_positive() {
+            1.0
+        } else {
+            -1.0
+        };
+        Some(EulerProduct {
+            coefficient: cos.coefficient.re,
+            factors: cos.factors.clone(),
+            phase_sign,
+            input: self_input,
+        })
+    }
+}
+
+#[derive(Clone, Debug)]
+struct EulerProduct {
+    coefficient: f64,
+    factors: Vec<PowerFactor>,
+    phase_sign: f64,
+    input: ExprId,
+}
+
+impl EulerProduct {
+    fn emit_with_exp(&self, exp: ExprId, builder: &mut ReplacementFragment<'_>) -> ExprId {
+        let mut factors = self.factors.clone();
+        factors.push(PowerFactor {
+            base: exp,
+            exponent: 1,
+        });
+        ProductTerm::push_parts(self.coefficient, &factors, builder)
+    }
+}
+
+#[derive(Clone, Debug)]
+struct PhaseProduct {
+    coefficient: Complex64,
+    factors: Vec<PowerFactor>,
+}
+
+impl PhaseProduct {
+    fn new() -> Self {
+        Self {
+            coefficient: Complex64::ONE,
+            factors: Vec::new(),
+        }
+    }
+
+    fn collect(&mut self, id: ExprId, context: &RewriteContext<'_>) -> Option<()> {
+        match context.node(id)? {
+            ExprNode::NaryMul { factors } => {
+                for factor in factors {
+                    self.collect(*factor, context)?;
+                }
+            }
+            ExprNode::Binary {
+                op: BinaryOp::Mul,
+                lhs,
+                rhs,
+            } => {
+                self.collect(*lhs, context)?;
+                self.collect(*rhs, context)?;
+            }
+            ExprNode::Unary {
+                op: UnaryOp::Neg,
+                input,
+            } => {
+                self.coefficient = -self.coefficient;
+                self.collect(*input, context)?;
+            }
+            ExprNode::RealConst(value) => self.coefficient *= *value,
+            ExprNode::ComplexConst(value) => self.coefficient *= *value,
+            ExprNode::Unary {
+                op: UnaryOp::PowI(power),
+                input,
+            } if is_scalar_value(context, *input) => {
+                self.factors.push(PowerFactor {
+                    base: *input,
+                    exponent: *power,
+                });
+            }
+            _ if context
+                .facts(id)
+                .is_some_and(|facts| facts.number_class == NumberClass::Real) =>
+            {
+                self.factors.push(PowerFactor {
+                    base: id,
+                    exponent: 1,
+                });
+            }
+            _ => return None,
+        }
+        Some(())
+    }
+
+    fn into_normalized(mut self, _context: &RewriteContext<'_>) -> Option<Self> {
+        if !ProductTerm::approx_eq(self.coefficient.re, 0.0)
+            || ProductTerm::approx_eq(self.coefficient.im, 0.0)
+        {
+            return None;
+        }
+        self.factors
+            .sort_by_key(|factor| (factor.base.index(), factor.exponent));
+        Some(Self {
+            coefficient: Complex64::from(self.coefficient.im),
+            factors: self.factors,
+        })
+    }
+
+    fn emit(&self, builder: &mut ReplacementFragment<'_>) -> ExprId {
+        ProductTerm::push_parts(self.coefficient.re, &self.factors, builder)
     }
 }
 
@@ -2283,7 +3195,20 @@ fn operand_sort_key(op: BinaryOp, id: ExprId, nodes: &[ExprNode]) -> OperandSort
     let node = nodes
         .get(id.index())
         .expect("associative operands are emitted nodes");
+    let is_negative_add_operand = || match node {
+        ExprNode::RealConst(value) => *value < 0.0,
+        ExprNode::NaryMul { factors } => factors.iter().any(|factor| {
+            matches!(
+                nodes.get(factor.index()),
+                Some(ExprNode::RealConst(value)) if *value < 0.0
+            )
+        }),
+        _ => false,
+    };
     let category = match (op, node) {
+        (BinaryOp::Add, ExprNode::RealConst(value)) if *value >= 0.0 => 0,
+        (BinaryOp::Add, _) if !is_negative_add_operand() => 1,
+        (BinaryOp::Add, _) => 2,
         (
             BinaryOp::Mul,
             ExprNode::Unary {
