@@ -622,6 +622,58 @@ mod tests {
     }
 
     #[test]
+    fn like_terms_with_real_coefficients_are_combined() {
+        let x = Expr::from(parameter!("x"));
+        let compiled = CompiledModel::from_expr(&(2.0 * x.clone() + 3.0 * x)).unwrap();
+
+        assert!(matches!(
+            compiled.graph().node(compiled.graph().root()),
+            Some(ExprNode::NaryMul { factors }) if factors.len() == 2
+                && factors.iter().any(|id| matches!(compiled.graph().node(*id), Some(ExprNode::RealConst(5.0))))
+                && factors.iter().any(|id| matches!(compiled.graph().node(*id), Some(ExprNode::ScalarParam(parameter)) if parameter.name() == "x"))
+        ));
+    }
+
+    #[test]
+    fn like_terms_cancel_in_nary_additions() {
+        let x = Expr::from(parameter!("x"));
+        let y = Expr::from(parameter!("y"));
+        let compiled = CompiledModel::from_expr(&(x.clone() + y.clone() - x)).unwrap();
+
+        assert!(matches!(
+            compiled.graph().node(compiled.graph().root()),
+            Some(ExprNode::ScalarParam(parameter)) if parameter.name() == "y"
+        ));
+    }
+
+    #[test]
+    fn common_product_factor_extraction_handles_nary_sums() {
+        let a = Expr::from(parameter!("a"));
+        let b = Expr::from(parameter!("b"));
+        let c = Expr::from(parameter!("c"));
+        let x = Expr::from(parameter!("x"));
+        let compiled =
+            CompiledModel::from_expr(&(a * x.clone() + b * x.clone() + c * x.clone())).unwrap();
+
+        let Some(ExprNode::NaryMul { factors }) = compiled.graph().node(compiled.graph().root())
+        else {
+            panic!("expected factored product root");
+        };
+
+        assert!(factors.iter().any(|id| matches!(
+            compiled.graph().node(*id),
+            Some(ExprNode::ScalarParam(parameter)) if parameter.name() == "x"
+        )));
+        assert!(factors.iter().any(|id| matches!(
+            compiled.graph().node(*id),
+            Some(ExprNode::NaryAdd { terms }) if terms.len() == 3
+                && terms.iter().any(|term| matches!(compiled.graph().node(*term), Some(ExprNode::ScalarParam(parameter)) if parameter.name() == "a"))
+                && terms.iter().any(|term| matches!(compiled.graph().node(*term), Some(ExprNode::ScalarParam(parameter)) if parameter.name() == "b"))
+                && terms.iter().any(|term| matches!(compiled.graph().node(*term), Some(ExprNode::ScalarParam(parameter)) if parameter.name() == "c"))
+        )));
+    }
+
+    #[test]
     fn common_product_factor_extraction_handles_partial_powers() {
         let x = Expr::from(parameter!("x"));
         let a = Expr::from(parameter!("a"));

@@ -32,6 +32,8 @@ impl OptimizationPipeline {
             .with_pass(CanonicalCsePass)
             .with_pass(RewritePass::normalize_add_mul())
             .with_pass(CanonicalCsePass)
+            .with_pass(RewritePass::combine_like_terms())
+            .with_pass(CanonicalCsePass)
             .with_pass(RewritePass::factor_common_products())
             .with_pass(RewritePass::normalize_add_mul())
             .with_pass(CanonicalCsePass)
@@ -161,6 +163,10 @@ impl RewritePass {
 
     pub fn factor_common_products() -> Self {
         Self::new("factor-common-products").with_rule(FactorCommonProductRule)
+    }
+
+    pub fn combine_like_terms() -> Self {
+        Self::new("combine-like-terms").with_rule(CombineLikeTermsRule)
     }
 
     pub fn normalize_add_mul() -> Self {
@@ -986,9 +992,103 @@ impl<'a> ReplacementFragment<'a> {
             .expect("graph too large")
     }
 
+    fn is_empty(&self) -> bool {
+        self.nodes.is_empty()
+    }
+
     fn into_rewrite(self) -> Rewrite {
         Rewrite::ReplaceMany { nodes: self.nodes }
     }
+}
+
+#[derive(Copy, Clone, Debug, Default)]
+pub struct CombineLikeTermsRule;
+
+impl RewriteRule for CombineLikeTermsRule {
+    fn name(&self) -> &'static str {
+        "combine-like-terms"
+    }
+
+    fn rewrite(
+        &self,
+        node: &ExprNode,
+        metadata: &ExprMetadata,
+        context: &RewriteContext<'_>,
+    ) -> CompileResult<Rewrite> {
+        match node {
+            ExprNode::NaryAdd { terms } => Ok(self.combine_terms(terms, metadata, context)),
+            _ => Ok(Rewrite::Keep),
+        }
+    }
+}
+
+impl CombineLikeTermsRule {
+    fn combine_terms(
+        &self,
+        terms: &[ExprId],
+        metadata: &ExprMetadata,
+        context: &RewriteContext<'_>,
+    ) -> Rewrite {
+        let mut groups: Vec<LikeTermGroup> = Vec::new();
+        let mut changed = false;
+
+        for term in terms {
+            let product = ProductTerm::from_id(*term, context);
+            let coefficient = product.signed_coefficient();
+            if coefficient == 0.0 {
+                changed = true;
+                continue;
+            }
+
+            let key = product.sorted_factor_key();
+            if let Some(group) = groups.iter_mut().find(|group| group.factors == key) {
+                group.coefficient += coefficient;
+                changed = true;
+            } else {
+                groups.push(LikeTermGroup {
+                    coefficient,
+                    factors: key,
+                });
+            }
+        }
+
+        let mut builder = ReplacementFragment::new(context);
+        let mut combined = Vec::new();
+        for group in groups {
+            if ProductTerm::approx_eq(group.coefficient, 0.0) {
+                changed = true;
+                continue;
+            }
+            combined.push(ProductTerm::push_parts(
+                group.coefficient,
+                &group.factors,
+                &mut builder,
+            ));
+        }
+
+        if !changed {
+            return Rewrite::Keep;
+        }
+
+        match combined.as_slice() {
+            [] => Rewrite::Replace {
+                node: ExprNode::RealConst(0.0),
+                metadata: metadata.clone(),
+            },
+            [term] if builder.is_empty() => alias_or_preserve(*term, metadata, context),
+            [_] => builder.into_rewrite(),
+            _ => {
+                builder.push(ExprNode::NaryAdd { terms: combined }, metadata.clone());
+                builder.into_rewrite()
+            }
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+struct LikeTermGroup {
+    coefficient: f64,
+    factors: Vec<PowerFactor>,
 }
 
 #[derive(Copy, Clone, Debug, Default)]
@@ -1010,9 +1110,9 @@ impl RewriteRule for FactorCommonProductRule {
                 op: BinaryOp::Add,
                 lhs,
                 rhs,
-            } => self.factor_common_product(*lhs, *rhs, metadata, context),
-            ExprNode::NaryAdd { terms } if terms.len() == 2 => {
-                self.factor_common_product(terms[0], terms[1], metadata, context)
+            } => self.factor_common_products(&[*lhs, *rhs], metadata, context),
+            ExprNode::NaryAdd { terms } if terms.len() >= 2 => {
+                self.factor_common_products(terms, metadata, context)
             }
             _ => Ok(Rewrite::Keep),
         }
@@ -1020,14 +1120,13 @@ impl RewriteRule for FactorCommonProductRule {
 }
 
 impl FactorCommonProductRule {
-    fn factor_common_product(
+    fn factor_common_products(
         &self,
-        lhs: ExprId,
-        rhs: ExprId,
+        terms: &[ExprId],
         metadata: &ExprMetadata,
         context: &RewriteContext<'_>,
     ) -> CompileResult<Rewrite> {
-        let Some(nodes) = self.common_product_factor_nodes(lhs, rhs, metadata, context) else {
+        let Some(nodes) = self.common_product_factor_nodes(terms, metadata, context) else {
             return Ok(Rewrite::Keep);
         };
         Ok(Rewrite::ReplaceMany { nodes })
@@ -1035,30 +1134,33 @@ impl FactorCommonProductRule {
 
     fn common_product_factor_nodes(
         &self,
-        lhs: ExprId,
-        rhs: ExprId,
+        term_ids: &[ExprId],
         metadata: &ExprMetadata,
         context: &RewriteContext<'_>,
     ) -> Option<Vec<(ExprNode, ExprMetadata)>> {
-        let mut lhs = ProductTerm::from_id(lhs, context);
-        let mut rhs = ProductTerm::from_id(rhs, context);
-        let common = lhs.take_common_factors(&mut rhs);
-        let common_coefficient = lhs.take_common_coefficient(&mut rhs);
-        if common.is_empty() && common_coefficient == 1.0 {
+        let mut terms: Vec<_> = term_ids
+            .iter()
+            .map(|term| ProductTerm::from_id(*term, context))
+            .collect();
+        let common = ProductTerm::take_common_factors_from_all(&mut terms);
+        let common_coefficient = ProductTerm::take_common_coefficient_from_all(&mut terms);
+        if common.is_empty() && ProductTerm::approx_eq(common_coefficient, 1.0) {
             return None;
         }
 
         let mut builder = ReplacementFragment::new(context);
-        let lhs_term = lhs.push_remainder(&mut builder);
-        let rhs_term = rhs.push_remainder(&mut builder);
+        let remainder_terms = terms
+            .iter()
+            .map(|term| term.push_remainder(&mut builder))
+            .collect();
         let sum = builder.push(
             ExprNode::NaryAdd {
-                terms: vec![lhs_term, rhs_term],
+                terms: remainder_terms,
             },
             ExprMetadata::new(ExprSourceKind::Binary),
         );
         let mut factors = Vec::new();
-        if common_coefficient != 1.0 {
+        if !ProductTerm::approx_eq(common_coefficient, 1.0) {
             factors.push(builder.push(
                 ExprNode::RealConst(common_coefficient),
                 ExprMetadata::new(ExprSourceKind::Const),
@@ -1155,18 +1257,39 @@ impl ProductTerm {
         self.factors.push(PowerFactor { base, exponent });
     }
 
-    fn push_remainder(&self, builder: &mut ReplacementFragment<'_>) -> ExprId {
-        let mut factors = Vec::new();
-        let coefficient = self.sign * self.coefficient;
+    fn signed_coefficient(&self) -> f64 {
+        self.sign * self.coefficient
+    }
 
-        for factor in &self.factors {
+    fn sorted_factor_key(&self) -> Vec<PowerFactor> {
+        let mut factors: Vec<_> = self
+            .factors
+            .iter()
+            .copied()
+            .filter(|factor| factor.exponent != 0)
+            .collect();
+        factors.sort_by_key(|factor| (factor.base.index(), factor.exponent));
+        factors
+    }
+
+    fn push_remainder(&self, builder: &mut ReplacementFragment<'_>) -> ExprId {
+        Self::push_parts(self.signed_coefficient(), &self.factors, builder)
+    }
+
+    fn push_parts(
+        coefficient: f64,
+        source_factors: &[PowerFactor],
+        builder: &mut ReplacementFragment<'_>,
+    ) -> ExprId {
+        let mut factors = Vec::new();
+        for factor in source_factors {
             if factor.exponent == 0 {
                 continue;
             }
             factors.push(factor.emit(builder));
         }
 
-        if coefficient != 1.0 || factors.is_empty() {
+        if !Self::approx_eq(coefficient, 1.0) || factors.is_empty() {
             let coefficient = builder.push(
                 ExprNode::RealConst(coefficient),
                 ExprMetadata::new(ExprSourceKind::Const),
@@ -1183,46 +1306,69 @@ impl ProductTerm {
         }
     }
 
-    fn take_common_factors(&mut self, other: &mut Self) -> Vec<PowerFactor> {
-        let mut common = Vec::new();
-        let mut index = 0;
-        while index < self.factors.len() {
-            let factor = self.factors[index];
-            if let Some(other_index) = other.factors.iter().position(|candidate| {
-                candidate.base == factor.base
-                    && candidate.exponent.signum() == factor.exponent.signum()
-            }) {
-                let common_exponent = factor
-                    .exponent
-                    .abs()
-                    .min(other.factors[other_index].exponent.abs())
-                    * factor.exponent.signum();
-                common.push(PowerFactor {
-                    base: factor.base,
-                    exponent: common_exponent,
-                });
-                self.factors[index].exponent -= common_exponent;
-                other.factors[other_index].exponent -= common_exponent;
-                if other.factors[other_index].exponent == 0 {
-                    other.factors.remove(other_index);
-                }
-                if self.factors[index].exponent == 0 {
-                    self.factors.remove(index);
-                } else {
-                    index += 1;
-                }
-            } else {
-                index += 1;
+    fn take_common_factors_from_all(terms: &mut [Self]) -> Vec<PowerFactor> {
+        let Some((first, rest)) = terms.split_first() else {
+            return Vec::new();
+        };
+
+        let mut common = first.sorted_factor_key();
+        for term in rest {
+            common = common
+                .into_iter()
+                .filter_map(|factor| {
+                    term.factors
+                        .iter()
+                        .find_map(|candidate| factor.common_with(candidate))
+                })
+                .collect();
+            if common.is_empty() {
+                return common;
+            }
+        }
+
+        for term in terms {
+            for factor in &common {
+                term.remove_factor(*factor);
+            }
+        }
+
+        common
+    }
+
+    fn take_common_coefficient_from_all(terms: &mut [Self]) -> f64 {
+        let Some((first, rest)) = terms.split_first() else {
+            return 1.0;
+        };
+
+        let mut common = first.coefficient;
+        for term in rest {
+            common = Self::common_real_coefficient(common, term.coefficient);
+            if Self::approx_eq(common, 1.0) {
+                return 1.0;
+            }
+        }
+
+        if !Self::approx_eq(common, 1.0) {
+            for term in terms {
+                term.coefficient /= common;
             }
         }
         common
     }
 
-    fn take_common_coefficient(&mut self, other: &mut Self) -> f64 {
-        let common = Self::common_real_coefficient(self.coefficient, other.coefficient);
-        self.coefficient /= common;
-        other.coefficient /= common;
-        common
+    fn remove_factor(&mut self, factor: PowerFactor) {
+        let Some(index) = self.factors.iter().position(|candidate| {
+            candidate.base == factor.base
+                && candidate.exponent.signum() == factor.exponent.signum()
+                && candidate.exponent.abs() >= factor.exponent.abs()
+        }) else {
+            return;
+        };
+
+        self.factors[index].exponent -= factor.exponent;
+        if self.factors[index].exponent == 0 {
+            self.factors.remove(index);
+        }
     }
 
     fn common_real_coefficient(lhs: f64, rhs: f64) -> f64 {
@@ -1269,6 +1415,17 @@ impl ProductTerm {
 }
 
 impl PowerFactor {
+    fn common_with(&self, other: &Self) -> Option<Self> {
+        if self.base != other.base || self.exponent.signum() != other.exponent.signum() {
+            return None;
+        }
+
+        Some(Self {
+            base: self.base,
+            exponent: self.exponent.abs().min(other.exponent.abs()) * self.exponent.signum(),
+        })
+    }
+
     fn emit(&self, builder: &mut ReplacementFragment<'_>) -> ExprId {
         match self.exponent {
             1 => self.base,
