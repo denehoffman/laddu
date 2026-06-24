@@ -167,6 +167,57 @@ impl OptimizationPass for CostGatePass {
     }
 }
 
+fn optimization_cost_is_better(candidate: &OptimizationCost, baseline: &OptimizationCost) -> bool {
+    candidate.weighted_ops() < baseline.weighted_ops()
+        || (candidate.weighted_ops() == baseline.weighted_ops()
+            && candidate.node_count() < baseline.node_count())
+}
+
+fn optimization_cost_is_no_worse(
+    candidate: &OptimizationCost,
+    baseline: &OptimizationCost,
+) -> bool {
+    candidate.weighted_ops() < baseline.weighted_ops()
+        || (candidate.weighted_ops() == baseline.weighted_ops()
+            && candidate.node_count() <= baseline.node_count())
+}
+
+fn local_node_cost(
+    node: ExprNode,
+    metadata: ExprMetadata,
+    context: &RewriteContext<'_>,
+) -> CompileResult<OptimizationCost> {
+    let root = context.next_id();
+    let mut nodes = context.nodes.to_vec();
+    let mut metadata_nodes = context.metadata.to_vec();
+    nodes.push(node);
+    metadata_nodes.push(metadata);
+    let graph = compact_graph(ExprGraph::from_parts(root, nodes, metadata_nodes)?)?;
+    Ok(OptimizationCost::analyze(&graph))
+}
+
+fn local_fragment_cost(
+    fragment: &[(ExprNode, ExprMetadata)],
+    context: &RewriteContext<'_>,
+) -> CompileResult<OptimizationCost> {
+    let root =
+        ExprId::from_index(context.nodes.len() + fragment.len() - 1).expect("graph too large");
+    let mut nodes = context.nodes.to_vec();
+    let mut metadata = context.metadata.to_vec();
+    nodes.extend(fragment.iter().map(|(node, _)| node.clone()));
+    metadata.extend(fragment.iter().map(|(_, metadata)| metadata.clone()));
+    let graph = compact_graph(ExprGraph::from_parts(root, nodes, metadata)?)?;
+    Ok(OptimizationCost::analyze(&graph))
+}
+
+fn terms_are_all_constants(terms: &[ExprId], context: &RewriteContext<'_>) -> bool {
+    terms.iter().all(|term| {
+        context
+            .node(*term)
+            .is_some_and(|node| node.const_value().is_some())
+    })
+}
+
 #[derive(Copy, Clone, Debug, Default)]
 pub struct CanonicalCsePass;
 
@@ -1745,9 +1796,96 @@ impl NormalizeAddMulRule {
         metadata: &ExprMetadata,
         context: &RewriteContext<'_>,
     ) -> CompileResult<Rewrite> {
+        if let Some(rewrite) =
+            self.absorb_additive_factor_coefficient(factors, metadata, context)?
+        {
+            return Ok(rewrite);
+        }
         let mut collector = ProductCollector::new(context);
         collector.collect_all(factors);
         Ok(collector.into_rewrite(factors, metadata))
+    }
+
+    fn absorb_additive_factor_coefficient(
+        &self,
+        factors: &[ExprId],
+        metadata: &ExprMetadata,
+        context: &RewriteContext<'_>,
+    ) -> CompileResult<Option<Rewrite>> {
+        let Some((scalar_index, scalar)) =
+            factors
+                .iter()
+                .enumerate()
+                .find_map(|(index, factor)| match context.node(*factor) {
+                    Some(ExprNode::RealConst(value)) if value.is_finite() => Some((index, *value)),
+                    _ => None,
+                })
+        else {
+            return Ok(None);
+        };
+
+        for (add_index, factor) in factors.iter().enumerate() {
+            let Some(ExprNode::NaryAdd { terms }) = context.node(*factor) else {
+                continue;
+            };
+            let mut product_terms: Vec<_> = terms
+                .iter()
+                .map(|term| ProductTerm::from_id(*term, context))
+                .collect();
+            let common_coefficient =
+                ProductTerm::take_common_coefficient_from_all(&mut product_terms);
+            if ProductTerm::approx_eq(common_coefficient, 1.0) {
+                continue;
+            }
+
+            let mut builder = ReplacementFragment::new(context);
+            let normalized_terms = product_terms
+                .iter()
+                .map(|term| term.push_remainder(&mut builder))
+                .collect();
+            let normalized_add = builder.push(
+                ExprNode::NaryAdd {
+                    terms: normalized_terms,
+                },
+                ExprMetadata::new(ExprSourceKind::Binary),
+            );
+            let absorbed_scalar = builder.push(
+                ExprNode::RealConst(scalar * common_coefficient),
+                ExprMetadata::new(ExprSourceKind::Const),
+            );
+            let normalized_factors = factors
+                .iter()
+                .enumerate()
+                .map(|(index, factor)| {
+                    if index == scalar_index {
+                        absorbed_scalar
+                    } else if index == add_index {
+                        normalized_add
+                    } else {
+                        *factor
+                    }
+                })
+                .collect();
+            builder.push(
+                ExprNode::NaryMul {
+                    factors: normalized_factors,
+                },
+                metadata.clone(),
+            );
+            let Rewrite::ReplaceMany { nodes } = builder.into_rewrite() else {
+                unreachable!("replacement builder always produces fragments")
+            };
+            let original = ExprNode::NaryMul {
+                factors: factors.to_vec(),
+            };
+            let original_cost = local_node_cost(original, metadata.clone(), context)?;
+            let candidate_cost = local_fragment_cost(&nodes, context)?;
+            if optimization_cost_is_no_worse(&candidate_cost, &original_cost) {
+                return Ok(Some(Rewrite::ReplaceMany { nodes }));
+            }
+        }
+
+        Ok(None)
     }
 }
 
@@ -2107,6 +2245,11 @@ struct LikeTermGroup {
 #[derive(Copy, Clone, Debug, Default)]
 pub struct FactorCommonProductRule;
 
+#[derive(Clone, Debug)]
+struct FactorCandidate {
+    nodes: Vec<(ExprNode, ExprMetadata)>,
+}
+
 impl RewriteRule for FactorCommonProductRule {
     fn name(&self) -> &'static str {
         "factor-common-product"
@@ -2123,9 +2266,9 @@ impl RewriteRule for FactorCommonProductRule {
                 op: BinaryOp::Add,
                 lhs,
                 rhs,
-            } => self.factor_common_products(&[*lhs, *rhs], metadata, context),
+            } => self.factor_common_products(node, &[*lhs, *rhs], metadata, context),
             ExprNode::NaryAdd { terms } if terms.len() >= 2 => {
-                self.factor_common_products(terms, metadata, context)
+                self.factor_common_products(node, terms, metadata, context)
             }
             _ => Ok(Rewrite::Keep),
         }
@@ -2135,22 +2278,62 @@ impl RewriteRule for FactorCommonProductRule {
 impl FactorCommonProductRule {
     fn factor_common_products(
         &self,
+        original: &ExprNode,
         terms: &[ExprId],
         metadata: &ExprMetadata,
         context: &RewriteContext<'_>,
     ) -> CompileResult<Rewrite> {
-        let Some(nodes) = self.common_product_factor_nodes(terms, metadata, context) else {
+        let Some(nodes) =
+            self.best_common_product_factor_nodes(original, terms, metadata, context)?
+        else {
             return Ok(Rewrite::Keep);
         };
         Ok(Rewrite::ReplaceMany { nodes })
     }
 
-    fn common_product_factor_nodes(
+    fn best_common_product_factor_nodes(
+        &self,
+        original: &ExprNode,
+        term_ids: &[ExprId],
+        metadata: &ExprMetadata,
+        context: &RewriteContext<'_>,
+    ) -> CompileResult<Option<Vec<(ExprNode, ExprMetadata)>>> {
+        let candidates = [
+            self.common_product_factor_candidate(term_ids, metadata, context),
+            self.partial_common_product_factor_candidate(term_ids, metadata, context),
+        ];
+        let original_cost = local_node_cost(original.clone(), metadata.clone(), context)?;
+        let mut best_cost = None;
+        let mut best_nodes = None;
+
+        for candidate in candidates.into_iter().flatten() {
+            let candidate_cost = local_fragment_cost(&candidate.nodes, context)?;
+            if best_cost
+                .as_ref()
+                .is_none_or(|best_cost| optimization_cost_is_better(&candidate_cost, best_cost))
+            {
+                best_cost = Some(candidate_cost);
+                best_nodes = Some(candidate.nodes);
+            }
+        }
+
+        let Some(best_cost) = best_cost else {
+            return Ok(None);
+        };
+        if !optimization_cost_is_no_worse(&best_cost, &original_cost)
+            && terms_are_all_constants(term_ids, context)
+        {
+            return Ok(None);
+        }
+        Ok(best_nodes)
+    }
+
+    fn common_product_factor_candidate(
         &self,
         term_ids: &[ExprId],
         metadata: &ExprMetadata,
         context: &RewriteContext<'_>,
-    ) -> Option<Vec<(ExprNode, ExprMetadata)>> {
+    ) -> Option<FactorCandidate> {
         let mut terms: Vec<_> = term_ids
             .iter()
             .map(|term| ProductTerm::from_id(*term, context))
@@ -2158,7 +2341,7 @@ impl FactorCommonProductRule {
         let common = ProductTerm::take_common_factors_from_all(&mut terms);
         let common_coefficient = ProductTerm::take_common_coefficient_from_all(&mut terms);
         if common.is_empty() && ProductTerm::approx_eq(common_coefficient, 1.0) {
-            return self.partial_common_product_factor_nodes(term_ids, metadata, context);
+            return None;
         }
 
         let mut builder = ReplacementFragment::new(context);
@@ -2185,15 +2368,15 @@ impl FactorCommonProductRule {
         let Rewrite::ReplaceMany { nodes } = builder.into_rewrite() else {
             unreachable!("replacement builder always produces fragments")
         };
-        Some(nodes)
+        Some(FactorCandidate { nodes })
     }
 
-    fn partial_common_product_factor_nodes(
+    fn partial_common_product_factor_candidate(
         &self,
         term_ids: &[ExprId],
         metadata: &ExprMetadata,
         context: &RewriteContext<'_>,
-    ) -> Option<Vec<(ExprNode, ExprMetadata)>> {
+    ) -> Option<FactorCandidate> {
         let terms: Vec<_> = term_ids
             .iter()
             .map(|term| ProductTerm::from_id(*term, context))
@@ -2254,7 +2437,7 @@ impl FactorCommonProductRule {
         let Rewrite::ReplaceMany { nodes } = builder.into_rewrite() else {
             unreachable!("replacement builder always produces fragments")
         };
-        Some(nodes)
+        Some(FactorCandidate { nodes })
     }
 
     fn best_partial_common_factors(terms: &[ProductTerm]) -> Option<Vec<PowerFactor>> {

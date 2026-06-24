@@ -1109,6 +1109,49 @@ mod tests {
     }
 
     #[test]
+    fn cost_aware_common_product_factor_extraction_keeps_useful_rewrites() {
+        let a = Expr::from(parameter!("a"));
+        let b = Expr::from(parameter!("b"));
+        let x = Expr::from(parameter!("x"));
+        let compiled = CompiledModel::from_expr_with_options(
+            &(a * x.clone() + b * x.clone()),
+            &CompileOptions::with_pipeline(
+                OptimizationPipeline::new()
+                    .with_pass(CanonicalCsePass)
+                    .with_pass(RewritePass::factor_common_products()),
+            ),
+        )
+        .unwrap();
+
+        assert!(matches!(
+            compiled.graph().node(compiled.graph().root()),
+            Some(ExprNode::NaryMul { factors }) if factors.iter().any(|id| matches!(
+                compiled.graph().node(*id),
+                Some(ExprNode::ScalarParam(parameter)) if parameter.name() == "x"
+            ))
+        ));
+    }
+
+    #[test]
+    fn cost_aware_common_product_factor_extraction_rejects_more_expensive_rewrites() {
+        let compiled = CompiledModel::from_expr_with_options(
+            &(Expr::from(2.0) + 4.0),
+            &CompileOptions::with_pipeline(
+                OptimizationPipeline::new().with_pass(RewritePass::factor_common_products()),
+            ),
+        )
+        .unwrap();
+
+        assert!(matches!(
+            compiled.graph().node(compiled.graph().root()),
+            Some(ExprNode::Binary {
+                op: BinaryOp::Add,
+                ..
+            })
+        ));
+    }
+
+    #[test]
     fn common_product_factor_extraction_handles_partial_powers() {
         let x = Expr::from(parameter!("x"));
         let a = Expr::from(parameter!("a"));
