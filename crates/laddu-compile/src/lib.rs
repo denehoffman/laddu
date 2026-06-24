@@ -4,9 +4,11 @@ use laddu_expr::{
 };
 use thiserror::Error;
 
+pub mod cost;
 pub mod facts;
 pub mod optimize;
 
+pub use cost::OptimizationCost;
 pub use facts::{DependencyFacts, EvaluationClass, GraphFacts, NodeFacts, NumberClass};
 pub use optimize::{
     AlgebraicIdentityRule, CanonicalCsePass, ComplexFactRule, ConstantFoldScalarRule,
@@ -107,6 +109,10 @@ impl CompiledModel {
 
     pub fn facts(&self) -> &GraphFacts {
         &self.facts
+    }
+
+    pub fn cost(&self) -> OptimizationCost {
+        OptimizationCost::analyze(&self.graph)
     }
 
     pub fn node_facts(&self, id: ExprId) -> Option<&NodeFacts> {
@@ -212,6 +218,12 @@ mod tests {
         })
     }
 
+    fn compile_cost(expr: &Expr, pipeline: OptimizationPipeline) -> OptimizationCost {
+        CompiledModel::from_expr_with_options(expr, &CompileOptions::with_pipeline(pipeline))
+            .unwrap()
+            .cost()
+    }
+
     #[test]
     fn collects_parameters_in_graph_construction_order() {
         let model = (Complex64::new(0.0, 1.0) * parameter!("y", initial: 1.0, bounds: (0.0, 2.0))
@@ -228,6 +240,52 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["y", "x"]
         );
+    }
+
+    #[test]
+    fn optimization_cost_reports_weighted_operation_breakdown() {
+        let x = Expr::from(parameter!("x"));
+        let compiled = CompiledModel::from_expr_with_options(
+            &(x.sin() + x.exp() * x.powi(2)),
+            &CompileOptions::without_optimizations(),
+        )
+        .unwrap();
+        let cost = compiled.cost();
+
+        assert_eq!(cost.transcendental_ops(), 2);
+        assert_eq!(cost.power_ops(), 1);
+        assert_eq!(cost.scalar_adds(), 1);
+        assert_eq!(cost.scalar_muls(), 1);
+        assert_eq!(cost.weighted_ops(), 46);
+    }
+
+    #[test]
+    fn optimization_cost_compares_pipeline_effectiveness() {
+        let phi = Expr::from(parameter!("phi"));
+        let euler = phi.cos() + Complex64::I * phi.sin();
+        let without_exponential = compile_cost(
+            &euler,
+            OptimizationPipeline::new()
+                .with_pass(RewritePass::simplify())
+                .with_pass(CanonicalCsePass)
+                .with_pass(RewritePass::normalize_add_mul())
+                .with_pass(CanonicalCsePass)
+                .with_max_iterations(4),
+        );
+        let with_exponential = compile_cost(
+            &euler,
+            OptimizationPipeline::new()
+                .with_pass(RewritePass::simplify())
+                .with_pass(CanonicalCsePass)
+                .with_pass(RewritePass::normalize_add_mul())
+                .with_pass(CanonicalCsePass)
+                .with_pass(RewritePass::exponential())
+                .with_pass(RewritePass::simplify())
+                .with_max_iterations(4),
+        );
+
+        assert!(with_exponential.weighted_ops() < without_exponential.weighted_ops());
+        assert_eq!(with_exponential.transcendental_ops(), 1);
     }
 
     #[test]
