@@ -159,63 +159,12 @@ impl OptimizationPass for CostGatePass {
         let original_cost = OptimizationCost::analyze(&graph);
         let candidate = self.candidate.run(graph.clone())?;
         let candidate_cost = OptimizationCost::analyze(&candidate);
-        if candidate_cost.weighted_ops() < original_cost.weighted_ops() {
+        if candidate_cost.is_better_than(&original_cost) {
             Ok(candidate)
         } else {
             Ok(graph)
         }
     }
-}
-
-fn optimization_cost_is_better(candidate: &OptimizationCost, baseline: &OptimizationCost) -> bool {
-    candidate.weighted_ops() < baseline.weighted_ops()
-        || (candidate.weighted_ops() == baseline.weighted_ops()
-            && candidate.node_count() < baseline.node_count())
-}
-
-fn optimization_cost_is_no_worse(
-    candidate: &OptimizationCost,
-    baseline: &OptimizationCost,
-) -> bool {
-    candidate.weighted_ops() < baseline.weighted_ops()
-        || (candidate.weighted_ops() == baseline.weighted_ops()
-            && candidate.node_count() <= baseline.node_count())
-}
-
-fn local_node_cost(
-    node: ExprNode,
-    metadata: ExprMetadata,
-    context: &RewriteContext<'_>,
-) -> CompileResult<OptimizationCost> {
-    let root = context.next_id();
-    let mut nodes = context.nodes.to_vec();
-    let mut metadata_nodes = context.metadata.to_vec();
-    nodes.push(node);
-    metadata_nodes.push(metadata);
-    let graph = compact_graph(ExprGraph::from_parts(root, nodes, metadata_nodes)?)?;
-    Ok(OptimizationCost::analyze(&graph))
-}
-
-fn local_fragment_cost(
-    fragment: &[(ExprNode, ExprMetadata)],
-    context: &RewriteContext<'_>,
-) -> CompileResult<OptimizationCost> {
-    let root =
-        ExprId::from_index(context.nodes.len() + fragment.len() - 1).expect("graph too large");
-    let mut nodes = context.nodes.to_vec();
-    let mut metadata = context.metadata.to_vec();
-    nodes.extend(fragment.iter().map(|(node, _)| node.clone()));
-    metadata.extend(fragment.iter().map(|(_, metadata)| metadata.clone()));
-    let graph = compact_graph(ExprGraph::from_parts(root, nodes, metadata)?)?;
-    Ok(OptimizationCost::analyze(&graph))
-}
-
-fn terms_are_all_constants(terms: &[ExprId], context: &RewriteContext<'_>) -> bool {
-    terms.iter().all(|term| {
-        context
-            .node(*term)
-            .is_some_and(|node| node.const_value().is_some())
-    })
 }
 
 #[derive(Copy, Clone, Debug, Default)]
@@ -373,6 +322,41 @@ impl<'a> RewriteContext<'a> {
 
     pub fn next_id(&self) -> ExprId {
         ExprId::from_index(self.nodes.len()).expect("graph too large")
+    }
+
+    fn local_node_cost(
+        &self,
+        node: ExprNode,
+        metadata: ExprMetadata,
+    ) -> CompileResult<OptimizationCost> {
+        let root = self.next_id();
+        let mut nodes = self.nodes.to_vec();
+        let mut metadata_nodes = self.metadata.to_vec();
+        nodes.push(node);
+        metadata_nodes.push(metadata);
+        let graph = compact_graph(ExprGraph::from_parts(root, nodes, metadata_nodes)?)?;
+        Ok(OptimizationCost::analyze(&graph))
+    }
+
+    fn local_fragment_cost(
+        &self,
+        fragment: &[(ExprNode, ExprMetadata)],
+    ) -> CompileResult<OptimizationCost> {
+        let root =
+            ExprId::from_index(self.nodes.len() + fragment.len() - 1).expect("graph too large");
+        let mut nodes = self.nodes.to_vec();
+        let mut metadata = self.metadata.to_vec();
+        nodes.extend(fragment.iter().map(|(node, _)| node.clone()));
+        metadata.extend(fragment.iter().map(|(_, metadata)| metadata.clone()));
+        let graph = compact_graph(ExprGraph::from_parts(root, nodes, metadata)?)?;
+        Ok(OptimizationCost::analyze(&graph))
+    }
+
+    fn ids_are_all_constants(&self, ids: &[ExprId]) -> bool {
+        ids.iter().all(|id| {
+            self.node(*id)
+                .is_some_and(|node| node.const_value().is_some())
+        })
     }
 }
 
@@ -1801,9 +1785,120 @@ impl NormalizeAddMulRule {
         {
             return Ok(rewrite);
         }
+        if let Some(rewrite) = self.combine_same_power_factors(factors, metadata, context)? {
+            return Ok(rewrite);
+        }
         let mut collector = ProductCollector::new(context);
         collector.collect_all(factors);
         Ok(collector.into_rewrite(factors, metadata))
+    }
+
+    fn combine_same_power_factors(
+        &self,
+        factors: &[ExprId],
+        metadata: &ExprMetadata,
+        context: &RewriteContext<'_>,
+    ) -> CompileResult<Option<Rewrite>> {
+        let Some((power, selected)) = self.largest_same_power_group(factors, context) else {
+            return Ok(None);
+        };
+        let mut builder = ReplacementFragment::new(context);
+        let inner_factors = selected.iter().map(|index| {
+            let Some(ExprNode::Unary {
+                op: UnaryOp::PowI(_),
+                input,
+            }) = context.node(factors[*index])
+            else {
+                unreachable!("selected factors are powers")
+            };
+            *input
+        });
+        let inner = builder.push(
+            ExprNode::NaryMul {
+                factors: inner_factors.collect(),
+            },
+            ExprMetadata::new(ExprSourceKind::Binary),
+        );
+        let combined = builder.push(
+            ExprNode::Unary {
+                op: UnaryOp::PowI(power),
+                input: inner,
+            },
+            ExprMetadata::new(ExprSourceKind::Unary),
+        );
+        let first_selected = selected[0];
+        let mut output_factors = Vec::with_capacity(factors.len() - selected.len() + 1);
+        for (index, factor) in factors.iter().enumerate() {
+            if index == first_selected {
+                output_factors.push(combined);
+            } else if !selected.contains(&index) {
+                output_factors.push(*factor);
+            }
+        }
+        builder.push(
+            ExprNode::NaryMul {
+                factors: output_factors,
+            },
+            metadata.clone(),
+        );
+        let Rewrite::ReplaceMany { nodes } = builder.into_rewrite() else {
+            unreachable!("replacement builder always produces fragments")
+        };
+        let original = ExprNode::NaryMul {
+            factors: factors.to_vec(),
+        };
+        let original_cost = context.local_node_cost(original, metadata.clone())?;
+        let candidate_cost = context.local_fragment_cost(&nodes)?;
+        if candidate_cost.is_better_than(&original_cost) {
+            Ok(Some(Rewrite::ReplaceMany { nodes }))
+        } else {
+            Ok(None)
+        }
+    }
+
+    fn largest_same_power_group(
+        &self,
+        factors: &[ExprId],
+        context: &RewriteContext<'_>,
+    ) -> Option<(i32, Vec<usize>)> {
+        let mut best = None;
+        for (index, factor) in factors.iter().enumerate() {
+            let Some(ExprNode::Unary {
+                op: UnaryOp::PowI(power),
+                input,
+            }) = context.node(*factor)
+            else {
+                continue;
+            };
+            if *power <= 1 || !is_scalar_value(context, *input) {
+                continue;
+            }
+            let selected: Vec<_> = factors
+                .iter()
+                .enumerate()
+                .skip(index)
+                .filter_map(|(candidate_index, candidate)| {
+                    matches!(
+                        context.node(*candidate),
+                        Some(ExprNode::Unary {
+                            op: UnaryOp::PowI(candidate_power),
+                            input,
+                        }) if candidate_power == power && is_scalar_value(context, *input)
+                    )
+                    .then_some(candidate_index)
+                })
+                .collect();
+            if selected.len() >= 2
+                && best
+                    .as_ref()
+                    .is_none_or(|(_, best_selected): &(i32, Vec<usize>)| {
+                        selected.len() > best_selected.len()
+                    })
+            {
+                best = Some((*power, selected));
+            }
+        }
+        best
     }
 
     fn absorb_additive_factor_coefficient(
@@ -1878,9 +1973,9 @@ impl NormalizeAddMulRule {
             let original = ExprNode::NaryMul {
                 factors: factors.to_vec(),
             };
-            let original_cost = local_node_cost(original, metadata.clone(), context)?;
-            let candidate_cost = local_fragment_cost(&nodes, context)?;
-            if optimization_cost_is_no_worse(&candidate_cost, &original_cost) {
+            let original_cost = context.local_node_cost(original, metadata.clone())?;
+            let candidate_cost = context.local_fragment_cost(&nodes)?;
+            if candidate_cost.is_no_worse_than(&original_cost) {
                 return Ok(Some(Rewrite::ReplaceMany { nodes }));
             }
         }
@@ -2302,15 +2397,15 @@ impl FactorCommonProductRule {
             self.common_product_factor_candidate(term_ids, metadata, context),
             self.partial_common_product_factor_candidate(term_ids, metadata, context),
         ];
-        let original_cost = local_node_cost(original.clone(), metadata.clone(), context)?;
+        let original_cost = context.local_node_cost(original.clone(), metadata.clone())?;
         let mut best_cost = None;
         let mut best_nodes = None;
 
         for candidate in candidates.into_iter().flatten() {
-            let candidate_cost = local_fragment_cost(&candidate.nodes, context)?;
+            let candidate_cost = context.local_fragment_cost(&candidate.nodes)?;
             if best_cost
                 .as_ref()
-                .is_none_or(|best_cost| optimization_cost_is_better(&candidate_cost, best_cost))
+                .is_none_or(|best_cost| candidate_cost.is_better_than(best_cost))
             {
                 best_cost = Some(candidate_cost);
                 best_nodes = Some(candidate.nodes);
@@ -2320,9 +2415,7 @@ impl FactorCommonProductRule {
         let Some(best_cost) = best_cost else {
             return Ok(None);
         };
-        if !optimization_cost_is_no_worse(&best_cost, &original_cost)
-            && terms_are_all_constants(term_ids, context)
-        {
+        if !best_cost.is_no_worse_than(&original_cost) && context.ids_are_all_constants(term_ids) {
             return Ok(None);
         }
         Ok(best_nodes)

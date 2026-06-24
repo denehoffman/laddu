@@ -768,6 +768,27 @@ mod tests {
     }
 
     #[test]
+    fn product_normalization_combines_same_power_factors() {
+        let x = Expr::from(parameter!("x"));
+        let y = Expr::from(parameter!("y"));
+        let compiled = CompiledModel::from_expr(&(x.powi(2) * y.powi(2))).unwrap();
+
+        let Some(ExprNode::Unary {
+            op: UnaryOp::PowI(2),
+            input,
+        }) = compiled.graph().node(compiled.graph().root())
+        else {
+            panic!("expected combined square root");
+        };
+        assert!(matches!(
+            compiled.graph().node(*input),
+            Some(ExprNode::NaryMul { factors }) if factors.len() == 2
+                && factors.iter().any(|factor| matches!(compiled.graph().node(*factor), Some(ExprNode::ScalarParam(parameter)) if parameter.name() == "x"))
+                && factors.iter().any(|factor| matches!(compiled.graph().node(*factor), Some(ExprNode::ScalarParam(parameter)) if parameter.name() == "y"))
+        ));
+    }
+
+    #[test]
     fn nary_add_constant_terms_are_folded_without_requiring_all_constants() {
         let x = Expr::from(parameter!("x"));
         let compiled = CompiledModel::from_expr(&(x + 2.0 + 3.0)).unwrap();

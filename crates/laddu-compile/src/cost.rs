@@ -33,6 +33,17 @@ impl OptimizationCost {
         self.weighted_ops
     }
 
+    pub fn is_better_than(&self, baseline: &Self) -> bool {
+        self.weighted_ops < baseline.weighted_ops
+            || (self.weighted_ops == baseline.weighted_ops && self.node_count < baseline.node_count)
+    }
+
+    pub fn is_no_worse_than(&self, baseline: &Self) -> bool {
+        self.weighted_ops < baseline.weighted_ops
+            || (self.weighted_ops == baseline.weighted_ops
+                && self.node_count <= baseline.node_count)
+    }
+
     pub fn free_nodes(&self) -> usize {
         self.free_nodes
     }
