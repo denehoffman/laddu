@@ -8,6 +8,7 @@ use num::complex::Complex64;
 
 use crate::{
     CompileResult,
+    cost::OptimizationCost,
     facts::{NodeFacts, NumberClass},
 };
 
@@ -39,7 +40,26 @@ impl OptimizationPipeline {
             .with_pass(CanonicalCsePass)
             .with_pass(RewritePass::exponential())
             .with_pass(RewritePass::simplify())
+            .with_pass(CostGatePass::new(Self::norm_sqr_expansion_candidate()))
             .with_max_iterations(DEFAULT_MAX_ITERATIONS)
+    }
+
+    pub fn norm_sqr_expansion_candidate() -> Self {
+        Self::new()
+            .with_pass(RewritePass::norm_sqr_expansion())
+            .with_pass(CanonicalCsePass)
+            .with_pass(RewritePass::conjugation())
+            .with_pass(CanonicalCsePass)
+            .with_pass(RewritePass::normalize_add_mul())
+            .with_pass(CanonicalCsePass)
+            .with_pass(RewritePass::combine_like_terms())
+            .with_pass(CanonicalCsePass)
+            .with_pass(RewritePass::factor_common_products())
+            .with_pass(RewritePass::normalize_add_mul())
+            .with_pass(CanonicalCsePass)
+            .with_pass(RewritePass::exponential())
+            .with_pass(RewritePass::simplify())
+            .with_max_iterations(8)
     }
 
     pub fn add_pass(&mut self, pass: impl OptimizationPass + 'static) {
@@ -104,6 +124,47 @@ fn graph_shape_eq(lhs: &ExprGraph, rhs: &ExprGraph) -> bool {
 pub trait OptimizationPass: Send + Sync {
     fn name(&self) -> &'static str;
     fn run(&self, graph: ExprGraph) -> CompileResult<ExprGraph>;
+}
+
+pub struct CostGatePass {
+    name: &'static str,
+    candidate: OptimizationPipeline,
+}
+
+impl CostGatePass {
+    pub fn new(candidate: OptimizationPipeline) -> Self {
+        Self::named("cost-gate", candidate)
+    }
+
+    pub fn named(name: &'static str, candidate: OptimizationPipeline) -> Self {
+        Self { name, candidate }
+    }
+}
+
+impl fmt::Debug for CostGatePass {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("CostGatePass")
+            .field("name", &self.name)
+            .field("candidate", &self.candidate)
+            .finish()
+    }
+}
+
+impl OptimizationPass for CostGatePass {
+    fn name(&self) -> &'static str {
+        self.name
+    }
+
+    fn run(&self, graph: ExprGraph) -> CompileResult<ExprGraph> {
+        let original_cost = OptimizationCost::analyze(&graph);
+        let candidate = self.candidate.run(graph.clone())?;
+        let candidate_cost = OptimizationCost::analyze(&candidate);
+        if candidate_cost.weighted_ops() < original_cost.weighted_ops() {
+            Ok(candidate)
+        } else {
+            Ok(graph)
+        }
+    }
 }
 
 #[derive(Copy, Clone, Debug, Default)]
@@ -176,6 +237,14 @@ impl RewritePass {
 
     pub fn exponential() -> Self {
         Self::new("exponential").with_rule(ExponentialRule)
+    }
+
+    pub fn conjugation() -> Self {
+        Self::new("conjugation").with_rule(ConjugationRule)
+    }
+
+    pub fn norm_sqr_expansion() -> Self {
+        Self::new("norm-sqr-expansion").with_rule(NormSqrExpansionRule)
     }
 
     pub fn add_rule(&mut self, rule: impl RewriteRule + 'static) {
@@ -1921,6 +1990,16 @@ impl<'a> ReplacementFragment<'a> {
         )
     }
 
+    fn conjugated_term(&mut self, id: ExprId) -> ExprId {
+        self.push(
+            ExprNode::Unary {
+                op: UnaryOp::Conj,
+                input: id,
+            },
+            ExprMetadata::new(ExprSourceKind::Unary),
+        )
+    }
+
     fn next_id(&self) -> ExprId {
         ExprId::from_index(self.context.next_id().index() + self.nodes.len())
             .expect("graph too large")
@@ -2079,7 +2158,7 @@ impl FactorCommonProductRule {
         let common = ProductTerm::take_common_factors_from_all(&mut terms);
         let common_coefficient = ProductTerm::take_common_coefficient_from_all(&mut terms);
         if common.is_empty() && ProductTerm::approx_eq(common_coefficient, 1.0) {
-            return None;
+            return self.partial_common_product_factor_nodes(term_ids, metadata, context);
         }
 
         let mut builder = ReplacementFragment::new(context);
@@ -2107,6 +2186,89 @@ impl FactorCommonProductRule {
             unreachable!("replacement builder always produces fragments")
         };
         Some(nodes)
+    }
+
+    fn partial_common_product_factor_nodes(
+        &self,
+        term_ids: &[ExprId],
+        metadata: &ExprMetadata,
+        context: &RewriteContext<'_>,
+    ) -> Option<Vec<(ExprNode, ExprMetadata)>> {
+        let terms: Vec<_> = term_ids
+            .iter()
+            .map(|term| ProductTerm::from_id(*term, context))
+            .collect();
+        let common = Self::best_partial_common_factors(&terms)?;
+        let selected_indices: Vec<_> = terms
+            .iter()
+            .enumerate()
+            .filter_map(|(index, term)| term.has_factors(&common).then_some(index))
+            .collect();
+        if selected_indices.len() < 2 || selected_indices.len() == terms.len() {
+            return None;
+        }
+
+        let mut remainders = terms.clone();
+        for index in &selected_indices {
+            for factor in &common {
+                remainders[*index].remove_factor(*factor);
+            }
+        }
+
+        let mut builder = ReplacementFragment::new(context);
+        let subset_terms = selected_indices
+            .iter()
+            .map(|index| remainders[*index].push_remainder(&mut builder))
+            .collect();
+        let subset_sum = builder.push(
+            ExprNode::NaryAdd {
+                terms: subset_terms,
+            },
+            ExprMetadata::new(ExprSourceKind::Binary),
+        );
+        let mut factored_factors: Vec<_> = common
+            .iter()
+            .map(|factor| factor.emit(&mut builder))
+            .collect();
+        factored_factors.push(subset_sum);
+        let factored_term = builder.push(
+            ExprNode::NaryMul {
+                factors: factored_factors,
+            },
+            ExprMetadata::new(ExprSourceKind::Binary),
+        );
+
+        let mut output_terms = Vec::with_capacity(term_ids.len() - selected_indices.len() + 1);
+        for (index, term_id) in term_ids.iter().enumerate() {
+            if !selected_indices.contains(&index) {
+                output_terms.push(*term_id);
+            }
+        }
+        output_terms.push(factored_term);
+        builder.push(
+            ExprNode::NaryAdd {
+                terms: output_terms,
+            },
+            metadata.clone(),
+        );
+        let Rewrite::ReplaceMany { nodes } = builder.into_rewrite() else {
+            unreachable!("replacement builder always produces fragments")
+        };
+        Some(nodes)
+    }
+
+    fn best_partial_common_factors(terms: &[ProductTerm]) -> Option<Vec<PowerFactor>> {
+        let mut best = Vec::new();
+        for lhs_index in 0..terms.len() {
+            for rhs_index in (lhs_index + 1)..terms.len() {
+                let mut pair = vec![terms[lhs_index].clone(), terms[rhs_index].clone()];
+                let common = ProductTerm::take_common_factors_from_all(&mut pair);
+                if common.len() > best.len() {
+                    best = common;
+                }
+            }
+        }
+        (!best.is_empty()).then_some(best)
     }
 }
 
@@ -2333,6 +2495,16 @@ impl ProductTerm {
         }
     }
 
+    fn has_factors(&self, factors: &[PowerFactor]) -> bool {
+        factors.iter().all(|factor| {
+            self.factors.iter().any(|candidate| {
+                candidate.base == factor.base
+                    && candidate.exponent.signum() == factor.exponent.signum()
+                    && candidate.exponent.abs() >= factor.exponent.abs()
+            })
+        })
+    }
+
     fn common_real_coefficient(lhs: f64, rhs: f64) -> f64 {
         if lhs == 0.0 || rhs == 0.0 || !lhs.is_finite() || !rhs.is_finite() {
             return 1.0;
@@ -2424,6 +2596,9 @@ impl RewriteRule for ExponentialRule {
                 node: ExprNode::RealConst(1.0),
                 metadata: metadata.clone(),
             }),
+            ExprNode::Unary {
+                op: UnaryOp::Exp, ..
+            } => Ok(Rewrite::Keep),
             ExprNode::Binary {
                 op: BinaryOp::Mul,
                 lhs,
@@ -2864,6 +3039,162 @@ impl PhaseProduct {
 
     fn emit(&self, builder: &mut ReplacementFragment<'_>) -> ExprId {
         ProductTerm::push_parts(self.coefficient.re, &self.factors, builder)
+    }
+}
+
+#[derive(Copy, Clone, Debug, Default)]
+pub struct NormSqrExpansionRule;
+
+impl RewriteRule for NormSqrExpansionRule {
+    fn name(&self) -> &'static str {
+        "norm-sqr-expansion"
+    }
+
+    fn rewrite(
+        &self,
+        node: &ExprNode,
+        metadata: &ExprMetadata,
+        context: &RewriteContext<'_>,
+    ) -> CompileResult<Rewrite> {
+        let ExprNode::Unary {
+            op: UnaryOp::NormSqr,
+            input,
+        } = node
+        else {
+            return Ok(Rewrite::Keep);
+        };
+        let mut builder = ReplacementFragment::new(context);
+        let conj = builder.push(
+            ExprNode::Unary {
+                op: UnaryOp::Conj,
+                input: *input,
+            },
+            ExprMetadata::new(ExprSourceKind::Unary),
+        );
+        builder.push(
+            ExprNode::NaryMul {
+                factors: vec![*input, conj],
+            },
+            metadata.clone(),
+        );
+        Ok(builder.into_rewrite())
+    }
+}
+
+#[derive(Copy, Clone, Debug, Default)]
+pub struct ConjugationRule;
+
+impl RewriteRule for ConjugationRule {
+    fn name(&self) -> &'static str {
+        "conjugation"
+    }
+
+    fn rewrite(
+        &self,
+        node: &ExprNode,
+        metadata: &ExprMetadata,
+        context: &RewriteContext<'_>,
+    ) -> CompileResult<Rewrite> {
+        let ExprNode::Unary {
+            op: UnaryOp::Conj,
+            input,
+        } = node
+        else {
+            return Ok(Rewrite::Keep);
+        };
+        Ok(match context.node(*input) {
+            Some(ExprNode::NaryMul { factors }) => {
+                self.push_conjugated_product(factors, metadata, context)
+            }
+            Some(ExprNode::Binary {
+                op: BinaryOp::Mul,
+                lhs,
+                rhs,
+            }) => self.push_conjugated_product(&[*lhs, *rhs], metadata, context),
+            Some(ExprNode::NaryAdd { terms }) => self.push_conjugated_sum(terms, metadata, context),
+            Some(ExprNode::Binary {
+                op: BinaryOp::Add,
+                lhs,
+                rhs,
+            }) => self.push_conjugated_sum(&[*lhs, *rhs], metadata, context),
+            Some(ExprNode::Unary {
+                op: UnaryOp::Exp,
+                input,
+            }) => self.push_conjugated_exp(*input, metadata, context),
+            Some(ExprNode::Unary {
+                op: UnaryOp::Neg,
+                input,
+            }) => self.push_conjugated_neg(*input, metadata, context),
+            _ => Rewrite::Keep,
+        })
+    }
+}
+
+impl ConjugationRule {
+    fn push_conjugated_product(
+        &self,
+        factors: &[ExprId],
+        metadata: &ExprMetadata,
+        context: &RewriteContext<'_>,
+    ) -> Rewrite {
+        let mut builder = ReplacementFragment::new(context);
+        let factors = factors
+            .iter()
+            .map(|factor| builder.conjugated_term(*factor))
+            .collect();
+        builder.push(ExprNode::NaryMul { factors }, metadata.clone());
+        builder.into_rewrite()
+    }
+
+    fn push_conjugated_sum(
+        &self,
+        terms: &[ExprId],
+        metadata: &ExprMetadata,
+        context: &RewriteContext<'_>,
+    ) -> Rewrite {
+        let mut builder = ReplacementFragment::new(context);
+        let terms = terms
+            .iter()
+            .map(|term| builder.conjugated_term(*term))
+            .collect();
+        builder.push(ExprNode::NaryAdd { terms }, metadata.clone());
+        builder.into_rewrite()
+    }
+
+    fn push_conjugated_exp(
+        &self,
+        input: ExprId,
+        metadata: &ExprMetadata,
+        context: &RewriteContext<'_>,
+    ) -> Rewrite {
+        let mut builder = ReplacementFragment::new(context);
+        let input = builder.conjugated_term(input);
+        builder.push(
+            ExprNode::Unary {
+                op: UnaryOp::Exp,
+                input,
+            },
+            metadata.clone(),
+        );
+        builder.into_rewrite()
+    }
+
+    fn push_conjugated_neg(
+        &self,
+        input: ExprId,
+        metadata: &ExprMetadata,
+        context: &RewriteContext<'_>,
+    ) -> Rewrite {
+        let mut builder = ReplacementFragment::new(context);
+        let input = builder.conjugated_term(input);
+        builder.push(
+            ExprNode::Unary {
+                op: UnaryOp::Neg,
+                input,
+            },
+            metadata.clone(),
+        );
+        builder.into_rewrite()
     }
 }
 

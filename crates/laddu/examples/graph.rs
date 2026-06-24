@@ -10,9 +10,17 @@ fn main() -> Result<(), Box<dyn Error>> {
     let costheta = parameter!("costheta");
     let phi = parameter!("phi");
     let model = (w.D(&costheta, &phi, -&phi) * y.evaluate(&costheta, &phi)).norm_sqr();
-    println!("Raw graph:\n{}", model.to_graph());
+    println!(
+        "Raw graph:\n{}\n\n{}",
+        model.to_graph().display_tree(),
+        model.to_graph()
+    );
 
     let compiled = CompiledModel::from_expr(&model)?;
-    println!("Optimized graph:\n{}", compiled.graph());
+    println!(
+        "Optimized graph:\n{}\n\n{}",
+        compiled.graph().display_tree(),
+        compiled.graph()
+    );
     Ok(())
 }

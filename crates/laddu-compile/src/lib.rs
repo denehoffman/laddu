@@ -11,9 +11,10 @@ pub mod optimize;
 pub use cost::OptimizationCost;
 pub use facts::{DependencyFacts, EvaluationClass, GraphFacts, NodeFacts, NumberClass};
 pub use optimize::{
-    AlgebraicIdentityRule, CanonicalCsePass, ComplexFactRule, ConstantFoldScalarRule,
-    ExponentialRule, FactorCommonProductRule, OptimizationPass, OptimizationPipeline, Rewrite,
-    RewriteContext, RewritePass, RewriteRule,
+    AlgebraicIdentityRule, CanonicalCsePass, ComplexFactRule, ConjugationRule,
+    ConstantFoldScalarRule, CostGatePass, ExponentialRule, FactorCommonProductRule,
+    NormSqrExpansionRule, OptimizationPass, OptimizationPipeline, Rewrite, RewriteContext,
+    RewritePass, RewriteRule,
 };
 
 pub type CompileResult<T> = Result<T, CompileError>;
@@ -176,6 +177,37 @@ mod tests {
         }
     }
 
+    #[derive(Copy, Clone, Debug)]
+    struct WrapRootInExp;
+
+    impl OptimizationPass for WrapRootInExp {
+        fn name(&self) -> &'static str {
+            "wrap-root-in-exp"
+        }
+
+        fn run(&self, graph: ExprGraph) -> CompileResult<ExprGraph> {
+            let mut nodes = graph.nodes().to_vec();
+            let mut metadata = graph
+                .nodes()
+                .iter()
+                .enumerate()
+                .map(|(index, _)| {
+                    graph
+                        .metadata(ExprId::from_index(index).expect("graph too large"))
+                        .expect("graph metadata length is validated")
+                        .clone()
+                })
+                .collect::<Vec<_>>();
+            let root = ExprId::from_index(nodes.len()).expect("graph too large");
+            nodes.push(ExprNode::Unary {
+                op: UnaryOp::Exp,
+                input: graph.root(),
+            });
+            metadata.push(ExprMetadata::new(laddu_expr::ExprSourceKind::Unary));
+            Ok(ExprGraph::from_parts(root, nodes, metadata)?)
+        }
+    }
+
     fn count_binary_op(compiled: &CompiledModel, op: BinaryOp) -> usize {
         compiled
             .graph()
@@ -286,6 +318,56 @@ mod tests {
 
         assert!(with_exponential.weighted_ops() < without_exponential.weighted_ops());
         assert_eq!(with_exponential.transcendental_ops(), 1);
+    }
+
+    #[test]
+    fn cost_gate_rejects_more_expensive_candidate_pipeline() {
+        let x = Expr::from(parameter!("x"));
+        let baseline =
+            CompiledModel::from_expr_with_options(&x, &CompileOptions::without_optimizations())
+                .unwrap();
+        let gated = CompiledModel::from_expr_with_options(
+            &x,
+            &CompileOptions::with_pipeline(OptimizationPipeline::new().with_pass(
+                CostGatePass::new(OptimizationPipeline::new().with_pass(WrapRootInExp)),
+            )),
+        )
+        .unwrap();
+
+        assert_eq!(baseline.graph().root(), gated.graph().root());
+        assert_eq!(baseline.graph().nodes(), gated.graph().nodes());
+        assert_eq!(baseline.cost(), gated.cost());
+    }
+
+    #[test]
+    fn cost_gated_norm_sqr_expansion_removes_unit_phase_when_cheaper() {
+        let costheta = Expr::from(parameter!("costheta"));
+        let phi = Expr::from(parameter!("phi"));
+        let expr = ((Complex64::I * phi).exp() * (1.0 + costheta)).norm_sqr();
+        let without_gate = CompiledModel::from_expr_with_options(
+            &expr,
+            &CompileOptions::with_pipeline(
+                OptimizationPipeline::new()
+                    .with_pass(RewritePass::simplify())
+                    .with_pass(CanonicalCsePass)
+                    .with_pass(RewritePass::normalize_add_mul())
+                    .with_pass(CanonicalCsePass)
+                    .with_pass(RewritePass::combine_like_terms())
+                    .with_pass(CanonicalCsePass)
+                    .with_pass(RewritePass::factor_common_products())
+                    .with_pass(RewritePass::normalize_add_mul())
+                    .with_pass(CanonicalCsePass)
+                    .with_pass(RewritePass::exponential())
+                    .with_pass(RewritePass::simplify())
+                    .with_max_iterations(16),
+            ),
+        )
+        .unwrap();
+        let with_gate = CompiledModel::from_expr(&expr).unwrap();
+
+        assert!(with_gate.cost().weighted_ops() < without_gate.cost().weighted_ops());
+        assert_eq!(count_unary_op(&with_gate, UnaryOp::NormSqr), 0);
+        assert_eq!(count_unary_op(&with_gate, UnaryOp::Exp), 0);
     }
 
     #[test]
@@ -866,6 +948,57 @@ mod tests {
             ))
         ));
         assert_eq!(count_unary_op(&compiled, UnaryOp::Exp), 1);
+    }
+
+    #[test]
+    fn partial_common_product_factorization_groups_subset_terms() {
+        let x = Expr::from(parameter!("x"));
+        let y = Expr::from(parameter!("y"));
+        let direct =
+            CompiledModel::from_expr(&(1.0 + Complex64::I * x.clone() + Complex64::I * y.clone()))
+                .unwrap();
+
+        assert!(matches!(
+            direct.graph().node(direct.graph().root()),
+            Some(ExprNode::NaryAdd { terms }) if terms.len() == 2
+                && terms.iter().any(|term| matches!(direct.graph().node(*term), Some(ExprNode::RealConst(1.0))))
+                && terms.iter().any(|term| matches!(
+                    direct.graph().node(*term),
+                    Some(ExprNode::NaryMul { factors }) if factors.iter().any(|factor| matches!(
+                        direct.graph().node(*factor),
+                        Some(ExprNode::ComplexConst(value)) if *value == Complex64::I
+                    )) && factors.iter().any(|factor| matches!(
+                        direct.graph().node(*factor),
+                        Some(ExprNode::NaryAdd { terms }) if terms.len() == 2
+                    ))
+                ))
+        ));
+
+        let compiled =
+            CompiledModel::from_expr(&(1.0 + Complex64::I * x + Complex64::I * y).exp()).unwrap();
+
+        let ExprNode::Unary {
+            op: UnaryOp::Exp,
+            input,
+        } = compiled.graph().node(compiled.graph().root()).unwrap()
+        else {
+            panic!("expected root exp node");
+        };
+        assert!(matches!(
+            compiled.graph().node(*input),
+            Some(ExprNode::NaryAdd { terms }) if terms.len() == 2
+                && terms.iter().any(|term| matches!(compiled.graph().node(*term), Some(ExprNode::RealConst(1.0))))
+                && terms.iter().any(|term| matches!(
+                    compiled.graph().node(*term),
+                    Some(ExprNode::NaryMul { factors }) if factors.iter().any(|factor| matches!(
+                        compiled.graph().node(*factor),
+                        Some(ExprNode::ComplexConst(value)) if *value == Complex64::I
+                    )) && factors.iter().any(|factor| matches!(
+                        compiled.graph().node(*factor),
+                        Some(ExprNode::NaryAdd { terms }) if terms.len() == 2
+                    ))
+                ))
+        ));
     }
 
     #[test]
