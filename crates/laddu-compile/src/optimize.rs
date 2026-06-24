@@ -158,6 +158,7 @@ impl RewritePass {
         Self::new("simplify")
             .with_rule(ConstantFoldScalarRule)
             .with_rule(AlgebraicIdentityRule)
+            .with_rule(TrigIdentityRule)
             .with_rule(ComplexFactRule)
     }
 
@@ -291,19 +292,7 @@ impl RewriteRule for ConstantFoldScalarRule {
                     metadata: metadata.clone(),
                 })
             }
-            ExprNode::NaryAdd { terms } => {
-                let Some(sum) = terms
-                    .iter()
-                    .map(|id| context.node(*id).and_then(ExprNode::const_value))
-                    .try_fold(Complex64::ZERO, |sum, value| value.map(|value| sum + value))
-                else {
-                    return Ok(Rewrite::Keep);
-                };
-                Ok(Rewrite::Replace {
-                    node: sum.into(),
-                    metadata: metadata.clone(),
-                })
-            }
+            ExprNode::NaryAdd { terms } => self.fold_nary_add_constants(terms, metadata, context),
             ExprNode::NaryMul { factors } => {
                 let Some(product) = factors
                     .iter()
@@ -321,6 +310,68 @@ impl RewriteRule for ConstantFoldScalarRule {
             }
             _ => Ok(Rewrite::Keep),
         }
+    }
+}
+
+impl ConstantFoldScalarRule {
+    fn fold_nary_add_constants(
+        &self,
+        terms: &[ExprId],
+        metadata: &ExprMetadata,
+        context: &RewriteContext<'_>,
+    ) -> CompileResult<Rewrite> {
+        let mut constant_sum = Complex64::ZERO;
+        let mut nonconstant_terms = Vec::new();
+        let mut constant_count = 0;
+
+        for term in terms {
+            if let Some(value) = context.node(*term).and_then(ExprNode::const_value) {
+                constant_sum += value;
+                constant_count += 1;
+            } else {
+                nonconstant_terms.push(*term);
+            }
+        }
+
+        if constant_count == 0 {
+            return Ok(Rewrite::Keep);
+        }
+
+        if nonconstant_terms.is_empty() {
+            return Ok(Rewrite::Replace {
+                node: constant_sum.into(),
+                metadata: metadata.clone(),
+            });
+        }
+
+        if constant_sum != Complex64::ZERO {
+            if constant_count == 1 {
+                return Ok(Rewrite::Keep);
+            }
+            let mut builder = ReplacementFragment::new(context);
+            let constant = builder.push(
+                ExprNode::from(constant_sum),
+                ExprMetadata::new(ExprSourceKind::Const),
+            );
+            nonconstant_terms.push(constant);
+            builder.push(
+                ExprNode::NaryAdd {
+                    terms: nonconstant_terms,
+                },
+                metadata.clone(),
+            );
+            return Ok(builder.into_rewrite());
+        }
+
+        Ok(match nonconstant_terms.as_slice() {
+            [term] => alias_or_preserve(*term, metadata, context),
+            _ => Rewrite::Replace {
+                node: ExprNode::NaryAdd {
+                    terms: nonconstant_terms,
+                },
+                metadata: metadata.clone(),
+            },
+        })
     }
 }
 
@@ -436,6 +487,39 @@ impl RewriteRule for AlgebraicIdentityRule {
                     return Ok(Rewrite::Keep);
                 };
                 Ok(alias_or_preserve(*input, metadata, context))
+            }
+            ExprNode::Unary {
+                op: UnaryOp::PowI(0),
+                ..
+            } => Ok(Rewrite::Replace {
+                node: ExprNode::RealConst(1.0),
+                metadata: metadata.clone(),
+            }),
+            ExprNode::Unary {
+                op: UnaryOp::PowI(1),
+                input,
+            } => Ok(alias_or_preserve(*input, metadata, context)),
+            ExprNode::Unary {
+                op: UnaryOp::PowI(outer_power),
+                input,
+            } => {
+                let Some(ExprNode::Unary {
+                    op: UnaryOp::PowI(inner_power),
+                    input,
+                }) = context.node(*input)
+                else {
+                    return Ok(Rewrite::Keep);
+                };
+                let Some(power) = inner_power.checked_mul(*outer_power) else {
+                    return Ok(Rewrite::Keep);
+                };
+                Ok(Rewrite::Replace {
+                    node: ExprNode::Unary {
+                        op: UnaryOp::PowI(power),
+                        input: *input,
+                    },
+                    metadata: metadata.clone(),
+                })
             }
             ExprNode::Unary {
                 op: UnaryOp::Conj,
@@ -640,6 +724,304 @@ impl AlgebraicIdentityRule {
     }
 }
 
+#[derive(Copy, Clone, Debug, Default)]
+pub struct TrigIdentityRule;
+
+impl RewriteRule for TrigIdentityRule {
+    fn name(&self) -> &'static str {
+        "trig-identity"
+    }
+
+    fn rewrite(
+        &self,
+        node: &ExprNode,
+        metadata: &ExprMetadata,
+        context: &RewriteContext<'_>,
+    ) -> CompileResult<Rewrite> {
+        match node {
+            ExprNode::Binary {
+                op: BinaryOp::Add,
+                lhs,
+                rhs,
+            } => Ok(self.simplify_sum(&[*lhs, *rhs], metadata, context)),
+            ExprNode::Binary {
+                op: BinaryOp::Sub,
+                lhs,
+                rhs,
+            } if context.node(*lhs).is_some_and(ExprNode::is_one) => {
+                Ok(self.simplify_one_minus(*rhs, metadata, context))
+            }
+            ExprNode::NaryAdd { terms } => Ok(self.simplify_sum(terms, metadata, context)),
+            _ => Ok(Rewrite::Keep),
+        }
+    }
+}
+
+impl TrigIdentityRule {
+    fn simplify_sum(
+        &self,
+        terms: &[ExprId],
+        metadata: &ExprMetadata,
+        context: &RewriteContext<'_>,
+    ) -> Rewrite {
+        if let Some(rewrite) = self.simplify_sin_cos_pair(terms, metadata, context) {
+            return rewrite;
+        }
+        self.simplify_one_minus_trig_square(terms, metadata, context)
+    }
+
+    fn simplify_sin_cos_pair(
+        &self,
+        terms: &[ExprId],
+        metadata: &ExprMetadata,
+        context: &RewriteContext<'_>,
+    ) -> Option<Rewrite> {
+        for (lhs_index, lhs) in terms.iter().enumerate() {
+            let Some((lhs_op, lhs_input)) = self.trig_square(*lhs, context) else {
+                continue;
+            };
+            for (rhs_index, rhs) in terms.iter().enumerate().skip(lhs_index + 1) {
+                let Some((rhs_op, rhs_input)) = self.trig_square(*rhs, context) else {
+                    continue;
+                };
+                if lhs_input == rhs_input && lhs_op.is_complement(rhs_op) {
+                    return Some(
+                        self.replace_pair_with_one(terms, lhs_index, rhs_index, metadata, context),
+                    );
+                }
+            }
+        }
+        None
+    }
+
+    fn replace_pair_with_one(
+        &self,
+        terms: &[ExprId],
+        lhs_index: usize,
+        rhs_index: usize,
+        metadata: &ExprMetadata,
+        context: &RewriteContext<'_>,
+    ) -> Rewrite {
+        let remaining: Vec<_> = terms
+            .iter()
+            .enumerate()
+            .filter_map(|(index, term)| {
+                if index == lhs_index || index == rhs_index {
+                    None
+                } else {
+                    Some(*term)
+                }
+            })
+            .collect();
+
+        if remaining.is_empty() {
+            return Rewrite::Replace {
+                node: ExprNode::RealConst(1.0),
+                metadata: metadata.clone(),
+            };
+        }
+
+        let mut builder = ReplacementFragment::new(context);
+        let one = builder.push(
+            ExprNode::RealConst(1.0),
+            ExprMetadata::new(ExprSourceKind::Const),
+        );
+        let mut terms = remaining;
+        terms.push(one);
+        builder.push(ExprNode::NaryAdd { terms }, metadata.clone());
+        builder.into_rewrite()
+    }
+
+    fn simplify_one_minus_trig_square(
+        &self,
+        terms: &[ExprId],
+        metadata: &ExprMetadata,
+        context: &RewriteContext<'_>,
+    ) -> Rewrite {
+        let Some(one_index) = terms
+            .iter()
+            .position(|term| context.node(*term).is_some_and(ExprNode::is_one))
+        else {
+            return Rewrite::Keep;
+        };
+
+        for (index, term) in terms.iter().enumerate() {
+            if index == one_index {
+                continue;
+            }
+            let Some((op, input)) = self.negative_trig_square(*term, context) else {
+                continue;
+            };
+            let remaining: Vec<_> = terms
+                .iter()
+                .enumerate()
+                .filter_map(|(term_index, term)| {
+                    if term_index == one_index || term_index == index {
+                        None
+                    } else {
+                        Some(*term)
+                    }
+                })
+                .collect();
+            return self.replace_one_minus_term(remaining, op, input, metadata, context);
+        }
+
+        Rewrite::Keep
+    }
+
+    fn simplify_one_minus(
+        &self,
+        rhs: ExprId,
+        metadata: &ExprMetadata,
+        context: &RewriteContext<'_>,
+    ) -> Rewrite {
+        let Some((op, input)) = self.trig_square(rhs, context) else {
+            return Rewrite::Keep;
+        };
+        let mut builder = ReplacementFragment::new(context);
+        self.push_complement_square(op, input, metadata.clone(), &mut builder);
+        builder.into_rewrite()
+    }
+
+    fn replace_one_minus_term(
+        &self,
+        remaining: Vec<ExprId>,
+        op: TrigSquareOp,
+        input: ExprId,
+        metadata: &ExprMetadata,
+        context: &RewriteContext<'_>,
+    ) -> Rewrite {
+        let mut builder = ReplacementFragment::new(context);
+        if remaining.is_empty() {
+            self.push_complement_square(op, input, metadata.clone(), &mut builder);
+            return builder.into_rewrite();
+        }
+
+        let mut terms = remaining;
+        let replacement = self.push_complement_square(
+            op,
+            input,
+            ExprMetadata::new(ExprSourceKind::Unary),
+            &mut builder,
+        );
+        terms.push(replacement);
+        builder.push(ExprNode::NaryAdd { terms }, metadata.clone());
+        builder.into_rewrite()
+    }
+
+    fn push_complement_square(
+        &self,
+        op: TrigSquareOp,
+        input: ExprId,
+        metadata: ExprMetadata,
+        builder: &mut ReplacementFragment<'_>,
+    ) -> ExprId {
+        let trig = builder.push(
+            ExprNode::Unary {
+                op: op.complement().into_unary_op(),
+                input,
+            },
+            ExprMetadata::new(ExprSourceKind::Unary),
+        );
+        builder.push(
+            ExprNode::Unary {
+                op: UnaryOp::PowI(2),
+                input: trig,
+            },
+            metadata,
+        )
+    }
+
+    fn trig_square(
+        &self,
+        id: ExprId,
+        context: &RewriteContext<'_>,
+    ) -> Option<(TrigSquareOp, ExprId)> {
+        let ExprNode::Unary {
+            op: UnaryOp::PowI(2),
+            input,
+        } = context.node(id)?
+        else {
+            return None;
+        };
+        self.trig_call(*input, context)
+    }
+
+    fn negative_trig_square(
+        &self,
+        id: ExprId,
+        context: &RewriteContext<'_>,
+    ) -> Option<(TrigSquareOp, ExprId)> {
+        match context.node(id)? {
+            ExprNode::Unary {
+                op: UnaryOp::Neg,
+                input,
+            } => self.trig_square(*input, context),
+            ExprNode::NaryMul { factors } => {
+                let mut has_minus_one = false;
+                let mut square = None;
+                for factor in factors {
+                    match context.node(*factor) {
+                        Some(ExprNode::RealConst(-1.0)) if !has_minus_one => {
+                            has_minus_one = true;
+                        }
+                        _ if square.is_none() => {
+                            square = self.trig_square(*factor, context);
+                        }
+                        _ => return None,
+                    }
+                }
+                has_minus_one.then_some(square).flatten()
+            }
+            _ => None,
+        }
+    }
+
+    fn trig_call(
+        &self,
+        id: ExprId,
+        context: &RewriteContext<'_>,
+    ) -> Option<(TrigSquareOp, ExprId)> {
+        match context.node(id)? {
+            ExprNode::Unary {
+                op: UnaryOp::Sin,
+                input,
+            } => Some((TrigSquareOp::Sin, *input)),
+            ExprNode::Unary {
+                op: UnaryOp::Cos,
+                input,
+            } => Some((TrigSquareOp::Cos, *input)),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+enum TrigSquareOp {
+    Sin,
+    Cos,
+}
+
+impl TrigSquareOp {
+    fn complement(self) -> Self {
+        match self {
+            Self::Sin => Self::Cos,
+            Self::Cos => Self::Sin,
+        }
+    }
+
+    fn is_complement(self, other: Self) -> bool {
+        self.complement() == other
+    }
+
+    fn into_unary_op(self) -> UnaryOp {
+        match self {
+            Self::Sin => UnaryOp::Sin,
+            Self::Cos => UnaryOp::Cos,
+        }
+    }
+}
+
 fn is_scalar_value(context: &RewriteContext<'_>, id: ExprId) -> bool {
     context
         .facts(id)
@@ -681,6 +1063,13 @@ impl RewriteRule for NormalizeAddMulRule {
                 lhs,
                 rhs,
             } => self.normalize_product(&[*lhs, *rhs], metadata, context),
+            ExprNode::Binary {
+                op: BinaryOp::Div,
+                lhs,
+                rhs,
+            } if is_scalar_value(context, *lhs) && is_scalar_value(context, *rhs) => {
+                self.normalize_division(*lhs, *rhs, metadata, context)
+            }
             ExprNode::NaryAdd { terms } => self.normalize_sum(terms, metadata, context),
             ExprNode::NaryMul { factors } => self.normalize_product(factors, metadata, context),
             _ => Ok(Rewrite::Keep),
@@ -701,6 +1090,30 @@ impl NormalizeAddMulRule {
         builder.push(
             ExprNode::NaryAdd {
                 terms: vec![lhs, rhs],
+            },
+            metadata.clone(),
+        );
+        Ok(builder.into_rewrite())
+    }
+
+    fn normalize_division(
+        &self,
+        lhs: ExprId,
+        rhs: ExprId,
+        metadata: &ExprMetadata,
+        context: &RewriteContext<'_>,
+    ) -> CompileResult<Rewrite> {
+        let mut builder = ReplacementFragment::new(context);
+        let reciprocal = builder.push(
+            ExprNode::Unary {
+                op: UnaryOp::PowI(-1),
+                input: rhs,
+            },
+            ExprMetadata::new(ExprSourceKind::Unary),
+        );
+        builder.push(
+            ExprNode::NaryMul {
+                factors: vec![lhs, reciprocal],
             },
             metadata.clone(),
         );

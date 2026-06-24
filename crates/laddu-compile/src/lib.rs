@@ -622,6 +622,91 @@ mod tests {
     }
 
     #[test]
+    fn nary_add_constant_terms_are_folded_without_requiring_all_constants() {
+        let x = Expr::from(parameter!("x"));
+        let compiled = CompiledModel::from_expr(&(x + 2.0 + 3.0)).unwrap();
+
+        assert!(matches!(
+            compiled.graph().node(compiled.graph().root()),
+            Some(ExprNode::NaryAdd { terms }) if terms.len() == 2
+                && terms.iter().any(|id| matches!(compiled.graph().node(*id), Some(ExprNode::RealConst(5.0))))
+                && terms.iter().any(|id| matches!(compiled.graph().node(*id), Some(ExprNode::ScalarParam(parameter)) if parameter.name() == "x"))
+        ));
+    }
+
+    #[test]
+    fn power_identities_simplify_integer_powers() {
+        let x = Expr::from(parameter!("x"));
+
+        let identity = CompiledModel::from_expr(&x.powi(1)).unwrap();
+        assert!(matches!(
+            identity.graph().node(identity.graph().root()),
+            Some(ExprNode::ScalarParam(parameter)) if parameter.name() == "x"
+        ));
+
+        let one = CompiledModel::from_expr(&x.powi(0)).unwrap();
+        assert!(matches!(
+            one.graph().node(one.graph().root()),
+            Some(ExprNode::RealConst(1.0))
+        ));
+
+        let nested = CompiledModel::from_expr(&x.powi(2).powi(3)).unwrap();
+        assert!(matches!(
+            nested.graph().node(nested.graph().root()),
+            Some(ExprNode::Unary {
+                op: UnaryOp::PowI(6),
+                input,
+            }) if matches!(nested.graph().node(*input), Some(ExprNode::ScalarParam(parameter)) if parameter.name() == "x")
+        ));
+    }
+
+    #[test]
+    fn scalar_division_normalizes_to_inverse_powers() {
+        let x = Expr::from(parameter!("x"));
+        let compiled = CompiledModel::from_expr(&(x.clone().powi(3) / x)).unwrap();
+
+        assert!(compiled.graph().nodes().iter().all(|node| !matches!(
+            node,
+            ExprNode::Binary {
+                op: BinaryOp::Div,
+                ..
+            }
+        )));
+        assert!(matches!(
+            compiled.graph().node(compiled.graph().root()),
+            Some(ExprNode::Unary {
+                op: UnaryOp::PowI(2),
+                input,
+            }) if matches!(compiled.graph().node(*input), Some(ExprNode::ScalarParam(parameter)) if parameter.name() == "x")
+        ));
+    }
+
+    #[test]
+    fn trig_identities_simplify_common_pythagorean_forms() {
+        let phi = Expr::from(parameter!("phi"));
+        let sin_cos = CompiledModel::from_expr(&(phi.sin().powi(2) + phi.cos().powi(2))).unwrap();
+        assert!(matches!(
+            sin_cos.graph().node(sin_cos.graph().root()),
+            Some(ExprNode::RealConst(1.0))
+        ));
+
+        let one_minus_cos = CompiledModel::from_expr(&(1.0 - phi.cos().powi(2))).unwrap();
+        assert!(matches!(
+            one_minus_cos.graph().node(one_minus_cos.graph().root()),
+            Some(ExprNode::Unary {
+                op: UnaryOp::PowI(2),
+                input,
+            }) if matches!(
+                one_minus_cos.graph().node(*input),
+                Some(ExprNode::Unary {
+                    op: UnaryOp::Sin,
+                    ..
+                })
+            )
+        ));
+    }
+
+    #[test]
     fn like_terms_with_real_coefficients_are_combined() {
         let x = Expr::from(parameter!("x"));
         let compiled = CompiledModel::from_expr(&(2.0 * x.clone() + 3.0 * x)).unwrap();
