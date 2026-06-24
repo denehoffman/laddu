@@ -746,6 +746,375 @@ impl ExprGraph {
         self.metadata.get(id.index())
     }
 
+    pub fn display_tree(&self) -> ExprGraphTreeDisplay<'_> {
+        ExprGraphTreeDisplay { graph: self }
+    }
+
+    fn format_expression(&self, id: ExprId) -> String {
+        self.format_child(id, ExprPrecedence::Lowest, false)
+    }
+
+    fn format_child(
+        &self,
+        id: ExprId,
+        parent_precedence: ExprPrecedence,
+        parenthesize_equal: bool,
+    ) -> String {
+        let (text, precedence) = self.format_node_expression(id);
+        if precedence < parent_precedence || (parenthesize_equal && precedence == parent_precedence)
+        {
+            format!("({text})")
+        } else {
+            text
+        }
+    }
+
+    fn format_node_expression(&self, id: ExprId) -> (String, ExprPrecedence) {
+        let Some(node) = self.node(id) else {
+            return (format!("<missing #{}>", id.index()), ExprPrecedence::Atom);
+        };
+
+        match node {
+            ExprNode::RealConst(value) => (Self::format_real_number(*value), ExprPrecedence::Atom),
+            ExprNode::ComplexConst(value) => self.format_complex_const(*value),
+            ExprNode::ScalarParam(parameter) => (parameter.name().to_owned(), ExprPrecedence::Atom),
+            ExprNode::ComplexScalarParam { re, im } => (
+                format!("complex({}, {})", re.name(), im.name()),
+                ExprPrecedence::Atom,
+            ),
+            ExprNode::PolarComplexScalarParam { mag, phase } => (
+                format!("polar({}, {})", mag.name(), phase.name()),
+                ExprPrecedence::Atom,
+            ),
+            ExprNode::EventScalar(name) => (name.to_string(), ExprPrecedence::Atom),
+            ExprNode::Unary { op, input } => self.format_unary_expression(*op, *input),
+            ExprNode::Binary { op, lhs, rhs } => self.format_binary_expression(*op, *lhs, *rhs),
+            ExprNode::NaryAdd { terms } => self.format_sum_expression(terms),
+            ExprNode::NaryMul { factors } => self.format_product_expression(factors),
+            ExprNode::Complex { re, im } => (
+                format!(
+                    "complex({}, {})",
+                    self.format_expression(*re),
+                    self.format_expression(*im)
+                ),
+                ExprPrecedence::Atom,
+            ),
+            ExprNode::Vector { elements } => (
+                format!(
+                    "[{}]",
+                    elements
+                        .iter()
+                        .map(|id| self.format_expression(*id))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+                ExprPrecedence::Atom,
+            ),
+            ExprNode::Matrix {
+                rows,
+                cols,
+                elements,
+            } => {
+                let rows = (0..*rows)
+                    .map(|row| {
+                        let start = row * *cols;
+                        let end = start + *cols;
+                        format!(
+                            "[{}]",
+                            elements[start..end]
+                                .iter()
+                                .map(|id| self.format_expression(*id))
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                (format!("[{rows}]"), ExprPrecedence::Atom)
+            }
+            ExprNode::Component { input, index } => (
+                format!(
+                    "{}[{index}]",
+                    self.format_child(*input, ExprPrecedence::Postfix, false)
+                ),
+                ExprPrecedence::Postfix,
+            ),
+            ExprNode::MatrixElement { input, row, col } => (
+                format!(
+                    "{}[{row}, {col}]",
+                    self.format_child(*input, ExprPrecedence::Postfix, false)
+                ),
+                ExprPrecedence::Postfix,
+            ),
+            ExprNode::MatMul { lhs, rhs } => (
+                format!(
+                    "matmul({}, {})",
+                    self.format_expression(*lhs),
+                    self.format_expression(*rhs)
+                ),
+                ExprPrecedence::Atom,
+            ),
+            ExprNode::MatVec { matrix, vector } => (
+                format!(
+                    "matvec({}, {})",
+                    self.format_expression(*matrix),
+                    self.format_expression(*vector)
+                ),
+                ExprPrecedence::Atom,
+            ),
+            ExprNode::Dot { lhs, rhs } => (
+                format!(
+                    "dot({}, {})",
+                    self.format_expression(*lhs),
+                    self.format_expression(*rhs)
+                ),
+                ExprPrecedence::Atom,
+            ),
+            ExprNode::Solve { matrix, rhs } => (
+                format!(
+                    "solve({}, {})",
+                    self.format_expression(*matrix),
+                    self.format_expression(*rhs)
+                ),
+                ExprPrecedence::Atom,
+            ),
+        }
+    }
+
+    fn format_unary_expression(&self, op: UnaryOp, input: ExprId) -> (String, ExprPrecedence) {
+        match op {
+            UnaryOp::Neg => (
+                format!("-{}", self.format_child(input, ExprPrecedence::Unary, true)),
+                ExprPrecedence::Unary,
+            ),
+            UnaryOp::Real => (
+                self.format_call_expression("real", input),
+                ExprPrecedence::Atom,
+            ),
+            UnaryOp::Imag => (
+                self.format_call_expression("imag", input),
+                ExprPrecedence::Atom,
+            ),
+            UnaryOp::Conj => (
+                self.format_call_expression("conj", input),
+                ExprPrecedence::Atom,
+            ),
+            UnaryOp::NormSqr => (
+                format!("|{}|^2", self.format_expression(input)),
+                ExprPrecedence::Pow,
+            ),
+            UnaryOp::Sqrt => (
+                self.format_call_expression("sqrt", input),
+                ExprPrecedence::Atom,
+            ),
+            UnaryOp::Exp => (
+                self.format_call_expression("exp", input),
+                ExprPrecedence::Atom,
+            ),
+            UnaryOp::Sin => (
+                self.format_call_expression("sin", input),
+                ExprPrecedence::Atom,
+            ),
+            UnaryOp::Cos => (
+                self.format_call_expression("cos", input),
+                ExprPrecedence::Atom,
+            ),
+            UnaryOp::Log => (
+                self.format_call_expression("log", input),
+                ExprPrecedence::Atom,
+            ),
+            UnaryOp::PowI(power) => {
+                let exponent = if power < 0 {
+                    format!("({power})")
+                } else {
+                    power.to_string()
+                };
+                (
+                    format!(
+                        "{}^{exponent}",
+                        self.format_child(input, ExprPrecedence::Pow, true)
+                    ),
+                    ExprPrecedence::Pow,
+                )
+            }
+        }
+    }
+
+    fn format_call_expression(&self, name: &str, input: ExprId) -> String {
+        format!("{name}({})", self.format_expression(input))
+    }
+
+    fn format_binary_expression(
+        &self,
+        op: BinaryOp,
+        lhs: ExprId,
+        rhs: ExprId,
+    ) -> (String, ExprPrecedence) {
+        match op {
+            BinaryOp::Add => self.format_sum_expression(&[lhs, rhs]),
+            BinaryOp::Sub => {
+                let lhs = self.format_child(lhs, ExprPrecedence::Add, false);
+                let rhs = self.format_child(rhs, ExprPrecedence::Add, true);
+                (format!("{lhs} - {rhs}"), ExprPrecedence::Add)
+            }
+            BinaryOp::Mul => self.format_product_expression(&[lhs, rhs]),
+            BinaryOp::Div => {
+                let lhs = self.format_child(lhs, ExprPrecedence::Mul, false);
+                let rhs = self.format_child(rhs, ExprPrecedence::Mul, true);
+                (format!("{lhs} / {rhs}"), ExprPrecedence::Mul)
+            }
+        }
+    }
+
+    fn format_sum_expression(&self, terms: &[ExprId]) -> (String, ExprPrecedence) {
+        let mut formatted = String::new();
+        for term in terms {
+            let (negative, term) = self.format_signed_term(*term);
+            if formatted.is_empty() {
+                if negative {
+                    formatted.push('-');
+                }
+                formatted.push_str(&term);
+            } else if negative {
+                formatted.push_str(" - ");
+                formatted.push_str(&term);
+            } else {
+                formatted.push_str(" + ");
+                formatted.push_str(&term);
+            }
+        }
+        if formatted.is_empty() {
+            formatted.push('0');
+        }
+        (formatted, ExprPrecedence::Add)
+    }
+
+    fn format_signed_term(&self, id: ExprId) -> (bool, String) {
+        match self.node(id) {
+            Some(ExprNode::RealConst(value)) if *value < 0.0 => {
+                (true, Self::format_real_number(-*value))
+            }
+            Some(ExprNode::Unary {
+                op: UnaryOp::Neg,
+                input,
+            }) => (true, self.format_child(*input, ExprPrecedence::Add, false)),
+            Some(ExprNode::NaryMul { factors }) => {
+                let (negative, product) = self.format_product_parts(factors);
+                (negative, product)
+            }
+            _ => (false, self.format_child(id, ExprPrecedence::Add, false)),
+        }
+    }
+
+    fn format_product_expression(&self, factors: &[ExprId]) -> (String, ExprPrecedence) {
+        let (negative, product) = self.format_product_parts(factors);
+        if negative {
+            (format!("-{product}"), ExprPrecedence::Unary)
+        } else {
+            (product, ExprPrecedence::Mul)
+        }
+    }
+
+    fn format_product_parts(&self, factors: &[ExprId]) -> (bool, String) {
+        let mut negative = false;
+        let mut pieces = Vec::new();
+
+        for factor in factors {
+            match self.node(*factor) {
+                Some(ExprNode::RealConst(value)) if *value < 0.0 => {
+                    negative = !negative;
+                    if *value != -1.0 || factors.len() == 1 {
+                        pieces.push(Self::format_real_number(-*value));
+                    }
+                }
+                Some(ExprNode::Unary {
+                    op: UnaryOp::Neg,
+                    input,
+                }) => {
+                    negative = !negative;
+                    pieces.push(self.format_child(*input, ExprPrecedence::Mul, false));
+                }
+                _ => pieces.push(self.format_child(*factor, ExprPrecedence::Mul, false)),
+            }
+        }
+
+        if pieces.is_empty() {
+            pieces.push("1".to_owned());
+        }
+
+        (negative, pieces.join(" * "))
+    }
+
+    fn format_complex_const(&self, value: Complex64) -> (String, ExprPrecedence) {
+        match (value.re, value.im) {
+            (re, 0.0) => (Self::format_real_number(re), ExprPrecedence::Atom),
+            (0.0, im) => (Self::format_imaginary_unit(im), ExprPrecedence::Atom),
+            (re, im) if im < 0.0 => (
+                format!(
+                    "{} - {}",
+                    Self::format_real_number(re),
+                    Self::format_imaginary_unit(-im)
+                ),
+                ExprPrecedence::Add,
+            ),
+            (re, im) => (
+                format!(
+                    "{} + {}",
+                    Self::format_real_number(re),
+                    Self::format_imaginary_unit(im)
+                ),
+                ExprPrecedence::Add,
+            ),
+        }
+    }
+
+    fn format_real_number(value: f64) -> String {
+        let Some((value, decimals)) = Self::nearby_simple_decimal(value) else {
+            return value.to_string();
+        };
+
+        if decimals == 0 {
+            return value.to_string();
+        }
+
+        let mut formatted = format!("{value:.decimals$}");
+        while formatted.contains('.') && formatted.ends_with('0') {
+            formatted.pop();
+        }
+        if formatted.ends_with('.') {
+            formatted.pop();
+        }
+        formatted
+    }
+
+    fn nearby_simple_decimal(value: f64) -> Option<(f64, usize)> {
+        if !value.is_finite() {
+            return None;
+        }
+
+        for decimals in 0..=12 {
+            let scale = 10_f64.powi(decimals as i32);
+            let rounded = (value * scale).round() / scale;
+            if Self::nearly_equal(value, rounded) {
+                return Some((rounded, decimals));
+            }
+        }
+
+        None
+    }
+
+    fn nearly_equal(lhs: f64, rhs: f64) -> bool {
+        (lhs - rhs).abs() <= f64::EPSILON * lhs.abs().max(rhs.abs()).max(1.0) * 16.0
+    }
+
+    fn format_imaginary_unit(value: f64) -> String {
+        match value {
+            1.0 => "i".to_owned(),
+            -1.0 => "-i".to_owned(),
+            value => format!("{}i", Self::format_real_number(value)),
+        }
+    }
+
     fn fmt_node(
         &self,
         f: &mut fmt::Formatter<'_>,
@@ -780,8 +1149,17 @@ impl ExprGraph {
 
     fn node_label(&self, id: ExprId, node: &ExprNode) -> String {
         let mut label = match node {
-            ExprNode::RealConst(value) => format!("#{} RealConst({value})", id.index()),
-            ExprNode::ComplexConst(value) => format!("#{} ComplexConst({value})", id.index()),
+            ExprNode::RealConst(value) => {
+                format!(
+                    "#{} RealConst({})",
+                    id.index(),
+                    Self::format_real_number(*value)
+                )
+            }
+            ExprNode::ComplexConst(value) => {
+                let (value, _) = self.format_complex_const(*value);
+                format!("#{} ComplexConst({value})", id.index())
+            }
             ExprNode::ScalarParam(parameter) => {
                 format!("#{} ScalarParam({})", id.index(), parameter.name())
             }
@@ -847,9 +1225,30 @@ impl ExprGraph {
 
 impl fmt::Display for ExprGraph {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "ExprGraph(root=#{})", self.root.index())?;
-        self.fmt_node(f, self.root, "", None)
+        f.write_str(&self.format_expression(self.root))
     }
+}
+
+pub struct ExprGraphTreeDisplay<'a> {
+    graph: &'a ExprGraph,
+}
+
+impl fmt::Display for ExprGraphTreeDisplay<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(f, "ExprGraph(root=#{})", self.graph.root.index())?;
+        self.graph.fmt_node(f, self.graph.root, "", None)
+    }
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum ExprPrecedence {
+    Lowest,
+    Add,
+    Mul,
+    Unary,
+    Pow,
+    Postfix,
+    Atom,
 }
 
 fn write_tree_line(
@@ -1112,7 +1511,7 @@ mod tests {
     fn display_formats_graph_as_labeled_tree() {
         let graph = ((parameter!("x") + 1.0).named("offset") * event_scalar("mass").tagged("data"))
             .to_graph();
-        let display = graph.to_string();
+        let display = graph.display_tree().to_string();
 
         assert!(display.starts_with("ExprGraph(root=#"));
         assert!(display.contains("Binary(Mul)"));
@@ -1122,6 +1521,66 @@ mod tests {
         assert!(display.contains("ScalarParam(x)"));
         assert!(display.contains("RealConst(1)"));
         assert!(display.contains("EventScalar(mass) tags=[data]"));
+    }
+
+    #[test]
+    fn display_formats_graph_as_expression() {
+        let costheta = Expr::from(parameter!("costheta"));
+        let phi = event_scalar("phi");
+        let p = Expr::from(parameter!("p"));
+        let phase = Expr::from(7.0) * Complex64::I;
+        let graph =
+            (((costheta.powi(2) * phi.sin()) - 5.2).norm_sqr() * p.conj() - phase.exp()).to_graph();
+
+        assert_eq!(
+            graph.to_string(),
+            "|costheta^2 * sin(phi) - 5.2|^2 * conj(p) - exp(7 * i)"
+        );
+    }
+
+    #[test]
+    fn display_parenthesizes_when_precedence_requires_it() {
+        let a = Expr::from(parameter!("a"));
+        let b = Expr::from(parameter!("b"));
+        let c = Expr::from(parameter!("c"));
+
+        assert_eq!(
+            (a.clone() * (b.clone() + c.clone())).to_graph().to_string(),
+            "a * (b + c)"
+        );
+        assert_eq!(
+            (a.clone() - (b.clone() - c.clone())).to_graph().to_string(),
+            "a - (b - c)"
+        );
+        assert_eq!(((a / b) / c).to_graph().to_string(), "a / b / c");
+    }
+
+    #[test]
+    fn display_rounds_tiny_float_representation_noise() {
+        let metadata = ExprMetadata::new(ExprSourceKind::Const);
+        let graph = ExprGraph::from_parts(
+            ExprId::from_index(2).unwrap(),
+            vec![
+                ExprNode::RealConst(2.9999999999999996),
+                ExprNode::ComplexConst(Complex64::new(0.30000000000000004, 1.9999999999999998)),
+                ExprNode::Binary {
+                    op: BinaryOp::Add,
+                    lhs: ExprId::from_index(0).unwrap(),
+                    rhs: ExprId::from_index(1).unwrap(),
+                },
+            ],
+            vec![metadata.clone(), metadata.clone(), metadata],
+        )
+        .unwrap();
+
+        assert_eq!(graph.to_string(), "3 + 0.3 + 2i");
+        assert!(graph.display_tree().to_string().contains("RealConst(3)"));
+        assert!(
+            graph
+                .display_tree()
+                .to_string()
+                .contains("ComplexConst(0.3 + 2i)")
+        );
     }
 
     #[test]

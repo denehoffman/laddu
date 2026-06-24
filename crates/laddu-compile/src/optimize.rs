@@ -744,7 +744,7 @@ impl NormalizeAddMulRule {
 
 #[derive(Copy, Clone, Debug, PartialEq)]
 enum ProductPiece {
-    Existing(ExprId),
+    Power { base: ExprId, exponent: i32 },
     Const(Complex64),
 }
 
@@ -801,6 +801,13 @@ impl<'a> ProductCollector<'a> {
                 self.coefficient = -self.coefficient;
                 self.collect_factor(*input);
             }
+            Some(ExprNode::Unary {
+                op: UnaryOp::PowI(power),
+                input,
+            }) if self.is_scalar(*input) => {
+                self.changed = true;
+                self.collect_power(*input, *power);
+            }
             Some(ExprNode::RealConst(value)) => self.collect_real_const(*value),
             Some(ExprNode::ComplexConst(value)) => {
                 self.changed = true;
@@ -809,7 +816,32 @@ impl<'a> ProductCollector<'a> {
                     self.zero = true;
                 }
             }
-            _ => self.pieces.push(ProductPiece::Existing(id)),
+            _ if self.is_scalar(id) => self.collect_power(id, 1),
+            _ => self.pieces.push(ProductPiece::Power {
+                base: id,
+                exponent: 1,
+            }),
+        }
+    }
+
+    fn collect_power(&mut self, base: ExprId, exponent: i32) {
+        if exponent == 0 {
+            self.changed = true;
+            return;
+        }
+
+        if let Some(ProductPiece::Power {
+            exponent: existing,
+            ..
+        }) = self
+            .pieces
+            .iter_mut()
+            .find(|piece| matches!(piece, ProductPiece::Power { base: candidate, .. } if *candidate == base))
+        {
+            *existing += exponent;
+            self.changed = true;
+        } else {
+            self.pieces.push(ProductPiece::Power { base, exponent });
         }
     }
 
@@ -832,22 +864,13 @@ impl<'a> ProductCollector<'a> {
             };
         }
 
+        self.remove_cancelled_powers();
+
         if self.coefficient != Complex64::ONE || self.pieces.is_empty() {
             self.pieces.insert(0, ProductPiece::Const(self.coefficient));
         }
 
-        let existing: Option<Vec<_>> = self
-            .pieces
-            .iter()
-            .map(|piece| match piece {
-                ProductPiece::Existing(id) => Some(*id),
-                ProductPiece::Const(_) => None,
-            })
-            .collect();
-        if !self.changed
-            && let Some(existing) = existing.as_ref()
-            && existing.as_slice() == original
-        {
+        if self.has_original_shape(original) {
             return Rewrite::Keep;
         }
 
@@ -858,8 +881,8 @@ impl<'a> ProductCollector<'a> {
                     metadata: metadata.clone(),
                 };
             }
-            [ProductPiece::Existing(factor)] => {
-                return alias_or_preserve(*factor, metadata, self.context);
+            [ProductPiece::Power { base, exponent: 1 }] => {
+                return alias_or_preserve(*base, metadata, self.context);
             }
             [ProductPiece::Const(value)] => {
                 return Rewrite::Replace {
@@ -874,7 +897,14 @@ impl<'a> ProductCollector<'a> {
         let mut factors = Vec::with_capacity(self.pieces.len());
         for piece in self.pieces {
             match piece {
-                ProductPiece::Existing(id) => factors.push(id),
+                ProductPiece::Power { base, exponent: 1 } => factors.push(base),
+                ProductPiece::Power { base, exponent } => factors.push(builder.push(
+                    ExprNode::Unary {
+                        op: UnaryOp::PowI(exponent),
+                        input: base,
+                    },
+                    ExprMetadata::new(ExprSourceKind::Unary),
+                )),
                 ProductPiece::Const(value) => factors.push(builder.push(
                     ExprNode::from(value),
                     ExprMetadata::new(ExprSourceKind::Const),
@@ -883,6 +913,39 @@ impl<'a> ProductCollector<'a> {
         }
         builder.push(ExprNode::NaryMul { factors }, metadata.clone());
         builder.into_rewrite()
+    }
+
+    fn remove_cancelled_powers(&mut self) {
+        self.pieces.retain(|piece| match piece {
+            ProductPiece::Power { exponent, .. } if *exponent == 0 => {
+                self.changed = true;
+                false
+            }
+            _ => true,
+        });
+    }
+
+    fn has_original_shape(&self, original: &[ExprId]) -> bool {
+        !self.changed
+            && self.pieces.len() == original.len()
+            && self
+                .pieces
+                .iter()
+                .zip(original)
+                .all(|(piece, original)| piece.as_identity_factor() == Some(*original))
+    }
+
+    fn is_scalar(&self, id: ExprId) -> bool {
+        is_scalar_value(self.context, id)
+    }
+}
+
+impl ProductPiece {
+    fn as_identity_factor(&self) -> Option<ExprId> {
+        match self {
+            Self::Power { base, exponent: 1 } => Some(*base),
+            Self::Power { .. } | Self::Const(_) => None,
+        }
     }
 }
 
@@ -1001,7 +1064,7 @@ impl FactorCommonProductRule {
                 ExprMetadata::new(ExprSourceKind::Const),
             ));
         }
-        factors.extend(common);
+        factors.extend(common.iter().map(|factor| factor.emit(&mut builder)));
         factors.push(sum);
         builder.push(ExprNode::NaryMul { factors }, metadata.clone());
         let Rewrite::ReplaceMany { nodes } = builder.into_rewrite() else {
@@ -1015,7 +1078,13 @@ impl FactorCommonProductRule {
 struct ProductTerm {
     sign: f64,
     coefficient: f64,
-    factors: Vec<ExprId>,
+    factors: Vec<PowerFactor>,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+struct PowerFactor {
+    base: ExprId,
+    exponent: i32,
 }
 
 impl ProductTerm {
@@ -1051,6 +1120,12 @@ impl ProductTerm {
                 self.sign *= -1.0;
                 self.collect(*input, context);
             }
+            Some(ExprNode::Unary {
+                op: UnaryOp::PowI(power),
+                input,
+            }) if is_scalar_value(context, *input) => {
+                self.collect_power(*input, *power);
+            }
             Some(ExprNode::RealConst(-1.0)) => {
                 self.sign *= -1.0;
             }
@@ -1061,13 +1136,36 @@ impl ProductTerm {
             Some(ExprNode::RealConst(value)) => {
                 self.coefficient *= *value;
             }
-            _ => self.factors.push(id),
+            _ => self.collect_power(id, 1),
         }
     }
 
+    fn collect_power(&mut self, base: ExprId, exponent: i32) {
+        if exponent == 0 {
+            return;
+        }
+
+        if let Some(existing) = self.factors.iter_mut().find(|factor| factor.base == base)
+            && let Some(exponent) = existing.exponent.checked_add(exponent)
+        {
+            existing.exponent = exponent;
+            return;
+        }
+
+        self.factors.push(PowerFactor { base, exponent });
+    }
+
     fn push_remainder(&self, builder: &mut ReplacementFragment<'_>) -> ExprId {
-        let mut factors = self.factors.clone();
+        let mut factors = Vec::new();
         let coefficient = self.sign * self.coefficient;
+
+        for factor in &self.factors {
+            if factor.exponent == 0 {
+                continue;
+            }
+            factors.push(factor.emit(builder));
+        }
+
         if coefficient != 1.0 || factors.is_empty() {
             let coefficient = builder.push(
                 ExprNode::RealConst(coefficient),
@@ -1085,18 +1183,34 @@ impl ProductTerm {
         }
     }
 
-    fn take_common_factors(&mut self, other: &mut Self) -> Vec<ExprId> {
+    fn take_common_factors(&mut self, other: &mut Self) -> Vec<PowerFactor> {
         let mut common = Vec::new();
         let mut index = 0;
         while index < self.factors.len() {
             let factor = self.factors[index];
-            if let Some(other_index) = other
-                .factors
-                .iter()
-                .position(|other_factor| *other_factor == factor)
-            {
-                common.push(self.factors.remove(index));
-                other.factors.remove(other_index);
+            if let Some(other_index) = other.factors.iter().position(|candidate| {
+                candidate.base == factor.base
+                    && candidate.exponent.signum() == factor.exponent.signum()
+            }) {
+                let common_exponent = factor
+                    .exponent
+                    .abs()
+                    .min(other.factors[other_index].exponent.abs())
+                    * factor.exponent.signum();
+                common.push(PowerFactor {
+                    base: factor.base,
+                    exponent: common_exponent,
+                });
+                self.factors[index].exponent -= common_exponent;
+                other.factors[other_index].exponent -= common_exponent;
+                if other.factors[other_index].exponent == 0 {
+                    other.factors.remove(other_index);
+                }
+                if self.factors[index].exponent == 0 {
+                    self.factors.remove(index);
+                } else {
+                    index += 1;
+                }
             } else {
                 index += 1;
             }
@@ -1151,6 +1265,21 @@ impl ProductTerm {
             rhs = remainder;
         }
         lhs
+    }
+}
+
+impl PowerFactor {
+    fn emit(&self, builder: &mut ReplacementFragment<'_>) -> ExprId {
+        match self.exponent {
+            1 => self.base,
+            exponent => builder.push(
+                ExprNode::Unary {
+                    op: UnaryOp::PowI(exponent),
+                    input: self.base,
+                },
+                ExprMetadata::new(ExprSourceKind::Unary),
+            ),
+        }
     }
 }
 

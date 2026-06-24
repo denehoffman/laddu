@@ -336,7 +336,10 @@ mod tests {
         assert_eq!(count_nary_add(&compiled), 1);
         assert!(matches!(
             compiled.graph().node(compiled.graph().root()),
-            Some(ExprNode::NaryMul { factors }) if factors.len() == 2 && factors[0] == factors[1]
+            Some(ExprNode::Unary {
+                op: UnaryOp::PowI(2),
+                input,
+            }) if matches!(compiled.graph().node(*input), Some(ExprNode::NaryAdd { .. }))
         ));
     }
 
@@ -351,7 +354,10 @@ mod tests {
 
         assert!(matches!(
             compiled.graph().node(compiled.graph().root()),
-            Some(ExprNode::NaryMul { factors }) if factors.len() == 2 && factors[0] == factors[1]
+            Some(ExprNode::Unary {
+                op: UnaryOp::PowI(2),
+                input,
+            }) if matches!(compiled.graph().node(*input), Some(ExprNode::NaryAdd { .. }))
         ));
         assert_eq!(count_nary_add(&compiled), 1);
     }
@@ -602,6 +608,55 @@ mod tests {
     }
 
     #[test]
+    fn product_normalization_collects_repeated_factors_into_powers() {
+        let x = Expr::from(parameter!("x"));
+        let compiled = CompiledModel::from_expr(&(x.clone() * x.clone() * x)).unwrap();
+
+        assert!(matches!(
+            compiled.graph().node(compiled.graph().root()),
+            Some(ExprNode::Unary {
+                op: UnaryOp::PowI(3),
+                input,
+            }) if matches!(compiled.graph().node(*input), Some(ExprNode::ScalarParam(parameter)) if parameter.name() == "x")
+        ));
+    }
+
+    #[test]
+    fn common_product_factor_extraction_handles_partial_powers() {
+        let x = Expr::from(parameter!("x"));
+        let a = Expr::from(parameter!("a"));
+        let b = Expr::from(parameter!("b"));
+        let compiled = CompiledModel::from_expr(&(a * x.clone().powi(3) - b * x.powi(2))).unwrap();
+
+        let Some(ExprNode::NaryMul { factors }) = compiled.graph().node(compiled.graph().root())
+        else {
+            panic!("expected factored product root");
+        };
+
+        assert!(factors.iter().any(|id| matches!(
+            compiled.graph().node(*id),
+            Some(ExprNode::Unary {
+                op: UnaryOp::PowI(2),
+                input,
+            }) if matches!(compiled.graph().node(*input), Some(ExprNode::ScalarParam(parameter)) if parameter.name() == "x")
+        )));
+        assert!(factors.iter().any(|id| matches!(
+            compiled.graph().node(*id),
+            Some(ExprNode::NaryAdd { terms }) if terms.len() == 2
+                && terms.iter().any(|term| matches!(
+                    compiled.graph().node(*term),
+                    Some(ExprNode::NaryMul { factors }) if factors.iter().any(|factor| matches!(compiled.graph().node(*factor), Some(ExprNode::ScalarParam(parameter)) if parameter.name() == "a"))
+                        && factors.iter().any(|factor| matches!(compiled.graph().node(*factor), Some(ExprNode::ScalarParam(parameter)) if parameter.name() == "x"))
+                ))
+                && terms.iter().any(|term| matches!(
+                    compiled.graph().node(*term),
+                    Some(ExprNode::NaryMul { factors }) if factors.iter().any(|factor| matches!(compiled.graph().node(*factor), Some(ExprNode::RealConst(-1.0))))
+                        && factors.iter().any(|factor| matches!(compiled.graph().node(*factor), Some(ExprNode::ScalarParam(parameter)) if parameter.name() == "b"))
+                ))
+        )));
+    }
+
+    #[test]
     fn common_product_factor_extraction_runs_before_coefficient_folding() {
         let c = Expr::from(parameter!("c"));
         let d = Expr::from(parameter!("d"));
@@ -620,22 +675,28 @@ mod tests {
                 .iter()
                 .any(|id| matches!(compiled.graph().node(*id), Some(ExprNode::RealConst(15.0))))
         );
-        assert_eq!(
-            factors
-                .iter()
-                .filter(|id| matches!(compiled.graph().node(**id), Some(ExprNode::ScalarParam(parameter)) if parameter.name() == "d"))
-                .count(),
-            2
-        );
+        assert!(factors.iter().any(|id| matches!(
+            compiled.graph().node(*id),
+            Some(ExprNode::Unary {
+                op: UnaryOp::PowI(2),
+                input,
+            }) if matches!(compiled.graph().node(*input), Some(ExprNode::ScalarParam(parameter)) if parameter.name() == "d")
+        )));
         assert!(factors.iter().any(|id| matches!(
             compiled.graph().node(*id),
             Some(ExprNode::NaryAdd { terms }) if terms.len() == 2
                 && terms.iter().any(|term| matches!(compiled.graph().node(*term), Some(ExprNode::RealConst(-1.0))))
                 && terms.iter().any(|term| matches!(
                     compiled.graph().node(*term),
-                    Some(ExprNode::NaryMul { factors }) if factors.len() == 3
+                    Some(ExprNode::NaryMul { factors }) if factors.len() == 2
                         && factors.iter().any(|factor| matches!(compiled.graph().node(*factor), Some(ExprNode::RealConst(7.0))))
-                        && factors.iter().filter(|factor| matches!(compiled.graph().node(**factor), Some(ExprNode::ScalarParam(parameter)) if parameter.name() == "c")).count() == 2
+                        && factors.iter().any(|factor| matches!(
+                            compiled.graph().node(*factor),
+                            Some(ExprNode::Unary {
+                                op: UnaryOp::PowI(2),
+                                input,
+                            }) if matches!(compiled.graph().node(*input), Some(ExprNode::ScalarParam(parameter)) if parameter.name() == "c")
+                        ))
                 ))
         )));
     }
