@@ -181,11 +181,23 @@ fn value_kind(node: &ExprNode, facts: &[NodeFacts]) -> ValueKind {
             ValueKind::Vector { .. } => ValueKind::Complex,
             kind => kind,
         },
-        ExprNode::MatrixElement { .. }
-        | ExprNode::MatMul { .. }
-        | ExprNode::MatVec { .. }
-        | ExprNode::Dot { .. }
-        | ExprNode::Solve { .. } => ValueKind::Complex,
+        ExprNode::MatrixElement { .. } | ExprNode::Dot { .. } => ValueKind::Complex,
+        ExprNode::MatMul { lhs, rhs } => {
+            let ValueKind::Matrix { rows, .. } = facts[lhs.index()].value_kind else {
+                return ValueKind::Complex;
+            };
+            let ValueKind::Matrix { cols, .. } = facts[rhs.index()].value_kind else {
+                return ValueKind::Complex;
+            };
+            ValueKind::Matrix { rows, cols }
+        }
+        ExprNode::MatVec { matrix, .. } => {
+            let ValueKind::Matrix { rows, .. } = facts[matrix.index()].value_kind else {
+                return ValueKind::Complex;
+            };
+            ValueKind::Vector { len: rows }
+        }
+        ExprNode::Solve { rhs, .. } => facts[rhs.index()].value_kind,
     }
 }
 

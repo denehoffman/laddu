@@ -1,5 +1,5 @@
 use laddu_expr::{
-    Expr, ExprGraph, ExprGraphError, ExprId, ExprNode,
+    Expr, ExprGraph, ExprGraphError, ExprId, ExprNode, ValueKind,
     parameters::{ParamError, ParamLayout, ParamRegistry},
 };
 use thiserror::Error;
@@ -13,8 +13,8 @@ pub use facts::{DependencyFacts, EvaluationClass, GraphFacts, NodeFacts, NumberC
 pub use optimize::{
     AlgebraicIdentityRule, CanonicalCsePass, ComplexFactRule, ConjugationRule,
     ConstantFoldScalarRule, CostGatePass, ExponentialRule, FactorCommonProductRule,
-    NormSqrExpansionRule, OptimizationPass, OptimizationPipeline, Rewrite, RewriteContext,
-    RewritePass, RewriteRule,
+    MatrixVectorRule, NormSqrExpansionRule, OptimizationPass, OptimizationPipeline, Rewrite,
+    RewriteContext, RewritePass, RewriteRule,
 };
 
 pub type CompileResult<T> = Result<T, CompileError>;
@@ -32,6 +32,7 @@ pub enum CompileError {
 #[derive(Debug)]
 pub struct CompileOptions {
     pipeline: OptimizationPipeline,
+    cache_policy: CachePolicy,
 }
 
 impl CompileOptions {
@@ -42,11 +43,15 @@ impl CompileOptions {
     pub fn without_optimizations() -> Self {
         Self {
             pipeline: OptimizationPipeline::new(),
+            cache_policy: CachePolicy::default(),
         }
     }
 
     pub fn with_pipeline(pipeline: OptimizationPipeline) -> Self {
-        Self { pipeline }
+        Self {
+            pipeline,
+            cache_policy: CachePolicy::default(),
+        }
     }
 
     pub fn pipeline(&self) -> &OptimizationPipeline {
@@ -56,13 +61,119 @@ impl CompileOptions {
     pub fn pipeline_mut(&mut self) -> &mut OptimizationPipeline {
         &mut self.pipeline
     }
+
+    pub fn cache_policy(&self) -> CachePolicy {
+        self.cache_policy
+    }
+
+    pub fn set_cache_policy(&mut self, cache_policy: CachePolicy) {
+        self.cache_policy = cache_policy;
+    }
+
+    pub fn with_cache_policy(mut self, cache_policy: CachePolicy) -> Self {
+        self.set_cache_policy(cache_policy);
+        self
+    }
 }
 
 impl Default for CompileOptions {
     fn default() -> Self {
         Self {
             pipeline: OptimizationPipeline::default(),
+            cache_policy: CachePolicy::default(),
         }
+    }
+}
+
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub enum CachePolicy {
+    Off,
+    #[default]
+    EventDependent,
+}
+
+impl CachePolicy {
+    fn accepts(self, facts: NodeFacts) -> bool {
+        match self {
+            Self::Off => false,
+            Self::EventDependent => {
+                facts.dependency.depends_on_event
+                    && !facts.dependency.depends_on_free_params
+                    && !facts.dependency.depends_on_fixed_params
+            }
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct CachePlan {
+    entries: Vec<CacheEntry>,
+}
+
+impl CachePlan {
+    pub(crate) fn new(graph: &ExprGraph, facts: &GraphFacts, policy: CachePolicy) -> Self {
+        if policy == CachePolicy::Off {
+            return Self::default();
+        }
+
+        let entries = graph
+            .nodes()
+            .iter()
+            .enumerate()
+            .filter_map(|(index, _node)| {
+                let id = ExprId::from_index(index).expect("graph too large");
+                let facts = *facts.get(id).expect("facts are complete for graph");
+                policy.accepts(facts).then_some(CacheEntry {
+                    node: id,
+                    value_kind: facts.value_kind,
+                    evaluation_class: facts.evaluation_class(),
+                    dependency: facts.dependency,
+                })
+            })
+            .collect();
+        Self { entries }
+    }
+
+    pub fn entries(&self) -> &[CacheEntry] {
+        &self.entries
+    }
+
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    pub fn node_slot(&self, node: ExprId) -> Option<usize> {
+        self.entries.iter().position(|entry| entry.node == node)
+    }
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct CacheEntry {
+    node: ExprId,
+    value_kind: ValueKind,
+    evaluation_class: EvaluationClass,
+    dependency: DependencyFacts,
+}
+
+impl CacheEntry {
+    pub fn node(&self) -> ExprId {
+        self.node
+    }
+
+    pub fn value_kind(&self) -> ValueKind {
+        self.value_kind
+    }
+
+    pub fn evaluation_class(&self) -> EvaluationClass {
+        self.evaluation_class
+    }
+
+    pub fn dependency(&self) -> DependencyFacts {
+        self.dependency
     }
 }
 
@@ -71,6 +182,7 @@ pub struct CompiledModel {
     graph: ExprGraph,
     params: ParamLayout,
     facts: GraphFacts,
+    cache_plan: CachePlan,
 }
 
 impl CompiledModel {
@@ -93,10 +205,12 @@ impl CompiledModel {
         let params = collect_params(&graph)?;
         let graph = options.pipeline.run(graph)?;
         let facts = GraphFacts::analyze(&graph);
+        let cache_plan = CachePlan::new(&graph, &facts, options.cache_policy);
         Ok(Self {
             graph,
             params,
             facts,
+            cache_plan,
         })
     }
 
@@ -110,6 +224,10 @@ impl CompiledModel {
 
     pub fn facts(&self) -> &GraphFacts {
         &self.facts
+    }
+
+    pub fn cache_plan(&self) -> &CachePlan {
+        &self.cache_plan
     }
 
     pub fn cost(&self) -> OptimizationCost {
@@ -145,8 +263,8 @@ pub fn collect_params(graph: &ExprGraph) -> CompileResult<ParamLayout> {
 #[cfg(test)]
 mod tests {
     use laddu_expr::{
-        BinaryOp, Expr, ExprId, ExprMetadata, UnaryOp, ValueKind, complex, event_scalar, matrix,
-        parameter, parameters::Parameter, polar_complex, vector,
+        BinaryOp, Expr, ExprId, ExprMetadata, UnaryOp, ValueKind, complex, dot, event_scalar,
+        matmul, matrix, matvec, parameter, parameters::Parameter, polar_complex, vector,
     };
     use num::complex::Complex64;
 
@@ -1352,6 +1470,97 @@ mod tests {
     }
 
     #[test]
+    fn matrix_vector_identities_and_zeroes_simplify() {
+        let x = Expr::from(event_scalar("x"));
+        let y = Expr::from(event_scalar("y"));
+        let identity = matrix([[1.0, 0.0], [0.0, 1.0]]);
+        let zero_matrix = matrix([[0.0, 0.0], [0.0, 0.0]]);
+        let vector = vector([x, y]);
+
+        let identity_product = CompiledModel::from_expr(&matvec(identity, vector.clone())).unwrap();
+        assert!(matches!(
+            identity_product.graph().node(identity_product.graph().root()),
+            Some(ExprNode::Vector { elements }) if elements.len() == 2
+        ));
+
+        let zero_product = CompiledModel::from_expr(&matvec(zero_matrix, vector)).unwrap();
+        assert!(matches!(
+            zero_product.graph().node(zero_product.graph().root()),
+            Some(ExprNode::Vector { elements }) if elements.len() == 2
+                && elements.iter().all(|id| matches!(zero_product.graph().node(*id), Some(ExprNode::RealConst(0.0))))
+        ));
+    }
+
+    #[test]
+    fn dot_and_matvec_lower_to_scalar_arithmetic_when_cheaper() {
+        let x = Expr::from(event_scalar("x"));
+        let y = Expr::from(event_scalar("y"));
+        let dot_product =
+            CompiledModel::from_expr(&dot(vector([x.clone(), y.clone()]), vector([2.0, 3.0])))
+                .unwrap();
+        assert_eq!(
+            dot_product
+                .graph()
+                .nodes()
+                .iter()
+                .filter(|node| matches!(node, ExprNode::Dot { .. }))
+                .count(),
+            0
+        );
+        assert!(matches!(
+            dot_product.graph().node(dot_product.graph().root()),
+            Some(ExprNode::NaryAdd { terms }) if terms.len() == 2
+        ));
+
+        let matrix_product =
+            CompiledModel::from_expr(&matvec(matrix([[1.0, 2.0], [3.0, 4.0]]), vector([x, y])))
+                .unwrap();
+        assert_eq!(
+            matrix_product
+                .graph()
+                .nodes()
+                .iter()
+                .filter(|node| matches!(node, ExprNode::MatVec { .. }))
+                .count(),
+            0
+        );
+        assert!(matches!(
+            matrix_product.graph().node(matrix_product.graph().root()),
+            Some(ExprNode::Vector { elements }) if elements.len() == 2
+        ));
+    }
+
+    #[test]
+    fn matrix_multiplication_identity_and_zero_simplify() {
+        let x = Expr::from(event_scalar("x"));
+        let matrix_value = matrix([[x, 2.0.into()], [3.0.into(), 4.0.into()]]);
+        let identity = matrix([[1.0, 0.0], [0.0, 1.0]]);
+        let identity_product = CompiledModel::from_expr(&matmul(identity, matrix_value)).unwrap();
+        assert!(matches!(
+            identity_product
+                .graph()
+                .node(identity_product.graph().root()),
+            Some(ExprNode::Matrix {
+                rows: 2,
+                cols: 2,
+                ..
+            })
+        ));
+
+        let zero_product = CompiledModel::from_expr(&matmul(
+            matrix([[0.0, 0.0], [0.0, 0.0]]),
+            matrix([[1.0, 2.0], [3.0, 4.0]]),
+        ))
+        .unwrap();
+        assert!(matches!(
+            zero_product.graph().node(zero_product.graph().root()),
+            Some(ExprNode::Matrix { rows: 2, cols: 2, elements }) if elements
+                .iter()
+                .all(|id| matches!(zero_product.graph().node(*id), Some(ExprNode::RealConst(0.0))))
+        ));
+    }
+
+    #[test]
     fn no_optimization_preserves_raw_graph_shape() {
         let model = (parameter!("x") + 0.0) * 1.0;
         let options = CompileOptions::without_optimizations();
@@ -1402,6 +1611,54 @@ mod tests {
             Err(CompileError::Params(ParamError::ParameterConflict { name, .. }))
                 if name == "x"
         ));
+    }
+
+    #[test]
+    fn cache_policy_off_produces_no_cache_entries() {
+        let model = event_scalar("x").sin() + event_scalar("x").sin();
+        let compiled = CompiledModel::from_expr_with_options(
+            &model,
+            &CompileOptions::default().with_cache_policy(CachePolicy::Off),
+        )
+        .unwrap();
+
+        assert!(compiled.cache_plan().is_empty());
+    }
+
+    #[test]
+    fn event_dependent_cache_policy_selects_event_leaves_and_derived_values() {
+        let x = Expr::from(event_scalar("x"));
+        let y = Expr::from(event_scalar("y"));
+        let model = x.clone().sin() + dot(vector([x, y]), vector([2.0, 3.0]));
+        let compiled = CompiledModel::from_expr(&model).unwrap();
+
+        assert!(!compiled.cache_plan().is_empty());
+        assert!(compiled.cache_plan().entries().iter().all(|entry| {
+            entry.evaluation_class() == EvaluationClass::PerEvent
+                && entry.dependency().depends_on_event
+                && !entry.dependency().depends_on_free_params
+                && !entry.dependency().depends_on_fixed_params
+        }));
+        assert!(compiled.cache_plan().entries().iter().any(|entry| {
+            matches!(compiled.graph().node(entry.node()), Some(ExprNode::EventScalar(name)) if name.as_ref() == "x")
+        }));
+    }
+
+    #[test]
+    fn event_dependent_cache_policy_excludes_parameter_dependent_values() {
+        let x = Expr::from(event_scalar("x"));
+        let y = Expr::from(parameter!("y"));
+        let fixed = Expr::from(Parameter::fixed("fixed", 2.0));
+        let model = x.clone() * 2.0 + x.sin() + y.clone() * event_scalar("x") + fixed * x;
+        let compiled = CompiledModel::from_expr(&model).unwrap();
+
+        assert!(!compiled.cache_plan().is_empty());
+        for entry in compiled.cache_plan().entries() {
+            let facts = compiled.node_facts(entry.node()).unwrap();
+            assert_eq!(facts.evaluation_class(), EvaluationClass::PerEvent);
+            assert!(!facts.dependency.depends_on_free_params);
+            assert!(!facts.dependency.depends_on_fixed_params);
+        }
     }
 
     #[test]

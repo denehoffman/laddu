@@ -26,10 +26,11 @@ pub use laddu_wgpu as wgpu;
 pub mod prelude {
     pub use laddu_autodiff::{AutodiffMode, AutodiffPlan};
     pub use laddu_compile::{
-        AlgebraicIdentityRule, CanonicalCsePass, CompileError, CompileOptions, CompileResult,
-        CompiledModel, ComplexFactRule, ConstantFoldScalarRule, DependencyFacts, EvaluationClass,
-        ExponentialRule, FactorCommonProductRule, GraphFacts, NodeFacts, NumberClass,
-        OptimizationPass, OptimizationPipeline, Rewrite, RewriteContext, RewritePass, RewriteRule,
+        AlgebraicIdentityRule, CacheEntry, CachePlan, CachePolicy, CanonicalCsePass, CompileError,
+        CompileOptions, CompileResult, CompiledModel, ComplexFactRule, ConstantFoldScalarRule,
+        DependencyFacts, EvaluationClass, ExponentialRule, FactorCommonProductRule, GraphFacts,
+        MatrixVectorRule, NodeFacts, NumberClass, OptimizationPass, OptimizationPipeline, Rewrite,
+        RewriteContext, RewritePass, RewriteRule,
     };
     pub use laddu_expr::parameter;
     pub use laddu_expr::parameters::{
@@ -41,5 +42,5 @@ pub mod prelude {
         complex, dot, event_scalar, matmul, matrix, matvec, polar_complex, solve, vector,
     };
     pub use laddu_kernel::{KernelSpec, kernel};
-    pub use laddu_runtime::{CpuBackend, CpuPlan};
+    pub use laddu_runtime::{CpuBackend, CpuBatchCache, CpuCachedBatch, CpuCachedDataset, CpuPlan};
 }

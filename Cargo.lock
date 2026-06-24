@@ -1113,6 +1113,7 @@ name = "laddu-runtime"
 version = "0.1.0"
 dependencies = [
  "laddu-compile",
+ "laddu-data",
  "laddu-expr",
  "nalgebra",
  "num",
