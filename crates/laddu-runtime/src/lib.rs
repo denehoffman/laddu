@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use laddu_compile::{CachePlan, CompiledModel};
 use laddu_data::{
+    data::accurate::{AccurateComplex64, AccurateF64},
     data::{Dataset, EventBatch},
     schema::Schema,
 };
@@ -11,6 +12,7 @@ use laddu_expr::{
 };
 use nalgebra::{DMatrix, DVector};
 use num::complex::Complex64;
+use rayon::prelude::*;
 use thiserror::Error;
 
 pub type RuntimeResult<T> = Result<T, RuntimeError>;
@@ -146,10 +148,20 @@ impl CpuPlan {
         self.check_batch_cache(cache)?;
         let mut out = Vec::with_capacity(cache.len());
         for row in 0..cache.len() {
-            let values = self.evaluate_values_from_cache(params, cache, row)?;
-            out.push(scalar_at(&values, self.graph.root().index())?);
+            out.push(self.evaluate_cache_row(params, cache, row)?);
         }
         Ok(out)
+    }
+
+    pub fn evaluate_cache_row(
+        &self,
+        params: &ParamValues,
+        cache: &CpuBatchCache,
+        row: usize,
+    ) -> RuntimeResult<Complex64> {
+        self.check_batch_cache(cache)?;
+        let values = self.evaluate_values_from_cache(params, cache, row)?;
+        scalar_at(&values, self.graph.root().index())
     }
 
     pub fn evaluate_batch(
@@ -163,16 +175,22 @@ impl CpuPlan {
 
     pub fn cache_dataset(&self, dataset: &Dataset) -> RuntimeResult<CpuCachedDataset> {
         let mut batches = Vec::new();
+        let mut sum_weights = 0.0;
         for batch in dataset
             .batches()
             .map_err(|err| RuntimeError::Data(err.to_string()))?
         {
             let batch = batch.map_err(|err| RuntimeError::Data(err.to_string()))?;
-            batches.push(CpuCachedBatch {
+            let cached = CpuCachedBatch {
                 cache: self.cache_event_batch(&batch)?,
-            });
+            };
+            sum_weights += cached.sum_weights();
+            batches.push(cached);
         }
-        Ok(CpuCachedDataset { batches })
+        Ok(CpuCachedDataset {
+            batches,
+            sum_weights,
+        })
     }
 
     pub fn evaluate_cached_dataset(
@@ -186,6 +204,150 @@ impl CpuPlan {
             out.extend(self.evaluate_cache(params, batch.cache())?);
         }
         Ok(out)
+    }
+
+    pub fn try_weighted_sum_cached<E, F>(
+        &self,
+        params: &ParamValues,
+        dataset: &CpuCachedDataset,
+        mut f: F,
+    ) -> Result<f64, E>
+    where
+        E: From<RuntimeError>,
+        F: FnMut(Complex64) -> Result<f64, E>,
+    {
+        let mut sum = 0.0;
+        for batch in dataset.batches() {
+            for row in 0..batch.len() {
+                let value = self.evaluate_cache_row(params, batch.cache(), row)?;
+                sum += batch.weights()[row] * f(value)?;
+            }
+        }
+        Ok(sum)
+    }
+
+    pub fn weighted_sum_cached<F>(
+        &self,
+        params: &ParamValues,
+        dataset: &CpuCachedDataset,
+        mut f: F,
+    ) -> RuntimeResult<f64>
+    where
+        F: FnMut(Complex64) -> f64,
+    {
+        self.try_weighted_sum_cached(params, dataset, |value| Ok(f(value)))
+    }
+
+    pub fn try_weighted_complex_sum_cached<E, F>(
+        &self,
+        params: &ParamValues,
+        dataset: &CpuCachedDataset,
+        mut f: F,
+    ) -> Result<Complex64, E>
+    where
+        E: From<RuntimeError>,
+        F: FnMut(Complex64) -> Result<Complex64, E>,
+    {
+        let mut sum = Complex64::default();
+        for batch in dataset.batches() {
+            for row in 0..batch.len() {
+                let value = self.evaluate_cache_row(params, batch.cache(), row)?;
+                sum += f(value)? * batch.weights()[row];
+            }
+        }
+        Ok(sum)
+    }
+
+    pub fn weighted_complex_sum_cached<F>(
+        &self,
+        params: &ParamValues,
+        dataset: &CpuCachedDataset,
+        mut f: F,
+    ) -> RuntimeResult<Complex64>
+    where
+        F: FnMut(Complex64) -> Complex64,
+    {
+        self.try_weighted_complex_sum_cached(params, dataset, |value| Ok(f(value)))
+    }
+
+    pub fn par_try_weighted_sum_cached<E, F>(
+        &self,
+        params: &ParamValues,
+        dataset: &CpuCachedDataset,
+        f: F,
+    ) -> Result<f64, E>
+    where
+        E: From<RuntimeError> + Send,
+        F: Fn(Complex64) -> Result<f64, E> + Send + Sync,
+    {
+        let mut total = AccurateF64::zero();
+        for batch in dataset.batches() {
+            let partial = (0..batch.len())
+                .into_par_iter()
+                .try_fold(AccurateF64::zero, |mut acc, row| {
+                    let value = self.evaluate_cache_row(params, batch.cache(), row)?;
+                    acc.push(batch.weights()[row] * f(value)?);
+                    Ok::<AccurateF64, E>(acc)
+                })
+                .try_reduce(AccurateF64::zero, |mut a, b| {
+                    a.merge(b);
+                    Ok::<AccurateF64, E>(a)
+                })?;
+            total.merge(partial);
+        }
+        Ok(total.finish())
+    }
+
+    pub fn par_weighted_sum_cached<F>(
+        &self,
+        params: &ParamValues,
+        dataset: &CpuCachedDataset,
+        f: F,
+    ) -> RuntimeResult<f64>
+    where
+        F: Fn(Complex64) -> f64 + Send + Sync,
+    {
+        self.par_try_weighted_sum_cached(params, dataset, |value| Ok(f(value)))
+    }
+
+    pub fn par_try_weighted_complex_sum_cached<E, F>(
+        &self,
+        params: &ParamValues,
+        dataset: &CpuCachedDataset,
+        f: F,
+    ) -> Result<Complex64, E>
+    where
+        E: From<RuntimeError> + Send,
+        F: Fn(Complex64) -> Result<Complex64, E> + Send + Sync,
+    {
+        let mut total = AccurateComplex64::zero();
+        for batch in dataset.batches() {
+            let partial = (0..batch.len())
+                .into_par_iter()
+                .try_fold(AccurateComplex64::zero, |mut acc, row| {
+                    let value = self.evaluate_cache_row(params, batch.cache(), row)?;
+                    acc.push(f(value)? * batch.weights()[row]);
+                    Ok::<AccurateComplex64, E>(acc)
+                })
+                .try_reduce(AccurateComplex64::zero, |mut a, b| {
+                    a.merge(b);
+                    Ok::<AccurateComplex64, E>(a)
+                })?;
+            total.merge(partial);
+        }
+        Ok(total.finish())
+    }
+
+    pub fn par_weighted_complex_sum_cached<F>(
+        &self,
+        params: &ParamValues,
+        dataset: &CpuCachedDataset,
+        f: F,
+    ) -> RuntimeResult<Complex64>
+    where
+        F: Fn(Complex64) -> Complex64 + Send + Sync,
+    {
+        self.par_try_weighted_complex_sum_cached(params, dataset, |value| Ok(f(value)))
     }
 
     fn evaluate_inner(
@@ -811,6 +973,7 @@ enum Value {
 pub struct CpuBatchCache {
     len: usize,
     weights: Vec<f64>,
+    sum_weights: f64,
     nodes: Vec<ExprId>,
     slots: Vec<CachedSlot>,
 }
@@ -820,6 +983,7 @@ impl CpuBatchCache {
         Self {
             len,
             weights: vec![1.0; len],
+            sum_weights: len as f64,
             nodes: cache_plan
                 .entries()
                 .iter()
@@ -845,7 +1009,12 @@ impl CpuBatchCache {
         &self.weights
     }
 
+    pub fn sum_weights(&self) -> f64 {
+        self.sum_weights
+    }
+
     fn set_weights(&mut self, weights: Vec<f64>) {
+        self.sum_weights = weights.iter().sum();
         self.weights = weights;
     }
 
@@ -898,11 +1067,16 @@ impl CpuCachedBatch {
     pub fn weights(&self) -> &[f64] {
         self.cache.weights()
     }
+
+    pub fn sum_weights(&self) -> f64 {
+        self.cache.sum_weights()
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct CpuCachedDataset {
     batches: Vec<CpuCachedBatch>,
+    sum_weights: f64,
 }
 
 impl CpuCachedDataset {
@@ -916,6 +1090,10 @@ impl CpuCachedDataset {
 
     pub fn is_empty(&self) -> bool {
         self.batches.iter().all(CpuCachedBatch::is_empty)
+    }
+
+    pub fn sum_weights(&self) -> f64 {
+        self.sum_weights
     }
 }
 
@@ -1326,9 +1504,55 @@ mod tests {
 
         assert_eq!(cached.len(), 1);
         assert_eq!(cached.batches()[0].weights(), &[3.0]);
+        assert_eq!(cached.batches()[0].sum_weights(), 3.0);
         assert_eq!(
             plan.evaluate_cached_dataset(&params, &cached).unwrap(),
             vec![Complex64::from(2.0)]
+        );
+    }
+
+    #[test]
+    fn cached_dataset_weighted_reductions_match_dataset_path() {
+        let expr = event_scalar("x") * parameter!("scale", initial: 2.0);
+        let model = CompiledModel::from_expr(&expr).unwrap();
+        let params = Arc::new(model.params().clone()).default_values();
+        let plan = CpuBackend.prepare(&model);
+        let schema = Arc::new(Schema::new(std::iter::empty::<&str>(), ["x"], true).unwrap());
+        let first = EventBatch::from_events(
+            Arc::clone(&schema),
+            [
+                OwnedEvent::weighted(vec![], vec![1.0], 2.0),
+                OwnedEvent::weighted(vec![], vec![2.0], 3.0),
+            ],
+        )
+        .unwrap();
+        let second =
+            EventBatch::from_events(schema, [OwnedEvent::weighted(vec![], vec![3.0], 4.0)])
+                .unwrap();
+        let dataset = Dataset::from_batches(vec![first, second]).unwrap();
+        let cached = plan.cache_dataset(&dataset).unwrap();
+
+        let expected = dataset.weighted_sum(|event| 2.0 * event.scalar(0)).unwrap();
+        assert_eq!(cached.sum_weights(), dataset.sum_weights().unwrap());
+        assert_eq!(
+            plan.weighted_sum_cached(&params, &cached, |value| value.re)
+                .unwrap(),
+            expected
+        );
+        assert_eq!(
+            plan.weighted_complex_sum_cached(&params, &cached, |value| value * Complex64::I)
+                .unwrap(),
+            Complex64::I * expected
+        );
+        assert_eq!(
+            plan.par_weighted_sum_cached(&params, &cached, |value| value.re)
+                .unwrap(),
+            expected
+        );
+        assert_eq!(
+            plan.par_weighted_complex_sum_cached(&params, &cached, |value| value * Complex64::I)
+                .unwrap(),
+            Complex64::I * expected
         );
     }
 

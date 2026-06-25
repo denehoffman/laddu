@@ -42,5 +42,10 @@ pub mod prelude {
         complex, dot, event_scalar, matmul, matrix, matvec, polar_complex, solve, vector,
     };
     pub use laddu_kernel::{KernelSpec, kernel};
+    #[cfg(feature = "likelihood")]
+    pub use laddu_likelihood::{
+        CpuCrossSectionIntegrals, CpuIntensityLikelihood, CpuIntensityTerm, LikelihoodError,
+        LikelihoodName, LikelihoodResult,
+    };
     pub use laddu_runtime::{CpuBackend, CpuBatchCache, CpuCachedBatch, CpuCachedDataset, CpuPlan};
 }

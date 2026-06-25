@@ -14,4 +14,5 @@ laddu-data = { path = "../laddu-data" }
 laddu-expr = { path = "../laddu-expr" }
 nalgebra.workspace = true
 num.workspace = true
+rayon.workspace = true
 thiserror.workspace = true

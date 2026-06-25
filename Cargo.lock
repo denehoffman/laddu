@@ -1085,7 +1085,13 @@ dependencies = [
 name = "laddu-likelihood"
 version = "0.1.0"
 dependencies = [
+ "approx",
+ "laddu-compile",
+ "laddu-data",
+ "laddu-expr",
  "laddu-runtime",
+ "num",
+ "thiserror",
 ]
 
 [[package]]
@@ -1117,6 +1123,7 @@ dependencies = [
  "laddu-expr",
  "nalgebra",
  "num",
+ "rayon",
  "thiserror",
 ]
 
