@@ -44,8 +44,8 @@ pub mod prelude {
     pub use laddu_kernel::{KernelSpec, kernel};
     #[cfg(feature = "likelihood")]
     pub use laddu_likelihood::{
-        CpuCrossSectionIntegrals, CpuIntensityLikelihood, CpuIntensityTerm, LikelihoodError,
-        LikelihoodName, LikelihoodResult,
+        CpuCrossSectionIntegrals, CpuLassoPenalty, CpuLikelihood, CpuLikelihoodTerm, CpuNllTerm,
+        CpuRidgePenalty, LikelihoodError, LikelihoodName, LikelihoodResult,
     };
     pub use laddu_runtime::{CpuBackend, CpuBatchCache, CpuCachedBatch, CpuCachedDataset, CpuPlan};
 }
