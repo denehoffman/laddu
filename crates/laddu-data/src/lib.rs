@@ -2,6 +2,8 @@ use std::sync::Arc;
 
 use thiserror::Error;
 
+pub use laddu_physics::vectors::RealVec4;
+
 pub mod data;
 pub mod io;
 pub mod schema;

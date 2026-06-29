@@ -130,6 +130,7 @@ fn value_kind(node: &ExprNode, facts: &[NodeFacts]) -> ValueKind {
         | ExprNode::PolarComplexScalarParam { .. }
         | ExprNode::Complex { .. }
         | ExprNode::EventScalar(_) => ValueKind::Complex,
+        ExprNode::EventP4Component { .. } => ValueKind::Real,
         ExprNode::Unary { op, input } => match op {
             UnaryOp::Real | UnaryOp::Imag | UnaryOp::NormSqr => ValueKind::Real,
             UnaryOp::Neg
@@ -141,7 +142,10 @@ fn value_kind(node: &ExprNode, facts: &[NodeFacts]) -> ValueKind {
             | UnaryOp::Log
             | UnaryOp::PowI(_) => facts[input.index()].value_kind,
         },
-        ExprNode::Binary { lhs, rhs, .. } => {
+        ExprNode::Binary { op, lhs, rhs } => {
+            if *op == BinaryOp::Atan2 {
+                return ValueKind::Real;
+            }
             if facts[lhs.index()].value_kind == ValueKind::Real
                 && facts[rhs.index()].value_kind == ValueKind::Real
             {
@@ -216,6 +220,7 @@ fn number_class(node: &ExprNode, facts: &[NodeFacts]) -> NumberClass {
         | ExprNode::PolarComplexScalarParam { .. }
         | ExprNode::Complex { .. } => NumberClass::Complex,
         ExprNode::EventScalar(_) => NumberClass::Unknown,
+        ExprNode::EventP4Component { .. } => NumberClass::Real,
         ExprNode::Unary { op, input } => {
             let input = facts[input.index()].number_class;
             match op {
@@ -250,6 +255,7 @@ fn number_class(node: &ExprNode, facts: &[NodeFacts]) -> NumberClass {
                     (Complex, _) | (_, Complex) => Complex,
                     (Unknown, _) | (_, Unknown) => Unknown,
                 },
+                BinaryOp::Atan2 => Real,
             }
         }
         ExprNode::NaryAdd { terms } => {
@@ -308,7 +314,9 @@ fn dependency(node: &ExprNode, facts: &[NodeFacts]) -> DependencyFacts {
         ExprNode::PolarComplexScalarParam { mag, phase } => {
             DependencyFacts::from_parameter(mag).union(DependencyFacts::from_parameter(phase))
         }
-        ExprNode::EventScalar(_) => DependencyFacts::from_event(),
+        ExprNode::EventScalar(_) | ExprNode::EventP4Component { .. } => {
+            DependencyFacts::from_event()
+        }
         ExprNode::Unary { input, .. }
         | ExprNode::Component { input, .. }
         | ExprNode::MatrixElement { input, .. } => facts[input.index()].dependency,

@@ -10,8 +10,9 @@ pub use laddu_runtime as runtime;
 pub use laddu_expr::parameter;
 pub use laddu_expr::parameters::Parameter;
 pub use laddu_expr::{
-    BinaryOp, Expr, ExprGraph, ExprId, ExprMetadata, ExprNode, ExprSourceKind, UnaryOp, cis,
-    complex, dot, event_scalar, matmul, matrix, matvec, polar_complex, solve, vector,
+    BinaryOp, Expr, ExprGraph, ExprId, ExprMetadata, ExprNode, ExprSourceKind, P4Component,
+    UnaryOp, atan2, cis, complex, dot, event_p4_component, event_scalar, matmul, matrix, matvec,
+    polar_complex, solve, vector,
 };
 
 #[cfg(feature = "amplitudes")]
@@ -38,8 +39,9 @@ pub mod prelude {
         ParamState, ParamValues, Parameter,
     };
     pub use laddu_expr::{
-        BinaryOp, Expr, ExprGraph, ExprId, ExprMetadata, ExprNode, ExprSourceKind, UnaryOp, cis,
-        complex, dot, event_scalar, matmul, matrix, matvec, polar_complex, solve, vector,
+        BinaryOp, Expr, ExprGraph, ExprId, ExprMetadata, ExprNode, ExprSourceKind, P4Component,
+        UnaryOp, atan2, cis, complex, dot, event_p4_component, event_scalar, matmul, matrix,
+        matvec, polar_complex, solve, vector,
     };
     pub use laddu_kernel::{KernelSpec, kernel};
     #[cfg(feature = "likelihood")]
@@ -47,5 +49,6 @@ pub mod prelude {
         CpuCrossSectionIntegrals, CpuLassoPenalty, CpuLikelihood, CpuLikelihoodTerm, CpuNllTerm,
         CpuRidgePenalty, LikelihoodError, LikelihoodName, LikelihoodResult,
     };
+    pub use laddu_physics::channel::{Channel, Edge, EdgeHandle, Vertex, VertexHandle, VertexView};
     pub use laddu_runtime::{CpuBackend, CpuBatchCache, CpuCachedBatch, CpuCachedDataset, CpuPlan};
 }

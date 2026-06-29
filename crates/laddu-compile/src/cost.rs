@@ -92,7 +92,8 @@ impl OptimizationCost {
             | ExprNode::ScalarParam(_)
             | ExprNode::ComplexScalarParam { .. }
             | ExprNode::PolarComplexScalarParam { .. }
-            | ExprNode::EventScalar(_) => {
+            | ExprNode::EventScalar(_)
+            | ExprNode::EventP4Component { .. } => {
                 self.free_nodes += 1;
             }
             ExprNode::Unary { op, .. } => self.add_unary(*op),
@@ -156,6 +157,10 @@ impl OptimizationCost {
             BinaryOp::Div => {
                 self.scalar_divs += operations;
                 self.weighted_ops += 6 * operations as u64;
+            }
+            BinaryOp::Atan2 => {
+                self.transcendental_ops += operations;
+                self.weighted_ops += 20 * operations as u64;
             }
         }
     }

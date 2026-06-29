@@ -7,7 +7,7 @@ use laddu_data::{
     schema::Schema,
 };
 use laddu_expr::{
-    BinaryOp, ExprGraph, ExprId, ExprNode, UnaryOp, ValueKind,
+    BinaryOp, ExprGraph, ExprId, ExprNode, P4Component, UnaryOp, ValueKind,
     parameters::{ParamLayout, ParamValues},
 };
 use nalgebra::{DMatrix, DVector};
@@ -45,6 +45,11 @@ pub enum RuntimeError {
 
 pub trait EventLookup {
     fn scalar(&self, name: &str) -> Option<Complex64>;
+
+    fn p4_component(&self, name: &str, component: P4Component) -> Option<Complex64> {
+        let key = format!("{}.{}", name, component.label());
+        self.scalar(&key)
+    }
 }
 
 impl<F> EventLookup for F
@@ -124,7 +129,7 @@ impl CpuPlan {
     }
 
     pub fn cache_event_batch(&self, batch: &EventBatch) -> RuntimeResult<CpuBatchCache> {
-        let event_columns = self.event_scalar_columns(batch.schema())?;
+        let event_columns = self.event_columns(batch.schema())?;
         let mut cache = CpuBatchCache::new(&self.cache_plan, batch.len());
         for row in 0..batch.len() {
             let values = self.evaluate_cache_values_for_row(batch, row, &event_columns)?;
@@ -359,15 +364,24 @@ impl CpuPlan {
         scalar_at(&values, self.graph.root().index())
     }
 
-    fn event_scalar_columns(&self, schema: &Schema) -> RuntimeResult<Vec<Option<usize>>> {
+    fn event_columns(&self, schema: &Schema) -> RuntimeResult<Vec<Option<EventColumn>>> {
         self.graph
             .nodes()
             .iter()
             .map(|node| {
                 if let ExprNode::EventScalar(name) = node {
-                    Ok(Some(schema.scalar_index(name).ok_or_else(|| {
-                        RuntimeError::MissingEventColumn(name.to_string())
-                    })?))
+                    Ok(Some(EventColumn::Scalar(
+                        schema
+                            .scalar_index(name)
+                            .ok_or_else(|| RuntimeError::MissingEventColumn(name.to_string()))?,
+                    )))
+                } else if let ExprNode::EventP4Component { name, component } = node {
+                    Ok(Some(EventColumn::P4Component {
+                        col: schema
+                            .p4_index(name)
+                            .ok_or_else(|| RuntimeError::MissingEventColumn(name.to_string()))?,
+                        component: *component,
+                    }))
                 } else {
                     Ok(None)
                 }
@@ -379,7 +393,7 @@ impl CpuPlan {
         &self,
         batch: &EventBatch,
         row: usize,
-        event_columns: &[Option<usize>],
+        event_columns: &[Option<EventColumn>],
     ) -> RuntimeResult<Vec<Option<Value>>> {
         let mut values = vec![None; self.graph.nodes().len()];
 
@@ -393,7 +407,30 @@ impl CpuPlan {
                 ExprNode::EventScalar(name) => {
                     let col = event_columns[index]
                         .ok_or_else(|| RuntimeError::MissingEventColumn(name.to_string()))?;
+                    let EventColumn::Scalar(col) = col else {
+                        return Err(RuntimeError::MissingEventColumn(name.to_string()));
+                    };
                     Value::Scalar(Complex64::from(batch.scalar_at(col, row)))
+                }
+                ExprNode::EventP4Component { name, component } => {
+                    let col = event_columns[index]
+                        .ok_or_else(|| RuntimeError::MissingEventColumn(name.to_string()))?;
+                    let EventColumn::P4Component {
+                        col,
+                        component: actual,
+                    } = col
+                    else {
+                        return Err(RuntimeError::MissingEventColumn(name.to_string()));
+                    };
+                    debug_assert_eq!(actual, *component);
+                    let p4 = batch.p4_at(col, row);
+                    let value = match component {
+                        P4Component::Px => p4.x,
+                        P4Component::Py => p4.y,
+                        P4Component::Pz => p4.z,
+                        P4Component::E => p4.t,
+                    };
+                    Value::Scalar(Complex64::from(value))
                 }
                 ExprNode::Unary { op, input } => {
                     let input = scalar_at_optional(&values, input.index())?;
@@ -595,6 +632,17 @@ impl CpuPlan {
                             .ok_or_else(|| RuntimeError::MissingEventScalar(name.to_string()))?,
                     )
                 }
+                ExprNode::EventP4Component { name, component } => {
+                    let Some(event) = event else {
+                        return Err(RuntimeError::MissingEventScalar(format!(
+                            "{name}.{}",
+                            component.label()
+                        )));
+                    };
+                    Value::Scalar(event.p4_component(name, *component).ok_or_else(|| {
+                        RuntimeError::MissingEventScalar(format!("{name}.{}", component.label()))
+                    })?)
+                }
                 ExprNode::Unary { op, input } => {
                     let input = scalar_at(&values, input.index())?;
                     Value::Scalar(eval_unary(*op, input))
@@ -785,6 +833,12 @@ impl CpuPlan {
                 ExprNode::EventScalar(name) => {
                     return Err(RuntimeError::MissingEventScalar(name.to_string()));
                 }
+                ExprNode::EventP4Component { name, component } => {
+                    return Err(RuntimeError::MissingEventScalar(format!(
+                        "{name}.{}",
+                        component.label()
+                    )));
+                }
                 ExprNode::Unary { op, input } => {
                     let input = scalar_at(&values, input.index())?;
                     Value::Scalar(eval_unary(*op, input))
@@ -967,6 +1021,12 @@ enum Value {
         cols: usize,
         values: Vec<Complex64>,
     },
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+enum EventColumn {
+    Scalar(usize),
+    P4Component { col: usize, component: P4Component },
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -1346,7 +1406,8 @@ fn node_children(node: &ExprNode) -> Vec<ExprId> {
         | ExprNode::ScalarParam(_)
         | ExprNode::ComplexScalarParam { .. }
         | ExprNode::PolarComplexScalarParam { .. }
-        | ExprNode::EventScalar(_) => Vec::new(),
+        | ExprNode::EventScalar(_)
+        | ExprNode::EventP4Component { .. } => Vec::new(),
     }
 }
 
@@ -1382,6 +1443,7 @@ fn eval_binary(op: BinaryOp, lhs: Complex64, rhs: Complex64) -> Complex64 {
         BinaryOp::Sub => lhs - rhs,
         BinaryOp::Mul => lhs * rhs,
         BinaryOp::Div => lhs / rhs,
+        BinaryOp::Atan2 => Complex64::from(lhs.re.atan2(rhs.re)),
     }
 }
 
@@ -1391,10 +1453,14 @@ mod tests {
 
     use laddu_compile::{CompileOptions, CompiledModel};
     use laddu_data::{
+        RealVec4,
         data::{Dataset, EventBatch, OwnedEvent},
         schema::Schema,
     };
-    use laddu_expr::{complex, dot, event_scalar, matrix, parameter, polar_complex, solve, vector};
+    use laddu_expr::{
+        P4Component, atan2, complex, dot, event_p4_component, event_scalar, matrix, parameter,
+        polar_complex, solve, vector,
+    };
 
     use super::*;
 
@@ -1427,6 +1493,32 @@ mod tests {
         assert_eq!(
             plan.evaluate_with_event(&params, &event).unwrap(),
             Complex64::from(6.0)
+        );
+    }
+
+    #[test]
+    fn evaluates_p4_schema_components_and_atan2() {
+        let expr = event_p4_component("ks1", P4Component::E)
+            + event_p4_component("ks1", P4Component::Px)
+            + atan2(
+                event_p4_component("ks1", P4Component::Py),
+                event_p4_component("ks1", P4Component::Px),
+            );
+        let model = CompiledModel::from_expr(&expr).unwrap();
+        let params = Arc::new(model.params().clone()).default_values();
+        let plan = CpuBackend.prepare(&model);
+        let batch = EventBatch::from_events(
+            Arc::new(Schema::new(["ks1"], std::iter::empty::<&str>(), false).unwrap()),
+            [OwnedEvent::new(
+                vec![RealVec4::new(3.0, 4.0, 5.0, 10.0)],
+                vec![],
+            )],
+        )
+        .unwrap();
+
+        assert_eq!(
+            plan.evaluate_batch(&params, &batch).unwrap()[0],
+            Complex64::from(13.0 + 4.0_f64.atan2(3.0))
         );
     }
 

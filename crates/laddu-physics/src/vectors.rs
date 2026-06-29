@@ -2,7 +2,7 @@ use std::fmt::Display;
 
 use approx::{AbsDiffEq, RelativeEq};
 use auto_ops::{impl_op_ex, impl_op_ex_commutative};
-use laddu_expr::{Expr, event_scalar, vector};
+use laddu_expr::{Expr, P4Component, atan2, event_p4_component, vector};
 use nalgebra::{Vector3, Vector4};
 use serde::{Deserialize, Serialize};
 
@@ -621,9 +621,9 @@ impl Vec3 {
 
     pub fn event(prefix: &str) -> Self {
         Self::new(
-            event_scalar(format!("{prefix}_px")),
-            event_scalar(format!("{prefix}_py")),
-            event_scalar(format!("{prefix}_pz")),
+            event_p4_component(prefix, P4Component::Px),
+            event_p4_component(prefix, P4Component::Py),
+            event_p4_component(prefix, P4Component::Pz),
         )
     }
 
@@ -661,6 +661,14 @@ impl Vec3 {
 
     pub fn costheta(&self) -> Expr {
         &self.z / self.mag()
+    }
+
+    pub fn unit(&self) -> Self {
+        self / &self.mag()
+    }
+
+    pub fn phi(&self) -> Expr {
+        atan2(self.py(), self.px())
     }
 
     pub fn with_mass(&self, mass: impl Into<Expr>) -> Vec4 {
@@ -739,10 +747,10 @@ impl Vec4 {
 
     pub fn event(prefix: &str) -> Self {
         Self::new(
-            event_scalar(format!("{prefix}_px")),
-            event_scalar(format!("{prefix}_py")),
-            event_scalar(format!("{prefix}_pz")),
-            event_scalar(format!("{prefix}_e")),
+            event_p4_component(prefix, P4Component::Px),
+            event_p4_component(prefix, P4Component::Py),
+            event_p4_component(prefix, P4Component::Pz),
+            event_p4_component(prefix, P4Component::E),
         )
     }
 
@@ -798,8 +806,8 @@ impl Vec4 {
         let b2 = beta.dot(beta);
         let gamma = (1.0 - &b2).sqrt();
         let gamma = 1.0 / gamma;
-        let p3 = self.vec3()
-            + beta * (((&gamma - 1.0) * self.vec3().dot(beta) / &b2) + &gamma * &self.t);
+        let boost_factor = gamma.powi(2) / (&gamma + 1.0);
+        let p3 = self.vec3() + beta * ((boost_factor * self.vec3().dot(beta)) + &gamma * &self.t);
         Self::new(p3.x, p3.y, p3.z, gamma * (&self.t + beta.dot(&self.vec3())))
     }
 

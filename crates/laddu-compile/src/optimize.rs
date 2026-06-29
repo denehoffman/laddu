@@ -1,7 +1,8 @@
 use std::{collections::HashMap, fmt};
 
 use laddu_expr::{
-    BinaryOp, ExprGraph, ExprId, ExprMetadata, ExprNode, ExprSourceKind, UnaryOp, ValueKind,
+    BinaryOp, ExprGraph, ExprId, ExprMetadata, ExprNode, ExprSourceKind, P4Component, UnaryOp,
+    ValueKind,
     parameters::{InitialSpec, ParamState, Parameter},
 };
 use num::complex::Complex64;
@@ -4055,7 +4056,7 @@ fn emit_canonical_associative(
             let node = match op {
                 BinaryOp::Add => ExprNode::NaryAdd { terms: flattened },
                 BinaryOp::Mul => ExprNode::NaryMul { factors: flattened },
-                BinaryOp::Sub | BinaryOp::Div => {
+                BinaryOp::Sub | BinaryOp::Div | BinaryOp::Atan2 => {
                     unreachable!("only associative ops are canonicalized")
                 }
             };
@@ -4068,7 +4069,9 @@ fn identity_for_associative_op(op: BinaryOp) -> ExprNode {
     match op {
         BinaryOp::Add => ExprNode::RealConst(0.0),
         BinaryOp::Mul => ExprNode::RealConst(1.0),
-        BinaryOp::Sub | BinaryOp::Div => unreachable!("only associative ops have identities"),
+        BinaryOp::Sub | BinaryOp::Div | BinaryOp::Atan2 => {
+            unreachable!("only associative ops have identities")
+        }
     }
 }
 
@@ -4193,6 +4196,10 @@ enum StructuralKey {
         phase: ParameterKey,
     },
     EventScalar(String),
+    EventP4Component {
+        name: String,
+        component: P4Component,
+    },
     Unary {
         op: UnaryKey,
         input: usize,
@@ -4265,6 +4272,10 @@ impl StructuralKey {
                 phase: ParameterKey::from(phase),
             },
             ExprNode::EventScalar(name) => Self::EventScalar(name.to_string()),
+            ExprNode::EventP4Component { name, component } => Self::EventP4Component {
+                name: name.to_string(),
+                component: *component,
+            },
             ExprNode::Unary { op, input } => Self::Unary {
                 op: UnaryKey::from(*op),
                 input: input.index(),
@@ -4434,7 +4445,8 @@ fn remap_node(node: &ExprNode, old_to_new: &[ExprId]) -> ExprNode {
         | ExprNode::ScalarParam(_)
         | ExprNode::ComplexScalarParam { .. }
         | ExprNode::PolarComplexScalarParam { .. }
-        | ExprNode::EventScalar(_) => node.clone(),
+        | ExprNode::EventScalar(_)
+        | ExprNode::EventP4Component { .. } => node.clone(),
         ExprNode::Unary { op, input } => ExprNode::Unary {
             op: *op,
             input: old_to_new[input.index()],
@@ -4501,7 +4513,8 @@ fn remap_compacted_node(node: &ExprNode, old_to_new: &[Option<ExprId>]) -> ExprN
         | ExprNode::ScalarParam(_)
         | ExprNode::ComplexScalarParam { .. }
         | ExprNode::PolarComplexScalarParam { .. }
-        | ExprNode::EventScalar(_) => node.clone(),
+        | ExprNode::EventScalar(_)
+        | ExprNode::EventP4Component { .. } => node.clone(),
         ExprNode::Unary { op, input } => ExprNode::Unary {
             op: *op,
             input: old_to_new[input.index()].expect("child was compacted first"),
@@ -4580,7 +4593,8 @@ fn child_ids(node: &ExprNode) -> Vec<ExprId> {
         | ExprNode::ScalarParam(_)
         | ExprNode::ComplexScalarParam { .. }
         | ExprNode::PolarComplexScalarParam { .. }
-        | ExprNode::EventScalar(_) => Vec::new(),
+        | ExprNode::EventScalar(_)
+        | ExprNode::EventP4Component { .. } => Vec::new(),
         ExprNode::Unary { input, .. }
         | ExprNode::Component { input, .. }
         | ExprNode::MatrixElement { input, .. } => vec![*input],

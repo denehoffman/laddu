@@ -49,6 +49,34 @@ pub enum ValueKind {
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum P4Component {
+    Px,
+    Py,
+    Pz,
+    E,
+}
+
+impl P4Component {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Px => "px",
+            Self::Py => "py",
+            Self::Pz => "pz",
+            Self::E => "e",
+        }
+    }
+
+    pub fn index(self) -> usize {
+        match self {
+            Self::Px => 0,
+            Self::Py => 1,
+            Self::Pz => 2,
+            Self::E => 3,
+        }
+    }
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum UnaryOp {
     Neg,
     Real,
@@ -87,6 +115,7 @@ pub enum BinaryOp {
     Sub,
     Mul,
     Div,
+    Atan2,
 }
 
 impl BinaryOp {
@@ -96,6 +125,7 @@ impl BinaryOp {
             Self::Sub => a - b,
             Self::Mul => a * b,
             Self::Div => a / b,
+            Self::Atan2 => Complex64::from(a.re.atan2(b.re)),
         }
     }
 }
@@ -114,6 +144,10 @@ pub enum ExprNode {
         phase: Parameter,
     },
     EventScalar(Arc<str>),
+    EventP4Component {
+        name: Arc<str>,
+        component: P4Component,
+    },
     Unary {
         op: UnaryOp,
         input: ExprId,
@@ -261,6 +295,10 @@ enum DagNodeKind {
     ComplexConst(Complex64),
     ScalarParam(Parameter),
     EventScalar(Arc<str>),
+    EventP4Component {
+        name: Arc<str>,
+        component: P4Component,
+    },
     Unary {
         op: UnaryOp,
         input: Expr,
@@ -614,6 +652,17 @@ pub fn event_scalar(name: impl Into<Arc<str>>) -> Expr {
     Expr::new(DagNodeKind::EventScalar(name.into()))
 }
 
+pub fn event_p4_component(name: impl Into<Arc<str>>, component: P4Component) -> Expr {
+    Expr::new(DagNodeKind::EventP4Component {
+        name: name.into(),
+        component,
+    })
+}
+
+pub fn atan2(y: impl Into<Expr>, x: impl Into<Expr>) -> Expr {
+    binary(BinaryOp::Atan2, y, x)
+}
+
 pub fn vector<E>(elements: impl IntoIterator<Item = E>) -> Expr
 where
     E: Into<Expr>,
@@ -787,6 +836,10 @@ impl ExprGraph {
                 ExprPrecedence::Atom,
             ),
             ExprNode::EventScalar(name) => (name.to_string(), ExprPrecedence::Atom),
+            ExprNode::EventP4Component { name, component } => (
+                format!("{name}.{}", component.label()),
+                ExprPrecedence::Atom,
+            ),
             ExprNode::Unary { op, input } => self.format_unary_expression(*op, *input),
             ExprNode::Binary { op, lhs, rhs } => self.format_binary_expression(*op, *lhs, *rhs),
             ExprNode::NaryAdd { terms } => self.format_sum_expression(terms),
@@ -963,6 +1016,14 @@ impl ExprGraph {
                 let rhs = self.format_child(rhs, ExprPrecedence::Mul, true);
                 (format!("{lhs} / {rhs}"), ExprPrecedence::Mul)
             }
+            BinaryOp::Atan2 => (
+                format!(
+                    "atan2({}, {})",
+                    self.format_expression(lhs),
+                    self.format_expression(rhs)
+                ),
+                ExprPrecedence::Atom,
+            ),
         }
     }
 
@@ -1176,6 +1237,13 @@ impl ExprGraph {
                 phase.name()
             ),
             ExprNode::EventScalar(name) => format!("#{} EventScalar({name})", id.index()),
+            ExprNode::EventP4Component { name, component } => {
+                format!(
+                    "#{} EventP4Component({name}.{})",
+                    id.index(),
+                    component.label()
+                )
+            }
             ExprNode::Unary { op, .. } => format!("#{} Unary({op:?})", id.index()),
             ExprNode::Binary { op, .. } => format!("#{} Binary({op:?})", id.index()),
             ExprNode::NaryAdd { terms } => {
@@ -1272,7 +1340,8 @@ fn node_children(node: &ExprNode) -> Vec<(String, ExprId)> {
         | ExprNode::ScalarParam(_)
         | ExprNode::ComplexScalarParam { .. }
         | ExprNode::PolarComplexScalarParam { .. }
-        | ExprNode::EventScalar(_) => Vec::new(),
+        | ExprNode::EventScalar(_)
+        | ExprNode::EventP4Component { .. } => Vec::new(),
         ExprNode::Unary { input, .. } => vec![("input".into(), *input)],
         ExprNode::Binary { lhs, rhs, .. } => vec![("lhs".into(), *lhs), ("rhs".into(), *rhs)],
         ExprNode::NaryAdd { terms } => terms
@@ -1342,6 +1411,10 @@ impl GraphBuilder {
             DagNodeKind::ComplexConst(value) => ExprNode::ComplexConst(*value),
             DagNodeKind::ScalarParam(parameter) => ExprNode::ScalarParam(parameter.clone()),
             DagNodeKind::EventScalar(name) => ExprNode::EventScalar(Arc::clone(name)),
+            DagNodeKind::EventP4Component { name, component } => ExprNode::EventP4Component {
+                name: Arc::clone(name),
+                component: *component,
+            },
             DagNodeKind::Unary { op, input } => {
                 let input = self.visit(input);
                 ExprNode::Unary { op: *op, input }
@@ -1416,7 +1489,7 @@ fn source_kind(kind: &DagNodeKind) -> ExprSourceKind {
     match kind {
         DagNodeKind::RealConst(_) | DagNodeKind::ComplexConst(_) => ExprSourceKind::Const,
         DagNodeKind::ScalarParam(_) => ExprSourceKind::Param,
-        DagNodeKind::EventScalar(_) => ExprSourceKind::Event,
+        DagNodeKind::EventScalar(_) | DagNodeKind::EventP4Component { .. } => ExprSourceKind::Event,
         DagNodeKind::Unary { .. } => ExprSourceKind::Unary,
         DagNodeKind::Binary { .. } => ExprSourceKind::Binary,
         DagNodeKind::Complex { .. } => ExprSourceKind::Complex,
@@ -1581,6 +1654,16 @@ mod tests {
                 .to_string()
                 .contains("ComplexConst(0.3 + 2i)")
         );
+    }
+
+    #[test]
+    fn display_formats_p4_components_and_atan2() {
+        let expr = atan2(
+            event_p4_component("ks1", P4Component::Py),
+            event_p4_component("ks1", P4Component::Px),
+        );
+
+        assert_eq!(expr.to_graph().to_string(), "atan2(ks1.py, ks1.px)");
     }
 
     #[test]

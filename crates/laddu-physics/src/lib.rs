@@ -1,5 +1,6 @@
 use thiserror::Error;
 
+pub mod channel;
 pub mod histogram;
 pub mod math;
 pub mod quantum;
