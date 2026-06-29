@@ -1021,7 +1021,13 @@ dependencies = [
 name = "laddu-amplitudes"
 version = "0.1.0"
 dependencies = [
+ "approx",
+ "laddu-compile",
+ "laddu-expr",
  "laddu-kernel",
+ "laddu-physics",
+ "laddu-runtime",
+ "num",
 ]
 
 [[package]]

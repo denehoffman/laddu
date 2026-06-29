@@ -1,1 +1,3 @@
-pub mod scalar {}
+mod breit_wigner;
+
+pub use breit_wigner::*;

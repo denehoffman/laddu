@@ -111,52 +111,26 @@ fn factorial_ratio_l_minus_over_l_plus(l: usize, abs_m: usize) -> f64 {
     ratio
 }
 
-/// A validated spherical-harmonic mode.
-///
-/// This stores fixed quantum numbers `l` and `m`, so they are validated once.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub struct SphericalHarmonic {
-    l: L,
-    m: M,
-}
+pub fn spherical_harmonic(
+    l: impl TryInto<L>,
+    m: impl TryInto<M>,
+    costheta: impl Into<Expr>,
+    phi: impl Into<Expr>,
+) -> LadduPhysicsResult<Expr> {
+    let l = l
+        .try_into()
+        .map_err(|_| LadduPhysicsError::ConversionError("L"))?;
+    let m = m
+        .try_into()
+        .map_err(|_| LadduPhysicsError::ConversionError("M"))?;
+    validate_spherical_harmonic_quantum_numbers(l, m)?;
 
-impl SphericalHarmonic {
-    pub fn new(l: impl TryInto<L>, m: impl TryInto<M>) -> LadduPhysicsResult<Self> {
-        let l = l
-            .try_into()
-            .map_err(|_| LadduPhysicsError::ConversionError("L"))?;
-        let m = m
-            .try_into()
-            .map_err(|_| LadduPhysicsError::ConversionError("M"))?;
-        validate_spherical_harmonic_quantum_numbers(l, m)?;
-        Ok(Self { l, m })
-    }
-
-    #[inline]
-    pub const fn l(&self) -> L {
-        self.l
-    }
-
-    #[inline]
-    pub const fn m(&self) -> M {
-        self.m
-    }
-
-    pub fn evaluate(&self, costheta: impl Into<Expr>, phi: impl Into<Expr>) -> Expr {
-        spherical_harmonic_expr(
-            self.l.value() as usize,
-            self.m.doubled() as isize / 2,
-            costheta.into(),
-            phi.into(),
-        )
-    }
-}
-
-/// Computes the spherical harmonic $`Y_\ell^m(\theta, \phi)`$ given $`\cos\theta`$ and $`\phi`$.
-///
-/// This checked version validates `|m| <= l`
-pub fn spherical_harmonic(l: L, m: M, costheta: Expr, phi: Expr) -> LadduPhysicsResult<Expr> {
-    Ok(SphericalHarmonic::new(l, m)?.evaluate(costheta, phi))
+    Ok(spherical_harmonic_expr(
+        l.value() as usize,
+        m.doubled() as isize / 2,
+        costheta.into(),
+        phi.into(),
+    ))
 }
 
 #[inline(always)]
@@ -175,90 +149,6 @@ fn spherical_harmonic_expr(l: usize, m: isize, costheta: Expr, phi: Expr) -> Exp
     &res * (m as f64 * &phi).cos() + Complex64::I * res * (m as f64 * phi).sin()
 }
 
-/// A two-body channel with fixed daughter masses.
-#[derive(Clone, Debug)]
-pub struct TwoBodyChannel {
-    m1: Expr,
-    m2: Expr,
-}
-
-impl TwoBodyChannel {
-    pub fn new(m1: impl Into<Expr>, m2: impl Into<Expr>) -> Self {
-        Self {
-            m1: m1.into(),
-            m2: m2.into(),
-        }
-    }
-
-    #[inline]
-    pub fn m1(&self) -> Expr {
-        self.m1.clone()
-    }
-
-    #[inline]
-    pub fn m2(&self) -> Expr {
-        self.m2.clone()
-    }
-
-    #[inline]
-    pub fn threshold(&self) -> Expr {
-        &self.m1 + &self.m2
-    }
-
-    #[inline]
-    pub fn threshold_s(&self) -> Expr {
-        self.threshold().powi(2)
-    }
-
-    #[inline]
-    pub fn pseudothreshold(&self) -> Expr {
-        (&self.m1 - &self.m2).powi(2).sqrt()
-    }
-
-    #[inline]
-    pub fn pseudothreshold_s(&self) -> Expr {
-        self.pseudothreshold().powi(2)
-    }
-
-    pub fn chi_plus(&self, s: impl Into<Expr>) -> Expr {
-        chi_plus_expr(s.into(), &self.m1, &self.m2)
-    }
-
-    pub fn chi_minus(&self, s: impl Into<Expr>) -> Expr {
-        chi_minus_expr(s.into(), &self.m1, &self.m2)
-    }
-
-    pub fn q_s(&self, s: impl Into<Expr>, sheet: Sheet) -> Expr {
-        q_s_expr(s.into(), &self.m1, &self.m2, sheet)
-    }
-
-    pub fn q_m(&self, m: impl Into<Expr>, sheet: Sheet) -> Expr {
-        q_m_expr(m.into(), &self.m1, &self.m2, sheet)
-    }
-
-    pub fn rho_s(&self, s: impl Into<Expr>, sheet: Sheet) -> Expr {
-        rho_s_expr(s.into(), &self.m1, &self.m2, sheet)
-    }
-
-    pub fn rho_m(&self, m: impl Into<Expr>, sheet: Sheet) -> Expr {
-        rho_m_expr(m.into(), &self.m1, &self.m2, sheet)
-    }
-}
-
-#[inline(always)]
-fn chi_plus_expr(s: Expr, m1: impl Into<Expr>, m2: impl Into<Expr>) -> Expr {
-    let m1 = m1.into();
-    let m2 = m2.into();
-    1.0 - (m1 + m2).powi(2) / s
-}
-
-#[inline(always)]
-fn chi_minus_expr(s: Expr, m1: impl Into<Expr>, m2: impl Into<Expr>) -> Expr {
-    let m1 = m1.into();
-    let m2 = m2.into();
-    1.0 - (m1 - m2).powi(2) / s
-}
-
 /// Selects the Riemann sheet used for analytic continuation of two-body kinematic functions.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Sheet {
@@ -268,10 +158,15 @@ pub enum Sheet {
     Unphysical,
 }
 
-#[inline(always)]
-fn q_s_expr(s: Expr, m1: impl Into<Expr>, m2: impl Into<Expr>, sheet: Sheet) -> Expr {
-    let m1 = m1.into();
-    let m2 = m2.into();
+pub fn q_s(
+    s: impl Into<Expr>,
+    mass1: impl Into<Expr>,
+    mass2: impl Into<Expr>,
+    sheet: Sheet,
+) -> Expr {
+    let s = s.into();
+    let m1 = mass1.into();
+    let m2 = mass2.into();
     let sp = (&m1 + &m2).powi(2);
     let sm = (m1 - m2).powi(2);
     let q_phys = ((&s - sp) * (&s - sm)).sqrt() / (2.0 * s.sqrt());
@@ -282,19 +177,32 @@ fn q_s_expr(s: Expr, m1: impl Into<Expr>, m2: impl Into<Expr>, sheet: Sheet) -> 
     }
 }
 
-#[inline(always)]
-fn q_m_expr(m: Expr, m1: impl Into<Expr>, m2: impl Into<Expr>, sheet: Sheet) -> Expr {
-    q_s_expr(m.powi(2), m1, m2, sheet)
+pub fn q_m(
+    m: impl Into<Expr>,
+    mass1: impl Into<Expr>,
+    mass2: impl Into<Expr>,
+    sheet: Sheet,
+) -> Expr {
+    q_s(m.into().powi(2), mass1, mass2, sheet)
 }
 
-#[inline(always)]
-fn rho_s_expr(s: Expr, m1: impl Into<Expr>, m2: impl Into<Expr>, sheet: Sheet) -> Expr {
-    2.0 * q_s_expr(s.clone(), m1, m2, sheet) / s.sqrt()
+pub fn rho_s(
+    s: impl Into<Expr>,
+    mass1: impl Into<Expr>,
+    mass2: impl Into<Expr>,
+    sheet: Sheet,
+) -> Expr {
+    let s = s.into();
+    2.0 * q_s(s.clone(), mass1, mass2, sheet) / s.sqrt()
 }
 
-#[inline(always)]
-fn rho_m_expr(m: Expr, m1: impl Into<Expr>, m2: impl Into<Expr>, sheet: Sheet) -> Expr {
-    rho_s_expr(m.powi(2), m1, m2, sheet)
+pub fn rho_m(
+    m: impl Into<Expr>,
+    mass1: impl Into<Expr>,
+    mass2: impl Into<Expr>,
+    sheet: Sheet,
+) -> Expr {
+    rho_s(m.into().powi(2), mass1, mass2, sheet)
 }
 
 /// Selects which form of the Blatt-Weisskopf barrier factor is returned.
@@ -311,74 +219,43 @@ pub const BLATT_WEISSKOPF_MAX_L: usize = 8;
 /// Default Blatt-Weisskopf radius parameter $`q_R`$ in GeV.
 pub const QR_DEFAULT: f64 = 0.1973;
 
-/// Validated Blatt-Weisskopf barrier-factor configuration.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct BlattWeisskopf {
-    l: L,
-    q_r: f64,
+pub fn blatt_weisskopf_custom(
+    q: impl Into<Expr>,
+    l: impl TryInto<L>,
     kind: BarrierKind,
-}
-
-impl BlattWeisskopf {
-    pub fn new(l: impl TryInto<L>, q_r: f64, kind: BarrierKind) -> LadduPhysicsResult<Self> {
-        let l = l
-            .try_into()
-            .map_err(|_| LadduPhysicsError::ConversionError("L"))?;
-        validate_blatt_weisskopf_l(l)?;
-        validate_q_r(q_r)?;
-
-        Ok(Self { l, q_r, kind })
-    }
-
-    pub fn new_default(l: impl TryInto<L>, kind: BarrierKind) -> LadduPhysicsResult<Self> {
-        Self::new(l, QR_DEFAULT, kind)
-    }
-
-    #[inline]
-    pub const fn l(&self) -> L {
-        self.l
-    }
-
-    #[inline]
-    pub const fn q_r(&self) -> f64 {
-        self.q_r
-    }
-
-    #[inline]
-    pub const fn kind(&self) -> BarrierKind {
-        self.kind
-    }
-
-    pub fn evaluate_q(&self, q: impl Into<Expr>) -> Expr {
-        let q = q.into();
-        let z = q.powi(2) / self.q_r.powi(2);
-        let full = blatt_weisskopf_polynomial_expr(z, self.l);
-
-        match self.kind {
-            BarrierKind::Full => full,
-            BarrierKind::Tensor => full / q.powi(self.l.value() as i32),
-        }
-    }
-
-    pub fn evaluate_s(&self, s: impl Into<Expr>, channel: &TwoBodyChannel, sheet: Sheet) -> Expr {
-        let q = channel.q_s(s, sheet);
-        self.evaluate_q(q)
-    }
-
-    pub fn evaluate_m(&self, m0: impl Into<Expr>, channel: &TwoBodyChannel, sheet: Sheet) -> Expr {
-        let q = channel.q_m(m0, sheet);
-        self.evaluate_q(q)
-    }
-}
-
-/// Computes the Blatt-Weisskopf polynomial factor from `z`.
-///
-/// This checked version validates that `l <= BLATT_WEISSKOPF_MAX_L` and that
-/// `z` is finite.
-pub fn blatt_weisskopf_polynomial(z: Expr, l: L) -> LadduPhysicsResult<Expr> {
+    q_r: f64,
+) -> LadduPhysicsResult<Expr> {
+    let q = q.into();
+    let l = l
+        .try_into()
+        .map_err(|_| LadduPhysicsError::ConversionError("L"))?;
     validate_blatt_weisskopf_l(l)?;
+    validate_q_r(q_r)?;
+    let z = q.powi(2) / q_r.powi(2);
+    let full = blatt_weisskopf_polynomial_expr(z, l);
+    Ok(match kind {
+        BarrierKind::Full => full,
+        BarrierKind::Tensor => full / q.powi(l.value() as i32),
+    })
+}
 
-    Ok(blatt_weisskopf_polynomial_expr(z, l))
+pub fn blatt_weisskopf(
+    q: impl Into<Expr>,
+    l: impl TryInto<L>,
+    kind: BarrierKind,
+) -> LadduPhysicsResult<Expr> {
+    let q = q.into();
+    let l = l
+        .try_into()
+        .map_err(|_| LadduPhysicsError::ConversionError("L"))?;
+    validate_blatt_weisskopf_l(l)?;
+    validate_q_r(QR_DEFAULT)?;
+    let z = q.powi(2) / QR_DEFAULT.powi(2);
+    let full = blatt_weisskopf_polynomial_expr(z, l);
+    Ok(match kind {
+        BarrierKind::Full => full,
+        BarrierKind::Tensor => full / q.powi(l.value() as i32),
+    })
 }
 
 #[inline(always)]
@@ -452,7 +329,11 @@ mod test {
     use num::complex::Complex64;
 
     use super::*;
-    use crate::{l, m};
+    use crate::{
+        channel::Channel,
+        l, m,
+        vectors::{RealVec4, Vec3},
+    };
 
     const EPS: f64 = 1.0e-12;
     const LOOSE_EPS: f64 = 1.0e-8;
@@ -466,6 +347,10 @@ mod test {
     fn assert_complex_relative_eq(actual: Complex64, expected: Complex64, epsilon: f64) {
         assert_relative_eq!(actual.re, expected.re, epsilon = epsilon);
         assert_relative_eq!(actual.im, expected.im, epsilon = epsilon);
+    }
+
+    fn p4(px: f64, py: f64, pz: f64, e: f64) -> crate::vectors::Vec4 {
+        RealVec4::new(px, py, pz, e).into()
     }
 
     fn expected_spherical_harmonic(l: usize, m: isize, costheta: f64, phi: f64) -> Complex64 {
@@ -520,10 +405,6 @@ mod test {
         let phis = [0.0, 0.3, 0.5, 0.8, 1.0].map(|v| v * 2.0 * PI);
 
         for (l, m) in modes {
-            let mode = SphericalHarmonic::new(l, m).unwrap();
-            assert_eq!(mode.l(), l);
-            assert_eq!(mode.m(), m);
-
             for costheta in costhetas {
                 for phi in phis {
                     let expected = expected_spherical_harmonic(
@@ -534,12 +415,7 @@ mod test {
                     );
 
                     assert_complex_relative_eq(
-                        evaluate(spherical_harmonic(l, m, costheta.into(), phi.into()).unwrap()),
-                        expected,
-                        EPS,
-                    );
-                    assert_complex_relative_eq(
-                        evaluate(mode.evaluate(costheta, phi)),
+                        evaluate(spherical_harmonic(l, m, costheta, phi).unwrap()),
                         expected,
                         EPS,
                     );
@@ -549,67 +425,90 @@ mod test {
     }
 
     #[test]
+    fn spherical_harmonic_accepts_vertex_angle_expressions() {
+        let mut channel = Channel::new("decay");
+        channel.edge("x").p4(p4(0.0, 0.0, 0.0, 2.0));
+        channel.edge("a").p4(p4(1.0, 0.0, 0.0, 1.0));
+        channel.edge("b").p4(p4(-1.0, 0.0, 0.0, 1.0));
+        channel
+            .vertex("x_decay")
+            .incoming(["x"])
+            .outgoing(["a", "b"])
+            .validate()
+            .unwrap();
+        let vertex = channel.get_vertex("x_decay").unwrap();
+        let costheta = vertex.costheta("a", Vec3::z(), Vec3::y()).unwrap();
+        let phi = vertex.phi("a", Vec3::z(), Vec3::y()).unwrap();
+
+        assert_complex_relative_eq(
+            evaluate(spherical_harmonic(l!(1), m!(1), costheta, phi).unwrap()),
+            evaluate(spherical_harmonic(l!(1), m!(1), 0.0, 0.0).unwrap()),
+            EPS,
+        );
+    }
+
+    #[test]
     fn two_body_kinematics_match_known_values() {
-        let channel = TwoBodyChannel::new(0.51, 0.62);
+        let m1 = 0.51;
+        let m2 = 0.62;
         let s = 1.3;
         let m = f64::sqrt(s);
 
-        assert_complex_relative_eq(evaluate(channel.m1()), 0.51.into(), EPS);
-        assert_complex_relative_eq(evaluate(channel.m2()), 0.62.into(), EPS);
-        assert_complex_relative_eq(evaluate(channel.threshold()), 1.13.into(), EPS);
-        assert_complex_relative_eq(evaluate(channel.threshold_s()), 1.2769.into(), EPS);
-        assert_complex_relative_eq(evaluate(channel.pseudothreshold()), 0.11.into(), EPS);
-        assert_complex_relative_eq(evaluate(channel.pseudothreshold_s()), 0.0121.into(), EPS);
-
+        assert_complex_relative_eq(evaluate(Expr::from(m1) + m2), 1.13.into(), EPS);
+        assert_complex_relative_eq(evaluate((&Expr::from(m1) + m2).powi(2)), 1.2769.into(), EPS);
         assert_complex_relative_eq(
-            evaluate(channel.chi_plus(s)),
+            evaluate((&Expr::from(m1) - m2).powi(2).sqrt()),
+            0.11.into(),
+            EPS,
+        );
+        assert_complex_relative_eq(evaluate((&Expr::from(m1) - m2).powi(2)), 0.0121.into(), EPS);
+        assert_complex_relative_eq(
+            evaluate(1.0 - (&Expr::from(m1) + m2).powi(2) / s),
             0.01776923076923098.into(),
             EPS,
         );
         assert_complex_relative_eq(
-            evaluate(channel.chi_minus(s)),
+            evaluate(1.0 - (&Expr::from(m1) - m2).powi(2) / s),
             0.9906923076923076.into(),
             EPS,
         );
 
         let rho_expected = Complex64::new(0.13267946426138, 0.0);
         assert_complex_relative_eq(
-            evaluate(channel.rho_m(m, Sheet::Physical)),
+            evaluate(rho_m(m, m1, m2, Sheet::Physical)),
             rho_expected,
             EPS,
         );
         assert_complex_relative_eq(
-            evaluate(channel.rho_s(Complex64::from(s), Sheet::Physical)),
+            evaluate(rho_s(Complex64::from(s), m1, m2, Sheet::Physical)),
             rho_expected,
             EPS,
         );
 
         let q_expected = Complex64::new(0.3954823004889093, 0.0);
-        let q_channel = TwoBodyChannel::new(0.4, 0.5);
         assert_complex_relative_eq(
-            evaluate(q_channel.q_m(1.2, Sheet::Physical)),
+            evaluate(q_m(1.2, 0.4, 0.5, Sheet::Physical)),
             q_expected,
             EPS,
         );
         assert_complex_relative_eq(
-            evaluate(q_channel.q_s(Complex64::from(1.44), Sheet::Physical)),
+            evaluate(q_s(Complex64::from(1.44), 0.4, 0.5, Sheet::Physical)),
             q_expected,
             EPS,
         );
         assert_complex_relative_eq(
-            evaluate(q_channel.q_m(1.2, Sheet::Unphysical)),
+            evaluate(q_m(1.2, 0.4, 0.5, Sheet::Unphysical)),
             -q_expected,
             EPS,
         );
 
-        let below_channel = TwoBodyChannel::new(1.23, 0.62);
         assert_complex_relative_eq(
-            evaluate(below_channel.rho_m(m, Sheet::Physical)),
+            evaluate(rho_m(m, 1.23, 0.62, Sheet::Physical)),
             Complex64::new(0.0, 1.0795209736472833),
             EPS,
         );
         assert_complex_relative_eq(
-            evaluate(TwoBodyChannel::new(1.4, 1.5).q_m(1.2, Sheet::Physical)),
+            evaluate(q_m(1.2, 1.4, 1.5, Sheet::Physical)),
             Complex64::new(0.0, 1.3154464282347478),
             EPS,
         );
@@ -617,9 +516,6 @@ mod test {
 
     #[test]
     fn blatt_weisskopf_matches_known_values() {
-        let above_channel = TwoBodyChannel::new(0.4, 0.5);
-        let below_channel = TwoBodyChannel::new(1.4, 1.5);
-
         let above_expected = [
             (l!(0), 1.0),
             (l!(1), 1.2654752018685698),
@@ -641,28 +537,35 @@ mod test {
         ];
 
         for (l, expected_re) in above_expected {
-            let barrier = BlattWeisskopf::new_default(l, BarrierKind::Full).unwrap();
-            assert_eq!(barrier.l(), l);
-            assert_relative_eq!(barrier.q_r(), QR_DEFAULT, epsilon = EPS);
-            assert_eq!(barrier.kind(), BarrierKind::Full);
-
             assert_complex_relative_eq(
-                evaluate(barrier.evaluate_m(1.2, &above_channel, Sheet::Physical)),
+                evaluate(
+                    blatt_weisskopf(q_m(1.2, 0.4, 0.5, Sheet::Physical), l, BarrierKind::Full)
+                        .unwrap(),
+                ),
                 Complex64::new(expected_re, 0.0),
                 LOOSE_EPS,
             );
-            let q = above_channel.q_m(1.2, Sheet::Physical);
             assert_complex_relative_eq(
-                evaluate(barrier.evaluate_q(q)),
+                evaluate(
+                    blatt_weisskopf_custom(
+                        q_m(1.2, 0.4, 0.5, Sheet::Physical),
+                        l,
+                        BarrierKind::Full,
+                        QR_DEFAULT,
+                    )
+                    .unwrap(),
+                ),
                 Complex64::new(expected_re, 0.0),
                 LOOSE_EPS,
             );
         }
 
         for (l, expected_re) in below_expected {
-            let barrier = BlattWeisskopf::new_default(l, BarrierKind::Full).unwrap();
             assert_complex_relative_eq(
-                evaluate(barrier.evaluate_m(1.2, &below_channel, Sheet::Physical)),
+                evaluate(
+                    blatt_weisskopf(q_m(1.2, 1.4, 1.5, Sheet::Physical), l, BarrierKind::Full)
+                        .unwrap(),
+                ),
                 Complex64::new(expected_re, 0.0),
                 LOOSE_EPS,
             );
@@ -675,12 +578,8 @@ mod test {
 
         for l_raw in 0..=BLATT_WEISSKOPF_MAX_L {
             let l = L::try_from(l_raw).unwrap();
-            let full = BlattWeisskopf::new(l, QR_DEFAULT, BarrierKind::Full)
-                .unwrap()
-                .evaluate_q(q);
-            let tensor = BlattWeisskopf::new(l, QR_DEFAULT, BarrierKind::Tensor)
-                .unwrap()
-                .evaluate_q(q);
+            let full = blatt_weisskopf(q, l, BarrierKind::Full).unwrap();
+            let tensor = blatt_weisskopf(q, l, BarrierKind::Tensor).unwrap();
 
             assert_complex_relative_eq(
                 evaluate(tensor) * q.powu(l_raw as u32),
@@ -689,9 +588,8 @@ mod test {
             );
         }
 
-        let tensor_l0_at_threshold = BlattWeisskopf::new(l!(0), QR_DEFAULT, BarrierKind::Tensor)
-            .unwrap()
-            .evaluate_q(Complex64::new(0.0, 0.0));
+        let tensor_l0_at_threshold =
+            blatt_weisskopf(Complex64::new(0.0, 0.0), l!(0), BarrierKind::Tensor).unwrap();
         assert_complex_relative_eq(
             evaluate(tensor_l0_at_threshold),
             Complex64::new(1.0, 0.0),
@@ -701,20 +599,10 @@ mod test {
 
     #[test]
     fn constructors_reject_invalid_static_configuration() {
-        assert!(SphericalHarmonic::new(l!(1), m!(2)).is_err());
-        assert!(SphericalHarmonic::new(l!(1), m!(1 / 2)).is_err());
-        assert!(
-            BlattWeisskopf::new(BLATT_WEISSKOPF_MAX_L + 1, QR_DEFAULT, BarrierKind::Full).is_err()
-        );
-        assert!(BlattWeisskopf::new_default(BLATT_WEISSKOPF_MAX_L + 1, BarrierKind::Full).is_err());
-        assert!(BlattWeisskopf::new(l!(0), 0.0, BarrierKind::Full).is_err());
-        assert!(BlattWeisskopf::new(l!(0), f64::NAN, BarrierKind::Full).is_err());
-        assert!(
-            blatt_weisskopf_polynomial(
-                Complex64::new(1.0, 0.0).into(),
-                L::try_from(BLATT_WEISSKOPF_MAX_L + 1).unwrap(),
-            )
-            .is_err()
-        );
+        assert!(spherical_harmonic(l!(1), m!(2), 0.0, 0.0).is_err());
+        assert!(spherical_harmonic(l!(1), m!(1 / 2), 0.0, 0.0).is_err());
+        assert!(blatt_weisskopf(1.0, BLATT_WEISSKOPF_MAX_L + 1, BarrierKind::Full).is_err());
+        assert!(blatt_weisskopf_custom(1.0, l!(0), BarrierKind::Full, 0.0).is_err());
+        assert!(blatt_weisskopf_custom(1.0, l!(0), BarrierKind::Full, f64::NAN).is_err());
     }
 }

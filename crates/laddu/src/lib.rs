@@ -25,6 +25,12 @@ pub use laddu_likelihood as likelihood;
 pub use laddu_wgpu as wgpu;
 
 pub mod prelude {
+    #[cfg(feature = "amplitudes")]
+    pub use laddu_amplitudes::{
+        breit_wigner_m, breit_wigner_s, relativistic_breit_wigner_custom,
+        relativistic_breit_wigner_custom_s, relativistic_breit_wigner_m,
+        relativistic_breit_wigner_s,
+    };
     pub use laddu_autodiff::{AutodiffMode, AutodiffPlan};
     pub use laddu_compile::{
         AlgebraicIdentityRule, CacheEntry, CachePlan, CachePolicy, CanonicalCsePass, CompileError,
@@ -50,5 +56,9 @@ pub mod prelude {
         CpuRidgePenalty, LikelihoodError, LikelihoodName, LikelihoodResult,
     };
     pub use laddu_physics::channel::{Channel, Edge, EdgeHandle, Vertex, VertexHandle, VertexView};
+    pub use laddu_physics::math::{
+        BarrierKind, Sheet, blatt_weisskopf, blatt_weisskopf_custom, q_m, q_s, rho_m, rho_s,
+        spherical_harmonic,
+    };
     pub use laddu_runtime::{CpuBackend, CpuBatchCache, CpuCachedBatch, CpuCachedDataset, CpuPlan};
 }

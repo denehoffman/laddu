@@ -9,4 +9,12 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+laddu-expr = { path = "../laddu-expr" }
 laddu-kernel = { path = "../laddu-kernel" }
+laddu-physics = { path = "../laddu-physics" }
+num.workspace = true
+
+[dev-dependencies]
+laddu-compile = { path = "../laddu-compile" }
+laddu-runtime = { path = "../laddu-runtime" }
+approx.workspace = true
