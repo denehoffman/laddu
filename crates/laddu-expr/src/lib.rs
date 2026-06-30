@@ -291,6 +291,30 @@ impl ExprNode {
         node.const_value()
             .is_some_and(|value| value == Complex64::ONE)
     }
+
+    pub fn child_ids(&self) -> Vec<ExprId> {
+        match self {
+            Self::RealConst(_)
+            | Self::ComplexConst(_)
+            | Self::ScalarParam(_)
+            | Self::ComplexScalarParam { .. }
+            | Self::PolarComplexScalarParam { .. }
+            | Self::EventScalar(_)
+            | Self::EventP4Component { .. } => Vec::new(),
+            Self::Unary { input, .. }
+            | Self::Component { input, .. }
+            | Self::MatrixElement { input, .. } => vec![*input],
+            Self::Binary { lhs, rhs, .. }
+            | Self::Complex { re: lhs, im: rhs }
+            | Self::MatMul { lhs, rhs }
+            | Self::Dot { lhs, rhs } => vec![*lhs, *rhs],
+            Self::NaryAdd { terms } => terms.clone(),
+            Self::NaryMul { factors } => factors.clone(),
+            Self::Vector { elements } | Self::Matrix { elements, .. } => elements.clone(),
+            Self::MatVec { matrix, vector } => vec![*matrix, *vector],
+            Self::Solve { matrix, rhs } => vec![*matrix, *rhs],
+        }
+    }
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]

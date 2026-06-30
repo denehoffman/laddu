@@ -116,18 +116,45 @@ impl CachePlan {
             return Self::default();
         }
 
-        let entries = graph
+        let cacheable = graph
             .nodes()
             .iter()
             .enumerate()
-            .filter_map(|(index, _node)| {
+            .map(|(index, _)| {
                 let id = ExprId::from_index(index).expect("graph too large");
                 let facts = *facts.get(id).expect("facts are complete for graph");
-                policy.accepts(facts).then_some(CacheEntry {
-                    node: id,
-                    value_kind: facts.value_kind,
-                    evaluation_class: facts.evaluation_class(),
-                    dependency: facts.dependency,
+                policy.accepts(facts)
+            })
+            .collect::<Vec<_>>();
+        let mut frontier = vec![false; graph.nodes().len()];
+        if cacheable[graph.root().index()] {
+            frontier[graph.root().index()] = true;
+        }
+        for (index, node) in graph.nodes().iter().enumerate() {
+            if cacheable[index] {
+                continue;
+            }
+            for child in node.child_ids() {
+                if cacheable[child.index()] {
+                    frontier[child.index()] = true;
+                }
+            }
+        }
+
+        let entries = cacheable
+            .into_iter()
+            .zip(frontier)
+            .enumerate()
+            .filter_map(|(index, (cacheable, frontier))| {
+                (cacheable && frontier).then(|| {
+                    let id = ExprId::from_index(index).expect("graph too large");
+                    let facts = *facts.get(id).expect("facts are complete for graph");
+                    CacheEntry {
+                        node: id,
+                        value_kind: facts.value_kind,
+                        evaluation_class: facts.evaluation_class(),
+                        dependency: facts.dependency,
+                    }
                 })
             })
             .collect();
@@ -1638,22 +1665,28 @@ mod tests {
     }
 
     #[test]
-    fn event_dependent_cache_policy_selects_event_leaves_and_derived_values() {
-        let x = Expr::from(event_scalar("x"));
-        let y = Expr::from(event_scalar("y"));
-        let model = x.clone().sin() + dot(vector([x, y]), vector([2.0, 3.0]));
+    fn event_dependent_cache_policy_selects_parameter_boundary() {
+        let model = parameter!("scale") * event_scalar("x").sin();
         let compiled = CompiledModel::from_expr(&model).unwrap();
 
-        assert!(!compiled.cache_plan().is_empty());
+        assert_eq!(compiled.cache_plan().len(), 1);
         assert!(compiled.cache_plan().entries().iter().all(|entry| {
             entry.evaluation_class() == EvaluationClass::PerEvent
                 && entry.dependency().depends_on_event
                 && !entry.dependency().depends_on_free_params
                 && !entry.dependency().depends_on_fixed_params
         }));
-        assert!(compiled.cache_plan().entries().iter().any(|entry| {
-            matches!(compiled.graph().node(entry.node()), Some(ExprNode::EventScalar(name)) if name.as_ref() == "x")
-        }));
+        let entry = compiled.cache_plan().entries()[0];
+        assert!(matches!(
+            compiled.graph().node(entry.node()),
+            Some(ExprNode::Unary {
+                op: UnaryOp::Sin,
+                input,
+            }) if matches!(
+                compiled.graph().node(*input),
+                Some(ExprNode::EventScalar(name)) if name.as_ref() == "x"
+            )
+        ));
     }
 
     #[test]

@@ -2245,30 +2245,7 @@ fn mark_required(graph: &ExprGraph, id: ExprId, required: &mut [bool]) {
 }
 
 fn node_children(node: &ExprNode) -> Vec<ExprId> {
-    match node {
-        ExprNode::Unary { input, .. }
-        | ExprNode::Component { input, .. }
-        | ExprNode::MatrixElement { input, .. } => vec![*input],
-        ExprNode::Binary { lhs, rhs, .. }
-        | ExprNode::Complex { re: lhs, im: rhs }
-        | ExprNode::MatMul { lhs, rhs }
-        | ExprNode::Dot { lhs, rhs } => vec![*lhs, *rhs],
-        ExprNode::MatVec { matrix, vector }
-        | ExprNode::Solve {
-            matrix,
-            rhs: vector,
-        } => vec![*matrix, *vector],
-        ExprNode::NaryAdd { terms } => terms.clone(),
-        ExprNode::NaryMul { factors } => factors.clone(),
-        ExprNode::Vector { elements } | ExprNode::Matrix { elements, .. } => elements.clone(),
-        ExprNode::RealConst(_)
-        | ExprNode::ComplexConst(_)
-        | ExprNode::ScalarParam(_)
-        | ExprNode::ComplexScalarParam { .. }
-        | ExprNode::PolarComplexScalarParam { .. }
-        | ExprNode::EventScalar(_)
-        | ExprNode::EventP4Component { .. } => Vec::new(),
-    }
+    node.child_ids()
 }
 
 fn matrix_values_row_major(matrix: &DMatrix<Complex64>) -> Vec<Complex64> {
