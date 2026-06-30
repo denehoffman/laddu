@@ -88,7 +88,8 @@ pub struct CpuPlan {
     autodiff: AutodiffPlan,
     cache_plan: CachePlan,
     cache_slots: Vec<Option<usize>>,
-    cached_evaluation_nodes: Vec<bool>,
+    cached_evaluation_nodes: Vec<ExprId>,
+    cached_value_slots: Vec<Option<usize>>,
     cache_required_nodes: Vec<bool>,
     factor_matrix_slots: Vec<Option<usize>>,
     factor_matrices: Vec<(ExprId, usize)>,
@@ -112,7 +113,8 @@ impl CpuBackend {
         for (slot, entry) in cache_plan.entries().iter().enumerate() {
             cache_slots[entry.node().index()] = Some(slot);
         }
-        let cached_evaluation_nodes = cached_evaluation_nodes(model.graph(), &cache_slots);
+        let (cached_evaluation_nodes, cached_value_slots) =
+            cached_evaluation_schedule(model.graph(), &cache_slots);
         let cache_required_nodes = cache_required_nodes(model.graph(), &cache_plan);
         let mut factor_matrix_slots = vec![None; model.graph().nodes().len()];
         let mut factor_matrices = Vec::new();
@@ -154,6 +156,7 @@ impl CpuBackend {
             cache_plan,
             cache_slots,
             cached_evaluation_nodes,
+            cached_value_slots,
             cache_required_nodes,
             factor_matrix_slots,
             factor_matrices,
@@ -308,7 +311,7 @@ impl CpuPlan {
         row: usize,
     ) -> RuntimeResult<Complex64> {
         let values = self.evaluate_values_from_cache(params, cache, row)?;
-        scalar_at(&values, self.graph.root().index())
+        self.cached_scalar_at(&values, self.graph.root())
     }
 
     pub fn evaluate_cache_row_with_gradient(
@@ -642,7 +645,11 @@ impl CpuPlan {
         values: Vec<Value>,
         cached_factors: Option<(&CpuBatchCache, usize)>,
     ) -> RuntimeResult<ValueGradient> {
-        let value = scalar_at(&values, self.graph.root().index())?;
+        let value = if cached_factors.is_some() {
+            self.cached_scalar_at(&values, self.graph.root())?
+        } else {
+            scalar_at(&values, self.graph.root().index())?
+        };
         let gradient =
             DerivativeWorkspace::new(self, params, &values, cached_factors).gradient()?;
         Ok(ValueGradient { value, gradient })
@@ -1109,14 +1116,13 @@ impl CpuPlan {
         cache: &CpuBatchCache,
         row: usize,
     ) -> RuntimeResult<Vec<Value>> {
-        let mut values = vec![Value::Scalar(Complex64::ZERO); self.graph.nodes().len()];
+        let mut values = Vec::with_capacity(self.cached_evaluation_nodes.len());
 
-        for (index, node) in self.graph.nodes().iter().enumerate() {
-            if !self.cached_evaluation_nodes[index] {
-                continue;
-            }
+        for id in &self.cached_evaluation_nodes {
+            let index = id.index();
+            let node = &self.graph.nodes()[index];
             if let Some(slot) = self.cache_slots[index] {
-                values[index] = cache.value(slot, row)?;
+                values.push(cache.value(slot, row)?);
                 continue;
             }
             let value = match node {
@@ -1146,37 +1152,37 @@ impl CpuPlan {
                     )));
                 }
                 ExprNode::Unary { op, input } => {
-                    let input = scalar_at(&values, input.index())?;
+                    let input = self.cached_scalar_at(&values, *input)?;
                     Value::Scalar(eval_unary(*op, input))
                 }
                 ExprNode::Binary { op, lhs, rhs } => {
-                    let lhs = scalar_at(&values, lhs.index())?;
-                    let rhs = scalar_at(&values, rhs.index())?;
+                    let lhs = self.cached_scalar_at(&values, *lhs)?;
+                    let rhs = self.cached_scalar_at(&values, *rhs)?;
                     Value::Scalar(eval_binary(*op, lhs, rhs))
                 }
                 ExprNode::NaryAdd { terms } => {
                     let mut sum = Complex64::ZERO;
                     for term in terms {
-                        sum += scalar_at(&values, term.index())?;
+                        sum += self.cached_scalar_at(&values, *term)?;
                     }
                     Value::Scalar(sum)
                 }
                 ExprNode::NaryMul { factors } => {
                     let mut product = Complex64::ONE;
                     for factor in factors {
-                        product *= scalar_at(&values, factor.index())?;
+                        product *= self.cached_scalar_at(&values, *factor)?;
                     }
                     Value::Scalar(product)
                 }
                 ExprNode::Complex { re, im } => {
-                    let re = scalar_at(&values, re.index())?;
-                    let im = scalar_at(&values, im.index())?;
+                    let re = self.cached_scalar_at(&values, *re)?;
+                    let im = self.cached_scalar_at(&values, *im)?;
                     Value::Scalar(Complex64::new(re.re, im.re))
                 }
                 ExprNode::Vector { elements } => Value::Vector(
                     elements
                         .iter()
-                        .map(|id| scalar_at(&values, id.index()))
+                        .map(|id| self.cached_scalar_at(&values, *id))
                         .collect::<RuntimeResult<_>>()?,
                 ),
                 ExprNode::Matrix {
@@ -1198,12 +1204,12 @@ impl CpuPlan {
                         cols: *cols,
                         values: elements
                             .iter()
-                            .map(|id| scalar_at(&values, id.index()))
+                            .map(|id| self.cached_scalar_at(&values, *id))
                             .collect::<RuntimeResult<_>>()?,
                     }
                 }
                 ExprNode::Component { input, index: i } => {
-                    let vector = vector_at(&values, input.index())?;
+                    let vector = self.cached_vector_at(&values, *input)?;
                     Value::Scalar(*vector.get(*i).ok_or_else(|| RuntimeError::InvalidShape {
                         index,
                         message: format!(
@@ -1213,7 +1219,7 @@ impl CpuPlan {
                     })?)
                 }
                 ExprNode::MatrixElement { input, row, col } => {
-                    let (rows, cols, matrix) = matrix_at(&values, input.index())?;
+                    let (rows, cols, matrix) = self.cached_matrix_at(&values, *input)?;
                     if *row >= rows || *col >= cols {
                         return Err(RuntimeError::InvalidShape {
                             index,
@@ -1225,8 +1231,8 @@ impl CpuPlan {
                     Value::Scalar(matrix[row * cols + col])
                 }
                 ExprNode::MatMul { lhs, rhs } => {
-                    let (lhs_rows, lhs_cols, lhs) = matrix_at(&values, lhs.index())?;
-                    let (rhs_rows, rhs_cols, rhs) = matrix_at(&values, rhs.index())?;
+                    let (lhs_rows, lhs_cols, lhs) = self.cached_matrix_at(&values, *lhs)?;
+                    let (rhs_rows, rhs_cols, rhs) = self.cached_matrix_at(&values, *rhs)?;
                     if lhs_cols != rhs_rows {
                         return Err(RuntimeError::InvalidShape {
                             index,
@@ -1245,8 +1251,8 @@ impl CpuPlan {
                     }
                 }
                 ExprNode::MatVec { matrix, vector } => {
-                    let (rows, cols, matrix) = matrix_at(&values, matrix.index())?;
-                    let vector = vector_at(&values, vector.index())?;
+                    let (rows, cols, matrix) = self.cached_matrix_at(&values, *matrix)?;
+                    let vector = self.cached_vector_at(&values, *vector)?;
                     if cols != vector.len() {
                         return Err(RuntimeError::InvalidShape {
                             index,
@@ -1261,8 +1267,8 @@ impl CpuPlan {
                     Value::Vector((matrix * vector).iter().copied().collect())
                 }
                 ExprNode::Dot { lhs, rhs } => {
-                    let lhs = vector_at(&values, lhs.index())?;
-                    let rhs = vector_at(&values, rhs.index())?;
+                    let lhs = self.cached_vector_at(&values, *lhs)?;
+                    let rhs = self.cached_vector_at(&values, *rhs)?;
                     if lhs.len() != rhs.len() {
                         return Err(RuntimeError::InvalidShape {
                             index,
@@ -1277,8 +1283,8 @@ impl CpuPlan {
                 }
                 ExprNode::Solve { matrix, rhs } => {
                     let matrix_id = *matrix;
-                    let (rows, cols, matrix) = matrix_at(&values, matrix_id.index())?;
-                    let rhs = vector_at(&values, rhs.index())?;
+                    let (rows, cols, matrix) = self.cached_matrix_at(&values, matrix_id)?;
+                    let rhs = self.cached_vector_at(&values, *rhs)?;
                     if rows != cols || rows != rhs.len() {
                         return Err(RuntimeError::InvalidShape {
                             index,
@@ -1300,10 +1306,37 @@ impl CpuPlan {
                     Value::Vector(solution.iter().copied().collect())
                 }
             };
-            values[index] = value;
+            values.push(value);
         }
 
         Ok(values)
+    }
+
+    fn cached_value_slot(&self, id: ExprId) -> RuntimeResult<usize> {
+        self.cached_value_slots[id.index()].ok_or_else(|| RuntimeError::InvalidShape {
+            index: id.index(),
+            message: "node is not part of the cached evaluation schedule".into(),
+        })
+    }
+
+    fn cached_scalar_at(&self, values: &[Value], id: ExprId) -> RuntimeResult<Complex64> {
+        scalar_at(values, self.cached_value_slot(id)?)
+    }
+
+    fn cached_vector_at<'a>(
+        &self,
+        values: &'a [Value],
+        id: ExprId,
+    ) -> RuntimeResult<&'a [Complex64]> {
+        vector_at(values, self.cached_value_slot(id)?)
+    }
+
+    fn cached_matrix_at<'a>(
+        &self,
+        values: &'a [Value],
+        id: ExprId,
+    ) -> RuntimeResult<(usize, usize, &'a [Complex64])> {
+        matrix_at(values, self.cached_value_slot(id)?)
     }
 
     fn check_batch_cache(&self, cache: &CpuBatchCache) -> RuntimeResult<()> {
@@ -1361,7 +1394,7 @@ impl<'a> DerivativeWorkspace<'a> {
             plan,
             params,
             primals,
-            tangents: vec![None; primals.len()],
+            tangents: vec![None; plan.graph.nodes().len()],
             factors: HashMap::new(),
             cached_factors,
         }
@@ -1396,8 +1429,8 @@ impl<'a> DerivativeWorkspace<'a> {
                 Value::Scalar(self.parameter_seed(id, parameter, &node)?)
             }
             ExprNode::Unary { op, input } => {
-                let input_value = scalar_at(self.primals, input.index())?;
-                let output_value = scalar_at(self.primals, index)?;
+                let input_value = self.primal_scalar(input)?;
+                let output_value = self.primal_scalar(id)?;
                 let input_tangent = self.scalar_tangent(input)?;
                 let value = match op {
                     UnaryOp::Neg => -input_tangent,
@@ -1425,8 +1458,8 @@ impl<'a> DerivativeWorkspace<'a> {
                 Value::Scalar(value)
             }
             ExprNode::Binary { op, lhs, rhs } => {
-                let lhs_value = scalar_at(self.primals, lhs.index())?;
-                let rhs_value = scalar_at(self.primals, rhs.index())?;
+                let lhs_value = self.primal_scalar(lhs)?;
+                let rhs_value = self.primal_scalar(rhs)?;
                 let lhs_tangent = self.scalar_tangent(lhs)?;
                 let rhs_tangent = self.scalar_tangent(rhs)?;
                 let value = match op {
@@ -1455,7 +1488,7 @@ impl<'a> DerivativeWorkspace<'a> {
                 let mut product = Complex64::ONE;
                 let mut derivative = Complex64::ZERO;
                 for factor in factors {
-                    let value = scalar_at(self.primals, factor.index())?;
+                    let value = self.primal_scalar(factor)?;
                     derivative = derivative * value + product * self.scalar_tangent(factor)?;
                     product *= value;
                 }
@@ -1514,8 +1547,8 @@ impl<'a> DerivativeWorkspace<'a> {
                 Value::Scalar(matrix[row * cols + col])
             }
             ExprNode::MatMul { lhs, rhs } => {
-                let (lhs_rows, lhs_cols, lhs_value) = matrix_at(self.primals, lhs.index())?;
-                let (rhs_rows, rhs_cols, rhs_value) = matrix_at(self.primals, rhs.index())?;
+                let (lhs_rows, lhs_cols, lhs_value) = self.primal_matrix(lhs)?;
+                let (rhs_rows, rhs_cols, rhs_value) = self.primal_matrix(rhs)?;
                 if lhs_cols != rhs_rows {
                     return Err(RuntimeError::InvalidShape {
                         index,
@@ -1536,8 +1569,8 @@ impl<'a> DerivativeWorkspace<'a> {
                 }
             }
             ExprNode::MatVec { matrix, vector } => {
-                let (rows, cols, matrix_value) = matrix_at(self.primals, matrix.index())?;
-                let vector_value = vector_at(self.primals, vector.index())?;
+                let (rows, cols, matrix_value) = self.primal_matrix(matrix)?;
+                let vector_value = self.primal_vector(vector)?;
                 if cols != vector_value.len() {
                     return Err(RuntimeError::InvalidShape {
                         index,
@@ -1559,8 +1592,8 @@ impl<'a> DerivativeWorkspace<'a> {
                 )
             }
             ExprNode::Dot { lhs, rhs } => {
-                let lhs_value = vector_at(self.primals, lhs.index())?;
-                let rhs_value = vector_at(self.primals, rhs.index())?;
+                let lhs_value = self.primal_vector(lhs)?;
+                let rhs_value = self.primal_vector(rhs)?;
                 if lhs_value.len() != rhs_value.len() {
                     return Err(RuntimeError::InvalidShape {
                         index,
@@ -1587,9 +1620,9 @@ impl<'a> DerivativeWorkspace<'a> {
                 )
             }
             ExprNode::Solve { matrix, rhs } => {
-                let (rows, cols, matrix_value) = matrix_at(self.primals, matrix.index())?;
-                let solution = vector_at(self.primals, index)?;
-                let rhs_value = vector_at(self.primals, rhs.index())?;
+                let (rows, cols, matrix_value) = self.primal_matrix(matrix)?;
+                let solution = self.primal_vector(id)?;
+                let rhs_value = self.primal_vector(rhs)?;
                 if rows != cols || rows != rhs_value.len() {
                     return Err(RuntimeError::InvalidShape {
                         index,
@@ -1617,9 +1650,10 @@ impl<'a> DerivativeWorkspace<'a> {
                         .solve(&tangent_rhs)
                         .ok_or(RuntimeError::SingularMatrix(index))?
                 } else {
+                    let matrix_value = DMatrix::from_row_slice(rows, cols, matrix_value);
                     self.factors
                         .entry(matrix.index())
-                        .or_insert_with(|| DMatrix::from_row_slice(rows, cols, matrix_value).lu())
+                        .or_insert_with(|| matrix_value.lu())
                         .solve(&tangent_rhs)
                         .ok_or(RuntimeError::SingularMatrix(index))?
                 };
@@ -1659,8 +1693,32 @@ impl<'a> DerivativeWorkspace<'a> {
                 };
                 Complex64::cis(param_value(self.params, &self.plan.params, phase.name())?)
             }
-            SeedKind::PolarPhase => Complex64::I * scalar_at(self.primals, id.index())?,
+            SeedKind::PolarPhase => Complex64::I * self.primal_scalar(id)?,
         })
+    }
+
+    fn primal_scalar(&self, id: ExprId) -> RuntimeResult<Complex64> {
+        if self.cached_factors.is_some() {
+            self.plan.cached_scalar_at(self.primals, id)
+        } else {
+            scalar_at(self.primals, id.index())
+        }
+    }
+
+    fn primal_vector(&self, id: ExprId) -> RuntimeResult<&[Complex64]> {
+        if self.cached_factors.is_some() {
+            self.plan.cached_vector_at(self.primals, id)
+        } else {
+            vector_at(self.primals, id.index())
+        }
+    }
+
+    fn primal_matrix(&self, id: ExprId) -> RuntimeResult<(usize, usize, &[Complex64])> {
+        if self.cached_factors.is_some() {
+            self.plan.cached_matrix_at(self.primals, id)
+        } else {
+            matrix_at(self.primals, id.index())
+        }
     }
 
     fn scalar_tangent(&self, id: ExprId) -> RuntimeResult<Complex64> {
@@ -2206,10 +2264,24 @@ fn cache_required_nodes(graph: &ExprGraph, cache_plan: &CachePlan) -> Vec<bool> 
     required
 }
 
-fn cached_evaluation_nodes(graph: &ExprGraph, cache_slots: &[Option<usize>]) -> Vec<bool> {
+fn cached_evaluation_schedule(
+    graph: &ExprGraph,
+    cache_slots: &[Option<usize>],
+) -> (Vec<ExprId>, Vec<Option<usize>>) {
     let mut required = vec![false; graph.nodes().len()];
     mark_cached_evaluation_node(graph, graph.root(), cache_slots, &mut required);
-    required
+    let nodes = required
+        .into_iter()
+        .enumerate()
+        .filter_map(|(index, required)| {
+            required.then(|| ExprId::from_index(index).expect("graph too large"))
+        })
+        .collect::<Vec<_>>();
+    let mut value_slots = vec![None; graph.nodes().len()];
+    for (slot, id) in nodes.iter().enumerate() {
+        value_slots[id.index()] = Some(slot);
+    }
+    (nodes, value_slots)
 }
 
 fn mark_cached_evaluation_node(
