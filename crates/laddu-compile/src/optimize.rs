@@ -669,37 +669,6 @@ impl RewriteRule for AlgebraicIdentityRule {
                         ],
                     })
                 }
-                Some(ExprNode::ComplexScalarParam { re, im }) => {
-                    let re_id = context.next_id();
-                    let im_id = ExprId::from_index(re_id.index() + 1).expect("graph too large");
-                    let neg_id = ExprId::from_index(re_id.index() + 2).expect("graph too large");
-                    Ok(Rewrite::ReplaceMany {
-                        nodes: vec![
-                            (
-                                ExprNode::ScalarParam(re.clone()),
-                                ExprMetadata::new(ExprSourceKind::Param),
-                            ),
-                            (
-                                ExprNode::ScalarParam(im.clone()),
-                                ExprMetadata::new(ExprSourceKind::Param),
-                            ),
-                            (
-                                ExprNode::Unary {
-                                    op: UnaryOp::Neg,
-                                    input: im_id,
-                                },
-                                ExprMetadata::new(ExprSourceKind::Unary),
-                            ),
-                            (
-                                ExprNode::Complex {
-                                    re: re_id,
-                                    im: neg_id,
-                                },
-                                metadata.clone(),
-                            ),
-                        ],
-                    })
-                }
                 _ => Ok(Rewrite::Keep),
             },
             ExprNode::Unary {
@@ -713,10 +682,6 @@ impl RewriteRule for AlgebraicIdentityRule {
                     op: UnaryOp::Imag, ..
                 }) => Ok(alias_or_preserve(*input, metadata, context)),
                 Some(ExprNode::Complex { re, .. }) => Ok(alias_or_preserve(*re, metadata, context)),
-                Some(ExprNode::ComplexScalarParam { re, .. }) => Ok(Rewrite::Replace {
-                    node: ExprNode::ScalarParam(re.clone()),
-                    metadata: metadata.clone(),
-                }),
                 _ => Ok(Rewrite::Keep),
             },
             ExprNode::Unary {
@@ -730,10 +695,6 @@ impl RewriteRule for AlgebraicIdentityRule {
                     metadata: metadata.clone(),
                 }),
                 Some(ExprNode::Complex { im, .. }) => Ok(alias_or_preserve(*im, metadata, context)),
-                Some(ExprNode::ComplexScalarParam { im, .. }) => Ok(Rewrite::Replace {
-                    node: ExprNode::ScalarParam(im.clone()),
-                    metadata: metadata.clone(),
-                }),
                 _ => Ok(Rewrite::Keep),
             },
             ExprNode::Component { input, index } => {
@@ -4187,14 +4148,6 @@ enum StructuralKey {
         im: u64,
     },
     ScalarParam(ParameterKey),
-    ComplexScalarParam {
-        re: ParameterKey,
-        im: ParameterKey,
-    },
-    PolarComplexScalarParam {
-        mag: ParameterKey,
-        phase: ParameterKey,
-    },
     EventScalar(String),
     EventP4Component {
         name: String,
@@ -4263,14 +4216,6 @@ impl StructuralKey {
                 im: value.im.to_bits(),
             },
             ExprNode::ScalarParam(parameter) => Self::ScalarParam(ParameterKey::from(parameter)),
-            ExprNode::ComplexScalarParam { re, im } => Self::ComplexScalarParam {
-                re: ParameterKey::from(re),
-                im: ParameterKey::from(im),
-            },
-            ExprNode::PolarComplexScalarParam { mag, phase } => Self::PolarComplexScalarParam {
-                mag: ParameterKey::from(mag),
-                phase: ParameterKey::from(phase),
-            },
             ExprNode::EventScalar(name) => Self::EventScalar(name.to_string()),
             ExprNode::EventP4Component { name, component } => Self::EventP4Component {
                 name: name.to_string(),
@@ -4443,8 +4388,6 @@ fn remap_node(node: &ExprNode, old_to_new: &[ExprId]) -> ExprNode {
         ExprNode::RealConst(_)
         | ExprNode::ComplexConst(_)
         | ExprNode::ScalarParam(_)
-        | ExprNode::ComplexScalarParam { .. }
-        | ExprNode::PolarComplexScalarParam { .. }
         | ExprNode::EventScalar(_)
         | ExprNode::EventP4Component { .. } => node.clone(),
         ExprNode::Unary { op, input } => ExprNode::Unary {
@@ -4511,8 +4454,6 @@ fn remap_compacted_node(node: &ExprNode, old_to_new: &[Option<ExprId>]) -> ExprN
         ExprNode::RealConst(_)
         | ExprNode::ComplexConst(_)
         | ExprNode::ScalarParam(_)
-        | ExprNode::ComplexScalarParam { .. }
-        | ExprNode::PolarComplexScalarParam { .. }
         | ExprNode::EventScalar(_)
         | ExprNode::EventP4Component { .. } => node.clone(),
         ExprNode::Unary { op, input } => ExprNode::Unary {
@@ -4591,8 +4532,6 @@ fn child_ids(node: &ExprNode) -> Vec<ExprId> {
         ExprNode::RealConst(_)
         | ExprNode::ComplexConst(_)
         | ExprNode::ScalarParam(_)
-        | ExprNode::ComplexScalarParam { .. }
-        | ExprNode::PolarComplexScalarParam { .. }
         | ExprNode::EventScalar(_)
         | ExprNode::EventP4Component { .. } => Vec::new(),
         ExprNode::Unary { input, .. }

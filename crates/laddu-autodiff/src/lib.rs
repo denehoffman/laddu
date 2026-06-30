@@ -10,15 +10,6 @@ pub enum AutodiffMode {
     Reverse,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
-pub enum SeedKind {
-    Real,
-    ComplexReal,
-    ComplexImag,
-    PolarMagnitude,
-    PolarPhase,
-}
-
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 pub enum AutodiffError {
     #[error("autodiff mode {0:?} is not implemented")]
@@ -29,7 +20,6 @@ pub enum AutodiffError {
 pub struct AutodiffPlan {
     mode: AutodiffMode,
     active_nodes: Vec<Vec<ExprId>>,
-    seeds: Vec<Vec<(usize, SeedKind)>>,
 }
 
 impl AutodiffPlan {
@@ -40,52 +30,12 @@ impl AutodiffPlan {
 
         let parameter_count = model.params().n_free();
         let mut node_dependencies = Vec::<Vec<bool>>::with_capacity(model.graph().nodes().len());
-        let mut seeds = Vec::with_capacity(model.graph().nodes().len());
 
         for node in model.graph().nodes() {
             let mut dependencies = vec![false; parameter_count];
-            let mut node_seeds = Vec::new();
             match node {
                 ExprNode::ScalarParam(parameter) => {
-                    Self::add_seed(
-                        model,
-                        parameter.name(),
-                        SeedKind::Real,
-                        &mut dependencies,
-                        &mut node_seeds,
-                    );
-                }
-                ExprNode::ComplexScalarParam { re, im } => {
-                    Self::add_seed(
-                        model,
-                        re.name(),
-                        SeedKind::ComplexReal,
-                        &mut dependencies,
-                        &mut node_seeds,
-                    );
-                    Self::add_seed(
-                        model,
-                        im.name(),
-                        SeedKind::ComplexImag,
-                        &mut dependencies,
-                        &mut node_seeds,
-                    );
-                }
-                ExprNode::PolarComplexScalarParam { mag, phase } => {
-                    Self::add_seed(
-                        model,
-                        mag.name(),
-                        SeedKind::PolarMagnitude,
-                        &mut dependencies,
-                        &mut node_seeds,
-                    );
-                    Self::add_seed(
-                        model,
-                        phase.name(),
-                        SeedKind::PolarPhase,
-                        &mut dependencies,
-                        &mut node_seeds,
-                    );
+                    Self::mark_parameter_dependency(model, parameter.name(), &mut dependencies);
                 }
                 _ => {
                     for child in Self::children(node) {
@@ -99,7 +49,6 @@ impl AutodiffPlan {
                 }
             }
             node_dependencies.push(dependencies);
-            seeds.push(node_seeds);
         }
 
         let mut active_nodes = vec![Vec::new(); parameter_count];
@@ -112,11 +61,7 @@ impl AutodiffPlan {
             }
         }
 
-        Ok(Self {
-            mode,
-            active_nodes,
-            seeds,
-        })
+        Ok(Self { mode, active_nodes })
     }
 
     pub fn mode(&self) -> AutodiffMode {
@@ -131,19 +76,7 @@ impl AutodiffPlan {
         self.active_nodes.get(free_parameter).map(Vec::as_slice)
     }
 
-    pub fn seed_kind(&self, node: ExprId, free_parameter: usize) -> Option<SeedKind> {
-        self.seeds[node.index()]
-            .iter()
-            .find_map(|(parameter, seed)| (*parameter == free_parameter).then_some(*seed))
-    }
-
-    fn add_seed(
-        model: &CompiledModel,
-        name: &str,
-        kind: SeedKind,
-        dependencies: &mut [bool],
-        seeds: &mut Vec<(usize, SeedKind)>,
-    ) {
+    fn mark_parameter_dependency(model: &CompiledModel, name: &str, dependencies: &mut [bool]) {
         let Some(id) = model.params().id(name) else {
             return;
         };
@@ -151,7 +84,6 @@ impl AutodiffPlan {
             return;
         };
         dependencies[free_id.index()] = true;
-        seeds.push((free_id.index(), kind));
     }
 
     fn children(node: &ExprNode) -> Vec<ExprId> {
@@ -171,8 +103,6 @@ impl AutodiffPlan {
             ExprNode::RealConst(_)
             | ExprNode::ComplexConst(_)
             | ExprNode::ScalarParam(_)
-            | ExprNode::ComplexScalarParam { .. }
-            | ExprNode::PolarComplexScalarParam { .. }
             | ExprNode::EventScalar(_)
             | ExprNode::EventP4Component { .. } => Vec::new(),
         }
@@ -187,7 +117,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn tracks_exact_parameter_dependencies_and_seeds() {
+    fn tracks_exact_parameter_dependencies() {
         let x = parameter!("x");
         let y = parameter!("y");
         let expression = complex(x.clone(), y.clone()) * x + event_scalar("event");

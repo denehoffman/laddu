@@ -34,7 +34,7 @@ pub mod prelude {
         kopf_f0_resampled, kopf_f2, kopf_f2_resampled, kopf_pi1, kopf_rho, p_vector,
         p_vector_with_background, relativistic_breit_wigner, relativistic_breit_wigner_custom,
     };
-    pub use laddu_autodiff::{AutodiffError, AutodiffMode, AutodiffPlan, AutodiffResult, SeedKind};
+    pub use laddu_autodiff::{AutodiffError, AutodiffMode, AutodiffPlan, AutodiffResult};
     pub use laddu_compile::{
         AlgebraicIdentityRule, CacheEntry, CachePlan, CachePolicy, CanonicalCsePass, CompileError,
         CompileOptions, CompileResult, CompiledModel, ComplexFactRule, ConstantFoldScalarRule,

@@ -273,14 +273,6 @@ pub fn collect_params(graph: &ExprGraph) -> CompileResult<ParamLayout> {
             ExprNode::ScalarParam(spec) => {
                 registry.register(spec.clone())?;
             }
-            ExprNode::ComplexScalarParam { re, im } => {
-                registry.register(re.clone())?;
-                registry.register(im.clone())?;
-            }
-            ExprNode::PolarComplexScalarParam { mag, phase } => {
-                registry.register(mag.clone())?;
-                registry.register(phase.clone())?;
-            }
             _ => {}
         }
     }

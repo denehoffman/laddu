@@ -126,10 +126,7 @@ fn value_kind(node: &ExprNode, facts: &[NodeFacts]) -> ValueKind {
                 ValueKind::Complex
             }
         }
-        ExprNode::ComplexScalarParam { .. }
-        | ExprNode::PolarComplexScalarParam { .. }
-        | ExprNode::Complex { .. }
-        | ExprNode::EventScalar(_) => ValueKind::Complex,
+        ExprNode::Complex { .. } | ExprNode::EventScalar(_) => ValueKind::Complex,
         ExprNode::EventP4Component { .. } => ValueKind::Real,
         ExprNode::Unary { op, input } => match op {
             UnaryOp::Real | UnaryOp::Imag | UnaryOp::NormSqr => ValueKind::Real,
@@ -216,9 +213,7 @@ fn number_class(node: &ExprNode, facts: &[NodeFacts]) -> NumberClass {
                 (false, false) => NumberClass::Complex,
             }
         }
-        ExprNode::ComplexScalarParam { .. }
-        | ExprNode::PolarComplexScalarParam { .. }
-        | ExprNode::Complex { .. } => NumberClass::Complex,
+        ExprNode::Complex { .. } => NumberClass::Complex,
         ExprNode::EventScalar(_) => NumberClass::Unknown,
         ExprNode::EventP4Component { .. } => NumberClass::Real,
         ExprNode::Unary { op, input } => {
@@ -308,12 +303,6 @@ fn dependency(node: &ExprNode, facts: &[NodeFacts]) -> DependencyFacts {
     match node {
         ExprNode::RealConst(_) | ExprNode::ComplexConst(_) => DependencyFacts::per_compile(),
         ExprNode::ScalarParam(parameter) => DependencyFacts::from_parameter(parameter),
-        ExprNode::ComplexScalarParam { re, im } => {
-            DependencyFacts::from_parameter(re).union(DependencyFacts::from_parameter(im))
-        }
-        ExprNode::PolarComplexScalarParam { mag, phase } => {
-            DependencyFacts::from_parameter(mag).union(DependencyFacts::from_parameter(phase))
-        }
         ExprNode::EventScalar(_) | ExprNode::EventP4Component { .. } => {
             DependencyFacts::from_event()
         }

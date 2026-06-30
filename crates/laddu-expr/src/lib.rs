@@ -188,14 +188,6 @@ pub enum ExprNode {
     RealConst(f64),
     ComplexConst(Complex64),
     ScalarParam(Parameter),
-    ComplexScalarParam {
-        re: Parameter,
-        im: Parameter,
-    },
-    PolarComplexScalarParam {
-        mag: Parameter,
-        phase: Parameter,
-    },
     EventScalar(Arc<str>),
     EventP4Component {
         name: Arc<str>,
@@ -297,8 +289,6 @@ impl ExprNode {
             Self::RealConst(_)
             | Self::ComplexConst(_)
             | Self::ScalarParam(_)
-            | Self::ComplexScalarParam { .. }
-            | Self::PolarComplexScalarParam { .. }
             | Self::EventScalar(_)
             | Self::EventP4Component { .. } => Vec::new(),
             Self::Unary { input, .. }
@@ -1160,14 +1150,6 @@ impl ExprGraph {
             ExprNode::RealConst(value) => (Self::format_real_number(*value), ExprPrecedence::Atom),
             ExprNode::ComplexConst(value) => self.format_complex_const(*value),
             ExprNode::ScalarParam(parameter) => (parameter.name().to_owned(), ExprPrecedence::Atom),
-            ExprNode::ComplexScalarParam { re, im } => (
-                format!("complex({}, {})", re.name(), im.name()),
-                ExprPrecedence::Atom,
-            ),
-            ExprNode::PolarComplexScalarParam { mag, phase } => (
-                format!("polar({}, {})", mag.name(), phase.name()),
-                ExprPrecedence::Atom,
-            ),
             ExprNode::EventScalar(name) => (name.to_string(), ExprPrecedence::Atom),
             ExprNode::EventP4Component { name, component } => (
                 format!("{name}.{}", component.label()),
@@ -1557,18 +1539,6 @@ impl ExprGraph {
             ExprNode::ScalarParam(parameter) => {
                 format!("#{} ScalarParam({})", id.index(), parameter.name())
             }
-            ExprNode::ComplexScalarParam { re, im } => format!(
-                "#{} ComplexScalarParam(re={}, im={})",
-                id.index(),
-                re.name(),
-                im.name()
-            ),
-            ExprNode::PolarComplexScalarParam { mag, phase } => format!(
-                "#{} PolarComplexScalarParam(mag={}, phase={})",
-                id.index(),
-                mag.name(),
-                phase.name()
-            ),
             ExprNode::EventScalar(name) => format!("#{} EventScalar({name})", id.index()),
             ExprNode::EventP4Component { name, component } => {
                 format!(
@@ -1671,8 +1641,6 @@ fn node_children(node: &ExprNode) -> Vec<(String, ExprId)> {
         ExprNode::RealConst(_)
         | ExprNode::ComplexConst(_)
         | ExprNode::ScalarParam(_)
-        | ExprNode::ComplexScalarParam { .. }
-        | ExprNode::PolarComplexScalarParam { .. }
         | ExprNode::EventScalar(_)
         | ExprNode::EventP4Component { .. } => Vec::new(),
         ExprNode::Unary { input, .. } => vec![("input".into(), *input)],
@@ -1879,12 +1847,6 @@ mod tests {
             graph.node(graph.root()),
             Some(ExprNode::Complex { .. })
         ));
-        assert!(
-            graph
-                .nodes()
-                .iter()
-                .all(|node| !matches!(node, ExprNode::ComplexScalarParam { .. }))
-        );
     }
 
     #[test]
@@ -1898,12 +1860,6 @@ mod tests {
                 ..
             }
         )));
-        assert!(
-            graph
-                .nodes()
-                .iter()
-                .all(|node| !matches!(node, ExprNode::PolarComplexScalarParam { .. }))
-        );
     }
 
     #[test]

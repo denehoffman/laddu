@@ -90,8 +90,6 @@ impl OptimizationCost {
             ExprNode::RealConst(_)
             | ExprNode::ComplexConst(_)
             | ExprNode::ScalarParam(_)
-            | ExprNode::ComplexScalarParam { .. }
-            | ExprNode::PolarComplexScalarParam { .. }
             | ExprNode::EventScalar(_)
             | ExprNode::EventP4Component { .. } => {
                 self.free_nodes += 1;

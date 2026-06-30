@@ -4,7 +4,7 @@ use std::{
     sync::{Arc, OnceLock},
 };
 
-use laddu_autodiff::{AutodiffMode, AutodiffPlan, AutodiffResult, SeedKind};
+use laddu_autodiff::{AutodiffMode, AutodiffPlan, AutodiffResult};
 use laddu_compile::{CachePlan, CompiledModel};
 use laddu_data::{
     data::accurate::{AccurateComplex64, AccurateF64},
@@ -13,7 +13,7 @@ use laddu_data::{
 };
 use laddu_expr::{
     BinaryOp, ExprGraph, ExprId, ExprNode, P4Component, UnaryOp, ValueKind,
-    parameters::{ParamLayout, ParamValues},
+    parameters::{ParamId, ParamLayout, ParamValues},
 };
 use nalgebra::{DMatrix, DVector, Dyn, LU};
 use num::complex::Complex64;
@@ -85,6 +85,7 @@ pub struct CpuBackend;
 pub struct CpuPlan {
     graph: ExprGraph,
     params: ParamLayout,
+    parameter_slots: Vec<Option<ParamId>>,
     autodiff: AutodiffPlan,
     cache_plan: CachePlan,
     cache_slots: Vec<Option<usize>>,
@@ -109,6 +110,20 @@ impl CpuBackend {
         mode: AutodiffMode,
     ) -> AutodiffResult<CpuPlan> {
         let cache_plan = model.cache_plan().clone();
+        let parameter_slots = model
+            .graph()
+            .nodes()
+            .iter()
+            .map(|node| match node {
+                ExprNode::ScalarParam(parameter) => Some(
+                    model
+                        .params()
+                        .id(parameter.name())
+                        .expect("compiled parameter is present in the parameter layout"),
+                ),
+                _ => None,
+            })
+            .collect();
         let mut cache_slots = vec![None; model.graph().nodes().len()];
         for (slot, entry) in cache_plan.entries().iter().enumerate() {
             cache_slots[entry.node().index()] = Some(slot);
@@ -152,6 +167,7 @@ impl CpuBackend {
         Ok(CpuPlan {
             graph: model.graph().clone(),
             params: model.params().clone(),
+            parameter_slots,
             autodiff: AutodiffPlan::from_model(model, mode)?,
             cache_plan,
             cache_slots,
@@ -222,6 +238,16 @@ impl RealGradientAccumulator {
 }
 
 impl CpuPlan {
+    fn parameter_value(&self, params: &ParamValues, node: usize) -> RuntimeResult<f64> {
+        let id = self.parameter_slots[node].ok_or_else(|| RuntimeError::InvalidShape {
+            index: node,
+            message: "node is not a parameter".into(),
+        })?;
+        params
+            .get(id)
+            .map_err(|err| RuntimeError::Parameter(err.to_string()))
+    }
+
     pub fn parameter_count(&self) -> usize {
         self.params.len()
     }
@@ -240,7 +266,7 @@ impl CpuPlan {
 
     pub fn evaluate_with_gradient(&self, params: &ParamValues) -> RuntimeResult<ValueGradient> {
         let values = self.evaluate_values(params, None)?;
-        self.value_gradient(params, values, None)
+        self.value_gradient(values, None)
     }
 
     pub fn evaluate_with_event(
@@ -257,7 +283,7 @@ impl CpuPlan {
         event: &impl EventLookup,
     ) -> RuntimeResult<ValueGradient> {
         let values = self.evaluate_values(params, Some(event))?;
-        self.value_gradient(params, values, None)
+        self.value_gradient(values, None)
     }
 
     pub fn cache_event_batch(&self, batch: &EventBatch) -> RuntimeResult<CpuBatchCache> {
@@ -331,7 +357,7 @@ impl CpuPlan {
         row: usize,
     ) -> RuntimeResult<ValueGradient> {
         let values = self.evaluate_values_from_cache(params, cache, row)?;
-        self.value_gradient(params, values, Some((cache, row)))
+        self.value_gradient(values, Some((cache, row)))
     }
 
     pub fn evaluate_cache_with_gradient(
@@ -641,7 +667,6 @@ impl CpuPlan {
 
     fn value_gradient(
         &self,
-        params: &ParamValues,
         values: Vec<Value>,
         cached_factors: Option<(&CpuBatchCache, usize)>,
     ) -> RuntimeResult<ValueGradient> {
@@ -650,8 +675,7 @@ impl CpuPlan {
         } else {
             scalar_at(&values, self.graph.root().index())?
         };
-        let gradient =
-            DerivativeWorkspace::new(self, params, &values, cached_factors).gradient()?;
+        let gradient = DerivativeWorkspace::new(self, &values, cached_factors).gradient()?;
         Ok(ValueGradient { value, gradient })
     }
 
@@ -895,9 +919,7 @@ impl CpuPlan {
                     let solution = self.solve_primal(matrix_id, rows, matrix, &rhs, index, None)?;
                     Value::Vector(solution.iter().copied().collect())
                 }
-                ExprNode::ScalarParam(_)
-                | ExprNode::ComplexScalarParam { .. }
-                | ExprNode::PolarComplexScalarParam { .. } => {
+                ExprNode::ScalarParam(_) => {
                     return Err(RuntimeError::InvalidShape {
                         index,
                         message: "parameter-dependent node cannot be part of an event cache".into(),
@@ -921,19 +943,8 @@ impl CpuPlan {
             let value = match node {
                 ExprNode::RealConst(value) => Value::Scalar(Complex64::from(*value)),
                 ExprNode::ComplexConst(value) => Value::Scalar(*value),
-                ExprNode::ScalarParam(parameter) => Value::Scalar(Complex64::from(param_value(
-                    params,
-                    &self.params,
-                    parameter.name(),
-                )?)),
-                ExprNode::ComplexScalarParam { re, im } => Value::Scalar(Complex64::new(
-                    param_value(params, &self.params, re.name())?,
-                    param_value(params, &self.params, im.name())?,
-                )),
-                ExprNode::PolarComplexScalarParam { mag, phase } => {
-                    let mag = param_value(params, &self.params, mag.name())?;
-                    let phase = param_value(params, &self.params, phase.name())?;
-                    Value::Scalar(Complex64::cis(phase) * mag)
+                ExprNode::ScalarParam(_) => {
+                    Value::Scalar(Complex64::from(self.parameter_value(params, index)?))
                 }
                 ExprNode::EventScalar(name) => {
                     let Some(event) = event else {
@@ -1128,19 +1139,8 @@ impl CpuPlan {
             let value = match node {
                 ExprNode::RealConst(value) => Value::Scalar(Complex64::from(*value)),
                 ExprNode::ComplexConst(value) => Value::Scalar(*value),
-                ExprNode::ScalarParam(parameter) => Value::Scalar(Complex64::from(param_value(
-                    params,
-                    &self.params,
-                    parameter.name(),
-                )?)),
-                ExprNode::ComplexScalarParam { re, im } => Value::Scalar(Complex64::new(
-                    param_value(params, &self.params, re.name())?,
-                    param_value(params, &self.params, im.name())?,
-                )),
-                ExprNode::PolarComplexScalarParam { mag, phase } => {
-                    let mag = param_value(params, &self.params, mag.name())?;
-                    let phase = param_value(params, &self.params, phase.name())?;
-                    Value::Scalar(Complex64::cis(phase) * mag)
+                ExprNode::ScalarParam(_) => {
+                    Value::Scalar(Complex64::from(self.parameter_value(params, index)?))
                 }
                 ExprNode::EventScalar(name) => {
                     return Err(RuntimeError::MissingEventScalar(name.to_string()));
@@ -1376,7 +1376,6 @@ type DynamicLu = LU<Complex64, Dyn, Dyn>;
 
 struct DerivativeWorkspace<'a> {
     plan: &'a CpuPlan,
-    params: &'a ParamValues,
     primals: &'a [Value],
     tangents: Vec<Option<Value>>,
     factors: HashMap<usize, DynamicLu>,
@@ -1386,13 +1385,11 @@ struct DerivativeWorkspace<'a> {
 impl<'a> DerivativeWorkspace<'a> {
     fn new(
         plan: &'a CpuPlan,
-        params: &'a ParamValues,
         primals: &'a [Value],
         cached_factors: Option<(&'a CpuBatchCache, usize)>,
     ) -> Self {
         Self {
             plan,
-            params,
             primals,
             tangents: vec![None; plan.graph.nodes().len()],
             factors: HashMap::new(),
@@ -1409,7 +1406,7 @@ impl<'a> DerivativeWorkspace<'a> {
                 .active_nodes(parameter)
                 .expect("free parameter index is valid");
             for id in active {
-                self.differentiate_node(*id, parameter)?;
+                self.differentiate_node(*id)?;
             }
             gradient.push(self.scalar_tangent(self.plan.graph.root())?);
             for id in active {
@@ -1419,15 +1416,11 @@ impl<'a> DerivativeWorkspace<'a> {
         Ok(gradient)
     }
 
-    fn differentiate_node(&mut self, id: ExprId, parameter: usize) -> RuntimeResult<()> {
+    fn differentiate_node(&mut self, id: ExprId) -> RuntimeResult<()> {
         let index = id.index();
         let node = self.plan.graph.nodes()[index].clone();
         let tangent = match node {
-            ExprNode::ScalarParam(_)
-            | ExprNode::ComplexScalarParam { .. }
-            | ExprNode::PolarComplexScalarParam { .. } => {
-                Value::Scalar(self.parameter_seed(id, parameter, &node)?)
-            }
+            ExprNode::ScalarParam(_) => Value::Scalar(Complex64::ONE),
             ExprNode::Unary { op, input } => {
                 let input_value = self.primal_scalar(input)?;
                 let output_value = self.primal_scalar(id)?;
@@ -1671,30 +1664,6 @@ impl<'a> DerivativeWorkspace<'a> {
         };
         self.tangents[index] = Some(tangent);
         Ok(())
-    }
-
-    fn parameter_seed(
-        &self,
-        id: ExprId,
-        parameter: usize,
-        node: &ExprNode,
-    ) -> RuntimeResult<Complex64> {
-        let seed = self
-            .plan
-            .autodiff
-            .seed_kind(id, parameter)
-            .expect("active parameter node has a seed");
-        Ok(match seed {
-            SeedKind::Real | SeedKind::ComplexReal => Complex64::ONE,
-            SeedKind::ComplexImag => Complex64::I,
-            SeedKind::PolarMagnitude => {
-                let ExprNode::PolarComplexScalarParam { phase, .. } = node else {
-                    unreachable!("polar magnitude seed belongs to a polar parameter")
-                };
-                Complex64::cis(param_value(self.params, &self.plan.params, phase.name())?)
-            }
-            SeedKind::PolarPhase => Complex64::I * self.primal_scalar(id)?,
-        })
     }
 
     fn primal_scalar(&self, id: ExprId) -> RuntimeResult<Complex64> {
@@ -2164,15 +2133,6 @@ impl Value {
             Self::Matrix { .. } => "matrix",
         }
     }
-}
-
-fn param_value(params: &ParamValues, layout: &ParamLayout, name: &str) -> RuntimeResult<f64> {
-    let id = layout
-        .id(name)
-        .ok_or_else(|| RuntimeError::Parameter(format!("unknown parameter `{name}`")))?;
-    params
-        .get(id)
-        .map_err(|err| RuntimeError::Parameter(err.to_string()))
 }
 
 fn scalar_at(values: &[Value], index: usize) -> RuntimeResult<Complex64> {
