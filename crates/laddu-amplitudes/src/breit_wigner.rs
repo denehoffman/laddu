@@ -58,6 +58,7 @@ pub fn relativistic_breit_wigner_custom(
 mod tests {
     use approx::assert_relative_eq;
     use laddu_compile::CompiledModel;
+    use laddu_expr::parameters::Parameter;
     use laddu_physics::{
         l,
         math::{BLATT_WEISSKOPF_MAX_L, QR_DEFAULT},
@@ -101,6 +102,32 @@ mod tests {
             expected_pole,
             LOOSE_EPS,
         );
+    }
+
+    #[test]
+    fn breit_wigner_gradient_matches_closed_form() {
+        let mass_value = 1.2;
+        let width_value = 0.13;
+        let s = mass_value * mass_value;
+        let mass = Parameter::free("mass").with_initial(mass_value);
+        let width = Parameter::free("width").with_initial(width_value);
+        let model = CompiledModel::from_expr(&breit_wigner(s, mass, width)).unwrap();
+        let params = model.params().default_values();
+        let result = CpuBackend
+            .prepare(&model)
+            .evaluate_with_gradient(&params)
+            .unwrap();
+
+        let denominator = Complex64::new(0.0, -mass_value * width_value);
+        let expected_mass = -Complex64::new(2.0 * mass_value, -width_value) / denominator.powi(2);
+        let expected_width = Complex64::I * mass_value / denominator.powi(2);
+        assert_complex_relative_eq(
+            result.value(),
+            Complex64::I / (mass_value * width_value),
+            EPS,
+        );
+        assert_complex_relative_eq(result.gradient()[0], expected_mass, EPS);
+        assert_complex_relative_eq(result.gradient()[1], expected_width, EPS);
     }
 
     #[test]

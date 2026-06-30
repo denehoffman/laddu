@@ -46,6 +46,28 @@ pub enum LikelihoodError {
     InvalidPenaltyWeight { term: String, lambda: f64 },
     #[error("parameter values were built for a different likelihood parameter layout")]
     ParameterLayoutMismatch,
+    #[error("gradient has length {actual}, expected {expected}")]
+    GradientLengthMismatch { expected: usize, actual: usize },
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct LikelihoodEvaluation {
+    value: f64,
+    gradient: Vec<f64>,
+}
+
+impl LikelihoodEvaluation {
+    pub fn value(&self) -> f64 {
+        self.value
+    }
+
+    pub fn gradient(&self) -> &[f64] {
+        &self.gradient
+    }
+
+    pub fn into_parts(self) -> (f64, Vec<f64>) {
+        (self.value, self.gradient)
+    }
 }
 
 pub trait CpuLikelihoodTerm: Debug {
@@ -58,6 +80,58 @@ pub trait CpuLikelihoodTerm: Debug {
     fn resolve(&mut self, global_params: Arc<ParamLayout>) -> LikelihoodResult<()>;
 
     fn nll(&self, params: &ParamValues) -> LikelihoodResult<f64>;
+
+    fn nll_with_gradient(
+        &self,
+        params: &ParamValues,
+        gradient: &mut [f64],
+    ) -> LikelihoodResult<f64> {
+        let layout = params.layout();
+        if gradient.len() != layout.n_free() {
+            return Err(LikelihoodError::GradientLengthMismatch {
+                expected: layout.n_free(),
+                actual: gradient.len(),
+            });
+        }
+
+        let value = self.nll(params)?;
+        for (free_index, id) in layout.free_params().iter().copied().enumerate() {
+            let parameter = layout.spec(id)?;
+            let center = params.get(id)?;
+            let scale = center.abs().max(1.0);
+            let base_step = f64::EPSILON.cbrt() * scale;
+            let bounds = parameter.bounds_spec();
+            let left_room = bounds
+                .min
+                .map_or(f64::INFINITY, |min| (center - min).max(0.0));
+            let right_room = bounds
+                .max
+                .map_or(f64::INFINITY, |max| (max - center).max(0.0));
+
+            let derivative = if left_room > 0.0 && right_room > 0.0 {
+                let step = base_step.min(left_room).min(right_room);
+                let mut plus = params.clone();
+                let mut minus = params.clone();
+                plus.set_full(id, center + step)?;
+                minus.set_full(id, center - step)?;
+                (self.nll(&plus)? - self.nll(&minus)?) / (2.0 * step)
+            } else if right_room > 0.0 {
+                let step = base_step.min(right_room);
+                let mut plus = params.clone();
+                plus.set_full(id, center + step)?;
+                (self.nll(&plus)? - value) / step
+            } else if left_room > 0.0 {
+                let step = base_step.min(left_room);
+                let mut minus = params.clone();
+                minus.set_full(id, center - step)?;
+                (value - self.nll(&minus)?) / step
+            } else {
+                0.0
+            };
+            gradient[free_index] += derivative;
+        }
+        Ok(value)
+    }
 
     fn as_intensity(&self) -> Option<&CpuNllTerm> {
         None
@@ -117,6 +191,22 @@ impl CpuLikelihood {
         self.terms
             .iter()
             .try_fold(0.0, |sum, term| Ok(sum + term.nll(params)?))
+    }
+
+    pub fn nll_with_gradient(
+        &self,
+        params: &ParamValues,
+    ) -> LikelihoodResult<LikelihoodEvaluation> {
+        check_params(&self.params, params)?;
+        let mut gradient = vec![0.0; self.params.n_free()];
+        let value = self.terms.iter().try_fold(0.0, |sum, term| {
+            Ok::<_, LikelihoodError>(sum + term.nll_with_gradient(params, &mut gradient)?)
+        })?;
+        Ok(LikelihoodEvaluation { value, gradient })
+    }
+
+    pub fn gradient(&self, params: &ParamValues) -> LikelihoodResult<Vec<f64>> {
+        Ok(self.nll_with_gradient(params)?.gradient)
     }
 
     pub fn cross_section_integrals(
@@ -181,11 +271,10 @@ impl CpuNllTerm {
 
     pub fn data_log_intensity_sum(&self, params: &ParamValues) -> LikelihoodResult<f64> {
         let local_params = self.local_values(params)?;
-        Ok(self
-            .plan
+        self.plan
             .try_weighted_sum_cached(&local_params, &self.data, |value| {
                 positive_intensity("data", value).map(f64::ln)
-            })?)
+            })
     }
 
     pub fn accepted_normalization(&self, params: &ParamValues) -> LikelihoodResult<f64> {
@@ -213,9 +302,20 @@ impl CpuNllTerm {
         dataset: &CpuCachedDataset,
         name: &'static str,
     ) -> LikelihoodResult<f64> {
-        Ok(self
-            .plan
-            .try_weighted_sum_cached(params, dataset, |value| positive_intensity(name, value))?)
+        self.plan
+            .try_weighted_sum_cached(params, dataset, |value| positive_intensity(name, value))
+    }
+
+    fn weighted_intensity_sum_with_gradient(
+        &self,
+        params: &ParamValues,
+        dataset: &CpuCachedDataset,
+        name: &'static str,
+    ) -> LikelihoodResult<(f64, Vec<f64>)> {
+        self.plan
+            .try_weighted_real_sum_with_gradient_cached(params, dataset, |value| {
+                Ok::<_, LikelihoodError>((positive_intensity(name, value)?, 1.0))
+            })
     }
 
     fn local_values(&self, params: &ParamValues) -> LikelihoodResult<ParamValues> {
@@ -264,6 +364,36 @@ impl CpuLikelihoodTerm for CpuNllTerm {
         Ok(self.data_weight_sum() * normalization.ln() - data_log_sum)
     }
 
+    fn nll_with_gradient(
+        &self,
+        params: &ParamValues,
+        gradient: &mut [f64],
+    ) -> LikelihoodResult<f64> {
+        let local_params = self.local_values(params)?;
+        let (normalization, normalization_gradient) = self.weighted_intensity_sum_with_gradient(
+            &local_params,
+            &self.accepted_mc,
+            "accepted MC",
+        )?;
+        let normalization = positive_integral("accepted MC", normalization)?;
+        let (data_log_sum, data_log_gradient) = self
+            .plan
+            .try_weighted_real_sum_with_gradient_cached(&local_params, &self.data, |value| {
+                let intensity = positive_intensity("data", value)?;
+                Ok::<_, LikelihoodError>((intensity.ln(), intensity.recip()))
+            })?;
+        let local_gradient = normalization_gradient
+            .into_iter()
+            .zip(data_log_gradient)
+            .map(|(normalization_derivative, data_derivative)| {
+                self.data_weight_sum * normalization_derivative / normalization - data_derivative
+            })
+            .collect::<Vec<_>>();
+        self.resolved_projection()?
+            .scatter_gradient(&local_gradient, gradient)?;
+        Ok(self.data_weight_sum * normalization.ln() - data_log_sum)
+    }
+
     fn as_intensity(&self) -> Option<&CpuNllTerm> {
         Some(self)
     }
@@ -298,6 +428,14 @@ impl CpuLikelihoodTerm for CpuRidgePenalty {
     fn nll(&self, params: &ParamValues) -> LikelihoodResult<f64> {
         self.inner.nll(params)
     }
+
+    fn nll_with_gradient(
+        &self,
+        params: &ParamValues,
+        gradient: &mut [f64],
+    ) -> LikelihoodResult<f64> {
+        self.inner.nll_with_gradient(params, gradient)
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -328,6 +466,14 @@ impl CpuLikelihoodTerm for CpuLassoPenalty {
 
     fn nll(&self, params: &ParamValues) -> LikelihoodResult<f64> {
         self.inner.nll(params)
+    }
+
+    fn nll_with_gradient(
+        &self,
+        params: &ParamValues,
+        gradient: &mut [f64],
+    ) -> LikelihoodResult<f64> {
+        self.inner.nll_with_gradient(params, gradient)
     }
 }
 
@@ -399,6 +545,39 @@ impl CpuParameterPenalty {
                 PenaltyKind::Ridge => value * value,
                 PenaltyKind::Lasso => value.abs(),
             };
+        }
+        Ok(self.lambda * sum)
+    }
+
+    fn nll_with_gradient(
+        &self,
+        params: &ParamValues,
+        gradient: &mut [f64],
+    ) -> LikelihoodResult<f64> {
+        let global_params = self
+            .global_params
+            .as_ref()
+            .ok_or(LikelihoodError::ParameterLayoutMismatch)?;
+        check_params(global_params, params)?;
+        if gradient.len() != global_params.n_free() {
+            return Err(LikelihoodError::GradientLengthMismatch {
+                expected: global_params.n_free(),
+                actual: gradient.len(),
+            });
+        }
+        let mut sum = 0.0;
+        for id in &self.parameter_ids {
+            let value = params.get(*id)?;
+            let (penalty, derivative) = match self.kind {
+                PenaltyKind::Ridge => (value * value, 2.0 * value),
+                PenaltyKind::Lasso => {
+                    (value.abs(), if value == 0.0 { 0.0 } else { value.signum() })
+                }
+            };
+            sum += penalty;
+            if let Some(free) = global_params.free_id(*id)? {
+                gradient[free.index()] += self.lambda * derivative;
+            }
         }
         Ok(self.lambda * sum)
     }
@@ -478,9 +657,8 @@ impl CpuCrossSectionIntegrals {
         dataset: &CpuCachedDataset,
         name: &'static str,
     ) -> LikelihoodResult<f64> {
-        Ok(self
-            .plan
-            .try_weighted_sum_cached(params, dataset, |value| positive_intensity(name, value))?)
+        self.plan
+            .try_weighted_sum_cached(params, dataset, |value| positive_intensity(name, value))
     }
 }
 
@@ -489,6 +667,7 @@ struct ParamProjection {
     global_layout: Arc<ParamLayout>,
     local_layout: Arc<ParamLayout>,
     global_ids: Vec<ParamId>,
+    local_free_to_global_free: Vec<usize>,
 }
 
 impl ParamProjection {
@@ -509,10 +688,29 @@ impl ParamProjection {
                     })
             })
             .collect::<LikelihoodResult<_>>()?;
+        let local_free_to_global_free = local_layout
+            .free_params()
+            .iter()
+            .map(|local_id| {
+                let name = local_layout.name(*local_id)?;
+                let global_id =
+                    global_layout
+                        .id(name)
+                        .ok_or_else(|| LikelihoodError::MissingParameter {
+                            term: term.to_owned(),
+                            parameter: name.to_owned(),
+                        })?;
+                global_layout
+                    .free_id(global_id)?
+                    .map(|id| id.index())
+                    .ok_or(LikelihoodError::ParameterLayoutMismatch)
+            })
+            .collect::<LikelihoodResult<Vec<_>>>()?;
         Ok(Self {
             global_layout,
             local_layout: Arc::new(local_layout.clone()),
             global_ids,
+            local_free_to_global_free,
         })
     }
 
@@ -527,6 +725,25 @@ impl ParamProjection {
             Arc::clone(&self.local_layout),
             values,
         )?)
+    }
+
+    fn scatter_gradient(&self, local: &[f64], global: &mut [f64]) -> LikelihoodResult<()> {
+        if local.len() != self.local_free_to_global_free.len() {
+            return Err(LikelihoodError::GradientLengthMismatch {
+                expected: self.local_free_to_global_free.len(),
+                actual: local.len(),
+            });
+        }
+        if global.len() != self.global_layout.n_free() {
+            return Err(LikelihoodError::GradientLengthMismatch {
+                expected: self.global_layout.n_free(),
+                actual: global.len(),
+            });
+        }
+        for (derivative, target) in local.iter().zip(&self.local_free_to_global_free) {
+            global[*target] += derivative;
+        }
+        Ok(())
     }
 }
 
@@ -567,7 +784,7 @@ mod tests {
         data::{Dataset, EventBatch, OwnedEvent},
         schema::Schema,
     };
-    use laddu_expr::{event_scalar, parameter};
+    use laddu_expr::{event_scalar, parameter, parameters::Parameter};
 
     use super::*;
 
@@ -595,6 +812,21 @@ mod tests {
         .unwrap()
     }
 
+    fn finite_difference_nll(
+        likelihood: &CpuLikelihood,
+        params: &ParamValues,
+        free_parameter: usize,
+    ) -> f64 {
+        let id = likelihood.params().free_params()[free_parameter];
+        let center = params.get(id).unwrap();
+        let h = 1.0e-6;
+        let mut plus = params.clone();
+        let mut minus = params.clone();
+        plus.set_full(id, center + h).unwrap();
+        minus.set_full(id, center - h).unwrap();
+        (likelihood.nll(&plus).unwrap() - likelihood.nll(&minus).unwrap()) / (2.0 * h)
+    }
+
     #[test]
     fn nll_uses_data_and_accepted_mc_reductions() {
         let expr = event_scalar("x") * parameter!("scale", initial: 0.5);
@@ -606,6 +838,25 @@ mod tests {
 
         let expected = 2.0 * 2.0_f64.ln() - 1.0_f64.ln() - 1.5_f64.ln();
         assert_relative_eq!(likelihood.nll(&params).unwrap(), expected);
+    }
+
+    #[test]
+    fn nll_gradient_matches_finite_difference() {
+        let scale = laddu_expr::Expr::from(parameter!("scale", initial: 0.7));
+        let expr = (event_scalar("x") + scale).powi(2);
+        let model = CompiledModel::from_expr(&expr).unwrap();
+        let data = weighted_dataset(&[(0.3, 1.0), (1.1, 2.0)]);
+        let accepted_mc = weighted_dataset(&[(0.5, 1.5), (1.7, 0.8)]);
+        let likelihood = single_term_likelihood("data", &model, &data, &accepted_mc);
+        let params = likelihood.default_params();
+        let evaluation = likelihood.nll_with_gradient(&params).unwrap();
+
+        assert_relative_eq!(evaluation.value(), likelihood.nll(&params).unwrap());
+        assert_relative_eq!(
+            evaluation.gradient()[0],
+            finite_difference_nll(&likelihood, &params, 0),
+            epsilon = 1.0e-8
+        );
     }
 
     #[test]
@@ -665,6 +916,46 @@ mod tests {
 
         let expected_term = 1.0 * 4.0_f64.ln() - 2.0_f64.ln();
         assert_relative_eq!(likelihood.nll(&params).unwrap(), 2.0 * expected_term);
+    }
+
+    #[test]
+    fn shared_and_channel_specific_gradients_scatter_into_global_layout() {
+        let shared = laddu_expr::Expr::from(parameter!("shared", initial: 0.4));
+        let model_a = CompiledModel::from_expr(
+            &(event_scalar("x")
+                + shared.clone()
+                + laddu_expr::Expr::from(parameter!("only_a", initial: 0.2)))
+            .powi(2),
+        )
+        .unwrap();
+        let model_b = CompiledModel::from_expr(
+            &(event_scalar("x")
+                + shared
+                + laddu_expr::Expr::from(parameter!("only_b", initial: -0.1)))
+            .powi(2),
+        )
+        .unwrap();
+        let data = weighted_dataset(&[(0.5, 1.0), (1.2, 0.7)]);
+        let accepted = weighted_dataset(&[(0.8, 1.3), (1.5, 0.9)]);
+        let likelihood = CpuLikelihood::new([
+            CpuNllTerm::new("a", &model_a, &data, &accepted)
+                .unwrap()
+                .boxed(),
+            CpuNllTerm::new("b", &model_b, &data, &accepted)
+                .unwrap()
+                .boxed(),
+        ])
+        .unwrap();
+        let params = likelihood.default_params();
+        let evaluation = likelihood.nll_with_gradient(&params).unwrap();
+
+        for (parameter, derivative) in evaluation.gradient().iter().enumerate() {
+            assert_relative_eq!(
+                *derivative,
+                finite_difference_nll(&likelihood, &params, parameter),
+                epsilon = 1.0e-8
+            );
+        }
     }
 
     #[test]
@@ -744,6 +1035,7 @@ mod tests {
         let nll = 2.0 * 2.0_f64.ln() - 1.0_f64.ln() - 1.5_f64.ln();
         let penalty = 2.0 * 0.5_f64.powi(2) + 3.0 * 0.5_f64.abs();
         assert_relative_eq!(likelihood.nll(&params).unwrap(), nll + penalty);
+        assert_relative_eq!(likelihood.gradient(&params).unwrap()[0], 5.0);
     }
 
     #[test]
@@ -764,6 +1056,33 @@ mod tests {
     struct ConstantTerm {
         name: String,
         value: f64,
+    }
+
+    #[derive(Debug)]
+    struct BoundedQuadraticTerm {
+        parameter: Parameter,
+        id: Option<ParamId>,
+    }
+
+    impl CpuLikelihoodTerm for BoundedQuadraticTerm {
+        fn name(&self) -> &str {
+            "bounded-quadratic"
+        }
+
+        fn register_params(&self, registry: &mut ParamRegistry) -> LikelihoodResult<()> {
+            registry.register(self.parameter.clone())?;
+            Ok(())
+        }
+
+        fn resolve(&mut self, global_params: Arc<ParamLayout>) -> LikelihoodResult<()> {
+            self.id = global_params.id(self.parameter.name());
+            Ok(())
+        }
+
+        fn nll(&self, params: &ParamValues) -> LikelihoodResult<f64> {
+            let value = params.get(self.id.ok_or(LikelihoodError::ParameterLayoutMismatch)?)?;
+            Ok((value - 2.0).powi(2))
+        }
     }
 
     impl CpuLikelihoodTerm for ConstantTerm {
@@ -802,6 +1121,23 @@ mod tests {
 
         let expected = 1.0 * 2.0_f64.ln() - 1.0_f64.ln() + 12.5;
         assert_relative_eq!(likelihood.nll(&params).unwrap(), expected);
+    }
+
+    #[test]
+    fn custom_term_gradient_uses_bounded_finite_difference_fallback() {
+        let likelihood = CpuLikelihood::new([BoundedQuadraticTerm {
+            parameter: Parameter::free("x")
+                .with_initial(0.0)
+                .with_bounds(Some(0.0), None),
+            id: None,
+        }
+        .boxed()])
+        .unwrap();
+        let params = likelihood.default_params();
+        let evaluation = likelihood.nll_with_gradient(&params).unwrap();
+
+        assert_relative_eq!(evaluation.value(), 4.0);
+        assert_relative_eq!(evaluation.gradient()[0], -4.0, epsilon = 1.0e-5);
     }
 
     #[test]

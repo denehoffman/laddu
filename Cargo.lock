@@ -1039,6 +1039,8 @@ name = "laddu-autodiff"
 version = "0.1.0"
 dependencies = [
  "laddu-compile",
+ "laddu-expr",
+ "thiserror",
 ]
 
 [[package]]
@@ -1128,6 +1130,7 @@ dependencies = [
 name = "laddu-runtime"
 version = "0.1.0"
 dependencies = [
+ "laddu-autodiff",
  "laddu-compile",
  "laddu-data",
  "laddu-expr",

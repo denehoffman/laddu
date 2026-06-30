@@ -376,7 +376,7 @@ fn pole_products(s: &Expr, pole_masses: &Expr, poles: usize) -> (Expr, Vec<Expr>
 mod tests {
     use approx::assert_relative_eq;
     use laddu_compile::CompiledModel;
-    use laddu_expr::{BinaryOp, ExprNode, matrix};
+    use laddu_expr::{BinaryOp, ExprNode, complex, matrix, parameters::Parameter};
     use laddu_runtime::CpuBackend;
     use nalgebra::{Matrix2, Vector2};
     use num::complex::Complex64;
@@ -414,6 +414,72 @@ mod tests {
         assert_relative_eq!(actual.im, expected.im, epsilon = 1.0e-12);
         assert_relative_eq!(evaluate(k.matrix_element(0, 0)).re, expected_k);
         assert_relative_eq!(evaluate(p.component(0)).re, expected_p.re);
+    }
+
+    #[test]
+    fn one_channel_f_gradient_matches_closed_scalar_equation() {
+        let s = 1.5;
+        let mass = 2.0_f64;
+        let coupling = 3.0;
+        let background = 0.2;
+        let phase_space = Complex64::new(0.0, -0.4);
+        let beta = complex(
+            Parameter::free("beta_re").with_initial(0.5),
+            Parameter::free("beta_im").with_initial(0.25),
+        );
+        let masses = vector([mass]);
+        let k = k_matrix_with_background(
+            s,
+            &masses,
+            matrix([[coupling]]),
+            matrix([[1.0]]),
+            matrix([[background]]),
+        )
+        .unwrap();
+        let p = p_vector(
+            s,
+            &masses,
+            vector([beta]),
+            matrix([[coupling]]),
+            matrix([[1.0]]),
+        )
+        .unwrap();
+        let expression = f_vector(s, masses, k, p, matrix([[phase_space]]))
+            .unwrap()
+            .component(0);
+        let model = CompiledModel::from_expr(&expression).unwrap();
+        let params = model.params().default_values();
+        let result = CpuBackend
+            .prepare(&model)
+            .evaluate_with_gradient(&params)
+            .unwrap();
+
+        let pole = mass.powi(2) - s;
+        let denominator = pole + (coupling.powi(2) + background * pole) * phase_space;
+        let expected_value = Complex64::new(0.5, 0.25) * coupling / denominator;
+        let expected_beta_re = Complex64::from(coupling) / denominator;
+        assert_relative_eq!(result.value().re, expected_value.re, epsilon = 1.0e-12);
+        assert_relative_eq!(result.value().im, expected_value.im, epsilon = 1.0e-12);
+        assert_relative_eq!(
+            result.gradient()[0].re,
+            expected_beta_re.re,
+            epsilon = 1.0e-12
+        );
+        assert_relative_eq!(
+            result.gradient()[0].im,
+            expected_beta_re.im,
+            epsilon = 1.0e-12
+        );
+        assert_relative_eq!(
+            result.gradient()[1].re,
+            -expected_beta_re.im,
+            epsilon = 1.0e-12
+        );
+        assert_relative_eq!(
+            result.gradient()[1].im,
+            expected_beta_re.re,
+            epsilon = 1.0e-12
+        );
     }
 
     #[test]

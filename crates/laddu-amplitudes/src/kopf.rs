@@ -560,6 +560,7 @@ mod a2_data {
 mod tests {
     use approx::assert_relative_eq;
     use laddu_compile::{CompileOptions, CompiledModel};
+    use laddu_expr::{complex, parameters::Parameter};
     use laddu_runtime::CpuBackend;
     use num::complex::Complex64;
 
@@ -579,6 +580,32 @@ mod tests {
         let model = CompiledModel::from_expr(expr).unwrap();
         let parameters = model.params().default_values();
         CpuBackend.prepare(&model).evaluate(&parameters).unwrap()
+    }
+
+    fn finite_difference_gradient(expr: &Expr) -> (Vec<Complex64>, Vec<Complex64>) {
+        let model = CompiledModel::from_expr(expr).unwrap();
+        let params = model.params().default_values();
+        let plan = CpuBackend.prepare(&model);
+        let analytic = plan
+            .evaluate_with_gradient(&params)
+            .unwrap()
+            .gradient()
+            .to_vec();
+        let numerical = model
+            .params()
+            .free_params()
+            .iter()
+            .map(|id| {
+                let center = params.get(*id).unwrap();
+                let h = 1.0e-6;
+                let mut plus = params.clone();
+                let mut minus = params.clone();
+                plus.set_full(*id, center + h).unwrap();
+                minus.set_full(*id, center - h).unwrap();
+                (plan.evaluate(&plus).unwrap() - plan.evaluate(&minus).unwrap()) / (2.0 * h)
+            })
+            .collect();
+        (analytic, numerical)
     }
 
     #[test]
@@ -643,6 +670,99 @@ mod tests {
             assert_relative_eq!(unoptimized.im, expected.im, epsilon = 1.0e-12);
             assert_relative_eq!(optimized.re, expected.re, epsilon = 1.0e-12);
             assert_relative_eq!(optimized.im, expected.im, epsilon = 1.0e-12);
+        }
+    }
+
+    #[test]
+    fn kopf_gradients_match_expected_values_and_finite_differences() {
+        fn production<const N: usize>(family: &str) -> [Expr; N] {
+            std::array::from_fn(|pole| {
+                complex(
+                    Parameter::free(format!("{family}_beta_{pole}_re"))
+                        .with_initial(0.1 + 0.2 * pole as f64),
+                    Parameter::free(format!("{family}_beta_{pole}_im"))
+                        .with_initial(0.2 + 0.2 * pole as f64),
+                )
+            })
+        }
+
+        let expressions = [
+            kopf_f0(S_KSKS, production("f0"))
+                .unwrap()
+                .component(KopfF0Channel::FourPi),
+            kopf_f2(S_KSKS, production("f2"))
+                .unwrap()
+                .component(KopfF2Channel::FourPi),
+            kopf_a0(S_KSKS, production("a0"))
+                .unwrap()
+                .component(KopfA0Channel::KKbar),
+            kopf_a2(S_KSKS, production("a2"))
+                .unwrap()
+                .component(KopfA2Channel::KKbar),
+            kopf_rho(S_KSKS, production("rho"))
+                .unwrap()
+                .component(KopfRhoChannel::FourPi),
+            kopf_pi1(S_KSKS, production("pi1"))
+                .unwrap()
+                .component(KopfPi1Channel::PiEtaPrime),
+        ];
+        let expected = [
+            vec![
+                Complex64::new(-0.032_491_219_879_072_594, -0.011_073_489_047_324_615),
+                Complex64::new(0.011_073_489_047_324_615, -0.032_491_219_879_072_594),
+                Complex64::new(0.024_105_308_965_826_12, 0.007_918_499_653_925_656),
+                Complex64::new(-0.007_918_499_653_925_656, 0.024_105_308_965_826_12),
+                Complex64::new(-0.031_634_528_397_387_424, 0.014_915_567_588_885_64),
+                Complex64::new(-0.014_915_567_588_885_64, -0.031_634_528_397_387_424),
+                Complex64::new(0.583_898_275_441_943_6, 0.207_161_752_568_048_92),
+                Complex64::new(-0.207_161_752_568_048_92, 0.583_898_275_441_943_6),
+                Complex64::new(0.091_454_654_710_226_67, 0.036_077_184_405_860_96),
+                Complex64::new(-0.036_077_184_405_860_96, 0.091_454_654_710_226_67),
+            ],
+            vec![
+                Complex64::new(-0.312_683_007_329_483_2, 0.380_006_582_493_698_2),
+                Complex64::new(-0.380_006_582_493_698_2, -0.312_683_007_329_483_2),
+                Complex64::new(0.429_226_954_353_538_86, 0.080_665_772_800_635_36),
+                Complex64::new(-0.080_665_772_800_635_36, 0.429_226_954_353_538_86),
+                Complex64::new(0.167_975_207_180_540_35, -0.003_448_520_978_409_45),
+                Complex64::new(0.003_448_520_978_409_45, 0.167_975_207_180_540_35),
+                Complex64::new(0.057_828_286_780_043_52, 0.113_921_666_330_671_12),
+                Complex64::new(-0.113_921_666_330_671_12, 0.057_828_286_780_043_52),
+            ],
+            vec![
+                Complex64::new(0.290_619_243_834_445_9, -0.099_890_604_599_043_09),
+                Complex64::new(0.099_890_604_599_043_09, 0.290_619_243_834_445_9),
+                Complex64::new(-1.313_683_875_655_594, 1.138_026_995_831_437_3),
+                Complex64::new(-1.138_026_995_831_437_3, -1.313_683_875_655_594),
+            ],
+            vec![
+                Complex64::new(-0.590_738_408_642_117_8, 0.957_739_382_697_132_3),
+                Complex64::new(-0.957_739_382_697_132_3, -0.590_738_408_642_117_8),
+                Complex64::new(-0.076_764_959_170_434_73, -0.162_174_248_620_602_73),
+                Complex64::new(0.162_174_248_620_602_73, -0.076_764_959_170_434_73),
+            ],
+            vec![
+                Complex64::new(0.027_345_847_192_201_86, -0.028_062_285_824_319_13),
+                Complex64::new(0.028_062_285_824_319_13, 0.027_345_847_192_201_86),
+                Complex64::new(0.516_566_057_334_753_1, 0.172_066_851_567_593_77),
+                Complex64::new(-0.172_066_851_567_593_77, 0.516_566_057_334_753_1),
+            ],
+            vec![
+                Complex64::new(0.833_308_210_872_602_3, 0.968_072_700_233_668_1),
+                Complex64::new(-0.968_072_700_233_668_1, 0.833_308_210_872_602_3),
+            ],
+        ];
+
+        for (expression, expected) in expressions.into_iter().zip(expected) {
+            let (analytic, numerical) = finite_difference_gradient(&expression);
+            for ((analytic, numerical), expected) in
+                analytic.into_iter().zip(numerical).zip(expected)
+            {
+                assert_relative_eq!(analytic.re, expected.re, epsilon = 1.0e-12);
+                assert_relative_eq!(analytic.im, expected.im, epsilon = 1.0e-12);
+                assert_relative_eq!(analytic.re, numerical.re, epsilon = 1.0e-8);
+                assert_relative_eq!(analytic.im, numerical.im, epsilon = 1.0e-8);
+            }
         }
     }
 
