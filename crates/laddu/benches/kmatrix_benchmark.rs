@@ -1,145 +1,198 @@
-use criterion::{black_box, criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion};
-use fastrand_contrib::RngExt;
+use criterion::{BatchSize, BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use laddu::{
     amplitudes::{
-        angular::Zlm,
-        kmatrix::{
-            KopfKMatrixA0, KopfKMatrixA0Channel, KopfKMatrixA2, KopfKMatrixA2Channel,
-            KopfKMatrixF0, KopfKMatrixF0Channel, KopfKMatrixF2, KopfKMatrixF2Channel,
-        },
+        KopfA0Channel, KopfA2Channel, KopfF0Channel, KopfF2Channel, kopf_a0, kopf_a2, kopf_f0,
+        kopf_f2,
     },
-    data::DatasetReadOptions,
-    extensions::NLL,
-    io, parameter,
-    quantum::Reflectivity,
-    traits::LikelihoodTerm,
-    variables::Mass,
-    Axes, Axis, Frame,
+    compile::CompiledModel,
+    complex,
+    data::{data::Dataset, io::parquet::ParquetSource},
+    event_scalar,
+    expr::{Expr, cis},
+    likelihood::{CpuLikelihood, CpuLikelihoodTerm, CpuNllTerm},
+    parameter,
+    physics::{
+        channel::Channel,
+        math::spherical_harmonic,
+        quantum::Reflectivity,
+        vectors::{Vec3, Vec4},
+    },
 };
 use rayon::ThreadPoolBuilder;
 
-fn reaction_variables() -> (laddu::Angles, laddu::Polarization, Mass) {
-    let mut channel = laddu::Channel::new();
+fn reaction_variables() -> (Expr, Expr, Expr, Expr) {
+    let mut channel = Channel::new("gamma p -> Ks Ks p");
+    channel.edge("beam").p4(Vec4::event("beam"));
+    channel.edge("target");
+    channel.edge("kk");
+    channel.edge("proton").p4(Vec4::event("proton"));
+    channel.edge("kshort1").p4(Vec4::event("kshort1"));
+    channel.edge("kshort2").p4(Vec4::event("kshort2"));
     channel
-        .create_production("production", ["beam", "target"], ["kk", "proton"])
+        .vertex("production")
+        .incoming(["beam", "target"])
+        .outgoing(["kk", "proton"])
+        .validate()
         .unwrap();
     channel
-        .create_decay("kk_decay", "kk", ["kshort1", "kshort2"])
+        .vertex("kk_decay")
+        .incoming(["kk"])
+        .outgoing(["kshort1", "kshort2"])
+        .validate()
         .unwrap();
-    channel.edit_particle("beam").unwrap().stored();
-    channel.edit_particle("target").unwrap().missing().unwrap();
-    channel.edit_particle("kshort1").unwrap().stored();
-    channel.edit_particle("kshort2").unwrap().stored();
-    channel.edit_particle("proton").unwrap().stored();
-    let frame = Frame::new(
-        "kk_decay",
-        Axes::from_y_z(
-            Axis::normal("beam", "proton").at("production").flipped(),
-            Axis::opposite("proton").at("kk_decay"),
-        ),
-    )
-    .unwrap();
-    let angles = channel.angles("kshort1", frame).unwrap();
-    let polarization = channel
-        .polarization("production", "pol_magnitude", "pol_angle")
+
+    let production = channel.get_vertex("production").unwrap();
+    let y_hint = -production
+        .vec3("beam")
+        .unwrap()
+        .cross(&production.vec3("proton").unwrap());
+    let decay = channel.get_vertex("kk_decay").unwrap();
+    let z_axis = -decay.vec3("proton").unwrap();
+    let costheta = decay
+        .costheta("kshort1", z_axis.clone(), y_hint.clone())
         .unwrap();
-    let resonance_mass = channel.mass("kk").unwrap();
-    (angles, polarization, resonance_mass)
+    let phi = decay.phi("kshort1", z_axis, y_hint).unwrap();
+    let resonance_s = channel.s("kk").unwrap();
+
+    let lab_angle = event_scalar("pol_angle");
+    let lab_polarization = Vec3::new(lab_angle.cos(), lab_angle.sin(), 0.0);
+    let reference = channel.vec3("beam").unwrap();
+    let spectator = channel.vec3("proton").unwrap();
+    let production_normal = reference.cross(&(-spectator)).unit();
+    let polarization_angle = laddu::atan2(
+        production_normal.dot(&lab_polarization),
+        reference
+            .unit()
+            .dot(&lab_polarization.cross(&production_normal)),
+    );
+    (costheta, phi, resonance_s, polarization_angle)
 }
 
-fn kmatrix_nll_benchmark(c: &mut Criterion) {
-    let p4_names = ["beam", "proton", "kshort1", "kshort2"];
-    let aux_names = ["pol_magnitude", "pol_angle"];
-    let options = DatasetReadOptions::default()
-        .p4_names(p4_names)
-        .aux_names(aux_names);
-    let ds_data = io::read_parquet("benches/bench.parquet", &options).unwrap();
-    let ds_mc = io::read_parquet("benches/bench.parquet", &options).unwrap();
+fn zlm(
+    l: usize,
+    m: isize,
+    reflectivity: Reflectivity,
+    costheta: &Expr,
+    phi: &Expr,
+    polarization: &Expr,
+    polarization_angle: &Expr,
+) -> Expr {
+    let ylm = spherical_harmonic(l, m, costheta, phi).unwrap();
+    let rotated = ylm * cis(-polarization_angle);
+    match reflectivity {
+        Reflectivity::Positive => complex(
+            (1.0 + polarization).sqrt() * rotated.real(),
+            (1.0 - polarization).sqrt() * rotated.imag(),
+        ),
+        Reflectivity::Negative => complex(
+            (1.0 - polarization).sqrt() * rotated.real(),
+            (1.0 + polarization).sqrt() * rotated.imag(),
+        ),
+    }
+}
 
-    let (angles, polarization, resonance_mass) = reaction_variables();
-    let z00p = Zlm::new("Z00+", 0, 0, Reflectivity::Positive, &angles, &polarization).unwrap();
-    let z00n = Zlm::new("Z00-", 0, 0, Reflectivity::Negative, &angles, &polarization).unwrap();
-    let z22p = Zlm::new("Z22+", 2, 2, Reflectivity::Positive, &angles, &polarization).unwrap();
-    let f0p = KopfKMatrixF0::new(
-        "f0+",
+fn kmatrix_likelihood() -> CpuLikelihood {
+    const DATASET: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/benches/bench.parquet");
+    let dataset = Dataset::new(ParquetSource::open(DATASET).unwrap());
+    let (costheta, phi, resonance_s, polarization_angle) = reaction_variables();
+    let polarization = event_scalar("pol_magnitude");
+    let z00p = zlm(
+        0,
+        0,
+        Reflectivity::Positive,
+        &costheta,
+        &phi,
+        &polarization,
+        &polarization_angle,
+    );
+    let z00n = zlm(
+        0,
+        0,
+        Reflectivity::Negative,
+        &costheta,
+        &phi,
+        &polarization,
+        &polarization_angle,
+    );
+    let z22p = zlm(
+        2,
+        2,
+        Reflectivity::Positive,
+        &costheta,
+        &phi,
+        &polarization,
+        &polarization_angle,
+    );
+
+    let f0p = kopf_f0(
+        &resonance_s,
         [
-            [parameter!("f0+ c00 re", 0.0), parameter!("f0+ c00 im", 0.0)],
-            [
+            complex(parameter!("f0+ c00 re", 0.0), parameter!("f0+ c00 im", 0.0)),
+            complex(
                 parameter!("f0(980)+ re"),
                 parameter!("f0(980)+ im_fix", 0.0),
-            ],
-            [parameter!("f0(1370)+ re"), parameter!("f0(1370)+ im")],
-            [parameter!("f0(1500)+ re"), parameter!("f0(1500)+ im")],
-            [parameter!("f0(1710)+ re"), parameter!("f0(1710)+ im")],
+            ),
+            complex(parameter!("f0(1370)+ re"), parameter!("f0(1370)+ im")),
+            complex(parameter!("f0(1500)+ re"), parameter!("f0(1500)+ im")),
+            complex(parameter!("f0(1710)+ re"), parameter!("f0(1710)+ im")),
         ],
-        KopfKMatrixF0Channel::PiPi,
-        &resonance_mass,
-        None,
     )
-    .unwrap();
-    let a0p = KopfKMatrixA0::new(
-        "a0+",
+    .unwrap()
+    .component(KopfF0Channel::KKbar);
+    let a0p = kopf_a0(
+        &resonance_s,
         [
-            [parameter!("a0(980)+ re"), parameter!("a0(980)+ im")],
-            [parameter!("a0(1450)+ re"), parameter!("a0(1450)+ im")],
+            complex(parameter!("a0(980)+ re"), parameter!("a0(980)+ im")),
+            complex(parameter!("a0(1450)+ re"), parameter!("a0(1450)+ im")),
         ],
-        KopfKMatrixA0Channel::PiEta,
-        &resonance_mass,
-        None,
     )
-    .unwrap();
-    let f0n = KopfKMatrixF0::new(
-        "f0-",
+    .unwrap()
+    .component(KopfA0Channel::KKbar);
+    let f0n = kopf_f0(
+        &resonance_s,
         [
-            [parameter!("f0- c00 re", 0.0), parameter!("f0- c00 im", 0.0)],
-            [
+            complex(parameter!("f0- c00 re", 0.0), parameter!("f0- c00 im", 0.0)),
+            complex(
                 parameter!("f0(980)- re"),
                 parameter!("f0(980)- im_fix", 0.0),
-            ],
-            [parameter!("f0(1370)- re"), parameter!("f0(1370)- im")],
-            [parameter!("f0(1500)- re"), parameter!("f0(1500)- im")],
-            [parameter!("f0(1710)- re"), parameter!("f0(1710)- im")],
+            ),
+            complex(parameter!("f0(1370)- re"), parameter!("f0(1370)- im")),
+            complex(parameter!("f0(1500)- re"), parameter!("f0(1500)- im")),
+            complex(parameter!("f0(1710)- re"), parameter!("f0(1710)- im")),
         ],
-        KopfKMatrixF0Channel::PiPi,
-        &resonance_mass,
-        None,
     )
-    .unwrap();
-    let a0n = KopfKMatrixA0::new(
-        "a0-",
+    .unwrap()
+    .component(KopfF0Channel::KKbar);
+    let a0n = kopf_a0(
+        &resonance_s,
         [
-            [parameter!("a0(980)- re"), parameter!("a0(980)- im")],
-            [parameter!("a0(1450)- re"), parameter!("a0(1450)- im")],
+            complex(parameter!("a0(980)- re"), parameter!("a0(980)- im")),
+            complex(parameter!("a0(1450)- re"), parameter!("a0(1450)- im")),
         ],
-        KopfKMatrixA0Channel::PiEta,
-        &resonance_mass,
-        None,
     )
-    .unwrap();
-    let f2 = KopfKMatrixF2::new(
-        "f2",
+    .unwrap()
+    .component(KopfA0Channel::KKbar);
+    let f2 = kopf_f2(
+        &resonance_s,
         [
-            [parameter!("f2(1270) re"), parameter!("f2(1270) im")],
-            [parameter!("f2(1525) re"), parameter!("f2(1525) im")],
-            [parameter!("f2(1850) re"), parameter!("f2(1850) im")],
-            [parameter!("f2(1910) re"), parameter!("f2(1910) im")],
+            complex(parameter!("f2(1270) re"), parameter!("f2(1270) im")),
+            complex(parameter!("f2(1525) re"), parameter!("f2(1525) im")),
+            complex(parameter!("f2(1850) re"), parameter!("f2(1850) im")),
+            complex(parameter!("f2(1910) re"), parameter!("f2(1910) im")),
         ],
-        KopfKMatrixF2Channel::KKbar,
-        &resonance_mass,
-        None,
     )
-    .unwrap();
-    let a2 = KopfKMatrixA2::new(
-        "a2",
+    .unwrap()
+    .component(KopfF2Channel::KKbar);
+    let a2 = kopf_a2(
+        &resonance_s,
         [
-            [parameter!("a2(1320) re"), parameter!("a2(1320) im")],
-            [parameter!("a2(1700) re"), parameter!("a2(1700) im")],
+            complex(parameter!("a2(1320) re"), parameter!("a2(1320) im")),
+            complex(parameter!("a2(1700) re"), parameter!("a2(1700) im")),
         ],
-        KopfKMatrixA2Channel::PiEtaPrime,
-        &resonance_mass,
-        None,
     )
-    .unwrap();
+    .unwrap()
+    .component(KopfA2Channel::KKbar);
+
     let s0p = f0p + a0p;
     let s0n = f0n + a0n;
     let d2p = f2 + a2;
@@ -147,13 +200,18 @@ fn kmatrix_nll_benchmark(c: &mut Criterion) {
     let pos_im = (&s0p * z00p.imag() + &d2p * z22p.imag()).norm_sqr();
     let neg_re = (&s0n * z00n.real()).norm_sqr();
     let neg_im = (&s0n * z00n.imag()).norm_sqr();
-    let expr = pos_re + pos_im + neg_re + neg_im;
-    let nll = NLL::new(&expr, &ds_data, &ds_mc, None).unwrap();
+    let model = CompiledModel::from_expr(&(pos_re + pos_im + neg_re + neg_im)).unwrap();
+    let nll = CpuNllTerm::new("K-Matrix", &model, &dataset, &dataset).unwrap();
+    CpuLikelihood::new([nll.boxed()]).unwrap()
+}
+
+fn kmatrix_nll_benchmark(c: &mut Criterion) {
+    let likelihood = kmatrix_likelihood();
     let mut group = c.benchmark_group("K-Matrix NLL Performance");
-    let n_threads: Vec<usize> = (0..)
-        .map(|x| 1 << x)
-        .take_while(|&p| p <= num_cpus::get())
-        .collect();
+    let n_threads = (0..)
+        .map(|power| 1 << power)
+        .take_while(|threads| *threads <= num_cpus::get());
+
     for threads in n_threads {
         let pool = ThreadPoolBuilder::new()
             .num_threads(threads)
@@ -166,11 +224,15 @@ fn kmatrix_nll_benchmark(c: &mut Criterion) {
                 let mut rng = fastrand::Rng::new();
                 b.iter_batched(
                     || {
-                        (0..nll.n_free())
-                            .map(|_| rng.f64_range(-100.0..100.0))
-                            .collect::<Vec<f64>>()
+                        let mut params = likelihood.default_params();
+                        for id in likelihood.params().free_params() {
+                            params.set_full(*id, rng.f64() * 200.0 - 100.0).unwrap();
+                        }
+                        params
                     },
-                    |p| pool.install(|| black_box(nll.evaluate(&p))),
+                    |params| {
+                        pool.install(|| black_box(likelihood.nll(black_box(&params)).unwrap()))
+                    },
                     BatchSize::SmallInput,
                 )
             },

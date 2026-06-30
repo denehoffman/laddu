@@ -70,7 +70,7 @@ impl LikelihoodEvaluation {
     }
 }
 
-pub trait CpuLikelihoodTerm: Debug {
+pub trait CpuLikelihoodTerm: Debug + Send + Sync {
     fn name(&self) -> &str;
 
     fn register_params(&self, _registry: &mut ParamRegistry) -> LikelihoodResult<()> {
@@ -272,7 +272,7 @@ impl CpuNllTerm {
     pub fn data_log_intensity_sum(&self, params: &ParamValues) -> LikelihoodResult<f64> {
         let local_params = self.local_values(params)?;
         self.plan
-            .try_weighted_sum_cached(&local_params, &self.data, |value| {
+            .par_try_weighted_sum_cached(&local_params, &self.data, |value| {
                 positive_intensity("data", value).map(f64::ln)
             })
     }
@@ -303,7 +303,7 @@ impl CpuNllTerm {
         name: &'static str,
     ) -> LikelihoodResult<f64> {
         self.plan
-            .try_weighted_sum_cached(params, dataset, |value| positive_intensity(name, value))
+            .par_try_weighted_sum_cached(params, dataset, |value| positive_intensity(name, value))
     }
 
     fn weighted_intensity_sum_with_gradient(
@@ -313,7 +313,7 @@ impl CpuNllTerm {
         name: &'static str,
     ) -> LikelihoodResult<(f64, Vec<f64>)> {
         self.plan
-            .try_weighted_real_sum_with_gradient_cached(params, dataset, |value| {
+            .par_try_weighted_real_sum_with_gradient_cached(params, dataset, |value| {
                 Ok::<_, LikelihoodError>((positive_intensity(name, value)?, 1.0))
             })
     }
@@ -358,7 +358,7 @@ impl CpuLikelihoodTerm for CpuNllTerm {
         )?;
         let data_log_sum =
             self.plan
-                .try_weighted_sum_cached(&local_params, &self.data, |value| {
+                .par_try_weighted_sum_cached(&local_params, &self.data, |value| {
                     positive_intensity("data", value).map(f64::ln)
                 })?;
         Ok(self.data_weight_sum() * normalization.ln() - data_log_sum)
@@ -378,7 +378,7 @@ impl CpuLikelihoodTerm for CpuNllTerm {
         let normalization = positive_integral("accepted MC", normalization)?;
         let (data_log_sum, data_log_gradient) = self
             .plan
-            .try_weighted_real_sum_with_gradient_cached(&local_params, &self.data, |value| {
+            .par_try_weighted_real_sum_with_gradient_cached(&local_params, &self.data, |value| {
                 let intensity = positive_intensity("data", value)?;
                 Ok::<_, LikelihoodError>((intensity.ln(), intensity.recip()))
             })?;

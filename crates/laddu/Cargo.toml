@@ -25,3 +25,13 @@ default = ["amplitudes", "likelihood"]
 amplitudes = ["dep:laddu-amplitudes"]
 likelihood = ["dep:laddu-likelihood"]
 wgpu = ["dep:laddu-wgpu"]
+
+[dev-dependencies]
+criterion.workspace = true
+fastrand.workspace = true
+num_cpus.workspace = true
+rayon.workspace = true
+
+[[bench]]
+name = "kmatrix_benchmark"
+harness = false

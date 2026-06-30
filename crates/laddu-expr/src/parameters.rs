@@ -596,7 +596,7 @@ macro_rules! parameter {
 
     ($name:expr, $value:expr) => {{
         let mut p = $crate::parameters::Parameter::free($name);
-        p.set_fixed_value(Some($value));
+        p.set_fixed_value($value);
         p
     }};
 
@@ -609,7 +609,7 @@ macro_rules! parameter {
     (@parse $p:ident, [fixed = $f:tt, initial = $i:tt]; ) => {};
 
     (@parse $p:ident, [fixed = false, initial = false]; fixed : $value:expr $(, $($rest:tt)*)?) => {{
-        $p.set_fixed_value(Some($value));
+        $p.set_fixed_value($value);
         $crate::parameter!(@parse $p, [fixed = true, initial = false]; $($($rest)*)?);
     }};
 
@@ -650,6 +650,15 @@ macro_rules! parameter {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parameter_macro_constructs_fixed_parameters() {
+        let positional = crate::parameter!("positional", 1.25);
+        let named = crate::parameter!("named", fixed: -0.5);
+
+        assert_eq!(positional.state(), &ParamState::Fixed(1.25));
+        assert_eq!(named.state(), &ParamState::Fixed(-0.5));
+    }
 
     #[test]
     fn layout_tracks_free_and_fixed_values() {
