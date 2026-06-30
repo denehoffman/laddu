@@ -283,7 +283,7 @@ impl CpuPlan {
         self.check_batch_cache(cache)?;
         let mut out = Vec::with_capacity(cache.len());
         for row in 0..cache.len() {
-            out.push(self.evaluate_cache_row(params, cache, row)?);
+            out.push(self.evaluate_cache_row_unchecked(params, cache, row)?);
         }
         Ok(out)
     }
@@ -295,6 +295,15 @@ impl CpuPlan {
         row: usize,
     ) -> RuntimeResult<Complex64> {
         self.check_batch_cache(cache)?;
+        self.evaluate_cache_row_unchecked(params, cache, row)
+    }
+
+    fn evaluate_cache_row_unchecked(
+        &self,
+        params: &ParamValues,
+        cache: &CpuBatchCache,
+        row: usize,
+    ) -> RuntimeResult<Complex64> {
         let values = self.evaluate_values_from_cache(params, cache, row)?;
         scalar_at(&values, self.graph.root().index())
     }
@@ -306,6 +315,15 @@ impl CpuPlan {
         row: usize,
     ) -> RuntimeResult<ValueGradient> {
         self.check_batch_cache(cache)?;
+        self.evaluate_cache_row_with_gradient_unchecked(params, cache, row)
+    }
+
+    fn evaluate_cache_row_with_gradient_unchecked(
+        &self,
+        params: &ParamValues,
+        cache: &CpuBatchCache,
+        row: usize,
+    ) -> RuntimeResult<ValueGradient> {
         let values = self.evaluate_values_from_cache(params, cache, row)?;
         self.value_gradient(params, values, Some((cache, row)))
     }
@@ -317,7 +335,7 @@ impl CpuPlan {
     ) -> RuntimeResult<Vec<ValueGradient>> {
         self.check_batch_cache(cache)?;
         (0..cache.len())
-            .map(|row| self.evaluate_cache_row_with_gradient(params, cache, row))
+            .map(|row| self.evaluate_cache_row_with_gradient_unchecked(params, cache, row))
             .collect()
     }
 
@@ -397,8 +415,9 @@ impl CpuPlan {
     {
         let mut sum = 0.0;
         for batch in dataset.batches() {
+            self.check_batch_cache(batch.cache())?;
             for row in 0..batch.len() {
-                let value = self.evaluate_cache_row(params, batch.cache(), row)?;
+                let value = self.evaluate_cache_row_unchecked(params, batch.cache(), row)?;
                 sum += batch.weights()[row] * f(value)?;
             }
         }
@@ -429,9 +448,10 @@ impl CpuPlan {
     {
         let mut total = RealGradientAccumulator::zero(self.free_parameter_count());
         for batch in dataset.batches() {
+            self.check_batch_cache(batch.cache())?;
             for row in 0..batch.len() {
                 let evaluation =
-                    self.evaluate_cache_row_with_gradient(params, batch.cache(), row)?;
+                    self.evaluate_cache_row_with_gradient_unchecked(params, batch.cache(), row)?;
                 let (value, derivative) = transform(evaluation.value())?;
                 total.push(
                     batch.weights()[row],
@@ -456,8 +476,9 @@ impl CpuPlan {
     {
         let mut sum = Complex64::default();
         for batch in dataset.batches() {
+            self.check_batch_cache(batch.cache())?;
             for row in 0..batch.len() {
-                let value = self.evaluate_cache_row(params, batch.cache(), row)?;
+                let value = self.evaluate_cache_row_unchecked(params, batch.cache(), row)?;
                 sum += f(value)? * batch.weights()[row];
             }
         }
@@ -488,10 +509,11 @@ impl CpuPlan {
     {
         let mut total = AccurateF64::zero();
         for batch in dataset.batches() {
+            self.check_batch_cache(batch.cache())?;
             let partial = (0..batch.len())
                 .into_par_iter()
                 .try_fold(AccurateF64::zero, |mut acc, row| {
-                    let value = self.evaluate_cache_row(params, batch.cache(), row)?;
+                    let value = self.evaluate_cache_row_unchecked(params, batch.cache(), row)?;
                     acc.push(batch.weights()[row] * f(value)?);
                     Ok::<AccurateF64, E>(acc)
                 })
@@ -528,13 +550,17 @@ impl CpuPlan {
     {
         let mut total = RealGradientAccumulator::zero(self.free_parameter_count());
         for batch in dataset.batches() {
+            self.check_batch_cache(batch.cache())?;
             let partial = (0..batch.len())
                 .into_par_iter()
                 .try_fold(
                     || RealGradientAccumulator::zero(self.free_parameter_count()),
                     |mut accumulator, row| {
-                        let evaluation =
-                            self.evaluate_cache_row_with_gradient(params, batch.cache(), row)?;
+                        let evaluation = self.evaluate_cache_row_with_gradient_unchecked(
+                            params,
+                            batch.cache(),
+                            row,
+                        )?;
                         let (value, derivative) = transform(evaluation.value())?;
                         accumulator.push(
                             batch.weights()[row],
@@ -569,10 +595,11 @@ impl CpuPlan {
     {
         let mut total = AccurateComplex64::zero();
         for batch in dataset.batches() {
+            self.check_batch_cache(batch.cache())?;
             let partial = (0..batch.len())
                 .into_par_iter()
                 .try_fold(AccurateComplex64::zero, |mut acc, row| {
-                    let value = self.evaluate_cache_row(params, batch.cache(), row)?;
+                    let value = self.evaluate_cache_row_unchecked(params, batch.cache(), row)?;
                     acc.push(f(value)? * batch.weights()[row]);
                     Ok::<AccurateComplex64, E>(acc)
                 })
