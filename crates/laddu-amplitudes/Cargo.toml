@@ -13,6 +13,10 @@ laddu-expr = { path = "../laddu-expr" }
 laddu-kernel = { path = "../laddu-kernel" }
 laddu-physics = { path = "../laddu-physics" }
 num.workspace = true
+thiserror.workspace = true
+fastrand.workspace = true
+fastrand-contrib.workspace = true
+nalgebra.workspace = true
 
 [dev-dependencies]
 laddu-compile = { path = "../laddu-compile" }

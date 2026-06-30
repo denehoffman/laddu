@@ -567,6 +567,18 @@ mod tests {
     }
 
     #[test]
+    fn constant_folding_preserves_signed_zero_across_branch_cuts() {
+        let expression = (Expr::from(Complex64::new(-1.0, -0.0)) * 1.0).sqrt();
+        let compiled = CompiledModel::from_expr(&expression).unwrap();
+
+        assert!(matches!(
+            compiled.graph().node(compiled.graph().root()),
+            Some(ExprNode::ComplexConst(value))
+                if value.re == 0.0 && value.im == -1.0
+        ));
+    }
+
+    #[test]
     fn default_pipeline_uses_simplify_cse_simplify() {
         let x = Expr::from(parameter!("x"));
         let model = (x.clone() + 0.0) - x;
@@ -671,12 +683,12 @@ mod tests {
     fn custom_pipeline_can_omit_canonical_cse() {
         let x = Expr::from(parameter!("x"));
         let y = Expr::from(parameter!("y"));
-        let sum = x + y;
+        let lhs = x.clone() + y.clone();
+        let rhs = x + y;
         let options = CompileOptions::with_pipeline(
             OptimizationPipeline::new().with_pass(RewritePass::simplify()),
         );
-        let compiled =
-            CompiledModel::from_expr_with_options(&(sum.clone() * sum), &options).unwrap();
+        let compiled = CompiledModel::from_expr_with_options(&(lhs * rhs), &options).unwrap();
 
         assert_eq!(count_binary_op(&compiled, BinaryOp::Add), 2);
     }

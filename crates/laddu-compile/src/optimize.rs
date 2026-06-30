@@ -382,7 +382,7 @@ impl RewriteRule for ConstantFoldScalarRule {
                     return Ok(Rewrite::Keep);
                 };
                 Ok(Rewrite::Replace {
-                    node: op.evaluate(input).into(),
+                    node: ExprNode::from_folded_const(op.evaluate(input)),
                     metadata: metadata.clone(),
                 })
             }
@@ -394,7 +394,7 @@ impl RewriteRule for ConstantFoldScalarRule {
                     return Ok(Rewrite::Keep);
                 };
                 Ok(Rewrite::Replace {
-                    node: op.evaluate(lhs, rhs).into(),
+                    node: ExprNode::from_folded_const(op.evaluate(lhs, rhs)),
                     metadata: metadata.clone(),
                 })
             }
@@ -410,7 +410,7 @@ impl RewriteRule for ConstantFoldScalarRule {
                     return Ok(Rewrite::Keep);
                 };
                 Ok(Rewrite::Replace {
-                    node: product.into(),
+                    node: ExprNode::from_folded_const(product),
                     metadata: metadata.clone(),
                 })
             }
@@ -445,7 +445,7 @@ impl ConstantFoldScalarRule {
 
         if nonconstant_terms.is_empty() {
             return Ok(Rewrite::Replace {
-                node: constant_sum.into(),
+                node: ExprNode::from_folded_const(constant_sum),
                 metadata: metadata.clone(),
             });
         }
@@ -456,7 +456,7 @@ impl ConstantFoldScalarRule {
             }
             let mut builder = ReplacementFragment::new(context);
             let constant = builder.push(
-                ExprNode::from(constant_sum),
+                ExprNode::from_folded_const(constant_sum),
                 ExprMetadata::new(ExprSourceKind::Const),
             );
             nonconstant_terms.push(constant);

@@ -1,22 +1,18 @@
 use laddu_expr::Expr;
 use laddu_physics::{
     LadduPhysicsError, LadduPhysicsResult,
-    math::{BarrierKind, QR_DEFAULT, Sheet, blatt_weisskopf_custom, q_m, q_s},
+    math::{BarrierKind, QR_DEFAULT, Sheet, blatt_weisskopf_custom, q},
     quantum::L,
 };
 use num::complex::Complex64;
 
-pub fn breit_wigner_s(s: impl Into<Expr>, mass: impl Into<Expr>, width: impl Into<Expr>) -> Expr {
+pub fn breit_wigner(s: impl Into<Expr>, mass: impl Into<Expr>, width: impl Into<Expr>) -> Expr {
     let mass = mass.into();
     let width = width.into();
     1.0 / (mass.powi(2) - s.into() - Complex64::I * mass * width)
 }
 
-pub fn breit_wigner_m(m: impl Into<Expr>, mass: impl Into<Expr>, width: impl Into<Expr>) -> Expr {
-    breit_wigner_s(m.into().powi(2), mass, width)
-}
-
-pub fn relativistic_breit_wigner_s(
+pub fn relativistic_breit_wigner(
     s: impl Into<Expr>,
     mass: impl Into<Expr>,
     width: impl Into<Expr>,
@@ -24,10 +20,11 @@ pub fn relativistic_breit_wigner_s(
     mass2: impl Into<Expr>,
     l: impl TryInto<L>,
 ) -> LadduPhysicsResult<Expr> {
-    relativistic_breit_wigner_custom_s(s, mass, width, mass1, mass2, l, true, QR_DEFAULT)
+    relativistic_breit_wigner_custom(s, mass, width, mass1, mass2, l, true, QR_DEFAULT)
 }
 
-pub fn relativistic_breit_wigner_custom_s(
+#[allow(clippy::too_many_arguments)]
+pub fn relativistic_breit_wigner_custom(
     s: impl Into<Expr>,
     mass: impl Into<Expr>,
     width: impl Into<Expr>,
@@ -45,8 +42,8 @@ pub fn relativistic_breit_wigner_custom_s(
     let l = l
         .try_into()
         .map_err(|_| LadduPhysicsError::ConversionError("L"))?;
-    let q0 = q_m(&mass, &mass1, &mass2, Sheet::Physical);
-    let q = q_s(&s, &mass1, &mass2, Sheet::Physical);
+    let q0 = q(mass.powi(2), &mass1, &mass2, Sheet::Physical);
+    let q = q(&s, &mass1, &mass2, Sheet::Physical);
     let running_width = if barrier_factors {
         let f0 = blatt_weisskopf_custom(&q0, l, BarrierKind::Full, q_r)?;
         let f = blatt_weisskopf_custom(&q, l, BarrierKind::Full, q_r)?;
@@ -55,39 +52,6 @@ pub fn relativistic_breit_wigner_custom_s(
         width * (&mass / s.sqrt()) * (q / q0).powi((2 * l.value() + 1) as i32)
     };
     Ok(Expr::from(1.0) / (mass.powi(2) - &s - Complex64::I * mass * running_width))
-}
-
-pub fn relativistic_breit_wigner_m(
-    m: impl Into<Expr>,
-    mass: impl Into<Expr>,
-    width: impl Into<Expr>,
-    mass1: impl Into<Expr>,
-    mass2: impl Into<Expr>,
-    l: impl TryInto<L>,
-) -> LadduPhysicsResult<Expr> {
-    relativistic_breit_wigner_s(m.into().powi(2), mass, width, mass1, mass2, l)
-}
-
-pub fn relativistic_breit_wigner_custom(
-    m: impl Into<Expr>,
-    mass: impl Into<Expr>,
-    width: impl Into<Expr>,
-    mass1: impl Into<Expr>,
-    mass2: impl Into<Expr>,
-    l: impl TryInto<L>,
-    barrier_factors: bool,
-    q_r: f64,
-) -> LadduPhysicsResult<Expr> {
-    relativistic_breit_wigner_custom_s(
-        m.into().powi(2),
-        mass,
-        width,
-        mass1,
-        mass2,
-        l,
-        barrier_factors,
-        q_r,
-    )
 }
 
 #[cfg(test)]
@@ -123,30 +87,16 @@ mod tests {
         let s = mass * mass;
         let expected_pole = Complex64::new(0.0, 1.0 / (mass * width));
 
-        assert_complex_relative_eq(evaluate(breit_wigner_s(s, mass, width)), expected_pole, EPS);
+        assert_complex_relative_eq(evaluate(breit_wigner(s, mass, width)), expected_pole, EPS);
         assert_complex_relative_eq(
-            evaluate(breit_wigner_m(mass, mass, width)),
-            expected_pole,
-            EPS,
-        );
-        assert_complex_relative_eq(
-            evaluate(relativistic_breit_wigner_m(mass, mass, width, 0.4, 0.5, l!(1)).unwrap()),
+            evaluate(relativistic_breit_wigner(s, mass, width, 0.4, 0.5, l!(1)).unwrap()),
             expected_pole,
             LOOSE_EPS,
         );
         assert_complex_relative_eq(
             evaluate(
-                relativistic_breit_wigner_custom(
-                    mass,
-                    mass,
-                    width,
-                    0.4,
-                    0.5,
-                    l!(1),
-                    true,
-                    QR_DEFAULT,
-                )
-                .unwrap(),
+                relativistic_breit_wigner_custom(s, mass, width, 0.4, 0.5, l!(1), true, QR_DEFAULT)
+                    .unwrap(),
             ),
             expected_pole,
             LOOSE_EPS,
@@ -156,8 +106,7 @@ mod tests {
     #[test]
     fn invalid_static_configuration_is_rejected() {
         assert!(
-            relativistic_breit_wigner_m(1.0, 0.1, 0.01, 0.2, 0.3, BLATT_WEISSKOPF_MAX_L + 1)
-                .is_err()
+            relativistic_breit_wigner(1.0, 0.1, 0.01, 0.2, 0.3, BLATT_WEISSKOPF_MAX_L + 1).is_err()
         );
         assert!(
             relativistic_breit_wigner_custom(1.0, 1.0, 0.1, 0.2, 0.3, l!(0), true, 0.0).is_err()

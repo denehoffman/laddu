@@ -158,12 +158,7 @@ pub enum Sheet {
     Unphysical,
 }
 
-pub fn q_s(
-    s: impl Into<Expr>,
-    mass1: impl Into<Expr>,
-    mass2: impl Into<Expr>,
-    sheet: Sheet,
-) -> Expr {
+pub fn q(s: impl Into<Expr>, mass1: impl Into<Expr>, mass2: impl Into<Expr>, sheet: Sheet) -> Expr {
     let s = s.into();
     let m1 = mass1.into();
     let m2 = mass2.into();
@@ -177,32 +172,25 @@ pub fn q_s(
     }
 }
 
-pub fn q_m(
-    m: impl Into<Expr>,
-    mass1: impl Into<Expr>,
-    mass2: impl Into<Expr>,
-    sheet: Sheet,
-) -> Expr {
-    q_s(m.into().powi(2), mass1, mass2, sheet)
-}
-
-pub fn rho_s(
+pub fn rho(
     s: impl Into<Expr>,
     mass1: impl Into<Expr>,
     mass2: impl Into<Expr>,
     sheet: Sheet,
 ) -> Expr {
     let s = s.into();
-    2.0 * q_s(s.clone(), mass1, mass2, sheet) / s.sqrt()
+    2.0 * q(s.clone(), mass1, mass2, sheet) / s.sqrt()
 }
 
-pub fn rho_m(
-    m: impl Into<Expr>,
-    mass1: impl Into<Expr>,
-    mass2: impl Into<Expr>,
-    sheet: Sheet,
-) -> Expr {
-    rho_s(m.into().powi(2), mass1, mass2, sheet)
+pub fn chew_mandelstam(s: impl Into<Expr>, mass1: impl Into<Expr>, mass2: impl Into<Expr>) -> Expr {
+    let s = s.into();
+    let mass1 = mass1.into();
+    let mass2 = mass2.into();
+    let chi_plus = 1.0 - (&mass1 + &mass2).powi(2) / &s;
+    let rho = rho(&s, &mass1, &mass2, Sheet::Physical);
+    (rho.clone() * ((&chi_plus + &rho) / (&chi_plus - rho)).log()
+        - &chi_plus * ((&mass2 - &mass1) / (&mass1 + &mass2)) * (&mass2 / mass1).log())
+        / PI
 }
 
 /// Selects which form of the Blatt-Weisskopf barrier factor is returned.
@@ -475,40 +463,30 @@ mod test {
 
         let rho_expected = Complex64::new(0.13267946426138, 0.0);
         assert_complex_relative_eq(
-            evaluate(rho_m(m, m1, m2, Sheet::Physical)),
-            rho_expected,
-            EPS,
-        );
-        assert_complex_relative_eq(
-            evaluate(rho_s(Complex64::from(s), m1, m2, Sheet::Physical)),
+            evaluate(rho(Complex64::from(s), m1, m2, Sheet::Physical)),
             rho_expected,
             EPS,
         );
 
         let q_expected = Complex64::new(0.3954823004889093, 0.0);
         assert_complex_relative_eq(
-            evaluate(q_m(1.2, 0.4, 0.5, Sheet::Physical)),
+            evaluate(q(Complex64::from(1.44), 0.4, 0.5, Sheet::Physical)),
             q_expected,
             EPS,
         );
         assert_complex_relative_eq(
-            evaluate(q_s(Complex64::from(1.44), 0.4, 0.5, Sheet::Physical)),
-            q_expected,
-            EPS,
-        );
-        assert_complex_relative_eq(
-            evaluate(q_m(1.2, 0.4, 0.5, Sheet::Unphysical)),
+            evaluate(q(1.44, 0.4, 0.5, Sheet::Unphysical)),
             -q_expected,
             EPS,
         );
 
         assert_complex_relative_eq(
-            evaluate(rho_m(m, 1.23, 0.62, Sheet::Physical)),
+            evaluate(rho(m.powi(2), 1.23, 0.62, Sheet::Physical)),
             Complex64::new(0.0, 1.0795209736472833),
             EPS,
         );
         assert_complex_relative_eq(
-            evaluate(q_m(1.2, 1.4, 1.5, Sheet::Physical)),
+            evaluate(q(1.44, 1.4, 1.5, Sheet::Physical)),
             Complex64::new(0.0, 1.3154464282347478),
             EPS,
         );
@@ -539,7 +517,7 @@ mod test {
         for (l, expected_re) in above_expected {
             assert_complex_relative_eq(
                 evaluate(
-                    blatt_weisskopf(q_m(1.2, 0.4, 0.5, Sheet::Physical), l, BarrierKind::Full)
+                    blatt_weisskopf(q(1.44, 0.4, 0.5, Sheet::Physical), l, BarrierKind::Full)
                         .unwrap(),
                 ),
                 Complex64::new(expected_re, 0.0),
@@ -548,7 +526,7 @@ mod test {
             assert_complex_relative_eq(
                 evaluate(
                     blatt_weisskopf_custom(
-                        q_m(1.2, 0.4, 0.5, Sheet::Physical),
+                        q(1.44, 0.4, 0.5, Sheet::Physical),
                         l,
                         BarrierKind::Full,
                         QR_DEFAULT,
@@ -563,7 +541,7 @@ mod test {
         for (l, expected_re) in below_expected {
             assert_complex_relative_eq(
                 evaluate(
-                    blatt_weisskopf(q_m(1.2, 1.4, 1.5, Sheet::Physical), l, BarrierKind::Full)
+                    blatt_weisskopf(q(1.44, 1.4, 1.5, Sheet::Physical), l, BarrierKind::Full)
                         .unwrap(),
                 ),
                 Complex64::new(expected_re, 0.0),

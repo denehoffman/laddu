@@ -1,4 +1,8 @@
-use std::{fmt, sync::Arc};
+use std::{
+    collections::HashMap,
+    fmt,
+    sync::{Arc, OnceLock},
+};
 
 use num::complex::Complex64;
 use serde::{Deserialize, Serialize};
@@ -46,6 +50,55 @@ pub enum ValueKind {
     Complex,
     Vector { len: usize },
     Matrix { rows: usize, cols: usize },
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum ExprShape {
+    Scalar,
+    Vector { len: usize },
+    Matrix { rows: usize, cols: usize },
+}
+
+impl fmt::Display for ExprShape {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Scalar => write!(f, "scalar"),
+            Self::Vector { len } => write!(f, "vector[{len}]"),
+            Self::Matrix { rows, cols } => write!(f, "matrix[{rows}x{cols}]"),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Error, PartialEq, Eq)]
+#[error("invalid expression shape for {operation}: {message}")]
+pub struct ExprShapeError {
+    operation: &'static str,
+    message: String,
+}
+
+pub trait ComponentIndex {
+    fn component_index(self) -> usize;
+}
+
+impl ComponentIndex for usize {
+    fn component_index(self) -> usize {
+        self
+    }
+}
+
+impl ComponentIndex for i32 {
+    fn component_index(self) -> usize {
+        usize::try_from(self).expect("component index must be nonnegative")
+    }
+}
+
+impl ExprShapeError {
+    fn new(operation: &'static str, message: impl Into<String>) -> Self {
+        Self {
+            operation,
+            message: message.into(),
+        }
+    }
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -213,6 +266,14 @@ impl From<Complex64> for ExprNode {
 }
 
 impl ExprNode {
+    pub fn from_folded_const(value: Complex64) -> Self {
+        if value.im == 0.0 && value.im.is_sign_positive() {
+            Self::RealConst(value.re)
+        } else {
+            Self::ComplexConst(value)
+        }
+    }
+
     pub fn const_value(&self) -> Option<Complex64> {
         match self {
             ExprNode::RealConst(value) => Some(Complex64::from(*value)),
@@ -287,6 +348,7 @@ pub struct Expr {
 struct DagNode {
     kind: DagNodeKind,
     metadata: ExprMetadata,
+    shape: OnceLock<Result<ExprShape, ExprShapeError>>,
 }
 
 #[derive(Clone, Debug)]
@@ -354,6 +416,7 @@ impl Expr {
             node: Arc::new(DagNode {
                 kind,
                 metadata: ExprMetadata::new(source),
+                shape: OnceLock::new(),
             }),
         }
     }
@@ -411,10 +474,10 @@ impl Expr {
         unary(UnaryOp::PowI(power), self)
     }
 
-    pub fn component(&self, index: usize) -> Self {
+    pub fn component(&self, index: impl ComponentIndex) -> Self {
         Expr::new(DagNodeKind::Component {
             input: self.clone(),
-            index,
+            index: index.component_index(),
         })
     }
 
@@ -430,12 +493,220 @@ impl Expr {
         GraphBuilder::new().build(self)
     }
 
+    pub fn shape(&self) -> Result<ExprShape, ExprShapeError> {
+        self.node
+            .shape
+            .get_or_init(|| self.node.kind.shape())
+            .clone()
+    }
+
     fn with_metadata(self, f: impl FnOnce(&mut ExprMetadata)) -> Self {
         let mut node = (*self.node).clone();
         f(&mut node.metadata);
         Self {
             node: Arc::new(node),
         }
+    }
+}
+
+impl DagNodeKind {
+    fn shape(&self) -> Result<ExprShape, ExprShapeError> {
+        match self {
+            Self::RealConst(_)
+            | Self::ComplexConst(_)
+            | Self::ScalarParam(_)
+            | Self::EventScalar(_)
+            | Self::EventP4Component { .. } => Ok(ExprShape::Scalar),
+            Self::Unary { input, .. } => {
+                input.expect_shape("unary operation", ExprShape::Scalar)?;
+                Ok(ExprShape::Scalar)
+            }
+            Self::Binary { lhs, rhs, .. } => {
+                lhs.expect_shape("binary operation", ExprShape::Scalar)?;
+                rhs.expect_shape("binary operation", ExprShape::Scalar)?;
+                Ok(ExprShape::Scalar)
+            }
+            Self::Complex { re, im } => {
+                re.expect_shape("complex constructor", ExprShape::Scalar)?;
+                im.expect_shape("complex constructor", ExprShape::Scalar)?;
+                Ok(ExprShape::Scalar)
+            }
+            Self::Vector { elements } => {
+                for element in elements {
+                    element.expect_shape("vector constructor", ExprShape::Scalar)?;
+                }
+                Ok(ExprShape::Vector {
+                    len: elements.len(),
+                })
+            }
+            Self::Matrix {
+                rows,
+                cols,
+                elements,
+            } => {
+                let expected = rows.checked_mul(*cols).ok_or_else(|| {
+                    ExprShapeError::new("matrix constructor", "row/column product overflowed")
+                })?;
+                if elements.len() != expected {
+                    return Err(ExprShapeError::new(
+                        "matrix constructor",
+                        format!(
+                            "shape {rows}x{cols} requires {expected} elements, got {}",
+                            elements.len()
+                        ),
+                    ));
+                }
+                for element in elements {
+                    element.expect_shape("matrix constructor", ExprShape::Scalar)?;
+                }
+                Ok(ExprShape::Matrix {
+                    rows: *rows,
+                    cols: *cols,
+                })
+            }
+            Self::Component { input, index } => {
+                let ExprShape::Vector { len } = input.shape()? else {
+                    return Err(ExprShapeError::new(
+                        "component",
+                        format!("expected vector, got {}", input.shape()?),
+                    ));
+                };
+                if *index >= len {
+                    return Err(ExprShapeError::new(
+                        "component",
+                        format!("index {index} is out of bounds for vector[{len}]"),
+                    ));
+                }
+                Ok(ExprShape::Scalar)
+            }
+            Self::MatrixElement { input, row, col } => {
+                let ExprShape::Matrix { rows, cols } = input.shape()? else {
+                    return Err(ExprShapeError::new(
+                        "matrix element",
+                        format!("expected matrix, got {}", input.shape()?),
+                    ));
+                };
+                if *row >= rows || *col >= cols {
+                    return Err(ExprShapeError::new(
+                        "matrix element",
+                        format!("index ({row}, {col}) is out of bounds for matrix[{rows}x{cols}]"),
+                    ));
+                }
+                Ok(ExprShape::Scalar)
+            }
+            Self::MatMul { lhs, rhs } => {
+                let ExprShape::Matrix {
+                    rows: lhs_rows,
+                    cols: lhs_cols,
+                } = lhs.shape()?
+                else {
+                    return Err(ExprShapeError::new(
+                        "matrix multiplication",
+                        format!("left input must be a matrix, got {}", lhs.shape()?),
+                    ));
+                };
+                let ExprShape::Matrix {
+                    rows: rhs_rows,
+                    cols: rhs_cols,
+                } = rhs.shape()?
+                else {
+                    return Err(ExprShapeError::new(
+                        "matrix multiplication",
+                        format!("right input must be a matrix, got {}", rhs.shape()?),
+                    ));
+                };
+                if lhs_cols != rhs_rows {
+                    return Err(ExprShapeError::new(
+                        "matrix multiplication",
+                        format!("cannot multiply {lhs_rows}x{lhs_cols} by {rhs_rows}x{rhs_cols}"),
+                    ));
+                }
+                Ok(ExprShape::Matrix {
+                    rows: lhs_rows,
+                    cols: rhs_cols,
+                })
+            }
+            Self::MatVec { matrix, vector } => {
+                let ExprShape::Matrix { rows, cols } = matrix.shape()? else {
+                    return Err(ExprShapeError::new(
+                        "matrix-vector multiplication",
+                        format!("left input must be a matrix, got {}", matrix.shape()?),
+                    ));
+                };
+                let ExprShape::Vector { len } = vector.shape()? else {
+                    return Err(ExprShapeError::new(
+                        "matrix-vector multiplication",
+                        format!("right input must be a vector, got {}", vector.shape()?),
+                    ));
+                };
+                if cols != len {
+                    return Err(ExprShapeError::new(
+                        "matrix-vector multiplication",
+                        format!("cannot multiply {rows}x{cols} matrix by vector[{len}]"),
+                    ));
+                }
+                Ok(ExprShape::Vector { len: rows })
+            }
+            Self::Dot { lhs, rhs } => {
+                let ExprShape::Vector { len: lhs_len } = lhs.shape()? else {
+                    return Err(ExprShapeError::new(
+                        "dot product",
+                        format!("left input must be a vector, got {}", lhs.shape()?),
+                    ));
+                };
+                let ExprShape::Vector { len: rhs_len } = rhs.shape()? else {
+                    return Err(ExprShapeError::new(
+                        "dot product",
+                        format!("right input must be a vector, got {}", rhs.shape()?),
+                    ));
+                };
+                if lhs_len != rhs_len {
+                    return Err(ExprShapeError::new(
+                        "dot product",
+                        format!("vector lengths differ: {lhs_len} and {rhs_len}"),
+                    ));
+                }
+                Ok(ExprShape::Scalar)
+            }
+            Self::Solve { matrix, rhs } => {
+                let ExprShape::Matrix { rows, cols } = matrix.shape()? else {
+                    return Err(ExprShapeError::new(
+                        "linear solve",
+                        format!("left input must be a matrix, got {}", matrix.shape()?),
+                    ));
+                };
+                let ExprShape::Vector { len } = rhs.shape()? else {
+                    return Err(ExprShapeError::new(
+                        "linear solve",
+                        format!("right input must be a vector, got {}", rhs.shape()?),
+                    ));
+                };
+                if rows != cols || rows != len {
+                    return Err(ExprShapeError::new(
+                        "linear solve",
+                        format!("cannot solve matrix[{rows}x{cols}] against vector[{len}]"),
+                    ));
+                }
+                Ok(ExprShape::Vector { len })
+            }
+        }
+    }
+}
+
+impl Expr {
+    fn expect_shape(
+        &self,
+        operation: &'static str,
+        expected: ExprShape,
+    ) -> Result<(), ExprShapeError> {
+        let actual = self.shape()?;
+        if actual != expected {
+            return Err(ExprShapeError::new(
+                operation,
+                format!("expected {expected}, got {actual}"),
+            ));
+        }
+        Ok(())
     }
 }
 
@@ -683,6 +954,44 @@ where
         cols: C,
         elements: elements.into_iter().flatten().map(Expr::from).collect(),
     })
+}
+
+pub fn matrix_from_flat<E>(
+    rows: usize,
+    cols: usize,
+    elements: impl IntoIterator<Item = E>,
+) -> Result<Expr, ExprShapeError>
+where
+    E: Into<Expr>,
+    Expr: From<E>,
+{
+    if rows == 0 || cols == 0 {
+        return Err(ExprShapeError::new(
+            "matrix constructor",
+            format!("matrix dimensions must be nonzero, got {rows}x{cols}"),
+        ));
+    }
+    let expected = rows.checked_mul(cols).ok_or_else(|| {
+        ExprShapeError::new("matrix constructor", "row/column product overflowed")
+    })?;
+    let elements = elements.into_iter().map(Expr::from).collect::<Vec<_>>();
+    if elements.len() != expected {
+        return Err(ExprShapeError::new(
+            "matrix constructor",
+            format!(
+                "shape {rows}x{cols} requires {expected} elements, got {}",
+                elements.len()
+            ),
+        ));
+    }
+    for element in &elements {
+        element.expect_shape("matrix constructor", ExprShape::Scalar)?;
+    }
+    Ok(Expr::new(DagNodeKind::Matrix {
+        rows,
+        cols,
+        elements,
+    }))
 }
 
 pub fn matmul(lhs: impl Into<Expr>, rhs: impl Into<Expr>) -> Expr {
@@ -1389,6 +1698,7 @@ fn node_child_ids(node: &ExprNode) -> Vec<ExprId> {
 struct GraphBuilder {
     nodes: Vec<ExprNode>,
     metadata: Vec<ExprMetadata>,
+    ids: HashMap<usize, ExprId>,
 }
 
 impl GraphBuilder {
@@ -1406,6 +1716,10 @@ impl GraphBuilder {
     }
 
     fn visit(&mut self, expr: &Expr) -> ExprId {
+        let key = Arc::as_ptr(&expr.node) as usize;
+        if let Some(id) = self.ids.get(&key) {
+            return *id;
+        }
         let node = match &expr.node.kind {
             DagNodeKind::RealConst(value) => ExprNode::RealConst(*value),
             DagNodeKind::ComplexConst(value) => ExprNode::ComplexConst(*value),
@@ -1481,6 +1795,7 @@ impl GraphBuilder {
         let id = ExprId(self.nodes.len() as u32);
         self.nodes.push(node);
         self.metadata.push(expr.node.metadata.clone());
+        self.ids.insert(key, id);
         id
     }
 }
@@ -1764,6 +2079,30 @@ mod tests {
                 .iter()
                 .any(|node| matches!(node, ExprNode::Solve { .. }))
         );
+    }
+
+    #[test]
+    fn graph_builder_preserves_shared_dag_nodes() {
+        let shared = event_scalar("x").sin();
+        let expression = vector((0..1_000).map(|_| shared.clone()));
+        let graph = expression.to_graph();
+
+        assert_eq!(graph.nodes().len(), 3);
+        let ExprNode::Vector { elements } = graph.node(graph.root()).unwrap() else {
+            panic!("root should be a vector");
+        };
+        assert!(elements.windows(2).all(|pair| pair[0] == pair[1]));
+    }
+
+    #[test]
+    fn dynamic_matrices_and_shapes_are_checked_eagerly() {
+        let dynamic = matrix_from_flat(2, 2, [1.0, 2.0, 3.0, 4.0]).unwrap();
+        assert_eq!(
+            dynamic.shape().unwrap(),
+            ExprShape::Matrix { rows: 2, cols: 2 }
+        );
+        assert!(matrix_from_flat(2, 2, [1.0, 2.0, 3.0]).is_err());
+        assert!(matmul(dynamic, matrix([[1.0, 2.0, 3.0]])).shape().is_err());
     }
 
     #[test]

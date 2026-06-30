@@ -1022,12 +1022,16 @@ name = "laddu-amplitudes"
 version = "0.1.0"
 dependencies = [
  "approx",
+ "fastrand",
+ "fastrand-contrib",
  "laddu-compile",
  "laddu-expr",
  "laddu-kernel",
  "laddu-physics",
  "laddu-runtime",
+ "nalgebra",
  "num",
+ "thiserror",
 ]
 
 [[package]]

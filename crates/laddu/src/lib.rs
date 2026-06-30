@@ -10,9 +10,10 @@ pub use laddu_runtime as runtime;
 pub use laddu_expr::parameter;
 pub use laddu_expr::parameters::Parameter;
 pub use laddu_expr::{
-    BinaryOp, Expr, ExprGraph, ExprId, ExprMetadata, ExprNode, ExprSourceKind, P4Component,
-    UnaryOp, atan2, cis, complex, dot, event_p4_component, event_scalar, matmul, matrix, matvec,
-    polar_complex, solve, vector,
+    BinaryOp, ComponentIndex, Expr, ExprGraph, ExprId, ExprMetadata, ExprNode, ExprShape,
+    ExprShapeError, ExprSourceKind, P4Component, UnaryOp, atan2, cis, complex, dot,
+    event_p4_component, event_scalar, matmul, matrix, matrix_from_flat, matvec, polar_complex,
+    solve, vector,
 };
 
 #[cfg(feature = "amplitudes")]
@@ -27,9 +28,11 @@ pub use laddu_wgpu as wgpu;
 pub mod prelude {
     #[cfg(feature = "amplitudes")]
     pub use laddu_amplitudes::{
-        breit_wigner_m, breit_wigner_s, relativistic_breit_wigner_custom,
-        relativistic_breit_wigner_custom_s, relativistic_breit_wigner_m,
-        relativistic_breit_wigner_s,
+        KMatrixError, KMatrixResult, KopfA0Channel, KopfA2Channel, KopfF0Channel, KopfF2Channel,
+        KopfPi1Channel, KopfRhoChannel, blatt_weisskopf_barriers, breit_wigner, f_vector, k_matrix,
+        k_matrix_with_background, kopf_a0, kopf_a0_resampled, kopf_a2, kopf_a2_resampled, kopf_f0,
+        kopf_f0_resampled, kopf_f2, kopf_f2_resampled, kopf_pi1, kopf_rho, p_vector,
+        p_vector_with_background, relativistic_breit_wigner, relativistic_breit_wigner_custom,
     };
     pub use laddu_autodiff::{AutodiffMode, AutodiffPlan};
     pub use laddu_compile::{
@@ -45,9 +48,10 @@ pub mod prelude {
         ParamState, ParamValues, Parameter,
     };
     pub use laddu_expr::{
-        BinaryOp, Expr, ExprGraph, ExprId, ExprMetadata, ExprNode, ExprSourceKind, P4Component,
-        UnaryOp, atan2, cis, complex, dot, event_p4_component, event_scalar, matmul, matrix,
-        matvec, polar_complex, solve, vector,
+        BinaryOp, ComponentIndex, Expr, ExprGraph, ExprId, ExprMetadata, ExprNode, ExprShape,
+        ExprShapeError, ExprSourceKind, P4Component, UnaryOp, atan2, cis, complex, dot,
+        event_p4_component, event_scalar, matmul, matrix, matrix_from_flat, matvec, polar_complex,
+        solve, vector,
     };
     pub use laddu_kernel::{KernelSpec, kernel};
     #[cfg(feature = "likelihood")]
@@ -57,7 +61,7 @@ pub mod prelude {
     };
     pub use laddu_physics::channel::{Channel, Edge, EdgeHandle, Vertex, VertexHandle, VertexView};
     pub use laddu_physics::math::{
-        BarrierKind, Sheet, blatt_weisskopf, blatt_weisskopf_custom, q_m, q_s, rho_m, rho_s,
+        BarrierKind, Sheet, blatt_weisskopf, blatt_weisskopf_custom, chew_mandelstam, q, rho,
         spherical_harmonic,
     };
     pub use laddu_runtime::{CpuBackend, CpuBatchCache, CpuCachedBatch, CpuCachedDataset, CpuPlan};
