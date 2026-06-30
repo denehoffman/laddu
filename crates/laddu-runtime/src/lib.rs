@@ -88,6 +88,7 @@ pub struct CpuPlan {
     autodiff: AutodiffPlan,
     cache_plan: CachePlan,
     cache_slots: Vec<Option<usize>>,
+    cached_evaluation_nodes: Vec<bool>,
     cache_required_nodes: Vec<bool>,
     factor_matrix_slots: Vec<Option<usize>>,
     factor_matrices: Vec<(ExprId, usize)>,
@@ -111,6 +112,7 @@ impl CpuBackend {
         for (slot, entry) in cache_plan.entries().iter().enumerate() {
             cache_slots[entry.node().index()] = Some(slot);
         }
+        let cached_evaluation_nodes = cached_evaluation_nodes(model.graph(), &cache_slots);
         let cache_required_nodes = cache_required_nodes(model.graph(), &cache_plan);
         let mut factor_matrix_slots = vec![None; model.graph().nodes().len()];
         let mut factor_matrices = Vec::new();
@@ -151,6 +153,7 @@ impl CpuBackend {
             autodiff: AutodiffPlan::from_model(model, mode)?,
             cache_plan,
             cache_slots,
+            cached_evaluation_nodes,
             cache_required_nodes,
             factor_matrix_slots,
             factor_matrices,
@@ -1106,11 +1109,14 @@ impl CpuPlan {
         cache: &CpuBatchCache,
         row: usize,
     ) -> RuntimeResult<Vec<Value>> {
-        let mut values = Vec::with_capacity(self.graph.nodes().len());
+        let mut values = vec![Value::Scalar(Complex64::ZERO); self.graph.nodes().len()];
 
         for (index, node) in self.graph.nodes().iter().enumerate() {
+            if !self.cached_evaluation_nodes[index] {
+                continue;
+            }
             if let Some(slot) = self.cache_slots[index] {
-                values.push(cache.value(slot, row)?);
+                values[index] = cache.value(slot, row)?;
                 continue;
             }
             let value = match node {
@@ -1294,7 +1300,7 @@ impl CpuPlan {
                     Value::Vector(solution.iter().copied().collect())
                 }
             };
-            values.push(value);
+            values[index] = value;
         }
 
         Ok(values)
@@ -2198,6 +2204,32 @@ fn cache_required_nodes(graph: &ExprGraph, cache_plan: &CachePlan) -> Vec<bool> 
         mark_required(graph, entry.node(), &mut required);
     }
     required
+}
+
+fn cached_evaluation_nodes(graph: &ExprGraph, cache_slots: &[Option<usize>]) -> Vec<bool> {
+    let mut required = vec![false; graph.nodes().len()];
+    mark_cached_evaluation_node(graph, graph.root(), cache_slots, &mut required);
+    required
+}
+
+fn mark_cached_evaluation_node(
+    graph: &ExprGraph,
+    id: ExprId,
+    cache_slots: &[Option<usize>],
+    required: &mut [bool],
+) {
+    if required[id.index()] {
+        return;
+    }
+    required[id.index()] = true;
+    if cache_slots[id.index()].is_some() {
+        return;
+    }
+    if let Some(node) = graph.node(id) {
+        for child in node_children(node) {
+            mark_cached_evaluation_node(graph, child, cache_slots, required);
+        }
+    }
 }
 
 fn mark_required(graph: &ExprGraph, id: ExprId, required: &mut [bool]) {
