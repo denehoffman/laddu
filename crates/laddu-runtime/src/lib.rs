@@ -87,6 +87,13 @@ impl EventLookup for HashMap<String, f64> {
 #[derive(Clone, Debug, Default)]
 pub struct CpuBackend;
 
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub enum CpuExecutionMode {
+    #[default]
+    Auto,
+    Interpreter,
+}
+
 #[derive(Clone, Debug)]
 pub struct CpuPlan {
     graph: ExprGraph,
@@ -98,7 +105,7 @@ pub struct CpuPlan {
     cached_evaluation_nodes: Vec<ExprId>,
     cached_value_slots: Vec<Option<usize>>,
     scalar_kernel: Option<ScalarKernelIr>,
-    scalar_evaluation: Option<ScalarEvaluationPlan>,
+    scalar_executor: Option<ScalarExecutor>,
     cache_required_nodes: Vec<bool>,
     solve_components: Vec<Option<SolveComponentPlan>>,
     solve_rhs_elements: Vec<Option<Vec<ExprId>>>,
@@ -108,6 +115,21 @@ pub struct CpuPlan {
     factor_matrices: Vec<(ExprId, usize)>,
     constant_factor_slots: Vec<Option<usize>>,
     constant_factors: Vec<Arc<OnceLock<DynamicLu>>>,
+}
+
+#[derive(Clone, Debug)]
+enum ScalarExecutor {
+    Interpreter(ScalarEvaluationPlan),
+}
+
+impl ScalarExecutor {
+    fn interpreter(plan: &ScalarKernelIr, mode: CpuExecutionMode) -> Self {
+        match mode {
+            CpuExecutionMode::Auto | CpuExecutionMode::Interpreter => {
+                Self::Interpreter(ScalarEvaluationPlan::from_kernel_ir(plan))
+            }
+        }
+    }
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -857,7 +879,16 @@ struct ScalarInvariantInstruction {
 
 impl CpuBackend {
     pub fn prepare(&self, model: &CompiledModel) -> CpuPlan {
-        self.prepare_with_autodiff_mode(model, AutodiffMode::Forward)
+        self.prepare_with_modes(model, AutodiffMode::Forward, CpuExecutionMode::Auto)
+            .expect("forward autodiff supports every compiled expression node")
+    }
+
+    pub fn prepare_with_execution_mode(
+        &self,
+        model: &CompiledModel,
+        execution_mode: CpuExecutionMode,
+    ) -> CpuPlan {
+        self.prepare_with_modes(model, AutodiffMode::Forward, execution_mode)
             .expect("forward autodiff supports every compiled expression node")
     }
 
@@ -865,6 +896,15 @@ impl CpuBackend {
         &self,
         model: &CompiledModel,
         mode: AutodiffMode,
+    ) -> AutodiffResult<CpuPlan> {
+        self.prepare_with_modes(model, mode, CpuExecutionMode::Auto)
+    }
+
+    pub fn prepare_with_modes(
+        &self,
+        model: &CompiledModel,
+        autodiff_mode: AutodiffMode,
+        execution_mode: CpuExecutionMode,
     ) -> AutodiffResult<CpuPlan> {
         let cache_plan = model.cache_plan().clone();
         let parameter_slots: Vec<Option<ParamId>> = model
@@ -901,9 +941,9 @@ impl CpuBackend {
             &solve_components,
             &solve_rhs_elements,
         );
-        let scalar_evaluation = scalar_kernel
+        let scalar_executor = scalar_kernel
             .as_ref()
-            .map(ScalarEvaluationPlan::from_kernel_ir);
+            .map(|kernel| ScalarExecutor::interpreter(kernel, execution_mode));
         let mut cache_required_nodes = cache_required_nodes(model.graph(), &cache_plan);
         for plan in &solve_row_matrices {
             mark_required(model.graph(), plan.matrix, &mut cache_required_nodes);
@@ -948,13 +988,13 @@ impl CpuBackend {
             graph: model.graph().clone(),
             params: model.params().clone(),
             parameter_slots,
-            autodiff: AutodiffPlan::from_model(model, mode)?,
+            autodiff: AutodiffPlan::from_model(model, autodiff_mode)?,
             cache_plan,
             cache_slots,
             cached_evaluation_nodes,
             cached_value_slots,
             scalar_kernel,
-            scalar_evaluation,
+            scalar_executor,
             cache_required_nodes,
             solve_components,
             solve_rhs_elements,
@@ -1025,10 +1065,10 @@ impl RealGradientAccumulator {
 
 impl CpuPlan {
     fn scalar_interpreter_plan(&self) -> Option<&ScalarEvaluationPlan> {
-        match (&self.scalar_kernel, &self.scalar_evaluation) {
-            (Some(_), Some(plan)) => Some(plan),
+        match (&self.scalar_kernel, &self.scalar_executor) {
+            (Some(_), Some(ScalarExecutor::Interpreter(plan))) => Some(plan),
             (None, None) => None,
-            _ => unreachable!("scalar kernel IR and interpreter plan must be prepared together"),
+            _ => unreachable!("scalar kernel IR and executor must be prepared together"),
         }
     }
 
@@ -4017,10 +4057,10 @@ impl CpuBackend {
             value_ids[index] = Some(kernel_id);
         }
 
-        Some(ScalarKernelIr::new(
-            values,
-            value_ids[model.graph().root().index()]?,
-        ))
+        Some(
+            ScalarKernelIr::new(values, value_ids[model.graph().root().index()]?)
+                .expect("runtime lowering must produce valid scalar kernel IR"),
+        )
     }
 }
 
@@ -4310,6 +4350,25 @@ mod tests {
     }
 
     #[test]
+    fn cpu_execution_mode_selects_retained_interpreter() {
+        let expr = laddu_expr::Expr::from(parameter!("x", initial: 2.0)).exp() + 1.0;
+        let model = CompiledModel::from_expr(&expr).unwrap();
+        let params = Arc::new(model.params().clone()).default_values();
+        let automatic = CpuBackend.prepare(&model);
+        let interpreted =
+            CpuBackend.prepare_with_execution_mode(&model, CpuExecutionMode::Interpreter);
+
+        assert!(matches!(
+            interpreted.scalar_executor,
+            Some(ScalarExecutor::Interpreter(_))
+        ));
+        assert_eq!(
+            automatic.evaluate(&params).unwrap(),
+            interpreted.evaluate(&params).unwrap()
+        );
+    }
+
+    #[test]
     fn evaluates_p4_schema_components_and_atan2() {
         let expr = event_p4_component("ks1", P4Component::E)
             + event_p4_component("ks1", P4Component::Px)
@@ -4320,7 +4379,7 @@ mod tests {
         let model = CompiledModel::from_expr(&expr).unwrap();
         let params = Arc::new(model.params().clone()).default_values();
         let plan = CpuBackend.prepare(&model);
-        assert!(plan.scalar_evaluation.is_some());
+        assert!(plan.scalar_interpreter_plan().is_some());
         let batch = EventBatch::from_events(
             Arc::new(Schema::new(["ks1"], std::iter::empty::<&str>(), false).unwrap()),
             [OwnedEvent::new(
@@ -4383,7 +4442,7 @@ mod tests {
         let model = CompiledModel::from_expr(&expression).unwrap();
         let params = Arc::new(model.params().clone()).default_values();
         let plan = CpuBackend.prepare(&model);
-        let scalar_plan = plan.scalar_evaluation.as_ref().unwrap();
+        let scalar_plan = plan.scalar_interpreter_plan().unwrap();
         assert!(!scalar_plan.invariant_instructions.is_empty());
         assert!(!scalar_plan.event_instructions.is_empty());
         let batch = EventBatch::from_events(
