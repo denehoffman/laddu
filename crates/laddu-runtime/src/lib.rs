@@ -640,20 +640,65 @@ impl CpuPlan {
                         .copy_from_slice(cache.scalar_range(*slot, start, end)?);
                 }
                 ScalarInstruction::Unary { op, input } => {
-                    for lane in 0..block_len {
-                        workspace[output_start + lane] = eval_unary(
-                            *op,
-                            input.block_value(invariant, workspace, block_len, lane),
-                        );
+                    macro_rules! apply_unary {
+                        ($map:expr) => {{
+                            let map = $map;
+                            for lane in 0..block_len {
+                                let value =
+                                    input.block_value(invariant, workspace, block_len, lane);
+                                workspace[output_start + lane] = map(value);
+                            }
+                        }};
+                    }
+                    match op {
+                        UnaryOp::Neg => apply_unary!(|value: Complex64| -value),
+                        UnaryOp::Real => {
+                            apply_unary!(|value: Complex64| Complex64::from(value.re))
+                        }
+                        UnaryOp::Imag => {
+                            apply_unary!(|value: Complex64| Complex64::from(value.im))
+                        }
+                        UnaryOp::Conj => apply_unary!(|value: Complex64| value.conj()),
+                        UnaryOp::NormSqr => {
+                            apply_unary!(|value: Complex64| Complex64::from(value.norm_sqr()))
+                        }
+                        UnaryOp::Sqrt => apply_unary!(|value: Complex64| value.sqrt()),
+                        UnaryOp::Exp => apply_unary!(|value: Complex64| value.exp()),
+                        UnaryOp::Sin => apply_unary!(|value: Complex64| value.sin()),
+                        UnaryOp::Cos => apply_unary!(|value: Complex64| value.cos()),
+                        UnaryOp::Log => apply_unary!(|value: Complex64| value.ln()),
+                        UnaryOp::PowI(power) => {
+                            apply_unary!(|value: Complex64| value.powi(*power))
+                        }
                     }
                 }
                 ScalarInstruction::Binary { op, lhs, rhs } => {
-                    for lane in 0..block_len {
-                        workspace[output_start + lane] = eval_binary(
-                            *op,
-                            lhs.block_value(invariant, workspace, block_len, lane),
-                            rhs.block_value(invariant, workspace, block_len, lane),
-                        );
+                    macro_rules! apply_binary {
+                        ($map:expr) => {{
+                            let map = $map;
+                            for lane in 0..block_len {
+                                let lhs = lhs.block_value(invariant, workspace, block_len, lane);
+                                let rhs = rhs.block_value(invariant, workspace, block_len, lane);
+                                workspace[output_start + lane] = map(lhs, rhs);
+                            }
+                        }};
+                    }
+                    match op {
+                        BinaryOp::Add => {
+                            apply_binary!(|lhs: Complex64, rhs: Complex64| lhs + rhs)
+                        }
+                        BinaryOp::Sub => {
+                            apply_binary!(|lhs: Complex64, rhs: Complex64| lhs - rhs)
+                        }
+                        BinaryOp::Mul => {
+                            apply_binary!(|lhs: Complex64, rhs: Complex64| lhs * rhs)
+                        }
+                        BinaryOp::Div => {
+                            apply_binary!(|lhs: Complex64, rhs: Complex64| lhs / rhs)
+                        }
+                        BinaryOp::Atan2 => apply_binary!(|lhs: Complex64, rhs: Complex64| {
+                            Complex64::from(lhs.re.atan2(rhs.re))
+                        }),
                     }
                 }
                 ScalarInstruction::Add(terms) => {
