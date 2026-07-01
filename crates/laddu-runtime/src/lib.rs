@@ -433,8 +433,15 @@ impl CpuPlan {
         self.check_batch_cache(cache)?;
         let invariant = self.scalar_invariant_values(params)?;
         let mut out = Vec::with_capacity(cache.len());
+        let mut workspace = Vec::new();
         for row in 0..cache.len() {
-            out.push(self.evaluate_cache_row_prepared(params, cache, row, invariant.as_deref())?);
+            out.push(self.evaluate_cache_row_prepared(
+                params,
+                cache,
+                row,
+                invariant.as_deref(),
+                &mut workspace,
+            )?);
         }
         Ok(out)
     }
@@ -456,7 +463,7 @@ impl CpuPlan {
         row: usize,
     ) -> RuntimeResult<Complex64> {
         let invariant = self.scalar_invariant_values(params)?;
-        self.evaluate_cache_row_prepared(params, cache, row, invariant.as_deref())
+        self.evaluate_cache_row_prepared(params, cache, row, invariant.as_deref(), &mut Vec::new())
     }
 
     fn evaluate_cache_row_prepared(
@@ -465,9 +472,10 @@ impl CpuPlan {
         cache: &CpuBatchCache,
         row: usize,
         invariant: Option<&[Complex64]>,
+        workspace: &mut Vec<Complex64>,
     ) -> RuntimeResult<Complex64> {
         if let (Some(plan), Some(invariant)) = (&self.scalar_evaluation, invariant) {
-            return self.evaluate_scalar_cache_row(cache, row, plan, invariant);
+            return self.evaluate_scalar_cache_row(cache, row, plan, invariant, workspace);
         }
         let values = self.evaluate_values_from_cache(params, cache, row)?;
         self.cached_scalar_at(&values, self.graph.root())
@@ -520,30 +528,31 @@ impl CpuPlan {
         row: usize,
         plan: &ScalarEvaluationPlan,
         invariant: &[Complex64],
+        values: &mut Vec<Complex64>,
     ) -> RuntimeResult<Complex64> {
-        let mut values = Vec::with_capacity(plan.event_instructions.len());
+        values.clear();
+        values.reserve(plan.event_instructions.len());
         for instruction in &plan.event_instructions {
             let value = match instruction {
                 ScalarInstruction::Cached(slot) => cache.scalar(*slot, row)?,
                 ScalarInstruction::Unary { op, input } => {
-                    eval_unary(*op, input.value(invariant, &values))
+                    eval_unary(*op, input.value(invariant, values))
                 }
                 ScalarInstruction::Binary { op, lhs, rhs } => eval_binary(
                     *op,
-                    lhs.value(invariant, &values),
-                    rhs.value(invariant, &values),
+                    lhs.value(invariant, values),
+                    rhs.value(invariant, values),
                 ),
-                ScalarInstruction::Add(terms) => terms
-                    .iter()
-                    .map(|term| term.value(invariant, &values))
-                    .sum(),
+                ScalarInstruction::Add(terms) => {
+                    terms.iter().map(|term| term.value(invariant, values)).sum()
+                }
                 ScalarInstruction::Mul(factors) => factors
                     .iter()
-                    .map(|factor| factor.value(invariant, &values))
+                    .map(|factor| factor.value(invariant, values))
                     .product(),
                 ScalarInstruction::Complex { re, im } => Complex64::new(
-                    re.value(invariant, &values).re,
-                    im.value(invariant, &values).re,
+                    re.value(invariant, values).re,
+                    im.value(invariant, values).re,
                 ),
                 ScalarInstruction::SolveRow { row_slot, rhs } => {
                     let inverse_row = cache.solve_row(*row_slot, row)?;
@@ -560,7 +569,7 @@ impl CpuPlan {
                     inverse_row
                         .iter()
                         .zip(rhs)
-                        .map(|(lhs, operand)| lhs * operand.value(invariant, &values))
+                        .map(|(lhs, operand)| lhs * operand.value(invariant, values))
                         .sum()
                 }
                 ScalarInstruction::Constant(_) | ScalarInstruction::Parameter(_) => {
@@ -569,7 +578,7 @@ impl CpuPlan {
             };
             values.push(value);
         }
-        Ok(plan.root.value(invariant, &values))
+        Ok(plan.root.value(invariant, values))
     }
 
     pub fn evaluate_cache_row_with_gradient(
@@ -649,6 +658,7 @@ impl CpuPlan {
         let total_len = dataset.batches.iter().map(CpuCachedBatch::len).sum();
         let mut out = Vec::with_capacity(total_len);
         let invariant = self.scalar_invariant_values(params)?;
+        let mut workspace = Vec::new();
         for batch in &dataset.batches {
             self.check_batch_cache(batch.cache())?;
             for row in 0..batch.len() {
@@ -657,6 +667,7 @@ impl CpuPlan {
                     batch.cache(),
                     row,
                     invariant.as_deref(),
+                    &mut workspace,
                 )?);
             }
         }
@@ -688,6 +699,7 @@ impl CpuPlan {
     {
         let mut sum = 0.0;
         let invariant = self.scalar_invariant_values(params)?;
+        let mut workspace = Vec::new();
         for batch in dataset.batches() {
             self.check_batch_cache(batch.cache())?;
             for row in 0..batch.len() {
@@ -696,6 +708,7 @@ impl CpuPlan {
                     batch.cache(),
                     row,
                     invariant.as_deref(),
+                    &mut workspace,
                 )?;
                 sum += batch.weights()[row] * f(value)?;
             }
@@ -755,6 +768,7 @@ impl CpuPlan {
     {
         let mut sum = Complex64::default();
         let invariant = self.scalar_invariant_values(params)?;
+        let mut workspace = Vec::new();
         for batch in dataset.batches() {
             self.check_batch_cache(batch.cache())?;
             for row in 0..batch.len() {
@@ -763,6 +777,7 @@ impl CpuPlan {
                     batch.cache(),
                     row,
                     invariant.as_deref(),
+                    &mut workspace,
                 )?;
                 sum += f(value)? * batch.weights()[row];
             }
@@ -798,21 +813,28 @@ impl CpuPlan {
             self.check_batch_cache(batch.cache())?;
             let partial = (0..batch.len())
                 .into_par_iter()
-                .try_fold(AccurateF64::zero, |mut acc, row| {
-                    let value = self.evaluate_cache_row_prepared(
-                        params,
-                        batch.cache(),
-                        row,
-                        invariant.as_deref(),
-                    )?;
-                    acc.push(batch.weights()[row] * f(value)?);
-                    Ok::<AccurateF64, E>(acc)
-                })
-                .try_reduce(AccurateF64::zero, |mut a, b| {
-                    a.merge(b);
-                    Ok::<AccurateF64, E>(a)
-                })?;
-            total.merge(partial);
+                .try_fold(
+                    || (AccurateF64::zero(), Vec::new()),
+                    |(mut acc, mut workspace), row| {
+                        let value = self.evaluate_cache_row_prepared(
+                            params,
+                            batch.cache(),
+                            row,
+                            invariant.as_deref(),
+                            &mut workspace,
+                        )?;
+                        acc.push(batch.weights()[row] * f(value)?);
+                        Ok::<_, E>((acc, workspace))
+                    },
+                )
+                .try_reduce(
+                    || (AccurateF64::zero(), Vec::new()),
+                    |(mut lhs, workspace), (rhs, _)| {
+                        lhs.merge(rhs);
+                        Ok::<_, E>((lhs, workspace))
+                    },
+                )?;
+            total.merge(partial.0);
         }
         Ok(total.finish())
     }
@@ -890,21 +912,28 @@ impl CpuPlan {
             self.check_batch_cache(batch.cache())?;
             let partial = (0..batch.len())
                 .into_par_iter()
-                .try_fold(AccurateComplex64::zero, |mut acc, row| {
-                    let value = self.evaluate_cache_row_prepared(
-                        params,
-                        batch.cache(),
-                        row,
-                        invariant.as_deref(),
-                    )?;
-                    acc.push(f(value)? * batch.weights()[row]);
-                    Ok::<AccurateComplex64, E>(acc)
-                })
-                .try_reduce(AccurateComplex64::zero, |mut a, b| {
-                    a.merge(b);
-                    Ok::<AccurateComplex64, E>(a)
-                })?;
-            total.merge(partial);
+                .try_fold(
+                    || (AccurateComplex64::zero(), Vec::new()),
+                    |(mut acc, mut workspace), row| {
+                        let value = self.evaluate_cache_row_prepared(
+                            params,
+                            batch.cache(),
+                            row,
+                            invariant.as_deref(),
+                            &mut workspace,
+                        )?;
+                        acc.push(f(value)? * batch.weights()[row]);
+                        Ok::<_, E>((acc, workspace))
+                    },
+                )
+                .try_reduce(
+                    || (AccurateComplex64::zero(), Vec::new()),
+                    |(mut lhs, workspace), (rhs, _)| {
+                        lhs.merge(rhs);
+                        Ok::<_, E>((lhs, workspace))
+                    },
+                )?;
+            total.merge(partial.0);
         }
         Ok(total.finish())
     }
