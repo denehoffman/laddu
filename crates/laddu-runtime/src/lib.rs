@@ -122,8 +122,62 @@ struct SolveRowMatrixPlan {
 #[derive(Clone, Debug)]
 struct ScalarEvaluationPlan {
     invariant_instructions: Vec<ScalarInstruction>,
-    event_instructions: Vec<ScalarInstruction>,
+    event_instructions: Vec<ScalarEventInstruction>,
+    event_slot_count: usize,
     root: ScalarOperand,
+}
+
+impl ScalarEvaluationPlan {
+    fn new(
+        invariant_instructions: Vec<ScalarInstruction>,
+        event_instructions: Vec<ScalarInstruction>,
+        root: ScalarOperand,
+    ) -> Self {
+        let mut last_use = vec![0; event_instructions.len()];
+        for (index, instruction) in event_instructions.iter().enumerate() {
+            instruction.record_event_uses(&mut last_use, index);
+        }
+        root.record_event_use(&mut last_use, event_instructions.len());
+
+        let mut logical_to_physical = vec![usize::MAX; event_instructions.len()];
+        let mut free_slots = Vec::new();
+        let mut next_slot = 0;
+        let mut slotted_instructions = Vec::with_capacity(event_instructions.len());
+
+        for (index, instruction) in event_instructions.into_iter().enumerate() {
+            let output_slot = if let Some(slot) = free_slots.pop() {
+                slot
+            } else {
+                let slot = next_slot;
+                next_slot += 1;
+                slot
+            };
+            logical_to_physical[index] = output_slot;
+
+            let mut event_inputs = Vec::new();
+            instruction.collect_event_slots(&mut event_inputs);
+            event_inputs.sort_unstable();
+            event_inputs.dedup();
+
+            slotted_instructions.push(ScalarEventInstruction {
+                output_slot,
+                instruction: instruction.remap_event_operands(&logical_to_physical),
+            });
+
+            for input in event_inputs {
+                if last_use[input] == index {
+                    free_slots.push(logical_to_physical[input]);
+                }
+            }
+        }
+
+        Self {
+            invariant_instructions,
+            event_instructions: slotted_instructions,
+            event_slot_count: next_slot,
+            root: root.remap_event(&logical_to_physical),
+        }
+    }
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -150,6 +204,25 @@ impl ScalarOperand {
         match self {
             Self::Invariant(slot) => invariant[slot],
             Self::Event(slot) => event[slot * block_len + lane],
+        }
+    }
+
+    fn collect_event_slot(self, slots: &mut Vec<usize>) {
+        if let Self::Event(slot) = self {
+            slots.push(slot);
+        }
+    }
+
+    fn record_event_use(self, last_use: &mut [usize], instruction_index: usize) {
+        if let Self::Event(slot) = self {
+            last_use[slot] = instruction_index;
+        }
+    }
+
+    fn remap_event(self, logical_to_physical: &[usize]) -> Self {
+        match self {
+            Self::Invariant(slot) => Self::Invariant(slot),
+            Self::Event(slot) => Self::Event(logical_to_physical[slot]),
         }
     }
 }
@@ -203,6 +276,32 @@ impl OperandRun {
             }
         }
     }
+
+    fn collect_event_slots(&self, slots: &mut Vec<usize>) {
+        if let Self::Event(event_slots) = self {
+            slots.extend(event_slots);
+        }
+    }
+
+    fn record_event_uses(&self, last_use: &mut [usize], instruction_index: usize) {
+        if let Self::Event(event_slots) = self {
+            for slot in event_slots {
+                last_use[*slot] = instruction_index;
+            }
+        }
+    }
+
+    fn remap_events(&self, logical_to_physical: &[usize]) -> Self {
+        match self {
+            Self::Invariant(slots) => Self::Invariant(slots.clone()),
+            Self::Event(slots) => Self::Event(
+                slots
+                    .iter()
+                    .map(|slot| logical_to_physical[*slot])
+                    .collect(),
+            ),
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -229,6 +328,102 @@ enum ScalarInstruction {
         row_slot: usize,
         rhs: Vec<ScalarOperand>,
     },
+}
+
+impl ScalarInstruction {
+    fn collect_event_slots(&self, slots: &mut Vec<usize>) {
+        match self {
+            Self::Cached(_) | Self::Constant(_) | Self::Parameter(_) => {}
+            Self::Unary { input, .. } => input.collect_event_slot(slots),
+            Self::Binary { lhs, rhs, .. } => {
+                lhs.collect_event_slot(slots);
+                rhs.collect_event_slot(slots);
+            }
+            Self::Add(runs) | Self::Mul(runs) => {
+                for run in runs {
+                    run.collect_event_slots(slots);
+                }
+            }
+            Self::Complex { re, im } => {
+                re.collect_event_slot(slots);
+                im.collect_event_slot(slots);
+            }
+            Self::SolveRow { rhs, .. } => {
+                for operand in rhs {
+                    operand.collect_event_slot(slots);
+                }
+            }
+        }
+    }
+
+    fn record_event_uses(&self, last_use: &mut [usize], instruction_index: usize) {
+        match self {
+            Self::Cached(_) | Self::Constant(_) | Self::Parameter(_) => {}
+            Self::Unary { input, .. } => input.record_event_use(last_use, instruction_index),
+            Self::Binary { lhs, rhs, .. } => {
+                lhs.record_event_use(last_use, instruction_index);
+                rhs.record_event_use(last_use, instruction_index);
+            }
+            Self::Add(runs) | Self::Mul(runs) => {
+                for run in runs {
+                    run.record_event_uses(last_use, instruction_index);
+                }
+            }
+            Self::Complex { re, im } => {
+                re.record_event_use(last_use, instruction_index);
+                im.record_event_use(last_use, instruction_index);
+            }
+            Self::SolveRow { rhs, .. } => {
+                for operand in rhs {
+                    operand.record_event_use(last_use, instruction_index);
+                }
+            }
+        }
+    }
+
+    fn remap_event_operands(self, logical_to_physical: &[usize]) -> Self {
+        match self {
+            Self::Cached(slot) => Self::Cached(slot),
+            Self::Constant(value) => Self::Constant(value),
+            Self::Parameter(id) => Self::Parameter(id),
+            Self::Unary { op, input } => Self::Unary {
+                op,
+                input: input.remap_event(logical_to_physical),
+            },
+            Self::Binary { op, lhs, rhs } => Self::Binary {
+                op,
+                lhs: lhs.remap_event(logical_to_physical),
+                rhs: rhs.remap_event(logical_to_physical),
+            },
+            Self::Add(runs) => Self::Add(
+                runs.iter()
+                    .map(|run| run.remap_events(logical_to_physical))
+                    .collect(),
+            ),
+            Self::Mul(runs) => Self::Mul(
+                runs.iter()
+                    .map(|run| run.remap_events(logical_to_physical))
+                    .collect(),
+            ),
+            Self::Complex { re, im } => Self::Complex {
+                re: re.remap_event(logical_to_physical),
+                im: im.remap_event(logical_to_physical),
+            },
+            Self::SolveRow { row_slot, rhs } => Self::SolveRow {
+                row_slot,
+                rhs: rhs
+                    .iter()
+                    .map(|operand| operand.remap_event(logical_to_physical))
+                    .collect(),
+            },
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+struct ScalarEventInstruction {
+    output_slot: usize,
+    instruction: ScalarInstruction,
 }
 
 impl CpuBackend {
@@ -604,9 +799,9 @@ impl CpuPlan {
         values: &mut Vec<Complex64>,
     ) -> RuntimeResult<Complex64> {
         values.clear();
-        values.reserve(plan.event_instructions.len());
-        for instruction in &plan.event_instructions {
-            let value = match instruction {
+        values.resize(plan.event_slot_count, Complex64::ZERO);
+        for event_instruction in &plan.event_instructions {
+            let value = match &event_instruction.instruction {
                 ScalarInstruction::Cached(slot) => cache.scalar(*slot, row)?,
                 ScalarInstruction::Unary { op, input } => {
                     eval_unary(*op, input.value(invariant, values))
@@ -656,7 +851,7 @@ impl CpuPlan {
                     unreachable!("invariant instruction appeared in the event tape")
                 }
             };
-            values.push(value);
+            values[event_instruction.output_slot] = value;
         }
         Ok(plan.root.value(invariant, values))
     }
@@ -695,11 +890,11 @@ impl CpuPlan {
         output: &mut Vec<Complex64>,
     ) -> RuntimeResult<()> {
         let block_len = end - start;
-        workspace.resize(plan.event_instructions.len() * block_len, Complex64::ZERO);
+        workspace.resize(plan.event_slot_count * block_len, Complex64::ZERO);
 
-        for (output_slot, instruction) in plan.event_instructions.iter().enumerate() {
-            let output_start = output_slot * block_len;
-            match instruction {
+        for event_instruction in &plan.event_instructions {
+            let output_start = event_instruction.output_slot * block_len;
+            match &event_instruction.instruction {
                 ScalarInstruction::Cached(slot) => {
                     workspace[output_start..output_start + block_len]
                         .copy_from_slice(cache.scalar_range(*slot, start, end)?);
@@ -3307,11 +3502,11 @@ impl CpuBackend {
             };
         }
 
-        Some(ScalarEvaluationPlan {
+        Some(ScalarEvaluationPlan::new(
             invariant_instructions,
             event_instructions,
-            root: operands[model.graph().root().index()]?,
-        })
+            operands[model.graph().root().index()]?,
+        ))
     }
 }
 
