@@ -246,8 +246,8 @@ struct ScalarInvariantValues {
 
 #[derive(Default)]
 struct ScalarEventWorkspace {
-    real: Vec<f64>,
-    complex: Vec<Complex64>,
+    real: Vec<[f64; SCALAR_BLOCK_SIZE]>,
+    complex: Vec<[Complex64; SCALAR_BLOCK_SIZE]>,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -267,8 +267,8 @@ impl ScalarOperand {
         match self {
             Self::InvariantReal(slot) => Complex64::from(invariant.real[slot]),
             Self::InvariantComplex(slot) => invariant.complex[slot],
-            Self::EventReal(slot) => Complex64::from(event.real[slot]),
-            Self::EventComplex(slot) => event.complex[slot],
+            Self::EventReal(slot) => Complex64::from(event.real[slot][0]),
+            Self::EventComplex(slot) => event.complex[slot][0],
         }
     }
 
@@ -276,8 +276,8 @@ impl ScalarOperand {
         match self {
             Self::InvariantReal(slot) => invariant.real[slot],
             Self::InvariantComplex(slot) => invariant.complex[slot].re,
-            Self::EventReal(slot) => event.real[slot],
-            Self::EventComplex(slot) => event.complex[slot].re,
+            Self::EventReal(slot) => event.real[slot][0],
+            Self::EventComplex(slot) => event.complex[slot][0].re,
         }
     }
 
@@ -285,14 +285,13 @@ impl ScalarOperand {
         self,
         invariant: &ScalarInvariantValues,
         event: &ScalarEventWorkspace,
-        block_len: usize,
         lane: usize,
     ) -> Complex64 {
         match self {
             Self::InvariantReal(slot) => Complex64::from(invariant.real[slot]),
             Self::InvariantComplex(slot) => invariant.complex[slot],
-            Self::EventReal(slot) => Complex64::from(event.real[slot * block_len + lane]),
-            Self::EventComplex(slot) => event.complex[slot * block_len + lane],
+            Self::EventReal(slot) => Complex64::from(event.real[slot][lane]),
+            Self::EventComplex(slot) => event.complex[slot][lane],
         }
     }
 
@@ -300,14 +299,13 @@ impl ScalarOperand {
         self,
         invariant: &ScalarInvariantValues,
         event: &ScalarEventWorkspace,
-        block_len: usize,
         lane: usize,
     ) -> f64 {
         match self {
             Self::InvariantReal(slot) => invariant.real[slot],
             Self::InvariantComplex(slot) => invariant.complex[slot].re,
-            Self::EventReal(slot) => event.real[slot * block_len + lane],
-            Self::EventComplex(slot) => event.complex[slot * block_len + lane].re,
+            Self::EventReal(slot) => event.real[slot][lane],
+            Self::EventComplex(slot) => event.complex[slot][lane].re,
         }
     }
 
@@ -384,12 +382,12 @@ impl OperandRun {
             }
             Self::EventReal(slots) => {
                 for slot in slots {
-                    *value += event.real[*slot];
+                    *value += event.real[*slot][0];
                 }
             }
             Self::EventComplex(slots) => {
                 for slot in slots {
-                    *value += event.complex[*slot];
+                    *value += event.complex[*slot][0];
                 }
             }
         }
@@ -409,7 +407,7 @@ impl OperandRun {
             }
             Self::EventReal(slots) => {
                 for slot in slots {
-                    *value += event.real[*slot];
+                    *value += event.real[*slot][0];
                 }
             }
             Self::InvariantComplex(_) | Self::EventComplex(_) => {
@@ -437,12 +435,12 @@ impl OperandRun {
             }
             Self::EventReal(slots) => {
                 for slot in slots {
-                    *value *= event.real[*slot];
+                    *value *= event.real[*slot][0];
                 }
             }
             Self::EventComplex(slots) => {
                 for slot in slots {
-                    *value *= event.complex[*slot];
+                    *value *= event.complex[*slot][0];
                 }
             }
         }
@@ -462,7 +460,7 @@ impl OperandRun {
             }
             Self::EventReal(slots) => {
                 for slot in slots {
-                    *value *= event.real[*slot];
+                    *value *= event.real[*slot][0];
                 }
             }
             Self::InvariantComplex(_) | Self::EventComplex(_) => {
@@ -1136,15 +1134,18 @@ impl CpuPlan {
         values: &mut ScalarEventWorkspace,
     ) -> RuntimeResult<Complex64> {
         values.real.clear();
-        values.real.resize(plan.event_real_slot_count, 0.0);
-        values.complex.clear();
         values
-            .complex
-            .resize(plan.event_complex_slot_count, Complex64::ZERO);
+            .real
+            .resize(plan.event_real_slot_count, [0.0; SCALAR_BLOCK_SIZE]);
+        values.complex.clear();
+        values.complex.resize(
+            plan.event_complex_slot_count,
+            [Complex64::ZERO; SCALAR_BLOCK_SIZE],
+        );
         for event_instruction in &plan.event_instructions {
             match event_instruction.output_slot {
                 ScalarSlot::Real(slot) => {
-                    values.real[slot] = event_instruction.instruction.evaluate_real(
+                    values.real[slot][0] = event_instruction.instruction.evaluate_real(
                         None,
                         Some((cache, row)),
                         invariant,
@@ -1152,7 +1153,7 @@ impl CpuPlan {
                     )?;
                 }
                 ScalarSlot::Complex(slot) => {
-                    values.complex[slot] = event_instruction.instruction.evaluate_complex(
+                    values.complex[slot][0] = event_instruction.instruction.evaluate_complex(
                         None,
                         Some((cache, row)),
                         invariant,
@@ -1200,73 +1201,65 @@ impl CpuPlan {
         let block_len = end - start;
         workspace
             .real
-            .resize(plan.event_real_slot_count * block_len, 0.0);
-        workspace
-            .complex
-            .resize(plan.event_complex_slot_count * block_len, Complex64::ZERO);
+            .resize(plan.event_real_slot_count, [0.0; SCALAR_BLOCK_SIZE]);
+        workspace.complex.resize(
+            plan.event_complex_slot_count,
+            [Complex64::ZERO; SCALAR_BLOCK_SIZE],
+        );
 
         for event_instruction in &plan.event_instructions {
             match event_instruction.output_slot {
                 ScalarSlot::Real(slot) => {
-                    let output_start = slot * block_len;
+                    let output_slot = slot;
                     match &event_instruction.instruction {
                         ScalarInstruction::Cached(slot) => {
                             for (lane, value) in
                                 cache.scalar_range(*slot, start, end)?.iter().enumerate()
                             {
-                                workspace.real[output_start + lane] = value.re;
+                                workspace.real[output_slot][lane] = value.re;
                             }
                         }
                         ScalarInstruction::Unary { op, input } => {
                             for lane in 0..block_len {
-                                workspace.real[output_start + lane] = match op {
-                                    UnaryOp::Neg => -input
-                                        .block_real_value(invariant, workspace, block_len, lane),
+                                workspace.real[output_slot][lane] = match op {
+                                    UnaryOp::Neg => {
+                                        -input.block_real_value(invariant, workspace, lane)
+                                    }
                                     UnaryOp::Real | UnaryOp::Conj => {
-                                        input
-                                            .block_complex_value(
-                                                invariant, workspace, block_len, lane,
-                                            )
-                                            .re
+                                        input.block_complex_value(invariant, workspace, lane).re
                                     }
                                     UnaryOp::Imag => {
-                                        input
-                                            .block_complex_value(
-                                                invariant, workspace, block_len, lane,
-                                            )
-                                            .im
+                                        input.block_complex_value(invariant, workspace, lane).im
                                     }
                                     UnaryOp::NormSqr => input
-                                        .block_complex_value(invariant, workspace, block_len, lane)
+                                        .block_complex_value(invariant, workspace, lane)
                                         .norm_sqr(),
-                                    UnaryOp::Sqrt => input
-                                        .block_real_value(invariant, workspace, block_len, lane)
-                                        .sqrt(),
-                                    UnaryOp::Exp => input
-                                        .block_real_value(invariant, workspace, block_len, lane)
-                                        .exp(),
-                                    UnaryOp::Sin => input
-                                        .block_real_value(invariant, workspace, block_len, lane)
-                                        .sin(),
-                                    UnaryOp::Cos => input
-                                        .block_real_value(invariant, workspace, block_len, lane)
-                                        .cos(),
-                                    UnaryOp::Log => input
-                                        .block_real_value(invariant, workspace, block_len, lane)
-                                        .ln(),
+                                    UnaryOp::Sqrt => {
+                                        input.block_real_value(invariant, workspace, lane).sqrt()
+                                    }
+                                    UnaryOp::Exp => {
+                                        input.block_real_value(invariant, workspace, lane).exp()
+                                    }
+                                    UnaryOp::Sin => {
+                                        input.block_real_value(invariant, workspace, lane).sin()
+                                    }
+                                    UnaryOp::Cos => {
+                                        input.block_real_value(invariant, workspace, lane).cos()
+                                    }
+                                    UnaryOp::Log => {
+                                        input.block_real_value(invariant, workspace, lane).ln()
+                                    }
                                     UnaryOp::PowI(power) => input
-                                        .block_real_value(invariant, workspace, block_len, lane)
+                                        .block_real_value(invariant, workspace, lane)
                                         .powi(*power),
                                 };
                             }
                         }
                         ScalarInstruction::Binary { op, lhs, rhs } => {
                             for lane in 0..block_len {
-                                let lhs =
-                                    lhs.block_real_value(invariant, workspace, block_len, lane);
-                                let rhs =
-                                    rhs.block_real_value(invariant, workspace, block_len, lane);
-                                workspace.real[output_start + lane] = match op {
+                                let lhs = lhs.block_real_value(invariant, workspace, lane);
+                                let rhs = rhs.block_real_value(invariant, workspace, lane);
+                                workspace.real[output_slot][lane] = match op {
                                     BinaryOp::Add => lhs + rhs,
                                     BinaryOp::Sub => lhs - rhs,
                                     BinaryOp::Mul => lhs * rhs,
@@ -1276,23 +1269,22 @@ impl CpuPlan {
                             }
                         }
                         ScalarInstruction::Add(runs) => {
-                            workspace.real[output_start..output_start + block_len].fill(0.0);
+                            workspace.real[output_slot][..block_len].fill(0.0);
                             for run in runs {
                                 match run {
                                     OperandRun::InvariantReal(slots) => {
                                         for slot in slots {
                                             let operand = invariant.real[*slot];
                                             for lane in 0..block_len {
-                                                workspace.real[output_start + lane] += operand;
+                                                workspace.real[output_slot][lane] += operand;
                                             }
                                         }
                                     }
                                     OperandRun::EventReal(slots) => {
                                         for slot in slots {
-                                            let input_start = slot * block_len;
                                             for lane in 0..block_len {
-                                                workspace.real[output_start + lane] +=
-                                                    workspace.real[input_start + lane];
+                                                workspace.real[output_slot][lane] +=
+                                                    workspace.real[*slot][lane];
                                             }
                                         }
                                     }
@@ -1304,23 +1296,22 @@ impl CpuPlan {
                             }
                         }
                         ScalarInstruction::Mul(runs) => {
-                            workspace.real[output_start..output_start + block_len].fill(1.0);
+                            workspace.real[output_slot][..block_len].fill(1.0);
                             for run in runs {
                                 match run {
                                     OperandRun::InvariantReal(slots) => {
                                         for slot in slots {
                                             let operand = invariant.real[*slot];
                                             for lane in 0..block_len {
-                                                workspace.real[output_start + lane] *= operand;
+                                                workspace.real[output_slot][lane] *= operand;
                                             }
                                         }
                                     }
                                     OperandRun::EventReal(slots) => {
                                         for slot in slots {
-                                            let input_start = slot * block_len;
                                             for lane in 0..block_len {
-                                                workspace.real[output_start + lane] *=
-                                                    workspace.real[input_start + lane];
+                                                workspace.real[output_slot][lane] *=
+                                                    workspace.real[*slot][lane];
                                             }
                                         }
                                     }
@@ -1340,38 +1331,34 @@ impl CpuPlan {
                     }
                 }
                 ScalarSlot::Complex(slot) => {
-                    let output_start = slot * block_len;
+                    let output_slot = slot;
                     match &event_instruction.instruction {
                         ScalarInstruction::Cached(slot) => {
-                            workspace.complex[output_start..output_start + block_len]
+                            workspace.complex[output_slot][..block_len]
                                 .copy_from_slice(cache.scalar_range(*slot, start, end)?);
                         }
                         ScalarInstruction::Unary { op, input } => {
                             for lane in 0..block_len {
-                                let input = input
-                                    .block_complex_value(invariant, workspace, block_len, lane);
-                                workspace.complex[output_start + lane] = eval_unary(*op, input);
+                                let input = input.block_complex_value(invariant, workspace, lane);
+                                workspace.complex[output_slot][lane] = eval_unary(*op, input);
                             }
                         }
                         ScalarInstruction::Binary { op, lhs, rhs } => {
                             for lane in 0..block_len {
-                                let lhs =
-                                    lhs.block_complex_value(invariant, workspace, block_len, lane);
-                                let rhs =
-                                    rhs.block_complex_value(invariant, workspace, block_len, lane);
-                                workspace.complex[output_start + lane] = eval_binary(*op, lhs, rhs);
+                                let lhs = lhs.block_complex_value(invariant, workspace, lane);
+                                let rhs = rhs.block_complex_value(invariant, workspace, lane);
+                                workspace.complex[output_slot][lane] = eval_binary(*op, lhs, rhs);
                             }
                         }
                         ScalarInstruction::Add(runs) => {
-                            workspace.complex[output_start..output_start + block_len]
-                                .fill(Complex64::ZERO);
+                            workspace.complex[output_slot][..block_len].fill(Complex64::ZERO);
                             for run in runs {
                                 match run {
                                     OperandRun::InvariantReal(slots) => {
                                         for slot in slots {
                                             let operand = invariant.real[*slot];
                                             for lane in 0..block_len {
-                                                workspace.complex[output_start + lane] += operand;
+                                                workspace.complex[output_slot][lane] += operand;
                                             }
                                         }
                                     }
@@ -1379,25 +1366,23 @@ impl CpuPlan {
                                         for slot in slots {
                                             let operand = invariant.complex[*slot];
                                             for lane in 0..block_len {
-                                                workspace.complex[output_start + lane] += operand;
+                                                workspace.complex[output_slot][lane] += operand;
                                             }
                                         }
                                     }
                                     OperandRun::EventReal(slots) => {
                                         for slot in slots {
-                                            let input_start = slot * block_len;
                                             for lane in 0..block_len {
-                                                workspace.complex[output_start + lane] +=
-                                                    workspace.real[input_start + lane];
+                                                workspace.complex[output_slot][lane] +=
+                                                    workspace.real[*slot][lane];
                                             }
                                         }
                                     }
                                     OperandRun::EventComplex(slots) => {
                                         for slot in slots {
-                                            let input_start = slot * block_len;
                                             for lane in 0..block_len {
-                                                let operand = workspace.complex[input_start + lane];
-                                                workspace.complex[output_start + lane] += operand;
+                                                let operand = workspace.complex[*slot][lane];
+                                                workspace.complex[output_slot][lane] += operand;
                                             }
                                         }
                                     }
@@ -1405,15 +1390,14 @@ impl CpuPlan {
                             }
                         }
                         ScalarInstruction::Mul(runs) => {
-                            workspace.complex[output_start..output_start + block_len]
-                                .fill(Complex64::ONE);
+                            workspace.complex[output_slot][..block_len].fill(Complex64::ONE);
                             for run in runs {
                                 match run {
                                     OperandRun::InvariantReal(slots) => {
                                         for slot in slots {
                                             let operand = invariant.real[*slot];
                                             for lane in 0..block_len {
-                                                workspace.complex[output_start + lane] *= operand;
+                                                workspace.complex[output_slot][lane] *= operand;
                                             }
                                         }
                                     }
@@ -1421,25 +1405,23 @@ impl CpuPlan {
                                         for slot in slots {
                                             let operand = invariant.complex[*slot];
                                             for lane in 0..block_len {
-                                                workspace.complex[output_start + lane] *= operand;
+                                                workspace.complex[output_slot][lane] *= operand;
                                             }
                                         }
                                     }
                                     OperandRun::EventReal(slots) => {
                                         for slot in slots {
-                                            let input_start = slot * block_len;
                                             for lane in 0..block_len {
-                                                workspace.complex[output_start + lane] *=
-                                                    workspace.real[input_start + lane];
+                                                workspace.complex[output_slot][lane] *=
+                                                    workspace.real[*slot][lane];
                                             }
                                         }
                                     }
                                     OperandRun::EventComplex(slots) => {
                                         for slot in slots {
-                                            let input_start = slot * block_len;
                                             for lane in 0..block_len {
-                                                let operand = workspace.complex[input_start + lane];
-                                                workspace.complex[output_start + lane] *= operand;
+                                                let operand = workspace.complex[*slot][lane];
+                                                workspace.complex[output_slot][lane] *= operand;
                                             }
                                         }
                                     }
@@ -1448,9 +1430,9 @@ impl CpuPlan {
                         }
                         ScalarInstruction::Complex { re, im } => {
                             for lane in 0..block_len {
-                                workspace.complex[output_start + lane] = Complex64::new(
-                                    re.block_real_value(invariant, workspace, block_len, lane),
-                                    im.block_real_value(invariant, workspace, block_len, lane),
+                                workspace.complex[output_slot][lane] = Complex64::new(
+                                    re.block_real_value(invariant, workspace, lane),
+                                    im.block_real_value(invariant, workspace, lane),
                                 );
                             }
                         }
@@ -1467,13 +1449,12 @@ impl CpuPlan {
                                         ),
                                     });
                                 }
-                                workspace.complex[output_start + lane] = inverse_row
+                                workspace.complex[output_slot][lane] = inverse_row
                                     .iter()
                                     .zip(rhs)
                                     .map(|(lhs, operand)| {
-                                        lhs * operand.block_complex_value(
-                                            invariant, workspace, block_len, lane,
-                                        )
+                                        lhs * operand
+                                            .block_complex_value(invariant, workspace, lane)
                                     })
                                     .sum();
                             }
@@ -1497,16 +1478,14 @@ impl CpuPlan {
             }
             ScalarOperand::EventReal(slot) => {
                 output.extend(
-                    workspace.real[slot * block_len..(slot + 1) * block_len]
+                    workspace.real[slot][..block_len]
                         .iter()
                         .copied()
                         .map(Complex64::from),
                 );
             }
             ScalarOperand::EventComplex(slot) => {
-                output.extend_from_slice(
-                    &workspace.complex[slot * block_len..(slot + 1) * block_len],
-                );
+                output.extend_from_slice(&workspace.complex[slot][..block_len]);
             }
         }
         Ok(())
