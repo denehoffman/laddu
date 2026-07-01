@@ -15,6 +15,10 @@ use laddu_expr::{
     BinaryOp, ExprGraph, ExprId, ExprNode, P4Component, UnaryOp, ValueKind,
     parameters::{ParamId, ParamLayout, ParamValues},
 };
+use laddu_kernel::ir::{
+    KernelInstruction, KernelScalarKind, KernelValue, KernelValueClass, KernelValueId,
+    ScalarKernelIr,
+};
 use nalgebra::{DMatrix, DVector, Dyn, LU};
 use num::complex::Complex64;
 use rayon::prelude::*;
@@ -93,6 +97,7 @@ pub struct CpuPlan {
     cache_slots: Vec<Option<usize>>,
     cached_evaluation_nodes: Vec<ExprId>,
     cached_value_slots: Vec<Option<usize>>,
+    scalar_kernel: Option<ScalarKernelIr>,
     scalar_evaluation: Option<ScalarEvaluationPlan>,
     cache_required_nodes: Vec<bool>,
     solve_components: Vec<Option<SolveComponentPlan>>,
@@ -131,6 +136,55 @@ struct ScalarEvaluationPlan {
 }
 
 impl ScalarEvaluationPlan {
+    fn from_kernel_ir(ir: &ScalarKernelIr) -> Self {
+        let mut operands = Vec::with_capacity(ir.values().len());
+        let mut invariant_instructions = Vec::new();
+        let mut invariant_real_slots = 0;
+        let mut invariant_complex_slots = 0;
+        let mut event_instructions = Vec::new();
+
+        for value in ir.values() {
+            let instruction = ScalarInstruction::from_kernel(&value.instruction, &operands);
+            let operand = match value.class {
+                KernelValueClass::Invariant => match value.kind {
+                    KernelScalarKind::Real => {
+                        let slot = invariant_real_slots;
+                        invariant_real_slots += 1;
+                        invariant_instructions.push((ScalarSlot::Real(slot), instruction));
+                        ScalarOperand::InvariantReal(slot)
+                    }
+                    KernelScalarKind::Complex => {
+                        let slot = invariant_complex_slots;
+                        invariant_complex_slots += 1;
+                        invariant_instructions.push((ScalarSlot::Complex(slot), instruction));
+                        ScalarOperand::InvariantComplex(slot)
+                    }
+                },
+                KernelValueClass::Event => {
+                    let slot = event_instructions.len();
+                    let output = match value.kind {
+                        KernelScalarKind::Real => ScalarSlot::Real(slot),
+                        KernelScalarKind::Complex => ScalarSlot::Complex(slot),
+                    };
+                    event_instructions.push((output, instruction));
+                    match value.kind {
+                        KernelScalarKind::Real => ScalarOperand::EventReal(slot),
+                        KernelScalarKind::Complex => ScalarOperand::EventComplex(slot),
+                    }
+                }
+            };
+            operands.push(operand);
+        }
+
+        Self::new(
+            invariant_instructions,
+            event_instructions,
+            operands[ir.root().index()],
+            invariant_real_slots,
+            invariant_complex_slots,
+        )
+    }
+
     fn new(
         invariant_instructions: Vec<(ScalarSlot, ScalarInstruction)>,
         event_instructions: Vec<(ScalarSlot, ScalarInstruction)>,
@@ -530,6 +584,39 @@ enum ScalarInstruction {
 }
 
 impl ScalarInstruction {
+    fn from_kernel(instruction: &KernelInstruction, operands: &[ScalarOperand]) -> Self {
+        let operand = |id: KernelValueId| operands[id.index()];
+        match instruction {
+            KernelInstruction::Cached(slot) => Self::Cached(*slot),
+            KernelInstruction::RealConstant(value) => Self::Constant(Complex64::from(*value)),
+            KernelInstruction::ComplexConstant(value) => Self::Constant(*value),
+            KernelInstruction::Parameter(id) => Self::Parameter(*id),
+            KernelInstruction::Unary { op, input } => Self::Unary {
+                op: *op,
+                input: operand(*input),
+            },
+            KernelInstruction::Binary { op, lhs, rhs } => Self::Binary {
+                op: *op,
+                lhs: operand(*lhs),
+                rhs: operand(*rhs),
+            },
+            KernelInstruction::Add(terms) => Self::Add(OperandRun::from_operands(
+                terms.iter().map(|id| operand(*id)),
+            )),
+            KernelInstruction::Mul(factors) => Self::Mul(OperandRun::from_operands(
+                factors.iter().map(|id| operand(*id)),
+            )),
+            KernelInstruction::Complex { re, im } => Self::Complex {
+                re: operand(*re),
+                im: operand(*im),
+            },
+            KernelInstruction::SolveRow { row_slot, rhs } => Self::SolveRow {
+                row_slot: *row_slot,
+                rhs: rhs.iter().map(|id| operand(*id)).collect(),
+            },
+        }
+    }
+
     fn collect_event_slots(&self, slots: &mut Vec<usize>) {
         match self {
             Self::Cached(_) | Self::Constant(_) | Self::Parameter(_) => {}
@@ -806,7 +893,7 @@ impl CpuBackend {
             &solve_components,
             &solve_rhs_elements,
         );
-        let scalar_evaluation = self.scalar_evaluation_plan(
+        let scalar_kernel = self.scalar_kernel_ir(
             model,
             &cached_evaluation_nodes,
             &cache_slots,
@@ -814,6 +901,9 @@ impl CpuBackend {
             &solve_components,
             &solve_rhs_elements,
         );
+        let scalar_evaluation = scalar_kernel
+            .as_ref()
+            .map(ScalarEvaluationPlan::from_kernel_ir);
         let mut cache_required_nodes = cache_required_nodes(model.graph(), &cache_plan);
         for plan in &solve_row_matrices {
             mark_required(model.graph(), plan.matrix, &mut cache_required_nodes);
@@ -863,6 +953,7 @@ impl CpuBackend {
             cache_slots,
             cached_evaluation_nodes,
             cached_value_slots,
+            scalar_kernel,
             scalar_evaluation,
             cache_required_nodes,
             solve_components,
@@ -933,6 +1024,14 @@ impl RealGradientAccumulator {
 }
 
 impl CpuPlan {
+    fn scalar_interpreter_plan(&self) -> Option<&ScalarEvaluationPlan> {
+        match (&self.scalar_kernel, &self.scalar_evaluation) {
+            (Some(_), Some(plan)) => Some(plan),
+            (None, None) => None,
+            _ => unreachable!("scalar kernel IR and interpreter plan must be prepared together"),
+        }
+    }
+
     fn parameter_value(&self, params: &ParamValues, node: usize) -> RuntimeResult<f64> {
         let id = self.parameter_slots[node].ok_or_else(|| RuntimeError::InvalidShape {
             index: node,
@@ -1083,7 +1182,7 @@ impl CpuPlan {
         invariant: Option<&ScalarInvariantValues>,
         workspace: &mut ScalarEventWorkspace,
     ) -> RuntimeResult<Complex64> {
-        if let (Some(plan), Some(invariant)) = (&self.scalar_evaluation, invariant) {
+        if let (Some(plan), Some(invariant)) = (self.scalar_interpreter_plan(), invariant) {
             return self.evaluate_scalar_cache_row(cache, row, plan, invariant, workspace);
         }
         let values = self.evaluate_values_from_cache(params, cache, row)?;
@@ -1094,7 +1193,7 @@ impl CpuPlan {
         &self,
         params: &ParamValues,
     ) -> RuntimeResult<Option<ScalarInvariantValues>> {
-        let Some(plan) = &self.scalar_evaluation else {
+        let Some(plan) = self.scalar_interpreter_plan() else {
             return Ok(None);
         };
         let mut values = ScalarInvariantValues {
@@ -1175,7 +1274,7 @@ impl CpuPlan {
         workspace: &mut ScalarEventWorkspace,
         output: &mut Vec<Complex64>,
     ) -> RuntimeResult<()> {
-        if let (Some(plan), Some(invariant)) = (&self.scalar_evaluation, invariant) {
+        if let (Some(plan), Some(invariant)) = (self.scalar_interpreter_plan(), invariant) {
             return self.evaluate_scalar_cache_block(
                 cache, start, end, plan, invariant, workspace, output,
             );
@@ -3824,7 +3923,7 @@ impl CpuBackend {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn scalar_evaluation_plan(
+    fn scalar_kernel_ir(
         &self,
         model: &CompiledModel,
         evaluation_nodes: &[ExprId],
@@ -3832,68 +3931,58 @@ impl CpuBackend {
         parameter_slots: &[Option<ParamId>],
         solve_components: &[Option<SolveComponentPlan>],
         solve_rhs_elements: &[Option<Vec<ExprId>>],
-    ) -> Option<ScalarEvaluationPlan> {
-        let mut operands = vec![None; model.graph().nodes().len()];
-        let mut invariant_instructions = Vec::new();
-        let mut invariant_real_slots = 0;
-        let mut invariant_complex_slots = 0;
-        let mut event_instructions = Vec::new();
-        let mut event_slots = 0;
+    ) -> Option<ScalarKernelIr> {
+        let mut value_ids = vec![None; model.graph().nodes().len()];
+        let mut values = Vec::with_capacity(evaluation_nodes.len());
 
         for id in evaluation_nodes {
             let index = id.index();
-            let operand = |id: ExprId| operands[id.index()];
+            let value_id = |id: ExprId| value_ids[id.index()];
             let instruction = if let Some(cache_slot) = cache_slots[index] {
                 match model.node_facts(*id)?.value_kind {
-                    ValueKind::Real | ValueKind::Complex => ScalarInstruction::Cached(cache_slot),
+                    ValueKind::Real | ValueKind::Complex => KernelInstruction::Cached(cache_slot),
                     ValueKind::Vector { .. } | ValueKind::Matrix { .. } => return None,
                 }
             } else {
                 match model.graph().node(*id)? {
-                    ExprNode::RealConst(value) => {
-                        ScalarInstruction::Constant(Complex64::from(*value))
-                    }
-                    ExprNode::ComplexConst(value) => ScalarInstruction::Constant(*value),
+                    ExprNode::RealConst(value) => KernelInstruction::RealConstant(*value),
+                    ExprNode::ComplexConst(value) => KernelInstruction::ComplexConstant(*value),
                     ExprNode::ScalarParam(_) => {
-                        ScalarInstruction::Parameter(parameter_slots[index]?)
+                        KernelInstruction::Parameter(parameter_slots[index]?)
                     }
-                    ExprNode::Unary { op, input } => ScalarInstruction::Unary {
+                    ExprNode::Unary { op, input } => KernelInstruction::Unary {
                         op: *op,
-                        input: operand(*input)?,
+                        input: value_id(*input)?,
                     },
-                    ExprNode::Binary { op, lhs, rhs } => ScalarInstruction::Binary {
+                    ExprNode::Binary { op, lhs, rhs } => KernelInstruction::Binary {
                         op: *op,
-                        lhs: operand(*lhs)?,
-                        rhs: operand(*rhs)?,
+                        lhs: value_id(*lhs)?,
+                        rhs: value_id(*rhs)?,
                     },
-                    ExprNode::NaryAdd { terms } => {
-                        ScalarInstruction::Add(OperandRun::from_operands(
-                            terms
-                                .iter()
-                                .map(|term| operand(*term))
-                                .collect::<Option<Vec<_>>>()?,
-                        ))
-                    }
-                    ExprNode::NaryMul { factors } => {
-                        ScalarInstruction::Mul(OperandRun::from_operands(
-                            factors
-                                .iter()
-                                .map(|factor| operand(*factor))
-                                .collect::<Option<Vec<_>>>()?,
-                        ))
-                    }
-                    ExprNode::Complex { re, im } => ScalarInstruction::Complex {
-                        re: operand(*re)?,
-                        im: operand(*im)?,
+                    ExprNode::NaryAdd { terms } => KernelInstruction::Add(
+                        terms
+                            .iter()
+                            .map(|term| value_id(*term))
+                            .collect::<Option<_>>()?,
+                    ),
+                    ExprNode::NaryMul { factors } => KernelInstruction::Mul(
+                        factors
+                            .iter()
+                            .map(|factor| value_id(*factor))
+                            .collect::<Option<_>>()?,
+                    ),
+                    ExprNode::Complex { re, im } => KernelInstruction::Complex {
+                        re: value_id(*re)?,
+                        im: value_id(*im)?,
                     },
                     ExprNode::Component { .. } => {
                         let solve = solve_components[index]?;
                         let elements = solve_rhs_elements[solve.rhs.index()].as_ref()?;
-                        ScalarInstruction::SolveRow {
+                        KernelInstruction::SolveRow {
                             row_slot: solve.row_slot,
                             rhs: elements
                                 .iter()
-                                .map(|element| operand(*element))
+                                .map(|element| value_id(*element))
                                 .collect::<Option<_>>()?,
                         }
                     }
@@ -3909,47 +3998,28 @@ impl CpuBackend {
                 }
             };
             let facts = model.node_facts(*id)?;
-            operands[index] = if facts.dependency.depends_on_event {
-                let slot = event_slots;
-                event_slots += 1;
-                let output = match facts.value_kind {
-                    ValueKind::Real => ScalarSlot::Real(slot),
-                    ValueKind::Complex => ScalarSlot::Complex(slot),
-                    ValueKind::Vector { .. } | ValueKind::Matrix { .. } => return None,
-                };
-                event_instructions.push((output, instruction));
-                Some(match output {
-                    ScalarSlot::Real(slot) => ScalarOperand::EventReal(slot),
-                    ScalarSlot::Complex(slot) => ScalarOperand::EventComplex(slot),
-                })
-            } else {
-                let output = match facts.value_kind {
-                    ValueKind::Real => {
-                        let slot = invariant_real_slots;
-                        invariant_real_slots += 1;
-                        ScalarSlot::Real(slot)
-                    }
-                    ValueKind::Complex => {
-                        let slot = invariant_complex_slots;
-                        invariant_complex_slots += 1;
-                        ScalarSlot::Complex(slot)
-                    }
-                    ValueKind::Vector { .. } | ValueKind::Matrix { .. } => return None,
-                };
-                invariant_instructions.push((output, instruction));
-                Some(match output {
-                    ScalarSlot::Real(slot) => ScalarOperand::InvariantReal(slot),
-                    ScalarSlot::Complex(slot) => ScalarOperand::InvariantComplex(slot),
-                })
+            let kind = match facts.value_kind {
+                ValueKind::Real => KernelScalarKind::Real,
+                ValueKind::Complex => KernelScalarKind::Complex,
+                ValueKind::Vector { .. } | ValueKind::Matrix { .. } => return None,
             };
+            let class = if facts.dependency.depends_on_event {
+                KernelValueClass::Event
+            } else {
+                KernelValueClass::Invariant
+            };
+            let kernel_id = KernelValueId::from_index(values.len());
+            values.push(KernelValue {
+                kind,
+                class,
+                instruction,
+            });
+            value_ids[index] = Some(kernel_id);
         }
 
-        Some(ScalarEvaluationPlan::new(
-            invariant_instructions,
-            event_instructions,
-            operands[model.graph().root().index()]?,
-            invariant_real_slots,
-            invariant_complex_slots,
+        Some(ScalarKernelIr::new(
+            values,
+            value_ids[model.graph().root().index()]?,
         ))
     }
 }
@@ -4210,6 +4280,33 @@ mod tests {
             plan.evaluate_with_event(&params, &event).unwrap(),
             Complex64::from(6.0)
         );
+    }
+
+    #[test]
+    fn scalar_kernel_ir_preserves_typed_dependency_classes() {
+        let coefficient = complex(parameter!("re", initial: 2.0), 1.0);
+        let expr = coefficient * event_scalar("x");
+        let model = CompiledModel::from_expr(&expr).unwrap();
+        let plan = CpuBackend.prepare(&model);
+        let kernel = plan.scalar_kernel.as_ref().unwrap();
+
+        assert!(plan.scalar_interpreter_plan().is_some());
+        assert!(
+            kernel
+                .values()
+                .iter()
+                .any(|value| value.class == KernelValueClass::Invariant)
+        );
+        assert!(
+            kernel
+                .values()
+                .iter()
+                .any(|value| value.class == KernelValueClass::Event)
+        );
+        let root = &kernel.values()[kernel.root().index()];
+        assert_eq!(root.kind, KernelScalarKind::Complex);
+        assert_eq!(root.class, KernelValueClass::Event);
+        assert!(matches!(root.instruction, KernelInstruction::Mul(_)));
     }
 
     #[test]

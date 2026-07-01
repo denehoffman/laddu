@@ -13,6 +13,7 @@ laddu-autodiff = { path = "../laddu-autodiff" }
 laddu-compile = { path = "../laddu-compile" }
 laddu-data = { path = "../laddu-data" }
 laddu-expr = { path = "../laddu-expr" }
+laddu-kernel = { path = "../laddu-kernel" }
 nalgebra.workspace = true
 num.workspace = true
 rayon.workspace = true

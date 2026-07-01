@@ -1094,6 +1094,7 @@ name = "laddu-kernel"
 version = "0.1.0"
 dependencies = [
  "laddu-expr",
+ "num",
  "serde",
 ]
 
@@ -1138,6 +1139,7 @@ dependencies = [
  "laddu-compile",
  "laddu-data",
  "laddu-expr",
+ "laddu-kernel",
  "nalgebra",
  "num",
  "rayon",
