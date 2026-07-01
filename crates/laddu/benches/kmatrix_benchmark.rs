@@ -19,7 +19,6 @@ use laddu::{
     },
 };
 use rayon::ThreadPoolBuilder;
-use std::collections::HashSet;
 
 fn reaction_variables() -> (Expr, Expr, Expr, Expr) {
     let mut channel = Channel::new("gamma p -> Ks Ks p");
@@ -202,43 +201,6 @@ fn kmatrix_likelihood() -> CpuLikelihood {
     let neg_re = (&s0n * z00n.real()).norm_sqr();
     let neg_im = (&s0n * z00n.imag()).norm_sqr();
     let model = CompiledModel::from_expr(&(pos_re + pos_im + neg_re + neg_im)).unwrap();
-    let cached = model
-        .cache_plan()
-        .entries()
-        .iter()
-        .map(|entry| entry.node())
-        .collect::<HashSet<_>>();
-    let mut required = HashSet::new();
-    let mut stack = vec![model.graph().root()];
-    while let Some(id) = stack.pop() {
-        if !required.insert(id) || cached.contains(&id) {
-            continue;
-        }
-        stack.extend(model.graph().node(id).unwrap().child_ids());
-    }
-    let mut kinds = std::collections::BTreeMap::new();
-    for id in &required {
-        let name = match model.graph().node(*id).unwrap() {
-            laddu::ExprNode::RealConst(_) | laddu::ExprNode::ComplexConst(_) => "const",
-            laddu::ExprNode::ScalarParam(_) => "param",
-            laddu::ExprNode::Unary { .. } => "unary",
-            laddu::ExprNode::Binary { .. } => "binary",
-            laddu::ExprNode::NaryAdd { .. } => "nary_add",
-            laddu::ExprNode::NaryMul { .. } => "nary_mul",
-            laddu::ExprNode::Complex { .. } => "complex",
-            laddu::ExprNode::Vector { .. } => "vector",
-            laddu::ExprNode::Matrix { .. } => "matrix",
-            laddu::ExprNode::Component { .. } => "component",
-            laddu::ExprNode::MatrixElement { .. } => "matrix_element",
-            laddu::ExprNode::MatMul { .. } => "matmul",
-            laddu::ExprNode::MatVec { .. } => "matvec",
-            laddu::ExprNode::Dot { .. } => "dot",
-            laddu::ExprNode::Solve { .. } => "solve",
-            laddu::ExprNode::EventScalar(_) | laddu::ExprNode::EventP4Component { .. } => "event",
-        };
-        *kinds.entry(name).or_insert(0usize) += 1;
-    }
-    eprintln!("compact nodes: {}, kinds: {kinds:?}", required.len());
     let nll = CpuNllTerm::new("K-Matrix", &model, &dataset, &dataset).unwrap();
     CpuLikelihood::new([nll.boxed()]).unwrap()
 }

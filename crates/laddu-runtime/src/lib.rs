@@ -92,10 +92,27 @@ pub struct CpuPlan {
     cached_evaluation_nodes: Vec<ExprId>,
     cached_value_slots: Vec<Option<usize>>,
     cache_required_nodes: Vec<bool>,
+    solve_components: Vec<Option<SolveComponentPlan>>,
+    solve_row_matrices: Vec<SolveRowMatrixPlan>,
+    solve_row_keys: Vec<(ExprId, usize, usize)>,
     factor_matrix_slots: Vec<Option<usize>>,
     factor_matrices: Vec<(ExprId, usize)>,
     constant_factor_slots: Vec<Option<usize>>,
     constant_factors: Vec<Arc<OnceLock<DynamicLu>>>,
+}
+
+#[derive(Copy, Clone, Debug)]
+struct SolveComponentPlan {
+    rhs: ExprId,
+    row_slot: usize,
+    dimension: usize,
+}
+
+#[derive(Clone, Debug)]
+struct SolveRowMatrixPlan {
+    matrix: ExprId,
+    dimension: usize,
+    rows: Vec<(usize, usize)>,
 }
 
 impl CpuBackend {
@@ -128,17 +145,25 @@ impl CpuBackend {
         for (slot, entry) in cache_plan.entries().iter().enumerate() {
             cache_slots[entry.node().index()] = Some(slot);
         }
+        let (solve_components, solve_row_matrices, solve_row_keys) =
+            self.solve_component_plans(model);
         let (cached_evaluation_nodes, cached_value_slots) =
-            cached_evaluation_schedule(model.graph(), &cache_slots);
-        let cache_required_nodes = cache_required_nodes(model.graph(), &cache_plan);
+            cached_evaluation_schedule(model.graph(), &cache_slots, &solve_components);
+        let mut cache_required_nodes = cache_required_nodes(model.graph(), &cache_plan);
+        for plan in &solve_row_matrices {
+            mark_required(model.graph(), plan.matrix, &mut cache_required_nodes);
+        }
         let mut factor_matrix_slots = vec![None; model.graph().nodes().len()];
         let mut factor_matrices = Vec::new();
         let mut constant_factor_slots = vec![None; model.graph().nodes().len()];
         let mut constant_factors = Vec::new();
-        for node in model.graph().nodes() {
+        for (index, node) in model.graph().nodes().iter().enumerate() {
             let ExprNode::Solve { matrix, .. } = node else {
                 continue;
             };
+            if cached_value_slots[index].is_none() {
+                continue;
+            }
             let facts = model
                 .node_facts(*matrix)
                 .expect("compiled model facts cover every graph node");
@@ -174,6 +199,9 @@ impl CpuBackend {
             cached_evaluation_nodes,
             cached_value_slots,
             cache_required_nodes,
+            solve_components,
+            solve_row_matrices,
+            solve_row_keys,
             factor_matrix_slots,
             factor_matrices,
             constant_factor_slots,
@@ -288,7 +316,12 @@ impl CpuPlan {
 
     pub fn cache_event_batch(&self, batch: &EventBatch) -> RuntimeResult<CpuBatchCache> {
         let event_columns = self.event_columns(batch.schema())?;
-        let mut cache = CpuBatchCache::new(&self.cache_plan, &self.factor_matrices, batch.len());
+        let mut cache = CpuBatchCache::new(
+            &self.cache_plan,
+            &self.factor_matrices,
+            &self.solve_row_keys,
+            batch.len(),
+        );
         for row in 0..batch.len() {
             let values = self.evaluate_cache_values_for_row(batch, row, &event_columns)?;
             for (slot, entry) in self.cache_plan.entries().iter().enumerate() {
@@ -297,6 +330,27 @@ impl CpuPlan {
                     .expect("cacheable node should have been evaluated")
                     .clone();
                 cache.push(slot, value)?;
+            }
+            for plan in &self.solve_row_matrices {
+                let (rows, cols, values) = matrix_at_optional(&values, plan.matrix.index())?;
+                if rows != plan.dimension || cols != plan.dimension {
+                    return Err(RuntimeError::InvalidShape {
+                        index: plan.matrix.index(),
+                        message: format!(
+                            "specialized solve expected a {}x{} matrix, got {rows}x{cols}",
+                            plan.dimension, plan.dimension
+                        ),
+                    });
+                }
+                let transpose_factor = DMatrix::from_row_slice(rows, cols, values).transpose().lu();
+                for (slot, index) in &plan.rows {
+                    let mut basis = DVector::zeros(plan.dimension);
+                    basis[*index] = Complex64::ONE;
+                    let inverse_row = transpose_factor
+                        .solve(&basis)
+                        .ok_or(RuntimeError::SingularMatrix(plan.matrix.index()))?;
+                    cache.push_solve_row(*slot, inverse_row.iter().copied())?;
+                }
             }
             for (slot, (matrix, _)) in self.factor_matrices.iter().enumerate() {
                 let (rows, cols, values) = matrix_at_optional(&values, matrix.index())?;
@@ -1209,14 +1263,39 @@ impl CpuPlan {
                     }
                 }
                 ExprNode::Component { input, index: i } => {
-                    let vector = self.cached_vector_at(&values, *input)?;
-                    Value::Scalar(*vector.get(*i).ok_or_else(|| RuntimeError::InvalidShape {
-                        index,
-                        message: format!(
-                            "component index {i} out of bounds for len {}",
-                            vector.len()
-                        ),
-                    })?)
+                    if let Some(plan) = self.solve_components[index] {
+                        let rhs = self.cached_vector_at(&values, plan.rhs)?;
+                        let inverse_row = cache.solve_row(plan.row_slot, row)?;
+                        if rhs.len() != plan.dimension || inverse_row.len() != plan.dimension {
+                            return Err(RuntimeError::InvalidShape {
+                                index,
+                                message: format!(
+                                    "specialized solve expected len {}, got rhs len {} and row len {}",
+                                    plan.dimension,
+                                    rhs.len(),
+                                    inverse_row.len()
+                                ),
+                            });
+                        }
+                        Value::Scalar(
+                            inverse_row
+                                .iter()
+                                .zip(rhs)
+                                .map(|(lhs, rhs)| lhs * rhs)
+                                .sum(),
+                        )
+                    } else {
+                        let vector = self.cached_vector_at(&values, *input)?;
+                        Value::Scalar(*vector.get(*i).ok_or_else(|| {
+                            RuntimeError::InvalidShape {
+                                index,
+                                message: format!(
+                                    "component index {i} out of bounds for len {}",
+                                    vector.len()
+                                ),
+                            }
+                        })?)
+                    }
                 }
                 ExprNode::MatrixElement { input, row, col } => {
                     let (rows, cols, matrix) = self.cached_matrix_at(&values, *input)?;
@@ -1353,6 +1432,7 @@ impl CpuPlan {
                     .iter()
                     .map(|(node, _)| *node)
                     .collect::<Vec<_>>()
+            && cache.solve_row_keys == self.solve_row_keys
         {
             Ok(())
         } else {
@@ -1521,11 +1601,28 @@ impl<'a> DerivativeWorkspace<'a> {
                 }
             }
             ExprNode::Component { input, index: i } => {
-                let vector = self.vector_tangent(input)?;
-                Value::Scalar(*vector.get(i).ok_or_else(|| RuntimeError::InvalidShape {
-                    index,
-                    message: format!("component index {i} out of bounds for len {}", vector.len()),
-                })?)
+                if let (Some(plan), Some((cache, row))) =
+                    (self.plan.solve_components[index], self.cached_factors)
+                {
+                    let rhs_tangent = self.vector_tangent_value(plan.rhs, plan.dimension)?;
+                    let inverse_row = cache.solve_row(plan.row_slot, row)?;
+                    Value::Scalar(
+                        inverse_row
+                            .iter()
+                            .zip(rhs_tangent)
+                            .map(|(lhs, rhs)| lhs * rhs)
+                            .sum(),
+                    )
+                } else {
+                    let vector = self.vector_tangent(input)?;
+                    Value::Scalar(*vector.get(i).ok_or_else(|| RuntimeError::InvalidShape {
+                        index,
+                        message: format!(
+                            "component index {i} out of bounds for len {}",
+                            vector.len()
+                        ),
+                    })?)
+                }
             }
             ExprNode::MatrixElement { input, row, col } => {
                 let (rows, cols, matrix) = self.matrix_tangent(input)?;
@@ -1613,6 +1710,11 @@ impl<'a> DerivativeWorkspace<'a> {
                 )
             }
             ExprNode::Solve { matrix, rhs } => {
+                if self.cached_factors.is_some() && self.plan.cached_value_slots[index].is_none() {
+                    // Specialized components differentiate the RHS directly and never read this.
+                    self.tangents[index] = Some(Value::Vector(Vec::new()));
+                    return Ok(());
+                }
                 let (rows, cols, matrix_value) = self.primal_matrix(matrix)?;
                 let solution = self.primal_vector(id)?;
                 let rhs_value = self.primal_vector(rhs)?;
@@ -1797,10 +1899,17 @@ pub struct CpuBatchCache {
     slots: Vec<CachedSlot>,
     factor_nodes: Vec<ExprId>,
     factor_slots: Vec<CachedFactorSlot>,
+    solve_row_keys: Vec<(ExprId, usize, usize)>,
+    solve_row_slots: Vec<CachedSolveRowSlot>,
 }
 
 impl CpuBatchCache {
-    fn new(cache_plan: &CachePlan, factor_matrices: &[(ExprId, usize)], len: usize) -> Self {
+    fn new(
+        cache_plan: &CachePlan,
+        factor_matrices: &[(ExprId, usize)],
+        solve_row_keys: &[(ExprId, usize, usize)],
+        len: usize,
+    ) -> Self {
         Self {
             len,
             weights: vec![1.0; len],
@@ -1819,6 +1928,11 @@ impl CpuBatchCache {
             factor_slots: factor_matrices
                 .iter()
                 .map(|(_, dimension)| CachedFactorSlot::new(*dimension))
+                .collect(),
+            solve_row_keys: solve_row_keys.to_vec(),
+            solve_row_slots: solve_row_keys
+                .iter()
+                .map(|(_, _, dimension)| CachedSolveRowSlot::new(*dimension))
                 .collect(),
         }
     }
@@ -1852,6 +1966,12 @@ impl CpuBatchCache {
                 .factor_slots
                 .iter()
                 .map(CachedFactorSlot::resident_bytes)
+                .sum::<usize>()
+            + self.solve_row_keys.capacity() * size_of::<(ExprId, usize, usize)>()
+            + self
+                .solve_row_slots
+                .iter()
+                .map(CachedSolveRowSlot::resident_bytes)
                 .sum::<usize>()
     }
 
@@ -1906,6 +2026,31 @@ impl CpuBatchCache {
                 actual: slot + 1,
             })?
             .factor(row)
+    }
+
+    fn push_solve_row(
+        &mut self,
+        slot: usize,
+        values: impl IntoIterator<Item = Complex64>,
+    ) -> RuntimeResult<()> {
+        let len = self.solve_row_slots.len();
+        self.solve_row_slots
+            .get_mut(slot)
+            .ok_or(RuntimeError::InvalidCache {
+                expected: len,
+                actual: slot + 1,
+            })?
+            .push(values)
+    }
+
+    fn solve_row(&self, slot: usize, row: usize) -> RuntimeResult<&[Complex64]> {
+        self.solve_row_slots
+            .get(slot)
+            .ok_or(RuntimeError::InvalidCache {
+                expected: self.solve_row_slots.len(),
+                actual: slot + 1,
+            })?
+            .row(row)
     }
 }
 
@@ -1975,6 +2120,59 @@ impl CpuCachedDataset {
 struct CachedFactorSlot {
     dimension: usize,
     factors: Vec<DynamicLu>,
+}
+
+#[derive(Clone, Debug)]
+struct CachedSolveRowSlot {
+    dimension: usize,
+    values: Vec<Complex64>,
+}
+
+impl CachedSolveRowSlot {
+    fn new(dimension: usize) -> Self {
+        Self {
+            dimension,
+            values: Vec::new(),
+        }
+    }
+
+    fn push(&mut self, values: impl IntoIterator<Item = Complex64>) -> RuntimeResult<()> {
+        let start = self.values.len();
+        self.values.extend(values);
+        let actual = self.values.len() - start;
+        if actual != self.dimension {
+            return Err(RuntimeError::InvalidShape {
+                index: start / self.dimension,
+                message: format!(
+                    "cached solve row has len {actual}, expected {}",
+                    self.dimension
+                ),
+            });
+        }
+        Ok(())
+    }
+
+    fn row(&self, row: usize) -> RuntimeResult<&[Complex64]> {
+        let start = row
+            .checked_mul(self.dimension)
+            .ok_or_else(|| RuntimeError::InvalidShape {
+                index: row,
+                message: "cached solve row offset overflowed".into(),
+            })?;
+        self.values
+            .get(start..start + self.dimension)
+            .ok_or_else(|| RuntimeError::InvalidShape {
+                index: row,
+                message: format!(
+                    "cached solve row {row} out of bounds for len {}",
+                    self.values.len() / self.dimension
+                ),
+            })
+    }
+
+    fn resident_bytes(&self) -> usize {
+        self.values.capacity() * size_of::<Complex64>()
+    }
 }
 
 impl CachedFactorSlot {
@@ -2224,12 +2422,100 @@ fn cache_required_nodes(graph: &ExprGraph, cache_plan: &CachePlan) -> Vec<bool> 
     required
 }
 
+impl CpuBackend {
+    fn solve_component_plans(
+        &self,
+        model: &CompiledModel,
+    ) -> (
+        Vec<Option<SolveComponentPlan>>,
+        Vec<SolveRowMatrixPlan>,
+        Vec<(ExprId, usize, usize)>,
+    ) {
+        let mut components = vec![None; model.graph().nodes().len()];
+        let mut row_slots = HashMap::<(ExprId, usize), usize>::new();
+        let mut row_keys = Vec::new();
+        let mut matrix_slots = HashMap::<ExprId, usize>::new();
+        let mut matrices = Vec::<SolveRowMatrixPlan>::new();
+
+        for (node_index, node) in model.graph().nodes().iter().enumerate() {
+            let ExprNode::Component { input, index } = node else {
+                continue;
+            };
+            let Some(ExprNode::Solve { matrix, rhs }) = model.graph().node(*input) else {
+                continue;
+            };
+            let matrix_facts = model
+                .node_facts(*matrix)
+                .expect("compiled model facts cover every graph node");
+            let matrix_dependency = matrix_facts.dependency;
+            if !matrix_dependency.depends_on_event
+                || matrix_dependency.depends_on_free_params
+                || matrix_dependency.depends_on_fixed_params
+            {
+                continue;
+            }
+            let rhs_facts = model
+                .node_facts(*rhs)
+                .expect("compiled model facts cover every graph node");
+            let rhs_dependency = rhs_facts.dependency;
+            if !rhs_dependency.depends_on_free_params && !rhs_dependency.depends_on_fixed_params {
+                continue;
+            }
+            let ValueKind::Matrix { rows, cols } = matrix_facts.value_kind else {
+                continue;
+            };
+            let ValueKind::Vector { len } = rhs_facts.value_kind else {
+                continue;
+            };
+            if rows == 0 || rows != cols || rows != len || *index >= rows {
+                continue;
+            }
+
+            let row_slot = if let Some(slot) = row_slots.get(&(*matrix, *index)) {
+                *slot
+            } else {
+                let slot = row_keys.len();
+                row_slots.insert((*matrix, *index), slot);
+                row_keys.push((*matrix, *index, rows));
+                let matrix_slot = if let Some(slot) = matrix_slots.get(matrix) {
+                    *slot
+                } else {
+                    let slot = matrices.len();
+                    matrix_slots.insert(*matrix, slot);
+                    matrices.push(SolveRowMatrixPlan {
+                        matrix: *matrix,
+                        dimension: rows,
+                        rows: Vec::new(),
+                    });
+                    slot
+                };
+                matrices[matrix_slot].rows.push((slot, *index));
+                slot
+            };
+            components[node_index] = Some(SolveComponentPlan {
+                rhs: *rhs,
+                row_slot,
+                dimension: rows,
+            });
+        }
+
+        (components, matrices, row_keys)
+    }
+}
+
 fn cached_evaluation_schedule(
     graph: &ExprGraph,
     cache_slots: &[Option<usize>],
+    solve_components: &[Option<SolveComponentPlan>],
 ) -> (Vec<ExprId>, Vec<Option<usize>>) {
     let mut required = vec![false; graph.nodes().len()];
-    mark_cached_evaluation_node(graph, graph.root(), cache_slots, &mut required);
+    mark_cached_evaluation_node(
+        graph,
+        graph.root(),
+        cache_slots,
+        solve_components,
+        &mut required,
+    );
     let nodes = required
         .into_iter()
         .enumerate()
@@ -2248,6 +2534,7 @@ fn mark_cached_evaluation_node(
     graph: &ExprGraph,
     id: ExprId,
     cache_slots: &[Option<usize>],
+    solve_components: &[Option<SolveComponentPlan>],
     required: &mut [bool],
 ) {
     if required[id.index()] {
@@ -2257,9 +2544,13 @@ fn mark_cached_evaluation_node(
     if cache_slots[id.index()].is_some() {
         return;
     }
+    if let Some(plan) = solve_components[id.index()] {
+        mark_cached_evaluation_node(graph, plan.rhs, cache_slots, solve_components, required);
+        return;
+    }
     if let Some(node) = graph.node(id) {
         for child in node_children(node) {
-            mark_cached_evaluation_node(graph, child, cache_slots, required);
+            mark_cached_evaluation_node(graph, child, cache_slots, solve_components, required);
         }
     }
 }
@@ -2504,7 +2795,7 @@ mod tests {
     }
 
     #[test]
-    fn event_only_solve_matrices_are_factorized_in_the_batch_cache() {
+    fn selected_event_only_solve_components_cache_inverse_rows() {
         let expression = solve(
             matrix([[event_scalar("x") + 2.0]]),
             vector([parameter!("rhs", initial: 3.0)]),
@@ -2523,8 +2814,9 @@ mod tests {
         .unwrap();
         let cache = plan.cache_event_batch(&batch).unwrap();
 
-        assert_eq!(cache.factor_slots.len(), 1);
-        assert_eq!(cache.factor_slots[0].factors.len(), 2);
+        assert!(cache.factor_slots.is_empty());
+        assert_eq!(cache.solve_row_slots.len(), 1);
+        assert_eq!(cache.solve_row_slots[0].values.len(), 2);
         assert!(cache.resident_bytes() > 0);
         let first = plan
             .evaluate_cache_row_with_gradient(&params, &cache, 0)
@@ -2536,6 +2828,44 @@ mod tests {
         assert_eq!(first.gradient(), &[Complex64::from(0.5)]);
         assert_eq!(second.value(), Complex64::from(1.0));
         assert_eq!(second.gradient(), &[Complex64::from(1.0 / 3.0)]);
+    }
+
+    #[test]
+    fn cached_solve_component_matches_general_complex_nonsymmetric_solve() {
+        let expression = solve(
+            matrix([
+                [event_scalar("x") + 2.0, Complex64::I.into()],
+                [Complex64::new(2.0, -1.0).into(), 3.0.into()],
+            ]),
+            vector([
+                parameter!("p", initial: 1.5),
+                parameter!("q", initial: -0.25),
+            ]),
+        )
+        .component(1);
+        let model = CompiledModel::from_expr(&expression).unwrap();
+        let params = Arc::new(model.params().clone()).default_values();
+        let plan = CpuBackend.prepare(&model);
+        assert!(plan.solve_components.iter().any(Option::is_some));
+
+        let event = HashMap::from([("x".to_owned(), Complex64::from(0.75))]);
+        let direct = plan
+            .evaluate_with_event_and_gradient(&params, &event)
+            .unwrap();
+        let batch = EventBatch::from_events(
+            Arc::new(Schema::new(std::iter::empty::<&str>(), ["x"], false).unwrap()),
+            [OwnedEvent::new(vec![], vec![0.75])],
+        )
+        .unwrap();
+        let cache = plan.cache_event_batch(&batch).unwrap();
+        let cached = plan
+            .evaluate_cache_row_with_gradient(&params, &cache, 0)
+            .unwrap();
+
+        assert!((cached.value() - direct.value()).norm() < 1.0e-12);
+        for (cached, direct) in cached.gradient().iter().zip(direct.gradient()) {
+            assert!((cached - direct).norm() < 1.0e-12);
+        }
     }
 
     #[test]
