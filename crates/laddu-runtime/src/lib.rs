@@ -155,6 +155,57 @@ impl ScalarOperand {
 }
 
 #[derive(Clone, Debug)]
+enum OperandRun {
+    Invariant(Vec<usize>),
+    Event(Vec<usize>),
+}
+
+impl OperandRun {
+    fn from_operands(operands: impl IntoIterator<Item = ScalarOperand>) -> Vec<Self> {
+        let mut runs = Vec::new();
+        for operand in operands {
+            match (runs.last_mut(), operand) {
+                (Some(Self::Invariant(slots)), ScalarOperand::Invariant(slot))
+                | (Some(Self::Event(slots)), ScalarOperand::Event(slot)) => slots.push(slot),
+                (_, ScalarOperand::Invariant(slot)) => runs.push(Self::Invariant(vec![slot])),
+                (_, ScalarOperand::Event(slot)) => runs.push(Self::Event(vec![slot])),
+            }
+        }
+        runs
+    }
+
+    fn add_to(&self, value: &mut Complex64, invariant: &[Complex64], event: &[Complex64]) {
+        match self {
+            Self::Invariant(slots) => {
+                for slot in slots {
+                    *value += invariant[*slot];
+                }
+            }
+            Self::Event(slots) => {
+                for slot in slots {
+                    *value += event[*slot];
+                }
+            }
+        }
+    }
+
+    fn multiply_into(&self, value: &mut Complex64, invariant: &[Complex64], event: &[Complex64]) {
+        match self {
+            Self::Invariant(slots) => {
+                for slot in slots {
+                    *value *= invariant[*slot];
+                }
+            }
+            Self::Event(slots) => {
+                for slot in slots {
+                    *value *= event[*slot];
+                }
+            }
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
 enum ScalarInstruction {
     Cached(usize),
     Constant(Complex64),
@@ -168,8 +219,8 @@ enum ScalarInstruction {
         lhs: ScalarOperand,
         rhs: ScalarOperand,
     },
-    Add(Vec<ScalarOperand>),
-    Mul(Vec<ScalarOperand>),
+    Add(Vec<OperandRun>),
+    Mul(Vec<OperandRun>),
     Complex {
         re: ScalarOperand,
         im: ScalarOperand,
@@ -518,13 +569,20 @@ impl CpuPlan {
                 ScalarInstruction::Binary { op, lhs, rhs } => {
                     eval_binary(*op, lhs.value(&values, &[]), rhs.value(&values, &[]))
                 }
-                ScalarInstruction::Add(terms) => {
-                    terms.iter().map(|term| term.value(&values, &[])).sum()
+                ScalarInstruction::Add(runs) => {
+                    let mut value = Complex64::ZERO;
+                    for run in runs {
+                        run.add_to(&mut value, &values, &[]);
+                    }
+                    value
                 }
-                ScalarInstruction::Mul(factors) => factors
-                    .iter()
-                    .map(|factor| factor.value(&values, &[]))
-                    .product(),
+                ScalarInstruction::Mul(runs) => {
+                    let mut value = Complex64::ONE;
+                    for run in runs {
+                        run.multiply_into(&mut value, &values, &[]);
+                    }
+                    value
+                }
                 ScalarInstruction::Complex { re, im } => {
                     Complex64::new(re.value(&values, &[]).re, im.value(&values, &[]).re)
                 }
@@ -558,13 +616,20 @@ impl CpuPlan {
                     lhs.value(invariant, values),
                     rhs.value(invariant, values),
                 ),
-                ScalarInstruction::Add(terms) => {
-                    terms.iter().map(|term| term.value(invariant, values)).sum()
+                ScalarInstruction::Add(runs) => {
+                    let mut value = Complex64::ZERO;
+                    for run in runs {
+                        run.add_to(&mut value, invariant, values);
+                    }
+                    value
                 }
-                ScalarInstruction::Mul(factors) => factors
-                    .iter()
-                    .map(|factor| factor.value(invariant, values))
-                    .product(),
+                ScalarInstruction::Mul(runs) => {
+                    let mut value = Complex64::ONE;
+                    for run in runs {
+                        run.multiply_into(&mut value, invariant, values);
+                    }
+                    value
+                }
                 ScalarInstruction::Complex { re, im } => Complex64::new(
                     re.value(invariant, values).re,
                     im.value(invariant, values).re,
@@ -640,12 +705,14 @@ impl CpuPlan {
                         .copy_from_slice(cache.scalar_range(*slot, start, end)?);
                 }
                 ScalarInstruction::Unary { op, input } => {
+                    let ScalarOperand::Event(input) = *input else {
+                        unreachable!("event unary instruction had an invariant input")
+                    };
                     macro_rules! apply_unary {
                         ($map:expr) => {{
                             let map = $map;
                             for lane in 0..block_len {
-                                let value =
-                                    input.block_value(invariant, workspace, block_len, lane);
+                                let value = workspace[input * block_len + lane];
                                 workspace[output_start + lane] = map(value);
                             }
                         }};
@@ -676,10 +743,33 @@ impl CpuPlan {
                     macro_rules! apply_binary {
                         ($map:expr) => {{
                             let map = $map;
-                            for lane in 0..block_len {
-                                let lhs = lhs.block_value(invariant, workspace, block_len, lane);
-                                let rhs = rhs.block_value(invariant, workspace, block_len, lane);
-                                workspace[output_start + lane] = map(lhs, rhs);
+                            match (*lhs, *rhs) {
+                                (ScalarOperand::Event(lhs), ScalarOperand::Event(rhs)) => {
+                                    for lane in 0..block_len {
+                                        let lhs = workspace[lhs * block_len + lane];
+                                        let rhs = workspace[rhs * block_len + lane];
+                                        workspace[output_start + lane] = map(lhs, rhs);
+                                    }
+                                }
+                                (ScalarOperand::Event(lhs), ScalarOperand::Invariant(rhs)) => {
+                                    let rhs = invariant[rhs];
+                                    for lane in 0..block_len {
+                                        let lhs = workspace[lhs * block_len + lane];
+                                        workspace[output_start + lane] = map(lhs, rhs);
+                                    }
+                                }
+                                (ScalarOperand::Invariant(lhs), ScalarOperand::Event(rhs)) => {
+                                    let lhs = invariant[lhs];
+                                    for lane in 0..block_len {
+                                        let rhs = workspace[rhs * block_len + lane];
+                                        workspace[output_start + lane] = map(lhs, rhs);
+                                    }
+                                }
+                                (ScalarOperand::Invariant(_), ScalarOperand::Invariant(_)) => {
+                                    unreachable!(
+                                        "event binary instruction had only invariant inputs"
+                                    )
+                                }
                             }
                         }};
                     }
@@ -701,30 +791,81 @@ impl CpuPlan {
                         }),
                     }
                 }
-                ScalarInstruction::Add(terms) => {
-                    for lane in 0..block_len {
-                        workspace[output_start + lane] = terms
-                            .iter()
-                            .map(|term| term.block_value(invariant, workspace, block_len, lane))
-                            .sum();
+                ScalarInstruction::Add(runs) => {
+                    workspace[output_start..output_start + block_len].fill(Complex64::ZERO);
+                    for run in runs {
+                        match run {
+                            OperandRun::Invariant(slots) => {
+                                for slot in slots {
+                                    let operand = invariant[*slot];
+                                    for lane in 0..block_len {
+                                        workspace[output_start + lane] += operand;
+                                    }
+                                }
+                            }
+                            OperandRun::Event(slots) => {
+                                for slot in slots {
+                                    let input_start = slot * block_len;
+                                    for lane in 0..block_len {
+                                        let operand = workspace[input_start + lane];
+                                        workspace[output_start + lane] += operand;
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
-                ScalarInstruction::Mul(factors) => {
-                    for lane in 0..block_len {
-                        workspace[output_start + lane] = factors
-                            .iter()
-                            .map(|factor| factor.block_value(invariant, workspace, block_len, lane))
-                            .product();
+                ScalarInstruction::Mul(runs) => {
+                    workspace[output_start..output_start + block_len].fill(Complex64::ONE);
+                    for run in runs {
+                        match run {
+                            OperandRun::Invariant(slots) => {
+                                for slot in slots {
+                                    let operand = invariant[*slot];
+                                    for lane in 0..block_len {
+                                        workspace[output_start + lane] *= operand;
+                                    }
+                                }
+                            }
+                            OperandRun::Event(slots) => {
+                                for slot in slots {
+                                    let input_start = slot * block_len;
+                                    for lane in 0..block_len {
+                                        let operand = workspace[input_start + lane];
+                                        workspace[output_start + lane] *= operand;
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
-                ScalarInstruction::Complex { re, im } => {
-                    for lane in 0..block_len {
-                        workspace[output_start + lane] = Complex64::new(
-                            re.block_value(invariant, workspace, block_len, lane).re,
-                            im.block_value(invariant, workspace, block_len, lane).re,
-                        );
+                ScalarInstruction::Complex { re, im } => match (*re, *im) {
+                    (ScalarOperand::Event(re), ScalarOperand::Event(im)) => {
+                        for lane in 0..block_len {
+                            workspace[output_start + lane] = Complex64::new(
+                                workspace[re * block_len + lane].re,
+                                workspace[im * block_len + lane].re,
+                            );
+                        }
                     }
-                }
+                    (ScalarOperand::Event(re), ScalarOperand::Invariant(im)) => {
+                        let im = invariant[im].re;
+                        for lane in 0..block_len {
+                            workspace[output_start + lane] =
+                                Complex64::new(workspace[re * block_len + lane].re, im);
+                        }
+                    }
+                    (ScalarOperand::Invariant(re), ScalarOperand::Event(im)) => {
+                        let re = invariant[re].re;
+                        for lane in 0..block_len {
+                            workspace[output_start + lane] =
+                                Complex64::new(re, workspace[im * block_len + lane].re);
+                        }
+                    }
+                    (ScalarOperand::Invariant(_), ScalarOperand::Invariant(_)) => {
+                        unreachable!("event complex instruction had only invariant inputs")
+                    }
+                },
                 ScalarInstruction::SolveRow { row_slot, rhs } => {
                     for lane in 0..block_len {
                         let inverse_row = cache.solve_row(*row_slot, start + lane)?;
@@ -3112,18 +3253,22 @@ impl CpuBackend {
                         lhs: operand(*lhs)?,
                         rhs: operand(*rhs)?,
                     },
-                    ExprNode::NaryAdd { terms } => ScalarInstruction::Add(
-                        terms
-                            .iter()
-                            .map(|term| operand(*term))
-                            .collect::<Option<_>>()?,
-                    ),
-                    ExprNode::NaryMul { factors } => ScalarInstruction::Mul(
-                        factors
-                            .iter()
-                            .map(|factor| operand(*factor))
-                            .collect::<Option<_>>()?,
-                    ),
+                    ExprNode::NaryAdd { terms } => {
+                        ScalarInstruction::Add(OperandRun::from_operands(
+                            terms
+                                .iter()
+                                .map(|term| operand(*term))
+                                .collect::<Option<Vec<_>>>()?,
+                        ))
+                    }
+                    ExprNode::NaryMul { factors } => {
+                        ScalarInstruction::Mul(OperandRun::from_operands(
+                            factors
+                                .iter()
+                                .map(|factor| operand(*factor))
+                                .collect::<Option<Vec<_>>>()?,
+                        ))
+                    }
                     ExprNode::Complex { re, im } => ScalarInstruction::Complex {
                         re: operand(*re)?,
                         im: operand(*im)?,
