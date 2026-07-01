@@ -93,6 +93,7 @@ pub struct CpuPlan {
     cached_value_slots: Vec<Option<usize>>,
     cache_required_nodes: Vec<bool>,
     solve_components: Vec<Option<SolveComponentPlan>>,
+    solve_rhs_elements: Vec<Option<Vec<ExprId>>>,
     solve_row_matrices: Vec<SolveRowMatrixPlan>,
     solve_row_keys: Vec<(ExprId, usize, usize)>,
     factor_matrix_slots: Vec<Option<usize>>,
@@ -145,10 +146,14 @@ impl CpuBackend {
         for (slot, entry) in cache_plan.entries().iter().enumerate() {
             cache_slots[entry.node().index()] = Some(slot);
         }
-        let (solve_components, solve_row_matrices, solve_row_keys) =
+        let (solve_components, solve_rhs_elements, solve_row_matrices, solve_row_keys) =
             self.solve_component_plans(model);
-        let (cached_evaluation_nodes, cached_value_slots) =
-            cached_evaluation_schedule(model.graph(), &cache_slots, &solve_components);
+        let (cached_evaluation_nodes, cached_value_slots) = cached_evaluation_schedule(
+            model.graph(),
+            &cache_slots,
+            &solve_components,
+            &solve_rhs_elements,
+        );
         let mut cache_required_nodes = cache_required_nodes(model.graph(), &cache_plan);
         for plan in &solve_row_matrices {
             mark_required(model.graph(), plan.matrix, &mut cache_required_nodes);
@@ -200,6 +205,7 @@ impl CpuBackend {
             cached_value_slots,
             cache_required_nodes,
             solve_components,
+            solve_rhs_elements,
             solve_row_matrices,
             solve_row_keys,
             factor_matrix_slots,
@@ -1264,26 +1270,57 @@ impl CpuPlan {
                 }
                 ExprNode::Component { input, index: i } => {
                     if let Some(plan) = self.solve_components[index] {
-                        let rhs = self.cached_vector_at(&values, plan.rhs)?;
                         let inverse_row = cache.solve_row(plan.row_slot, row)?;
-                        if rhs.len() != plan.dimension || inverse_row.len() != plan.dimension {
+                        if inverse_row.len() != plan.dimension {
                             return Err(RuntimeError::InvalidShape {
                                 index,
                                 message: format!(
-                                    "specialized solve expected len {}, got rhs len {} and row len {}",
+                                    "specialized solve expected row len {}, got {}",
                                     plan.dimension,
-                                    rhs.len(),
                                     inverse_row.len()
                                 ),
                             });
                         }
-                        Value::Scalar(
-                            inverse_row
-                                .iter()
-                                .zip(rhs)
-                                .map(|(lhs, rhs)| lhs * rhs)
-                                .sum(),
-                        )
+                        if let Some(elements) = &self.solve_rhs_elements[plan.rhs.index()] {
+                            if elements.len() != plan.dimension {
+                                return Err(RuntimeError::InvalidShape {
+                                    index,
+                                    message: format!(
+                                        "specialized solve expected {} RHS elements, got {}",
+                                        plan.dimension,
+                                        elements.len()
+                                    ),
+                                });
+                            }
+                            Value::Scalar(
+                                inverse_row
+                                    .iter()
+                                    .zip(elements)
+                                    .map(|(lhs, rhs)| {
+                                        Ok(lhs * self.cached_scalar_at(&values, *rhs)?)
+                                    })
+                                    .sum::<RuntimeResult<Complex64>>()?,
+                            )
+                        } else {
+                            let rhs = self.cached_vector_at(&values, plan.rhs)?;
+                            if rhs.len() != plan.dimension {
+                                return Err(RuntimeError::InvalidShape {
+                                    index,
+                                    message: format!(
+                                        "specialized solve expected RHS len {}, got {}",
+                                        plan.dimension,
+                                        rhs.len()
+                                    ),
+                                });
+                            }
+                            Value::Scalar(
+                                inverse_row
+                                    .iter()
+                                    .zip(rhs)
+                                    .map(|(lhs, rhs)| lhs * rhs)
+                                    .sum(),
+                            )
+                        }
                     } else {
                         let vector = self.cached_vector_at(&values, *input)?;
                         Value::Scalar(*vector.get(*i).ok_or_else(|| {
@@ -1571,6 +1608,13 @@ impl<'a> DerivativeWorkspace<'a> {
                 self.scalar_tangent(re)?.re,
                 self.scalar_tangent(im)?.re,
             )),
+            ExprNode::Vector { .. }
+                if self.cached_factors.is_some()
+                    && self.plan.cached_value_slots[index].is_none()
+                    && self.plan.solve_rhs_elements[index].is_some() =>
+            {
+                Value::Vector(Vec::new())
+            }
             ExprNode::Vector { elements } => Value::Vector(
                 elements
                     .into_iter()
@@ -1604,15 +1648,25 @@ impl<'a> DerivativeWorkspace<'a> {
                 if let (Some(plan), Some((cache, row))) =
                     (self.plan.solve_components[index], self.cached_factors)
                 {
-                    let rhs_tangent = self.vector_tangent_value(plan.rhs, plan.dimension)?;
                     let inverse_row = cache.solve_row(plan.row_slot, row)?;
-                    Value::Scalar(
-                        inverse_row
-                            .iter()
-                            .zip(rhs_tangent)
-                            .map(|(lhs, rhs)| lhs * rhs)
-                            .sum(),
-                    )
+                    if let Some(elements) = &self.plan.solve_rhs_elements[plan.rhs.index()] {
+                        Value::Scalar(
+                            inverse_row
+                                .iter()
+                                .zip(elements)
+                                .map(|(lhs, rhs)| Ok(lhs * self.scalar_tangent(*rhs)?))
+                                .sum::<RuntimeResult<Complex64>>()?,
+                        )
+                    } else {
+                        let rhs_tangent = self.vector_tangent_value(plan.rhs, plan.dimension)?;
+                        Value::Scalar(
+                            inverse_row
+                                .iter()
+                                .zip(rhs_tangent)
+                                .map(|(lhs, rhs)| lhs * rhs)
+                                .sum(),
+                        )
+                    }
                 } else {
                     let vector = self.vector_tangent(input)?;
                     Value::Scalar(*vector.get(i).ok_or_else(|| RuntimeError::InvalidShape {
@@ -2428,10 +2482,12 @@ impl CpuBackend {
         model: &CompiledModel,
     ) -> (
         Vec<Option<SolveComponentPlan>>,
+        Vec<Option<Vec<ExprId>>>,
         Vec<SolveRowMatrixPlan>,
         Vec<(ExprId, usize, usize)>,
     ) {
         let mut components = vec![None; model.graph().nodes().len()];
+        let mut rhs_elements = vec![None; model.graph().nodes().len()];
         let mut row_slots = HashMap::<(ExprId, usize), usize>::new();
         let mut row_keys = Vec::new();
         let mut matrix_slots = HashMap::<ExprId, usize>::new();
@@ -2497,9 +2553,12 @@ impl CpuBackend {
                 row_slot,
                 dimension: rows,
             });
+            if let Some(ExprNode::Vector { elements }) = model.graph().node(*rhs) {
+                rhs_elements[rhs.index()] = Some(elements.clone());
+            }
         }
 
-        (components, matrices, row_keys)
+        (components, rhs_elements, matrices, row_keys)
     }
 }
 
@@ -2507,6 +2566,7 @@ fn cached_evaluation_schedule(
     graph: &ExprGraph,
     cache_slots: &[Option<usize>],
     solve_components: &[Option<SolveComponentPlan>],
+    solve_rhs_elements: &[Option<Vec<ExprId>>],
 ) -> (Vec<ExprId>, Vec<Option<usize>>) {
     let mut required = vec![false; graph.nodes().len()];
     mark_cached_evaluation_node(
@@ -2514,6 +2574,7 @@ fn cached_evaluation_schedule(
         graph.root(),
         cache_slots,
         solve_components,
+        solve_rhs_elements,
         &mut required,
     );
     let nodes = required
@@ -2535,6 +2596,7 @@ fn mark_cached_evaluation_node(
     id: ExprId,
     cache_slots: &[Option<usize>],
     solve_components: &[Option<SolveComponentPlan>],
+    solve_rhs_elements: &[Option<Vec<ExprId>>],
     required: &mut [bool],
 ) {
     if required[id.index()] {
@@ -2545,12 +2607,39 @@ fn mark_cached_evaluation_node(
         return;
     }
     if let Some(plan) = solve_components[id.index()] {
-        mark_cached_evaluation_node(graph, plan.rhs, cache_slots, solve_components, required);
+        if let Some(elements) = &solve_rhs_elements[plan.rhs.index()] {
+            for element in elements {
+                mark_cached_evaluation_node(
+                    graph,
+                    *element,
+                    cache_slots,
+                    solve_components,
+                    solve_rhs_elements,
+                    required,
+                );
+            }
+        } else {
+            mark_cached_evaluation_node(
+                graph,
+                plan.rhs,
+                cache_slots,
+                solve_components,
+                solve_rhs_elements,
+                required,
+            );
+        }
         return;
     }
     if let Some(node) = graph.node(id) {
         for child in node_children(node) {
-            mark_cached_evaluation_node(graph, child, cache_slots, solve_components, required);
+            mark_cached_evaluation_node(
+                graph,
+                child,
+                cache_slots,
+                solve_components,
+                solve_rhs_elements,
+                required,
+            );
         }
     }
 }
