@@ -22,6 +22,8 @@ use thiserror::Error;
 
 pub type RuntimeResult<T> = Result<T, RuntimeError>;
 
+const SCALAR_BLOCK_SIZE: usize = 32;
+
 #[derive(Clone, Debug, Error, PartialEq)]
 pub enum RuntimeError {
     #[error("event scalar `{0}` was requested, but no event lookup was provided")]
@@ -135,6 +137,19 @@ impl ScalarOperand {
         match self {
             Self::Invariant(slot) => invariant[slot],
             Self::Event(slot) => event[slot],
+        }
+    }
+
+    fn block_value(
+        self,
+        invariant: &[Complex64],
+        event: &[Complex64],
+        block_len: usize,
+        lane: usize,
+    ) -> Complex64 {
+        match self {
+            Self::Invariant(slot) => invariant[slot],
+            Self::Event(slot) => event[slot * block_len + lane],
         }
     }
 }
@@ -581,6 +596,129 @@ impl CpuPlan {
         Ok(plan.root.value(invariant, values))
     }
 
+    fn evaluate_cache_block_prepared(
+        &self,
+        params: &ParamValues,
+        cache: &CpuBatchCache,
+        start: usize,
+        end: usize,
+        invariant: Option<&[Complex64]>,
+        workspace: &mut Vec<Complex64>,
+        output: &mut Vec<Complex64>,
+    ) -> RuntimeResult<()> {
+        if let (Some(plan), Some(invariant)) = (&self.scalar_evaluation, invariant) {
+            return self.evaluate_scalar_cache_block(
+                cache, start, end, plan, invariant, workspace, output,
+            );
+        }
+        output.clear();
+        for row in start..end {
+            output
+                .push(self.evaluate_cache_row_prepared(params, cache, row, invariant, workspace)?);
+        }
+        Ok(())
+    }
+
+    fn evaluate_scalar_cache_block(
+        &self,
+        cache: &CpuBatchCache,
+        start: usize,
+        end: usize,
+        plan: &ScalarEvaluationPlan,
+        invariant: &[Complex64],
+        workspace: &mut Vec<Complex64>,
+        output: &mut Vec<Complex64>,
+    ) -> RuntimeResult<()> {
+        let block_len = end - start;
+        workspace.resize(plan.event_instructions.len() * block_len, Complex64::ZERO);
+
+        for (output_slot, instruction) in plan.event_instructions.iter().enumerate() {
+            let output_start = output_slot * block_len;
+            match instruction {
+                ScalarInstruction::Cached(slot) => {
+                    workspace[output_start..output_start + block_len]
+                        .copy_from_slice(cache.scalar_range(*slot, start, end)?);
+                }
+                ScalarInstruction::Unary { op, input } => {
+                    for lane in 0..block_len {
+                        workspace[output_start + lane] = eval_unary(
+                            *op,
+                            input.block_value(invariant, workspace, block_len, lane),
+                        );
+                    }
+                }
+                ScalarInstruction::Binary { op, lhs, rhs } => {
+                    for lane in 0..block_len {
+                        workspace[output_start + lane] = eval_binary(
+                            *op,
+                            lhs.block_value(invariant, workspace, block_len, lane),
+                            rhs.block_value(invariant, workspace, block_len, lane),
+                        );
+                    }
+                }
+                ScalarInstruction::Add(terms) => {
+                    for lane in 0..block_len {
+                        workspace[output_start + lane] = terms
+                            .iter()
+                            .map(|term| term.block_value(invariant, workspace, block_len, lane))
+                            .sum();
+                    }
+                }
+                ScalarInstruction::Mul(factors) => {
+                    for lane in 0..block_len {
+                        workspace[output_start + lane] = factors
+                            .iter()
+                            .map(|factor| factor.block_value(invariant, workspace, block_len, lane))
+                            .product();
+                    }
+                }
+                ScalarInstruction::Complex { re, im } => {
+                    for lane in 0..block_len {
+                        workspace[output_start + lane] = Complex64::new(
+                            re.block_value(invariant, workspace, block_len, lane).re,
+                            im.block_value(invariant, workspace, block_len, lane).re,
+                        );
+                    }
+                }
+                ScalarInstruction::SolveRow { row_slot, rhs } => {
+                    for lane in 0..block_len {
+                        let inverse_row = cache.solve_row(*row_slot, start + lane)?;
+                        if inverse_row.len() != rhs.len() {
+                            return Err(RuntimeError::InvalidShape {
+                                index: start + lane,
+                                message: format!(
+                                    "specialized solve row has len {}, expected {}",
+                                    inverse_row.len(),
+                                    rhs.len()
+                                ),
+                            });
+                        }
+                        workspace[output_start + lane] = inverse_row
+                            .iter()
+                            .zip(rhs)
+                            .map(|(lhs, operand)| {
+                                lhs * operand.block_value(invariant, workspace, block_len, lane)
+                            })
+                            .sum();
+                    }
+                }
+                ScalarInstruction::Constant(_) | ScalarInstruction::Parameter(_) => {
+                    unreachable!("invariant instruction appeared in the event tape")
+                }
+            }
+        }
+
+        output.clear();
+        output.reserve(block_len);
+        match plan.root {
+            ScalarOperand::Invariant(slot) => output.resize(block_len, invariant[slot]),
+            ScalarOperand::Event(slot) => {
+                output.extend_from_slice(&workspace[slot * block_len..(slot + 1) * block_len])
+            }
+        }
+        Ok(())
+    }
+
     pub fn evaluate_cache_row_with_gradient(
         &self,
         params: &ParamValues,
@@ -811,27 +949,34 @@ impl CpuPlan {
         let invariant = self.scalar_invariant_values(params)?;
         for batch in dataset.batches() {
             self.check_batch_cache(batch.cache())?;
-            let partial = (0..batch.len())
+            let n_blocks = batch.len().div_ceil(SCALAR_BLOCK_SIZE);
+            let partial = (0..n_blocks)
                 .into_par_iter()
                 .try_fold(
-                    || (AccurateF64::zero(), Vec::new()),
-                    |(mut acc, mut workspace), row| {
-                        let value = self.evaluate_cache_row_prepared(
+                    || (AccurateF64::zero(), Vec::new(), Vec::new()),
+                    |(mut acc, mut workspace, mut output), block| {
+                        let start = block * SCALAR_BLOCK_SIZE;
+                        let end = (start + SCALAR_BLOCK_SIZE).min(batch.len());
+                        self.evaluate_cache_block_prepared(
                             params,
                             batch.cache(),
-                            row,
+                            start,
+                            end,
                             invariant.as_deref(),
                             &mut workspace,
+                            &mut output,
                         )?;
-                        acc.push(batch.weights()[row] * f(value)?);
-                        Ok::<_, E>((acc, workspace))
+                        for (lane, value) in output.iter().copied().enumerate() {
+                            acc.push(batch.weights()[start + lane] * f(value)?);
+                        }
+                        Ok::<_, E>((acc, workspace, output))
                     },
                 )
                 .try_reduce(
-                    || (AccurateF64::zero(), Vec::new()),
-                    |(mut lhs, workspace), (rhs, _)| {
+                    || (AccurateF64::zero(), Vec::new(), Vec::new()),
+                    |(mut lhs, workspace, output), (rhs, _, _)| {
                         lhs.merge(rhs);
-                        Ok::<_, E>((lhs, workspace))
+                        Ok::<_, E>((lhs, workspace, output))
                     },
                 )?;
             total.merge(partial.0);
@@ -910,27 +1055,34 @@ impl CpuPlan {
         let invariant = self.scalar_invariant_values(params)?;
         for batch in dataset.batches() {
             self.check_batch_cache(batch.cache())?;
-            let partial = (0..batch.len())
+            let n_blocks = batch.len().div_ceil(SCALAR_BLOCK_SIZE);
+            let partial = (0..n_blocks)
                 .into_par_iter()
                 .try_fold(
-                    || (AccurateComplex64::zero(), Vec::new()),
-                    |(mut acc, mut workspace), row| {
-                        let value = self.evaluate_cache_row_prepared(
+                    || (AccurateComplex64::zero(), Vec::new(), Vec::new()),
+                    |(mut acc, mut workspace, mut output), block| {
+                        let start = block * SCALAR_BLOCK_SIZE;
+                        let end = (start + SCALAR_BLOCK_SIZE).min(batch.len());
+                        self.evaluate_cache_block_prepared(
                             params,
                             batch.cache(),
-                            row,
+                            start,
+                            end,
                             invariant.as_deref(),
                             &mut workspace,
+                            &mut output,
                         )?;
-                        acc.push(f(value)? * batch.weights()[row]);
-                        Ok::<_, E>((acc, workspace))
+                        for (lane, value) in output.iter().copied().enumerate() {
+                            acc.push(f(value)? * batch.weights()[start + lane]);
+                        }
+                        Ok::<_, E>((acc, workspace, output))
                     },
                 )
                 .try_reduce(
-                    || (AccurateComplex64::zero(), Vec::new()),
-                    |(mut lhs, workspace), (rhs, _)| {
+                    || (AccurateComplex64::zero(), Vec::new(), Vec::new()),
+                    |(mut lhs, workspace, output), (rhs, _, _)| {
                         lhs.merge(rhs);
-                        Ok::<_, E>((lhs, workspace))
+                        Ok::<_, E>((lhs, workspace, output))
                     },
                 )?;
             total.merge(partial.0);
@@ -2311,6 +2463,25 @@ impl CpuBatchCache {
             .scalar(row)
     }
 
+    fn scalar_range(&self, slot: usize, start: usize, end: usize) -> RuntimeResult<&[Complex64]> {
+        if start > end || end > self.len {
+            return Err(RuntimeError::InvalidShape {
+                index: start,
+                message: format!(
+                    "cache range {start}..{end} out of bounds for len {}",
+                    self.len
+                ),
+            });
+        }
+        self.slots
+            .get(slot)
+            .ok_or(RuntimeError::InvalidCache {
+                expected: self.slots.len(),
+                actual: slot + 1,
+            })?
+            .scalar_range(start, end)
+    }
+
     fn push_factor(&mut self, slot: usize, factor: DynamicLu) -> RuntimeResult<()> {
         let len = self.factor_slots.len();
         self.factor_slots
@@ -2639,6 +2810,28 @@ impl CachedSlot {
             }
             Self::Vector { .. } | Self::Matrix { .. } => Err(RuntimeError::TypeMismatch {
                 index: row,
+                expected: "scalar",
+                actual: match self {
+                    Self::Vector { .. } => "vector",
+                    Self::Matrix { .. } => "matrix",
+                    Self::Scalar(_) => unreachable!(),
+                },
+            }),
+        }
+    }
+
+    fn scalar_range(&self, start: usize, end: usize) -> RuntimeResult<&[Complex64]> {
+        match self {
+            Self::Scalar(values) => {
+                values
+                    .get(start..end)
+                    .ok_or_else(|| RuntimeError::InvalidShape {
+                        index: start,
+                        message: format!("cache range {start}..{end} out of bounds"),
+                    })
+            }
+            Self::Vector { .. } | Self::Matrix { .. } => Err(RuntimeError::TypeMismatch {
+                index: start,
                 expected: "scalar",
                 actual: match self {
                     Self::Vector { .. } => "vector",
