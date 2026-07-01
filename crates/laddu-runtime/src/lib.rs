@@ -91,6 +91,7 @@ pub struct CpuPlan {
     cache_slots: Vec<Option<usize>>,
     cached_evaluation_nodes: Vec<ExprId>,
     cached_value_slots: Vec<Option<usize>>,
+    scalar_evaluation: Option<ScalarEvaluationPlan>,
     cache_required_nodes: Vec<bool>,
     solve_components: Vec<Option<SolveComponentPlan>>,
     solve_rhs_elements: Vec<Option<Vec<ExprId>>>,
@@ -116,6 +117,38 @@ struct SolveRowMatrixPlan {
     rows: Vec<(usize, usize)>,
 }
 
+#[derive(Clone, Debug)]
+struct ScalarEvaluationPlan {
+    instructions: Vec<ScalarInstruction>,
+    root_slot: usize,
+}
+
+#[derive(Clone, Debug)]
+enum ScalarInstruction {
+    Cached(usize),
+    Constant(Complex64),
+    Parameter(ParamId),
+    Unary {
+        op: UnaryOp,
+        input: usize,
+    },
+    Binary {
+        op: BinaryOp,
+        lhs: usize,
+        rhs: usize,
+    },
+    Add(Vec<usize>),
+    Mul(Vec<usize>),
+    Complex {
+        re: usize,
+        im: usize,
+    },
+    SolveRow {
+        row_slot: usize,
+        rhs: Vec<usize>,
+    },
+}
+
 impl CpuBackend {
     pub fn prepare(&self, model: &CompiledModel) -> CpuPlan {
         self.prepare_with_autodiff_mode(model, AutodiffMode::Forward)
@@ -128,7 +161,7 @@ impl CpuBackend {
         mode: AutodiffMode,
     ) -> AutodiffResult<CpuPlan> {
         let cache_plan = model.cache_plan().clone();
-        let parameter_slots = model
+        let parameter_slots: Vec<Option<ParamId>> = model
             .graph()
             .nodes()
             .iter()
@@ -151,6 +184,15 @@ impl CpuBackend {
         let (cached_evaluation_nodes, cached_value_slots) = cached_evaluation_schedule(
             model.graph(),
             &cache_slots,
+            &solve_components,
+            &solve_rhs_elements,
+        );
+        let scalar_evaluation = self.scalar_evaluation_plan(
+            model,
+            &cached_evaluation_nodes,
+            &cached_value_slots,
+            &cache_slots,
+            &parameter_slots,
             &solve_components,
             &solve_rhs_elements,
         );
@@ -203,6 +245,7 @@ impl CpuBackend {
             cache_slots,
             cached_evaluation_nodes,
             cached_value_slots,
+            scalar_evaluation,
             cache_required_nodes,
             solve_components,
             solve_rhs_elements,
@@ -396,8 +439,63 @@ impl CpuPlan {
         cache: &CpuBatchCache,
         row: usize,
     ) -> RuntimeResult<Complex64> {
+        if let Some(plan) = &self.scalar_evaluation {
+            return self.evaluate_scalar_cache_row(params, cache, row, plan);
+        }
         let values = self.evaluate_values_from_cache(params, cache, row)?;
         self.cached_scalar_at(&values, self.graph.root())
+    }
+
+    fn evaluate_scalar_cache_row(
+        &self,
+        params: &ParamValues,
+        cache: &CpuBatchCache,
+        row: usize,
+        plan: &ScalarEvaluationPlan,
+    ) -> RuntimeResult<Complex64> {
+        let mut values = Vec::with_capacity(plan.instructions.len());
+        for instruction in &plan.instructions {
+            let value = match instruction {
+                ScalarInstruction::Cached(slot) => cache.scalar(*slot, row)?,
+                ScalarInstruction::Constant(value) => *value,
+                ScalarInstruction::Parameter(id) => Complex64::from(
+                    params
+                        .get(*id)
+                        .map_err(|err| RuntimeError::Parameter(err.to_string()))?,
+                ),
+                ScalarInstruction::Unary { op, input } => eval_unary(*op, values[*input]),
+                ScalarInstruction::Binary { op, lhs, rhs } => {
+                    eval_binary(*op, values[*lhs], values[*rhs])
+                }
+                ScalarInstruction::Add(terms) => terms.iter().map(|slot| values[*slot]).sum(),
+                ScalarInstruction::Mul(factors) => {
+                    factors.iter().map(|slot| values[*slot]).product()
+                }
+                ScalarInstruction::Complex { re, im } => {
+                    Complex64::new(values[*re].re, values[*im].re)
+                }
+                ScalarInstruction::SolveRow { row_slot, rhs } => {
+                    let inverse_row = cache.solve_row(*row_slot, row)?;
+                    if inverse_row.len() != rhs.len() {
+                        return Err(RuntimeError::InvalidShape {
+                            index: row,
+                            message: format!(
+                                "specialized solve row has len {}, expected {}",
+                                inverse_row.len(),
+                                rhs.len()
+                            ),
+                        });
+                    }
+                    inverse_row
+                        .iter()
+                        .zip(rhs)
+                        .map(|(lhs, slot)| lhs * values[*slot])
+                        .sum()
+                }
+            };
+            values.push(value);
+        }
+        Ok(values[plan.root_slot])
     }
 
     pub fn evaluate_cache_row_with_gradient(
@@ -2061,6 +2159,22 @@ impl CpuBatchCache {
             .value(row)
     }
 
+    fn scalar(&self, slot: usize, row: usize) -> RuntimeResult<Complex64> {
+        if row >= self.len {
+            return Err(RuntimeError::InvalidShape {
+                index: row,
+                message: format!("cache row {row} out of bounds for len {}", self.len),
+            });
+        }
+        self.slots
+            .get(slot)
+            .ok_or(RuntimeError::InvalidCache {
+                expected: self.slots.len(),
+                actual: slot + 1,
+            })?
+            .scalar(row)
+    }
+
     fn push_factor(&mut self, slot: usize, factor: DynamicLu) -> RuntimeResult<()> {
         let len = self.factor_slots.len();
         self.factor_slots
@@ -2375,6 +2489,29 @@ impl CachedSlot {
             }
         }
     }
+
+    fn scalar(&self, row: usize) -> RuntimeResult<Complex64> {
+        match self {
+            Self::Scalar(values) => {
+                values
+                    .get(row)
+                    .copied()
+                    .ok_or_else(|| RuntimeError::InvalidShape {
+                        index: row,
+                        message: format!("cache row {row} out of bounds"),
+                    })
+            }
+            Self::Vector { .. } | Self::Matrix { .. } => Err(RuntimeError::TypeMismatch {
+                index: row,
+                expected: "scalar",
+                actual: match self {
+                    Self::Vector { .. } => "vector",
+                    Self::Matrix { .. } => "matrix",
+                    Self::Scalar(_) => unreachable!(),
+                },
+            }),
+        }
+    }
 }
 
 impl Value {
@@ -2559,6 +2696,92 @@ impl CpuBackend {
         }
 
         (components, rhs_elements, matrices, row_keys)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn scalar_evaluation_plan(
+        &self,
+        model: &CompiledModel,
+        evaluation_nodes: &[ExprId],
+        value_slots: &[Option<usize>],
+        cache_slots: &[Option<usize>],
+        parameter_slots: &[Option<ParamId>],
+        solve_components: &[Option<SolveComponentPlan>],
+        solve_rhs_elements: &[Option<Vec<ExprId>>],
+    ) -> Option<ScalarEvaluationPlan> {
+        let slot = |id: ExprId| value_slots[id.index()];
+        let mut instructions = Vec::with_capacity(evaluation_nodes.len());
+
+        for id in evaluation_nodes {
+            let index = id.index();
+            let instruction = if let Some(cache_slot) = cache_slots[index] {
+                match model.node_facts(*id)?.value_kind {
+                    ValueKind::Real | ValueKind::Complex => ScalarInstruction::Cached(cache_slot),
+                    ValueKind::Vector { .. } | ValueKind::Matrix { .. } => return None,
+                }
+            } else {
+                match model.graph().node(*id)? {
+                    ExprNode::RealConst(value) => {
+                        ScalarInstruction::Constant(Complex64::from(*value))
+                    }
+                    ExprNode::ComplexConst(value) => ScalarInstruction::Constant(*value),
+                    ExprNode::ScalarParam(_) => {
+                        ScalarInstruction::Parameter(parameter_slots[index]?)
+                    }
+                    ExprNode::Unary { op, input } => ScalarInstruction::Unary {
+                        op: *op,
+                        input: slot(*input)?,
+                    },
+                    ExprNode::Binary { op, lhs, rhs } => ScalarInstruction::Binary {
+                        op: *op,
+                        lhs: slot(*lhs)?,
+                        rhs: slot(*rhs)?,
+                    },
+                    ExprNode::NaryAdd { terms } => ScalarInstruction::Add(
+                        terms
+                            .iter()
+                            .map(|term| slot(*term))
+                            .collect::<Option<_>>()?,
+                    ),
+                    ExprNode::NaryMul { factors } => ScalarInstruction::Mul(
+                        factors
+                            .iter()
+                            .map(|factor| slot(*factor))
+                            .collect::<Option<_>>()?,
+                    ),
+                    ExprNode::Complex { re, im } => ScalarInstruction::Complex {
+                        re: slot(*re)?,
+                        im: slot(*im)?,
+                    },
+                    ExprNode::Component { .. } => {
+                        let solve = solve_components[index]?;
+                        let elements = solve_rhs_elements[solve.rhs.index()].as_ref()?;
+                        ScalarInstruction::SolveRow {
+                            row_slot: solve.row_slot,
+                            rhs: elements
+                                .iter()
+                                .map(|element| slot(*element))
+                                .collect::<Option<_>>()?,
+                        }
+                    }
+                    ExprNode::EventScalar(_)
+                    | ExprNode::EventP4Component { .. }
+                    | ExprNode::Vector { .. }
+                    | ExprNode::Matrix { .. }
+                    | ExprNode::MatrixElement { .. }
+                    | ExprNode::MatMul { .. }
+                    | ExprNode::MatVec { .. }
+                    | ExprNode::Dot { .. }
+                    | ExprNode::Solve { .. } => return None,
+                }
+            };
+            instructions.push(instruction);
+        }
+
+        Some(ScalarEvaluationPlan {
+            instructions,
+            root_slot: slot(model.graph().root())?,
+        })
     }
 }
 
@@ -2831,6 +3054,7 @@ mod tests {
         let model = CompiledModel::from_expr(&expr).unwrap();
         let params = Arc::new(model.params().clone()).default_values();
         let plan = CpuBackend.prepare(&model);
+        assert!(plan.scalar_evaluation.is_some());
         let batch = EventBatch::from_events(
             Arc::new(Schema::new(["ks1"], std::iter::empty::<&str>(), false).unwrap()),
             [OwnedEvent::new(
