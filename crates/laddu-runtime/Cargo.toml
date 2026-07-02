@@ -15,6 +15,7 @@ laddu-compile = { path = "../laddu-compile" }
 laddu-data = { path = "../laddu-data" }
 laddu-expr = { path = "../laddu-expr" }
 laddu-kernel = { path = "../laddu-kernel" }
+mpi = { workspace = true, optional = true }
 nalgebra.workspace = true
 num.workspace = true
 rayon.workspace = true
@@ -22,3 +23,4 @@ thiserror.workspace = true
 
 [features]
 jit = ["dep:cranelift"]
+mpi = ["dep:mpi", "laddu-data/mpi"]

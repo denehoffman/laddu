@@ -72,8 +72,7 @@ impl Distribution {
     }
 }
 
-#[cfg(feature = "mpi")]
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Partitioning {
     /// Each rank reads a contiguous global row range.
     #[default]

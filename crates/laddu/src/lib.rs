@@ -42,6 +42,8 @@ pub mod prelude {
         MatrixVectorRule, NodeFacts, NumberClass, OptimizationPass, OptimizationPipeline, Rewrite,
         RewriteContext, RewritePass, RewriteRule,
     };
+    pub use laddu_data::data::{CacheStorage, Dataset};
+    pub use laddu_data::io::Partitioning;
     pub use laddu_expr::parameter;
     pub use laddu_expr::parameters::{
         Bounds, FreeParamId, InitialSpec, ParamError, ParamId, ParamLayout, ParamRegistry,
@@ -65,7 +67,8 @@ pub mod prelude {
         spherical_harmonic,
     };
     pub use laddu_runtime::{
-        CpuBackend, CpuBatchCache, CpuCachedBatch, CpuCachedDataset, CpuExecutionMode, CpuPlan,
-        ValueGradient,
+        CpuBackend, CpuBatchCache, CpuCachedBatch, CpuCachedDataset, CpuExecution,
+        CpuExecutionError, CpuExecutionMode, CpuExecutionOptions, CpuPlan, CpuPreparedDataset,
+        PreparedDatasetStats, ThreadPolicy, ValueGradient,
     };
 }

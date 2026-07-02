@@ -13,8 +13,13 @@ laddu-compile = { path = "../laddu-compile" }
 laddu-data = { path = "../laddu-data" }
 laddu-expr = { path = "../laddu-expr" }
 laddu-runtime = { path = "../laddu-runtime" }
+mpi = { workspace = true, optional = true }
 num.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
 approx.workspace = true
+mpi_test.workspace = true
+
+[features]
+mpi = ["dep:mpi", "laddu-data/mpi", "laddu-runtime/mpi"]

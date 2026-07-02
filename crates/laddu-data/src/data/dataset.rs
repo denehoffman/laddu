@@ -1,18 +1,13 @@
 use std::sync::Arc;
 
-use laddu_physics::vectors::RealVec4;
-use num::complex::Complex64;
-#[cfg(feature = "parallel")]
-use rayon::{ThreadPool, prelude::*};
-
-#[cfg(feature = "parallel")]
-use crate::data::dataset::accurate::{AccurateComplex64, AccurateF64};
 use crate::{
     LadduDataError, LadduDataResult,
     data::event::{Event, EventBatch, OwnedEvent},
     io::{EventSink, EventSource, ReadPlan, SourceCapabilities, WritePlan, memory::MemorySource},
     schema::Schema,
 };
+use laddu_physics::vectors::RealVec4;
+use num::complex::Complex64;
 
 #[derive(Clone)]
 enum DatasetOp {
@@ -26,6 +21,16 @@ pub struct Dataset {
     source: Arc<dyn EventSource>,
     plan: ReadPlan,
     ops: Arc<[DatasetOp]>,
+    cache_storage: CacheStorage,
+}
+
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub enum CacheStorage {
+    /// Materialize all event-dependent cache values once and retain them for repeated evaluations.
+    #[default]
+    Resident,
+    /// Retain only dataset statistics and rebuild each batch cache during every evaluation.
+    Streaming,
 }
 
 impl Dataset {
@@ -37,6 +42,7 @@ impl Dataset {
             source: Arc::new(source),
             plan: ReadPlan::default(),
             ops: Arc::from([]),
+            cache_storage: CacheStorage::Resident,
         }
     }
 
@@ -45,6 +51,7 @@ impl Dataset {
             source,
             plan: ReadPlan::default(),
             ops: Arc::from([]),
+            cache_storage: CacheStorage::Resident,
         }
     }
 
@@ -73,6 +80,28 @@ impl Dataset {
 
     pub fn read_plan(&self) -> ReadPlan {
         self.plan
+    }
+
+    pub fn cache_storage(&self) -> CacheStorage {
+        self.cache_storage
+    }
+
+    /// Retain compiled event-dependent values for every local event.
+    ///
+    /// This is the default and is intended for repeatedly evaluating a likelihood. The source is
+    /// read once while the likelihood is prepared; later parameter evaluations do not read it.
+    pub fn resident(mut self) -> Self {
+        self.cache_storage = CacheStorage::Resident;
+        self
+    }
+
+    /// Re-read the source and rebuild one batch cache during each parameter evaluation.
+    ///
+    /// Only fixed dataset statistics are retained. This minimizes memory use but requires a
+    /// repeatable source and is expected to be slower than [`Dataset::resident`].
+    pub fn streaming(mut self) -> Self {
+        self.cache_storage = CacheStorage::Streaming;
+        self
     }
 
     pub fn chunked(mut self, chunk_size: usize) -> LadduDataResult<Self> {
@@ -226,7 +255,15 @@ impl Dataset {
     pub fn batches(
         &self,
     ) -> LadduDataResult<Box<dyn Iterator<Item = LadduDataResult<EventBatch>> + Send>> {
-        let iter = self.source.batches(self.plan)?;
+        self.batches_with_plan(self.plan)
+    }
+
+    #[doc(hidden)]
+    pub fn batches_with_plan(
+        &self,
+        plan: ReadPlan,
+    ) -> LadduDataResult<Box<dyn Iterator<Item = LadduDataResult<EventBatch>> + Send>> {
+        let iter = self.source.batches(plan)?;
         let ops = Arc::clone(&self.ops);
 
         Ok(Box::new(iter.scan(0_u64, move |offset, batch| {
@@ -285,439 +322,9 @@ impl Dataset {
             source: self.source,
             plan: self.plan,
             ops: ops.into(),
+            cache_storage: self.cache_storage,
         }
     }
-}
-
-#[cfg(feature = "parallel")]
-impl Dataset {
-    pub fn par_for_each_event<F>(&self, f: F) -> LadduDataResult<()>
-    where
-        F: Fn(Event<'_>) + Send + Sync,
-    {
-        self.par_try_for_each_event(|ev| {
-            f(ev);
-            Ok(())
-        })
-    }
-
-    pub fn par_for_each_event_in<F>(&self, pool: &ThreadPool, f: F) -> LadduDataResult<()>
-    where
-        F: Fn(Event<'_>) + Send + Sync,
-    {
-        pool.install(move || self.par_for_each_event(f))
-    }
-
-    pub fn par_try_for_each_event<F>(&self, f: F) -> LadduDataResult<()>
-    where
-        F: Fn(Event<'_>) -> LadduDataResult<()> + Send + Sync,
-    {
-        let mut offset = 0_u64;
-
-        for batch in self.source.batches(self.plan)? {
-            let batch = batch?;
-            let base = offset;
-            offset += batch.len() as u64;
-
-            (0..batch.len())
-                .into_par_iter()
-                .filter_map(|row| eval_event(&batch, &self.ops, base, row))
-                .try_for_each(|ev| f(ev))?;
-        }
-
-        Ok(())
-    }
-
-    pub fn par_try_for_each_event_in<F>(&self, pool: &ThreadPool, f: F) -> LadduDataResult<()>
-    where
-        F: Fn(Event<'_>) -> LadduDataResult<()> + Send + Sync,
-    {
-        pool.install(move || self.par_try_for_each_event(f))
-    }
-
-    pub fn par_try_map_events<T, F>(&self, f: F) -> LadduDataResult<Vec<T>>
-    where
-        T: Send,
-        F: Fn(Event<'_>) -> LadduDataResult<T> + Send + Sync,
-    {
-        let mut out = Vec::new();
-        let mut offset = 0_u64;
-
-        for batch in self.source.batches(self.plan)? {
-            let batch = batch?;
-            let base = offset;
-            offset += batch.len() as u64;
-
-            let mut batch_out = (0..batch.len())
-                .into_par_iter()
-                .filter_map(|row| eval_event(&batch, &self.ops, base, row))
-                .map(|ev| f(ev))
-                .collect::<LadduDataResult<Vec<_>>>()?;
-
-            out.append(&mut batch_out);
-        }
-
-        Ok(out)
-    }
-
-    pub fn par_try_map_events_in<T, F>(&self, pool: &ThreadPool, f: F) -> LadduDataResult<Vec<T>>
-    where
-        T: Send,
-        F: Fn(Event<'_>) -> LadduDataResult<T> + Send + Sync,
-    {
-        pool.install(move || self.par_try_map_events(f))
-    }
-
-    pub fn par_map_events<T, F>(&self, f: F) -> LadduDataResult<Vec<T>>
-    where
-        T: Send,
-        F: Fn(Event<'_>) -> T + Send + Sync,
-    {
-        self.par_try_map_events(|ev| Ok(f(ev)))
-    }
-
-    pub fn par_map_events_in<T, F>(&self, pool: &ThreadPool, f: F) -> LadduDataResult<Vec<T>>
-    where
-        T: Send,
-        F: Fn(Event<'_>) -> T + Send + Sync,
-    {
-        pool.install(move || self.par_map_events(f))
-    }
-
-    pub fn par_try_fold_events<T, Init, Fold, Reduce>(
-        &self,
-        init: Init,
-        fold: Fold,
-        reduce: Reduce,
-    ) -> LadduDataResult<T>
-    where
-        T: Send,
-        Init: Fn() -> T + Send + Sync,
-        Fold: Fn(T, Event<'_>) -> LadduDataResult<T> + Send + Sync,
-        Reduce: Fn(T, T) -> LadduDataResult<T> + Send + Sync,
-    {
-        let mut total = init();
-        let mut offset = 0_u64;
-
-        for batch in self.source.batches(self.plan)? {
-            let batch = batch?;
-            let base = offset;
-            offset += batch.len() as u64;
-
-            let partial = (0..batch.len())
-                .into_par_iter()
-                .filter_map(|row| eval_event(&batch, &self.ops, base, row))
-                .try_fold(&init, |acc, ev| fold(acc, ev))
-                .try_reduce(&init, |a, b| reduce(a, b))?;
-
-            total = reduce(total, partial)?;
-        }
-
-        Ok(total)
-    }
-
-    pub fn par_try_fold_events_in<T, Init, Fold, Reduce>(
-        &self,
-        pool: &ThreadPool,
-        init: Init,
-        fold: Fold,
-        reduce: Reduce,
-    ) -> LadduDataResult<T>
-    where
-        T: Send,
-        Init: Fn() -> T + Send + Sync,
-        Fold: Fn(T, Event<'_>) -> LadduDataResult<T> + Send + Sync,
-        Reduce: Fn(T, T) -> LadduDataResult<T> + Send + Sync,
-    {
-        pool.install(move || self.par_try_fold_events(init, fold, reduce))
-    }
-
-    pub fn par_fold_events<T, Init, Fold, Reduce>(
-        &self,
-        init: Init,
-        fold: Fold,
-        reduce: Reduce,
-    ) -> LadduDataResult<T>
-    where
-        T: Send,
-        Init: Fn() -> T + Send + Sync,
-        Fold: Fn(T, Event<'_>) -> T + Send + Sync,
-        Reduce: Fn(T, T) -> T + Send + Sync,
-    {
-        self.par_try_fold_events(init, |acc, ev| Ok(fold(acc, ev)), |a, b| Ok(reduce(a, b)))
-    }
-
-    pub fn par_fold_events_in<T, Init, Fold, Reduce>(
-        &self,
-        pool: &ThreadPool,
-        init: Init,
-        fold: Fold,
-        reduce: Reduce,
-    ) -> LadduDataResult<T>
-    where
-        T: Send,
-        Init: Fn() -> T + Send + Sync,
-        Fold: Fn(T, Event<'_>) -> T + Send + Sync,
-        Reduce: Fn(T, T) -> T + Send + Sync,
-    {
-        pool.install(move || self.par_fold_events(init, fold, reduce))
-    }
-
-    pub fn par_try_accumulate_events<T, Init, Accumulate, Merge>(
-        &self,
-        init: Init,
-        accumulate: Accumulate,
-        merge: Merge,
-    ) -> LadduDataResult<T>
-    where
-        T: Send,
-        Init: Fn() -> T + Send + Sync,
-        Accumulate: Fn(&mut T, Event<'_>) -> LadduDataResult<()> + Send + Sync,
-        Merge: Fn(&mut T, T) -> LadduDataResult<()> + Send + Sync,
-    {
-        let mut total = init();
-        let mut offset = 0_u64;
-
-        for batch in self.source.batches(self.plan)? {
-            let batch = batch?;
-            let base = offset;
-            offset += batch.len() as u64;
-
-            let partial = (0..batch.len())
-                .into_par_iter()
-                .filter_map(|row| eval_event(&batch, &self.ops, base, row))
-                .try_fold(&init, |mut acc, ev| {
-                    accumulate(&mut acc, ev)?;
-                    Ok(acc)
-                })
-                .try_reduce(&init, |mut a, b| {
-                    merge(&mut a, b)?;
-                    Ok(a)
-                })?;
-
-            merge(&mut total, partial)?;
-        }
-
-        Ok(total)
-    }
-
-    pub fn par_try_accumulate_events_in<T, Init, Accumulate, Merge>(
-        &self,
-        pool: &ThreadPool,
-        init: Init,
-        accumulate: Accumulate,
-        merge: Merge,
-    ) -> LadduDataResult<T>
-    where
-        T: Send,
-        Init: Fn() -> T + Send + Sync,
-        Accumulate: Fn(&mut T, Event<'_>) -> LadduDataResult<()> + Send + Sync,
-        Merge: Fn(&mut T, T) -> LadduDataResult<()> + Send + Sync,
-    {
-        pool.install(move || self.par_try_accumulate_events(init, accumulate, merge))
-    }
-
-    pub fn par_accumulate_events<T, Init, Accumulate, Merge>(
-        &self,
-        init: Init,
-        accumulate: Accumulate,
-        merge: Merge,
-    ) -> LadduDataResult<T>
-    where
-        T: Send,
-        Init: Fn() -> T + Send + Sync,
-        Accumulate: Fn(&mut T, Event<'_>) + Send + Sync,
-        Merge: Fn(&mut T, T) + Send + Sync,
-    {
-        self.par_try_accumulate_events(
-            init,
-            |acc, ev| {
-                accumulate(acc, ev);
-                Ok(())
-            },
-            |acc, other| {
-                merge(acc, other);
-                Ok(())
-            },
-        )
-    }
-
-    pub fn par_accumulate_events_in<T, Init, Accumulate, Merge>(
-        &self,
-        pool: &ThreadPool,
-        init: Init,
-        accumulate: Accumulate,
-        merge: Merge,
-    ) -> LadduDataResult<T>
-    where
-        T: Send,
-        Init: Fn() -> T + Send + Sync,
-        Accumulate: Fn(&mut T, Event<'_>) + Send + Sync,
-        Merge: Fn(&mut T, T) + Send + Sync,
-    {
-        pool.install(move || self.par_accumulate_events(init, accumulate, merge))
-    }
-
-    pub fn par_sum_weights(&self) -> LadduDataResult<f64> {
-        self.par_sum_real(|ev| ev.weight())
-    }
-
-    pub fn par_sum_weights_in(&self, pool: &ThreadPool) -> LadduDataResult<f64> {
-        pool.install(|| self.par_sum_weights())
-    }
-
-    pub fn par_weighted_sum<F>(&self, f: F) -> LadduDataResult<f64>
-    where
-        F: Fn(Event<'_>) -> f64 + Send + Sync,
-    {
-        self.par_sum_real(|ev| ev.weight() * f(ev))
-    }
-
-    pub fn par_weighted_sum_in<F>(&self, pool: &ThreadPool, f: F) -> LadduDataResult<f64>
-    where
-        F: Fn(Event<'_>) -> f64 + Send + Sync,
-    {
-        pool.install(move || self.par_weighted_sum(f))
-    }
-
-    pub fn par_weighted_complex_sum<F>(&self, f: F) -> LadduDataResult<Complex64>
-    where
-        F: Fn(Event<'_>) -> Complex64 + Send + Sync,
-    {
-        self.par_sum_complex(|ev| f(ev) * ev.weight())
-    }
-
-    pub fn par_weighted_complex_sum_in<F>(
-        &self,
-        pool: &ThreadPool,
-        f: F,
-    ) -> LadduDataResult<Complex64>
-    where
-        F: Fn(Event<'_>) -> Complex64 + Send + Sync,
-    {
-        pool.install(move || self.par_weighted_complex_sum(f))
-    }
-
-    fn par_sum_real<F>(&self, f: F) -> LadduDataResult<f64>
-    where
-        F: Fn(Event<'_>) -> f64 + Send + Sync,
-    {
-        let mut total = AccurateF64::zero();
-        let mut offset = 0_u64;
-
-        for batch in self.source.batches(self.plan)? {
-            let batch = batch?;
-            let base = offset;
-            offset += batch.len() as u64;
-
-            let partial = (0..batch.len())
-                .into_par_iter()
-                .filter_map(|row| eval_event(&batch, &self.ops, base, row))
-                .map(|ev| f(ev))
-                .fold(AccurateF64::zero, |mut acc, value| {
-                    acc.push(value);
-                    acc
-                })
-                .reduce(AccurateF64::zero, |mut a, b| {
-                    a.merge(b);
-                    a
-                });
-
-            total.merge(partial);
-        }
-
-        Ok(total.finish())
-    }
-
-    fn par_sum_complex<F>(&self, f: F) -> LadduDataResult<Complex64>
-    where
-        F: Fn(Event<'_>) -> Complex64 + Send + Sync,
-    {
-        let mut total = AccurateComplex64::zero();
-        let mut offset = 0_u64;
-
-        for batch in self.source.batches(self.plan)? {
-            let batch = batch?;
-            let base = offset;
-            offset += batch.len() as u64;
-
-            let partial = (0..batch.len())
-                .into_par_iter()
-                .filter_map(|row| eval_event(&batch, &self.ops, base, row))
-                .map(|ev| f(ev))
-                .fold(AccurateComplex64::zero, |mut acc, value| {
-                    acc.push(value);
-                    acc
-                })
-                .reduce(AccurateComplex64::zero, |mut a, b| {
-                    a.merge(b);
-                    a
-                });
-
-            total.merge(partial);
-        }
-
-        Ok(total.finish())
-    }
-}
-
-#[cfg(feature = "mpi")]
-impl Dataset {
-    pub fn distributed<C>(mut self, world: &C) -> Self
-    where
-        C: mpi::topology::Communicator,
-    {
-        self.plan.distribution = Distribution::from_world(world);
-        self
-    }
-
-    pub fn partitioning(mut self, partitioning: Partitioning) -> Self {
-        self.plan.distribution = match self.plan.distribution {
-            Distribution::Serial => Distribution::Serial,
-            Distribution::Mpi {
-                rank,
-                nranks,
-                partitioning: _,
-            } => Distribution::Mpi {
-                rank,
-                nranks,
-                partitioning,
-            },
-        };
-
-        self
-    }
-}
-
-fn eval_event<'a>(
-    batch: &'a EventBatch,
-    ops: &[DatasetOp],
-    base: u64,
-    row: usize,
-) -> Option<Event<'a>> {
-    let event_id = base + row as u64;
-    let mut weight = batch.weights_at(row);
-
-    for op in ops {
-        match op {
-            DatasetOp::Filter(pred) => {
-                let ev = Event { batch, row, weight };
-                if !pred(ev) {
-                    return None;
-                }
-            }
-            DatasetOp::Subsample { fraction, seed } => {
-                if uniform_hash_01(*seed, event_id) >= *fraction {
-                    return None;
-                }
-            }
-            DatasetOp::Bootstrap { seed } => {
-                weight *= poisson1_from_hash(*seed, event_id) as f64;
-            }
-        }
-    }
-
-    Some(Event { batch, row, weight })
 }
 
 fn eval_batch<F>(batch: &EventBatch, ops: &[DatasetOp], base: u64, mut f: F) -> LadduDataResult<()>
@@ -1041,135 +648,5 @@ mod tests {
 
         assert_eq!(scalar_values(&captured), vec![2.0, 3.0, 4.0]);
         assert_eq!(captured.weights_column().unwrap(), &[12.0, 13.0, 14.0]);
-    }
-
-    #[cfg(feature = "parallel")]
-    #[test]
-    fn parallel_dataset_methods_match_serial_methods_and_custom_pool() {
-        let dataset = Dataset::from_batches(vec![weighted_batch(0, 64), weighted_batch(64, 64)])
-            .unwrap()
-            .filter(|ev| ev.scalar(0) % 3.0 != 1.0)
-            .bootstrap(12345);
-
-        let serial_values = dataset.map_events(|ev| ev.scalar(0)).unwrap();
-        let parallel_values = dataset.par_map_events(|ev| ev.scalar(0)).unwrap();
-        assert_eq!(parallel_values, serial_values);
-
-        let serial_weighted = dataset.weighted_sum(|ev| ev.scalar(0).sin()).unwrap();
-        let parallel_weighted = dataset.par_weighted_sum(|ev| ev.scalar(0).sin()).unwrap();
-        assert!((parallel_weighted - serial_weighted).abs() < 1.0e-10);
-
-        let serial_complex = dataset
-            .weighted_complex_sum(|ev| Complex64::new(ev.scalar(0), ev.scalar(0).cos()))
-            .unwrap();
-
-        let parallel_complex = dataset
-            .par_weighted_complex_sum(|ev| Complex64::new(ev.scalar(0), ev.scalar(0).cos()))
-            .unwrap();
-
-        assert!((parallel_complex.re - serial_complex.re).abs() < 1.0e-10);
-        assert!((parallel_complex.im - serial_complex.im).abs() < 1.0e-10);
-
-        let pool = rayon::ThreadPoolBuilder::new()
-            .num_threads(2)
-            .build()
-            .unwrap();
-
-        let pooled = dataset
-            .par_weighted_sum_in(&pool, |ev| ev.scalar(0).sqrt())
-            .unwrap();
-
-        let serial = dataset.weighted_sum(|ev| ev.scalar(0).sqrt()).unwrap();
-
-        assert!((pooled - serial).abs() < 1.0e-10);
-    }
-
-    #[cfg(feature = "mpi")]
-    use mpi::traits::*;
-    #[cfg(feature = "mpi")]
-    use mpi_test::mpi_test;
-
-    #[cfg(feature = "mpi")]
-    #[mpi_test(np = [2, 3, 4])]
-    fn mpi_dataset_distributed_rows_partitioning_matches_global_row_modulo_rule() {
-        let universe = mpi::initialize().unwrap();
-        let world = universe.world();
-
-        let rank = world.rank() as usize;
-        let nranks = world.size() as usize;
-
-        let dataset = Dataset::from_batches(vec![weighted_batch(0, 5), weighted_batch(5, 7)])
-            .unwrap()
-            .distributed(&world)
-            .partitioning(Partitioning::Rows);
-
-        assert_eq!(dataset.read_plan().rank(), rank);
-        assert_eq!(dataset.read_plan().nranks(), nranks);
-        assert!(dataset.read_plan().is_distributed());
-
-        let observed = dataset.map_events(|ev| ev.scalar(0) as usize).unwrap();
-
-        let expected = (0..12)
-            .filter(|row| row % nranks == rank)
-            .collect::<Vec<_>>();
-
-        assert_eq!(observed, expected);
-    }
-
-    #[cfg(feature = "mpi")]
-    #[mpi_test(np = [2, 3, 4])]
-    fn mpi_dataset_distributed_contiguous_partitioning_covers_rank_range() {
-        let universe = mpi::initialize().unwrap();
-        let world = universe.world();
-
-        let rank = world.rank() as usize;
-        let nranks = world.size() as usize;
-
-        let n = 17usize;
-
-        let dataset = Dataset::from_batch(weighted_batch(0, n))
-            .distributed(&world)
-            .partitioning(Partitioning::Contiguous);
-
-        let observed = dataset.map_events(|ev| ev.scalar(0) as usize).unwrap();
-
-        let start = n * rank / nranks;
-        let end = n * (rank + 1) / nranks;
-        let expected = (start..end).collect::<Vec<_>>();
-
-        assert_eq!(observed, expected);
-    }
-
-    #[cfg(feature = "mpi")]
-    #[mpi_test(np = [2, 3])]
-    fn mpi_dataset_distributed_file_group_partitioning_reads_whole_memory_fragments() {
-        let universe = mpi::initialize().unwrap();
-        let world = universe.world();
-
-        let rank = world.rank() as usize;
-        let nranks = world.size() as usize;
-
-        let dataset = Dataset::from_batches(vec![
-            weighted_batch(0, 2),
-            weighted_batch(2, 3),
-            weighted_batch(5, 4),
-            weighted_batch(9, 1),
-        ])
-        .unwrap()
-        .distributed(&world)
-        .partitioning(Partitioning::FileGroups);
-
-        let observed = dataset.map_events(|ev| ev.scalar(0) as usize).unwrap();
-
-        let fragment_values = [vec![0, 1], vec![2, 3, 4], vec![5, 6, 7, 8], vec![9]];
-
-        let expected = fragment_values
-            .into_iter()
-            .enumerate()
-            .filter(|(fragment_index, _)| fragment_index % nranks == rank)
-            .flat_map(|(_, values)| values)
-            .collect::<Vec<_>>();
-
-        assert_eq!(observed, expected);
     }
 }

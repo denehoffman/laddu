@@ -6,9 +6,11 @@ use std::{
 
 use laddu_autodiff::{AutodiffMode, AutodiffPlan, AutodiffResult};
 use laddu_compile::{CachePlan, CompiledModel};
+#[cfg(test)]
+use laddu_data::data::accurate::AccurateComplex64;
 use laddu_data::{
-    data::accurate::{AccurateComplex64, AccurateF64},
-    data::{Dataset, EventBatch},
+    data::accurate::AccurateF64,
+    data::{CacheStorage, Dataset, EventBatch},
     schema::Schema,
 };
 use laddu_expr::{
@@ -24,8 +26,11 @@ use num::complex::Complex64;
 use rayon::prelude::*;
 use thiserror::Error;
 
+mod execution;
 #[cfg(feature = "jit")]
 mod jit;
+
+pub use execution::{CpuExecution, CpuExecutionError, CpuExecutionOptions, ThreadPolicy};
 
 #[cfg(feature = "jit")]
 use jit::{JitCacheView, JitScalarKernel};
@@ -60,6 +65,8 @@ pub enum RuntimeError {
     Parameter(String),
     #[error("JIT kernel execution failed with status {0}")]
     JitExecution(i32),
+    #[error("an MPI peer failed during distributed evaluation")]
+    DistributedPeerFailure,
 }
 
 pub trait EventLookup {
@@ -1756,10 +1763,18 @@ impl CpuPlan {
     }
 
     pub fn cache_dataset(&self, dataset: &Dataset) -> RuntimeResult<CpuCachedDataset> {
+        self.cache_dataset_with_plan(dataset, dataset.read_plan())
+    }
+
+    fn cache_dataset_with_plan(
+        &self,
+        dataset: &Dataset,
+        read_plan: laddu_data::io::ReadPlan,
+    ) -> RuntimeResult<CpuCachedDataset> {
         let mut batches = Vec::new();
         let mut sum_weights = 0.0;
         for batch in dataset
-            .batches()
+            .batches_with_plan(read_plan)
             .map_err(|err| RuntimeError::Data(err.to_string()))?
         {
             let batch = batch.map_err(|err| RuntimeError::Data(err.to_string()))?;
@@ -1773,6 +1788,176 @@ impl CpuPlan {
             batches,
             sum_weights,
         })
+    }
+
+    pub fn prepare_dataset(
+        &self,
+        execution: &CpuExecution,
+        dataset: &Dataset,
+    ) -> RuntimeResult<CpuPreparedDataset> {
+        let read_plan = execution.read_plan(dataset.read_plan());
+        match dataset.cache_storage() {
+            CacheStorage::Resident => {
+                let local = self.cache_dataset_with_plan(dataset, read_plan);
+                if !execution.all_succeeded(local.is_ok()) {
+                    return local.and(Err(RuntimeError::DistributedPeerFailure));
+                }
+                let dataset = local?;
+                let stats = PreparedDatasetStats {
+                    local_events: dataset.len(),
+                    global_events: execution.sum_usize(dataset.len()),
+                    local_batches: dataset.batches().len(),
+                    sum_weights: execution.sum_f64(dataset.sum_weights()),
+                    resident_bytes: dataset.resident_bytes(),
+                    storage: CacheStorage::Resident,
+                };
+                Ok(CpuPreparedDataset::Resident { dataset, stats })
+            }
+            CacheStorage::Streaming => {
+                let local = (|| {
+                    let mut local_events = 0;
+                    let mut local_batches = 0;
+                    let mut sum_weights = AccurateF64::zero();
+                    for batch in dataset
+                        .batches_with_plan(read_plan)
+                        .map_err(|error| RuntimeError::Data(error.to_string()))?
+                    {
+                        let batch = batch.map_err(|error| RuntimeError::Data(error.to_string()))?;
+                        local_events += batch.len();
+                        local_batches += 1;
+                        for row in 0..batch.len() {
+                            sum_weights.push(batch.weights_at(row));
+                        }
+                    }
+                    Ok::<_, RuntimeError>((local_events, local_batches, sum_weights.finish()))
+                })();
+                if !execution.all_succeeded(local.is_ok()) {
+                    return local.and(Err(RuntimeError::DistributedPeerFailure));
+                }
+                let (local_events, local_batches, sum_weights) = local?;
+                Ok(CpuPreparedDataset::Streaming {
+                    dataset: dataset.clone(),
+                    stats: PreparedDatasetStats {
+                        local_events,
+                        global_events: execution.sum_usize(local_events),
+                        local_batches,
+                        sum_weights: execution.sum_f64(sum_weights),
+                        resident_bytes: 0,
+                        storage: CacheStorage::Streaming,
+                    },
+                    read_plan,
+                })
+            }
+        }
+    }
+
+    pub fn try_reduce_weighted<E, F>(
+        &self,
+        execution: &CpuExecution,
+        params: &ParamValues,
+        dataset: &CpuPreparedDataset,
+        transform: F,
+    ) -> Result<f64, E>
+    where
+        E: From<RuntimeError> + Send,
+        F: Fn(Complex64) -> Result<f64, E> + Send + Sync,
+    {
+        let local = if let Some(dataset) = dataset.resident() {
+            self.try_reduce_weighted_cached(execution, params, dataset, transform)
+        } else {
+            let CpuPreparedDataset::Streaming {
+                dataset, read_plan, ..
+            } = dataset
+            else {
+                unreachable!()
+            };
+            (|| {
+                let mut total = AccurateF64::zero();
+                for batch in dataset
+                    .batches_with_plan(*read_plan)
+                    .map_err(|error| E::from(RuntimeError::Data(error.to_string())))?
+                {
+                    let batch =
+                        batch.map_err(|error| E::from(RuntimeError::Data(error.to_string())))?;
+                    let cached = CpuCachedDataset {
+                        sum_weights: (0..batch.len()).map(|row| batch.weights_at(row)).sum(),
+                        batches: vec![CpuCachedBatch {
+                            cache: self.cache_event_batch(&batch)?,
+                        }],
+                    };
+                    total.push(
+                        self.try_reduce_weighted_cached(execution, params, &cached, &transform)?,
+                    );
+                }
+                Ok::<_, E>(total.finish())
+            })()
+        };
+        if !execution.all_succeeded(local.is_ok()) {
+            return local.and(Err(E::from(RuntimeError::DistributedPeerFailure)));
+        }
+        Ok(execution.sum_f64(local?))
+    }
+
+    pub fn try_reduce_weighted_with_gradient<E, F>(
+        &self,
+        execution: &CpuExecution,
+        params: &ParamValues,
+        dataset: &CpuPreparedDataset,
+        transform: F,
+    ) -> Result<(f64, Vec<f64>), E>
+    where
+        E: From<RuntimeError> + Send,
+        F: Fn(Complex64) -> Result<(f64, f64), E> + Send + Sync,
+    {
+        let local = if let Some(dataset) = dataset.resident() {
+            self.try_reduce_weighted_with_gradient_cached(execution, params, dataset, transform)
+        } else {
+            let CpuPreparedDataset::Streaming {
+                dataset, read_plan, ..
+            } = dataset
+            else {
+                unreachable!()
+            };
+            (|| {
+                let mut value = AccurateF64::zero();
+                let mut gradient = (0..self.free_parameter_count())
+                    .map(|_| AccurateF64::zero())
+                    .collect::<Vec<_>>();
+                for batch in dataset
+                    .batches_with_plan(*read_plan)
+                    .map_err(|error| E::from(RuntimeError::Data(error.to_string())))?
+                {
+                    let batch =
+                        batch.map_err(|error| E::from(RuntimeError::Data(error.to_string())))?;
+                    let cached = CpuCachedDataset {
+                        sum_weights: (0..batch.len()).map(|row| batch.weights_at(row)).sum(),
+                        batches: vec![CpuCachedBatch {
+                            cache: self.cache_event_batch(&batch)?,
+                        }],
+                    };
+                    let (partial_value, partial_gradient) = self
+                        .try_reduce_weighted_with_gradient_cached(
+                            execution, params, &cached, &transform,
+                        )?;
+                    value.push(partial_value);
+                    for (sum, partial) in gradient.iter_mut().zip(partial_gradient) {
+                        sum.push(partial);
+                    }
+                }
+                Ok::<_, E>((
+                    value.finish(),
+                    gradient.into_iter().map(AccurateF64::finish).collect(),
+                ))
+            })()
+        };
+        if !execution.all_succeeded(local.is_ok()) {
+            return local.and(Err(E::from(RuntimeError::DistributedPeerFailure)));
+        }
+        let (local_value, local_gradient) = local?;
+        Ok((
+            execution.sum_f64(local_value),
+            execution.sum_slice(&local_gradient),
+        ))
     }
 
     pub fn evaluate_cached_dataset(
@@ -1922,7 +2107,45 @@ impl CpuPlan {
         self.try_weighted_complex_sum_cached(params, dataset, |value| Ok(f(value)))
     }
 
-    pub fn par_try_weighted_sum_cached<E, F>(
+    pub fn try_reduce_weighted_cached<E, F>(
+        &self,
+        execution: &CpuExecution,
+        params: &ParamValues,
+        dataset: &CpuCachedDataset,
+        transform: F,
+    ) -> Result<f64, E>
+    where
+        E: From<RuntimeError> + Send,
+        F: Fn(Complex64) -> Result<f64, E> + Send + Sync,
+    {
+        if execution.is_parallel() {
+            execution.install(|| self.par_try_weighted_sum_cached(params, dataset, transform))
+        } else {
+            self.try_weighted_sum_cached(params, dataset, transform)
+        }
+    }
+
+    pub fn try_reduce_weighted_with_gradient_cached<E, F>(
+        &self,
+        execution: &CpuExecution,
+        params: &ParamValues,
+        dataset: &CpuCachedDataset,
+        transform: F,
+    ) -> Result<(f64, Vec<f64>), E>
+    where
+        E: From<RuntimeError> + Send,
+        F: Fn(Complex64) -> Result<(f64, f64), E> + Send + Sync,
+    {
+        if execution.is_parallel() {
+            execution.install(|| {
+                self.par_try_weighted_real_sum_with_gradient_cached(params, dataset, transform)
+            })
+        } else {
+            self.try_weighted_real_sum_with_gradient_cached(params, dataset, transform)
+        }
+    }
+
+    pub(crate) fn par_try_weighted_sum_cached<E, F>(
         &self,
         params: &ParamValues,
         dataset: &CpuCachedDataset,
@@ -1989,7 +2212,8 @@ impl CpuPlan {
         Ok(total.finish())
     }
 
-    pub fn par_weighted_sum_cached<F>(
+    #[cfg(test)]
+    pub(crate) fn par_weighted_sum_cached<F>(
         &self,
         params: &ParamValues,
         dataset: &CpuCachedDataset,
@@ -2001,7 +2225,7 @@ impl CpuPlan {
         self.par_try_weighted_sum_cached(params, dataset, |value| Ok(f(value)))
     }
 
-    pub fn par_try_weighted_real_sum_with_gradient_cached<E, F>(
+    pub(crate) fn par_try_weighted_real_sum_with_gradient_cached<E, F>(
         &self,
         params: &ParamValues,
         dataset: &CpuCachedDataset,
@@ -2046,7 +2270,8 @@ impl CpuPlan {
         Ok(total.finish())
     }
 
-    pub fn par_try_weighted_complex_sum_cached<E, F>(
+    #[cfg(test)]
+    pub(crate) fn par_try_weighted_complex_sum_cached<E, F>(
         &self,
         params: &ParamValues,
         dataset: &CpuCachedDataset,
@@ -2113,7 +2338,8 @@ impl CpuPlan {
         Ok(total.finish())
     }
 
-    pub fn par_weighted_complex_sum_cached<F>(
+    #[cfg(test)]
+    pub(crate) fn par_weighted_complex_sum_cached<F>(
         &self,
         params: &ParamValues,
         dataset: &CpuCachedDataset,
@@ -3600,6 +3826,84 @@ impl CpuCachedBatch {
 pub struct CpuCachedDataset {
     batches: Vec<CpuCachedBatch>,
     sum_weights: f64,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq)]
+/// Fixed statistics collected when a dataset is prepared for repeated evaluation.
+pub struct PreparedDatasetStats {
+    local_events: usize,
+    global_events: usize,
+    local_batches: usize,
+    sum_weights: f64,
+    resident_bytes: usize,
+    storage: CacheStorage,
+}
+
+impl PreparedDatasetStats {
+    pub fn local_events(&self) -> usize {
+        self.local_events
+    }
+
+    pub fn global_events(&self) -> usize {
+        self.global_events
+    }
+
+    pub fn local_batches(&self) -> usize {
+        self.local_batches
+    }
+
+    pub fn sum_weights(&self) -> f64 {
+        self.sum_weights
+    }
+
+    pub fn resident_bytes(&self) -> usize {
+        self.resident_bytes
+    }
+
+    pub fn storage(&self) -> CacheStorage {
+        self.storage
+    }
+}
+
+#[derive(Clone)]
+/// A dataset prepared according to its [`CacheStorage`] policy.
+///
+/// Resident datasets own all event-dependent cache values. Streaming datasets retain the source
+/// and read plan and rebuild transient batch caches on every reduction.
+pub enum CpuPreparedDataset {
+    Resident {
+        dataset: CpuCachedDataset,
+        stats: PreparedDatasetStats,
+    },
+    Streaming {
+        dataset: Dataset,
+        read_plan: laddu_data::io::ReadPlan,
+        stats: PreparedDatasetStats,
+    },
+}
+
+impl std::fmt::Debug for CpuPreparedDataset {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("CpuPreparedDataset")
+            .field("stats", self.stats())
+            .finish_non_exhaustive()
+    }
+}
+
+impl CpuPreparedDataset {
+    pub fn stats(&self) -> &PreparedDatasetStats {
+        match self {
+            Self::Resident { stats, .. } | Self::Streaming { stats, .. } => stats,
+        }
+    }
+
+    fn resident(&self) -> Option<&CpuCachedDataset> {
+        match self {
+            Self::Resident { dataset, .. } => Some(dataset),
+            Self::Streaming { .. } => None,
+        }
+    }
 }
 
 impl CpuCachedDataset {

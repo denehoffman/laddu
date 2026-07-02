@@ -6,7 +6,10 @@ use laddu::{
     },
     compile::CompiledModel,
     complex,
-    data::{data::Dataset, io::parquet::ParquetSource},
+    data::{
+        data::{Dataset, EventBatch},
+        io::parquet::ParquetSource,
+    },
     event_scalar,
     expr::{Expr, cis},
     likelihood::{CpuLikelihood, CpuLikelihoodTerm, CpuNllTerm},
@@ -17,8 +20,8 @@ use laddu::{
         quantum::Reflectivity,
         vectors::{Vec3, Vec4},
     },
+    runtime::{CpuExecution, CpuExecutionOptions, ThreadPolicy},
 };
-use rayon::ThreadPoolBuilder;
 
 fn reaction_variables() -> (Expr, Expr, Expr, Expr) {
     let mut channel = Channel::new("gamma p -> Ks Ks p");
@@ -91,9 +94,35 @@ fn zlm(
     }
 }
 
-fn kmatrix_likelihood() -> CpuLikelihood {
+fn benchmark_dataset(batches: usize) -> Dataset {
     const DATASET: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/benches/bench.parquet");
     let dataset = Dataset::new(ParquetSource::open(DATASET).unwrap());
+    let materialized = dataset
+        .batches()
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    let batch = EventBatch::concat(&materialized).unwrap();
+
+    match batches {
+        1 => Dataset::from_batch(batch),
+        2 => {
+            let midpoint = batch.len() / 2;
+            let largest = midpoint.max(batch.len() - midpoint);
+            Dataset::from_batches(vec![
+                batch.slice(0, midpoint),
+                batch.slice(midpoint, batch.len()),
+            ])
+            .unwrap()
+            .chunked(largest)
+            .unwrap()
+        }
+        _ => unreachable!("benchmark only defines one- and two-batch layouts"),
+    }
+}
+
+fn kmatrix_term(batches: usize) -> CpuNllTerm {
+    let dataset = benchmark_dataset(batches);
     let (costheta, phi, resonance_s, polarization_angle) = reaction_variables();
     let polarization = event_scalar("pol_magnitude");
     let z00p = zlm(
@@ -201,44 +230,60 @@ fn kmatrix_likelihood() -> CpuLikelihood {
     let neg_re = (&s0n * z00n.real()).norm_sqr();
     let neg_im = (&s0n * z00n.imag()).norm_sqr();
     let model = CompiledModel::from_expr(&(pos_re + pos_im + neg_re + neg_im)).unwrap();
-    let nll = CpuNllTerm::new("K-Matrix", &model, &dataset, &dataset).unwrap();
-    CpuLikelihood::new([nll.boxed()]).unwrap()
+    CpuNllTerm::new("K-Matrix", &model, &dataset, &dataset).unwrap()
 }
 
 fn kmatrix_nll_benchmark(c: &mut Criterion) {
-    let likelihood = kmatrix_likelihood();
-    let mut group = c.benchmark_group("K-Matrix NLL Performance");
-    let n_threads = (0..)
-        .map(|power| 1 << power)
-        .take_while(|threads| *threads <= num_cpus::get());
+    for batches in [1, 2] {
+        let term = kmatrix_term(batches);
+        let name = if batches == 1 {
+            "K-Matrix NLL Performance"
+        } else {
+            "K-Matrix NLL Performance (2 batches)"
+        };
+        let mut group = c.benchmark_group(name);
+        let n_threads = (0..)
+            .map(|power| 1 << power)
+            .take_while(|threads| *threads <= num_cpus::get());
 
-    for threads in n_threads {
-        let pool = ThreadPoolBuilder::new()
-            .num_threads(threads)
-            .build()
+        for threads in n_threads {
+            let execution = CpuExecution::local(CpuExecutionOptions {
+                threads: ThreadPolicy::Fixed(threads),
+                ..CpuExecutionOptions::default()
+            })
             .unwrap();
-        group.bench_with_input(
-            BenchmarkId::from_parameter(threads),
-            &threads,
-            |b, &_threads| {
-                let mut rng = fastrand::Rng::new();
-                b.iter_batched(
-                    || {
-                        let mut params = likelihood.default_params();
-                        for id in likelihood.params().free_params() {
-                            params.set_full(*id, rng.f64() * 200.0 - 100.0).unwrap();
-                        }
-                        params
-                    },
-                    |params| {
-                        pool.install(|| black_box(likelihood.nll(black_box(&params)).unwrap()))
-                    },
-                    BatchSize::SmallInput,
-                )
-            },
-        );
+            let likelihood =
+                CpuLikelihood::with_execution([term.clone().boxed()], execution).unwrap();
+            assert_eq!(
+                likelihood.terms()[0]
+                    .as_intensity()
+                    .unwrap()
+                    .data()
+                    .stats()
+                    .local_batches(),
+                batches
+            );
+            group.bench_with_input(
+                BenchmarkId::from_parameter(threads),
+                &threads,
+                |b, &_threads| {
+                    let mut rng = fastrand::Rng::new();
+                    b.iter_batched(
+                        || {
+                            let mut params = likelihood.default_params();
+                            for id in likelihood.params().free_params() {
+                                params.set_full(*id, rng.f64() * 200.0 - 100.0).unwrap();
+                            }
+                            params
+                        },
+                        |params| black_box(likelihood.nll(black_box(&params)).unwrap()),
+                        BatchSize::SmallInput,
+                    )
+                },
+            );
+        }
+        group.finish();
     }
-    group.finish();
 }
 
 criterion_group! {

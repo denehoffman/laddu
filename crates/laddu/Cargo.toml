@@ -25,6 +25,7 @@ default = ["amplitudes", "likelihood"]
 amplitudes = ["dep:laddu-amplitudes"]
 likelihood = ["dep:laddu-likelihood"]
 jit = ["laddu-runtime/jit"]
+mpi = ["laddu-data/mpi", "laddu-runtime/mpi", "laddu-likelihood?/mpi"]
 wgpu = ["dep:laddu-wgpu"]
 
 [dev-dependencies]
