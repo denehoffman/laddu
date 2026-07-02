@@ -24,6 +24,7 @@ laddu-wgpu = { path = "../laddu-wgpu", optional = true }
 default = ["amplitudes", "likelihood"]
 amplitudes = ["dep:laddu-amplitudes"]
 likelihood = ["dep:laddu-likelihood"]
+jit = ["laddu-runtime/jit"]
 wgpu = ["dep:laddu-wgpu"]
 
 [dev-dependencies]
@@ -35,3 +36,8 @@ rayon.workspace = true
 [[bench]]
 name = "kmatrix_benchmark"
 harness = false
+
+[[bench]]
+name = "jit_benchmark"
+harness = false
+required-features = ["jit"]

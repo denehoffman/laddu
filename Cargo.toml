@@ -9,7 +9,7 @@ edition = "2024"
 homepage = "https://github.com/denehoffman/laddu"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/denehoffman/laddu"
-rust-version = "1.88.0"
+rust-version = "1.94.0"
 
 [workspace.dependencies]
 accurate = "0.4.1"
@@ -20,6 +20,7 @@ bitcode = { version = "0.6.9", features = ["serde"] }
 criterion = { version = "4.4.1", package = "codspeed-criterion-compat", features = [
   "html_reports",
 ] }
+cranelift = { version = "0.133.1", features = ["jit", "module", "native"] }
 dyn-clone = "1.0.20"
 errorfunctions = "0.2.0"
 factorial = "0.4.0"

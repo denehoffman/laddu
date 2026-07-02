@@ -16,13 +16,19 @@ use laddu_expr::{
     parameters::{ParamId, ParamLayout, ParamValues},
 };
 use laddu_kernel::ir::{
-    KernelInstruction, KernelScalarKind, KernelValue, KernelValueClass, KernelValueId,
+    KernelInstruction, KernelValue, KernelValueClass, KernelValueId, KernelValueKind,
     ScalarKernelIr,
 };
 use nalgebra::{DMatrix, DVector, Dyn, LU};
 use num::complex::Complex64;
 use rayon::prelude::*;
 use thiserror::Error;
+
+#[cfg(feature = "jit")]
+mod jit;
+
+#[cfg(feature = "jit")]
+use jit::{JitCacheView, JitScalarKernel};
 
 pub type RuntimeResult<T> = Result<T, RuntimeError>;
 
@@ -52,6 +58,8 @@ pub enum RuntimeError {
     Data(String),
     #[error("parameter error: {0}")]
     Parameter(String),
+    #[error("JIT kernel execution failed with status {0}")]
+    JitExecution(i32),
 }
 
 pub trait EventLookup {
@@ -120,13 +128,22 @@ pub struct CpuPlan {
 #[derive(Clone, Debug)]
 enum ScalarExecutor {
     Interpreter(ScalarEvaluationPlan),
+    #[cfg(feature = "jit")]
+    Jit(JitScalarKernel),
 }
 
 impl ScalarExecutor {
-    fn interpreter(plan: &ScalarKernelIr, mode: CpuExecutionMode) -> Self {
+    fn prepare(plan: &ScalarKernelIr, mode: CpuExecutionMode) -> Option<Self> {
         match mode {
-            CpuExecutionMode::Auto | CpuExecutionMode::Interpreter => {
-                Self::Interpreter(ScalarEvaluationPlan::from_kernel_ir(plan))
+            CpuExecutionMode::Auto => {
+                #[cfg(feature = "jit")]
+                if let Ok(Some(kernel)) = JitScalarKernel::compile(plan) {
+                    return Some(Self::Jit(kernel));
+                }
+                ScalarEvaluationPlan::from_kernel_ir(plan).map(Self::Interpreter)
+            }
+            CpuExecutionMode::Interpreter => {
+                ScalarEvaluationPlan::from_kernel_ir(plan).map(Self::Interpreter)
             }
         }
     }
@@ -158,7 +175,7 @@ struct ScalarEvaluationPlan {
 }
 
 impl ScalarEvaluationPlan {
-    fn from_kernel_ir(ir: &ScalarKernelIr) -> Self {
+    fn from_kernel_ir(ir: &ScalarKernelIr) -> Option<Self> {
         let mut operands = Vec::with_capacity(ir.values().len());
         let mut invariant_instructions = Vec::new();
         let mut invariant_real_slots = 0;
@@ -166,45 +183,57 @@ impl ScalarEvaluationPlan {
         let mut event_instructions = Vec::new();
 
         for value in ir.values() {
+            if !matches!(value.kind, KernelValueKind::Real | KernelValueKind::Complex) {
+                return None;
+            }
             let instruction = ScalarInstruction::from_kernel(&value.instruction, &operands);
             let operand = match value.class {
                 KernelValueClass::Invariant => match value.kind {
-                    KernelScalarKind::Real => {
+                    KernelValueKind::Real => {
                         let slot = invariant_real_slots;
                         invariant_real_slots += 1;
                         invariant_instructions.push((ScalarSlot::Real(slot), instruction));
                         ScalarOperand::InvariantReal(slot)
                     }
-                    KernelScalarKind::Complex => {
+                    KernelValueKind::Complex => {
                         let slot = invariant_complex_slots;
                         invariant_complex_slots += 1;
                         invariant_instructions.push((ScalarSlot::Complex(slot), instruction));
                         ScalarOperand::InvariantComplex(slot)
                     }
+                    KernelValueKind::Vector { .. } | KernelValueKind::Matrix { .. } => {
+                        unreachable!("aggregate values were rejected before scalar lowering")
+                    }
                 },
                 KernelValueClass::Event => {
                     let slot = event_instructions.len();
                     let output = match value.kind {
-                        KernelScalarKind::Real => ScalarSlot::Real(slot),
-                        KernelScalarKind::Complex => ScalarSlot::Complex(slot),
+                        KernelValueKind::Real => ScalarSlot::Real(slot),
+                        KernelValueKind::Complex => ScalarSlot::Complex(slot),
+                        KernelValueKind::Vector { .. } | KernelValueKind::Matrix { .. } => {
+                            unreachable!("aggregate values were rejected before scalar lowering")
+                        }
                     };
                     event_instructions.push((output, instruction));
                     match value.kind {
-                        KernelScalarKind::Real => ScalarOperand::EventReal(slot),
-                        KernelScalarKind::Complex => ScalarOperand::EventComplex(slot),
+                        KernelValueKind::Real => ScalarOperand::EventReal(slot),
+                        KernelValueKind::Complex => ScalarOperand::EventComplex(slot),
+                        KernelValueKind::Vector { .. } | KernelValueKind::Matrix { .. } => {
+                            unreachable!("aggregate values were rejected before scalar lowering")
+                        }
                     }
                 }
             };
             operands.push(operand);
         }
 
-        Self::new(
+        Some(Self::new(
             invariant_instructions,
             event_instructions,
             operands[ir.root().index()],
             invariant_real_slots,
             invariant_complex_slots,
-        )
+        ))
     }
 
     fn new(
@@ -636,6 +665,16 @@ impl ScalarInstruction {
                 row_slot: *row_slot,
                 rhs: rhs.iter().map(|id| operand(*id)).collect(),
             },
+            KernelInstruction::Vector(_)
+            | KernelInstruction::Matrix { .. }
+            | KernelInstruction::Component { .. }
+            | KernelInstruction::MatrixElement { .. }
+            | KernelInstruction::MatMul { .. }
+            | KernelInstruction::MatVec { .. }
+            | KernelInstruction::Dot { .. }
+            | KernelInstruction::Solve { .. } => {
+                unreachable!("aggregate instruction cannot enter the scalar interpreter")
+            }
         }
     }
 
@@ -943,7 +982,7 @@ impl CpuBackend {
         );
         let scalar_executor = scalar_kernel
             .as_ref()
-            .map(|kernel| ScalarExecutor::interpreter(kernel, execution_mode));
+            .and_then(|kernel| ScalarExecutor::prepare(kernel, execution_mode));
         let mut cache_required_nodes = cache_required_nodes(model.graph(), &cache_plan);
         for plan in &solve_row_matrices {
             mark_required(model.graph(), plan.matrix, &mut cache_required_nodes);
@@ -1067,8 +1106,21 @@ impl CpuPlan {
     fn scalar_interpreter_plan(&self) -> Option<&ScalarEvaluationPlan> {
         match (&self.scalar_kernel, &self.scalar_executor) {
             (Some(_), Some(ScalarExecutor::Interpreter(plan))) => Some(plan),
-            (None, None) => None,
-            _ => unreachable!("scalar kernel IR and executor must be prepared together"),
+            #[cfg(feature = "jit")]
+            (Some(_), Some(ScalarExecutor::Jit(_))) => None,
+            (Some(_), None) | (None, None) => None,
+            (None, Some(_)) => unreachable!("executor requires kernel IR"),
+        }
+    }
+
+    #[cfg(feature = "jit")]
+    fn scalar_jit_kernel(&self) -> Option<&JitScalarKernel> {
+        match (&self.scalar_kernel, &self.scalar_executor) {
+            (Some(_), Some(ScalarExecutor::Jit(kernel))) => Some(kernel),
+            (Some(_), Some(ScalarExecutor::Interpreter(_))) | (Some(_), None) | (None, None) => {
+                None
+            }
+            (None, Some(_)) => unreachable!("executor requires kernel IR"),
         }
     }
 
@@ -1173,6 +1225,12 @@ impl CpuPlan {
         cache: &CpuBatchCache,
     ) -> RuntimeResult<Vec<Complex64>> {
         self.check_batch_cache(cache)?;
+        #[cfg(feature = "jit")]
+        if let Some(kernel) = self.scalar_jit_kernel() {
+            let mut output = Vec::with_capacity(cache.len());
+            kernel.evaluate(params, cache, 0, cache.len(), &mut output)?;
+            return Ok(output);
+        }
         let invariant = self.scalar_invariant_values(params)?;
         let mut out = Vec::with_capacity(cache.len());
         let mut workspace = ScalarEventWorkspace::default();
@@ -1222,6 +1280,12 @@ impl CpuPlan {
         invariant: Option<&ScalarInvariantValues>,
         workspace: &mut ScalarEventWorkspace,
     ) -> RuntimeResult<Complex64> {
+        #[cfg(feature = "jit")]
+        if let Some(kernel) = self.scalar_jit_kernel() {
+            let mut output = Vec::with_capacity(1);
+            kernel.evaluate(params, cache, row, row + 1, &mut output)?;
+            return Ok(output[0]);
+        }
         if let (Some(plan), Some(invariant)) = (self.scalar_interpreter_plan(), invariant) {
             return self.evaluate_scalar_cache_row(cache, row, plan, invariant, workspace);
         }
@@ -1313,7 +1377,19 @@ impl CpuPlan {
         invariant: Option<&ScalarInvariantValues>,
         workspace: &mut ScalarEventWorkspace,
         output: &mut Vec<Complex64>,
+        #[cfg(feature = "jit")] jit_cache: Option<&JitCacheView>,
     ) -> RuntimeResult<()> {
+        #[cfg(feature = "jit")]
+        if let Some(kernel) = self.scalar_jit_kernel() {
+            let owned;
+            let jit_cache = if let Some(jit_cache) = jit_cache {
+                jit_cache
+            } else {
+                owned = JitScalarKernel::prepare_cache(cache);
+                &owned
+            };
+            return kernel.evaluate_prepared(params, jit_cache, start, end, output);
+        }
         if let (Some(plan), Some(invariant)) = (self.scalar_interpreter_plan(), invariant) {
             return self.evaluate_scalar_cache_block(
                 cache, start, end, plan, invariant, workspace, output,
@@ -1860,6 +1936,10 @@ impl CpuPlan {
         let invariant = self.scalar_invariant_values(params)?;
         for batch in dataset.batches() {
             self.check_batch_cache(batch.cache())?;
+            #[cfg(feature = "jit")]
+            let jit_cache = self
+                .scalar_jit_kernel()
+                .map(|_| JitScalarKernel::prepare_cache(batch.cache()));
             let n_blocks = batch.len().div_ceil(SCALAR_BLOCK_SIZE);
             let partial = (0..n_blocks)
                 .into_par_iter()
@@ -1882,6 +1962,8 @@ impl CpuPlan {
                             invariant.as_ref(),
                             &mut workspace,
                             &mut output,
+                            #[cfg(feature = "jit")]
+                            jit_cache.as_ref(),
                         )?;
                         for (lane, value) in output.iter().copied().enumerate() {
                             acc.push(batch.weights()[start + lane] * f(value)?);
@@ -1978,6 +2060,10 @@ impl CpuPlan {
         let invariant = self.scalar_invariant_values(params)?;
         for batch in dataset.batches() {
             self.check_batch_cache(batch.cache())?;
+            #[cfg(feature = "jit")]
+            let jit_cache = self
+                .scalar_jit_kernel()
+                .map(|_| JitScalarKernel::prepare_cache(batch.cache()));
             let n_blocks = batch.len().div_ceil(SCALAR_BLOCK_SIZE);
             let partial = (0..n_blocks)
                 .into_par_iter()
@@ -2000,6 +2086,8 @@ impl CpuPlan {
                             invariant.as_ref(),
                             &mut workspace,
                             &mut output,
+                            #[cfg(feature = "jit")]
+                            jit_cache.as_ref(),
                         )?;
                         for (lane, value) in output.iter().copied().enumerate() {
                             acc.push(f(value)? * batch.weights()[start + lane]);
@@ -2042,6 +2130,19 @@ impl CpuPlan {
         params: &ParamValues,
         event: Option<&dyn EventLookup>,
     ) -> RuntimeResult<Complex64> {
+        #[cfg(feature = "jit")]
+        if event.is_none()
+            && let Some(kernel) = self.scalar_jit_kernel()
+        {
+            if params.as_slice().len() != self.params.len() {
+                return Err(RuntimeError::Parameter(format!(
+                    "expected {} parameter values, got {}",
+                    self.params.len(),
+                    params.as_slice().len()
+                )));
+            }
+            return kernel.evaluate_invariant(params);
+        }
         let values = self.evaluate_values(params, event)?;
         scalar_at(&values, self.graph.root().index())
     }
@@ -3632,6 +3733,24 @@ enum CachedSlot {
 }
 
 impl CachedSlot {
+    #[cfg(feature = "jit")]
+    fn values(&self) -> &[Complex64] {
+        match self {
+            Self::Scalar(values) | Self::Vector { values, .. } | Self::Matrix { values, .. } => {
+                values
+            }
+        }
+    }
+
+    #[cfg(feature = "jit")]
+    fn width(&self) -> usize {
+        match self {
+            Self::Scalar(_) => 1,
+            Self::Vector { len, .. } => *len,
+            Self::Matrix { rows, cols, .. } => rows * cols,
+        }
+    }
+
     fn new(kind: ValueKind) -> Self {
         match kind {
             ValueKind::Real | ValueKind::Complex => Self::Scalar(Vec::new()),
@@ -3979,10 +4098,7 @@ impl CpuBackend {
             let index = id.index();
             let value_id = |id: ExprId| value_ids[id.index()];
             let instruction = if let Some(cache_slot) = cache_slots[index] {
-                match model.node_facts(*id)?.value_kind {
-                    ValueKind::Real | ValueKind::Complex => KernelInstruction::Cached(cache_slot),
-                    ValueKind::Vector { .. } | ValueKind::Matrix { .. } => return None,
-                }
+                KernelInstruction::Cached(cache_slot)
             } else {
                 match model.graph().node(*id)? {
                     ExprNode::RealConst(value) => KernelInstruction::RealConstant(*value),
@@ -4015,33 +4131,79 @@ impl CpuBackend {
                         re: value_id(*re)?,
                         im: value_id(*im)?,
                     },
-                    ExprNode::Component { .. } => {
-                        let solve = solve_components[index]?;
-                        let elements = solve_rhs_elements[solve.rhs.index()].as_ref()?;
-                        KernelInstruction::SolveRow {
-                            row_slot: solve.row_slot,
-                            rhs: elements
-                                .iter()
-                                .map(|element| value_id(*element))
-                                .collect::<Option<_>>()?,
+                    ExprNode::Vector { elements } => KernelInstruction::Vector(
+                        elements
+                            .iter()
+                            .map(|element| value_id(*element))
+                            .collect::<Option<_>>()?,
+                    ),
+                    ExprNode::Matrix {
+                        rows,
+                        cols,
+                        elements,
+                    } => KernelInstruction::Matrix {
+                        rows: *rows,
+                        cols: *cols,
+                        elements: elements
+                            .iter()
+                            .map(|element| value_id(*element))
+                            .collect::<Option<_>>()?,
+                    },
+                    ExprNode::Component {
+                        input,
+                        index: component,
+                    } => {
+                        if let Some(solve) = solve_components[index]
+                            && let Some(elements) = solve_rhs_elements[solve.rhs.index()].as_ref()
+                        {
+                            KernelInstruction::SolveRow {
+                                row_slot: solve.row_slot,
+                                rhs: elements
+                                    .iter()
+                                    .map(|element| value_id(*element))
+                                    .collect::<Option<_>>()?,
+                            }
+                        } else {
+                            KernelInstruction::Component {
+                                input: value_id(*input)?,
+                                index: *component,
+                            }
                         }
                     }
-                    ExprNode::EventScalar(_)
-                    | ExprNode::EventP4Component { .. }
-                    | ExprNode::Vector { .. }
-                    | ExprNode::Matrix { .. }
-                    | ExprNode::MatrixElement { .. }
-                    | ExprNode::MatMul { .. }
-                    | ExprNode::MatVec { .. }
-                    | ExprNode::Dot { .. }
-                    | ExprNode::Solve { .. } => return None,
+                    ExprNode::MatrixElement { input, row, col } => {
+                        KernelInstruction::MatrixElement {
+                            input: value_id(*input)?,
+                            row: *row,
+                            col: *col,
+                        }
+                    }
+                    ExprNode::MatMul { lhs, rhs } => KernelInstruction::MatMul {
+                        lhs: value_id(*lhs)?,
+                        rhs: value_id(*rhs)?,
+                    },
+                    ExprNode::MatVec { matrix, vector } => KernelInstruction::MatVec {
+                        matrix: value_id(*matrix)?,
+                        vector: value_id(*vector)?,
+                    },
+                    ExprNode::Dot { lhs, rhs } => KernelInstruction::Dot {
+                        lhs: value_id(*lhs)?,
+                        rhs: value_id(*rhs)?,
+                    },
+                    ExprNode::Solve { matrix, rhs } => KernelInstruction::Solve {
+                        matrix: value_id(*matrix)?,
+                        rhs: value_id(*rhs)?,
+                    },
+                    // Event leaves are always materialized by the cache schedule before
+                    // final-evaluation IR is lowered.
+                    ExprNode::EventScalar(_) | ExprNode::EventP4Component { .. } => return None,
                 }
             };
             let facts = model.node_facts(*id)?;
             let kind = match facts.value_kind {
-                ValueKind::Real => KernelScalarKind::Real,
-                ValueKind::Complex => KernelScalarKind::Complex,
-                ValueKind::Vector { .. } | ValueKind::Matrix { .. } => return None,
+                ValueKind::Real => KernelValueKind::Real,
+                ValueKind::Complex => KernelValueKind::Complex,
+                ValueKind::Vector { len } => KernelValueKind::Vector { len },
+                ValueKind::Matrix { rows, cols } => KernelValueKind::Matrix { rows, cols },
             };
             let class = if facts.dependency.depends_on_event {
                 KernelValueClass::Event
@@ -4330,7 +4492,6 @@ mod tests {
         let plan = CpuBackend.prepare(&model);
         let kernel = plan.scalar_kernel.as_ref().unwrap();
 
-        assert!(plan.scalar_interpreter_plan().is_some());
         assert!(
             kernel
                 .values()
@@ -4344,7 +4505,7 @@ mod tests {
                 .any(|value| value.class == KernelValueClass::Event)
         );
         let root = &kernel.values()[kernel.root().index()];
-        assert_eq!(root.kind, KernelScalarKind::Complex);
+        assert_eq!(root.kind, KernelValueKind::Complex);
         assert_eq!(root.class, KernelValueClass::Event);
         assert!(matches!(root.instruction, KernelInstruction::Mul(_)));
     }
@@ -4366,6 +4527,47 @@ mod tests {
             automatic.evaluate(&params).unwrap(),
             interpreted.evaluate(&params).unwrap()
         );
+
+        let empty_model = CompiledModel::from_expr(&laddu_expr::Expr::from(1.0)).unwrap();
+        let wrong_params = empty_model.params().default_values();
+        assert!(matches!(
+            automatic.evaluate(&wrong_params),
+            Err(RuntimeError::Parameter(_))
+        ));
+    }
+
+    #[cfg(feature = "jit")]
+    #[test]
+    fn auto_jit_matches_interpreter_for_supported_real_arithmetic() {
+        let x = laddu_expr::Expr::from(parameter!("x", initial: 2.0));
+        let y = laddu_expr::Expr::from(parameter!("y", initial: -0.5));
+        let expr = (x * 3.0 + y) / 2.0;
+        let model = CompiledModel::from_expr(&expr).unwrap();
+        let params = Arc::new(model.params().clone()).default_values();
+        let automatic = CpuBackend.prepare(&model);
+        let interpreted =
+            CpuBackend.prepare_with_execution_mode(&model, CpuExecutionMode::Interpreter);
+
+        assert!(matches!(
+            automatic.scalar_executor,
+            Some(ScalarExecutor::Jit(_))
+        ));
+        assert_eq!(
+            automatic.evaluate(&params).unwrap(),
+            interpreted.evaluate(&params).unwrap()
+        );
+    }
+
+    #[cfg(feature = "jit")]
+    #[test]
+    fn auto_jit_supports_complex_transcendentals() {
+        let expr = laddu_expr::Expr::from(parameter!("x", initial: 2.0)).exp();
+        let model = CompiledModel::from_expr(&expr).unwrap();
+        let plan = CpuBackend.prepare(&model);
+
+        assert!(matches!(plan.scalar_executor, Some(ScalarExecutor::Jit(_))));
+        let params = Arc::new(model.params().clone()).default_values();
+        assert_eq!(plan.evaluate(&params).unwrap(), Complex64::from(2.0).exp());
     }
 
     #[test]
@@ -4379,7 +4581,6 @@ mod tests {
         let model = CompiledModel::from_expr(&expr).unwrap();
         let params = Arc::new(model.params().clone()).default_values();
         let plan = CpuBackend.prepare(&model);
-        assert!(plan.scalar_interpreter_plan().is_some());
         let batch = EventBatch::from_events(
             Arc::new(Schema::new(["ks1"], std::iter::empty::<&str>(), false).unwrap()),
             [OwnedEvent::new(
@@ -4441,7 +4642,7 @@ mod tests {
         .component(0);
         let model = CompiledModel::from_expr(&expression).unwrap();
         let params = Arc::new(model.params().clone()).default_values();
-        let plan = CpuBackend.prepare(&model);
+        let plan = CpuBackend.prepare_with_execution_mode(&model, CpuExecutionMode::Interpreter);
         let scalar_plan = plan.scalar_interpreter_plan().unwrap();
         assert!(!scalar_plan.invariant_instructions.is_empty());
         assert!(!scalar_plan.event_instructions.is_empty());
@@ -4617,11 +4818,85 @@ mod tests {
         let expr = dot(&x, vector([1.0, 1.0]));
         let model = CompiledModel::from_expr(&expr).unwrap();
         let params = Arc::new(model.params().clone()).default_values();
-        let plan = CpuBackend.prepare(&model);
+        let plan = CpuBackend.prepare_with_execution_mode(&model, CpuExecutionMode::Interpreter);
 
         assert_eq!(plan.evaluate(&params).unwrap(), Complex64::from(7.0));
         assert_eq!(plan.constant_factors.len(), 1);
         assert!(plan.constant_factors[0].get().is_some());
+    }
+
+    #[cfg(feature = "jit")]
+    #[test]
+    fn auto_jit_matches_interpreter_for_complex_linear_algebra() {
+        let diagonal = laddu_expr::Expr::from(parameter!("diagonal", initial: 4.0));
+        let matrix = matrix([
+            [complex(2.0, 0.5), complex(0.25, -0.1)],
+            [complex(-0.2, 0.3), diagonal],
+        ]);
+        let rhs = vector([complex(8.0, 1.0), complex(12.0, -0.5)]);
+        let solution = solve(matrix, rhs);
+        let expression = dot(solution, vector([complex(1.0, -0.2), complex(0.5, 0.3)])).exp();
+        let model = CompiledModel::from_expr(&expression).unwrap();
+        let params = Arc::new(model.params().clone()).default_values();
+        let automatic = CpuBackend.prepare(&model);
+        let interpreted =
+            CpuBackend.prepare_with_execution_mode(&model, CpuExecutionMode::Interpreter);
+
+        assert!(matches!(
+            automatic.scalar_executor,
+            Some(ScalarExecutor::Jit(_))
+        ));
+        let actual = automatic.evaluate(&params).unwrap();
+        let expected = interpreted.evaluate(&params).unwrap();
+        assert!(
+            (actual - expected).norm() < 1.0e-12,
+            "{actual} != {expected}"
+        );
+    }
+
+    #[cfg(feature = "jit")]
+    #[test]
+    fn auto_jit_executes_event_block_with_parameter_dependent_solve() {
+        let x = event_scalar("x");
+        let coupling = laddu_expr::Expr::from(parameter!("coupling", initial: 0.2));
+        let matrix = matrix([
+            [x.clone() + 2.0, complex(coupling.clone(), 0.1)],
+            [complex(-0.3, coupling), 3.0.into()],
+        ]);
+        let expression = solve(matrix, vector([x.sin(), complex(x.cos(), 0.5)]))
+            .component(1)
+            .norm_sqr();
+        let model = CompiledModel::from_expr(&expression).unwrap();
+        let params = Arc::new(model.params().clone()).default_values();
+        let automatic = CpuBackend.prepare(&model);
+        let interpreted =
+            CpuBackend.prepare_with_execution_mode(&model, CpuExecutionMode::Interpreter);
+        let batch = EventBatch::from_events(
+            Arc::new(Schema::new(std::iter::empty::<&str>(), ["x"], false).unwrap()),
+            [
+                OwnedEvent::new(vec![], vec![0.25]),
+                OwnedEvent::new(vec![], vec![0.75]),
+                OwnedEvent::new(vec![], vec![1.25]),
+            ],
+        )
+        .unwrap();
+        let automatic_cache = automatic.cache_event_batch(&batch).unwrap();
+        let interpreted_cache = interpreted.cache_event_batch(&batch).unwrap();
+
+        assert!(matches!(
+            automatic.scalar_executor,
+            Some(ScalarExecutor::Jit(_))
+        ));
+        let actual = automatic.evaluate_cache(&params, &automatic_cache).unwrap();
+        let expected = interpreted
+            .evaluate_cache(&params, &interpreted_cache)
+            .unwrap();
+        for (actual, expected) in actual.iter().zip(expected) {
+            assert!(
+                (*actual - expected).norm() < 1.0e-12,
+                "{actual} != {expected}"
+            );
+        }
     }
 
     #[test]

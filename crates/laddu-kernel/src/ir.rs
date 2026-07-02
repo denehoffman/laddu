@@ -18,8 +18,8 @@ pub enum KernelIrError {
     #[error("kernel value {value} has kind {actual:?}, but its instruction produces {expected:?}")]
     KindMismatch {
         value: usize,
-        expected: KernelScalarKind,
-        actual: KernelScalarKind,
+        expected: KernelValueKind,
+        actual: KernelValueKind,
     },
     #[error("kernel value {value} has class {actual:?}, but its dependencies require {expected:?}")]
     ClassMismatch {
@@ -27,8 +27,12 @@ pub enum KernelIrError {
         expected: KernelValueClass,
         actual: KernelValueClass,
     },
-    #[error("kernel value {value} constructs a complex value from a non-real component")]
-    InvalidComplexComponent { value: usize },
+    #[error("kernel value {value} has invalid operands for {operation}: {message}")]
+    InvalidShape {
+        value: usize,
+        operation: &'static str,
+        message: String,
+    },
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -45,18 +49,32 @@ impl KernelValueId {
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum KernelScalarKind {
+pub enum KernelValueKind {
     Real,
     Complex,
+    Vector { len: usize },
+    Matrix { rows: usize, cols: usize },
 }
 
-impl KernelScalarKind {
-    fn combine(self, rhs: Self) -> Self {
-        if self == Self::Complex || rhs == Self::Complex {
-            Self::Complex
-        } else {
-            Self::Real
+impl KernelValueKind {
+    pub fn width(self) -> usize {
+        match self {
+            Self::Real | Self::Complex => 1,
+            Self::Vector { len } => len,
+            Self::Matrix { rows, cols } => rows * cols,
         }
+    }
+
+    fn scalar_combine(self, rhs: Self) -> Option<Self> {
+        match (self, rhs) {
+            (Self::Real, Self::Real) => Some(Self::Real),
+            (Self::Real | Self::Complex, Self::Real | Self::Complex) => Some(Self::Complex),
+            _ => None,
+        }
+    }
+
+    fn is_scalar(self) -> bool {
+        matches!(self, Self::Real | Self::Complex)
     }
 }
 
@@ -87,6 +105,37 @@ pub enum KernelInstruction {
         re: KernelValueId,
         im: KernelValueId,
     },
+    Vector(Vec<KernelValueId>),
+    Matrix {
+        rows: usize,
+        cols: usize,
+        elements: Vec<KernelValueId>,
+    },
+    Component {
+        input: KernelValueId,
+        index: usize,
+    },
+    MatrixElement {
+        input: KernelValueId,
+        row: usize,
+        col: usize,
+    },
+    MatMul {
+        lhs: KernelValueId,
+        rhs: KernelValueId,
+    },
+    MatVec {
+        matrix: KernelValueId,
+        vector: KernelValueId,
+    },
+    Dot {
+        lhs: KernelValueId,
+        rhs: KernelValueId,
+    },
+    Solve {
+        matrix: KernelValueId,
+        rhs: KernelValueId,
+    },
     SolveRow {
         row_slot: usize,
         rhs: Vec<KernelValueId>,
@@ -100,11 +149,35 @@ impl KernelInstruction {
             | Self::RealConstant(_)
             | Self::ComplexConstant(_)
             | Self::Parameter(_) => Vec::new(),
-            Self::Unary { input, .. } => vec![*input],
-            Self::Binary { lhs, rhs, .. } => vec![*lhs, *rhs],
-            Self::Add(terms) | Self::Mul(terms) => terms.clone(),
+            Self::Unary { input, .. }
+            | Self::Component { input, .. }
+            | Self::MatrixElement { input, .. } => vec![*input],
+            Self::Binary { lhs, rhs, .. } | Self::MatMul { lhs, rhs } | Self::Dot { lhs, rhs } => {
+                vec![*lhs, *rhs]
+            }
+            Self::MatVec { matrix, vector }
+            | Self::Solve {
+                matrix,
+                rhs: vector,
+            } => vec![*matrix, *vector],
+            Self::Add(values)
+            | Self::Mul(values)
+            | Self::Vector(values)
+            | Self::SolveRow { rhs: values, .. } => values.clone(),
             Self::Complex { re, im } => vec![*re, *im],
-            Self::SolveRow { rhs, .. } => rhs.clone(),
+            Self::Matrix { elements, .. } => elements.clone(),
+        }
+    }
+
+    fn shape_error(
+        value: usize,
+        operation: &'static str,
+        message: impl Into<String>,
+    ) -> KernelIrError {
+        KernelIrError::InvalidShape {
+            value,
+            operation,
+            message: message.into(),
         }
     }
 
@@ -112,56 +185,188 @@ impl KernelInstruction {
         &self,
         values: &[KernelValue],
         value: usize,
-    ) -> Result<Option<KernelScalarKind>, KernelIrError> {
+    ) -> Result<Option<KernelValueKind>, KernelIrError> {
+        let kind = |id: KernelValueId| values[id.index()].kind;
         Ok(Some(match self {
             Self::Cached(_) => return Ok(None),
-            Self::RealConstant(_) | Self::Parameter(_) => KernelScalarKind::Real,
-            Self::ComplexConstant(value) => {
-                if value.im == 0.0 {
-                    KernelScalarKind::Real
-                } else {
-                    KernelScalarKind::Complex
+            Self::RealConstant(_) | Self::Parameter(_) => KernelValueKind::Real,
+            Self::ComplexConstant(value) if value.im == 0.0 => KernelValueKind::Real,
+            Self::ComplexConstant(_) => KernelValueKind::Complex,
+            Self::Unary { op, input } => {
+                if !kind(*input).is_scalar() {
+                    return Err(Self::shape_error(
+                        value,
+                        "unary operation",
+                        "input is not scalar",
+                    ));
+                }
+                match op {
+                    UnaryOp::Real | UnaryOp::Imag | UnaryOp::NormSqr => KernelValueKind::Real,
+                    _ => kind(*input),
                 }
             }
-            Self::SolveRow { .. } => KernelScalarKind::Complex,
-            Self::Unary { op, input } => match op {
-                UnaryOp::Real | UnaryOp::Imag | UnaryOp::NormSqr => KernelScalarKind::Real,
-                UnaryOp::Neg
-                | UnaryOp::Conj
-                | UnaryOp::Sqrt
-                | UnaryOp::Exp
-                | UnaryOp::Sin
-                | UnaryOp::Cos
-                | UnaryOp::Log
-                | UnaryOp::PowI(_) => values[input.index()].kind,
-            },
-            Self::Binary { op, lhs, rhs } => match op {
-                BinaryOp::Atan2 => KernelScalarKind::Real,
-                BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div => {
-                    values[lhs.index()].kind.combine(values[rhs.index()].kind)
+            Self::Binary { op, lhs, rhs } => {
+                if *op == BinaryOp::Atan2 {
+                    if kind(*lhs) != KernelValueKind::Real || kind(*rhs) != KernelValueKind::Real {
+                        return Err(Self::shape_error(
+                            value,
+                            "atan2",
+                            "both inputs must be real",
+                        ));
+                    }
+                    KernelValueKind::Real
+                } else {
+                    kind(*lhs).scalar_combine(kind(*rhs)).ok_or_else(|| {
+                        Self::shape_error(value, "binary operation", "both inputs must be scalar")
+                    })?
                 }
-            },
+            }
             Self::Add(terms) | Self::Mul(terms) => {
+                let operation = if matches!(self, Self::Add(_)) {
+                    "addition"
+                } else {
+                    "multiplication"
+                };
                 let mut terms = terms.iter();
-                let first = terms.next().ok_or(KernelIrError::EmptyOperands {
-                    value,
-                    operation: match self {
-                        Self::Add(_) => "addition",
-                        Self::Mul(_) => "multiplication",
-                        _ => unreachable!(),
-                    },
-                })?;
-                terms.fold(values[first.index()].kind, |kind, term| {
-                    kind.combine(values[term.index()].kind)
-                })
+                let first = terms
+                    .next()
+                    .ok_or(KernelIrError::EmptyOperands { value, operation })?;
+                terms.try_fold(kind(*first), |acc, term| {
+                    acc.scalar_combine(kind(*term)).ok_or_else(|| {
+                        Self::shape_error(value, operation, "all inputs must be scalar")
+                    })
+                })?
             }
             Self::Complex { re, im } => {
-                if values[re.index()].kind != KernelScalarKind::Real
-                    || values[im.index()].kind != KernelScalarKind::Real
-                {
-                    return Err(KernelIrError::InvalidComplexComponent { value });
+                if kind(*re) != KernelValueKind::Real || kind(*im) != KernelValueKind::Real {
+                    return Err(Self::shape_error(
+                        value,
+                        "complex construction",
+                        "components must be real",
+                    ));
                 }
-                KernelScalarKind::Complex
+                KernelValueKind::Complex
+            }
+            Self::Vector(elements) => {
+                if elements.iter().any(|element| !kind(*element).is_scalar()) {
+                    return Err(Self::shape_error(
+                        value,
+                        "vector construction",
+                        "elements must be scalar",
+                    ));
+                }
+                KernelValueKind::Vector {
+                    len: elements.len(),
+                }
+            }
+            Self::Matrix {
+                rows,
+                cols,
+                elements,
+            } => {
+                if elements.len() != rows * cols
+                    || elements.iter().any(|element| !kind(*element).is_scalar())
+                {
+                    return Err(Self::shape_error(
+                        value,
+                        "matrix construction",
+                        format!("expected {} scalar elements", rows * cols),
+                    ));
+                }
+                KernelValueKind::Matrix {
+                    rows: *rows,
+                    cols: *cols,
+                }
+            }
+            Self::Component { input, index } => match kind(*input) {
+                KernelValueKind::Vector { len } if *index < len => KernelValueKind::Complex,
+                actual => {
+                    return Err(Self::shape_error(
+                        value,
+                        "component",
+                        format!("index {index} is invalid for {actual:?}"),
+                    ));
+                }
+            },
+            Self::MatrixElement { input, row, col } => match kind(*input) {
+                KernelValueKind::Matrix { rows, cols } if *row < rows && *col < cols => {
+                    KernelValueKind::Complex
+                }
+                actual => {
+                    return Err(Self::shape_error(
+                        value,
+                        "matrix element",
+                        format!("index ({row}, {col}) is invalid for {actual:?}"),
+                    ));
+                }
+            },
+            Self::MatMul { lhs, rhs } => match (kind(*lhs), kind(*rhs)) {
+                (
+                    KernelValueKind::Matrix { rows, cols: inner },
+                    KernelValueKind::Matrix {
+                        rows: rhs_rows,
+                        cols,
+                    },
+                ) if inner == rhs_rows => KernelValueKind::Matrix { rows, cols },
+                shapes => {
+                    return Err(Self::shape_error(
+                        value,
+                        "matrix multiplication",
+                        format!("incompatible operands {shapes:?}"),
+                    ));
+                }
+            },
+            Self::MatVec { matrix, vector } => match (kind(*matrix), kind(*vector)) {
+                (KernelValueKind::Matrix { rows, cols }, KernelValueKind::Vector { len })
+                    if cols == len =>
+                {
+                    KernelValueKind::Vector { len: rows }
+                }
+                shapes => {
+                    return Err(Self::shape_error(
+                        value,
+                        "matrix-vector multiplication",
+                        format!("incompatible operands {shapes:?}"),
+                    ));
+                }
+            },
+            Self::Dot { lhs, rhs } => match (kind(*lhs), kind(*rhs)) {
+                (KernelValueKind::Vector { len }, KernelValueKind::Vector { len: rhs_len })
+                    if len == rhs_len =>
+                {
+                    KernelValueKind::Complex
+                }
+                shapes => {
+                    return Err(Self::shape_error(
+                        value,
+                        "dot product",
+                        format!("incompatible operands {shapes:?}"),
+                    ));
+                }
+            },
+            Self::Solve { matrix, rhs } => match (kind(*matrix), kind(*rhs)) {
+                (KernelValueKind::Matrix { rows, cols }, KernelValueKind::Vector { len })
+                    if rows == cols && rows == len =>
+                {
+                    KernelValueKind::Vector { len }
+                }
+                shapes => {
+                    return Err(Self::shape_error(
+                        value,
+                        "linear solve",
+                        format!("incompatible operands {shapes:?}"),
+                    ));
+                }
+            },
+            Self::SolveRow { rhs, .. } => {
+                if rhs.is_empty() || rhs.iter().any(|entry| !kind(*entry).is_scalar()) {
+                    return Err(Self::shape_error(
+                        value,
+                        "specialized solve row",
+                        "right-hand side must contain scalars",
+                    ));
+                }
+                KernelValueKind::Complex
             }
         }))
     }
@@ -172,24 +377,21 @@ impl KernelInstruction {
             Self::RealConstant(_) | Self::ComplexConstant(_) | Self::Parameter(_) => {
                 KernelValueClass::Invariant
             }
-            _ => {
-                if self
-                    .operands()
-                    .iter()
-                    .any(|operand| values[operand.index()].class == KernelValueClass::Event)
-                {
-                    KernelValueClass::Event
-                } else {
-                    KernelValueClass::Invariant
-                }
+            _ if self
+                .operands()
+                .iter()
+                .any(|operand| values[operand.index()].class == KernelValueClass::Event) =>
+            {
+                KernelValueClass::Event
             }
+            _ => KernelValueClass::Invariant,
         }
     }
 }
 
 #[derive(Clone, Debug)]
 pub struct KernelValue {
-    pub kind: KernelScalarKind,
+    pub kind: KernelValueKind,
     pub class: KernelValueClass,
     pub instruction: KernelInstruction,
 }
@@ -204,6 +406,13 @@ impl ScalarKernelIr {
     pub fn new(values: Vec<KernelValue>, root: KernelValueId) -> Result<Self, KernelIrError> {
         let ir = Self { values, root };
         ir.validate()?;
+        if !ir.values[ir.root.index()].kind.is_scalar() {
+            return Err(KernelIrError::InvalidShape {
+                value: ir.root.index(),
+                operation: "kernel root",
+                message: "root must be scalar".into(),
+            });
+        }
         Ok(ir)
     }
 
@@ -250,7 +459,6 @@ impl ScalarKernelIr {
     pub fn values(&self) -> &[KernelValue] {
         &self.values
     }
-
     pub fn root(&self) -> KernelValueId {
         self.root
     }
@@ -261,34 +469,28 @@ mod tests {
     use super::*;
 
     #[test]
-    fn validates_typed_topological_scalar_ir() {
-        let ir = ScalarKernelIr::new(
-            vec![
-                KernelValue {
-                    kind: KernelScalarKind::Real,
-                    class: KernelValueClass::Invariant,
-                    instruction: KernelInstruction::RealConstant(2.0),
+    fn validates_aggregate_operations() {
+        let values = vec![
+            KernelValue {
+                kind: KernelValueKind::Complex,
+                class: KernelValueClass::Invariant,
+                instruction: KernelInstruction::ComplexConstant(Complex64::new(1.0, 2.0)),
+            },
+            KernelValue {
+                kind: KernelValueKind::Vector { len: 1 },
+                class: KernelValueClass::Invariant,
+                instruction: KernelInstruction::Vector(vec![KernelValueId::from_index(0)]),
+            },
+            KernelValue {
+                kind: KernelValueKind::Complex,
+                class: KernelValueClass::Invariant,
+                instruction: KernelInstruction::Dot {
+                    lhs: KernelValueId::from_index(1),
+                    rhs: KernelValueId::from_index(1),
                 },
-                KernelValue {
-                    kind: KernelScalarKind::Real,
-                    class: KernelValueClass::Event,
-                    instruction: KernelInstruction::Cached(0),
-                },
-                KernelValue {
-                    kind: KernelScalarKind::Real,
-                    class: KernelValueClass::Event,
-                    instruction: KernelInstruction::Binary {
-                        op: BinaryOp::Mul,
-                        lhs: KernelValueId::from_index(0),
-                        rhs: KernelValueId::from_index(1),
-                    },
-                },
-            ],
-            KernelValueId::from_index(2),
-        )
-        .unwrap();
-
-        assert_eq!(ir.root().index(), 2);
+            },
+        ];
+        ScalarKernelIr::new(values, KernelValueId::from_index(2)).unwrap();
     }
 
     #[test]
@@ -296,7 +498,7 @@ mod tests {
         let error = ScalarKernelIr::new(
             vec![
                 KernelValue {
-                    kind: KernelScalarKind::Real,
+                    kind: KernelValueKind::Real,
                     class: KernelValueClass::Invariant,
                     instruction: KernelInstruction::Unary {
                         op: UnaryOp::Neg,
@@ -304,7 +506,7 @@ mod tests {
                     },
                 },
                 KernelValue {
-                    kind: KernelScalarKind::Real,
+                    kind: KernelValueKind::Real,
                     class: KernelValueClass::Invariant,
                     instruction: KernelInstruction::RealConstant(1.0),
                 },
@@ -312,7 +514,6 @@ mod tests {
             KernelValueId::from_index(0),
         )
         .unwrap_err();
-
         assert_eq!(
             error,
             KernelIrError::InvalidOperand {
@@ -323,27 +524,27 @@ mod tests {
     }
 
     #[test]
-    fn rejects_incorrect_kind_and_dependency_class() {
-        let kind_error = ScalarKernelIr::new(
-            vec![KernelValue {
-                kind: KernelScalarKind::Complex,
-                class: KernelValueClass::Invariant,
-                instruction: KernelInstruction::RealConstant(1.0),
-            }],
+    fn rejects_invalid_matrix_shapes() {
+        let error = ScalarKernelIr::new(
+            vec![
+                KernelValue {
+                    kind: KernelValueKind::Real,
+                    class: KernelValueClass::Invariant,
+                    instruction: KernelInstruction::RealConstant(1.0),
+                },
+                KernelValue {
+                    kind: KernelValueKind::Matrix { rows: 2, cols: 2 },
+                    class: KernelValueClass::Invariant,
+                    instruction: KernelInstruction::Matrix {
+                        rows: 2,
+                        cols: 2,
+                        elements: vec![KernelValueId::from_index(0)],
+                    },
+                },
+            ],
             KernelValueId::from_index(0),
         )
         .unwrap_err();
-        assert!(matches!(kind_error, KernelIrError::KindMismatch { .. }));
-
-        let class_error = ScalarKernelIr::new(
-            vec![KernelValue {
-                kind: KernelScalarKind::Real,
-                class: KernelValueClass::Event,
-                instruction: KernelInstruction::RealConstant(1.0),
-            }],
-            KernelValueId::from_index(0),
-        )
-        .unwrap_err();
-        assert!(matches!(class_error, KernelIrError::ClassMismatch { .. }));
+        assert!(matches!(error, KernelIrError::InvalidShape { .. }));
     }
 }

@@ -9,6 +9,7 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+cranelift = { workspace = true, optional = true }
 laddu-autodiff = { path = "../laddu-autodiff" }
 laddu-compile = { path = "../laddu-compile" }
 laddu-data = { path = "../laddu-data" }
@@ -18,3 +19,6 @@ nalgebra.workspace = true
 num.workspace = true
 rayon.workspace = true
 thiserror.workspace = true
+
+[features]
+jit = ["dep:cranelift"]

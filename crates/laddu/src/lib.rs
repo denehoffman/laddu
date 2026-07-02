@@ -65,6 +65,7 @@ pub mod prelude {
         spherical_harmonic,
     };
     pub use laddu_runtime::{
-        CpuBackend, CpuBatchCache, CpuCachedBatch, CpuCachedDataset, CpuPlan, ValueGradient,
+        CpuBackend, CpuBatchCache, CpuCachedBatch, CpuCachedDataset, CpuExecutionMode, CpuPlan,
+        ValueGradient,
     };
 }
