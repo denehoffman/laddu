@@ -199,14 +199,14 @@ impl Dataset {
         let mut acc = Some(init);
 
         self.try_for_each_event(|ev| {
-            let current = acc
-                .take()
-                .expect("fold accumulator should always be present");
+            let current = acc.take().ok_or_else(|| {
+                LadduDataError::Source("dataset fold accumulator was consumed".into())
+            })?;
             acc = Some(f(current, ev)?);
             Ok(())
         })?;
 
-        Ok(acc.expect("fold accumulator should always be present"))
+        acc.ok_or_else(|| LadduDataError::Source("dataset fold produced no accumulator".into()))
     }
 
     pub fn fold_events<T, F>(&self, init: T, mut f: F) -> LadduDataResult<T>

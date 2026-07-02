@@ -19,6 +19,7 @@ laddu-likelihood = { path = "../laddu-likelihood", optional = true }
 laddu-physics = { path = "../laddu-physics" }
 laddu-runtime = { path = "../laddu-runtime" }
 laddu-wgpu = { path = "../laddu-wgpu", optional = true }
+thiserror.workspace = true
 
 [features]
 default = ["amplitudes", "likelihood"]

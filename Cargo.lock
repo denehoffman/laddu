@@ -1261,6 +1261,7 @@ dependencies = [
  "laddu-wgpu",
  "num_cpus",
  "rayon",
+ "thiserror",
 ]
 
 [[package]]
@@ -1326,6 +1327,8 @@ name = "laddu-expr"
 version = "0.1.0"
 dependencies = [
  "auto_ops",
+ "fastrand",
+ "fastrand-contrib",
  "num",
  "serde",
  "thiserror",

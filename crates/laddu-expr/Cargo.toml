@@ -13,3 +13,5 @@ num.workspace = true
 serde.workspace = true
 auto_ops.workspace = true
 thiserror.workspace = true
+fastrand.workspace = true
+fastrand-contrib.workspace = true

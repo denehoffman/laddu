@@ -1,8 +1,10 @@
 use std::sync::Arc;
 
 use rayon::{ThreadPool, ThreadPoolBuilder};
-use thiserror::Error;
 
+#[cfg(test)]
+use crate::RuntimeError;
+use crate::{CpuExecutionError, RuntimeResult};
 use laddu_data::io::{Partitioning, ReadPlan};
 
 #[cfg(feature = "mpi")]
@@ -31,14 +33,6 @@ pub struct CpuExecutionOptions {
     pub partitioning: Partitioning,
 }
 
-#[derive(Clone, Debug, Error)]
-pub enum CpuExecutionError {
-    #[error("fixed thread count must be nonzero")]
-    ZeroThreads,
-    #[error("failed to create Rayon thread pool: {0}")]
-    ThreadPool(String),
-}
-
 #[derive(Clone)]
 pub struct CpuExecution {
     threads: ThreadPolicy,
@@ -61,16 +55,21 @@ impl std::fmt::Debug for CpuExecution {
 
 impl Default for CpuExecution {
     fn default() -> Self {
-        Self::local(CpuExecutionOptions::default())
-            .expect("the automatic execution policy does not construct a private pool")
+        Self {
+            threads: ThreadPolicy::Auto,
+            pool: None,
+            partitioning: Partitioning::default(),
+            #[cfg(feature = "mpi")]
+            communicator: None,
+        }
     }
 }
 
 impl CpuExecution {
     /// Create local execution with runtime-selectable Rayon behavior.
-    pub fn local(options: CpuExecutionOptions) -> Result<Self, CpuExecutionError> {
+    pub fn local(options: CpuExecutionOptions) -> RuntimeResult<Self> {
         let pool = match options.threads {
-            ThreadPolicy::Fixed(0) => return Err(CpuExecutionError::ZeroThreads),
+            ThreadPolicy::Fixed(0) => return Err(CpuExecutionError::ZeroThreads.into()),
             ThreadPolicy::Fixed(threads) => Some(Arc::new(
                 ThreadPoolBuilder::new()
                     .num_threads(threads)
@@ -93,10 +92,7 @@ impl CpuExecution {
     ///
     /// Dataset partitioning and global likelihood reductions then happen transparently. The caller
     /// remains responsible for initializing MPI before constructing this value.
-    pub fn distributed<C>(
-        options: CpuExecutionOptions,
-        world: &C,
-    ) -> Result<Self, CpuExecutionError>
+    pub fn distributed<C>(options: CpuExecutionOptions, world: &C) -> RuntimeResult<Self>
     where
         C: Communicator,
     {
@@ -219,7 +215,7 @@ mod tests {
                 threads: ThreadPolicy::Fixed(0),
                 ..CpuExecutionOptions::default()
             }),
-            Err(CpuExecutionError::ZeroThreads)
+            Err(RuntimeError::Execution(CpuExecutionError::ZeroThreads))
         ));
     }
 }

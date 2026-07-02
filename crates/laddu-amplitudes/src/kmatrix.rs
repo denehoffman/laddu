@@ -1,22 +1,10 @@
-use laddu_expr::{Expr, ExprShape, ExprShapeError, matmul, matrix_from_flat, solve, vector};
+use crate::{KMatrixError, KMatrixResult};
+use laddu_expr::{Expr, ExprShape, matmul, matrix_from_flat, solve, vector};
 use laddu_physics::{
     LadduPhysicsError,
     math::{BarrierKind, Sheet, blatt_weisskopf_custom, q},
     quantum::L,
 };
-use thiserror::Error;
-
-#[derive(Clone, Debug, Error)]
-pub enum KMatrixError {
-    #[error(transparent)]
-    ExpressionShape(#[from] ExprShapeError),
-    #[error(transparent)]
-    Physics(#[from] LadduPhysicsError),
-    #[error("invalid K-matrix input shape: {0}")]
-    InvalidShape(String),
-}
-
-pub type KMatrixResult<T> = Result<T, KMatrixError>;
 
 pub fn blatt_weisskopf_barriers(
     s: impl Into<Expr>,

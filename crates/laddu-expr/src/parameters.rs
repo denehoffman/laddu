@@ -1,35 +1,9 @@
 use std::{collections::HashMap, sync::Arc};
 
+pub use crate::{ParamError, ParamResult};
+use fastrand::Rng;
+use fastrand_contrib::RngExt;
 use serde::{Deserialize, Serialize};
-use thiserror::Error;
-
-pub type ParamResult<T> = Result<T, ParamError>;
-
-#[derive(Clone, Debug, Error, PartialEq)]
-pub enum ParamError {
-    #[error("parameter name cannot be empty")]
-    EmptyName,
-    #[error("duplicate parameter name: {0}")]
-    DuplicateName(String),
-    #[error("parameter conflict for {name}: {reason}")]
-    ParameterConflict { name: String, reason: String },
-    #[error("invalid parameter id #{id} for layout of size {len}")]
-    InvalidParamId { id: usize, len: usize },
-    #[error("invalid free parameter id #{id} for layout with {len} free parameters")]
-    InvalidFreeParamId { id: usize, len: usize },
-    #[error("expected {expected} free parameters, got {actual}")]
-    FreeLengthMismatch { expected: usize, actual: usize },
-    #[error("expected {expected} total parameters, got {actual}")]
-    FullLengthMismatch { expected: usize, actual: usize },
-    #[error("invalid bounds for {name}: min {min} is greater than max {max}")]
-    InvalidBounds { name: String, min: f64, max: f64 },
-    #[error("invalid uniform initial range for {name}: min {min} is greater than max {max}")]
-    InvalidInitialRange { name: String, min: f64, max: f64 },
-    #[error("initial value {value} for {name} is outside bounds")]
-    InitialOutOfBounds { name: String, value: f64 },
-    #[error("fixed value {value} for {name} is outside bounds")]
-    FixedValueOutOfBounds { name: String, value: f64 },
-}
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ParamId(u32);
@@ -49,17 +23,15 @@ impl FreeParamId {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub enum InitialSpec {
+    #[default]
     Default,
     Value(f64),
-    Uniform { min: f64, max: f64 },
-}
-
-impl Default for InitialSpec {
-    fn default() -> Self {
-        Self::Default
-    }
+    Uniform {
+        min: f64,
+        max: f64,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -68,7 +40,7 @@ pub enum ParamState {
     Fixed(f64),
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Bounds {
     pub min: Option<f64>,
     pub max: Option<f64>,
@@ -83,29 +55,20 @@ impl Bounds {
     }
 
     fn validate(&self, name: &str) -> ParamResult<()> {
-        if let (Some(min), Some(max)) = (self.min, self.max) {
-            if min > max {
-                return Err(ParamError::InvalidBounds {
-                    name: name.to_owned(),
-                    min,
-                    max,
-                });
-            }
+        if let (Some(min), Some(max)) = (self.min, self.max)
+            && min > max
+        {
+            return Err(ParamError::InvalidBounds {
+                name: name.to_owned(),
+                min,
+                max,
+            });
         }
         Ok(())
     }
 
     pub fn contains(&self, value: f64) -> bool {
         self.min.is_none_or(|min| value >= min) && self.max.is_none_or(|max| value <= max)
-    }
-}
-
-impl Default for Bounds {
-    fn default() -> Self {
-        Self {
-            min: None,
-            max: None,
-        }
     }
 }
 
@@ -145,7 +108,7 @@ impl Parameter {
         }
     }
 
-    pub fn set_fixed_value(&mut self, value: f64) {
+    fn set_fixed_value(&mut self, value: f64) {
         self.state = ParamState::Fixed(value);
         self.initial = InitialSpec::Value(value);
     }
@@ -155,7 +118,7 @@ impl Parameter {
         self
     }
 
-    pub fn set_initial(&mut self, initial: impl Into<InitialSpec>) {
+    fn set_initial(&mut self, initial: impl Into<InitialSpec>) {
         self.initial = initial.into();
     }
 
@@ -164,7 +127,7 @@ impl Parameter {
         self
     }
 
-    pub fn set_bounds(&mut self, min: impl Into<Option<f64>>, max: impl Into<Option<f64>>) {
+    fn set_bounds(&mut self, min: impl Into<Option<f64>>, max: impl Into<Option<f64>>) {
         self.bounds = Bounds::new(min, max);
     }
 
@@ -173,7 +136,7 @@ impl Parameter {
         self
     }
 
-    pub fn set_unit(&mut self, unit: impl Into<Arc<str>>) {
+    fn set_unit(&mut self, unit: impl Into<Arc<str>>) {
         self.unit = Some(unit.into());
     }
 
@@ -182,7 +145,7 @@ impl Parameter {
         self
     }
 
-    pub fn set_latex(&mut self, latex: impl Into<Arc<str>>) {
+    fn set_latex(&mut self, latex: impl Into<Arc<str>>) {
         self.latex = Some(latex.into());
     }
 
@@ -191,7 +154,7 @@ impl Parameter {
         self
     }
 
-    pub fn set_description(&mut self, description: impl Into<Arc<str>>) {
+    fn set_description(&mut self, description: impl Into<Arc<str>>) {
         self.description = Some(description.into());
     }
 
@@ -334,17 +297,13 @@ impl ParamLayout {
         Ok(self.full_to_free[id.index()])
     }
 
-    pub fn free_param(&self, id: FreeParamId) -> ParamResult<ParamId> {
+    fn free_param(&self, id: FreeParamId) -> ParamResult<ParamId> {
         self.check_free_id(id)?;
         Ok(self.free_params[id.index()])
     }
 
     pub fn free_params(&self) -> &[ParamId] {
         &self.free_params
-    }
-
-    pub fn defaults(&self) -> &[f64] {
-        &self.defaults
     }
 
     pub fn default_values(&self) -> ParamValues {
@@ -354,14 +313,18 @@ impl ParamLayout {
         }
     }
 
-    pub fn default_free_values(&self) -> Vec<f64> {
+    /// Return deterministic initial values in free-parameter order.
+    ///
+    /// Uniform initial ranges use their midpoint.
+    pub fn initial_free_values(&self) -> Vec<f64> {
         self.free_params
             .iter()
             .map(|id| self.defaults[id.index()])
             .collect()
     }
 
-    pub fn expand_free_values(&self, free: &[f64]) -> ParamResult<ParamValues> {
+    /// Expand a free-parameter slice while restoring fixed values from the layout.
+    pub fn values(&self, free: &[f64]) -> ParamResult<ParamValues> {
         let mut values = self.defaults.to_vec();
         self.fill_full_from_free(free, &mut values)?;
         Ok(ParamValues {
@@ -370,47 +333,35 @@ impl ParamLayout {
         })
     }
 
-    pub fn extract_free_values(&self, full: &[f64]) -> ParamResult<Vec<f64>> {
-        let mut free = vec![0.0; self.n_free()];
-        self.fill_free_from_full(full, &mut free)?;
-        Ok(free)
+    /// Generate one value per free parameter in layout order.
+    pub fn free_values_with(&self, mut value: impl FnMut(&Parameter) -> f64) -> Vec<f64> {
+        self.free_params
+            .iter()
+            .map(|id| value(&self.specs[id.index()]))
+            .collect()
     }
 
-    pub fn fill_full_from_free(&self, free: &[f64], full: &mut [f64]) -> ParamResult<()> {
+    /// Generate initial free values, invoking `uniform` only for uniform initial ranges.
+    pub fn sample_initial(&self, seed: u64) -> Vec<f64> {
+        let mut rng = Rng::with_seed(seed);
+        self.free_values_with(|parameter| match parameter.initial {
+            InitialSpec::Default => 0.0,
+            InitialSpec::Value(value) => value,
+            InitialSpec::Uniform { min, max } => rng.f64_range(min..max),
+        })
+    }
+
+    fn fill_full_from_free(&self, free: &[f64], full: &mut [f64]) -> ParamResult<()> {
         if free.len() != self.n_free() {
             return Err(ParamError::FreeLengthMismatch {
                 expected: self.n_free(),
                 actual: free.len(),
             });
         }
-        if full.len() != self.len() {
-            return Err(ParamError::FullLengthMismatch {
-                expected: self.len(),
-                actual: full.len(),
-            });
-        }
+        debug_assert_eq!(full.len(), self.len());
         full.copy_from_slice(&self.defaults);
         for (free_index, id) in self.free_params.iter().enumerate() {
             full[id.index()] = free[free_index];
-        }
-        Ok(())
-    }
-
-    pub fn fill_free_from_full(&self, full: &[f64], free: &mut [f64]) -> ParamResult<()> {
-        if full.len() != self.len() {
-            return Err(ParamError::FullLengthMismatch {
-                expected: self.len(),
-                actual: full.len(),
-            });
-        }
-        if free.len() != self.n_free() {
-            return Err(ParamError::FreeLengthMismatch {
-                expected: self.n_free(),
-                actual: free.len(),
-            });
-        }
-        for (free_index, id) in self.free_params.iter().enumerate() {
-            free[free_index] = full[id.index()];
         }
         Ok(())
     }
@@ -474,10 +425,6 @@ impl ParamRegistry {
         Ok(id)
     }
 
-    pub fn specs(&self) -> &[Parameter] {
-        &self.specs
-    }
-
     pub fn layout(&self) -> ParamResult<ParamLayout> {
         ParamLayout::new(self.specs.clone())
     }
@@ -490,16 +437,6 @@ pub struct ParamValues {
 }
 
 impl ParamValues {
-    pub fn from_full(layout: Arc<ParamLayout>, values: Vec<f64>) -> ParamResult<Self> {
-        if values.len() != layout.len() {
-            return Err(ParamError::FullLengthMismatch {
-                expected: layout.len(),
-                actual: values.len(),
-            });
-        }
-        Ok(Self { layout, values })
-    }
-
     pub fn layout(&self) -> &Arc<ParamLayout> {
         &self.layout
     }
@@ -521,16 +458,15 @@ impl ParamValues {
             .collect()
     }
 
-    pub fn set_full(&mut self, id: ParamId, value: f64) -> ParamResult<()> {
-        self.layout.check_id(id)?;
-        self.values[id.index()] = value;
-        Ok(())
-    }
-
     pub fn set_free(&mut self, id: FreeParamId, value: f64) -> ParamResult<()> {
         let full_id = self.layout.free_param(id)?;
         self.values[full_id.index()] = value;
         Ok(())
+    }
+
+    pub fn set_free_values(&mut self, values: &[f64]) -> ParamResult<()> {
+        let layout = Arc::clone(&self.layout);
+        layout.fill_full_from_free(values, &mut self.values)
     }
 }
 
@@ -573,11 +509,11 @@ fn validate_initial(spec: &Parameter) -> ParamResult<()> {
                         max,
                     });
                 }
-                let value = 0.5 * (min + max);
-                if !spec.bounds.contains(value) {
-                    return Err(ParamError::InitialOutOfBounds {
+                if !spec.bounds.contains(min) || !spec.bounds.contains(max) {
+                    return Err(ParamError::InitialRangeOutOfBounds {
                         name: spec.name().to_owned(),
-                        value,
+                        min,
+                        max,
                     });
                 }
             }
@@ -595,9 +531,7 @@ macro_rules! parameter {
     }};
 
     ($name:expr, $value:expr) => {{
-        let mut p = $crate::parameters::Parameter::free($name);
-        p.set_fixed_value($value);
-        p
+        $crate::parameters::Parameter::fixed($name, $value)
     }};
 
     ($name:expr, $($rest:tt)+) => {{
@@ -609,12 +543,12 @@ macro_rules! parameter {
     (@parse $p:ident, [fixed = $f:tt, initial = $i:tt]; ) => {};
 
     (@parse $p:ident, [fixed = false, initial = false]; fixed : $value:expr $(, $($rest:tt)*)?) => {{
-        $p.set_fixed_value($value);
+        $p = $p.with_fixed_value($value);
         $crate::parameter!(@parse $p, [fixed = true, initial = false]; $($($rest)*)?);
     }};
 
     (@parse $p:ident, [fixed = false, initial = false]; initial : $value:expr $(, $($rest:tt)*)?) => {{
-        $p.set_initial($value);
+        $p = $p.with_initial($value);
         $crate::parameter!(@parse $p, [fixed = false, initial = true]; $($($rest)*)?);
     }};
 
@@ -627,22 +561,22 @@ macro_rules! parameter {
     };
 
     (@parse $p:ident, [fixed = $f:tt, initial = $i:tt]; bounds : ($min:expr, $max:expr) $(, $($rest:tt)*)?) => {{
-        $p.set_bounds($min, $max);
+        $p = $p.with_bounds($min, $max);
         $crate::parameter!(@parse $p, [fixed = $f, initial = $i]; $($($rest)*)?);
     }};
 
     (@parse $p:ident, [fixed = $f:tt, initial = $i:tt]; unit : $value:expr $(, $($rest:tt)*)?) => {{
-        $p.set_unit($value);
+        $p = $p.with_unit($value);
         $crate::parameter!(@parse $p, [fixed = $f, initial = $i]; $($($rest)*)?);
     }};
 
     (@parse $p:ident, [fixed = $f:tt, initial = $i:tt]; latex : $value:expr $(, $($rest:tt)*)?) => {{
-        $p.set_latex($value);
+        $p = $p.with_latex($value);
         $crate::parameter!(@parse $p, [fixed = $f, initial = $i]; $($($rest)*)?);
     }};
 
     (@parse $p:ident, [fixed = $f:tt, initial = $i:tt]; description : $value:expr $(, $($rest:tt)*)?) => {{
-        $p.set_description($value);
+        $p = $p.with_description($value);
         $crate::parameter!(@parse $p, [fixed = $f, initial = $i]; $($($rest)*)?);
     }};
 }
@@ -673,7 +607,7 @@ mod tests {
 
         assert_eq!(layout.len(), 3);
         assert_eq!(layout.n_free(), 2);
-        assert_eq!(layout.default_free_values(), vec![1.2, 0.5]);
+        assert_eq!(layout.initial_free_values(), vec![1.2, 0.5]);
         assert_eq!(layout.id("mass").map(ParamId::index), Some(0));
         assert_eq!(layout.id("pi").map(ParamId::index), Some(1));
         assert_eq!(layout.id("width").map(ParamId::index), Some(2));
@@ -686,9 +620,27 @@ mod tests {
             vec!["mass", "width"]
         );
 
-        let values = layout.expand_free_values(&[1.4, 0.2]).unwrap();
+        let values = layout.values(&[1.4, 0.2]).unwrap();
         assert_eq!(values.as_slice(), &[1.4, std::f64::consts::PI, 0.2]);
         assert_eq!(values.free_values(), vec![1.4, 0.2]);
+    }
+
+    #[test]
+    fn free_values_can_be_generated_or_sampled_in_layout_order() {
+        let layout = ParamLayout::new([
+            Parameter::fixed("fixed", 8.0),
+            Parameter::free("uniform").with_initial((-2.0, 4.0)),
+            Parameter::free("value").with_initial(3.0),
+            Parameter::free("default"),
+        ])
+        .unwrap();
+
+        assert_eq!(layout.initial_free_values(), vec![1.0, 3.0, 0.0]);
+        assert_eq!(layout.sample_initial(0), vec![1.6157656431461036, 3.0, 0.0]);
+        assert_eq!(
+            layout.free_values_with(|parameter| parameter.name().len() as f64),
+            vec![7.0, 5.0, 7.0]
+        );
     }
 
     #[test]
@@ -700,7 +652,7 @@ mod tests {
     #[test]
     fn free_length_is_checked() {
         let layout = ParamLayout::new([Parameter::free("x"), Parameter::free("y")]).unwrap();
-        let err = layout.expand_free_values(&[1.0]).unwrap_err();
+        let err = layout.values(&[1.0]).unwrap_err();
         assert_eq!(
             err,
             ParamError::FreeLengthMismatch {
@@ -720,44 +672,33 @@ mod tests {
         ])
         .unwrap();
 
-        let full = layout.expand_free_values(&[1.4, 0.2]).unwrap();
+        let full = layout.values(&[1.4, 0.2]).unwrap();
         assert_eq!(full.as_slice(), &[-1.0, 1.4, 2.0, 0.2]);
-        assert_eq!(
-            layout.extract_free_values(full.as_slice()).unwrap(),
-            vec![1.4, 0.2]
-        );
-
         let mut rewritten = vec![0.0; layout.len()];
         layout
             .fill_full_from_free(&[1.5, 0.3], &mut rewritten)
             .unwrap();
         assert_eq!(rewritten, vec![-1.0, 1.5, 2.0, 0.3]);
-
-        let mut free = vec![0.0; layout.n_free()];
-        layout.fill_free_from_full(&rewritten, &mut free).unwrap();
-        assert_eq!(free, vec![1.5, 0.3]);
     }
 
     #[test]
-    fn values_can_be_mutated_by_full_or_free_id() {
+    fn values_only_mutate_free_parameters() {
         let layout = ParamLayout::new([
             Parameter::fixed("fixed", 1.0),
             Parameter::free("x"),
             Parameter::free("y"),
         ])
         .unwrap();
-        let fixed_id = layout.id("fixed").unwrap();
         let x_id = layout.id("x").unwrap();
         let y_id = layout.id("y").unwrap();
         let x_free = layout.free_id(x_id).unwrap().unwrap();
         let y_free = layout.free_id(y_id).unwrap().unwrap();
 
         let mut values = layout.default_values();
-        values.set_full(fixed_id, 2.0).unwrap();
         values.set_free(x_free, 3.0).unwrap();
         values.set_free(y_free, 4.0).unwrap();
 
-        assert_eq!(values.as_slice(), &[2.0, 3.0, 4.0]);
+        assert_eq!(values.as_slice(), &[1.0, 3.0, 4.0]);
         assert_eq!(values.free_values(), vec![3.0, 4.0]);
     }
 
@@ -798,6 +739,18 @@ mod tests {
         );
 
         assert_eq!(
+            ParamLayout::new([Parameter::free("x")
+                .with_initial((-1.0, 1.0))
+                .with_bounds(Some(0.0), Some(2.0))])
+            .unwrap_err(),
+            ParamError::InitialRangeOutOfBounds {
+                name: "x".into(),
+                min: -1.0,
+                max: 1.0
+            }
+        );
+
+        assert_eq!(
             ParamLayout::new([Parameter::fixed("x", 3.0).with_bounds(Some(0.0), Some(2.0))])
                 .unwrap_err(),
             ParamError::FixedValueOutOfBounds {
@@ -808,7 +761,7 @@ mod tests {
     }
 
     #[test]
-    fn vector_lengths_are_checked_for_both_directions() {
+    fn free_vector_lengths_are_checked() {
         let layout = ParamLayout::new([
             Parameter::fixed("a", 0.0),
             Parameter::free("x"),
@@ -819,33 +772,6 @@ mod tests {
         assert_eq!(
             layout
                 .fill_full_from_free(&[1.0], &mut [0.0, 0.0, 0.0])
-                .unwrap_err(),
-            ParamError::FreeLengthMismatch {
-                expected: 2,
-                actual: 1
-            }
-        );
-        assert_eq!(
-            layout
-                .fill_full_from_free(&[1.0, 2.0], &mut [0.0, 0.0])
-                .unwrap_err(),
-            ParamError::FullLengthMismatch {
-                expected: 3,
-                actual: 2
-            }
-        );
-        assert_eq!(
-            layout
-                .fill_free_from_full(&[0.0, 1.0], &mut [0.0, 0.0])
-                .unwrap_err(),
-            ParamError::FullLengthMismatch {
-                expected: 3,
-                actual: 2
-            }
-        );
-        assert_eq!(
-            layout
-                .fill_free_from_full(&[0.0, 1.0, 2.0], &mut [0.0])
                 .unwrap_err(),
             ParamError::FreeLengthMismatch {
                 expected: 2,

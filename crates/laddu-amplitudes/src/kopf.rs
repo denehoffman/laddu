@@ -597,11 +597,12 @@ mod tests {
             .iter()
             .map(|id| {
                 let center = params.get(*id).unwrap();
+                let free_id = params.layout().free_id(*id).unwrap().unwrap();
                 let h = 1.0e-6;
                 let mut plus = params.clone();
                 let mut minus = params.clone();
-                plus.set_full(*id, center + h).unwrap();
-                minus.set_full(*id, center - h).unwrap();
+                plus.set_free(free_id, center + h).unwrap();
+                minus.set_free(free_id, center - h).unwrap();
                 (plan.evaluate(&plus).unwrap() - plan.evaluate(&minus).unwrap()) / (2.0 * h)
             })
             .collect();

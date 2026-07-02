@@ -1,0 +1,20 @@
+use crate::Name;
+use thiserror::Error;
+
+pub type LadduDataResult<T> = Result<T, LadduDataError>;
+
+#[derive(Error, Debug)]
+pub enum LadduDataError {
+    #[error("Unsupported: {0}")]
+    Unsupported(&'static str),
+    #[error("Invalid Argument: {0}")]
+    InvalidArgument(&'static str),
+    #[error("Missing Column: {0}")]
+    MissingColumn(Name),
+    #[error("Schema Error: {0}")]
+    Schema(String),
+    #[error("Source Error: {0}")]
+    Source(String),
+    #[error("Sink Error: {0}")]
+    Sink(String),
+}

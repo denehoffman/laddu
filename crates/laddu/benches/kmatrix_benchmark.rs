@@ -259,6 +259,7 @@ fn kmatrix_nll_benchmark(c: &mut Criterion) {
                     .as_intensity()
                     .unwrap()
                     .data()
+                    .unwrap()
                     .stats()
                     .local_batches(),
                 batches
@@ -269,13 +270,7 @@ fn kmatrix_nll_benchmark(c: &mut Criterion) {
                 |b, &_threads| {
                     let mut rng = fastrand::Rng::new();
                     b.iter_batched(
-                        || {
-                            let mut params = likelihood.default_params();
-                            for id in likelihood.params().free_params() {
-                                params.set_full(*id, rng.f64() * 200.0 - 100.0).unwrap();
-                            }
-                            params
-                        },
+                        || likelihood.params_with(|_| rng.f64() * 200.0 - 100.0),
                         |params| black_box(likelihood.nll(black_box(&params)).unwrap()),
                         BatchSize::SmallInput,
                     )

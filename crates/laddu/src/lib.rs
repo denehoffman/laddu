@@ -1,3 +1,6 @@
+mod error;
+
+pub use error::{LadduError, LadduResult};
 pub use laddu_autodiff as autodiff;
 pub use laddu_compile as compile;
 pub use laddu_data as data;
@@ -26,6 +29,7 @@ pub use laddu_likelihood as likelihood;
 pub use laddu_wgpu as wgpu;
 
 pub mod prelude {
+    pub use crate::{LadduError, LadduResult};
     #[cfg(feature = "amplitudes")]
     pub use laddu_amplitudes::{
         KMatrixError, KMatrixResult, KopfA0Channel, KopfA2Channel, KopfF0Channel, KopfF2Channel,
