@@ -13,7 +13,10 @@ use cranelift::{
     module::{FuncId, Linkage, Module, default_libcall_names},
     prelude::*,
 };
-use laddu_expr::{BinaryOp, UnaryOp, parameters::ParamValues};
+use laddu_expr::{
+    BinaryOp, UnaryOp,
+    parameters::{ParamId, ParamValues},
+};
 use laddu_kernel::ir::{
     KernelInstruction, KernelValue, KernelValueClass, KernelValueId, KernelValueKind,
     ScalarKernelIr,
@@ -51,9 +54,23 @@ type BlockJitFn = unsafe extern "C" fn(
     *mut Complex64,
 ) -> i32;
 
+type GradientBlockJitFn = unsafe extern "C" fn(
+    *const f64,
+    *const CacheDescriptor,
+    *const CacheDescriptor,
+    usize,
+    usize,
+    *mut f64,
+) -> i32;
+
 #[derive(Clone)]
 pub(crate) struct JitScalarKernel {
     code: Arc<JitScalarCode>,
+}
+
+#[derive(Clone)]
+pub(crate) struct JitGradientKernel {
+    code: [Arc<JitGradientCode>; 2],
 }
 
 struct JitScalarCode {
@@ -61,10 +78,24 @@ struct JitScalarCode {
     function: BlockJitFn,
 }
 
+struct JitGradientCode {
+    _module: Mutex<JITModule>,
+    function: GradientBlockJitFn,
+    parameter_count: usize,
+}
+
 impl fmt::Debug for JitScalarKernel {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("JitScalarKernel")
+            .finish_non_exhaustive()
+    }
+}
+
+impl fmt::Debug for JitGradientKernel {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("JitGradientKernel")
             .finish_non_exhaustive()
     }
 }
@@ -207,6 +238,153 @@ impl JitScalarKernel {
         };
         if status == 0 {
             Ok(output)
+        } else {
+            Err(RuntimeError::JitExecution(status))
+        }
+    }
+}
+
+impl JitGradientKernel {
+    pub(crate) fn compile(
+        ir: &ScalarKernelIr,
+        free_params: &[ParamId],
+    ) -> Result<Option<Self>, String> {
+        if ir
+            .values()
+            .iter()
+            .any(|value| matches!(value.instruction, KernelInstruction::Solve { .. }))
+        {
+            // A solve adjoint needs a reusable factorization. Cached SolveRow instructions already
+            // provide that linear map; general parameter-dependent solves use forward-mode fallback.
+            return Ok(None);
+        }
+        Ok(Some(Self {
+            code: [
+                Arc::new(Self::compile_component(ir, free_params, 0)?),
+                Arc::new(Self::compile_component(ir, free_params, 1)?),
+            ],
+        }))
+    }
+
+    fn compile_component(
+        ir: &ScalarKernelIr,
+        free_params: &[ParamId],
+        component: usize,
+    ) -> Result<JitGradientCode, String> {
+        let mut jit_builder =
+            JITBuilder::new(default_libcall_names()).map_err(|error| error.to_string())?;
+        jit_builder.symbol("laddu_jit_unary", unary_helper as *const u8);
+        jit_builder.symbol("laddu_jit_binary", binary_helper as *const u8);
+        jit_builder.symbol("laddu_jit_solve", solve_helper as *const u8);
+        let mut module = JITModule::new(jit_builder);
+        let pointer_type = module.target_config().pointer_type();
+        if pointer_type != types::I64 {
+            return Err("gradient JIT requires 64-bit pointers".into());
+        }
+
+        let helpers = declare_helpers(&mut module, pointer_type)?;
+        let mut signature = module.make_signature();
+        for _ in 0..6 {
+            signature.params.push(AbiParam::new(pointer_type));
+        }
+        signature.returns.push(AbiParam::new(types::I32));
+        let function_id = module
+            .declare_function("laddu_gradient_block_kernel", Linkage::Local, &signature)
+            .map_err(|error| error.to_string())?;
+        let mut context = module.make_context();
+        context.func.signature = signature;
+        context.func.name = UserFuncName::user(0, function_id.as_u32());
+        let mut function_context = FunctionBuilderContext::new();
+
+        {
+            let function_helpers = FunctionHelpers {
+                unary: module.declare_func_in_func(helpers.unary, &mut context.func),
+                binary: module.declare_func_in_func(helpers.binary, &mut context.func),
+                solve: module.declare_func_in_func(helpers.solve, &mut context.func),
+            };
+            let mut builder = FunctionBuilder::new(&mut context.func, &mut function_context);
+            emit_gradient_kernel(
+                &mut builder,
+                ir,
+                free_params,
+                component,
+                pointer_type,
+                &function_helpers,
+            )?;
+            builder.finalize();
+        }
+
+        module
+            .define_function(function_id, &mut context)
+            .map_err(|error| error.to_string())?;
+        module
+            .finalize_definitions()
+            .map_err(|error| error.to_string())?;
+        let code = module.get_finalized_function(function_id);
+        let function = unsafe { mem::transmute::<*const u8, GradientBlockJitFn>(code) };
+        Ok(JitGradientCode {
+            _module: Mutex::new(module),
+            function,
+            parameter_count: free_params.len(),
+        })
+    }
+
+    pub(crate) fn evaluate_prepared(
+        &self,
+        parameters: &ParamValues,
+        view: &JitCacheView,
+        start: usize,
+        end: usize,
+        component: usize,
+        output: &mut Vec<f64>,
+    ) -> RuntimeResult<()> {
+        let code = self
+            .code
+            .get(component)
+            .ok_or(RuntimeError::JitExecution(1))?;
+        output.clear();
+        output.resize((end - start) * code.parameter_count, 0.0);
+        let status = unsafe {
+            (code.function)(
+                parameters.as_slice().as_ptr(),
+                view.values.as_ptr(),
+                view.solve_rows.as_ptr(),
+                start,
+                end - start,
+                output.as_mut_ptr(),
+            )
+        };
+        if status == 0 {
+            Ok(())
+        } else {
+            Err(RuntimeError::JitExecution(status))
+        }
+    }
+
+    pub(crate) fn evaluate_invariant_component(
+        &self,
+        parameters: &ParamValues,
+        component: usize,
+        output: &mut Vec<f64>,
+    ) -> RuntimeResult<()> {
+        let code = self
+            .code
+            .get(component)
+            .ok_or(RuntimeError::JitExecution(1))?;
+        output.clear();
+        output.resize(code.parameter_count, 0.0);
+        let status = unsafe {
+            (code.function)(
+                parameters.as_slice().as_ptr(),
+                std::ptr::null(),
+                std::ptr::null(),
+                0,
+                1,
+                output.as_mut_ptr(),
+            )
+        };
+        if status == 0 {
+            Ok(())
         } else {
             Err(RuntimeError::JitExecution(status))
         }
@@ -372,6 +550,384 @@ fn emit_kernel(
     let failure_status = builder.ins().iconst(types::I32, 1);
     builder.ins().return_(&[failure_status]);
     builder.seal_all_blocks();
+    Ok(())
+}
+
+fn emit_gradient_kernel(
+    builder: &mut FunctionBuilder<'_>,
+    ir: &ScalarKernelIr,
+    free_params: &[ParamId],
+    component: usize,
+    pointer_type: Type,
+    helpers: &FunctionHelpers,
+) -> Result<(), String> {
+    let entry = builder.create_block();
+    let loop_header = builder.create_block();
+    let body = builder.create_block();
+    let done = builder.create_block();
+    let failed = builder.create_block();
+    builder.append_block_params_for_function_params(entry);
+    builder.append_block_param(loop_header, pointer_type);
+    builder.switch_to_block(entry);
+    let args = builder.block_params(entry).to_vec();
+    let parameters = args[0];
+    let cache = args[1];
+    let solve_rows = args[2];
+    let start = args[3];
+    let len = args[4];
+    let output = args[5];
+    let end = builder.ins().iadd(start, len);
+
+    let mut invariant = vec![None; ir.values().len()];
+    let invariant_row = builder.ins().iconst(pointer_type, 0);
+    for (index, value) in ir.values().iter().enumerate() {
+        if value.class == KernelValueClass::Invariant {
+            invariant[index] = Some(emit_instruction(
+                builder,
+                value,
+                &invariant,
+                parameters,
+                cache,
+                solve_rows,
+                invariant_row,
+                pointer_type,
+                helpers,
+                failed,
+            )?);
+        }
+    }
+    builder.ins().jump(loop_header, &[BlockArg::from(start)]);
+
+    builder.switch_to_block(loop_header);
+    let row = builder.block_params(loop_header)[0];
+    let finished = builder
+        .ins()
+        .icmp(IntCC::UnsignedGreaterThanOrEqual, row, end);
+    builder.ins().brif(finished, done, &[], body, &[]);
+
+    builder.switch_to_block(body);
+    let mut primals = invariant.clone();
+    for (index, value) in ir.values().iter().enumerate() {
+        if value.class == KernelValueClass::Event {
+            primals[index] = Some(emit_instruction(
+                builder,
+                value,
+                &primals,
+                parameters,
+                cache,
+                solve_rows,
+                row,
+                pointer_type,
+                helpers,
+                failed,
+            )?);
+        }
+    }
+    let mut adjoints = vec![None; ir.values().len()];
+    adjoints[ir.root().index()] = Some(vec![ComplexValue {
+        re: builder
+            .ins()
+            .f64const(if component == 0 { 1.0 } else { 0.0 }),
+        im: builder
+            .ins()
+            .f64const(if component == 0 { 0.0 } else { 1.0 }),
+    }]);
+    for index in (0..ir.values().len()).rev() {
+        let Some(adjoint) = adjoints[index].clone() else {
+            continue;
+        };
+        propagate_instruction_gradient(
+            builder,
+            &ir.values()[index],
+            index,
+            &primals,
+            &mut adjoints,
+            &adjoint,
+            solve_rows,
+            row,
+            pointer_type,
+            helpers,
+        )?;
+    }
+
+    let output_row = builder.ins().isub(row, start);
+    let row_offset = builder
+        .ins()
+        .imul_imm(output_row, (free_params.len() * size_of::<f64>()) as i64);
+    let output_ptr = builder.ins().iadd(output, row_offset);
+    for (free_index, parameter) in free_params.iter().enumerate() {
+        let derivative = ir
+            .values()
+            .iter()
+            .enumerate()
+            .find_map(|(index, value)| match value.instruction {
+                KernelInstruction::Parameter(id) if id == *parameter => adjoints[index]
+                    .as_ref()
+                    .and_then(|values| values.first())
+                    .map(|value| value.re),
+                _ => None,
+            })
+            .unwrap_or_else(|| builder.ins().f64const(0.0));
+        let offset = i32::try_from(free_index * size_of::<f64>())
+            .map_err(|_| "gradient output offset exceeds JIT address range")?;
+        builder
+            .ins()
+            .store(MemFlagsData::trusted(), derivative, output_ptr, offset);
+    }
+    let next = builder.ins().iadd_imm(row, 1);
+    builder.ins().jump(loop_header, &[BlockArg::from(next)]);
+
+    builder.switch_to_block(done);
+    let success_status = builder.ins().iconst(types::I32, 0);
+    builder.ins().return_(&[success_status]);
+    builder.switch_to_block(failed);
+    let failure_status = builder.ins().iconst(types::I32, 1);
+    builder.ins().return_(&[failure_status]);
+    builder.seal_all_blocks();
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn propagate_instruction_gradient(
+    builder: &mut FunctionBuilder<'_>,
+    value: &KernelValue,
+    value_index: usize,
+    primals: &[Option<LoweredValue>],
+    adjoints: &mut [Option<Vec<ComplexValue>>],
+    adjoint: &[ComplexValue],
+    solve_rows: cranelift::prelude::Value,
+    row: cranelift::prelude::Value,
+    pointer_type: Type,
+    helpers: &FunctionHelpers,
+) -> Result<(), String> {
+    match &value.instruction {
+        KernelInstruction::Cached(_)
+        | KernelInstruction::RealConstant(_)
+        | KernelInstruction::ComplexConstant(_)
+        | KernelInstruction::Parameter(_) => {}
+        KernelInstruction::Unary { op, input } => {
+            let contribution = propagate_unary_gradient(
+                builder,
+                *op,
+                lowered_scalar(primals, *input)?,
+                lowered_scalar(primals, KernelValueId::from_index(value_index))?,
+                adjoint[0],
+                pointer_type,
+                helpers.unary,
+            );
+            accumulate_adjoint(builder, adjoints, *input, &[contribution])?;
+        }
+        KernelInstruction::Binary { op, lhs, rhs } => {
+            let (lhs_contribution, rhs_contribution) = propagate_binary_gradient(
+                builder,
+                *op,
+                lowered_scalar(primals, *lhs)?,
+                lowered_scalar(primals, *rhs)?,
+                adjoint[0],
+            );
+            accumulate_adjoint(builder, adjoints, *lhs, &[lhs_contribution])?;
+            accumulate_adjoint(builder, adjoints, *rhs, &[rhs_contribution])?;
+        }
+        KernelInstruction::Add(terms) => {
+            for term in terms {
+                accumulate_adjoint(builder, adjoints, *term, adjoint)?;
+            }
+        }
+        KernelInstruction::Mul(factors) => {
+            let one = ComplexValue {
+                re: builder.ins().f64const(1.0),
+                im: builder.ins().f64const(0.0),
+            };
+            let mut prefixes = Vec::with_capacity(factors.len() + 1);
+            prefixes.push(one);
+            for factor in factors {
+                let factor_value = lowered_scalar(primals, *factor)?;
+                prefixes.push(mul(builder, *prefixes.last().unwrap(), factor_value));
+            }
+            let mut suffix = one;
+            for (index, factor) in factors.iter().enumerate().rev() {
+                let derivative = mul(builder, prefixes[index], suffix);
+                let contribution = mul_conj(builder, adjoint[0], derivative);
+                accumulate_adjoint(builder, adjoints, *factor, &[contribution])?;
+                suffix = mul(builder, lowered_scalar(primals, *factor)?, suffix);
+            }
+        }
+        KernelInstruction::Complex { re, im } => {
+            let zero = builder.ins().f64const(0.0);
+            accumulate_adjoint(
+                builder,
+                adjoints,
+                *re,
+                &[ComplexValue {
+                    re: adjoint[0].re,
+                    im: zero,
+                }],
+            )?;
+            accumulate_adjoint(
+                builder,
+                adjoints,
+                *im,
+                &[ComplexValue {
+                    re: adjoint[0].im,
+                    im: zero,
+                }],
+            )?;
+        }
+        KernelInstruction::Vector(entries)
+        | KernelInstruction::Matrix {
+            elements: entries, ..
+        } => {
+            for (entry, contribution) in entries.iter().zip(adjoint) {
+                accumulate_adjoint(builder, adjoints, *entry, &[*contribution])?;
+            }
+        }
+        KernelInstruction::Component { input, index } => {
+            let mut contribution =
+                zero_values(builder, lowered_value(primals, *input)?.kind.width());
+            contribution[*index] = adjoint[0];
+            accumulate_adjoint(builder, adjoints, *input, &contribution)?;
+        }
+        KernelInstruction::MatrixElement { input, row, col } => {
+            let input_value = lowered_value(primals, *input)?;
+            let KernelValueKind::Matrix { cols, .. } = input_value.kind else {
+                unreachable!()
+            };
+            let mut contribution = zero_values(builder, input_value.kind.width());
+            contribution[row * cols + col] = adjoint[0];
+            accumulate_adjoint(builder, adjoints, *input, &contribution)?;
+        }
+        KernelInstruction::MatMul { lhs, rhs } => {
+            let lhs_value = lowered_value(primals, *lhs)?;
+            let rhs_value = lowered_value(primals, *rhs)?;
+            let (
+                KernelValueKind::Matrix { rows, cols: inner },
+                KernelValueKind::Matrix { cols, .. },
+            ) = (lhs_value.kind, rhs_value.kind)
+            else {
+                unreachable!()
+            };
+            let mut lhs_adjoint = zero_values(builder, rows * inner);
+            let mut rhs_adjoint = zero_values(builder, inner * cols);
+            for r in 0..rows {
+                for c in 0..cols {
+                    let output_adjoint = adjoint[r * cols + c];
+                    for k in 0..inner {
+                        let lhs_contribution =
+                            mul_conj(builder, output_adjoint, rhs_value.elements[k * cols + c]);
+                        lhs_adjoint[r * inner + k] =
+                            add(builder, lhs_adjoint[r * inner + k], lhs_contribution);
+                        let rhs_contribution =
+                            mul_conj(builder, output_adjoint, lhs_value.elements[r * inner + k]);
+                        rhs_adjoint[k * cols + c] =
+                            add(builder, rhs_adjoint[k * cols + c], rhs_contribution);
+                    }
+                }
+            }
+            accumulate_adjoint(builder, adjoints, *lhs, &lhs_adjoint)?;
+            accumulate_adjoint(builder, adjoints, *rhs, &rhs_adjoint)?;
+        }
+        KernelInstruction::MatVec { matrix, vector } => {
+            let matrix_value = lowered_value(primals, *matrix)?;
+            let vector_value = lowered_value(primals, *vector)?;
+            let KernelValueKind::Matrix { rows, cols } = matrix_value.kind else {
+                unreachable!()
+            };
+            let mut matrix_adjoint = zero_values(builder, rows * cols);
+            let mut vector_adjoint = zero_values(builder, cols);
+            for r in 0..rows {
+                for c in 0..cols {
+                    matrix_adjoint[r * cols + c] =
+                        mul_conj(builder, adjoint[r], vector_value.elements[c]);
+                    let contribution =
+                        mul_conj(builder, adjoint[r], matrix_value.elements[r * cols + c]);
+                    vector_adjoint[c] = add(builder, vector_adjoint[c], contribution);
+                }
+            }
+            accumulate_adjoint(builder, adjoints, *matrix, &matrix_adjoint)?;
+            accumulate_adjoint(builder, adjoints, *vector, &vector_adjoint)?;
+        }
+        KernelInstruction::Dot { lhs, rhs } => {
+            let lhs_value = lowered_value(primals, *lhs)?;
+            let rhs_value = lowered_value(primals, *rhs)?;
+            let lhs_adjoint = rhs_value
+                .elements
+                .iter()
+                .map(|rhs| mul_conj(builder, adjoint[0], *rhs))
+                .collect::<Vec<_>>();
+            let rhs_adjoint = lhs_value
+                .elements
+                .iter()
+                .map(|lhs| mul_conj(builder, adjoint[0], *lhs))
+                .collect::<Vec<_>>();
+            accumulate_adjoint(builder, adjoints, *lhs, &lhs_adjoint)?;
+            accumulate_adjoint(builder, adjoints, *rhs, &rhs_adjoint)?;
+        }
+        KernelInstruction::Solve { .. } => {
+            return Err("gradient JIT encountered an unsupported solve".into());
+        }
+        KernelInstruction::SolveRow { row_slot, rhs } => {
+            let inverse = load_descriptor(
+                builder,
+                solve_rows,
+                *row_slot,
+                KernelValueKind::Vector { len: rhs.len() },
+                row,
+                pointer_type,
+            )?;
+            for (coefficient, rhs) in inverse.iter().zip(rhs) {
+                let contribution = mul_conj(builder, adjoint[0], *coefficient);
+                accumulate_adjoint(builder, adjoints, *rhs, &[contribution])?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn lowered_value(
+    values: &[Option<LoweredValue>],
+    id: KernelValueId,
+) -> Result<&LoweredValue, String> {
+    values[id.index()]
+        .as_ref()
+        .ok_or_else(|| format!("kernel operand {} was not lowered", id.index()))
+}
+
+fn lowered_scalar(
+    values: &[Option<LoweredValue>],
+    id: KernelValueId,
+) -> Result<ComplexValue, String> {
+    lowered_value(values, id)?
+        .elements
+        .first()
+        .copied()
+        .ok_or_else(|| String::from("scalar operand is empty"))
+}
+
+fn zero_values(builder: &mut FunctionBuilder<'_>, len: usize) -> Vec<ComplexValue> {
+    (0..len)
+        .map(|_| ComplexValue {
+            re: builder.ins().f64const(0.0),
+            im: builder.ins().f64const(0.0),
+        })
+        .collect()
+}
+
+fn accumulate_adjoint(
+    builder: &mut FunctionBuilder<'_>,
+    adjoints: &mut [Option<Vec<ComplexValue>>],
+    id: KernelValueId,
+    contribution: &[ComplexValue],
+) -> Result<(), String> {
+    if let Some(existing) = &mut adjoints[id.index()] {
+        if existing.len() != contribution.len() {
+            return Err("gradient adjoint shape mismatch".into());
+        }
+        for (target, source) in existing.iter_mut().zip(contribution) {
+            *target = add(builder, *target, *source);
+        }
+    } else {
+        adjoints[id.index()] = Some(contribution.to_vec());
+    }
     Ok(())
 }
 
@@ -628,6 +1184,187 @@ fn mul(builder: &mut FunctionBuilder<'_>, lhs: ComplexValue, rhs: ComplexValue) 
     ComplexValue {
         re: builder.ins().fsub(ac, bd),
         im: builder.ins().fadd(ad, bc),
+    }
+}
+
+fn neg(builder: &mut FunctionBuilder<'_>, value: ComplexValue) -> ComplexValue {
+    ComplexValue {
+        re: builder.ins().fneg(value.re),
+        im: builder.ins().fneg(value.im),
+    }
+}
+
+fn div(builder: &mut FunctionBuilder<'_>, lhs: ComplexValue, rhs: ComplexValue) -> ComplexValue {
+    let c2 = builder.ins().fmul(rhs.re, rhs.re);
+    let d2 = builder.ins().fmul(rhs.im, rhs.im);
+    let denominator = builder.ins().fadd(c2, d2);
+    let ac = builder.ins().fmul(lhs.re, rhs.re);
+    let bd = builder.ins().fmul(lhs.im, rhs.im);
+    let bc = builder.ins().fmul(lhs.im, rhs.re);
+    let ad = builder.ins().fmul(lhs.re, rhs.im);
+    let numerator_re = builder.ins().fadd(ac, bd);
+    let numerator_im = builder.ins().fsub(bc, ad);
+    ComplexValue {
+        re: builder.ins().fdiv(numerator_re, denominator),
+        im: builder.ins().fdiv(numerator_im, denominator),
+    }
+}
+
+fn mul_conj(
+    builder: &mut FunctionBuilder<'_>,
+    lhs: ComplexValue,
+    rhs: ComplexValue,
+) -> ComplexValue {
+    let rhs = ComplexValue {
+        re: rhs.re,
+        im: builder.ins().fneg(rhs.im),
+    };
+    mul(builder, lhs, rhs)
+}
+
+fn propagate_unary_gradient(
+    builder: &mut FunctionBuilder<'_>,
+    op: UnaryOp,
+    input: ComplexValue,
+    output: ComplexValue,
+    adjoint: ComplexValue,
+    pointer_type: Type,
+    unary_helper: FuncRef,
+) -> ComplexValue {
+    match op {
+        UnaryOp::Neg => neg(builder, adjoint),
+        UnaryOp::Real => ComplexValue {
+            re: adjoint.re,
+            im: builder.ins().f64const(0.0),
+        },
+        UnaryOp::Imag => ComplexValue {
+            re: builder.ins().f64const(0.0),
+            im: adjoint.re,
+        },
+        UnaryOp::Conj => ComplexValue {
+            re: adjoint.re,
+            im: builder.ins().fneg(adjoint.im),
+        },
+        UnaryOp::NormSqr => {
+            let two = builder.ins().f64const(2.0);
+            let re = builder.ins().fmul(input.re, two);
+            let im = builder.ins().fmul(input.im, two);
+            ComplexValue {
+                re: builder.ins().fmul(re, adjoint.re),
+                im: builder.ins().fmul(im, adjoint.re),
+            }
+        }
+        UnaryOp::Sqrt => {
+            let two = builder.ins().f64const(2.0);
+            let denominator = ComplexValue {
+                re: builder.ins().fmul(output.re, two),
+                im: builder.ins().fmul(output.im, two),
+            };
+            let one = ComplexValue {
+                re: builder.ins().f64const(1.0),
+                im: builder.ins().f64const(0.0),
+            };
+            let derivative = div(builder, one, denominator);
+            mul_conj(builder, adjoint, derivative)
+        }
+        UnaryOp::Exp => mul_conj(builder, adjoint, output),
+        UnaryOp::Sin => {
+            let cosine = emit_unary(builder, UnaryOp::Cos, input, pointer_type, unary_helper);
+            mul_conj(builder, adjoint, cosine)
+        }
+        UnaryOp::Cos => {
+            let sine = emit_unary(builder, UnaryOp::Sin, input, pointer_type, unary_helper);
+            let derivative = neg(builder, sine);
+            mul_conj(builder, adjoint, derivative)
+        }
+        UnaryOp::Log => {
+            let one = ComplexValue {
+                re: builder.ins().f64const(1.0),
+                im: builder.ins().f64const(0.0),
+            };
+            let derivative = div(builder, one, input);
+            mul_conj(builder, adjoint, derivative)
+        }
+        UnaryOp::PowI(power) => {
+            if power == 0 {
+                ComplexValue {
+                    re: builder.ins().f64const(0.0),
+                    im: builder.ins().f64const(0.0),
+                }
+            } else if power == i32::MIN {
+                let scale = builder.ins().f64const(power as f64);
+                let scaled = ComplexValue {
+                    re: builder.ins().fmul(output.re, scale),
+                    im: builder.ins().fmul(output.im, scale),
+                };
+                let derivative = div(builder, scaled, input);
+                mul_conj(builder, adjoint, derivative)
+            } else {
+                let power_value = emit_unary(
+                    builder,
+                    UnaryOp::PowI(power - 1),
+                    input,
+                    pointer_type,
+                    unary_helper,
+                );
+                let scale = builder.ins().f64const(power as f64);
+                let derivative = ComplexValue {
+                    re: builder.ins().fmul(power_value.re, scale),
+                    im: builder.ins().fmul(power_value.im, scale),
+                };
+                mul_conj(builder, adjoint, derivative)
+            }
+        }
+    }
+}
+
+fn propagate_binary_gradient(
+    builder: &mut FunctionBuilder<'_>,
+    op: BinaryOp,
+    lhs: ComplexValue,
+    rhs: ComplexValue,
+    adjoint: ComplexValue,
+) -> (ComplexValue, ComplexValue) {
+    match op {
+        BinaryOp::Add => (adjoint, adjoint),
+        BinaryOp::Sub => (adjoint, neg(builder, adjoint)),
+        BinaryOp::Mul => (
+            mul_conj(builder, adjoint, rhs),
+            mul_conj(builder, adjoint, lhs),
+        ),
+        BinaryOp::Div => {
+            let one = ComplexValue {
+                re: builder.ins().f64const(1.0),
+                im: builder.ins().f64const(0.0),
+            };
+            let lhs_derivative = div(builder, one, rhs);
+            let rhs_squared = mul(builder, rhs, rhs);
+            let rhs_quotient = div(builder, lhs, rhs_squared);
+            let rhs_derivative = neg(builder, rhs_quotient);
+            (
+                mul_conj(builder, adjoint, lhs_derivative),
+                mul_conj(builder, adjoint, rhs_derivative),
+            )
+        }
+        BinaryOp::Atan2 => {
+            let lhs_squared = builder.ins().fmul(lhs.re, lhs.re);
+            let rhs_squared = builder.ins().fmul(rhs.re, rhs.re);
+            let denominator = builder.ins().fadd(lhs_squared, rhs_squared);
+            let lhs_derivative = builder.ins().fdiv(rhs.re, denominator);
+            let negative_lhs = builder.ins().fneg(lhs.re);
+            let rhs_derivative = builder.ins().fdiv(negative_lhs, denominator);
+            let zero = builder.ins().f64const(0.0);
+            (
+                ComplexValue {
+                    re: builder.ins().fmul(adjoint.re, lhs_derivative),
+                    im: zero,
+                },
+                ComplexValue {
+                    re: builder.ins().fmul(adjoint.re, rhs_derivative),
+                    im: zero,
+                },
+            )
+        }
     }
 }
 

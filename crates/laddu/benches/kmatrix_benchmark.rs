@@ -281,9 +281,50 @@ fn kmatrix_nll_benchmark(c: &mut Criterion) {
     }
 }
 
+fn kmatrix_nll_gradient_benchmark(c: &mut Criterion) {
+    for batches in [1, 2] {
+        let term = kmatrix_term(batches);
+        let name = if batches == 1 {
+            "K-Matrix NLL Gradient Performance"
+        } else {
+            "K-Matrix NLL Gradient Performance (2 batches)"
+        };
+        let mut group = c.benchmark_group(name);
+        group.sample_size(10);
+        let n_threads = (0..)
+            .map(|power| 1 << power)
+            .take_while(|threads| *threads <= num_cpus::get());
+
+        for threads in n_threads {
+            let execution = CpuExecution::local(CpuExecutionOptions {
+                threads: ThreadPolicy::Fixed(threads),
+                ..CpuExecutionOptions::default()
+            })
+            .unwrap();
+            let likelihood =
+                CpuLikelihood::with_execution([term.clone().boxed()], execution).unwrap();
+            group.bench_with_input(
+                BenchmarkId::from_parameter(threads),
+                &threads,
+                |b, &_threads| {
+                    let mut rng = fastrand::Rng::new();
+                    b.iter_batched(
+                        || likelihood.params_with(|_| rng.f64() * 200.0 - 100.0),
+                        |params| {
+                            black_box(likelihood.nll_with_gradient(black_box(&params)).unwrap())
+                        },
+                        BatchSize::SmallInput,
+                    )
+                },
+            );
+        }
+        group.finish();
+    }
+}
+
 criterion_group! {
     name = benches;
     config = Criterion::default().sample_size(500);
-    targets = kmatrix_nll_benchmark
+    targets = kmatrix_nll_benchmark, kmatrix_nll_gradient_benchmark
 }
 criterion_main!(benches);

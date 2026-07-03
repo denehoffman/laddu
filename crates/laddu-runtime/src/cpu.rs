@@ -28,7 +28,7 @@ use rayon::prelude::*;
 use crate::{RuntimeError, RuntimeResult, execution::CpuExecution};
 
 #[cfg(feature = "jit")]
-use crate::jit::{JitCacheView, JitScalarKernel};
+use crate::jit::{JitCacheView, JitGradientKernel, JitScalarKernel};
 
 const SCALAR_BLOCK_SIZE: usize = 32;
 
@@ -84,6 +84,8 @@ pub struct CpuPlan {
     cached_value_slots: Vec<Option<usize>>,
     scalar_kernel: Option<ScalarKernelIr>,
     scalar_executor: Option<ScalarExecutor>,
+    #[cfg_attr(not(feature = "jit"), allow(dead_code))]
+    gradient_executor: GradientExecutor,
     cache_materialization_nodes: Vec<ExprId>,
     solve_components: Vec<Option<SolveComponentPlan>>,
     solve_rhs_elements: Vec<Option<Vec<ExprId>>>,
@@ -116,6 +118,32 @@ impl ScalarExecutor {
                 ScalarEvaluationPlan::from_kernel_ir(plan).map(Self::Interpreter)
             }
         }
+    }
+}
+
+#[derive(Clone, Debug)]
+enum GradientExecutor {
+    Interpreter,
+    #[cfg(feature = "jit")]
+    Jit(JitGradientKernel),
+}
+
+impl GradientExecutor {
+    fn prepare(
+        plan: Option<&ScalarKernelIr>,
+        params: &ParamLayout,
+        mode: CpuExecutionMode,
+    ) -> Self {
+        #[cfg(not(feature = "jit"))]
+        let _ = (plan, params, mode);
+        #[cfg(feature = "jit")]
+        if mode == CpuExecutionMode::Auto
+            && let Some(plan) = plan
+            && let Ok(Some(kernel)) = JitGradientKernel::compile(plan, params.free_params())
+        {
+            return Self::Jit(kernel);
+        }
+        Self::Interpreter
     }
 }
 
@@ -953,6 +981,8 @@ impl CpuBackend {
         let scalar_executor = scalar_kernel
             .as_ref()
             .and_then(|kernel| ScalarExecutor::prepare(kernel, execution_mode));
+        let gradient_executor =
+            GradientExecutor::prepare(scalar_kernel.as_ref(), model.params(), execution_mode);
         let mut cache_required_nodes = vec![false; model.graph().nodes().len()];
         for node in cache_plan.materialization_nodes() {
             cache_required_nodes[node.index()] = true;
@@ -1014,6 +1044,7 @@ impl CpuBackend {
             cached_value_slots,
             scalar_kernel,
             scalar_executor,
+            gradient_executor,
             cache_materialization_nodes,
             solve_components,
             solve_rhs_elements,
@@ -1125,6 +1156,14 @@ impl CpuPlan {
         }
     }
 
+    #[cfg(feature = "jit")]
+    fn gradient_jit_kernel(&self) -> Option<&JitGradientKernel> {
+        match &self.gradient_executor {
+            GradientExecutor::Jit(kernel) => Some(kernel),
+            GradientExecutor::Interpreter => None,
+        }
+    }
+
     fn parameter_value(&self, params: &ParamValues, node: usize) -> RuntimeResult<f64> {
         let id = self.parameter_slots[node].ok_or_else(|| RuntimeError::InvalidShape {
             index: node,
@@ -1152,6 +1191,22 @@ impl CpuPlan {
     }
 
     pub fn evaluate_with_gradient(&self, params: &ParamValues) -> RuntimeResult<ValueGradient> {
+        #[cfg(feature = "jit")]
+        if let (Some(value_kernel), Some(gradient_kernel)) =
+            (self.scalar_jit_kernel(), self.gradient_jit_kernel())
+        {
+            let value = value_kernel.evaluate_invariant(params)?;
+            let mut real = Vec::new();
+            let mut imag = Vec::new();
+            gradient_kernel.evaluate_invariant_component(params, 0, &mut real)?;
+            gradient_kernel.evaluate_invariant_component(params, 1, &mut imag)?;
+            let gradient = real
+                .into_iter()
+                .zip(imag)
+                .map(|(re, im)| Complex64::new(re, im))
+                .collect();
+            return Ok(ValueGradient { value, gradient });
+        }
         let values = self.evaluate_values(params, None)?;
         self.value_gradient(values, None)
     }
@@ -1720,6 +1775,16 @@ impl CpuPlan {
         cache: &CpuBatchCache,
         row: usize,
     ) -> RuntimeResult<ValueGradient> {
+        #[cfg(feature = "jit")]
+        if self.gradient_jit_kernel().is_some() {
+            return self
+                .evaluate_cache_gradient_jit(params, cache, row, row + 1)?
+                .pop()
+                .ok_or_else(|| RuntimeError::InvalidShape {
+                    index: row,
+                    message: "single-row JIT gradient produced no value".into(),
+                });
+        }
         let values = self.evaluate_values_from_cache(params, cache, row)?;
         self.value_gradient(values, Some((cache, row)))
     }
@@ -1730,9 +1795,52 @@ impl CpuPlan {
         cache: &CpuBatchCache,
     ) -> RuntimeResult<Vec<ValueGradient>> {
         self.check_batch_cache(cache)?;
+        #[cfg(feature = "jit")]
+        if self.gradient_jit_kernel().is_some() {
+            return self.evaluate_cache_gradient_jit(params, cache, 0, cache.len());
+        }
         (0..cache.len())
             .map(|row| self.evaluate_cache_row_with_gradient_unchecked(params, cache, row))
             .collect()
+    }
+
+    #[cfg(feature = "jit")]
+    fn evaluate_cache_gradient_jit(
+        &self,
+        params: &ParamValues,
+        cache: &CpuBatchCache,
+        start: usize,
+        end: usize,
+    ) -> RuntimeResult<Vec<ValueGradient>> {
+        let (Some(value_kernel), Some(gradient_kernel)) =
+            (self.scalar_jit_kernel(), self.gradient_jit_kernel())
+        else {
+            return Err(RuntimeError::InvalidShape {
+                index: self.graph.root().index(),
+                message: "JIT gradient evaluation requires both scalar and gradient kernels".into(),
+            });
+        };
+        let view = JitScalarKernel::prepare_cache(cache);
+        let mut values = Vec::new();
+        let mut real = Vec::new();
+        let mut imag = Vec::new();
+        value_kernel.evaluate_prepared(params, &view, start, end, &mut values)?;
+        gradient_kernel.evaluate_prepared(params, &view, start, end, 0, &mut real)?;
+        gradient_kernel.evaluate_prepared(params, &view, start, end, 1, &mut imag)?;
+        let parameter_count = self.free_parameter_count();
+        Ok(values
+            .into_iter()
+            .enumerate()
+            .map(|(row, value)| ValueGradient {
+                value,
+                gradient: (0..parameter_count)
+                    .map(|parameter| {
+                        let index = row * parameter_count + parameter;
+                        Complex64::new(real[index], imag[index])
+                    })
+                    .collect(),
+            })
+            .collect())
     }
 
     pub fn evaluate_batch(
@@ -2046,6 +2154,18 @@ impl CpuPlan {
         E: From<RuntimeError>,
         F: FnMut(Complex64) -> Result<(f64, f64), E>,
     {
+        #[cfg(feature = "jit")]
+        if let (Some(value_kernel), Some(gradient_kernel)) =
+            (self.scalar_jit_kernel(), self.gradient_jit_kernel())
+        {
+            return self.try_weighted_real_sum_with_jit_gradient_cached(
+                params,
+                dataset,
+                transform,
+                value_kernel,
+                gradient_kernel,
+            );
+        }
         let mut total = RealGradientAccumulator::zero(self.free_parameter_count());
         for batch in dataset.batches() {
             self.check_batch_cache(batch.cache())?;
@@ -2059,6 +2179,51 @@ impl CpuPlan {
                     derivative,
                     evaluation.gradient(),
                 );
+            }
+        }
+        Ok(total.finish())
+    }
+
+    #[cfg(feature = "jit")]
+    fn try_weighted_real_sum_with_jit_gradient_cached<E, F>(
+        &self,
+        params: &ParamValues,
+        dataset: &CpuCachedDataset,
+        mut transform: F,
+        value_kernel: &JitScalarKernel,
+        gradient_kernel: &JitGradientKernel,
+    ) -> Result<(f64, Vec<f64>), E>
+    where
+        E: From<RuntimeError>,
+        F: FnMut(Complex64) -> Result<(f64, f64), E>,
+    {
+        let mut total = RealGradientAccumulator::zero(self.free_parameter_count());
+        let mut values = Vec::new();
+        let mut tangents = Vec::new();
+        let mut derivatives = Vec::new();
+        for batch in dataset.batches() {
+            self.check_batch_cache(batch.cache())?;
+            let cache = JitScalarKernel::prepare_cache(batch.cache());
+            for block in 0..batch.len().div_ceil(SCALAR_BLOCK_SIZE) {
+                let start = block * SCALAR_BLOCK_SIZE;
+                let end = (start + SCALAR_BLOCK_SIZE).min(batch.len());
+                value_kernel.evaluate_prepared(params, &cache, start, end, &mut values)?;
+                derivatives.clear();
+                derivatives.reserve(values.len());
+                for (lane, value) in values.iter().copied().enumerate() {
+                    let (value, derivative) = transform(value)?;
+                    let weight = batch.weights()[start + lane];
+                    total.value.push(weight * value);
+                    derivatives.push(weight * derivative);
+                }
+                gradient_kernel.evaluate_prepared(params, &cache, start, end, 0, &mut tangents)?;
+                for (lane, factor) in derivatives.iter().enumerate() {
+                    for free_index in 0..self.free_parameter_count() {
+                        total.gradient[free_index].push(
+                            factor * tangents[lane * self.free_parameter_count() + free_index],
+                        );
+                    }
+                }
             }
         }
         Ok(total.finish())
@@ -2243,6 +2408,18 @@ impl CpuPlan {
         E: From<RuntimeError> + Send,
         F: Fn(Complex64) -> Result<(f64, f64), E> + Send + Sync,
     {
+        #[cfg(feature = "jit")]
+        if let (Some(value_kernel), Some(gradient_kernel)) =
+            (self.scalar_jit_kernel(), self.gradient_jit_kernel())
+        {
+            return self.par_try_weighted_real_sum_with_jit_gradient_cached(
+                params,
+                dataset,
+                transform,
+                value_kernel,
+                gradient_kernel,
+            );
+        }
         let mut total = RealGradientAccumulator::zero(self.free_parameter_count());
         for batch in dataset.batches() {
             self.check_batch_cache(batch.cache())?;
@@ -2274,6 +2451,85 @@ impl CpuPlan {
                     },
                 )?;
             total.merge(partial);
+        }
+        Ok(total.finish())
+    }
+
+    #[cfg(feature = "jit")]
+    fn par_try_weighted_real_sum_with_jit_gradient_cached<E, F>(
+        &self,
+        params: &ParamValues,
+        dataset: &CpuCachedDataset,
+        transform: F,
+        value_kernel: &JitScalarKernel,
+        gradient_kernel: &JitGradientKernel,
+    ) -> Result<(f64, Vec<f64>), E>
+    where
+        E: From<RuntimeError> + Send,
+        F: Fn(Complex64) -> Result<(f64, f64), E> + Send + Sync,
+    {
+        let mut total = RealGradientAccumulator::zero(self.free_parameter_count());
+        for batch in dataset.batches() {
+            self.check_batch_cache(batch.cache())?;
+            let cache = JitScalarKernel::prepare_cache(batch.cache());
+            let n_blocks = batch.len().div_ceil(SCALAR_BLOCK_SIZE);
+            let partial = (0..n_blocks)
+                .into_par_iter()
+                .try_fold(
+                    || {
+                        (
+                            RealGradientAccumulator::zero(self.free_parameter_count()),
+                            Vec::new(),
+                            Vec::new(),
+                            Vec::new(),
+                        )
+                    },
+                    |(mut accumulator, mut values, mut tangents, mut derivatives), block| {
+                        let start = block * SCALAR_BLOCK_SIZE;
+                        let end = (start + SCALAR_BLOCK_SIZE).min(batch.len());
+                        value_kernel.evaluate_prepared(params, &cache, start, end, &mut values)?;
+                        derivatives.clear();
+                        derivatives.reserve(values.len());
+                        for (lane, value) in values.iter().copied().enumerate() {
+                            let (value, derivative) = transform(value)?;
+                            let weight = batch.weights()[start + lane];
+                            accumulator.value.push(weight * value);
+                            derivatives.push(weight * derivative);
+                        }
+                        gradient_kernel.evaluate_prepared(
+                            params,
+                            &cache,
+                            start,
+                            end,
+                            0,
+                            &mut tangents,
+                        )?;
+                        for (lane, factor) in derivatives.iter().enumerate() {
+                            for free_index in 0..self.free_parameter_count() {
+                                accumulator.gradient[free_index].push(
+                                    factor
+                                        * tangents[lane * self.free_parameter_count() + free_index],
+                                );
+                            }
+                        }
+                        Ok::<_, E>((accumulator, values, tangents, derivatives))
+                    },
+                )
+                .try_reduce(
+                    || {
+                        (
+                            RealGradientAccumulator::zero(self.free_parameter_count()),
+                            Vec::new(),
+                            Vec::new(),
+                            Vec::new(),
+                        )
+                    },
+                    |(mut lhs, values, tangents, derivatives), (rhs, _, _, _)| {
+                        lhs.merge(rhs);
+                        Ok::<_, E>((lhs, values, tangents, derivatives))
+                    },
+                )?;
+            total.merge(partial.0);
         }
         Ok(total.finish())
     }
@@ -4791,6 +5047,82 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "jit")]
+    #[test]
+    fn jit_gradient_reduction_matches_interpreter() {
+        let x = event_scalar("x").real();
+        let scale = laddu_expr::Expr::from(parameter!("scale", initial: 0.4));
+        let phase = laddu_expr::Expr::from(parameter!("phase", initial: -0.2));
+        let intensity =
+            complex((x.clone() * &scale).sin(), (x.clone() + phase).cos()).norm_sqr() + 0.5;
+        let expression = complex(intensity, x * scale);
+        let model = CompiledModel::from_expr(&expression).unwrap();
+        let params = Arc::new(model.params().clone()).default_values();
+        let automatic = CpuBackend.prepare(&model);
+        let interpreted =
+            CpuBackend.prepare_with_execution_mode(&model, CpuExecutionMode::Interpreter);
+        assert!(matches!(
+            automatic.gradient_executor,
+            GradientExecutor::Jit(_)
+        ));
+
+        let schema = Arc::new(Schema::new(std::iter::empty::<&str>(), ["x"], true).unwrap());
+        let batch = EventBatch::from_events(
+            schema,
+            [
+                OwnedEvent::weighted(vec![], vec![0.25], 0.5),
+                OwnedEvent::weighted(vec![], vec![0.75], 1.5),
+                OwnedEvent::weighted(vec![], vec![1.25], 2.0),
+            ],
+        )
+        .unwrap();
+        let actual = automatic
+            .evaluate_cache_with_gradient(&params, &automatic.cache_event_batch(&batch).unwrap())
+            .unwrap();
+        let expected = interpreted
+            .evaluate_cache_with_gradient(&params, &interpreted.cache_event_batch(&batch).unwrap())
+            .unwrap();
+        for (actual, expected) in actual.iter().zip(&expected) {
+            assert!((actual.value() - expected.value()).norm() < 1.0e-12);
+            for (actual, expected) in actual.gradient().iter().zip(expected.gradient()) {
+                assert!((actual - expected).norm() < 1.0e-12);
+            }
+        }
+        let dataset = Dataset::from_batch(batch);
+        let execution = CpuExecution::local(crate::CpuExecutionOptions {
+            threads: crate::ThreadPolicy::Serial,
+            ..crate::CpuExecutionOptions::default()
+        })
+        .unwrap();
+        let automatic_data = automatic.prepare_dataset(&execution, &dataset).unwrap();
+        let interpreted_data = interpreted.prepare_dataset(&execution, &dataset).unwrap();
+        let automatic_result = automatic
+            .reduce_with_gradient(
+                &execution,
+                &params,
+                &automatic_data,
+                ReductionPlan::weighted_log_positive_real(),
+            )
+            .unwrap();
+        let interpreted_result = interpreted
+            .reduce_with_gradient(
+                &execution,
+                &params,
+                &interpreted_data,
+                ReductionPlan::weighted_log_positive_real(),
+            )
+            .unwrap();
+
+        assert!((automatic_result.value() - interpreted_result.value()).abs() < 1.0e-12);
+        for (actual, expected) in automatic_result
+            .gradient()
+            .iter()
+            .zip(interpreted_result.gradient())
+        {
+            assert!((actual - expected).abs() < 1.0e-12);
+        }
+    }
+
     #[test]
     fn forward_gradients_cover_unary_atan2_and_zero_products() {
         let x = laddu_expr::Expr::from(parameter!("x", initial: 0.8));
@@ -4921,9 +5253,17 @@ mod tests {
             automatic.scalar_executor,
             Some(ScalarExecutor::Jit(_))
         ));
+        assert!(matches!(
+            automatic.gradient_executor,
+            GradientExecutor::Jit(_)
+        ));
         assert_eq!(
             automatic.evaluate(&params).unwrap(),
             interpreted.evaluate(&params).unwrap()
+        );
+        assert_eq!(
+            automatic.evaluate_with_gradient(&params).unwrap(),
+            interpreted.evaluate_with_gradient(&params).unwrap()
         );
     }
 
@@ -5115,6 +5455,71 @@ mod tests {
         assert!((cached.value() - direct.value()).norm() < 1.0e-12);
         for (cached, direct) in cached.gradient().iter().zip(direct.gradient()) {
             assert!((cached - direct).norm() < 1.0e-12);
+        }
+    }
+
+    #[cfg(feature = "jit")]
+    #[test]
+    fn jit_gradient_reduction_handles_cached_solve_rows() {
+        let expression = solve(
+            matrix([
+                [event_scalar("x") + 2.0, Complex64::I.into()],
+                [Complex64::new(2.0, -1.0).into(), 3.0.into()],
+            ]),
+            vector([
+                parameter!("p", initial: 1.5),
+                parameter!("q", initial: -0.25),
+            ]),
+        )
+        .component(1);
+        let model = CompiledModel::from_expr(&expression).unwrap();
+        let params = Arc::new(model.params().clone()).default_values();
+        let automatic = CpuBackend.prepare(&model);
+        let interpreted =
+            CpuBackend.prepare_with_execution_mode(&model, CpuExecutionMode::Interpreter);
+        assert!(matches!(
+            automatic.gradient_executor,
+            GradientExecutor::Jit(_)
+        ));
+
+        let dataset = Dataset::from_batch(
+            EventBatch::from_events(
+                Arc::new(Schema::new(std::iter::empty::<&str>(), ["x"], false).unwrap()),
+                [
+                    OwnedEvent::new(vec![], vec![0.25]),
+                    OwnedEvent::new(vec![], vec![0.75]),
+                    OwnedEvent::new(vec![], vec![1.25]),
+                ],
+            )
+            .unwrap(),
+        );
+        let execution = CpuExecution::local(crate::CpuExecutionOptions {
+            threads: crate::ThreadPolicy::Fixed(2),
+            ..crate::CpuExecutionOptions::default()
+        })
+        .unwrap();
+        let automatic_data = automatic.prepare_dataset(&execution, &dataset).unwrap();
+        let interpreted_data = interpreted.prepare_dataset(&execution, &dataset).unwrap();
+        let actual = automatic
+            .reduce_with_gradient(
+                &execution,
+                &params,
+                &automatic_data,
+                ReductionPlan::weighted_real(),
+            )
+            .unwrap();
+        let expected = interpreted
+            .reduce_with_gradient(
+                &execution,
+                &params,
+                &interpreted_data,
+                ReductionPlan::weighted_real(),
+            )
+            .unwrap();
+
+        assert!((actual.value() - expected.value()).abs() < 1.0e-12);
+        for (actual, expected) in actual.gradient().iter().zip(expected.gradient()) {
+            assert!((actual - expected).abs() < 1.0e-12);
         }
     }
 
@@ -5399,6 +5804,10 @@ mod tests {
             automatic.scalar_executor,
             Some(ScalarExecutor::Jit(_))
         ));
+        assert!(matches!(
+            automatic.gradient_executor,
+            GradientExecutor::Interpreter
+        ));
         let actual = automatic.evaluate_cache(&params, &automatic_cache).unwrap();
         let expected = interpreted
             .evaluate_cache(&params, &interpreted_cache)
@@ -5409,6 +5818,13 @@ mod tests {
                 "{actual} != {expected}"
             );
         }
+        let actual = automatic
+            .evaluate_cache_with_gradient(&params, &automatic_cache)
+            .unwrap();
+        let expected = interpreted
+            .evaluate_cache_with_gradient(&params, &interpreted_cache)
+            .unwrap();
+        assert_eq!(actual, expected);
     }
 
     #[test]
