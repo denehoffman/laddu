@@ -23,6 +23,8 @@ use num::complex::Complex64;
 
 use crate::{CpuBatchCache, RuntimeError, RuntimeResult};
 
+const MAX_IN_PLACE_SOLVE_DIMENSION: usize = 8;
+
 #[repr(C)]
 #[derive(Copy, Clone)]
 struct CacheDescriptor {
@@ -843,18 +845,161 @@ unsafe extern "C" fn binary_helper(
 
 unsafe extern "C" fn solve_helper(
     dimension: usize,
-    matrix: *const Complex64,
+    matrix: *mut Complex64,
     rhs: *const Complex64,
     out: *mut Complex64,
 ) -> i32 {
-    let matrix = unsafe { std::slice::from_raw_parts(matrix, dimension * dimension) };
+    let matrix = unsafe { std::slice::from_raw_parts_mut(matrix, dimension * dimension) };
     let rhs = unsafe { std::slice::from_raw_parts(rhs, dimension) };
+    let out = unsafe { std::slice::from_raw_parts_mut(out, dimension) };
+    let solved = if dimension <= MAX_IN_PLACE_SOLVE_DIMENSION {
+        solve_small_in_place(dimension, matrix, rhs, out)
+    } else {
+        solve_dynamic(dimension, matrix, rhs, out)
+    };
+    if !solved {
+        return 1;
+    }
+    0
+}
+
+fn solve_small_in_place(
+    dimension: usize,
+    matrix: &mut [Complex64],
+    rhs: &[Complex64],
+    out: &mut [Complex64],
+) -> bool {
+    if dimension == 0
+        || matrix.len() != dimension * dimension
+        || rhs.len() != dimension
+        || out.len() != dimension
+    {
+        return false;
+    }
+    out.copy_from_slice(rhs);
+
+    for pivot_col in 0..dimension {
+        let mut pivot_row = pivot_col;
+        let mut pivot_norm = matrix[pivot_col * dimension + pivot_col].norm_sqr();
+        for row in pivot_col + 1..dimension {
+            let norm = matrix[row * dimension + pivot_col].norm_sqr();
+            if norm > pivot_norm {
+                pivot_row = row;
+                pivot_norm = norm;
+            }
+        }
+        if pivot_norm == 0.0 {
+            return false;
+        }
+        if pivot_row != pivot_col {
+            for col in 0..dimension {
+                matrix.swap(pivot_col * dimension + col, pivot_row * dimension + col);
+            }
+            out.swap(pivot_col, pivot_row);
+        }
+
+        let pivot = matrix[pivot_col * dimension + pivot_col];
+        for row in pivot_col + 1..dimension {
+            let row_offset = row * dimension;
+            let factor = matrix[row_offset + pivot_col] / pivot;
+            matrix[row_offset + pivot_col] = Complex64::new(0.0, 0.0);
+            for col in pivot_col + 1..dimension {
+                let pivot_value = matrix[pivot_col * dimension + col];
+                matrix[row_offset + col] -= factor * pivot_value;
+            }
+            let pivot_rhs = out[pivot_col];
+            out[row] -= factor * pivot_rhs;
+        }
+    }
+
+    for row in (0..dimension).rev() {
+        let row_offset = row * dimension;
+        let mut value = out[row];
+        for col in row + 1..dimension {
+            value -= matrix[row_offset + col] * out[col];
+        }
+        let diagonal = matrix[row_offset + row];
+        if diagonal.norm_sqr() == 0.0 {
+            return false;
+        }
+        out[row] = value / diagonal;
+    }
+    true
+}
+
+fn solve_dynamic(
+    dimension: usize,
+    matrix: &[Complex64],
+    rhs: &[Complex64],
+    out: &mut [Complex64],
+) -> bool {
     let Some(solution) = DMatrix::from_row_slice(dimension, dimension, matrix)
         .lu()
         .solve(&DVector::from_row_slice(rhs))
     else {
-        return 1;
+        return false;
     };
-    unsafe { std::ptr::copy_nonoverlapping(solution.as_ptr(), out, dimension) };
-    0
+    out.copy_from_slice(solution.as_slice());
+    true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn small_solve_handles_complex_partial_pivoting() {
+        let mut matrix = vec![
+            Complex64::new(0.0, 0.0),
+            Complex64::new(2.0, 1.0),
+            Complex64::new(1.0, -1.0),
+            Complex64::new(3.0, 0.0),
+        ];
+        let expected = [Complex64::new(1.0, 2.0), Complex64::new(-0.5, 0.25)];
+        let rhs = [
+            matrix[0] * expected[0] + matrix[1] * expected[1],
+            matrix[2] * expected[0] + matrix[3] * expected[1],
+        ];
+        let mut actual = [Complex64::new(0.0, 0.0); 2];
+
+        assert!(solve_small_in_place(2, &mut matrix, &rhs, &mut actual));
+        for (actual, expected) in actual.iter().zip(expected) {
+            assert!((*actual - expected).norm() < 1.0e-12);
+        }
+    }
+
+    #[test]
+    fn small_solve_rejects_singular_matrices() {
+        let mut matrix = vec![
+            Complex64::new(1.0, 0.0),
+            Complex64::new(2.0, 0.0),
+            Complex64::new(2.0, 0.0),
+            Complex64::new(4.0, 0.0),
+        ];
+        let rhs = [Complex64::new(1.0, 0.0), Complex64::new(2.0, 0.0)];
+        let mut out = [Complex64::new(0.0, 0.0); 2];
+
+        assert!(!solve_small_in_place(2, &mut matrix, &rhs, &mut out));
+    }
+
+    #[test]
+    fn dynamic_solve_remains_available_for_larger_matrices() {
+        let dimension = 9;
+        let mut matrix = vec![Complex64::new(0.0, 0.0); dimension * dimension];
+        let expected = (1..=dimension)
+            .map(|value| Complex64::new(value as f64, -(value as f64)))
+            .collect::<Vec<_>>();
+        for index in 0..dimension {
+            matrix[index * dimension + index] = Complex64::new((index + 2) as f64, 0.0);
+        }
+        let rhs = (0..dimension)
+            .map(|index| matrix[index * dimension + index] * expected[index])
+            .collect::<Vec<_>>();
+        let mut actual = vec![Complex64::new(0.0, 0.0); dimension];
+
+        assert!(solve_dynamic(dimension, &matrix, &rhs, &mut actual));
+        for (actual, expected) in actual.iter().zip(expected) {
+            assert!((*actual - expected).norm() < 1.0e-12);
+        }
+    }
 }
