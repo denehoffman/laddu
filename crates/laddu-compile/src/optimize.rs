@@ -3457,12 +3457,113 @@ impl RewriteRule for MatrixVectorRule {
                 self.rewrite_matvec(*matrix, *vector, metadata, context)
             }
             ExprNode::Dot { lhs, rhs } => self.rewrite_dot(*lhs, *rhs, metadata, context),
+            ExprNode::Component { input, index } => {
+                self.rewrite_component(*input, *index, metadata, context)
+            }
+            ExprNode::MatrixElement { input, row, col } => {
+                self.rewrite_matrix_element(*input, *row, *col, metadata, context)
+            }
             _ => Ok(Rewrite::Keep),
         }
     }
 }
 
 impl MatrixVectorRule {
+    fn rewrite_component(
+        &self,
+        input: ExprId,
+        index: usize,
+        metadata: &ExprMetadata,
+        context: &RewriteContext<'_>,
+    ) -> CompileResult<Rewrite> {
+        let Some(ExprNode::MatVec { matrix, vector }) = context.node(input) else {
+            return Ok(Rewrite::Keep);
+        };
+        if !matches!(context.node(*matrix), Some(ExprNode::Matrix { .. }))
+            || !matches!(context.node(*vector), Some(ExprNode::Vector { .. }))
+        {
+            return Ok(Rewrite::Keep);
+        }
+        let (Some((rows, cols)), Some(len)) = (
+            Self::matrix_dims(context, *matrix),
+            Self::vector_len(context, *vector),
+        ) else {
+            return Ok(Rewrite::Keep);
+        };
+        if index >= rows || cols != len || cols == 0 {
+            return Ok(Rewrite::Keep);
+        }
+
+        let mut builder = ReplacementFragment::new(context);
+        let terms = (0..cols)
+            .map(|col| {
+                let lhs = Self::matrix_element(*matrix, index, col, &mut builder);
+                let rhs = Self::vector_element(*vector, col, &mut builder);
+                builder.push(
+                    ExprNode::NaryMul {
+                        factors: vec![lhs, rhs],
+                    },
+                    ExprMetadata::new(ExprSourceKind::Binary),
+                )
+            })
+            .collect();
+        builder.push(ExprNode::NaryAdd { terms }, metadata.clone());
+        self.cost_gated_fragment(
+            ExprNode::Component { input, index },
+            metadata,
+            builder,
+            context,
+        )
+    }
+
+    fn rewrite_matrix_element(
+        &self,
+        input: ExprId,
+        row: usize,
+        col: usize,
+        metadata: &ExprMetadata,
+        context: &RewriteContext<'_>,
+    ) -> CompileResult<Rewrite> {
+        let Some(ExprNode::MatMul { lhs, rhs }) = context.node(input) else {
+            return Ok(Rewrite::Keep);
+        };
+        if !matches!(context.node(*lhs), Some(ExprNode::Matrix { .. }))
+            || !matches!(context.node(*rhs), Some(ExprNode::Matrix { .. }))
+        {
+            return Ok(Rewrite::Keep);
+        }
+        let (Some((lhs_rows, lhs_cols)), Some((rhs_rows, rhs_cols))) = (
+            Self::matrix_dims(context, *lhs),
+            Self::matrix_dims(context, *rhs),
+        ) else {
+            return Ok(Rewrite::Keep);
+        };
+        if row >= lhs_rows || col >= rhs_cols || lhs_cols != rhs_rows || lhs_cols == 0 {
+            return Ok(Rewrite::Keep);
+        }
+
+        let mut builder = ReplacementFragment::new(context);
+        let terms = (0..lhs_cols)
+            .map(|inner| {
+                let lhs = Self::matrix_element(*lhs, row, inner, &mut builder);
+                let rhs = Self::matrix_element(*rhs, inner, col, &mut builder);
+                builder.push(
+                    ExprNode::NaryMul {
+                        factors: vec![lhs, rhs],
+                    },
+                    ExprMetadata::new(ExprSourceKind::Binary),
+                )
+            })
+            .collect();
+        builder.push(ExprNode::NaryAdd { terms }, metadata.clone());
+        self.cost_gated_fragment(
+            ExprNode::MatrixElement { input, row, col },
+            metadata,
+            builder,
+            context,
+        )
+    }
+
     fn rewrite_matmul(
         &self,
         lhs: ExprId,
@@ -3568,17 +3669,7 @@ impl MatrixVectorRule {
             })
             .collect();
         builder.push(ExprNode::NaryAdd { terms }, metadata.clone());
-        let Rewrite::ReplaceMany { nodes } = builder.into_rewrite() else {
-            unreachable!("replacement builder always produces fragments")
-        };
-        let original = ExprNode::Dot { lhs, rhs };
-        let original_cost = context.local_node_cost(original, metadata.clone())?;
-        let candidate_cost = context.local_fragment_cost(&nodes)?;
-        if candidate_cost.is_better_than(&original_cost) {
-            Ok(Rewrite::ReplaceMany { nodes })
-        } else {
-            Ok(Rewrite::Keep)
-        }
+        self.cost_gated_fragment(ExprNode::Dot { lhs, rhs }, metadata, builder, context)
     }
 
     fn expand_matvec(
@@ -3612,10 +3703,24 @@ impl MatrixVectorRule {
             })
             .collect();
         builder.push(ExprNode::Vector { elements }, metadata.clone());
+        self.cost_gated_fragment(
+            ExprNode::MatVec { matrix, vector },
+            metadata,
+            builder,
+            context,
+        )
+    }
+
+    fn cost_gated_fragment(
+        &self,
+        original: ExprNode,
+        metadata: &ExprMetadata,
+        builder: ReplacementFragment<'_>,
+        context: &RewriteContext<'_>,
+    ) -> CompileResult<Rewrite> {
         let Rewrite::ReplaceMany { nodes } = builder.into_rewrite() else {
             unreachable!("replacement builder always produces fragments")
         };
-        let original = ExprNode::MatVec { matrix, vector };
         let original_cost = context.local_node_cost(original, metadata.clone())?;
         let candidate_cost = context.local_fragment_cost(&nodes)?;
         if candidate_cost.is_better_than(&original_cost) {

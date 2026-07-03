@@ -1622,6 +1622,81 @@ mod tests {
     }
 
     #[test]
+    fn selected_aggregate_outputs_only_lower_required_contractions() {
+        const N: usize = 8;
+        let matrix_values = matrix::<N, N, Expr>(std::array::from_fn(|row| {
+            std::array::from_fn(|col| event_scalar(format!("m{row}_{col}")))
+        }));
+        let vector_values = vector(std::array::from_fn::<Expr, N, _>(|index| {
+            event_scalar(format!("v{index}"))
+        }));
+        let selected_row =
+            CompiledModel::from_expr(&matvec(matrix_values, vector_values).component(3)).unwrap();
+
+        assert!(matches!(
+            selected_row.graph().node(selected_row.graph().root()),
+            Some(ExprNode::NaryAdd { terms }) if terms.len() == N
+        ));
+        assert!(
+            !selected_row
+                .graph()
+                .nodes()
+                .iter()
+                .any(|node| matches!(node, ExprNode::MatVec { .. } | ExprNode::Component { .. }))
+        );
+        let selected_names = selected_row
+            .graph()
+            .nodes()
+            .iter()
+            .filter_map(|node| match node {
+                ExprNode::EventScalar(name) => Some(name.as_ref()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(selected_names.len(), 2 * N);
+        assert!(
+            selected_names
+                .iter()
+                .all(|name| { name.starts_with("v") || name.starts_with("m3_") })
+        );
+
+        let lhs = matrix::<N, N, Expr>(std::array::from_fn(|row| {
+            std::array::from_fn(|col| event_scalar(format!("a{row}_{col}")))
+        }));
+        let rhs = matrix::<N, N, Expr>(std::array::from_fn(|row| {
+            std::array::from_fn(|col| event_scalar(format!("b{row}_{col}")))
+        }));
+        let selected_element =
+            CompiledModel::from_expr(&matmul(lhs, rhs).matrix_element(2, 5)).unwrap();
+
+        assert!(matches!(
+            selected_element.graph().node(selected_element.graph().root()),
+            Some(ExprNode::NaryAdd { terms }) if terms.len() == N
+        ));
+        assert!(
+            !selected_element.graph().nodes().iter().any(|node| matches!(
+                node,
+                ExprNode::MatMul { .. } | ExprNode::MatrixElement { .. }
+            ))
+        );
+        let selected_names = selected_element
+            .graph()
+            .nodes()
+            .iter()
+            .filter_map(|node| match node {
+                ExprNode::EventScalar(name) => Some(name.as_ref()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(selected_names.len(), 2 * N);
+        assert!(
+            selected_names
+                .iter()
+                .all(|name| { name.starts_with("a2_") || name.ends_with("_5") })
+        );
+    }
+
+    #[test]
     fn matrix_multiplication_identity_and_zero_simplify() {
         let x = Expr::from(event_scalar("x"));
         let matrix_value = matrix([[x, 2.0.into()], [3.0.into(), 4.0.into()]]);
