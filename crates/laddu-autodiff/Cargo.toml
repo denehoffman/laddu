@@ -11,4 +11,6 @@ rust-version.workspace = true
 [dependencies]
 laddu-compile = { path = "../laddu-compile" }
 laddu-expr = { path = "../laddu-expr" }
+laddu-kernel = { path = "../laddu-kernel" }
+num.workspace = true
 thiserror.workspace = true

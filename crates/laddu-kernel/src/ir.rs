@@ -369,6 +369,25 @@ pub struct ScalarKernelIr {
     root: KernelValueId,
 }
 
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub enum OutputComponent {
+    Real,
+    Imag,
+}
+
+#[derive(Clone, Debug)]
+pub struct GradientKernelIr {
+    values: Vec<KernelValue>,
+    primal_root: KernelValueId,
+    outputs: Vec<KernelValueId>,
+    component: OutputComponent,
+}
+
+#[derive(Clone, Debug)]
+pub struct KernelIrBuilder {
+    values: Vec<KernelValue>,
+}
+
 impl ScalarKernelIr {
     pub fn new(values: Vec<KernelValue>, root: KernelValueId) -> Result<Self, KernelIrError> {
         let ir = Self { values, root };
@@ -384,16 +403,20 @@ impl ScalarKernelIr {
     }
 
     pub fn validate(&self) -> Result<(), KernelIrError> {
-        if self.values.is_empty() {
+        Self::validate_values(&self.values, self.root)
+    }
+
+    fn validate_values(values: &[KernelValue], root: KernelValueId) -> Result<(), KernelIrError> {
+        if values.is_empty() {
             return Err(KernelIrError::Empty);
         }
-        if self.root.index() >= self.values.len() {
+        if root.index() >= values.len() {
             return Err(KernelIrError::RootOutOfBounds {
-                root: self.root.index(),
-                len: self.values.len(),
+                root: root.index(),
+                len: values.len(),
             });
         }
-        for (index, value) in self.values.iter().enumerate() {
+        for (index, value) in values.iter().enumerate() {
             for operand in value.instruction.operands() {
                 if operand.index() >= index {
                     return Err(KernelIrError::InvalidOperand {
@@ -402,7 +425,7 @@ impl ScalarKernelIr {
                     });
                 }
             }
-            if let Some(expected) = value.instruction.expected_kind(&self.values, index)?
+            if let Some(expected) = value.instruction.expected_kind(values, index)?
                 && value.kind != expected
             {
                 return Err(KernelIrError::KindMismatch {
@@ -411,7 +434,7 @@ impl ScalarKernelIr {
                     actual: value.kind,
                 });
             }
-            let expected = value.instruction.expected_class(&self.values);
+            let expected = value.instruction.expected_class(values);
             if value.class != expected {
                 return Err(KernelIrError::ClassMismatch {
                     value: index,
@@ -428,6 +451,114 @@ impl ScalarKernelIr {
     }
     pub fn root(&self) -> KernelValueId {
         self.root
+    }
+}
+
+impl GradientKernelIr {
+    pub fn new(
+        values: Vec<KernelValue>,
+        primal_root: KernelValueId,
+        outputs: Vec<KernelValueId>,
+        component: OutputComponent,
+    ) -> Result<Self, KernelIrError> {
+        let ir = Self {
+            values,
+            primal_root,
+            outputs,
+            component,
+        };
+        ir.validate()?;
+        Ok(ir)
+    }
+
+    pub fn validate(&self) -> Result<(), KernelIrError> {
+        ScalarKernelIr::validate_values(&self.values, self.primal_root)?;
+        if !self.values[self.primal_root.index()].kind.is_scalar() {
+            return Err(KernelIrError::InvalidShape {
+                value: self.primal_root.index(),
+                operation: "gradient primal root",
+                message: "primal root must be scalar".into(),
+            });
+        }
+        for output in &self.outputs {
+            let Some(value) = self.values.get(output.index()) else {
+                return Err(KernelIrError::GradientOutOfBounds {
+                    output: output.index(),
+                    len: self.values.len(),
+                });
+            };
+            if value.kind != KernelValueKind::Real {
+                return Err(KernelIrError::GradientKindMismatch {
+                    output: output.index(),
+                    actual: value.kind,
+                });
+            }
+        }
+        Ok(())
+    }
+
+    pub fn values(&self) -> &[KernelValue] {
+        &self.values
+    }
+
+    pub fn primal_root(&self) -> KernelValueId {
+        self.primal_root
+    }
+
+    pub fn outputs(&self) -> &[KernelValueId] {
+        &self.outputs
+    }
+
+    pub fn component(&self) -> OutputComponent {
+        self.component
+    }
+}
+
+impl KernelIrBuilder {
+    pub fn from_scalar(ir: &ScalarKernelIr) -> Self {
+        Self {
+            values: ir.values.clone(),
+        }
+    }
+
+    pub fn push(&mut self, instruction: KernelInstruction) -> Result<KernelValueId, KernelIrError> {
+        let index = self.values.len();
+        for operand in instruction.operands() {
+            if operand.index() >= index {
+                return Err(KernelIrError::InvalidOperand {
+                    value: index,
+                    operand: operand.index(),
+                });
+            }
+        }
+        let kind = instruction
+            .expected_kind(&self.values, index)?
+            .ok_or_else(|| KernelIrError::InvalidShape {
+                value: index,
+                operation: "derived instruction",
+                message: "instruction requires an explicitly supplied value kind".into(),
+            })?;
+        let class = instruction.expected_class(&self.values);
+        let id = KernelValueId::from_index(index);
+        self.values.push(KernelValue {
+            kind,
+            class,
+            instruction,
+        });
+        Ok(id)
+    }
+
+    pub fn finish_gradient(
+        self,
+        primal_root: KernelValueId,
+        outputs: Vec<KernelValueId>,
+        component: OutputComponent,
+    ) -> Result<GradientKernelIr, KernelIrError> {
+        GradientKernelIr::new(self.values, primal_root, outputs, component)
+    }
+
+    pub fn values(&self) -> &[KernelValue] {
+        &self.values
     }
 }
 
@@ -513,5 +644,61 @@ mod tests {
         )
         .unwrap_err();
         assert!(matches!(error, KernelIrError::InvalidShape { .. }));
+    }
+
+    #[test]
+    fn gradient_builder_appends_valid_real_outputs() {
+        let primal = ScalarKernelIr::new(
+            vec![KernelValue {
+                kind: KernelValueKind::Complex,
+                class: KernelValueClass::Invariant,
+                instruction: KernelInstruction::ComplexConstant(Complex64::new(1.0, 2.0)),
+            }],
+            KernelValueId::from_index(0),
+        )
+        .unwrap();
+        let mut builder = KernelIrBuilder::from_scalar(&primal);
+        let output = builder
+            .push(KernelInstruction::Unary {
+                op: UnaryOp::Real,
+                input: primal.root(),
+            })
+            .unwrap();
+        let gradient = builder
+            .finish_gradient(primal.root(), vec![output], OutputComponent::Real)
+            .unwrap();
+
+        assert_eq!(gradient.primal_root(), primal.root());
+        assert_eq!(gradient.outputs(), &[output]);
+        assert_eq!(gradient.component(), OutputComponent::Real);
+        assert_eq!(gradient.values().len(), 2);
+    }
+
+    #[test]
+    fn gradient_outputs_must_be_real() {
+        let primal = ScalarKernelIr::new(
+            vec![KernelValue {
+                kind: KernelValueKind::Complex,
+                class: KernelValueClass::Invariant,
+                instruction: KernelInstruction::ComplexConstant(Complex64::new(1.0, 2.0)),
+            }],
+            KernelValueId::from_index(0),
+        )
+        .unwrap();
+        let error = GradientKernelIr::new(
+            primal.values().to_vec(),
+            primal.root(),
+            vec![primal.root()],
+            OutputComponent::Real,
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            error,
+            KernelIrError::GradientKindMismatch {
+                output: 0,
+                actual: KernelValueKind::Complex,
+            }
+        );
     }
 }

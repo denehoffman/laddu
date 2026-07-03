@@ -1287,6 +1287,8 @@ version = "0.1.0"
 dependencies = [
  "laddu-compile",
  "laddu-expr",
+ "laddu-kernel",
+ "num",
  "thiserror",
 ]
 

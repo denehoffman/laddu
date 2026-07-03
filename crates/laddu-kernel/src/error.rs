@@ -9,6 +9,13 @@ pub enum KernelError {
     Empty,
     #[error("kernel root value {root} is out of bounds for {len} values")]
     RootOutOfBounds { root: usize, len: usize },
+    #[error("gradient output value {output} is out of bounds for {len} values")]
+    GradientOutOfBounds { output: usize, len: usize },
+    #[error("gradient output value {output} must be real, but has kind {actual:?}")]
+    GradientKindMismatch {
+        output: usize,
+        actual: crate::ir::KernelValueKind,
+    },
     #[error("kernel value {value} references non-prior value {operand}")]
     InvalidOperand { value: usize, operand: usize },
     #[error("kernel value {value} has no operands for {operation}")]
