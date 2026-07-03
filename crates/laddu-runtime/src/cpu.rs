@@ -5763,26 +5763,40 @@ mod tests {
             automatic.scalar_executor,
             Some(ScalarExecutor::Jit(_))
         ));
+        assert!(matches!(
+            automatic.gradient_executor,
+            GradientExecutor::Jit(_)
+        ));
         let actual = automatic.evaluate(&params).unwrap();
         let expected = interpreted.evaluate(&params).unwrap();
         assert!(
             (actual - expected).norm() < 1.0e-12,
             "{actual} != {expected}"
         );
+        let actual = automatic.evaluate_with_gradient(&params).unwrap();
+        let expected = interpreted.evaluate_with_gradient(&params).unwrap();
+        assert!((actual.value() - expected.value()).norm() < 1.0e-12);
+        for (actual, expected) in actual.gradient().iter().zip(expected.gradient()) {
+            assert!((actual - expected).norm() < 1.0e-12);
+        }
     }
 
     #[cfg(feature = "jit")]
     #[test]
-    fn auto_jit_executes_event_block_with_parameter_dependent_solve() {
+    fn auto_jit_gradients_support_parameter_dependent_solve() {
         let x = event_scalar("x");
         let coupling = laddu_expr::Expr::from(parameter!("coupling", initial: 0.2));
+        let drive = laddu_expr::Expr::from(parameter!("drive", initial: -0.4));
         let matrix = matrix([
             [x.clone() + 2.0, complex(coupling.clone(), 0.1)],
             [complex(-0.3, coupling), 3.0.into()],
         ]);
-        let expression = solve(matrix, vector([x.sin(), complex(x.cos(), 0.5)]))
-            .component(1)
-            .norm_sqr();
+        let expression = solve(
+            matrix,
+            vector([x.clone().sin() + drive, complex(x.cos(), 0.5)]),
+        )
+        .component(1)
+        .norm_sqr();
         let model = CompiledModel::from_expr(&expression).unwrap();
         let params = Arc::new(model.params().clone()).default_values();
         let automatic = CpuBackend.prepare(&model);
@@ -5806,7 +5820,7 @@ mod tests {
         ));
         assert!(matches!(
             automatic.gradient_executor,
-            GradientExecutor::Interpreter
+            GradientExecutor::Jit(_)
         ));
         let actual = automatic.evaluate_cache(&params, &automatic_cache).unwrap();
         let expected = interpreted
@@ -5824,7 +5838,51 @@ mod tests {
         let expected = interpreted
             .evaluate_cache_with_gradient(&params, &interpreted_cache)
             .unwrap();
-        assert_eq!(actual, expected);
+        for (actual, expected) in actual.iter().zip(&expected) {
+            assert!((actual.value() - expected.value()).norm() < 1.0e-12);
+            for (actual, expected) in actual.gradient().iter().zip(expected.gradient()) {
+                assert!((actual - expected).norm() < 1.0e-12);
+            }
+        }
+        for row in 0..actual.len() {
+            for parameter in 0..params.layout().n_free() {
+                let h = 1.0e-6;
+                let id = params.layout().free_params()[parameter];
+                let free_id = params.layout().free_id(id).unwrap().unwrap();
+                let value = params.get(id).unwrap();
+                let mut plus = params.clone();
+                let mut minus = params.clone();
+                plus.set_free(free_id, value + h).unwrap();
+                minus.set_free(free_id, value - h).unwrap();
+                let expected = (automatic.evaluate_cache(&plus, &automatic_cache).unwrap()[row]
+                    - automatic.evaluate_cache(&minus, &automatic_cache).unwrap()[row])
+                    / (2.0 * h);
+                assert!((actual[row].gradient()[parameter] - expected).norm() < 1.0e-8);
+            }
+        }
+    }
+
+    #[cfg(feature = "jit")]
+    #[test]
+    fn jit_and_interpreter_reject_singular_parameter_dependent_solve() {
+        let scale = laddu_expr::Expr::from(parameter!("scale", initial: 1.0));
+        let expression = solve(
+            matrix([[scale.clone(), 2.0.into()], [scale * 2.0, 4.0.into()]]),
+            vector([1.0, 2.0]),
+        )
+        .component(0);
+        let model = CompiledModel::from_expr(&expression).unwrap();
+        let params = Arc::new(model.params().clone()).default_values();
+        let automatic = CpuBackend.prepare(&model);
+        let interpreted =
+            CpuBackend.prepare_with_execution_mode(&model, CpuExecutionMode::Interpreter);
+
+        assert!(matches!(
+            automatic.gradient_executor,
+            GradientExecutor::Jit(_)
+        ));
+        assert!(automatic.evaluate_with_gradient(&params).is_err());
+        assert!(interpreted.evaluate_with_gradient(&params).is_err());
     }
 
     #[test]

@@ -249,15 +249,6 @@ impl JitGradientKernel {
         ir: &ScalarKernelIr,
         free_params: &[ParamId],
     ) -> Result<Option<Self>, String> {
-        if ir
-            .values()
-            .iter()
-            .any(|value| matches!(value.instruction, KernelInstruction::Solve { .. }))
-        {
-            // A solve adjoint needs a reusable factorization. Cached SolveRow instructions already
-            // provide that linear map; general parameter-dependent solves use forward-mode fallback.
-            return Ok(None);
-        }
         Ok(Some(Self {
             code: [
                 Arc::new(Self::compile_component(ir, free_params, 0)?),
@@ -647,6 +638,7 @@ fn emit_gradient_kernel(
             row,
             pointer_type,
             helpers,
+            failed,
         )?;
     }
 
@@ -699,6 +691,7 @@ fn propagate_instruction_gradient(
     row: cranelift::prelude::Value,
     pointer_type: Type,
     helpers: &FunctionHelpers,
+    failed: Block,
 ) -> Result<(), String> {
     match &value.instruction {
         KernelInstruction::Cached(_)
@@ -862,8 +855,43 @@ fn propagate_instruction_gradient(
             accumulate_adjoint(builder, adjoints, *lhs, &lhs_adjoint)?;
             accumulate_adjoint(builder, adjoints, *rhs, &rhs_adjoint)?;
         }
-        KernelInstruction::Solve { .. } => {
-            return Err("gradient JIT encountered an unsupported solve".into());
+        KernelInstruction::Solve { matrix, rhs } => {
+            let matrix_value = lowered_value(primals, *matrix)?;
+            let solution = lowered_value(primals, KernelValueId::from_index(value_index))?;
+            let KernelValueKind::Matrix { rows, cols } = matrix_value.kind else {
+                unreachable!()
+            };
+            debug_assert_eq!(rows, cols);
+            debug_assert_eq!(solution.elements.len(), rows);
+            debug_assert_eq!(adjoint.len(), rows);
+
+            let mut conjugate_transpose = Vec::with_capacity(rows * cols);
+            for row in 0..rows {
+                for col in 0..cols {
+                    let value = matrix_value.elements[col * cols + row];
+                    conjugate_transpose.push(ComplexValue {
+                        re: value.re,
+                        im: builder.ins().fneg(value.im),
+                    });
+                }
+            }
+            let rhs_adjoint = emit_solve(
+                builder,
+                &conjugate_transpose,
+                adjoint,
+                pointer_type,
+                helpers.solve,
+                failed,
+            )?;
+            let mut matrix_adjoint = Vec::with_capacity(rows * cols);
+            for lambda in &rhs_adjoint {
+                for value in &solution.elements {
+                    let contribution = mul_conj(builder, *lambda, *value);
+                    matrix_adjoint.push(neg(builder, contribution));
+                }
+            }
+            accumulate_adjoint(builder, adjoints, *matrix, &matrix_adjoint)?;
+            accumulate_adjoint(builder, adjoints, *rhs, &rhs_adjoint)?;
         }
         KernelInstruction::SolveRow { row_slot, rhs } => {
             let inverse = load_descriptor(
