@@ -5,7 +5,7 @@ use std::{
 };
 
 use laddu_autodiff::{AutodiffMode, AutodiffPlan, AutodiffResult};
-use laddu_compile::{CachePlan, CompiledModel};
+use laddu_compile::{CachePlan, CompiledModel, ReductionPlan};
 #[cfg(test)]
 use laddu_data::data::accurate::AccurateComplex64;
 use laddu_data::{
@@ -1023,6 +1023,27 @@ pub struct ValueGradient {
     gradient: Vec<Complex64>,
 }
 
+/// The scalar value and free-parameter gradient produced by a reduction.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ReductionEvaluation {
+    value: f64,
+    gradient: Vec<f64>,
+}
+
+impl ReductionEvaluation {
+    pub fn value(&self) -> f64 {
+        self.value
+    }
+
+    pub fn gradient(&self) -> &[f64] {
+        &self.gradient
+    }
+
+    pub fn into_parts(self) -> (f64, Vec<f64>) {
+        (self.value, self.gradient)
+    }
+}
+
 impl ValueGradient {
     pub fn value(&self) -> Complex64 {
         self.value
@@ -1814,20 +1835,17 @@ impl CpuPlan {
         }
     }
 
-    pub fn try_reduce_weighted<E, F>(
+    /// Execute a weighted reduction over a prepared dataset.
+    pub fn reduce(
         &self,
         execution: &CpuExecution,
         params: &ParamValues,
         dataset: &CpuPreparedDataset,
-        transform: F,
-    ) -> Result<f64, E>
-    where
-        E: From<RuntimeError> + Send,
-        F: Fn(Complex64) -> Result<f64, E> + Send + Sync,
-    {
+        reduction: ReductionPlan,
+    ) -> RuntimeResult<f64> {
         let local = match dataset {
             CpuPreparedDataset::Resident { dataset, .. } => {
-                self.try_reduce_weighted_cached(execution, params, dataset, transform)
+                self.reduce_cached(execution, params, dataset, reduction)
             }
             CpuPreparedDataset::Streaming {
                 dataset, read_plan, ..
@@ -1835,30 +1853,45 @@ impl CpuPlan {
                 let mut total = AccurateF64::zero();
                 for batch in dataset
                     .batches_with_plan(*read_plan)
-                    .map_err(|error| E::from(RuntimeError::Data(error.to_string())))?
+                    .map_err(|error| RuntimeError::Data(error.to_string()))?
                 {
-                    let batch =
-                        batch.map_err(|error| E::from(RuntimeError::Data(error.to_string())))?;
+                    let batch = batch.map_err(|error| RuntimeError::Data(error.to_string()))?;
                     let cached = CpuCachedDataset {
                         sum_weights: (0..batch.len()).map(|row| batch.weights_at(row)).sum(),
                         batches: vec![CpuCachedBatch {
                             cache: self.cache_event_batch(&batch)?,
                         }],
                     };
-                    total.push(
-                        self.try_reduce_weighted_cached(execution, params, &cached, &transform)?,
-                    );
+                    total.push(self.reduce_cached(execution, params, &cached, reduction)?);
                 }
-                Ok::<_, E>(total.finish())
+                Ok(total.finish())
             })(),
         };
         if !execution.all_succeeded(local.is_ok()) {
-            return local.and(Err(E::from(RuntimeError::DistributedPeerFailure)));
+            return local.and(Err(RuntimeError::DistributedPeerFailure));
         }
         Ok(execution.sum_f64(local?))
     }
 
-    pub fn try_reduce_weighted_with_gradient<E, F>(
+    /// Execute a weighted reduction and its free-parameter gradient.
+    pub fn reduce_with_gradient(
+        &self,
+        execution: &CpuExecution,
+        params: &ParamValues,
+        dataset: &CpuPreparedDataset,
+        reduction: ReductionPlan,
+    ) -> RuntimeResult<ReductionEvaluation> {
+        let (value, gradient) =
+            self.try_reduce_weighted_with_gradient(execution, params, dataset, |value| {
+                reduction
+                    .apply(value)
+                    .map(|output| output.into_parts())
+                    .map_err(RuntimeError::from)
+            })?;
+        Ok(ReductionEvaluation { value, gradient })
+    }
+
+    fn try_reduce_weighted_with_gradient<E, F>(
         &self,
         execution: &CpuExecution,
         params: &ParamValues,
@@ -1954,7 +1987,7 @@ impl CpuPlan {
         Ok(out)
     }
 
-    pub fn try_weighted_sum_cached<E, F>(
+    fn try_weighted_sum_cached<E, F>(
         &self,
         params: &ParamValues,
         dataset: &CpuCachedDataset,
@@ -1983,7 +2016,8 @@ impl CpuPlan {
         Ok(sum)
     }
 
-    pub fn weighted_sum_cached<F>(
+    #[cfg(test)]
+    fn weighted_sum_cached<F>(
         &self,
         params: &ParamValues,
         dataset: &CpuCachedDataset,
@@ -1995,7 +2029,7 @@ impl CpuPlan {
         self.try_weighted_sum_cached(params, dataset, |value| Ok(f(value)))
     }
 
-    pub fn try_weighted_real_sum_with_gradient_cached<E, F>(
+    fn try_weighted_real_sum_with_gradient_cached<E, F>(
         &self,
         params: &ParamValues,
         dataset: &CpuCachedDataset,
@@ -2023,7 +2057,8 @@ impl CpuPlan {
         Ok(total.finish())
     }
 
-    pub fn try_weighted_complex_sum_cached<E, F>(
+    #[cfg(test)]
+    fn try_weighted_complex_sum_cached<E, F>(
         &self,
         params: &ParamValues,
         dataset: &CpuCachedDataset,
@@ -2052,7 +2087,8 @@ impl CpuPlan {
         Ok(sum)
     }
 
-    pub fn weighted_complex_sum_cached<F>(
+    #[cfg(test)]
+    fn weighted_complex_sum_cached<F>(
         &self,
         params: &ParamValues,
         dataset: &CpuCachedDataset,
@@ -2064,25 +2100,33 @@ impl CpuPlan {
         self.try_weighted_complex_sum_cached(params, dataset, |value| Ok(f(value)))
     }
 
-    pub fn try_reduce_weighted_cached<E, F>(
+    fn reduce_cached(
         &self,
         execution: &CpuExecution,
         params: &ParamValues,
         dataset: &CpuCachedDataset,
-        transform: F,
-    ) -> Result<f64, E>
-    where
-        E: From<RuntimeError> + Send,
-        F: Fn(Complex64) -> Result<f64, E> + Send + Sync,
-    {
+        reduction: ReductionPlan,
+    ) -> RuntimeResult<f64> {
         if execution.is_parallel() {
-            execution.install(|| self.par_try_weighted_sum_cached(params, dataset, transform))
+            execution.install(|| {
+                self.par_try_weighted_sum_cached(params, dataset, |value| {
+                    reduction
+                        .apply(value)
+                        .map(|output| output.value())
+                        .map_err(RuntimeError::from)
+                })
+            })
         } else {
-            self.try_weighted_sum_cached(params, dataset, transform)
+            self.try_weighted_sum_cached(params, dataset, |value| {
+                reduction
+                    .apply(value)
+                    .map(|output| output.value())
+                    .map_err(RuntimeError::from)
+            })
         }
     }
 
-    pub fn try_reduce_weighted_with_gradient_cached<E, F>(
+    fn try_reduce_weighted_with_gradient_cached<E, F>(
         &self,
         execution: &CpuExecution,
         params: &ParamValues,
@@ -5066,6 +5110,110 @@ mod tests {
             })
             .unwrap();
         assert_eq!(serial_gradient, parallel_gradient);
+    }
+
+    #[test]
+    fn reduction_plans_match_across_storage_and_thread_policies() {
+        let expr = event_scalar("x") * parameter!("scale", initial: 2.0) + 1.0;
+        let model = CompiledModel::from_expr(&expr).unwrap();
+        let params = Arc::new(model.params().clone()).default_values();
+        let plan = CpuBackend.prepare(&model);
+        let schema = Arc::new(Schema::new(std::iter::empty::<&str>(), ["x"], true).unwrap());
+        let first = EventBatch::from_events(
+            Arc::clone(&schema),
+            [
+                OwnedEvent::weighted(vec![], vec![1.0], 2.0),
+                OwnedEvent::weighted(vec![], vec![2.0], 3.0),
+            ],
+        )
+        .unwrap();
+        let second =
+            EventBatch::from_events(schema, [OwnedEvent::weighted(vec![], vec![3.0], 4.0)])
+                .unwrap();
+        let resident = Dataset::from_batches(vec![first, second]).unwrap();
+        let datasets = [resident.clone(), resident.streaming()];
+        let executions = [
+            CpuExecution::local(crate::CpuExecutionOptions {
+                threads: crate::ThreadPolicy::Serial,
+                ..crate::CpuExecutionOptions::default()
+            })
+            .unwrap(),
+            CpuExecution::local(crate::CpuExecutionOptions {
+                threads: crate::ThreadPolicy::Fixed(2),
+                ..crate::CpuExecutionOptions::default()
+            })
+            .unwrap(),
+        ];
+        let expected_real = 49.0;
+        let expected_log = 2.0 * 3.0_f64.ln() + 3.0 * 5.0_f64.ln() + 4.0 * 7.0_f64.ln();
+        let expected_log_gradient = 2.0 / 3.0 + 6.0 / 5.0 + 12.0 / 7.0;
+
+        for execution in &executions {
+            for dataset in &datasets {
+                let prepared = plan.prepare_dataset(execution, dataset).unwrap();
+                assert_eq!(
+                    plan.reduce(
+                        execution,
+                        &params,
+                        &prepared,
+                        ReductionPlan::weighted_real(),
+                    )
+                    .unwrap(),
+                    expected_real
+                );
+                assert_eq!(
+                    plan.reduce(
+                        execution,
+                        &params,
+                        &prepared,
+                        ReductionPlan::weighted_positive_real(),
+                    )
+                    .unwrap(),
+                    expected_real
+                );
+                let evaluation = plan
+                    .reduce_with_gradient(
+                        execution,
+                        &params,
+                        &prepared,
+                        ReductionPlan::weighted_log_positive_real(),
+                    )
+                    .unwrap();
+                assert!((evaluation.value() - expected_log).abs() < 1.0e-12);
+                assert!((evaluation.gradient()[0] - expected_log_gradient).abs() < 1.0e-12);
+            }
+        }
+    }
+
+    #[test]
+    fn positive_reduction_reports_the_invalid_value() {
+        let model = CompiledModel::from_expr(&event_scalar("x")).unwrap();
+        let params = Arc::new(model.params().clone()).default_values();
+        let plan = CpuBackend.prepare(&model);
+        let dataset = Dataset::from_batch(
+            EventBatch::from_events(
+                Arc::new(Schema::new(std::iter::empty::<&str>(), ["x"], false).unwrap()),
+                [OwnedEvent::new(vec![], vec![-2.0])],
+            )
+            .unwrap(),
+        );
+        let execution = CpuExecution::default();
+        let prepared = plan.prepare_dataset(&execution, &dataset).unwrap();
+
+        assert!(matches!(
+            plan.reduce(
+                &execution,
+                &params,
+                &prepared,
+                ReductionPlan::weighted_log_positive_real(),
+            ),
+            Err(RuntimeError::Reduction(
+                laddu_compile::ReductionError::NonPositiveValue {
+                    transform: laddu_compile::ReductionTransform::LogPositiveReal,
+                    value: -2.0,
+                }
+            ))
+        ));
     }
 
     #[test]

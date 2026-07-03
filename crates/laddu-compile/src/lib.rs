@@ -3,6 +3,7 @@ mod error;
 pub mod facts;
 mod model;
 pub mod optimize;
+mod reduction;
 
 pub use cost::OptimizationCost;
 pub use error::{CompileError, CompileResult};
@@ -14,3 +15,4 @@ pub use optimize::{
     MatrixVectorRule, NormSqrExpansionRule, OptimizationPass, OptimizationPipeline, Rewrite,
     RewriteContext, RewritePass, RewriteRule,
 };
+pub use reduction::{ReductionError, ReductionOutput, ReductionPlan, ReductionTransform};

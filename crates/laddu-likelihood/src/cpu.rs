@@ -1,13 +1,12 @@
 use std::{collections::HashSet, fmt::Debug, sync::Arc};
 
 use crate::{LikelihoodError, LikelihoodResult};
-use laddu_compile::CompiledModel;
+use laddu_compile::{CompiledModel, ReductionPlan};
 use laddu_data::data::Dataset;
 #[cfg(test)]
 use laddu_expr::parameters::ParamError;
 use laddu_expr::parameters::{ParamId, ParamLayout, ParamRegistry, ParamValues};
 use laddu_runtime::{CpuBackend, CpuExecution, CpuPlan, CpuPreparedDataset};
-use num::complex::Complex64;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LikelihoodName(String);
@@ -348,11 +347,11 @@ impl CpuNllTerm {
     pub fn data_log_intensity_sum(&self, free: &[f64]) -> LikelihoodResult<f64> {
         let params = self.global_values(free)?;
         let local_params = self.local_values(&params)?;
-        self.plan.try_reduce_weighted(
-            self.resolved_execution()?,
+        self.reduce(
             &local_params,
             self.data()?,
-            |value| positive_intensity("data", value).map(f64::ln),
+            ReductionPlan::weighted_log_positive_real(),
+            "data",
         )
     }
 
@@ -384,10 +383,24 @@ impl CpuNllTerm {
         dataset: &CpuPreparedDataset,
         name: &'static str,
     ) -> LikelihoodResult<f64> {
+        self.reduce(
+            params,
+            dataset,
+            ReductionPlan::weighted_positive_real(),
+            name,
+        )
+    }
+
+    fn reduce(
+        &self,
+        params: &ParamValues,
+        dataset: &CpuPreparedDataset,
+        reduction: ReductionPlan,
+        name: &'static str,
+    ) -> LikelihoodResult<f64> {
         self.plan
-            .try_reduce_weighted(self.resolved_execution()?, params, dataset, |value| {
-                positive_intensity(name, value)
-            })
+            .reduce(self.resolved_execution()?, params, dataset, reduction)
+            .map_err(|error| map_reduction_error(name, error))
     }
 
     fn local_values(&self, params: &ParamValues) -> LikelihoodResult<ParamValues> {
@@ -447,18 +460,24 @@ impl CpuLikelihoodTerm for CpuNllTerm {
         let local_params = self.local_values(params)?;
         let normalization = positive_integral(
             "accepted MC",
-            self.plan.try_reduce_weighted(
+            self.plan
+                .reduce(
+                    execution,
+                    &local_params,
+                    self.accepted_mc()?,
+                    ReductionPlan::weighted_positive_real(),
+                )
+                .map_err(|error| map_reduction_error("accepted MC", error))?,
+        )?;
+        let data_log_sum = self
+            .plan
+            .reduce(
                 execution,
                 &local_params,
-                self.accepted_mc()?,
-                |value| positive_intensity("accepted MC", value),
-            )?,
-        )?;
-        let data_log_sum =
-            self.plan
-                .try_reduce_weighted(execution, &local_params, self.data()?, |value| {
-                    positive_intensity("data", value).map(f64::ln)
-                })?;
+                self.data()?,
+                ReductionPlan::weighted_log_positive_real(),
+            )
+            .map_err(|error| map_reduction_error("data", error))?;
         Ok(self.data_weight_sum()? * normalization.ln() - data_log_sum)
     }
 
@@ -469,22 +488,27 @@ impl CpuLikelihoodTerm for CpuNllTerm {
         execution: &CpuExecution,
     ) -> LikelihoodResult<f64> {
         let local_params = self.local_values(params)?;
-        let (normalization, normalization_gradient) = self.plan.try_reduce_weighted_with_gradient(
-            execution,
-            &local_params,
-            self.accepted_mc()?,
-            |value| Ok::<_, LikelihoodError>((positive_intensity("accepted MC", value)?, 1.0)),
-        )?;
+        let normalization_evaluation = self
+            .plan
+            .reduce_with_gradient(
+                execution,
+                &local_params,
+                self.accepted_mc()?,
+                ReductionPlan::weighted_positive_real(),
+            )
+            .map_err(|error| map_reduction_error("accepted MC", error))?;
+        let (normalization, normalization_gradient) = normalization_evaluation.into_parts();
         let normalization = positive_integral("accepted MC", normalization)?;
-        let (data_log_sum, data_log_gradient) = self.plan.try_reduce_weighted_with_gradient(
-            execution,
-            &local_params,
-            self.data()?,
-            |value| {
-                let intensity = positive_intensity("data", value)?;
-                Ok::<_, LikelihoodError>((intensity.ln(), intensity.recip()))
-            },
-        )?;
+        let data_evaluation = self
+            .plan
+            .reduce_with_gradient(
+                execution,
+                &local_params,
+                self.data()?,
+                ReductionPlan::weighted_log_positive_real(),
+            )
+            .map_err(|error| map_reduction_error("data", error))?;
+        let (data_log_sum, data_log_gradient) = data_evaluation.into_parts();
         let data_weight_sum = self.data_weight_sum()?;
         let local_gradient = normalization_gradient
             .into_iter()
@@ -775,9 +799,13 @@ impl CpuCrossSectionIntegrals {
         name: &'static str,
     ) -> LikelihoodResult<f64> {
         self.plan
-            .try_reduce_weighted(&self.execution, params, dataset, |value| {
-                positive_intensity(name, value)
-            })
+            .reduce(
+                &self.execution,
+                params,
+                dataset,
+                ReductionPlan::weighted_positive_real(),
+            )
+            .map_err(|error| map_reduction_error(name, error))
     }
 }
 
@@ -872,14 +900,15 @@ fn check_params(layout: &ParamLayout, params: &ParamValues) -> LikelihoodResult<
     }
 }
 
-fn positive_intensity(dataset: &'static str, value: Complex64) -> LikelihoodResult<f64> {
-    if value.re > 0.0 {
-        Ok(value.re)
-    } else {
-        Err(LikelihoodError::NonPositiveIntensity {
-            dataset,
-            value: value.re,
-        })
+fn map_reduction_error(
+    dataset: &'static str,
+    error: laddu_runtime::RuntimeError,
+) -> LikelihoodError {
+    match error {
+        laddu_runtime::RuntimeError::Reduction(
+            laddu_compile::ReductionError::NonPositiveValue { value, .. },
+        ) => LikelihoodError::NonPositiveIntensity { dataset, value },
+        error => error.into(),
     }
 }
 

@@ -1,5 +1,7 @@
 use thiserror::Error;
 
+use laddu_compile::ReductionError;
+
 pub type RuntimeResult<T> = Result<T, RuntimeError>;
 
 #[derive(Clone, Debug, Error, PartialEq)]
@@ -30,6 +32,8 @@ pub enum RuntimeError {
     Parameter(String),
     #[error("JIT kernel execution failed with status {0}")]
     JitExecution(i32),
+    #[error(transparent)]
+    Reduction(#[from] ReductionError),
     #[error("an MPI peer failed during distributed evaluation")]
     DistributedPeerFailure,
 }
