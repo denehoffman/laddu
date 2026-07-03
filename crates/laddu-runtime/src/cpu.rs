@@ -84,7 +84,7 @@ pub struct CpuPlan {
     cached_value_slots: Vec<Option<usize>>,
     scalar_kernel: Option<ScalarKernelIr>,
     scalar_executor: Option<ScalarExecutor>,
-    cache_required_nodes: Vec<bool>,
+    cache_materialization_nodes: Vec<ExprId>,
     solve_components: Vec<Option<SolveComponentPlan>>,
     solve_rhs_elements: Vec<Option<Vec<ExprId>>>,
     solve_row_matrices: Vec<SolveRowMatrixPlan>,
@@ -953,10 +953,20 @@ impl CpuBackend {
         let scalar_executor = scalar_kernel
             .as_ref()
             .and_then(|kernel| ScalarExecutor::prepare(kernel, execution_mode));
-        let mut cache_required_nodes = cache_required_nodes(model.graph(), &cache_plan);
+        let mut cache_required_nodes = vec![false; model.graph().nodes().len()];
+        for node in cache_plan.materialization_nodes() {
+            cache_required_nodes[node.index()] = true;
+        }
         for plan in &solve_row_matrices {
             mark_required(model.graph(), plan.matrix, &mut cache_required_nodes);
         }
+        let cache_materialization_nodes = cache_required_nodes
+            .into_iter()
+            .enumerate()
+            .filter_map(|(index, required)| {
+                required.then(|| ExprId::from_index(index).expect("graph too large"))
+            })
+            .collect();
         let mut factor_matrix_slots = vec![None; model.graph().nodes().len()];
         let mut factor_matrices = Vec::new();
         let mut constant_factor_slots = vec![None; model.graph().nodes().len()];
@@ -1004,7 +1014,7 @@ impl CpuBackend {
             cached_value_slots,
             scalar_kernel,
             scalar_executor,
-            cache_required_nodes,
+            cache_materialization_nodes,
             solve_components,
             solve_rhs_elements,
             solve_row_matrices,
@@ -1419,11 +1429,8 @@ impl CpuPlan {
                     let output_slot = slot;
                     match &event_instruction.instruction {
                         ScalarInstruction::Cached(slot) => {
-                            for (lane, value) in
-                                cache.scalar_range(*slot, start, end)?.iter().enumerate()
-                            {
-                                workspace.real[output_slot][lane] = value.re;
-                            }
+                            workspace.real[output_slot][..block_len]
+                                .copy_from_slice(cache.real_range(*slot, start, end)?);
                         }
                         ScalarInstruction::Unary { op, input } => {
                             for lane in 0..block_len {
@@ -1541,7 +1548,7 @@ impl CpuPlan {
                     match &event_instruction.instruction {
                         ScalarInstruction::Cached(slot) => {
                             workspace.complex[output_slot][..block_len]
-                                .copy_from_slice(cache.scalar_range(*slot, start, end)?);
+                                .copy_from_slice(cache.complex_range(*slot, start, end)?);
                         }
                         ScalarInstruction::Unary { op, input } => {
                             for lane in 0..block_len {
@@ -2446,10 +2453,9 @@ impl CpuPlan {
     ) -> RuntimeResult<Vec<Option<Value>>> {
         let mut values = vec![None; self.graph.nodes().len()];
 
-        for (index, node) in self.graph.nodes().iter().enumerate() {
-            if !self.cache_required_nodes[index] {
-                continue;
-            }
+        for id in &self.cache_materialization_nodes {
+            let index = id.index();
+            let node = &self.graph.nodes()[index];
             let value = match node {
                 ExprNode::RealConst(value) => Value::Scalar(Complex64::from(*value)),
                 ExprNode::ComplexConst(value) => Value::Scalar(*value),
@@ -3625,7 +3631,7 @@ impl CpuBatchCache {
             slots: cache_plan
                 .entries()
                 .iter()
-                .map(|entry| CachedSlot::new(entry.value_kind()))
+                .map(|entry| CachedSlot::new(entry.value_kind(), len))
                 .collect(),
             factor_nodes: factor_matrices.iter().map(|(node, _)| *node).collect(),
             factor_slots: factor_matrices
@@ -3726,7 +3732,7 @@ impl CpuBatchCache {
             .scalar(row)
     }
 
-    fn scalar_range(&self, slot: usize, start: usize, end: usize) -> RuntimeResult<&[Complex64]> {
+    fn real_range(&self, slot: usize, start: usize, end: usize) -> RuntimeResult<&[f64]> {
         if start > end || end > self.len {
             return Err(RuntimeError::InvalidShape {
                 index: start,
@@ -3742,7 +3748,26 @@ impl CpuBatchCache {
                 expected: self.slots.len(),
                 actual: slot + 1,
             })?
-            .scalar_range(start, end)
+            .real_range(start, end)
+    }
+
+    fn complex_range(&self, slot: usize, start: usize, end: usize) -> RuntimeResult<&[Complex64]> {
+        if start > end || end > self.len {
+            return Err(RuntimeError::InvalidShape {
+                index: start,
+                message: format!(
+                    "cache range {start}..{end} out of bounds for len {}",
+                    self.len
+                ),
+            });
+        }
+        self.slots
+            .get(slot)
+            .ok_or(RuntimeError::InvalidCache {
+                expected: self.slots.len(),
+                actual: slot + 1,
+            })?
+            .complex_range(start, end)
     }
 
     fn push_factor(&mut self, slot: usize, factor: DynamicLu) -> RuntimeResult<()> {
@@ -4018,7 +4043,8 @@ impl CachedFactorSlot {
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum CachedSlot {
-    Scalar(Vec<Complex64>),
+    Real(Vec<f64>),
+    Complex(Vec<Complex64>),
     Vector {
         len: usize,
         values: Vec<Complex64>,
@@ -4032,10 +4058,11 @@ pub(crate) enum CachedSlot {
 
 impl CachedSlot {
     #[cfg(feature = "jit")]
-    pub(crate) fn values(&self) -> &[Complex64] {
+    pub(crate) fn values_ptr(&self) -> *const u8 {
         match self {
-            Self::Scalar(values) | Self::Vector { values, .. } | Self::Matrix { values, .. } => {
-                values
+            Self::Real(values) => values.as_ptr().cast(),
+            Self::Complex(values) | Self::Vector { values, .. } | Self::Matrix { values, .. } => {
+                values.as_ptr().cast()
             }
         }
     }
@@ -4043,30 +4070,32 @@ impl CachedSlot {
     #[cfg(feature = "jit")]
     pub(crate) fn width(&self) -> usize {
         match self {
-            Self::Scalar(_) => 1,
+            Self::Real(_) | Self::Complex(_) => 1,
             Self::Vector { len, .. } => *len,
             Self::Matrix { rows, cols, .. } => rows * cols,
         }
     }
 
-    fn new(kind: ValueKind) -> Self {
+    fn new(kind: ValueKind, events: usize) -> Self {
         match kind {
-            ValueKind::Real | ValueKind::Complex => Self::Scalar(Vec::new()),
+            ValueKind::Real => Self::Real(Vec::with_capacity(events)),
+            ValueKind::Complex => Self::Complex(Vec::with_capacity(events)),
             ValueKind::Vector { len } => Self::Vector {
                 len,
-                values: Vec::new(),
+                values: Vec::with_capacity(events.saturating_mul(len)),
             },
             ValueKind::Matrix { rows, cols } => Self::Matrix {
                 rows,
                 cols,
-                values: Vec::new(),
+                values: Vec::with_capacity(events.saturating_mul(rows).saturating_mul(cols)),
             },
         }
     }
 
     fn resident_bytes(&self) -> usize {
         match self {
-            Self::Scalar(values) => values.capacity() * size_of::<Complex64>(),
+            Self::Real(values) => values.capacity() * size_of::<f64>(),
+            Self::Complex(values) => values.capacity() * size_of::<Complex64>(),
             Self::Vector { values, .. } | Self::Matrix { values, .. } => {
                 values.capacity() * size_of::<Complex64>()
             }
@@ -4075,7 +4104,11 @@ impl CachedSlot {
 
     fn push(&mut self, value: Value) -> RuntimeResult<()> {
         match (self, value) {
-            (Self::Scalar(values), Value::Scalar(value)) => {
+            (Self::Real(values), Value::Scalar(value)) => {
+                values.push(value.re);
+                Ok(())
+            }
+            (Self::Complex(values), Value::Scalar(value)) => {
                 values.push(value);
                 Ok(())
             }
@@ -4103,7 +4136,16 @@ impl CachedSlot {
 
     fn value(&self, row: usize) -> RuntimeResult<Value> {
         match self {
-            Self::Scalar(values) => values.get(row).copied().map(Value::Scalar).ok_or_else(|| {
+            Self::Real(values) => values
+                .get(row)
+                .copied()
+                .map(Complex64::from)
+                .map(Value::Scalar)
+                .ok_or_else(|| RuntimeError::InvalidShape {
+                    index: row,
+                    message: format!("cache row {row} out of bounds"),
+                }),
+            Self::Complex(values) => values.get(row).copied().map(Value::Scalar).ok_or_else(|| {
                 RuntimeError::InvalidShape {
                     index: row,
                     message: format!("cache row {row} out of bounds"),
@@ -4151,7 +4193,15 @@ impl CachedSlot {
 
     fn scalar(&self, row: usize) -> RuntimeResult<Complex64> {
         match self {
-            Self::Scalar(values) => {
+            Self::Real(values) => values
+                .get(row)
+                .copied()
+                .map(Complex64::from)
+                .ok_or_else(|| RuntimeError::InvalidShape {
+                    index: row,
+                    message: format!("cache row {row} out of bounds"),
+                }),
+            Self::Complex(values) => {
                 values
                     .get(row)
                     .copied()
@@ -4166,15 +4216,15 @@ impl CachedSlot {
                 actual: match self {
                     Self::Vector { .. } => "vector",
                     Self::Matrix { .. } => "matrix",
-                    Self::Scalar(_) => unreachable!(),
+                    Self::Real(_) | Self::Complex(_) => unreachable!(),
                 },
             }),
         }
     }
 
-    fn scalar_range(&self, start: usize, end: usize) -> RuntimeResult<&[Complex64]> {
+    fn real_range(&self, start: usize, end: usize) -> RuntimeResult<&[f64]> {
         match self {
-            Self::Scalar(values) => {
+            Self::Real(values) => {
                 values
                     .get(start..end)
                     .ok_or_else(|| RuntimeError::InvalidShape {
@@ -4182,15 +4232,43 @@ impl CachedSlot {
                         message: format!("cache range {start}..{end} out of bounds"),
                     })
             }
-            Self::Vector { .. } | Self::Matrix { .. } => Err(RuntimeError::TypeMismatch {
-                index: start,
-                expected: "scalar",
-                actual: match self {
-                    Self::Vector { .. } => "vector",
-                    Self::Matrix { .. } => "matrix",
-                    Self::Scalar(_) => unreachable!(),
-                },
-            }),
+            Self::Complex(_) | Self::Vector { .. } | Self::Matrix { .. } => {
+                Err(RuntimeError::TypeMismatch {
+                    index: start,
+                    expected: "real scalar",
+                    actual: match self {
+                        Self::Complex(_) => "complex scalar",
+                        Self::Vector { .. } => "vector",
+                        Self::Matrix { .. } => "matrix",
+                        Self::Real(_) => unreachable!(),
+                    },
+                })
+            }
+        }
+    }
+
+    fn complex_range(&self, start: usize, end: usize) -> RuntimeResult<&[Complex64]> {
+        match self {
+            Self::Complex(values) => {
+                values
+                    .get(start..end)
+                    .ok_or_else(|| RuntimeError::InvalidShape {
+                        index: start,
+                        message: format!("cache range {start}..{end} out of bounds"),
+                    })
+            }
+            Self::Real(_) | Self::Vector { .. } | Self::Matrix { .. } => {
+                Err(RuntimeError::TypeMismatch {
+                    index: start,
+                    expected: "complex scalar",
+                    actual: match self {
+                        Self::Real(_) => "real scalar",
+                        Self::Vector { .. } => "vector",
+                        Self::Matrix { .. } => "matrix",
+                        Self::Complex(_) => unreachable!(),
+                    },
+                })
+            }
         }
     }
 }
@@ -4284,14 +4362,6 @@ fn matrix_at_optional(
             message: "required cache prerequisite was not evaluated".into(),
         }),
     }
-}
-
-fn cache_required_nodes(graph: &ExprGraph, cache_plan: &CachePlan) -> Vec<bool> {
-    let mut required = vec![false; graph.nodes().len()];
-    for entry in cache_plan.entries() {
-        mark_required(graph, entry.node(), &mut required);
-    }
-    required
 }
 
 impl CpuBackend {
@@ -4897,11 +4967,11 @@ mod tests {
 
     #[test]
     fn batch_cache_evaluates_without_original_event_batch() {
-        let expr = event_scalar("x").sin() * parameter!("scale", initial: 2.0);
+        let expr = event_scalar("x").real().sin() * parameter!("scale", initial: 2.0);
         let model = CompiledModel::from_expr(&expr).unwrap();
         let layout = Arc::new(model.params().clone());
         let mut params = layout.default_values();
-        let plan = CpuBackend.prepare(&model);
+        let plan = CpuBackend.prepare_with_execution_mode(&model, CpuExecutionMode::Interpreter);
         let batch = EventBatch::from_events(
             Arc::new(Schema::new(std::iter::empty::<&str>(), ["x"], false).unwrap()),
             [
@@ -4913,6 +4983,8 @@ mod tests {
         let cache = plan.cache_event_batch(&batch).unwrap();
 
         assert_eq!(cache.weights(), &[1.0, 1.0]);
+        assert!(matches!(&cache.slots[0], CachedSlot::Real(values) if values.len() == 2));
+        assert_eq!(cache.slots[0].resident_bytes(), 2 * size_of::<f64>());
         assert_eq!(
             plan.evaluate_cache(&params, &cache).unwrap(),
             vec![
@@ -4932,6 +5004,40 @@ mod tests {
                 Complex64::from(3.0 * 0.5_f64.sin()),
                 Complex64::from(3.0 * 1.0_f64.sin())
             ]
+        );
+    }
+
+    #[test]
+    fn real_cache_slots_use_half_the_scalar_payload_of_complex_slots() {
+        let real_model =
+            CompiledModel::from_expr(&(parameter!("scale") * event_scalar("x").real().sin()))
+                .unwrap();
+        let complex_model = CompiledModel::from_expr(
+            &(parameter!("scale") * complex(event_scalar("x").sin(), event_scalar("x").cos())),
+        )
+        .unwrap();
+        let batch = EventBatch::from_events(
+            Arc::new(Schema::new(std::iter::empty::<&str>(), ["x"], false).unwrap()),
+            [
+                OwnedEvent::new(vec![], vec![0.5]),
+                OwnedEvent::new(vec![], vec![1.0]),
+            ],
+        )
+        .unwrap();
+        let real_cache = CpuBackend
+            .prepare(&real_model)
+            .cache_event_batch(&batch)
+            .unwrap();
+        let complex_cache = CpuBackend
+            .prepare(&complex_model)
+            .cache_event_batch(&batch)
+            .unwrap();
+
+        assert!(matches!(&real_cache.slots[0], CachedSlot::Real(_)));
+        assert!(matches!(&complex_cache.slots[0], CachedSlot::Complex(_)));
+        assert_eq!(
+            complex_cache.slots[0].resident_bytes(),
+            2 * real_cache.slots[0].resident_bytes()
         );
     }
 

@@ -1,3 +1,5 @@
+use std::mem::size_of;
+
 #[cfg(test)]
 use crate::CompileError;
 use crate::CompileResult;
@@ -95,6 +97,7 @@ impl CachePolicy {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct CachePlan {
     entries: Vec<CacheEntry>,
+    materialization_nodes: Vec<ExprId>,
 }
 
 impl CachePlan {
@@ -144,8 +147,22 @@ impl CachePlan {
                     }
                 })
             })
+            .collect::<Vec<_>>();
+        let mut required = vec![false; graph.nodes().len()];
+        for entry in &entries {
+            mark_cache_requirement(graph, entry.node, &mut required);
+        }
+        let materialization_nodes = required
+            .into_iter()
+            .enumerate()
+            .filter_map(|(index, required)| {
+                required.then(|| ExprId::from_index(index).expect("graph too large"))
+            })
             .collect();
-        Self { entries }
+        Self {
+            entries,
+            materialization_nodes,
+        }
     }
 
     pub fn entries(&self) -> &[CacheEntry] {
@@ -162,6 +179,53 @@ impl CachePlan {
 
     pub fn node_slot(&self, node: ExprId) -> Option<usize> {
         self.entries.iter().position(|entry| entry.node == node)
+    }
+
+    /// Graph nodes required to materialize every cache slot, in evaluation order.
+    pub fn materialization_nodes(&self) -> &[ExprId] {
+        &self.materialization_nodes
+    }
+
+    /// Packed payload bytes required per event by ordinary cache slots.
+    pub fn bytes_per_event(&self) -> usize {
+        self.entries
+            .iter()
+            .map(|entry| entry.storage_kind().bytes_per_event())
+            .sum()
+    }
+}
+
+fn mark_cache_requirement(graph: &ExprGraph, id: ExprId, required: &mut [bool]) {
+    if required[id.index()] {
+        return;
+    }
+    required[id.index()] = true;
+    if let Some(node) = graph.node(id) {
+        for child in node.child_ids() {
+            mark_cache_requirement(graph, child, required);
+        }
+    }
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum CacheStorageKind {
+    Real,
+    Complex { width: usize },
+}
+
+impl CacheStorageKind {
+    pub fn width(self) -> usize {
+        match self {
+            Self::Real => 1,
+            Self::Complex { width } => width,
+        }
+    }
+
+    pub fn bytes_per_event(self) -> usize {
+        match self {
+            Self::Real => size_of::<f64>(),
+            Self::Complex { width } => width * size_of::<num::complex::Complex64>(),
+        }
     }
 }
 
@@ -188,6 +252,15 @@ impl CacheEntry {
 
     pub fn dependency(&self) -> DependencyFacts {
         self.dependency
+    }
+
+    pub fn storage_kind(&self) -> CacheStorageKind {
+        match self.value_kind {
+            ValueKind::Real => CacheStorageKind::Real,
+            ValueKind::Complex => CacheStorageKind::Complex { width: 1 },
+            ValueKind::Vector { len } => CacheStorageKind::Complex { width: len },
+            ValueKind::Matrix { rows, cols } => CacheStorageKind::Complex { width: rows * cols },
+        }
     }
 }
 
@@ -1645,7 +1718,7 @@ mod tests {
 
     #[test]
     fn event_dependent_cache_policy_selects_parameter_boundary() {
-        let model = parameter!("scale") * event_scalar("x").sin();
+        let model = parameter!("scale") * event_scalar("x").real().sin();
         let compiled = CompiledModel::from_expr(&model).unwrap();
 
         assert_eq!(compiled.cache_plan().len(), 1);
@@ -1661,11 +1734,38 @@ mod tests {
             Some(ExprNode::Unary {
                 op: UnaryOp::Sin,
                 input,
-            }) if matches!(
-                compiled.graph().node(*input),
-                Some(ExprNode::EventScalar(name)) if name.as_ref() == "x"
-            )
+            }) if matches!(compiled.graph().node(*input),
+                Some(ExprNode::Unary { op: UnaryOp::Real, input })
+                    if matches!(compiled.graph().node(*input),
+                        Some(ExprNode::EventScalar(name)) if name.as_ref() == "x"))
         ));
+        assert_eq!(entry.storage_kind(), CacheStorageKind::Real);
+        assert_eq!(compiled.cache_plan().bytes_per_event(), size_of::<f64>());
+        assert_eq!(compiled.cache_plan().materialization_nodes().len(), 3);
+        assert_eq!(
+            compiled.cache_plan().materialization_nodes().last(),
+            Some(&entry.node())
+        );
+    }
+
+    #[test]
+    fn cache_layout_distinguishes_real_and_complex_payloads() {
+        let phase = event_scalar("x");
+        let model = parameter!("scale") * complex(phase.clone().cos(), phase.sin());
+        let compiled = CompiledModel::from_expr(&model).unwrap();
+
+        assert_eq!(compiled.cache_plan().len(), 1);
+        assert_eq!(
+            compiled.cache_plan().entries()[0].storage_kind(),
+            CacheStorageKind::Complex { width: 1 }
+        );
+        assert_eq!(
+            compiled.cache_plan().bytes_per_event(),
+            size_of::<Complex64>()
+        );
+        for window in compiled.cache_plan().materialization_nodes().windows(2) {
+            assert!(window[0].index() < window[1].index());
+        }
     }
 
     #[test]

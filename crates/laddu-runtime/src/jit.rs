@@ -26,7 +26,7 @@ use crate::{CpuBatchCache, RuntimeError, RuntimeResult};
 #[repr(C)]
 #[derive(Copy, Clone)]
 struct CacheDescriptor {
-    values: *const Complex64,
+    values: *const u8,
     width: usize,
 }
 
@@ -217,7 +217,7 @@ impl JitCacheView {
             .slots
             .iter()
             .map(|slot| CacheDescriptor {
-                values: slot.values().as_ptr(),
+                values: slot.values_ptr(),
                 width: slot.width(),
             })
             .collect();
@@ -225,7 +225,7 @@ impl JitCacheView {
             .solve_row_slots
             .iter()
             .map(|slot| CacheDescriptor {
-                values: slot.values.as_ptr(),
+                values: slot.values.as_ptr().cast(),
                 width: slot.dimension,
             })
             .collect();
@@ -404,7 +404,7 @@ fn emit_instruction(
     };
     let elements = match &value.instruction {
         KernelInstruction::Cached(slot) => {
-            load_descriptor(builder, cache, *slot, value.kind.width(), row, pointer_type)?
+            load_descriptor(builder, cache, *slot, value.kind, row, pointer_type)?
         }
         KernelInstruction::RealConstant(number) => vec![ComplexValue {
             re: builder.ins().f64const(*number),
@@ -542,8 +542,14 @@ fn emit_instruction(
             )?
         }
         KernelInstruction::SolveRow { row_slot, rhs } => {
-            let inverse =
-                load_descriptor(builder, solve_rows, *row_slot, rhs.len(), row, pointer_type)?;
+            let inverse = load_descriptor(
+                builder,
+                solve_rows,
+                *row_slot,
+                KernelValueKind::Vector { len: rhs.len() },
+                row,
+                pointer_type,
+            )?;
             let mut sum = zero(builder);
             for (coefficient, rhs) in inverse.iter().zip(rhs) {
                 let product = mul(builder, *coefficient, scalar(*rhs)?);
@@ -562,7 +568,7 @@ fn load_descriptor(
     builder: &mut FunctionBuilder<'_>,
     descriptors: cranelift::prelude::Value,
     slot: usize,
-    width: usize,
+    kind: KernelValueKind,
     row: cranelift::prelude::Value,
     pointer_type: Type,
 ) -> Result<Vec<ComplexValue>, String> {
@@ -575,22 +581,31 @@ fn load_descriptor(
         descriptors,
         descriptor_offset,
     );
+    let width = kind.width();
+    let real = kind == KernelValueKind::Real;
+    let element_size = if real {
+        size_of::<f64>()
+    } else {
+        size_of::<Complex64>()
+    };
     let row_width = builder.ins().imul_imm(row, width as i64);
-    let row_bytes = builder
-        .ins()
-        .imul_imm(row_width, size_of::<Complex64>() as i64);
+    let row_bytes = builder.ins().imul_imm(row_width, element_size as i64);
     let row_ptr = builder.ins().iadd(base, row_bytes);
     let mut out = Vec::with_capacity(width);
     for index in 0..width {
-        let offset = i32::try_from(index * size_of::<Complex64>())
+        let offset = i32::try_from(index * element_size)
             .map_err(|_| "cached value offset exceeds JIT address range")?;
         out.push(ComplexValue {
             re: builder
                 .ins()
                 .load(types::F64, MemFlagsData::trusted(), row_ptr, offset),
-            im: builder
-                .ins()
-                .load(types::F64, MemFlagsData::trusted(), row_ptr, offset + 8),
+            im: if real {
+                builder.ins().f64const(0.0)
+            } else {
+                builder
+                    .ins()
+                    .load(types::F64, MemFlagsData::trusted(), row_ptr, offset + 8)
+            },
         });
     }
     Ok(out)
