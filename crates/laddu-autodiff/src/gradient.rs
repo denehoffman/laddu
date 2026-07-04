@@ -154,6 +154,11 @@ impl<'a> GradientBuilder<'a> {
             KernelInstruction::SolveRow { row_slot, rhs } => {
                 self.solve_row_pullback(*row_slot, rhs, adjoint[0])?;
             }
+            KernelInstruction::SolveRowAdjointElement { .. } => {
+                return Err(AutodiffError::InvalidKernel(
+                    "cannot differentiate derivative-only solve-row adjoint instruction".into(),
+                ));
+            }
         }
         Ok(())
     }
@@ -393,16 +398,13 @@ impl<'a> GradientBuilder<'a> {
         rhs: &[KernelValueId],
         adjoint: KernelValueId,
     ) -> AutodiffResult<()> {
-        let conjugate_adjoint = self.unary(UnaryOp::Conj, adjoint)?;
-        let zero = self.real(0.0)?;
         for index in 0..rhs.len() {
-            let mut basis = vec![zero; rhs.len()];
-            basis[index] = conjugate_adjoint;
-            let product = self.push(KernelInstruction::SolveRow {
+            let contribution = self.push(KernelInstruction::SolveRowAdjointElement {
                 row_slot,
-                rhs: basis,
+                index,
+                len: rhs.len(),
+                adjoint,
             })?;
-            let contribution = self.unary(UnaryOp::Conj, product)?;
             self.accumulate(rhs[index], &[contribution])?;
         }
         Ok(())
@@ -530,6 +532,14 @@ mod tests {
         }
     }
 
+    fn event_value(kind: KernelValueKind, instruction: KernelInstruction) -> KernelValue {
+        KernelValue {
+            kind,
+            class: KernelValueClass::Event,
+            instruction,
+        }
+    }
+
     #[test]
     fn scalar_gradient_program_has_one_real_output_per_parameter() {
         let mut registry = ParamRegistry::new();
@@ -618,5 +628,48 @@ mod tests {
 
         assert_eq!(solves, 2);
         assert_eq!(gradient.component(), OutputComponent::Imag);
+    }
+
+    #[test]
+    fn solve_row_gradient_uses_elementwise_adjoint_loads() {
+        let mut registry = ParamRegistry::new();
+        let x = registry.register(Parameter::free("x")).unwrap();
+        let primal = ScalarKernelIr::new(
+            vec![
+                value(KernelValueKind::Real, KernelInstruction::Parameter(x)),
+                value(
+                    KernelValueKind::Complex,
+                    KernelInstruction::ComplexConstant(Complex64::new(2.0, 0.5)),
+                ),
+                event_value(
+                    KernelValueKind::Complex,
+                    KernelInstruction::SolveRow {
+                        row_slot: 0,
+                        rhs: vec![KernelValueId::from_index(0), KernelValueId::from_index(1)],
+                    },
+                ),
+            ],
+            KernelValueId::from_index(2),
+        )
+        .unwrap();
+
+        let gradient = gradient_ir(&primal, &[x], OutputComponent::Real).unwrap();
+        let adjoint_elements = gradient
+            .values()
+            .iter()
+            .filter(|value| {
+                matches!(
+                    value.instruction,
+                    KernelInstruction::SolveRowAdjointElement { len: 2, .. }
+                )
+            })
+            .count();
+        let generated_solve_rows = gradient.values()[primal.values().len()..]
+            .iter()
+            .filter(|value| matches!(value.instruction, KernelInstruction::SolveRow { .. }))
+            .count();
+
+        assert_eq!(adjoint_elements, 2);
+        assert_eq!(generated_solve_rows, 0);
     }
 }

@@ -107,6 +107,12 @@ pub enum KernelInstruction {
         row_slot: usize,
         rhs: Vec<KernelValueId>,
     },
+    SolveRowAdjointElement {
+        row_slot: usize,
+        index: usize,
+        len: usize,
+        adjoint: KernelValueId,
+    },
 }
 
 impl KernelInstruction {
@@ -118,7 +124,8 @@ impl KernelInstruction {
             | Self::Parameter(_) => Vec::new(),
             Self::Unary { input, .. }
             | Self::Component { input, .. }
-            | Self::MatrixElement { input, .. } => vec![*input],
+            | Self::MatrixElement { input, .. }
+            | Self::SolveRowAdjointElement { adjoint: input, .. } => vec![*input],
             Self::Binary { lhs, rhs, .. } | Self::MatMul { lhs, rhs } | Self::Dot { lhs, rhs } => {
                 vec![*lhs, *rhs]
             }
@@ -335,12 +342,29 @@ impl KernelInstruction {
                 }
                 KernelValueKind::Complex
             }
+            Self::SolveRowAdjointElement {
+                index,
+                len,
+                adjoint,
+                ..
+            } => {
+                if *len == 0 || *index >= *len || !kind(*adjoint).is_scalar() {
+                    return Err(Self::shape_error(
+                        value,
+                        "specialized solve-row adjoint",
+                        "adjoint must be scalar and index must be within a non-empty row",
+                    ));
+                }
+                KernelValueKind::Complex
+            }
         }))
     }
 
     fn expected_class(&self, values: &[KernelValue]) -> KernelValueClass {
         match self {
-            Self::Cached(_) | Self::SolveRow { .. } => KernelValueClass::Event,
+            Self::Cached(_) | Self::SolveRow { .. } | Self::SolveRowAdjointElement { .. } => {
+                KernelValueClass::Event
+            }
             Self::RealConstant(_) | Self::ComplexConstant(_) | Self::Parameter(_) => {
                 KernelValueClass::Invariant
             }

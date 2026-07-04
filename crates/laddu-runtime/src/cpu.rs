@@ -27,6 +27,9 @@ use rayon::prelude::*;
 
 use crate::{RuntimeError, RuntimeResult, execution::CpuExecution};
 
+mod gradient_interpreter;
+use gradient_interpreter::GradientInterpreter;
+
 #[cfg(feature = "jit")]
 use crate::jit::{JitCacheView, JitGradientKernel, JitScalarKernel};
 
@@ -123,7 +126,7 @@ impl ScalarExecutor {
 
 #[derive(Clone, Debug)]
 enum GradientExecutor {
-    Interpreter,
+    Interpreter(Option<GradientInterpreter>),
     #[cfg(feature = "jit")]
     Jit(JitGradientKernel),
 }
@@ -133,7 +136,7 @@ impl GradientExecutor {
         plan: Option<&ScalarKernelIr>,
         params: &ParamLayout,
         mode: CpuExecutionMode,
-    ) -> Self {
+    ) -> AutodiffResult<Self> {
         #[cfg(not(feature = "jit"))]
         let _ = (plan, params, mode);
         #[cfg(feature = "jit")]
@@ -141,9 +144,12 @@ impl GradientExecutor {
             && let Some(plan) = plan
             && let Ok(Some(kernel)) = JitGradientKernel::compile(plan, params.free_params())
         {
-            return Self::Jit(kernel);
+            return Ok(Self::Jit(kernel));
         }
-        Self::Interpreter
+        Ok(Self::Interpreter(
+            plan.map(|plan| GradientInterpreter::new(plan, params.free_params()))
+                .transpose()?,
+        ))
     }
 }
 
@@ -169,18 +175,35 @@ struct ScalarEvaluationPlan {
     event_instructions: Vec<ScalarEventInstruction>,
     event_real_slot_count: usize,
     event_complex_slot_count: usize,
-    root: ScalarOperand,
+    outputs: Vec<ScalarOperand>,
 }
 
 impl ScalarEvaluationPlan {
     fn from_kernel_ir(ir: &ScalarKernelIr) -> Option<Self> {
-        let mut operands = Vec::with_capacity(ir.values().len());
+        Self::from_kernel_values(ir.values(), &[ir.root()])
+    }
+
+    fn from_kernel_values(values: &[KernelValue], outputs: &[KernelValueId]) -> Option<Self> {
+        let mut required = vec![false; values.len()];
+        let mut pending = outputs.to_vec();
+        while let Some(id) = pending.pop() {
+            if required[id.index()] {
+                continue;
+            }
+            required[id.index()] = true;
+            pending.extend(values[id.index()].instruction.operands());
+        }
+        let mut operands = Vec::with_capacity(values.len());
         let mut invariant_instructions = Vec::new();
         let mut invariant_real_slots = 0;
         let mut invariant_complex_slots = 0;
         let mut event_instructions = Vec::new();
 
-        for value in ir.values() {
+        for (index, value) in values.iter().enumerate() {
+            if !required[index] {
+                operands.push(None);
+                continue;
+            }
             if !matches!(value.kind, KernelValueKind::Real | KernelValueKind::Complex) {
                 return None;
             }
@@ -222,13 +245,16 @@ impl ScalarEvaluationPlan {
                     }
                 }
             };
-            operands.push(operand);
+            operands.push(Some(operand));
         }
 
         Some(Self::new(
             invariant_instructions,
             event_instructions,
-            operands[ir.root().index()],
+            outputs
+                .iter()
+                .map(|output| operands[output.index()].expect("kernel output is required"))
+                .collect(),
             invariant_real_slots,
             invariant_complex_slots,
         ))
@@ -237,7 +263,7 @@ impl ScalarEvaluationPlan {
     fn new(
         invariant_instructions: Vec<(ScalarSlot, ScalarInstruction)>,
         event_instructions: Vec<(ScalarSlot, ScalarInstruction)>,
-        root: ScalarOperand,
+        outputs: Vec<ScalarOperand>,
         invariant_real_slot_count: usize,
         invariant_complex_slot_count: usize,
     ) -> Self {
@@ -245,7 +271,9 @@ impl ScalarEvaluationPlan {
         for (index, (_, instruction)) in event_instructions.iter().enumerate() {
             instruction.record_event_uses(&mut last_use, index);
         }
-        root.record_event_use(&mut last_use, event_instructions.len());
+        for output in &outputs {
+            output.record_event_use(&mut last_use, event_instructions.len());
+        }
 
         let mut logical_to_physical = vec![usize::MAX; event_instructions.len()];
         let mut free_real_slots = Vec::new();
@@ -312,8 +340,15 @@ impl ScalarEvaluationPlan {
             event_instructions: slotted_instructions,
             event_real_slot_count: next_real_slot,
             event_complex_slot_count: next_complex_slot,
-            root: root.remap_event(&logical_to_physical),
+            outputs: outputs
+                .into_iter()
+                .map(|output| output.remap_event(&logical_to_physical))
+                .collect(),
         }
+    }
+
+    fn root(&self) -> ScalarOperand {
+        self.outputs[0]
     }
 }
 
@@ -341,13 +376,13 @@ impl ScalarSlot {
     }
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct ScalarInvariantValues {
     real: Vec<f64>,
     complex: Vec<Complex64>,
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct ScalarEventWorkspace {
     real: Vec<[f64; SCALAR_BLOCK_SIZE]>,
     complex: Vec<[Complex64; SCALAR_BLOCK_SIZE]>,
@@ -630,11 +665,19 @@ enum ScalarInstruction {
         row_slot: usize,
         rhs: Vec<ScalarOperand>,
     },
+    SolveRowAdjointElement {
+        row_slot: usize,
+        index: usize,
+        len: usize,
+        adjoint: ScalarOperand,
+    },
 }
 
 impl ScalarInstruction {
-    fn from_kernel(instruction: &KernelInstruction, operands: &[ScalarOperand]) -> Self {
-        let operand = |id: KernelValueId| operands[id.index()];
+    fn from_kernel(instruction: &KernelInstruction, operands: &[Option<ScalarOperand>]) -> Self {
+        let operand = |id: KernelValueId| {
+            operands[id.index()].expect("required instruction operand was lowered")
+        };
         match instruction {
             KernelInstruction::Cached(slot) => Self::Cached(*slot),
             KernelInstruction::RealConstant(value) => Self::Constant(Complex64::from(*value)),
@@ -662,6 +705,17 @@ impl ScalarInstruction {
             KernelInstruction::SolveRow { row_slot, rhs } => Self::SolveRow {
                 row_slot: *row_slot,
                 rhs: rhs.iter().map(|id| operand(*id)).collect(),
+            },
+            KernelInstruction::SolveRowAdjointElement {
+                row_slot,
+                index,
+                len,
+                adjoint,
+            } => Self::SolveRowAdjointElement {
+                row_slot: *row_slot,
+                index: *index,
+                len: *len,
+                adjoint: operand(*adjoint),
             },
             KernelInstruction::Vector(_)
             | KernelInstruction::Matrix { .. }
@@ -698,6 +752,9 @@ impl ScalarInstruction {
                     operand.collect_event_slot(slots);
                 }
             }
+            Self::SolveRowAdjointElement { adjoint, .. } => {
+                adjoint.collect_event_slot(slots);
+            }
         }
     }
 
@@ -722,6 +779,9 @@ impl ScalarInstruction {
                 for operand in rhs {
                     operand.record_event_use(last_use, instruction_index);
                 }
+            }
+            Self::SolveRowAdjointElement { adjoint, .. } => {
+                adjoint.record_event_use(last_use, instruction_index);
             }
         }
     }
@@ -761,6 +821,17 @@ impl ScalarInstruction {
                     .map(|operand| operand.remap_event(logical_to_physical))
                     .collect(),
             },
+            Self::SolveRowAdjointElement {
+                row_slot,
+                index,
+                len,
+                adjoint,
+            } => Self::SolveRowAdjointElement {
+                row_slot,
+                index,
+                len,
+                adjoint: adjoint.remap_event(logical_to_physical),
+            },
         }
     }
 
@@ -787,21 +858,18 @@ impl ScalarInstruction {
                 .expect("parameter instruction requires parameter values")
                 .get(*id)
                 .map_err(|err| RuntimeError::Parameter(err.to_string()))?,
-            Self::Unary { op, input } => {
-                let input = input.real_value(invariant, event);
-                match op {
-                    UnaryOp::Neg => -input,
-                    UnaryOp::Real | UnaryOp::Conj => input,
-                    UnaryOp::Imag => 0.0,
-                    UnaryOp::NormSqr => input * input,
-                    UnaryOp::Sqrt => input.sqrt(),
-                    UnaryOp::Exp => input.exp(),
-                    UnaryOp::Sin => input.sin(),
-                    UnaryOp::Cos => input.cos(),
-                    UnaryOp::Log => input.ln(),
-                    UnaryOp::PowI(power) => input.powi(*power),
-                }
-            }
+            Self::Unary { op, input } => match op {
+                UnaryOp::Neg => -input.real_value(invariant, event),
+                UnaryOp::Real | UnaryOp::Conj => input.complex_value(invariant, event).re,
+                UnaryOp::Imag => input.complex_value(invariant, event).im,
+                UnaryOp::NormSqr => input.complex_value(invariant, event).norm_sqr(),
+                UnaryOp::Sqrt => input.real_value(invariant, event).sqrt(),
+                UnaryOp::Exp => input.real_value(invariant, event).exp(),
+                UnaryOp::Sin => input.real_value(invariant, event).sin(),
+                UnaryOp::Cos => input.real_value(invariant, event).cos(),
+                UnaryOp::Log => input.real_value(invariant, event).ln(),
+                UnaryOp::PowI(power) => input.real_value(invariant, event).powi(*power),
+            },
             Self::Binary { op, lhs, rhs } => {
                 let lhs = lhs.real_value(invariant, event);
                 let rhs = rhs.real_value(invariant, event);
@@ -827,7 +895,7 @@ impl ScalarInstruction {
                 }
                 value
             }
-            Self::Complex { .. } | Self::SolveRow { .. } => {
+            Self::Complex { .. } | Self::SolveRow { .. } | Self::SolveRowAdjointElement { .. } => {
                 unreachable!("complex-only instruction appeared in real scalar slot")
             }
         })
@@ -897,6 +965,26 @@ impl ScalarInstruction {
                     .zip(rhs)
                     .map(|(lhs, operand)| lhs * operand.complex_value(invariant, event))
                     .sum()
+            }
+            Self::SolveRowAdjointElement {
+                row_slot,
+                index,
+                len,
+                adjoint,
+            } => {
+                let (cache, row) =
+                    cache.expect("solve-row adjoint instruction requires an event cache");
+                let inverse_row = cache.solve_row(*row_slot, row)?;
+                if inverse_row.len() != *len {
+                    return Err(RuntimeError::InvalidShape {
+                        index: row,
+                        message: format!(
+                            "specialized solve row has len {}, expected {len}",
+                            inverse_row.len()
+                        ),
+                    });
+                }
+                adjoint.complex_value(invariant, event) * inverse_row[*index].conj()
             }
         })
     }
@@ -982,7 +1070,7 @@ impl CpuBackend {
             .as_ref()
             .and_then(|kernel| ScalarExecutor::prepare(kernel, execution_mode));
         let gradient_executor =
-            GradientExecutor::prepare(scalar_kernel.as_ref(), model.params(), execution_mode);
+            GradientExecutor::prepare(scalar_kernel.as_ref(), model.params(), execution_mode)?;
         let mut cache_required_nodes = vec![false; model.graph().nodes().len()];
         for node in cache_plan.materialization_nodes() {
             cache_required_nodes[node.index()] = true;
@@ -1160,7 +1248,15 @@ impl CpuPlan {
     fn gradient_jit_kernel(&self) -> Option<&JitGradientKernel> {
         match &self.gradient_executor {
             GradientExecutor::Jit(kernel) => Some(kernel),
-            GradientExecutor::Interpreter => None,
+            GradientExecutor::Interpreter(_) => None,
+        }
+    }
+
+    fn gradient_interpreter(&self) -> Option<&GradientInterpreter> {
+        match &self.gradient_executor {
+            GradientExecutor::Interpreter(interpreter) => interpreter.as_ref(),
+            #[cfg(feature = "jit")]
+            GradientExecutor::Jit(_) => None,
         }
     }
 
@@ -1205,6 +1301,10 @@ impl CpuPlan {
                 .zip(imag)
                 .map(|(re, im)| Complex64::new(re, im))
                 .collect();
+            return Ok(ValueGradient { value, gradient });
+        }
+        if let Some(interpreter) = self.gradient_interpreter() {
+            let (value, gradient) = interpreter.evaluate(params, None)?;
             return Ok(ValueGradient { value, gradient });
         }
         let values = self.evaluate_values(params, None)?;
@@ -1421,7 +1521,7 @@ impl CpuPlan {
                 }
             }
         }
-        Ok(plan.root.complex_value(invariant, values))
+        Ok(plan.root().complex_value(invariant, values))
     }
 
     fn evaluate_cache_block_prepared(
@@ -1447,7 +1547,7 @@ impl CpuPlan {
             return kernel.evaluate_prepared(params, jit_cache, start, end, output);
         }
         if let (Some(plan), Some(invariant)) = (self.scalar_interpreter_plan(), invariant) {
-            return self.evaluate_scalar_cache_block(
+            return evaluate_scalar_cache_block(
                 cache, start, end, plan, invariant, workspace, output,
             );
         }
@@ -1458,307 +1558,312 @@ impl CpuPlan {
         }
         Ok(())
     }
+}
 
-    fn evaluate_scalar_cache_block(
-        &self,
-        cache: &CpuBatchCache,
-        start: usize,
-        end: usize,
-        plan: &ScalarEvaluationPlan,
-        invariant: &ScalarInvariantValues,
-        workspace: &mut ScalarEventWorkspace,
-        output: &mut Vec<Complex64>,
-    ) -> RuntimeResult<()> {
-        let block_len = end - start;
-        workspace
-            .real
-            .resize(plan.event_real_slot_count, [0.0; SCALAR_BLOCK_SIZE]);
-        workspace.complex.resize(
-            plan.event_complex_slot_count,
-            [Complex64::ZERO; SCALAR_BLOCK_SIZE],
-        );
+fn evaluate_scalar_cache_block(
+    cache: &CpuBatchCache,
+    start: usize,
+    end: usize,
+    plan: &ScalarEvaluationPlan,
+    invariant: &ScalarInvariantValues,
+    workspace: &mut ScalarEventWorkspace,
+    output: &mut Vec<Complex64>,
+) -> RuntimeResult<()> {
+    let block_len = end - start;
+    workspace
+        .real
+        .resize(plan.event_real_slot_count, [0.0; SCALAR_BLOCK_SIZE]);
+    workspace.complex.resize(
+        plan.event_complex_slot_count,
+        [Complex64::ZERO; SCALAR_BLOCK_SIZE],
+    );
 
-        for event_instruction in &plan.event_instructions {
-            match event_instruction.output_slot {
-                ScalarSlot::Real(slot) => {
-                    let output_slot = slot;
-                    match &event_instruction.instruction {
-                        ScalarInstruction::Cached(slot) => {
-                            workspace.real[output_slot][..block_len]
-                                .copy_from_slice(cache.real_range(*slot, start, end)?);
-                        }
-                        ScalarInstruction::Unary { op, input } => {
-                            for lane in 0..block_len {
-                                workspace.real[output_slot][lane] = match op {
-                                    UnaryOp::Neg => {
-                                        -input.block_real_value(invariant, workspace, lane)
-                                    }
-                                    UnaryOp::Real | UnaryOp::Conj => {
-                                        input.block_complex_value(invariant, workspace, lane).re
-                                    }
-                                    UnaryOp::Imag => {
-                                        input.block_complex_value(invariant, workspace, lane).im
-                                    }
-                                    UnaryOp::NormSqr => input
-                                        .block_complex_value(invariant, workspace, lane)
-                                        .norm_sqr(),
-                                    UnaryOp::Sqrt => {
-                                        input.block_real_value(invariant, workspace, lane).sqrt()
-                                    }
-                                    UnaryOp::Exp => {
-                                        input.block_real_value(invariant, workspace, lane).exp()
-                                    }
-                                    UnaryOp::Sin => {
-                                        input.block_real_value(invariant, workspace, lane).sin()
-                                    }
-                                    UnaryOp::Cos => {
-                                        input.block_real_value(invariant, workspace, lane).cos()
-                                    }
-                                    UnaryOp::Log => {
-                                        input.block_real_value(invariant, workspace, lane).ln()
-                                    }
-                                    UnaryOp::PowI(power) => input
-                                        .block_real_value(invariant, workspace, lane)
-                                        .powi(*power),
-                                };
-                            }
-                        }
-                        ScalarInstruction::Binary { op, lhs, rhs } => {
-                            for lane in 0..block_len {
-                                let lhs = lhs.block_real_value(invariant, workspace, lane);
-                                let rhs = rhs.block_real_value(invariant, workspace, lane);
-                                workspace.real[output_slot][lane] = match op {
-                                    BinaryOp::Add => lhs + rhs,
-                                    BinaryOp::Sub => lhs - rhs,
-                                    BinaryOp::Mul => lhs * rhs,
-                                    BinaryOp::Div => lhs / rhs,
-                                    BinaryOp::Atan2 => lhs.atan2(rhs),
-                                };
-                            }
-                        }
-                        ScalarInstruction::Add(runs) => {
-                            workspace.real[output_slot][..block_len].fill(0.0);
-                            for run in runs {
-                                match run {
-                                    OperandRun::InvariantReal(slots) => {
-                                        for slot in slots {
-                                            let operand = invariant.real[*slot];
-                                            for lane in 0..block_len {
-                                                workspace.real[output_slot][lane] += operand;
-                                            }
-                                        }
-                                    }
-                                    OperandRun::EventReal(slots) => {
-                                        for slot in slots {
-                                            for lane in 0..block_len {
-                                                workspace.real[output_slot][lane] +=
-                                                    workspace.real[*slot][lane];
-                                            }
-                                        }
-                                    }
-                                    OperandRun::InvariantComplex(_)
-                                    | OperandRun::EventComplex(_) => {
-                                        unreachable!("complex operand appeared in real add")
-                                    }
+    for event_instruction in &plan.event_instructions {
+        match event_instruction.output_slot {
+            ScalarSlot::Real(slot) => {
+                let output_slot = slot;
+                match &event_instruction.instruction {
+                    ScalarInstruction::Cached(slot) => {
+                        workspace.real[output_slot][..block_len]
+                            .copy_from_slice(cache.real_range(*slot, start, end)?);
+                    }
+                    ScalarInstruction::Unary { op, input } => {
+                        for lane in 0..block_len {
+                            workspace.real[output_slot][lane] = match op {
+                                UnaryOp::Neg => -input.block_real_value(invariant, workspace, lane),
+                                UnaryOp::Real | UnaryOp::Conj => {
+                                    input.block_complex_value(invariant, workspace, lane).re
                                 }
-                            }
-                        }
-                        ScalarInstruction::Mul(runs) => {
-                            workspace.real[output_slot][..block_len].fill(1.0);
-                            for run in runs {
-                                match run {
-                                    OperandRun::InvariantReal(slots) => {
-                                        for slot in slots {
-                                            let operand = invariant.real[*slot];
-                                            for lane in 0..block_len {
-                                                workspace.real[output_slot][lane] *= operand;
-                                            }
-                                        }
-                                    }
-                                    OperandRun::EventReal(slots) => {
-                                        for slot in slots {
-                                            for lane in 0..block_len {
-                                                workspace.real[output_slot][lane] *=
-                                                    workspace.real[*slot][lane];
-                                            }
-                                        }
-                                    }
-                                    OperandRun::InvariantComplex(_)
-                                    | OperandRun::EventComplex(_) => {
-                                        unreachable!("complex operand appeared in real multiply")
-                                    }
+                                UnaryOp::Imag => {
+                                    input.block_complex_value(invariant, workspace, lane).im
                                 }
-                            }
-                        }
-                        ScalarInstruction::Constant(_)
-                        | ScalarInstruction::Parameter(_)
-                        | ScalarInstruction::Complex { .. }
-                        | ScalarInstruction::SolveRow { .. } => {
-                            unreachable!("non-real event instruction appeared in a real slot")
+                                UnaryOp::NormSqr => input
+                                    .block_complex_value(invariant, workspace, lane)
+                                    .norm_sqr(),
+                                UnaryOp::Sqrt => {
+                                    input.block_real_value(invariant, workspace, lane).sqrt()
+                                }
+                                UnaryOp::Exp => {
+                                    input.block_real_value(invariant, workspace, lane).exp()
+                                }
+                                UnaryOp::Sin => {
+                                    input.block_real_value(invariant, workspace, lane).sin()
+                                }
+                                UnaryOp::Cos => {
+                                    input.block_real_value(invariant, workspace, lane).cos()
+                                }
+                                UnaryOp::Log => {
+                                    input.block_real_value(invariant, workspace, lane).ln()
+                                }
+                                UnaryOp::PowI(power) => input
+                                    .block_real_value(invariant, workspace, lane)
+                                    .powi(*power),
+                            };
                         }
                     }
+                    ScalarInstruction::Binary { op, lhs, rhs } => {
+                        for lane in 0..block_len {
+                            let lhs = lhs.block_real_value(invariant, workspace, lane);
+                            let rhs = rhs.block_real_value(invariant, workspace, lane);
+                            workspace.real[output_slot][lane] = match op {
+                                BinaryOp::Add => lhs + rhs,
+                                BinaryOp::Sub => lhs - rhs,
+                                BinaryOp::Mul => lhs * rhs,
+                                BinaryOp::Div => lhs / rhs,
+                                BinaryOp::Atan2 => lhs.atan2(rhs),
+                            };
+                        }
+                    }
+                    ScalarInstruction::Add(runs) => {
+                        workspace.real[output_slot][..block_len].fill(0.0);
+                        for run in runs {
+                            match run {
+                                OperandRun::InvariantReal(slots) => {
+                                    for slot in slots {
+                                        let operand = invariant.real[*slot];
+                                        for lane in 0..block_len {
+                                            workspace.real[output_slot][lane] += operand;
+                                        }
+                                    }
+                                }
+                                OperandRun::EventReal(slots) => {
+                                    for slot in slots {
+                                        for lane in 0..block_len {
+                                            workspace.real[output_slot][lane] +=
+                                                workspace.real[*slot][lane];
+                                        }
+                                    }
+                                }
+                                OperandRun::InvariantComplex(_) | OperandRun::EventComplex(_) => {
+                                    unreachable!("complex operand appeared in real add")
+                                }
+                            }
+                        }
+                    }
+                    ScalarInstruction::Mul(runs) => {
+                        workspace.real[output_slot][..block_len].fill(1.0);
+                        for run in runs {
+                            match run {
+                                OperandRun::InvariantReal(slots) => {
+                                    for slot in slots {
+                                        let operand = invariant.real[*slot];
+                                        for lane in 0..block_len {
+                                            workspace.real[output_slot][lane] *= operand;
+                                        }
+                                    }
+                                }
+                                OperandRun::EventReal(slots) => {
+                                    for slot in slots {
+                                        for lane in 0..block_len {
+                                            workspace.real[output_slot][lane] *=
+                                                workspace.real[*slot][lane];
+                                        }
+                                    }
+                                }
+                                OperandRun::InvariantComplex(_) | OperandRun::EventComplex(_) => {
+                                    unreachable!("complex operand appeared in real multiply")
+                                }
+                            }
+                        }
+                    }
+                    ScalarInstruction::Constant(_)
+                    | ScalarInstruction::Parameter(_)
+                    | ScalarInstruction::Complex { .. }
+                    | ScalarInstruction::SolveRow { .. }
+                    | ScalarInstruction::SolveRowAdjointElement { .. } => {
+                        unreachable!("non-real event instruction appeared in a real slot")
+                    }
                 }
-                ScalarSlot::Complex(slot) => {
-                    let output_slot = slot;
-                    match &event_instruction.instruction {
-                        ScalarInstruction::Cached(slot) => {
-                            workspace.complex[output_slot][..block_len]
-                                .copy_from_slice(cache.complex_range(*slot, start, end)?);
+            }
+            ScalarSlot::Complex(slot) => {
+                let output_slot = slot;
+                match &event_instruction.instruction {
+                    ScalarInstruction::Cached(slot) => {
+                        workspace.complex[output_slot][..block_len]
+                            .copy_from_slice(cache.complex_range(*slot, start, end)?);
+                    }
+                    ScalarInstruction::Unary { op, input } => {
+                        for lane in 0..block_len {
+                            let input = input.block_complex_value(invariant, workspace, lane);
+                            workspace.complex[output_slot][lane] = eval_unary(*op, input);
                         }
-                        ScalarInstruction::Unary { op, input } => {
-                            for lane in 0..block_len {
-                                let input = input.block_complex_value(invariant, workspace, lane);
-                                workspace.complex[output_slot][lane] = eval_unary(*op, input);
-                            }
+                    }
+                    ScalarInstruction::Binary { op, lhs, rhs } => {
+                        for lane in 0..block_len {
+                            let lhs = lhs.block_complex_value(invariant, workspace, lane);
+                            let rhs = rhs.block_complex_value(invariant, workspace, lane);
+                            workspace.complex[output_slot][lane] = eval_binary(*op, lhs, rhs);
                         }
-                        ScalarInstruction::Binary { op, lhs, rhs } => {
-                            for lane in 0..block_len {
-                                let lhs = lhs.block_complex_value(invariant, workspace, lane);
-                                let rhs = rhs.block_complex_value(invariant, workspace, lane);
-                                workspace.complex[output_slot][lane] = eval_binary(*op, lhs, rhs);
-                            }
-                        }
-                        ScalarInstruction::Add(runs) => {
-                            workspace.complex[output_slot][..block_len].fill(Complex64::ZERO);
-                            for run in runs {
-                                match run {
-                                    OperandRun::InvariantReal(slots) => {
-                                        for slot in slots {
-                                            let operand = invariant.real[*slot];
-                                            for lane in 0..block_len {
-                                                workspace.complex[output_slot][lane] += operand;
-                                            }
+                    }
+                    ScalarInstruction::Add(runs) => {
+                        workspace.complex[output_slot][..block_len].fill(Complex64::ZERO);
+                        for run in runs {
+                            match run {
+                                OperandRun::InvariantReal(slots) => {
+                                    for slot in slots {
+                                        let operand = invariant.real[*slot];
+                                        for lane in 0..block_len {
+                                            workspace.complex[output_slot][lane] += operand;
                                         }
                                     }
-                                    OperandRun::InvariantComplex(slots) => {
-                                        for slot in slots {
-                                            let operand = invariant.complex[*slot];
-                                            for lane in 0..block_len {
-                                                workspace.complex[output_slot][lane] += operand;
-                                            }
+                                }
+                                OperandRun::InvariantComplex(slots) => {
+                                    for slot in slots {
+                                        let operand = invariant.complex[*slot];
+                                        for lane in 0..block_len {
+                                            workspace.complex[output_slot][lane] += operand;
                                         }
                                     }
-                                    OperandRun::EventReal(slots) => {
-                                        for slot in slots {
-                                            for lane in 0..block_len {
-                                                workspace.complex[output_slot][lane] +=
-                                                    workspace.real[*slot][lane];
-                                            }
+                                }
+                                OperandRun::EventReal(slots) => {
+                                    for slot in slots {
+                                        for lane in 0..block_len {
+                                            workspace.complex[output_slot][lane] +=
+                                                workspace.real[*slot][lane];
                                         }
                                     }
-                                    OperandRun::EventComplex(slots) => {
-                                        for slot in slots {
-                                            for lane in 0..block_len {
-                                                let operand = workspace.complex[*slot][lane];
-                                                workspace.complex[output_slot][lane] += operand;
-                                            }
+                                }
+                                OperandRun::EventComplex(slots) => {
+                                    for slot in slots {
+                                        for lane in 0..block_len {
+                                            let operand = workspace.complex[*slot][lane];
+                                            workspace.complex[output_slot][lane] += operand;
                                         }
                                     }
                                 }
                             }
                         }
-                        ScalarInstruction::Mul(runs) => {
-                            workspace.complex[output_slot][..block_len].fill(Complex64::ONE);
-                            for run in runs {
-                                match run {
-                                    OperandRun::InvariantReal(slots) => {
-                                        for slot in slots {
-                                            let operand = invariant.real[*slot];
-                                            for lane in 0..block_len {
-                                                workspace.complex[output_slot][lane] *= operand;
-                                            }
+                    }
+                    ScalarInstruction::Mul(runs) => {
+                        workspace.complex[output_slot][..block_len].fill(Complex64::ONE);
+                        for run in runs {
+                            match run {
+                                OperandRun::InvariantReal(slots) => {
+                                    for slot in slots {
+                                        let operand = invariant.real[*slot];
+                                        for lane in 0..block_len {
+                                            workspace.complex[output_slot][lane] *= operand;
                                         }
                                     }
-                                    OperandRun::InvariantComplex(slots) => {
-                                        for slot in slots {
-                                            let operand = invariant.complex[*slot];
-                                            for lane in 0..block_len {
-                                                workspace.complex[output_slot][lane] *= operand;
-                                            }
+                                }
+                                OperandRun::InvariantComplex(slots) => {
+                                    for slot in slots {
+                                        let operand = invariant.complex[*slot];
+                                        for lane in 0..block_len {
+                                            workspace.complex[output_slot][lane] *= operand;
                                         }
                                     }
-                                    OperandRun::EventReal(slots) => {
-                                        for slot in slots {
-                                            for lane in 0..block_len {
-                                                workspace.complex[output_slot][lane] *=
-                                                    workspace.real[*slot][lane];
-                                            }
+                                }
+                                OperandRun::EventReal(slots) => {
+                                    for slot in slots {
+                                        for lane in 0..block_len {
+                                            workspace.complex[output_slot][lane] *=
+                                                workspace.real[*slot][lane];
                                         }
                                     }
-                                    OperandRun::EventComplex(slots) => {
-                                        for slot in slots {
-                                            for lane in 0..block_len {
-                                                let operand = workspace.complex[*slot][lane];
-                                                workspace.complex[output_slot][lane] *= operand;
-                                            }
+                                }
+                                OperandRun::EventComplex(slots) => {
+                                    for slot in slots {
+                                        for lane in 0..block_len {
+                                            let operand = workspace.complex[*slot][lane];
+                                            workspace.complex[output_slot][lane] *= operand;
                                         }
                                     }
                                 }
                             }
                         }
-                        ScalarInstruction::Complex { re, im } => {
-                            for lane in 0..block_len {
-                                workspace.complex[output_slot][lane] = Complex64::new(
-                                    re.block_real_value(invariant, workspace, lane),
-                                    im.block_real_value(invariant, workspace, lane),
-                                );
+                    }
+                    ScalarInstruction::Complex { re, im } => {
+                        for lane in 0..block_len {
+                            workspace.complex[output_slot][lane] = Complex64::new(
+                                re.block_real_value(invariant, workspace, lane),
+                                im.block_real_value(invariant, workspace, lane),
+                            );
+                        }
+                    }
+                    ScalarInstruction::SolveRow { row_slot, rhs } => {
+                        for lane in 0..block_len {
+                            let inverse_row = cache.solve_row(*row_slot, start + lane)?;
+                            if inverse_row.len() != rhs.len() {
+                                return Err(RuntimeError::InvalidShape {
+                                    index: start + lane,
+                                    message: format!(
+                                        "specialized solve row has len {}, expected {}",
+                                        inverse_row.len(),
+                                        rhs.len()
+                                    ),
+                                });
                             }
+                            workspace.complex[output_slot][lane] = inverse_row
+                                .iter()
+                                .zip(rhs)
+                                .map(|(lhs, operand)| {
+                                    lhs * operand.block_complex_value(invariant, workspace, lane)
+                                })
+                                .sum();
                         }
-                        ScalarInstruction::SolveRow { row_slot, rhs } => {
-                            for lane in 0..block_len {
-                                let inverse_row = cache.solve_row(*row_slot, start + lane)?;
-                                if inverse_row.len() != rhs.len() {
-                                    return Err(RuntimeError::InvalidShape {
-                                        index: start + lane,
-                                        message: format!(
-                                            "specialized solve row has len {}, expected {}",
-                                            inverse_row.len(),
-                                            rhs.len()
-                                        ),
-                                    });
-                                }
-                                workspace.complex[output_slot][lane] = inverse_row
-                                    .iter()
-                                    .zip(rhs)
-                                    .map(|(lhs, operand)| {
-                                        lhs * operand
-                                            .block_complex_value(invariant, workspace, lane)
-                                    })
-                                    .sum();
+                    }
+                    ScalarInstruction::SolveRowAdjointElement {
+                        row_slot,
+                        index,
+                        len,
+                        adjoint,
+                    } => {
+                        for lane in 0..block_len {
+                            let inverse_row = cache.solve_row(*row_slot, start + lane)?;
+                            if inverse_row.len() != *len {
+                                return Err(RuntimeError::InvalidShape {
+                                    index: start + lane,
+                                    message: format!(
+                                        "specialized solve row has len {}, expected {len}",
+                                        inverse_row.len()
+                                    ),
+                                });
                             }
+                            workspace.complex[output_slot][lane] = adjoint
+                                .block_complex_value(invariant, workspace, lane)
+                                * inverse_row[*index].conj();
                         }
-                        ScalarInstruction::Constant(_) | ScalarInstruction::Parameter(_) => {
-                            unreachable!("invariant instruction appeared in the event tape")
-                        }
+                    }
+                    ScalarInstruction::Constant(_) | ScalarInstruction::Parameter(_) => {
+                        unreachable!("invariant instruction appeared in the event tape")
                     }
                 }
             }
         }
-
-        output.clear();
-        output.reserve(block_len);
-        match plan.root {
-            ScalarOperand::InvariantReal(slot) => {
-                output.resize(block_len, Complex64::from(invariant.real[slot]))
-            }
-            ScalarOperand::InvariantComplex(slot) => {
-                output.resize(block_len, invariant.complex[slot])
-            }
-            ScalarOperand::EventReal(slot) => {
-                output.extend(
-                    workspace.real[slot][..block_len]
-                        .iter()
-                        .copied()
-                        .map(Complex64::from),
-                );
-            }
-            ScalarOperand::EventComplex(slot) => {
-                output.extend_from_slice(&workspace.complex[slot][..block_len]);
-            }
-        }
-        Ok(())
     }
 
+    output.clear();
+    output.reserve(block_len * plan.outputs.len());
+    for lane in 0..block_len {
+        for output_operand in &plan.outputs {
+            output.push(output_operand.block_complex_value(invariant, workspace, lane));
+        }
+    }
+    Ok(())
+}
+
+impl CpuPlan {
     pub fn evaluate_cache_row_with_gradient(
         &self,
         params: &ParamValues,
@@ -1784,6 +1889,10 @@ impl CpuPlan {
                     index: row,
                     message: "single-row JIT gradient produced no value".into(),
                 });
+        }
+        if let Some(interpreter) = self.gradient_interpreter() {
+            let (value, gradient) = interpreter.evaluate(params, Some((cache, row)))?;
+            return Ok(ValueGradient { value, gradient });
         }
         let values = self.evaluate_values_from_cache(params, cache, row)?;
         self.value_gradient(values, Some((cache, row)))
@@ -2166,6 +2275,25 @@ impl CpuPlan {
                 gradient_kernel,
             );
         }
+        if let Some(interpreter) = self.gradient_interpreter()
+            && let Some(mut state) = interpreter.prepare_real_blocks(params)?
+        {
+            let mut total = RealGradientAccumulator::zero(self.free_parameter_count());
+            let output_count = state.output_count();
+            for batch in dataset.batches() {
+                self.check_batch_cache(batch.cache())?;
+                for block in 0..batch.len().div_ceil(SCALAR_BLOCK_SIZE) {
+                    let start = block * SCALAR_BLOCK_SIZE;
+                    let end = (start + SCALAR_BLOCK_SIZE).min(batch.len());
+                    let outputs = state.evaluate(batch.cache(), start, end)?;
+                    for (lane, row) in outputs.chunks_exact(output_count).enumerate() {
+                        let (value, derivative) = transform(row[0])?;
+                        total.push(batch.weights()[start + lane], value, derivative, &row[1..]);
+                    }
+                }
+            }
+            return Ok(total.finish());
+        }
         let mut total = RealGradientAccumulator::zero(self.free_parameter_count());
         for batch in dataset.batches() {
             self.check_batch_cache(batch.cache())?;
@@ -2419,6 +2547,54 @@ impl CpuPlan {
                 value_kernel,
                 gradient_kernel,
             );
+        }
+        if let Some(interpreter) = self.gradient_interpreter()
+            && let Some(state) = interpreter.prepare_real_blocks(params)?
+        {
+            let mut total = RealGradientAccumulator::zero(self.free_parameter_count());
+            let output_count = state.output_count();
+            for batch in dataset.batches() {
+                self.check_batch_cache(batch.cache())?;
+                let partial = (0..batch.len().div_ceil(SCALAR_BLOCK_SIZE))
+                    .into_par_iter()
+                    .try_fold(
+                        || {
+                            (
+                                RealGradientAccumulator::zero(self.free_parameter_count()),
+                                state.clone(),
+                            )
+                        },
+                        |(mut accumulator, mut state), block| {
+                            let start = block * SCALAR_BLOCK_SIZE;
+                            let end = (start + SCALAR_BLOCK_SIZE).min(batch.len());
+                            let outputs = state.evaluate(batch.cache(), start, end)?;
+                            for (lane, row) in outputs.chunks_exact(output_count).enumerate() {
+                                let (value, derivative) = transform(row[0])?;
+                                accumulator.push(
+                                    batch.weights()[start + lane],
+                                    value,
+                                    derivative,
+                                    &row[1..],
+                                );
+                            }
+                            Ok::<_, E>((accumulator, state))
+                        },
+                    )
+                    .try_reduce(
+                        || {
+                            (
+                                RealGradientAccumulator::zero(self.free_parameter_count()),
+                                state.clone(),
+                            )
+                        },
+                        |(mut lhs, state), (rhs, _)| {
+                            lhs.merge(rhs);
+                            Ok::<_, E>((lhs, state))
+                        },
+                    )?;
+                total.merge(partial.0);
+            }
+            return Ok(total.finish());
         }
         let mut total = RealGradientAccumulator::zero(self.free_parameter_count());
         for batch in dataset.batches() {
@@ -5040,6 +5216,21 @@ mod tests {
         let params = Arc::new(model.params().clone()).default_values();
         let plan = CpuBackend.prepare(&model);
         let result = plan.evaluate_with_gradient(&params).unwrap();
+        let ir_result = gradient_interpreter::GradientInterpreter::new(
+            plan.scalar_kernel.as_ref().unwrap(),
+            model.params().free_params(),
+        )
+        .unwrap()
+        .evaluate(&params, None)
+        .unwrap()
+        .1;
+
+        for (actual, expected) in ir_result.iter().zip(result.gradient()) {
+            assert!(
+                (actual - expected).norm() < 1.0e-12,
+                "{actual} != {expected}"
+            );
+        }
 
         for (parameter, derivative) in result.gradient().iter().enumerate() {
             let expected = finite_difference(&plan, &params, parameter);
@@ -5083,7 +5274,12 @@ mod tests {
             .evaluate_cache_with_gradient(&params, &interpreted.cache_event_batch(&batch).unwrap())
             .unwrap();
         for (actual, expected) in actual.iter().zip(&expected) {
-            assert!((actual.value() - expected.value()).norm() < 1.0e-12);
+            assert!(
+                (actual.value() - expected.value()).norm() < 1.0e-12,
+                "{} != {}",
+                actual.value(),
+                expected.value()
+            );
             for (actual, expected) in actual.gradient().iter().zip(expected.gradient()) {
                 assert!((actual - expected).norm() < 1.0e-12);
             }
@@ -5451,10 +5647,21 @@ mod tests {
         let cached = plan
             .evaluate_cache_row_with_gradient(&params, &cache, 0)
             .unwrap();
+        let ir_gradient = gradient_interpreter::GradientInterpreter::new(
+            plan.scalar_kernel.as_ref().unwrap(),
+            model.params().free_params(),
+        )
+        .unwrap()
+        .evaluate(&params, Some((&cache, 0)))
+        .unwrap()
+        .1;
 
         assert!((cached.value() - direct.value()).norm() < 1.0e-12);
         for (cached, direct) in cached.gradient().iter().zip(direct.gradient()) {
             assert!((cached - direct).norm() < 1.0e-12);
+        }
+        for (actual, expected) in ir_gradient.iter().zip(cached.gradient()) {
+            assert!((actual - expected).norm() < 1.0e-12);
         }
     }
 
@@ -5841,6 +6048,20 @@ mod tests {
         for (actual, expected) in actual.iter().zip(&expected) {
             assert!((actual.value() - expected.value()).norm() < 1.0e-12);
             for (actual, expected) in actual.gradient().iter().zip(expected.gradient()) {
+                assert!((actual - expected).norm() < 1.0e-12);
+            }
+        }
+        let ir_interpreter = gradient_interpreter::GradientInterpreter::new(
+            automatic.scalar_kernel.as_ref().unwrap(),
+            model.params().free_params(),
+        )
+        .unwrap();
+        for (row, expected) in expected.iter().enumerate() {
+            let actual = ir_interpreter
+                .evaluate(&params, Some((&automatic_cache, row)))
+                .unwrap()
+                .1;
+            for (actual, expected) in actual.iter().zip(expected.gradient()) {
                 assert!((actual - expected).norm() < 1.0e-12);
             }
         }
