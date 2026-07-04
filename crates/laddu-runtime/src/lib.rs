@@ -5,5 +5,8 @@ mod execution;
 mod jit;
 
 pub use cpu::*;
-pub use error::{CpuExecutionError, RuntimeError, RuntimeResult};
-pub use execution::{CpuExecution, CpuExecutionOptions, ThreadPolicy};
+pub use error::{ExecutionError, RuntimeError, RuntimeResult};
+pub use execution::{
+    CpuOptions, Device, Execution, ExecutionOptions, GpuBackend, GpuDeviceSelector, GpuOptions,
+    JitPolicy, Precision, ThreadPolicy,
+};

@@ -12,7 +12,7 @@ use laddu::{
     },
     event_scalar,
     expr::{Expr, cis},
-    likelihood::{CpuLikelihood, CpuLikelihoodTerm, CpuNllTerm},
+    likelihood::{Likelihood, LikelihoodTerm, NllTerm},
     parameter,
     physics::{
         channel::Channel,
@@ -20,7 +20,7 @@ use laddu::{
         quantum::Reflectivity,
         vectors::{Vec3, Vec4},
     },
-    runtime::{CpuExecution, CpuExecutionOptions, ThreadPolicy},
+    runtime::{CpuOptions, Device, Execution, ExecutionOptions, ThreadPolicy},
 };
 
 fn reaction_variables() -> (Expr, Expr, Expr, Expr) {
@@ -121,7 +121,7 @@ fn benchmark_dataset(batches: usize) -> Dataset {
     }
 }
 
-fn kmatrix_term(batches: usize) -> CpuNllTerm {
+fn kmatrix_term(batches: usize) -> NllTerm {
     let dataset = benchmark_dataset(batches);
     let (costheta, phi, resonance_s, polarization_angle) = reaction_variables();
     let polarization = event_scalar("pol_magnitude");
@@ -230,7 +230,7 @@ fn kmatrix_term(batches: usize) -> CpuNllTerm {
     let neg_re = (&s0n * z00n.real()).norm_sqr();
     let neg_im = (&s0n * z00n.imag()).norm_sqr();
     let model = CompiledModel::from_expr(&(pos_re + pos_im + neg_re + neg_im)).unwrap();
-    CpuNllTerm::new("K-Matrix", &model, &dataset, &dataset).unwrap()
+    NllTerm::new("K-Matrix", &model, &dataset, &dataset).unwrap()
 }
 
 fn kmatrix_nll_benchmark(c: &mut Criterion) {
@@ -247,13 +247,15 @@ fn kmatrix_nll_benchmark(c: &mut Criterion) {
             .take_while(|threads| *threads <= num_cpus::get());
 
         for threads in n_threads {
-            let execution = CpuExecution::local(CpuExecutionOptions {
-                threads: ThreadPolicy::Fixed(threads),
-                ..CpuExecutionOptions::default()
+            let execution = Execution::local(ExecutionOptions {
+                device: Device::Cpu(CpuOptions {
+                    threads: ThreadPolicy::Fixed(threads),
+                    ..CpuOptions::default()
+                }),
+                ..ExecutionOptions::default()
             })
             .unwrap();
-            let likelihood =
-                CpuLikelihood::with_execution([term.clone().boxed()], execution).unwrap();
+            let likelihood = Likelihood::with_execution([term.clone().boxed()], execution).unwrap();
             assert_eq!(
                 likelihood.terms()[0]
                     .as_intensity()
@@ -296,13 +298,15 @@ fn kmatrix_nll_gradient_benchmark(c: &mut Criterion) {
             .take_while(|threads| *threads <= num_cpus::get());
 
         for threads in n_threads {
-            let execution = CpuExecution::local(CpuExecutionOptions {
-                threads: ThreadPolicy::Fixed(threads),
-                ..CpuExecutionOptions::default()
+            let execution = Execution::local(ExecutionOptions {
+                device: Device::Cpu(CpuOptions {
+                    threads: ThreadPolicy::Fixed(threads),
+                    ..CpuOptions::default()
+                }),
+                ..ExecutionOptions::default()
             })
             .unwrap();
-            let likelihood =
-                CpuLikelihood::with_execution([term.clone().boxed()], execution).unwrap();
+            let likelihood = Likelihood::with_execution([term.clone().boxed()], execution).unwrap();
             group.bench_with_input(
                 BenchmarkId::from_parameter(threads),
                 &threads,

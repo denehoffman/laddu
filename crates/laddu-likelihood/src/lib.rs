@@ -1,5 +1,5 @@
-mod cpu;
 mod error;
+mod likelihood;
 
-pub use cpu::*;
 pub use error::{LikelihoodError, LikelihoodResult};
+pub use likelihood::*;

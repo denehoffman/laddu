@@ -1,11 +1,9 @@
 use std::sync::Arc;
 
+use laddu_data::io::{Partitioning, ReadPlan};
 use rayon::{ThreadPool, ThreadPoolBuilder};
 
-#[cfg(test)]
-use crate::RuntimeError;
-use crate::{CpuExecutionError, RuntimeResult};
-use laddu_data::io::{Partitioning, ReadPlan};
+use crate::{ExecutionError, RuntimeResult};
 
 #[cfg(feature = "mpi")]
 use mpi::{
@@ -15,48 +13,108 @@ use mpi::{
 };
 
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
-pub enum ThreadPolicy {
-    /// Use Rayon's process-wide thread pool.
+pub enum Precision {
     #[default]
     Auto,
-    /// Evaluate on the calling thread.
+    F32,
+    F64,
+}
+
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub enum ThreadPolicy {
+    #[default]
+    Auto,
     Serial,
-    /// Use a private Rayon pool with exactly this many threads.
     Fixed(usize),
 }
 
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
-pub struct CpuExecutionOptions {
-    /// Local CPU concurrency. `Auto` uses Rayon's global pool.
+pub enum JitPolicy {
+    #[default]
+    Auto,
+    Enabled,
+    Disabled,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct CpuOptions {
     pub threads: ThreadPolicy,
-    /// MPI row assignment when a distributed communicator is attached.
+    pub jit: JitPolicy,
+}
+
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub enum GpuBackend {
+    #[default]
+    Auto,
+    Wgpu,
+    Cuda,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum GpuDeviceSelector {
+    #[default]
+    Auto,
+    Index(usize),
+    PciBusId(String),
+    Name(String),
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct GpuOptions {
+    pub backend: GpuBackend,
+    pub device: GpuDeviceSelector,
+    pub memory_budget: Option<usize>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum Device {
+    #[default]
+    Auto,
+    Cpu(CpuOptions),
+    Gpu(GpuOptions),
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ExecutionOptions {
+    pub device: Device,
+    pub precision: Precision,
     pub partitioning: Partitioning,
 }
 
 #[derive(Clone)]
-pub struct CpuExecution {
+pub struct Execution {
+    requested_device: Device,
+    precision: Precision,
     threads: ThreadPolicy,
+    jit: JitPolicy,
     pool: Option<Arc<ThreadPool>>,
     partitioning: Partitioning,
     #[cfg(feature = "mpi")]
     communicator: Option<Arc<SimpleCommunicator>>,
 }
 
-impl std::fmt::Debug for CpuExecution {
+impl std::fmt::Debug for Execution {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
-            .debug_struct("CpuExecution")
+            .debug_struct("Execution")
+            .field("requested_device", &self.requested_device)
+            .field("resolved_device", &"cpu")
+            .field("precision", &self.precision)
             .field("threads", &self.threads)
+            .field("jit", &self.jit)
             .field("partitioning", &self.partitioning)
             .field("ranks", &self.nranks())
             .finish_non_exhaustive()
     }
 }
 
-impl Default for CpuExecution {
+impl Default for Execution {
     fn default() -> Self {
         Self {
+            requested_device: Device::Auto,
+            precision: Precision::F64,
             threads: ThreadPolicy::Auto,
+            jit: JitPolicy::Auto,
             pool: None,
             partitioning: Partitioning::default(),
             #[cfg(feature = "mpi")]
@@ -65,21 +123,38 @@ impl Default for CpuExecution {
     }
 }
 
-impl CpuExecution {
-    /// Create local execution with runtime-selectable Rayon behavior.
-    pub fn local(options: CpuExecutionOptions) -> RuntimeResult<Self> {
-        let pool = match options.threads {
-            ThreadPolicy::Fixed(0) => return Err(CpuExecutionError::ZeroThreads.into()),
+impl Execution {
+    pub fn local(options: ExecutionOptions) -> RuntimeResult<Self> {
+        let cpu = match &options.device {
+            Device::Auto => CpuOptions::default(),
+            Device::Cpu(options) => options.clone(),
+            Device::Gpu(options) => {
+                return Err(ExecutionError::GpuUnavailable(options.backend).into());
+            }
+        };
+        let precision = match options.precision {
+            Precision::Auto | Precision::F64 => Precision::F64,
+            Precision::F32 => return Err(ExecutionError::UnsupportedCpuPrecision.into()),
+        };
+        #[cfg(not(feature = "jit"))]
+        if cpu.jit == JitPolicy::Enabled {
+            return Err(ExecutionError::JitUnavailable.into());
+        }
+        let pool = match cpu.threads {
+            ThreadPolicy::Fixed(0) => return Err(ExecutionError::ZeroThreads.into()),
             ThreadPolicy::Fixed(threads) => Some(Arc::new(
                 ThreadPoolBuilder::new()
                     .num_threads(threads)
                     .build()
-                    .map_err(|error| CpuExecutionError::ThreadPool(error.to_string()))?,
+                    .map_err(|error| ExecutionError::ThreadPool(error.to_string()))?,
             )),
             ThreadPolicy::Auto | ThreadPolicy::Serial => None,
         };
         Ok(Self {
-            threads: options.threads,
+            requested_device: options.device,
+            precision,
+            threads: cpu.threads,
+            jit: cpu.jit,
             pool,
             partitioning: options.partitioning,
             #[cfg(feature = "mpi")]
@@ -88,11 +163,7 @@ impl CpuExecution {
     }
 
     #[cfg(feature = "mpi")]
-    /// Create distributed execution by duplicating the supplied MPI communicator.
-    ///
-    /// Dataset partitioning and global likelihood reductions then happen transparently. The caller
-    /// remains responsible for initializing MPI before constructing this value.
-    pub fn distributed<C>(options: CpuExecutionOptions, world: &C) -> RuntimeResult<Self>
+    pub fn distributed<C>(options: ExecutionOptions, world: &C) -> RuntimeResult<Self>
     where
         C: Communicator,
     {
@@ -101,8 +172,20 @@ impl CpuExecution {
         Ok(execution)
     }
 
+    pub fn requested_device(&self) -> &Device {
+        &self.requested_device
+    }
+
+    pub fn precision(&self) -> Precision {
+        self.precision
+    }
+
     pub fn thread_policy(&self) -> ThreadPolicy {
         self.threads
+    }
+
+    pub fn jit_policy(&self) -> JitPolicy {
+        self.jit
     }
 
     pub fn partitioning(&self) -> Partitioning {
@@ -189,33 +272,56 @@ impl CpuExecution {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{RuntimeError, execution::GpuBackend};
 
     #[test]
-    fn execution_selects_serial_auto_and_fixed_thread_policies() {
-        let serial = CpuExecution::local(CpuExecutionOptions {
-            threads: ThreadPolicy::Serial,
-            ..CpuExecutionOptions::default()
+    fn execution_selects_nested_cpu_options() {
+        let serial = Execution::local(ExecutionOptions {
+            device: Device::Cpu(CpuOptions {
+                threads: ThreadPolicy::Serial,
+                jit: JitPolicy::Disabled,
+            }),
+            ..ExecutionOptions::default()
         })
         .unwrap();
         assert!(!serial.is_parallel());
+        assert_eq!(serial.jit_policy(), JitPolicy::Disabled);
+        assert_eq!(serial.precision(), Precision::F64);
 
-        let automatic = CpuExecution::default();
-        assert!(automatic.is_parallel());
-
-        let fixed = CpuExecution::local(CpuExecutionOptions {
-            threads: ThreadPolicy::Fixed(2),
-            ..CpuExecutionOptions::default()
+        let fixed = Execution::local(ExecutionOptions {
+            device: Device::Cpu(CpuOptions {
+                threads: ThreadPolicy::Fixed(2),
+                ..CpuOptions::default()
+            }),
+            ..ExecutionOptions::default()
         })
         .unwrap();
-        assert!(fixed.is_parallel());
         assert_eq!(fixed.install(rayon::current_num_threads), 2);
+    }
 
+    #[test]
+    fn unavailable_execution_modes_return_capability_errors() {
         assert!(matches!(
-            CpuExecution::local(CpuExecutionOptions {
-                threads: ThreadPolicy::Fixed(0),
-                ..CpuExecutionOptions::default()
+            Execution::local(ExecutionOptions {
+                device: Device::Gpu(GpuOptions {
+                    backend: GpuBackend::Wgpu,
+                    ..GpuOptions::default()
+                }),
+                ..ExecutionOptions::default()
             }),
-            Err(RuntimeError::Execution(CpuExecutionError::ZeroThreads))
+            Err(RuntimeError::Execution(ExecutionError::GpuUnavailable(
+                GpuBackend::Wgpu
+            )))
+        ));
+        assert!(matches!(
+            Execution::local(ExecutionOptions {
+                device: Device::Cpu(CpuOptions::default()),
+                precision: Precision::F32,
+                ..ExecutionOptions::default()
+            }),
+            Err(RuntimeError::Execution(
+                ExecutionError::UnsupportedCpuPrecision
+            ))
         ));
     }
 }

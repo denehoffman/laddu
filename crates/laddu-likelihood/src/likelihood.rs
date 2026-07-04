@@ -6,7 +6,7 @@ use laddu_data::data::Dataset;
 #[cfg(test)]
 use laddu_expr::parameters::ParamError;
 use laddu_expr::parameters::{ParamId, ParamLayout, ParamRegistry, ParamValues};
-use laddu_runtime::{CpuBackend, CpuExecution, CpuPlan, CpuPreparedDataset};
+use laddu_runtime::{CpuBackend, CpuPlan, CpuPreparedDataset, Execution};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LikelihoodName(String);
@@ -41,7 +41,7 @@ impl LikelihoodEvaluation {
     }
 }
 
-pub trait CpuLikelihoodTerm: Debug + Send + Sync {
+pub trait LikelihoodTerm: Debug + Send + Sync {
     fn name(&self) -> &str;
 
     fn register_params(&self, _registry: &mut ParamRegistry) -> LikelihoodResult<()> {
@@ -51,16 +51,16 @@ pub trait CpuLikelihoodTerm: Debug + Send + Sync {
     fn resolve(
         &mut self,
         global_params: Arc<ParamLayout>,
-        execution: &CpuExecution,
+        execution: &Execution,
     ) -> LikelihoodResult<()>;
 
-    fn nll(&self, params: &ParamValues, execution: &CpuExecution) -> LikelihoodResult<f64>;
+    fn nll(&self, params: &ParamValues, execution: &Execution) -> LikelihoodResult<f64>;
 
     fn nll_with_gradient(
         &self,
         params: &ParamValues,
         gradient: &mut [f64],
-        execution: &CpuExecution,
+        execution: &Execution,
     ) -> LikelihoodResult<f64> {
         let layout = params.layout();
         if gradient.len() != layout.n_free() {
@@ -112,11 +112,11 @@ pub trait CpuLikelihoodTerm: Debug + Send + Sync {
         Ok(value)
     }
 
-    fn as_intensity(&self) -> Option<&CpuNllTerm> {
+    fn as_intensity(&self) -> Option<&NllTerm> {
         None
     }
 
-    fn boxed(self) -> Box<dyn CpuLikelihoodTerm>
+    fn boxed(self) -> Box<dyn LikelihoodTerm>
     where
         Self: Sized + 'static,
     {
@@ -154,22 +154,20 @@ impl<'a> From<&'a ParamValues> for Parameters<'a> {
 }
 
 #[derive(Debug)]
-pub struct CpuLikelihood {
+pub struct Likelihood {
     params: Arc<ParamLayout>,
-    terms: Vec<Box<dyn CpuLikelihoodTerm>>,
-    execution: CpuExecution,
+    terms: Vec<Box<dyn LikelihoodTerm>>,
+    execution: Execution,
 }
 
-impl CpuLikelihood {
-    pub fn new(
-        terms: impl IntoIterator<Item = Box<dyn CpuLikelihoodTerm>>,
-    ) -> LikelihoodResult<Self> {
-        Self::with_execution(terms, CpuExecution::default())
+impl Likelihood {
+    pub fn new(terms: impl IntoIterator<Item = Box<dyn LikelihoodTerm>>) -> LikelihoodResult<Self> {
+        Self::with_execution(terms, Execution::default())
     }
 
     pub fn with_execution(
-        terms: impl IntoIterator<Item = Box<dyn CpuLikelihoodTerm>>,
-        execution: CpuExecution,
+        terms: impl IntoIterator<Item = Box<dyn LikelihoodTerm>>,
+        execution: Execution,
     ) -> LikelihoodResult<Self> {
         let mut terms: Vec<_> = terms.into_iter().collect();
         let mut names = HashSet::new();
@@ -216,11 +214,11 @@ impl CpuLikelihood {
         self.params.sample_initial(seed)
     }
 
-    pub fn terms(&self) -> &[Box<dyn CpuLikelihoodTerm>] {
+    pub fn terms(&self) -> &[Box<dyn LikelihoodTerm>] {
         &self.terms
     }
 
-    pub fn execution(&self) -> &CpuExecution {
+    pub fn execution(&self) -> &Execution {
         &self.execution
     }
 
@@ -270,7 +268,7 @@ impl CpuLikelihood {
         &self,
         term_name: &str,
         generated_mc: &Dataset,
-    ) -> LikelihoodResult<CpuCrossSectionIntegrals> {
+    ) -> LikelihoodResult<CrossSectionIntegrals> {
         let Some(term) = self.terms.iter().find(|term| term.name() == term_name) else {
             return Err(LikelihoodError::MissingTerm(term_name.to_owned()));
         };
@@ -282,9 +280,10 @@ impl CpuLikelihood {
 }
 
 #[derive(Clone)]
-pub struct CpuNllTerm {
+pub struct NllTerm {
     name: LikelihoodName,
-    plan: CpuPlan,
+    model: CompiledModel,
+    plan: Option<CpuPlan>,
     local_params: Arc<ParamLayout>,
     projection: Option<ParamProjection>,
     data_source: Dataset,
@@ -292,30 +291,30 @@ pub struct CpuNllTerm {
     data: Option<CpuPreparedDataset>,
     accepted_mc: Option<CpuPreparedDataset>,
     data_weight_sum: Option<f64>,
-    execution: Option<CpuExecution>,
+    execution: Option<Execution>,
 }
 
-impl std::fmt::Debug for CpuNllTerm {
+impl std::fmt::Debug for NllTerm {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
-            .debug_struct("CpuNllTerm")
+            .debug_struct("NllTerm")
             .field("name", &self.name)
             .field("prepared", &self.data.is_some())
             .finish_non_exhaustive()
     }
 }
 
-impl CpuNllTerm {
+impl NllTerm {
     pub fn new(
         name: impl Into<String>,
         model: &CompiledModel,
         data: &Dataset,
         accepted_mc: &Dataset,
     ) -> LikelihoodResult<Self> {
-        let plan = CpuBackend.prepare(model);
         Ok(Self {
             name: LikelihoodName::new(name),
-            plan,
+            model: model.clone(),
+            plan: None,
             local_params: Arc::new(model.params().clone()),
             projection: None,
             data_source: data.clone(),
@@ -329,6 +328,12 @@ impl CpuNllTerm {
 
     pub fn data(&self) -> LikelihoodResult<&CpuPreparedDataset> {
         self.data
+            .as_ref()
+            .ok_or_else(|| LikelihoodError::UnresolvedTerm(self.name().to_owned()))
+    }
+
+    fn plan(&self) -> LikelihoodResult<&CpuPlan> {
+        self.plan
             .as_ref()
             .ok_or_else(|| LikelihoodError::UnresolvedTerm(self.name().to_owned()))
     }
@@ -364,14 +369,15 @@ impl CpuNllTerm {
     fn cross_section_integrals(
         &self,
         generated_mc: &Dataset,
-        execution: &CpuExecution,
-    ) -> LikelihoodResult<CpuCrossSectionIntegrals> {
-        Ok(CpuCrossSectionIntegrals {
+        execution: &Execution,
+    ) -> LikelihoodResult<CrossSectionIntegrals> {
+        let plan = self.plan()?.clone();
+        Ok(CrossSectionIntegrals {
             name: self.name.clone(),
-            plan: self.plan.clone(),
+            plan: plan.clone(),
             projection: self.resolved_projection()?.clone(),
             accepted_mc: self.accepted_mc()?.clone(),
-            generated_mc: self.plan.prepare_dataset(execution, generated_mc)?,
+            generated_mc: plan.prepare_dataset(execution, generated_mc)?,
             data_weight_sum: self.data_weight_sum()?,
             execution: execution.clone(),
         })
@@ -398,7 +404,7 @@ impl CpuNllTerm {
         reduction: ReductionPlan,
         name: &'static str,
     ) -> LikelihoodResult<f64> {
-        self.plan
+        self.plan()?
             .reduce(self.resolved_execution()?, params, dataset, reduction)
             .map_err(|error| map_reduction_error(name, error))
     }
@@ -417,14 +423,14 @@ impl CpuNllTerm {
             .ok_or(LikelihoodError::ParameterLayoutMismatch)
     }
 
-    fn resolved_execution(&self) -> LikelihoodResult<&CpuExecution> {
+    fn resolved_execution(&self) -> LikelihoodResult<&Execution> {
         self.execution
             .as_ref()
             .ok_or(LikelihoodError::ParameterLayoutMismatch)
     }
 }
 
-impl CpuLikelihoodTerm for CpuNllTerm {
+impl LikelihoodTerm for NllTerm {
     fn name(&self) -> &str {
         self.name.as_str()
     }
@@ -439,28 +445,27 @@ impl CpuLikelihoodTerm for CpuNllTerm {
     fn resolve(
         &mut self,
         global_params: Arc<ParamLayout>,
-        execution: &CpuExecution,
+        execution: &Execution,
     ) -> LikelihoodResult<()> {
         self.projection = Some(ParamProjection::new(
             global_params,
             &self.local_params,
             self.name(),
         )?);
-        self.data = Some(self.plan.prepare_dataset(execution, &self.data_source)?);
-        self.accepted_mc = Some(
-            self.plan
-                .prepare_dataset(execution, &self.accepted_mc_source)?,
-        );
+        let plan = CpuBackend.prepare_for_execution(&self.model, execution);
+        self.data = Some(plan.prepare_dataset(execution, &self.data_source)?);
+        self.accepted_mc = Some(plan.prepare_dataset(execution, &self.accepted_mc_source)?);
+        self.plan = Some(plan);
         self.data_weight_sum = Some(self.data()?.stats().sum_weights());
         self.execution = Some(execution.clone());
         Ok(())
     }
 
-    fn nll(&self, params: &ParamValues, execution: &CpuExecution) -> LikelihoodResult<f64> {
+    fn nll(&self, params: &ParamValues, execution: &Execution) -> LikelihoodResult<f64> {
         let local_params = self.local_values(params)?;
         let normalization = positive_integral(
             "accepted MC",
-            self.plan
+            self.plan()?
                 .reduce(
                     execution,
                     &local_params,
@@ -470,7 +475,7 @@ impl CpuLikelihoodTerm for CpuNllTerm {
                 .map_err(|error| map_reduction_error("accepted MC", error))?,
         )?;
         let data_log_sum = self
-            .plan
+            .plan()?
             .reduce(
                 execution,
                 &local_params,
@@ -485,11 +490,11 @@ impl CpuLikelihoodTerm for CpuNllTerm {
         &self,
         params: &ParamValues,
         gradient: &mut [f64],
-        execution: &CpuExecution,
+        execution: &Execution,
     ) -> LikelihoodResult<f64> {
         let local_params = self.local_values(params)?;
         let normalization_evaluation = self
-            .plan
+            .plan()?
             .reduce_with_gradient(
                 execution,
                 &local_params,
@@ -500,7 +505,7 @@ impl CpuLikelihoodTerm for CpuNllTerm {
         let (normalization, normalization_gradient) = normalization_evaluation.into_parts();
         let normalization = positive_integral("accepted MC", normalization)?;
         let data_evaluation = self
-            .plan
+            .plan()?
             .reduce_with_gradient(
                 execution,
                 &local_params,
@@ -522,17 +527,17 @@ impl CpuLikelihoodTerm for CpuNllTerm {
         Ok(data_weight_sum * normalization.ln() - data_log_sum)
     }
 
-    fn as_intensity(&self) -> Option<&CpuNllTerm> {
+    fn as_intensity(&self) -> Option<&NllTerm> {
         Some(self)
     }
 }
 
 #[derive(Clone, Debug)]
-pub struct CpuRidgePenalty {
+pub struct RidgePenalty {
     inner: CpuParameterPenalty,
 }
 
-impl CpuRidgePenalty {
+impl RidgePenalty {
     pub fn new(
         name: impl Into<String>,
         parameter_names: impl IntoIterator<Item = impl Into<String>>,
@@ -544,7 +549,7 @@ impl CpuRidgePenalty {
     }
 }
 
-impl CpuLikelihoodTerm for CpuRidgePenalty {
+impl LikelihoodTerm for RidgePenalty {
     fn name(&self) -> &str {
         self.inner.name()
     }
@@ -552,12 +557,12 @@ impl CpuLikelihoodTerm for CpuRidgePenalty {
     fn resolve(
         &mut self,
         global_params: Arc<ParamLayout>,
-        _execution: &CpuExecution,
+        _execution: &Execution,
     ) -> LikelihoodResult<()> {
         self.inner.resolve(global_params)
     }
 
-    fn nll(&self, params: &ParamValues, _execution: &CpuExecution) -> LikelihoodResult<f64> {
+    fn nll(&self, params: &ParamValues, _execution: &Execution) -> LikelihoodResult<f64> {
         self.inner.nll(params)
     }
 
@@ -565,18 +570,18 @@ impl CpuLikelihoodTerm for CpuRidgePenalty {
         &self,
         params: &ParamValues,
         gradient: &mut [f64],
-        _execution: &CpuExecution,
+        _execution: &Execution,
     ) -> LikelihoodResult<f64> {
         self.inner.nll_with_gradient(params, gradient)
     }
 }
 
 #[derive(Clone, Debug)]
-pub struct CpuLassoPenalty {
+pub struct LassoPenalty {
     inner: CpuParameterPenalty,
 }
 
-impl CpuLassoPenalty {
+impl LassoPenalty {
     pub fn new(
         name: impl Into<String>,
         parameter_names: impl IntoIterator<Item = impl Into<String>>,
@@ -588,7 +593,7 @@ impl CpuLassoPenalty {
     }
 }
 
-impl CpuLikelihoodTerm for CpuLassoPenalty {
+impl LikelihoodTerm for LassoPenalty {
     fn name(&self) -> &str {
         self.inner.name()
     }
@@ -596,12 +601,12 @@ impl CpuLikelihoodTerm for CpuLassoPenalty {
     fn resolve(
         &mut self,
         global_params: Arc<ParamLayout>,
-        _execution: &CpuExecution,
+        _execution: &Execution,
     ) -> LikelihoodResult<()> {
         self.inner.resolve(global_params)
     }
 
-    fn nll(&self, params: &ParamValues, _execution: &CpuExecution) -> LikelihoodResult<f64> {
+    fn nll(&self, params: &ParamValues, _execution: &Execution) -> LikelihoodResult<f64> {
         self.inner.nll(params)
     }
 
@@ -609,7 +614,7 @@ impl CpuLikelihoodTerm for CpuLassoPenalty {
         &self,
         params: &ParamValues,
         gradient: &mut [f64],
-        _execution: &CpuExecution,
+        _execution: &Execution,
     ) -> LikelihoodResult<f64> {
         self.inner.nll_with_gradient(params, gradient)
     }
@@ -728,17 +733,17 @@ enum PenaltyKind {
 }
 
 #[derive(Clone, Debug)]
-pub struct CpuCrossSectionIntegrals {
+pub struct CrossSectionIntegrals {
     name: LikelihoodName,
     plan: CpuPlan,
     projection: ParamProjection,
     accepted_mc: CpuPreparedDataset,
     generated_mc: CpuPreparedDataset,
     data_weight_sum: f64,
-    execution: CpuExecution,
+    execution: Execution,
 }
 
-impl CpuCrossSectionIntegrals {
+impl CrossSectionIntegrals {
     pub fn name(&self) -> &str {
         self.name.as_str()
     }
@@ -933,7 +938,7 @@ mod tests {
     use laddu_expr::{
         complex, event_scalar, matrix, parameter, parameters::Parameter, solve, vector,
     };
-    use laddu_runtime::{CpuExecutionOptions, ThreadPolicy};
+    use laddu_runtime::{CpuOptions, Device, ExecutionOptions, ThreadPolicy};
 
     use super::*;
 
@@ -978,8 +983,8 @@ mod tests {
         model: &CompiledModel,
         data: &Dataset,
         accepted_mc: &Dataset,
-    ) -> CpuLikelihood {
-        CpuLikelihood::new([CpuNllTerm::new(name, model, data, accepted_mc)
+    ) -> Likelihood {
+        Likelihood::new([NllTerm::new(name, model, data, accepted_mc)
             .unwrap()
             .boxed()])
         .unwrap()
@@ -990,10 +995,10 @@ mod tests {
         model: &CompiledModel,
         data: &Dataset,
         accepted_mc: &Dataset,
-        execution: CpuExecution,
-    ) -> CpuLikelihood {
-        CpuLikelihood::with_execution(
-            [CpuNllTerm::new(name, model, data, accepted_mc)
+        execution: Execution,
+    ) -> Likelihood {
+        Likelihood::with_execution(
+            [NllTerm::new(name, model, data, accepted_mc)
                 .unwrap()
                 .boxed()],
             execution,
@@ -1002,7 +1007,7 @@ mod tests {
     }
 
     fn finite_difference_nll(
-        likelihood: &CpuLikelihood,
+        likelihood: &Likelihood,
         params: &[f64],
         free_parameter: usize,
     ) -> f64 {
@@ -1104,9 +1109,12 @@ mod tests {
             &model,
             &streaming,
             &streaming,
-            CpuExecution::local(CpuExecutionOptions {
-                threads: ThreadPolicy::Serial,
-                ..CpuExecutionOptions::default()
+            Execution::local(ExecutionOptions {
+                device: Device::Cpu(CpuOptions {
+                    threads: ThreadPolicy::Serial,
+                    ..CpuOptions::default()
+                }),
+                ..ExecutionOptions::default()
             })
             .unwrap(),
         );
@@ -1115,9 +1123,12 @@ mod tests {
             &model,
             &two_batches,
             &streaming,
-            CpuExecution::local(CpuExecutionOptions {
-                threads: ThreadPolicy::Fixed(2),
-                ..CpuExecutionOptions::default()
+            Execution::local(ExecutionOptions {
+                device: Device::Cpu(CpuOptions {
+                    threads: ThreadPolicy::Fixed(2),
+                    ..CpuOptions::default()
+                }),
+                ..ExecutionOptions::default()
             })
             .unwrap(),
         );
@@ -1171,28 +1182,28 @@ mod tests {
         let scale = laddu_expr::Expr::from(parameter!("scale", initial: 0.6));
         let model = CompiledModel::from_expr(&(event_scalar("x") + scale).powi(2)).unwrap();
 
-        let reference = CpuLikelihood::new([
-            CpuNllTerm::new("data", &model, &resident, &streaming)
+        let reference = Likelihood::new([
+            NllTerm::new("data", &model, &resident, &streaming)
                 .unwrap()
                 .boxed(),
-            CpuRidgePenalty::new("ridge", ["scale"], 0.3)
-                .unwrap()
-                .boxed(),
+            RidgePenalty::new("ridge", ["scale"], 0.3).unwrap().boxed(),
         ])
         .unwrap();
-        let distributed = CpuLikelihood::with_execution(
+        let distributed = Likelihood::with_execution(
             [
-                CpuNllTerm::new("data", &model, &resident, &streaming)
+                NllTerm::new("data", &model, &resident, &streaming)
                     .unwrap()
                     .boxed(),
-                CpuRidgePenalty::new("ridge", ["scale"], 0.3)
-                    .unwrap()
-                    .boxed(),
+                RidgePenalty::new("ridge", ["scale"], 0.3).unwrap().boxed(),
             ],
-            CpuExecution::distributed(
-                CpuExecutionOptions {
-                    threads: ThreadPolicy::Serial,
+            Execution::distributed(
+                ExecutionOptions {
+                    device: Device::Cpu(CpuOptions {
+                        threads: ThreadPolicy::Serial,
+                        ..CpuOptions::default()
+                    }),
                     partitioning: laddu_data::io::Partitioning::Contiguous,
+                    ..ExecutionOptions::default()
                 },
                 &world,
             )
@@ -1251,11 +1262,11 @@ mod tests {
         let data = weighted_dataset_batches(&[(-1.0, 1.0), (2.0, 1.0)], &[2]);
         let accepted_mc = weighted_dataset_batches(&[(1.0, 1.0), (2.0, 1.0)], &[2]);
         let model = CompiledModel::from_expr(&event_scalar("x")).unwrap();
-        let likelihood = CpuLikelihood::with_execution(
-            [CpuNllTerm::new("data", &model, &data, &accepted_mc)
+        let likelihood = Likelihood::with_execution(
+            [NllTerm::new("data", &model, &data, &accepted_mc)
                 .unwrap()
                 .boxed()],
-            CpuExecution::distributed(CpuExecutionOptions::default(), &world).unwrap(),
+            Execution::distributed(ExecutionOptions::default(), &world).unwrap(),
         )
         .unwrap();
 
@@ -1274,11 +1285,11 @@ mod tests {
         let accepted_a = weighted_dataset(&[(4.0, 1.0)]);
         let data_b = weighted_dataset(&[(5.0, 2.0)]);
         let accepted_b = weighted_dataset(&[(6.0, 3.0)]);
-        let likelihood = CpuLikelihood::new([
-            CpuNllTerm::new("KsKs", &model_a, &data_a, &accepted_a)
+        let likelihood = Likelihood::new([
+            NllTerm::new("KsKs", &model_a, &data_a, &accepted_a)
                 .unwrap()
                 .boxed(),
-            CpuNllTerm::new("eta_pi", &model_b, &data_b, &accepted_b)
+            NllTerm::new("eta_pi", &model_b, &data_b, &accepted_b)
                 .unwrap()
                 .boxed(),
         ])
@@ -1303,11 +1314,11 @@ mod tests {
                 .unwrap();
         let data = weighted_dataset(&[(2.0, 1.0)]);
         let accepted = weighted_dataset(&[(4.0, 1.0)]);
-        let likelihood = CpuLikelihood::new([
-            CpuNllTerm::new("a", &model_a, &data, &accepted)
+        let likelihood = Likelihood::new([
+            NllTerm::new("a", &model_a, &data, &accepted)
                 .unwrap()
                 .boxed(),
-            CpuNllTerm::new("b", &model_b, &data, &accepted)
+            NllTerm::new("b", &model_b, &data, &accepted)
                 .unwrap()
                 .boxed(),
         ])
@@ -1338,11 +1349,11 @@ mod tests {
         .unwrap();
         let data = weighted_dataset(&[(0.5, 1.0), (1.2, 0.7)]);
         let accepted = weighted_dataset(&[(0.8, 1.3), (1.5, 0.9)]);
-        let likelihood = CpuLikelihood::new([
-            CpuNllTerm::new("a", &model_a, &data, &accepted)
+        let likelihood = Likelihood::new([
+            NllTerm::new("a", &model_a, &data, &accepted)
                 .unwrap()
                 .boxed(),
-            CpuNllTerm::new("b", &model_b, &data, &accepted)
+            NllTerm::new("b", &model_b, &data, &accepted)
                 .unwrap()
                 .boxed(),
         ])
@@ -1369,11 +1380,11 @@ mod tests {
                 .unwrap();
         let data = weighted_dataset(&[(2.0, 1.0)]);
         let accepted = weighted_dataset(&[(4.0, 1.0)]);
-        let err = CpuLikelihood::new([
-            CpuNllTerm::new("a", &model_a, &data, &accepted)
+        let err = Likelihood::new([
+            NllTerm::new("a", &model_a, &data, &accepted)
                 .unwrap()
                 .boxed(),
-            CpuNllTerm::new("b", &model_b, &data, &accepted)
+            NllTerm::new("b", &model_b, &data, &accepted)
                 .unwrap()
                 .boxed(),
         ])
@@ -1397,11 +1408,11 @@ mod tests {
         .unwrap();
         let data = weighted_dataset(&[(2.0, 1.0)]);
         let accepted = weighted_dataset(&[(4.0, 1.0)]);
-        let likelihood = CpuLikelihood::new([
-            CpuNllTerm::new("KsKs", &model_a, &data, &accepted)
+        let likelihood = Likelihood::new([
+            NllTerm::new("KsKs", &model_a, &data, &accepted)
                 .unwrap()
                 .boxed(),
-            CpuNllTerm::new("eta_pi", &model_b, &data, &accepted)
+            NllTerm::new("eta_pi", &model_b, &data, &accepted)
                 .unwrap()
                 .boxed(),
         ])
@@ -1419,16 +1430,12 @@ mod tests {
                 .unwrap();
         let data = weighted_dataset(&[(2.0, 1.0), (3.0, 1.0)]);
         let accepted = weighted_dataset(&[(4.0, 1.0)]);
-        let likelihood = CpuLikelihood::new([
-            CpuNllTerm::new("data", &model, &data, &accepted)
+        let likelihood = Likelihood::new([
+            NllTerm::new("data", &model, &data, &accepted)
                 .unwrap()
                 .boxed(),
-            CpuRidgePenalty::new("ridge", ["scale"], 2.0)
-                .unwrap()
-                .boxed(),
-            CpuLassoPenalty::new("lasso", ["scale"], 3.0)
-                .unwrap()
-                .boxed(),
+            RidgePenalty::new("ridge", ["scale"], 2.0).unwrap().boxed(),
+            LassoPenalty::new("lasso", ["scale"], 3.0).unwrap().boxed(),
         ])
         .unwrap();
         let params = likelihood.default_params();
@@ -1442,7 +1449,7 @@ mod tests {
 
     #[test]
     fn penalty_terms_reject_missing_parameters() {
-        let err = CpuLikelihood::new([CpuRidgePenalty::new("ridge", ["missing"], 1.0)
+        let err = Likelihood::new([RidgePenalty::new("ridge", ["missing"], 1.0)
             .unwrap()
             .boxed()])
         .unwrap_err();
@@ -1466,7 +1473,7 @@ mod tests {
         id: Option<ParamId>,
     }
 
-    impl CpuLikelihoodTerm for BoundedQuadraticTerm {
+    impl LikelihoodTerm for BoundedQuadraticTerm {
         fn name(&self) -> &str {
             "bounded-quadratic"
         }
@@ -1479,19 +1486,19 @@ mod tests {
         fn resolve(
             &mut self,
             global_params: Arc<ParamLayout>,
-            _execution: &CpuExecution,
+            _execution: &Execution,
         ) -> LikelihoodResult<()> {
             self.id = global_params.id(self.parameter.name());
             Ok(())
         }
 
-        fn nll(&self, params: &ParamValues, _execution: &CpuExecution) -> LikelihoodResult<f64> {
+        fn nll(&self, params: &ParamValues, _execution: &Execution) -> LikelihoodResult<f64> {
             let value = params.get(self.id.ok_or(LikelihoodError::ParameterLayoutMismatch)?)?;
             Ok((value - 2.0).powi(2))
         }
     }
 
-    impl CpuLikelihoodTerm for ConstantTerm {
+    impl LikelihoodTerm for ConstantTerm {
         fn name(&self) -> &str {
             &self.name
         }
@@ -1499,12 +1506,12 @@ mod tests {
         fn resolve(
             &mut self,
             _global_params: Arc<ParamLayout>,
-            _execution: &CpuExecution,
+            _execution: &Execution,
         ) -> LikelihoodResult<()> {
             Ok(())
         }
 
-        fn nll(&self, _params: &ParamValues, _execution: &CpuExecution) -> LikelihoodResult<f64> {
+        fn nll(&self, _params: &ParamValues, _execution: &Execution) -> LikelihoodResult<f64> {
             Ok(self.value)
         }
     }
@@ -1516,8 +1523,8 @@ mod tests {
                 .unwrap();
         let data = weighted_dataset(&[(2.0, 1.0)]);
         let accepted = weighted_dataset(&[(4.0, 1.0)]);
-        let likelihood = CpuLikelihood::new([
-            CpuNllTerm::new("data", &model, &data, &accepted)
+        let likelihood = Likelihood::new([
+            NllTerm::new("data", &model, &data, &accepted)
                 .unwrap()
                 .boxed(),
             ConstantTerm {
@@ -1535,7 +1542,7 @@ mod tests {
 
     #[test]
     fn custom_term_gradient_uses_bounded_finite_difference_fallback() {
-        let likelihood = CpuLikelihood::new([BoundedQuadraticTerm {
+        let likelihood = Likelihood::new([BoundedQuadraticTerm {
             parameter: Parameter::free("x")
                 .with_initial(0.0)
                 .with_bounds(Some(0.0), None),
@@ -1588,13 +1595,11 @@ mod tests {
         let data = weighted_dataset(&[(2.0, 1.0)]);
         let accepted = weighted_dataset(&[(4.0, 1.0)]);
         let generated = weighted_dataset(&[(5.0, 1.0)]);
-        let likelihood = CpuLikelihood::new([
-            CpuNllTerm::new("data", &model, &data, &accepted)
+        let likelihood = Likelihood::new([
+            NllTerm::new("data", &model, &data, &accepted)
                 .unwrap()
                 .boxed(),
-            CpuRidgePenalty::new("ridge", ["scale"], 1.0)
-                .unwrap()
-                .boxed(),
+            RidgePenalty::new("ridge", ["scale"], 1.0).unwrap().boxed(),
         ])
         .unwrap();
         let err = likelihood

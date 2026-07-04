@@ -62,8 +62,8 @@ pub mod prelude {
     pub use laddu_kernel::{KernelSpec, kernel};
     #[cfg(feature = "likelihood")]
     pub use laddu_likelihood::{
-        CpuCrossSectionIntegrals, CpuLassoPenalty, CpuLikelihood, CpuLikelihoodTerm, CpuNllTerm,
-        CpuRidgePenalty, LikelihoodError, LikelihoodEvaluation, LikelihoodName, LikelihoodResult,
+        CrossSectionIntegrals, LassoPenalty, Likelihood, LikelihoodError, LikelihoodEvaluation,
+        LikelihoodName, LikelihoodResult, LikelihoodTerm, NllTerm, RidgePenalty,
     };
     pub use laddu_physics::channel::{Channel, Edge, EdgeHandle, Vertex, VertexHandle, VertexView};
     pub use laddu_physics::math::{
@@ -71,8 +71,9 @@ pub mod prelude {
         spherical_harmonic,
     };
     pub use laddu_runtime::{
-        CpuBackend, CpuBatchCache, CpuCachedBatch, CpuCachedDataset, CpuExecution,
-        CpuExecutionError, CpuExecutionMode, CpuExecutionOptions, CpuPlan, CpuPreparedDataset,
-        PreparedDatasetStats, ThreadPolicy, ValueGradient,
+        CpuBackend, CpuBatchCache, CpuCachedBatch, CpuCachedDataset, CpuExecutionMode, CpuOptions,
+        CpuPlan, CpuPreparedDataset, Device, Execution, ExecutionError, ExecutionOptions,
+        GpuBackend, GpuDeviceSelector, GpuOptions, JitPolicy, Precision, PreparedDatasetStats,
+        ThreadPolicy, ValueGradient,
     };
 }

@@ -27,7 +27,7 @@ use nalgebra::{DMatrix, DVector, Dyn, LU};
 use num::complex::Complex64;
 use rayon::prelude::*;
 
-use crate::{RuntimeError, RuntimeResult, execution::CpuExecution};
+use crate::{JitPolicy, RuntimeError, RuntimeResult, execution::Execution};
 
 mod gradient_interpreter;
 use gradient_interpreter::GradientInterpreter;
@@ -991,6 +991,14 @@ struct ScalarInvariantInstruction {
 }
 
 impl CpuBackend {
+    pub fn prepare_for_execution(&self, model: &CompiledModel, execution: &Execution) -> CpuPlan {
+        let mode = match execution.jit_policy() {
+            JitPolicy::Auto | JitPolicy::Enabled => CpuExecutionMode::Auto,
+            JitPolicy::Disabled => CpuExecutionMode::Interpreter,
+        };
+        self.prepare_with_execution_mode(model, mode)
+    }
+
     pub fn prepare(&self, model: &CompiledModel) -> CpuPlan {
         self.prepare_with_modes(model, AutodiffMode::Forward, CpuExecutionMode::Auto)
             .expect("forward autodiff supports every compiled expression node")
@@ -1912,7 +1920,7 @@ impl CpuPlan {
 
     pub fn prepare_dataset(
         &self,
-        execution: &CpuExecution,
+        execution: &Execution,
         dataset: &Dataset,
     ) -> RuntimeResult<CpuPreparedDataset> {
         let read_plan = execution.read_plan(dataset.read_plan());
@@ -1974,7 +1982,7 @@ impl CpuPlan {
     /// Execute a weighted reduction over a prepared dataset.
     pub fn reduce(
         &self,
-        execution: &CpuExecution,
+        execution: &Execution,
         params: &ParamValues,
         dataset: &CpuPreparedDataset,
         reduction: ReductionPlan,
@@ -2012,7 +2020,7 @@ impl CpuPlan {
     /// Execute a weighted reduction and its free-parameter gradient.
     pub fn reduce_with_gradient(
         &self,
-        execution: &CpuExecution,
+        execution: &Execution,
         params: &ParamValues,
         dataset: &CpuPreparedDataset,
         reduction: ReductionPlan,
@@ -2029,7 +2037,7 @@ impl CpuPlan {
 
     fn try_reduce_weighted_with_gradient<E, F>(
         &self,
-        execution: &CpuExecution,
+        execution: &Execution,
         params: &ParamValues,
         dataset: &CpuPreparedDataset,
         transform: F,
@@ -2314,7 +2322,7 @@ impl CpuPlan {
 
     fn reduce_cached(
         &self,
-        execution: &CpuExecution,
+        execution: &Execution,
         params: &ParamValues,
         dataset: &CpuCachedDataset,
         reduction: ReductionPlan,
@@ -2340,7 +2348,7 @@ impl CpuPlan {
 
     fn try_reduce_weighted_with_gradient_cached<E, F>(
         &self,
-        execution: &CpuExecution,
+        execution: &Execution,
         params: &ParamValues,
         dataset: &CpuCachedDataset,
         transform: F,
@@ -4870,9 +4878,12 @@ mod tests {
             }
         }
         let dataset = Dataset::from_batch(batch);
-        let execution = CpuExecution::local(crate::CpuExecutionOptions {
-            threads: crate::ThreadPolicy::Serial,
-            ..crate::CpuExecutionOptions::default()
+        let execution = Execution::local(crate::ExecutionOptions {
+            device: crate::Device::Cpu(crate::CpuOptions {
+                threads: crate::ThreadPolicy::Serial,
+                ..crate::CpuOptions::default()
+            }),
+            ..crate::ExecutionOptions::default()
         })
         .unwrap();
         let automatic_data = automatic.prepare_dataset(&execution, &dataset).unwrap();
@@ -5000,10 +5011,27 @@ mod tests {
         let automatic = CpuBackend.prepare(&model);
         let interpreted =
             CpuBackend.prepare_with_execution_mode(&model, CpuExecutionMode::Interpreter);
+        let execution = Execution::local(crate::ExecutionOptions {
+            device: crate::Device::Cpu(crate::CpuOptions {
+                jit: crate::JitPolicy::Disabled,
+                ..crate::CpuOptions::default()
+            }),
+            ..crate::ExecutionOptions::default()
+        })
+        .unwrap();
+        let configured = CpuBackend.prepare_for_execution(&model, &execution);
 
         assert!(matches!(
             interpreted.scalar_executor,
             Some(ScalarExecutor::Interpreter(_))
+        ));
+        assert!(matches!(
+            configured.scalar_executor,
+            Some(ScalarExecutor::Interpreter(_))
+        ));
+        assert!(matches!(
+            configured.gradient_executor,
+            GradientExecutor::Interpreter(_)
         ));
         assert_eq!(
             automatic.evaluate(&params).unwrap(),
@@ -5285,9 +5313,12 @@ mod tests {
             )
             .unwrap(),
         );
-        let execution = CpuExecution::local(crate::CpuExecutionOptions {
-            threads: crate::ThreadPolicy::Fixed(2),
-            ..crate::CpuExecutionOptions::default()
+        let execution = Execution::local(crate::ExecutionOptions {
+            device: crate::Device::Cpu(crate::CpuOptions {
+                threads: crate::ThreadPolicy::Fixed(2),
+                ..crate::CpuOptions::default()
+            }),
+            ..crate::ExecutionOptions::default()
         })
         .unwrap();
         let automatic_data = automatic.prepare_dataset(&execution, &dataset).unwrap();
@@ -5436,14 +5467,20 @@ mod tests {
         let resident = Dataset::from_batches(vec![first, second]).unwrap();
         let datasets = [resident.clone(), resident.streaming()];
         let executions = [
-            CpuExecution::local(crate::CpuExecutionOptions {
-                threads: crate::ThreadPolicy::Serial,
-                ..crate::CpuExecutionOptions::default()
+            Execution::local(crate::ExecutionOptions {
+                device: crate::Device::Cpu(crate::CpuOptions {
+                    threads: crate::ThreadPolicy::Serial,
+                    ..crate::CpuOptions::default()
+                }),
+                ..crate::ExecutionOptions::default()
             })
             .unwrap(),
-            CpuExecution::local(crate::CpuExecutionOptions {
-                threads: crate::ThreadPolicy::Fixed(2),
-                ..crate::CpuExecutionOptions::default()
+            Execution::local(crate::ExecutionOptions {
+                device: crate::Device::Cpu(crate::CpuOptions {
+                    threads: crate::ThreadPolicy::Fixed(2),
+                    ..crate::CpuOptions::default()
+                }),
+                ..crate::ExecutionOptions::default()
             })
             .unwrap(),
         ];
@@ -5500,7 +5537,7 @@ mod tests {
             )
             .unwrap(),
         );
-        let execution = CpuExecution::default();
+        let execution = Execution::default();
         let prepared = plan.prepare_dataset(&execution, &dataset).unwrap();
 
         assert!(matches!(
