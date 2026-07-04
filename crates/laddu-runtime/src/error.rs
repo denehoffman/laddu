@@ -44,8 +44,10 @@ pub enum ExecutionError {
     ZeroThreads,
     #[error("failed to create Rayon thread pool: {0}")]
     ThreadPool(String),
-    #[error("f32 CPU execution is not implemented yet")]
-    UnsupportedCpuPrecision,
+    #[error("f32 CPU execution currently requires scalar arithmetic over raw event caches")]
+    UnsupportedCpuF32Model,
+    #[error("f32 CPU gradients are not implemented yet")]
+    UnsupportedCpuF32Gradient,
     #[error("GPU backend {0:?} is not available")]
     GpuUnavailable(crate::GpuBackend),
     #[error("CPU JIT execution was requested but the `jit` feature is unavailable")]

@@ -938,7 +938,7 @@ mod tests {
     use laddu_expr::{
         complex, event_scalar, matrix, parameter, parameters::Parameter, solve, vector,
     };
-    use laddu_runtime::{CpuOptions, Device, ExecutionOptions, ThreadPolicy};
+    use laddu_runtime::{CpuOptions, Device, ExecutionOptions, Precision, ThreadPolicy};
 
     use super::*;
 
@@ -1167,6 +1167,34 @@ mod tests {
         assert_eq!(streaming_stats.storage(), CacheStorage::Streaming);
         assert_eq!(streaming_stats.resident_bytes(), 0);
         assert_eq!(streaming_stats.local_batches(), 3);
+    }
+
+    #[test]
+    fn likelihood_nll_uses_configured_f32_scalar_execution() {
+        let dataset = weighted_dataset(&[(1.0, 1.0), (2.0, 1.0)]);
+        let scale = laddu_expr::Expr::from(parameter!("scale", initial: 1.0));
+        let model = CompiledModel::from_expr(&(event_scalar("x") + scale)).unwrap();
+        let likelihood = single_term_likelihood_with_execution(
+            "f32",
+            &model,
+            &dataset,
+            &dataset,
+            Execution::local(ExecutionOptions {
+                device: Device::Cpu(CpuOptions {
+                    threads: ThreadPolicy::Serial,
+                    ..CpuOptions::default()
+                }),
+                precision: Precision::F32,
+                ..ExecutionOptions::default()
+            })
+            .unwrap(),
+        );
+
+        let expected = 2.0 * 5.0_f64.ln() - 2.0_f32.ln() as f64 - 3.0_f32.ln() as f64;
+        assert_eq!(
+            likelihood.nll(&likelihood.default_params()).unwrap(),
+            expected
+        );
     }
 
     #[cfg(feature = "mpi")]

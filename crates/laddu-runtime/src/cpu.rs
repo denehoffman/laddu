@@ -6,7 +6,8 @@ use std::{
 
 use laddu_autodiff::{AutodiffMode, AutodiffPlan, AutodiffResult};
 use laddu_compile::{
-    CachePlan, CompiledModel, ExecutablePlan, ReductionPlan, SolveComponentPlan, SolveRowMatrixPlan,
+    CachePlan, CompiledModel, ExecutablePlan, ReductionPlan, ReductionTransform,
+    SolveComponentPlan, SolveRowMatrixPlan,
 };
 #[cfg(test)]
 use laddu_data::data::accurate::AccurateComplex64;
@@ -24,7 +25,10 @@ use laddu_kernel::ir::{
     ScalarKernelIr,
 };
 use nalgebra::{DMatrix, DVector, Dyn, LU};
-use num::complex::Complex64;
+use num::{
+    complex::{Complex, Complex32, Complex64},
+    traits::Float,
+};
 use rayon::prelude::*;
 
 use crate::{JitPolicy, Precision, RuntimeError, RuntimeResult, execution::Execution};
@@ -79,6 +83,7 @@ pub enum CpuExecutionMode {
 
 #[derive(Clone, Debug)]
 pub struct CpuPlan {
+    precision: Precision,
     graph: ExprGraph,
     params: ParamLayout,
     parameter_slots: Vec<Option<ParamId>>,
@@ -996,14 +1001,23 @@ impl CpuBackend {
         model: &CompiledModel,
         execution: &Execution,
     ) -> RuntimeResult<CpuPlan> {
-        if execution.precision() == Precision::F32 {
-            return Err(crate::ExecutionError::UnsupportedCpuPrecision.into());
-        }
         let mode = match execution.jit_policy() {
             JitPolicy::Auto | JitPolicy::Enabled => CpuExecutionMode::Auto,
             JitPolicy::Disabled => CpuExecutionMode::Interpreter,
         };
-        Ok(self.prepare_with_execution_mode(model, mode))
+        let mut plan = self.prepare_with_execution_mode(
+            model,
+            if execution.precision() == Precision::F32 {
+                CpuExecutionMode::Interpreter
+            } else {
+                mode
+            },
+        );
+        if execution.precision() == Precision::F32 && !plan.supports_f32_scalar_execution() {
+            return Err(crate::ExecutionError::UnsupportedCpuF32Model.into());
+        }
+        plan.precision = execution.precision();
+        Ok(plan)
     }
 
     pub fn prepare(&self, model: &CompiledModel) -> CpuPlan {
@@ -1048,6 +1062,7 @@ impl CpuBackend {
             .map(|_| Arc::new(OnceLock::new()))
             .collect();
         Ok(CpuPlan {
+            precision: Precision::F64,
             graph: executable.graph().clone(),
             params: executable.params().clone(),
             parameter_slots: executable.parameter_slots().to_vec(),
@@ -1149,6 +1164,45 @@ impl RealGradientAccumulator {
 }
 
 impl CpuPlan {
+    fn supports_f32_scalar_execution(&self) -> bool {
+        self.scalar_kernel.as_ref().is_some_and(|kernel| {
+            kernel.values().iter().all(|value| {
+                matches!(value.kind, KernelValueKind::Real | KernelValueKind::Complex)
+                    && match &value.instruction {
+                        KernelInstruction::Cached(slot) => self
+                            .cache_plan
+                            .entries()
+                            .get(*slot)
+                            .and_then(|entry| self.graph.node(entry.node()))
+                            .is_some_and(|node| {
+                                matches!(
+                                    node,
+                                    ExprNode::EventScalar(_) | ExprNode::EventP4Component { .. }
+                                )
+                            }),
+                        KernelInstruction::RealConstant(_)
+                        | KernelInstruction::ComplexConstant(_)
+                        | KernelInstruction::Parameter(_)
+                        | KernelInstruction::Unary { .. }
+                        | KernelInstruction::Binary { .. }
+                        | KernelInstruction::Add(_)
+                        | KernelInstruction::Mul(_)
+                        | KernelInstruction::Complex { .. } => true,
+                        KernelInstruction::Vector(_)
+                        | KernelInstruction::Matrix { .. }
+                        | KernelInstruction::Component { .. }
+                        | KernelInstruction::MatrixElement { .. }
+                        | KernelInstruction::MatMul { .. }
+                        | KernelInstruction::MatVec { .. }
+                        | KernelInstruction::Dot { .. }
+                        | KernelInstruction::Solve { .. }
+                        | KernelInstruction::SolveRow { .. }
+                        | KernelInstruction::SolveRowAdjointElement { .. } => false,
+                    }
+            })
+        })
+    }
+
     fn scalar_interpreter_plan(&self) -> Option<&ScalarEvaluationPlan> {
         match (&self.scalar_kernel, &self.scalar_executor) {
             (Some(_), Some(ScalarExecutor::Interpreter(plan))) => Some(plan),
@@ -1213,6 +1267,7 @@ impl CpuPlan {
     }
 
     pub fn evaluate_with_gradient(&self, params: &ParamValues) -> RuntimeResult<ValueGradient> {
+        self.require_f64_gradient()?;
         #[cfg(feature = "jit")]
         if let (Some(value_kernel), Some(gradient_kernel)) =
             (self.scalar_jit_kernel(), self.gradient_jit_kernel())
@@ -1250,6 +1305,7 @@ impl CpuPlan {
         params: &ParamValues,
         event: &impl EventLookup,
     ) -> RuntimeResult<ValueGradient> {
+        self.require_f64_gradient()?;
         let values = self.evaluate_values(params, Some(event))?;
         self.value_gradient(values, None)
     }
@@ -1363,6 +1419,9 @@ impl CpuPlan {
         invariant: Option<&ScalarInvariantValues>,
         workspace: &mut ScalarEventWorkspace,
     ) -> RuntimeResult<Complex64> {
+        if self.precision == Precision::F32 {
+            return self.evaluate_f32_scalar(params, Some((cache, row)));
+        }
         #[cfg(feature = "jit")]
         if let Some(kernel) = self.scalar_jit_kernel() {
             let mut output = Vec::with_capacity(1);
@@ -1380,6 +1439,9 @@ impl CpuPlan {
         &self,
         params: &ParamValues,
     ) -> RuntimeResult<Option<ScalarInvariantValues>> {
+        if self.precision == Precision::F32 {
+            return Ok(None);
+        }
         let Some(plan) = self.scalar_interpreter_plan() else {
             return Ok(None);
         };
@@ -1462,6 +1524,14 @@ impl CpuPlan {
         output: &mut Vec<Complex64>,
         #[cfg(feature = "jit")] jit_cache: Option<&JitCacheView>,
     ) -> RuntimeResult<()> {
+        if self.precision == Precision::F32 {
+            output.clear();
+            output.reserve(end - start);
+            for row in start..end {
+                output.push(self.evaluate_f32_scalar(params, Some((cache, row)))?);
+            }
+            return Ok(());
+        }
         #[cfg(feature = "jit")]
         if let Some(kernel) = self.scalar_jit_kernel() {
             let owned;
@@ -1797,6 +1867,7 @@ impl CpuPlan {
         cache: &CpuBatchCache,
         row: usize,
     ) -> RuntimeResult<ValueGradient> {
+        self.require_f64_gradient()?;
         self.check_batch_cache(cache)?;
         self.evaluate_cache_row_with_gradient_unchecked(params, cache, row)
     }
@@ -1830,6 +1901,7 @@ impl CpuPlan {
         params: &ParamValues,
         cache: &CpuBatchCache,
     ) -> RuntimeResult<Vec<ValueGradient>> {
+        self.require_f64_gradient()?;
         self.check_batch_cache(cache)?;
         #[cfg(feature = "jit")]
         if self.gradient_jit_kernel().is_some() {
@@ -2032,6 +2104,7 @@ impl CpuPlan {
         dataset: &CpuPreparedDataset,
         reduction: ReductionPlan,
     ) -> RuntimeResult<ReductionEvaluation> {
+        self.require_f64_gradient()?;
         let (value, gradient) =
             self.try_reduce_weighted_with_gradient(execution, params, dataset, |value| {
                 reduction
@@ -2337,19 +2410,32 @@ impl CpuPlan {
         if execution.is_parallel() {
             execution.install(|| {
                 self.par_try_weighted_sum_cached(params, dataset, |value| {
-                    reduction
-                        .apply(value)
-                        .map(|output| output.value())
-                        .map_err(RuntimeError::from)
+                    self.apply_reduction(reduction, value)
                 })
             })
         } else {
             self.try_weighted_sum_cached(params, dataset, |value| {
-                reduction
-                    .apply(value)
-                    .map(|output| output.value())
-                    .map_err(RuntimeError::from)
+                self.apply_reduction(reduction, value)
             })
+        }
+    }
+
+    fn apply_reduction(&self, reduction: ReductionPlan, value: Complex64) -> RuntimeResult<f64> {
+        if self.precision != Precision::F32 {
+            return reduction
+                .apply(value)
+                .map(|output| output.value())
+                .map_err(RuntimeError::from);
+        }
+        let real = value.re as f32;
+        match reduction.transform() {
+            ReductionTransform::Real => Ok(real as f64),
+            ReductionTransform::PositiveReal if real > 0.0 => Ok(real as f64),
+            ReductionTransform::LogPositiveReal if real > 0.0 => Ok(real.ln() as f64),
+            ReductionTransform::PositiveReal | ReductionTransform::LogPositiveReal => reduction
+                .apply(Complex64::from(real as f64))
+                .map(|output| output.value())
+                .map_err(RuntimeError::from),
         }
     }
 
@@ -2723,6 +2809,12 @@ impl CpuPlan {
         params: &ParamValues,
         event: Option<&dyn EventLookup>,
     ) -> RuntimeResult<Complex64> {
+        if self.precision == Precision::F32 {
+            if event.is_some() {
+                return Err(crate::ExecutionError::UnsupportedCpuF32Model.into());
+            }
+            return self.evaluate_f32_scalar(params, None);
+        }
         #[cfg(feature = "jit")]
         if event.is_none()
             && let Some(kernel) = self.scalar_jit_kernel()
@@ -2738,6 +2830,59 @@ impl CpuPlan {
         }
         let values = self.evaluate_values(params, event)?;
         scalar_at(&values, self.graph.root().index())
+    }
+
+    fn require_f64_gradient(&self) -> RuntimeResult<()> {
+        if self.precision == Precision::F32 {
+            return Err(crate::ExecutionError::UnsupportedCpuF32Gradient.into());
+        }
+        Ok(())
+    }
+
+    fn evaluate_f32_scalar(
+        &self,
+        params: &ParamValues,
+        cache: Option<(&CpuBatchCache, usize)>,
+    ) -> RuntimeResult<Complex64> {
+        let kernel = self
+            .scalar_kernel
+            .as_ref()
+            .ok_or(crate::ExecutionError::UnsupportedCpuF32Model)?;
+        let mut values = Vec::with_capacity(kernel.values().len());
+        for value in kernel.values() {
+            let get = |id: KernelValueId| values[id.index()];
+            let result = match &value.instruction {
+                KernelInstruction::Cached(slot) => {
+                    let (cache, row) =
+                        cache.ok_or(crate::ExecutionError::UnsupportedCpuF32Model)?;
+                    let value = cache.scalar(*slot, row)?;
+                    Complex32::new(value.re as f32, value.im as f32)
+                }
+                KernelInstruction::RealConstant(value) => Complex32::from(*value as f32),
+                KernelInstruction::ComplexConstant(value) => {
+                    Complex32::new(value.re as f32, value.im as f32)
+                }
+                KernelInstruction::Parameter(id) => Complex32::from(
+                    params
+                        .get(*id)
+                        .map_err(|error| RuntimeError::Parameter(error.to_string()))?
+                        as f32,
+                ),
+                KernelInstruction::Unary { op, input } => eval_unary(*op, get(*input)),
+                KernelInstruction::Binary { op, lhs, rhs } => {
+                    eval_binary(*op, get(*lhs), get(*rhs))
+                }
+                KernelInstruction::Add(terms) => terms.iter().map(|id| get(*id)).sum::<Complex32>(),
+                KernelInstruction::Mul(factors) => {
+                    factors.iter().map(|id| get(*id)).product::<Complex32>()
+                }
+                KernelInstruction::Complex { re, im } => Complex32::new(get(*re).re, get(*im).re),
+                _ => return Err(crate::ExecutionError::UnsupportedCpuF32Model.into()),
+            };
+            values.push(result);
+        }
+        let value = values[kernel.root().index()];
+        Ok(Complex64::new(value.re as f64, value.im as f64))
     }
 
     fn value_gradient(
@@ -4734,13 +4879,13 @@ fn matrix_values_row_major(matrix: &DMatrix<Complex64>) -> Vec<Complex64> {
     values
 }
 
-fn eval_unary(op: UnaryOp, input: Complex64) -> Complex64 {
+fn eval_unary<T: Float>(op: UnaryOp, input: Complex<T>) -> Complex<T> {
     match op {
         UnaryOp::Neg => -input,
-        UnaryOp::Real => Complex64::from(input.re),
-        UnaryOp::Imag => Complex64::from(input.im),
+        UnaryOp::Real => Complex::from(input.re),
+        UnaryOp::Imag => Complex::from(input.im),
         UnaryOp::Conj => input.conj(),
-        UnaryOp::NormSqr => Complex64::from(input.norm_sqr()),
+        UnaryOp::NormSqr => Complex::from(input.norm_sqr()),
         UnaryOp::Sqrt => input.sqrt(),
         UnaryOp::Exp => input.exp(),
         UnaryOp::Sin => input.sin(),
@@ -4750,13 +4895,13 @@ fn eval_unary(op: UnaryOp, input: Complex64) -> Complex64 {
     }
 }
 
-fn eval_binary(op: BinaryOp, lhs: Complex64, rhs: Complex64) -> Complex64 {
+fn eval_binary<T: Float>(op: BinaryOp, lhs: Complex<T>, rhs: Complex<T>) -> Complex<T> {
     match op {
         BinaryOp::Add => lhs + rhs,
         BinaryOp::Sub => lhs - rhs,
         BinaryOp::Mul => lhs * rhs,
         BinaryOp::Div => lhs / rhs,
-        BinaryOp::Atan2 => Complex64::from(lhs.re.atan2(rhs.re)),
+        BinaryOp::Atan2 => Complex::from(lhs.re.atan2(rhs.re)),
     }
 }
 
@@ -5056,19 +5201,83 @@ mod tests {
     }
 
     #[test]
-    fn cpu_plan_rejects_unsupported_precision_at_backend_boundary() {
-        let model = CompiledModel::from_expr(&laddu_expr::Expr::from(1.0)).unwrap();
+    fn cpu_plan_executes_parameter_only_scalar_kernel_in_f32() {
+        let x = laddu_expr::Expr::from(parameter!("x", initial: 16_777_216.0));
+        let y = laddu_expr::Expr::from(parameter!("y", initial: 1.0));
+        let model = CompiledModel::from_expr(&(x + y)).unwrap();
+        let params = model.params().default_values();
         let execution = Execution::local(crate::ExecutionOptions {
             device: crate::Device::Cpu(crate::CpuOptions::default()),
             precision: Precision::F32,
             ..crate::ExecutionOptions::default()
         })
         .unwrap();
+        let f32_plan = CpuBackend
+            .prepare_for_execution(&model, &execution)
+            .unwrap();
+        let f64_plan = CpuBackend.prepare(&model);
 
+        assert_eq!(f32_plan.evaluate(&params).unwrap().re, 16_777_216.0);
+        assert_eq!(f64_plan.evaluate(&params).unwrap().re, 16_777_217.0);
+        assert!(matches!(
+            f32_plan.evaluate_with_gradient(&params),
+            Err(RuntimeError::Execution(
+                crate::ExecutionError::UnsupportedCpuF32Gradient
+            ))
+        ));
+    }
+
+    #[test]
+    fn cpu_f32_reduces_event_scalar_arithmetic_with_f64_accumulation() {
+        let scale = laddu_expr::Expr::from(parameter!("scale", initial: 1.0));
+        let model = CompiledModel::from_expr(&(event_scalar("x") + scale)).unwrap();
+        let params = model.params().default_values();
+        let execution = Execution::local(crate::ExecutionOptions {
+            device: crate::Device::Cpu(crate::CpuOptions {
+                threads: crate::ThreadPolicy::Serial,
+                ..crate::CpuOptions::default()
+            }),
+            precision: Precision::F32,
+            ..crate::ExecutionOptions::default()
+        })
+        .unwrap();
+        let plan = CpuBackend
+            .prepare_for_execution(&model, &execution)
+            .unwrap();
+        let dataset = Dataset::from_batch(
+            EventBatch::from_events(
+                Arc::new(Schema::new(std::iter::empty::<&str>(), ["x"], false).unwrap()),
+                [OwnedEvent::new(vec![], vec![16_777_216.0])],
+            )
+            .unwrap(),
+        );
+        let prepared = plan.prepare_dataset(&execution, &dataset).unwrap();
+
+        assert_eq!(
+            plan.reduce(
+                &execution,
+                &params,
+                &prepared,
+                ReductionPlan::weighted_real(),
+            )
+            .unwrap(),
+            16_777_216.0
+        );
+    }
+
+    #[test]
+    fn cpu_f32_rejects_computed_f64_cache_entries() {
+        let model = CompiledModel::from_expr(&event_scalar("x").sin()).unwrap();
+        let execution = Execution::local(crate::ExecutionOptions {
+            device: crate::Device::Cpu(crate::CpuOptions::default()),
+            precision: Precision::F32,
+            ..crate::ExecutionOptions::default()
+        })
+        .unwrap();
         assert!(matches!(
             CpuBackend.prepare_for_execution(&model, &execution),
             Err(RuntimeError::Execution(
-                crate::ExecutionError::UnsupportedCpuPrecision
+                crate::ExecutionError::UnsupportedCpuF32Model
             ))
         ));
     }
