@@ -133,8 +133,8 @@ impl Execution {
             }
         };
         let precision = match options.precision {
-            Precision::Auto | Precision::F64 => Precision::F64,
-            Precision::F32 => return Err(ExecutionError::UnsupportedCpuPrecision.into()),
+            Precision::Auto => Precision::F64,
+            precision => precision,
         };
         #[cfg(not(feature = "jit"))]
         if cpu.jit == JitPolicy::Enabled {
@@ -313,15 +313,12 @@ mod tests {
                 GpuBackend::Wgpu
             )))
         ));
-        assert!(matches!(
-            Execution::local(ExecutionOptions {
-                device: Device::Cpu(CpuOptions::default()),
-                precision: Precision::F32,
-                ..ExecutionOptions::default()
-            }),
-            Err(RuntimeError::Execution(
-                ExecutionError::UnsupportedCpuPrecision
-            ))
-        ));
+        let f32 = Execution::local(ExecutionOptions {
+            device: Device::Cpu(CpuOptions::default()),
+            precision: Precision::F32,
+            ..ExecutionOptions::default()
+        })
+        .unwrap();
+        assert_eq!(f32.precision(), Precision::F32);
     }
 }

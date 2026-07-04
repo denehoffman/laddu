@@ -27,7 +27,7 @@ use nalgebra::{DMatrix, DVector, Dyn, LU};
 use num::complex::Complex64;
 use rayon::prelude::*;
 
-use crate::{JitPolicy, RuntimeError, RuntimeResult, execution::Execution};
+use crate::{JitPolicy, Precision, RuntimeError, RuntimeResult, execution::Execution};
 
 mod gradient_interpreter;
 use gradient_interpreter::GradientInterpreter;
@@ -991,12 +991,19 @@ struct ScalarInvariantInstruction {
 }
 
 impl CpuBackend {
-    pub fn prepare_for_execution(&self, model: &CompiledModel, execution: &Execution) -> CpuPlan {
+    pub fn prepare_for_execution(
+        &self,
+        model: &CompiledModel,
+        execution: &Execution,
+    ) -> RuntimeResult<CpuPlan> {
+        if execution.precision() == Precision::F32 {
+            return Err(crate::ExecutionError::UnsupportedCpuPrecision.into());
+        }
         let mode = match execution.jit_policy() {
             JitPolicy::Auto | JitPolicy::Enabled => CpuExecutionMode::Auto,
             JitPolicy::Disabled => CpuExecutionMode::Interpreter,
         };
-        self.prepare_with_execution_mode(model, mode)
+        Ok(self.prepare_with_execution_mode(model, mode))
     }
 
     pub fn prepare(&self, model: &CompiledModel) -> CpuPlan {
@@ -5019,7 +5026,9 @@ mod tests {
             ..crate::ExecutionOptions::default()
         })
         .unwrap();
-        let configured = CpuBackend.prepare_for_execution(&model, &execution);
+        let configured = CpuBackend
+            .prepare_for_execution(&model, &execution)
+            .unwrap();
 
         assert!(matches!(
             interpreted.scalar_executor,
@@ -5043,6 +5052,24 @@ mod tests {
         assert!(matches!(
             automatic.evaluate(&wrong_params),
             Err(RuntimeError::Parameter(_))
+        ));
+    }
+
+    #[test]
+    fn cpu_plan_rejects_unsupported_precision_at_backend_boundary() {
+        let model = CompiledModel::from_expr(&laddu_expr::Expr::from(1.0)).unwrap();
+        let execution = Execution::local(crate::ExecutionOptions {
+            device: crate::Device::Cpu(crate::CpuOptions::default()),
+            precision: Precision::F32,
+            ..crate::ExecutionOptions::default()
+        })
+        .unwrap();
+
+        assert!(matches!(
+            CpuBackend.prepare_for_execution(&model, &execution),
+            Err(RuntimeError::Execution(
+                crate::ExecutionError::UnsupportedCpuPrecision
+            ))
         ));
     }
 

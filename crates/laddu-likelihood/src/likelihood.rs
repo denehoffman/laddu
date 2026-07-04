@@ -452,7 +452,7 @@ impl LikelihoodTerm for NllTerm {
             &self.local_params,
             self.name(),
         )?);
-        let plan = CpuBackend.prepare_for_execution(&self.model, execution);
+        let plan = CpuBackend.prepare_for_execution(&self.model, execution)?;
         self.data = Some(plan.prepare_dataset(execution, &self.data_source)?);
         self.accepted_mc = Some(plan.prepare_dataset(execution, &self.accepted_mc_source)?);
         self.plan = Some(plan);
