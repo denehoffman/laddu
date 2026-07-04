@@ -1297,6 +1297,7 @@ name = "laddu-compile"
 version = "0.1.0"
 dependencies = [
  "laddu-expr",
+ "laddu-kernel",
  "num",
  "thiserror",
 ]

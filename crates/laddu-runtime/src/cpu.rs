@@ -5,7 +5,9 @@ use std::{
 };
 
 use laddu_autodiff::{AutodiffMode, AutodiffPlan, AutodiffResult};
-use laddu_compile::{CachePlan, CompiledModel, ReductionPlan};
+use laddu_compile::{
+    CachePlan, CompiledModel, ExecutablePlan, ReductionPlan, SolveComponentPlan, SolveRowMatrixPlan,
+};
 #[cfg(test)]
 use laddu_data::data::accurate::AccurateComplex64;
 use laddu_data::{
@@ -151,20 +153,6 @@ impl GradientExecutor {
                 .transpose()?,
         ))
     }
-}
-
-#[derive(Copy, Clone, Debug)]
-struct SolveComponentPlan {
-    rhs: ExprId,
-    row_slot: usize,
-    dimension: usize,
-}
-
-#[derive(Clone, Debug)]
-struct SolveRowMatrixPlan {
-    matrix: ExprId,
-    dimension: usize,
-    rows: Vec<(usize, usize)>,
 }
 
 #[derive(Clone, Debug)]
@@ -1031,116 +1019,39 @@ impl CpuBackend {
         autodiff_mode: AutodiffMode,
         execution_mode: CpuExecutionMode,
     ) -> AutodiffResult<CpuPlan> {
-        let cache_plan = model.cache_plan().clone();
-        let parameter_slots: Vec<Option<ParamId>> = model
-            .graph()
-            .nodes()
-            .iter()
-            .map(|node| match node {
-                ExprNode::ScalarParam(parameter) => Some(
-                    model
-                        .params()
-                        .id(parameter.name())
-                        .expect("compiled parameter is present in the parameter layout"),
-                ),
-                _ => None,
-            })
-            .collect();
-        let mut cache_slots = vec![None; model.graph().nodes().len()];
-        for (slot, entry) in cache_plan.entries().iter().enumerate() {
-            cache_slots[entry.node().index()] = Some(slot);
-        }
-        let (solve_components, solve_rhs_elements, solve_row_matrices, solve_row_keys) =
-            self.solve_component_plans(model);
-        let (cached_evaluation_nodes, cached_value_slots) = cached_evaluation_schedule(
-            model.graph(),
-            &cache_slots,
-            &solve_components,
-            &solve_rhs_elements,
-        );
-        let scalar_kernel = self.scalar_kernel_ir(
-            model,
-            &cached_evaluation_nodes,
-            &cache_slots,
-            &parameter_slots,
-            &solve_components,
-            &solve_rhs_elements,
-        );
+        let executable = ExecutablePlan::from_model(model)
+            .map_err(|error| laddu_autodiff::AutodiffError::InvalidKernel(error.to_string()))?;
+        let scalar_kernel = executable.scalar_kernel().cloned();
         let scalar_executor = scalar_kernel
             .as_ref()
             .and_then(|kernel| ScalarExecutor::prepare(kernel, execution_mode));
         let gradient_executor =
             GradientExecutor::prepare(scalar_kernel.as_ref(), model.params(), execution_mode)?;
-        let mut cache_required_nodes = vec![false; model.graph().nodes().len()];
-        for node in cache_plan.materialization_nodes() {
-            cache_required_nodes[node.index()] = true;
-        }
-        for plan in &solve_row_matrices {
-            mark_required(model.graph(), plan.matrix, &mut cache_required_nodes);
-        }
-        let cache_materialization_nodes = cache_required_nodes
-            .into_iter()
-            .enumerate()
-            .filter_map(|(index, required)| {
-                required.then(|| ExprId::from_index(index).expect("graph too large"))
-            })
+        let constant_factors = executable
+            .constant_factor_matrices()
+            .iter()
+            .map(|_| Arc::new(OnceLock::new()))
             .collect();
-        let mut factor_matrix_slots = vec![None; model.graph().nodes().len()];
-        let mut factor_matrices = Vec::new();
-        let mut constant_factor_slots = vec![None; model.graph().nodes().len()];
-        let mut constant_factors = Vec::new();
-        for (index, node) in model.graph().nodes().iter().enumerate() {
-            let ExprNode::Solve { matrix, .. } = node else {
-                continue;
-            };
-            if cached_value_slots[index].is_none() {
-                continue;
-            }
-            let facts = model
-                .node_facts(*matrix)
-                .expect("compiled model facts cover every graph node");
-            let dependency = facts.dependency;
-            if dependency.depends_on_free_params || dependency.depends_on_fixed_params {
-                continue;
-            }
-            let ValueKind::Matrix { rows, cols } = facts.value_kind else {
-                continue;
-            };
-            if rows != cols {
-                continue;
-            }
-            if dependency.depends_on_event {
-                if factor_matrix_slots[matrix.index()].is_none() {
-                    let slot = factor_matrices.len();
-                    factor_matrix_slots[matrix.index()] = Some(slot);
-                    factor_matrices.push((*matrix, rows));
-                }
-            } else if constant_factor_slots[matrix.index()].is_none() {
-                let slot = constant_factors.len();
-                constant_factor_slots[matrix.index()] = Some(slot);
-                constant_factors.push(Arc::new(OnceLock::new()));
-            }
-        }
         Ok(CpuPlan {
-            graph: model.graph().clone(),
-            params: model.params().clone(),
-            parameter_slots,
+            graph: executable.graph().clone(),
+            params: executable.params().clone(),
+            parameter_slots: executable.parameter_slots().to_vec(),
             autodiff: AutodiffPlan::from_model(model, autodiff_mode)?,
-            cache_plan,
-            cache_slots,
-            cached_evaluation_nodes,
-            cached_value_slots,
+            cache_plan: executable.cache_plan().clone(),
+            cache_slots: executable.cache_slots().to_vec(),
+            cached_evaluation_nodes: executable.evaluation_nodes().to_vec(),
+            cached_value_slots: executable.value_slots().to_vec(),
             scalar_kernel,
             scalar_executor,
             gradient_executor,
-            cache_materialization_nodes,
-            solve_components,
-            solve_rhs_elements,
-            solve_row_matrices,
-            solve_row_keys,
-            factor_matrix_slots,
-            factor_matrices,
-            constant_factor_slots,
+            cache_materialization_nodes: executable.cache_materialization_nodes().to_vec(),
+            solve_components: executable.solve_components().to_vec(),
+            solve_rhs_elements: executable.solve_rhs_elements().to_vec(),
+            solve_row_matrices: executable.solve_row_matrices().to_vec(),
+            solve_row_keys: executable.solve_row_keys().to_vec(),
+            factor_matrix_slots: executable.factor_matrix_slots().to_vec(),
+            factor_matrices: executable.factor_matrices().to_vec(),
+            constant_factor_slots: executable.constant_factor_slots().to_vec(),
             constant_factors,
         })
     }
@@ -1346,23 +1257,24 @@ impl CpuPlan {
                 cache.push(slot, value)?;
             }
             for plan in &self.solve_row_matrices {
-                let (rows, cols, values) = matrix_at_optional(&values, plan.matrix.index())?;
-                if rows != plan.dimension || cols != plan.dimension {
+                let (rows, cols, values) = matrix_at_optional(&values, plan.matrix().index())?;
+                if rows != plan.dimension() || cols != plan.dimension() {
                     return Err(RuntimeError::InvalidShape {
-                        index: plan.matrix.index(),
+                        index: plan.matrix().index(),
                         message: format!(
                             "specialized solve expected a {}x{} matrix, got {rows}x{cols}",
-                            plan.dimension, plan.dimension
+                            plan.dimension(),
+                            plan.dimension()
                         ),
                     });
                 }
                 let transpose_factor = DMatrix::from_row_slice(rows, cols, values).transpose().lu();
-                for (slot, index) in &plan.rows {
-                    let mut basis = DVector::zeros(plan.dimension);
+                for (slot, index) in plan.rows() {
+                    let mut basis = DVector::zeros(plan.dimension());
                     basis[*index] = Complex64::ONE;
                     let inverse_row = transpose_factor
                         .solve(&basis)
-                        .ok_or(RuntimeError::SingularMatrix(plan.matrix.index()))?;
+                        .ok_or(RuntimeError::SingularMatrix(plan.matrix().index()))?;
                     cache.push_solve_row(*slot, inverse_row.iter().copied())?;
                 }
             }
@@ -3357,24 +3269,24 @@ impl CpuPlan {
                 }
                 ExprNode::Component { input, index: i } => {
                     if let Some(plan) = self.solve_components[index] {
-                        let inverse_row = cache.solve_row(plan.row_slot, row)?;
-                        if inverse_row.len() != plan.dimension {
+                        let inverse_row = cache.solve_row(plan.row_slot(), row)?;
+                        if inverse_row.len() != plan.dimension() {
                             return Err(RuntimeError::InvalidShape {
                                 index,
                                 message: format!(
                                     "specialized solve expected row len {}, got {}",
-                                    plan.dimension,
+                                    plan.dimension(),
                                     inverse_row.len()
                                 ),
                             });
                         }
-                        if let Some(elements) = &self.solve_rhs_elements[plan.rhs.index()] {
-                            if elements.len() != plan.dimension {
+                        if let Some(elements) = &self.solve_rhs_elements[plan.rhs().index()] {
+                            if elements.len() != plan.dimension() {
                                 return Err(RuntimeError::InvalidShape {
                                     index,
                                     message: format!(
                                         "specialized solve expected {} RHS elements, got {}",
-                                        plan.dimension,
+                                        plan.dimension(),
                                         elements.len()
                                     ),
                                 });
@@ -3389,13 +3301,13 @@ impl CpuPlan {
                                     .sum::<RuntimeResult<Complex64>>()?,
                             )
                         } else {
-                            let rhs = self.cached_vector_at(&values, plan.rhs)?;
-                            if rhs.len() != plan.dimension {
+                            let rhs = self.cached_vector_at(&values, plan.rhs())?;
+                            if rhs.len() != plan.dimension() {
                                 return Err(RuntimeError::InvalidShape {
                                     index,
                                     message: format!(
                                         "specialized solve expected RHS len {}, got {}",
-                                        plan.dimension,
+                                        plan.dimension(),
                                         rhs.len()
                                     ),
                                 });
@@ -3735,8 +3647,8 @@ impl<'a> DerivativeWorkspace<'a> {
                 if let (Some(plan), Some((cache, row))) =
                     (self.plan.solve_components[index], self.cached_factors)
                 {
-                    let inverse_row = cache.solve_row(plan.row_slot, row)?;
-                    if let Some(elements) = &self.plan.solve_rhs_elements[plan.rhs.index()] {
+                    let inverse_row = cache.solve_row(plan.row_slot(), row)?;
+                    if let Some(elements) = &self.plan.solve_rhs_elements[plan.rhs().index()] {
                         Value::Scalar(
                             inverse_row
                                 .iter()
@@ -3745,7 +3657,8 @@ impl<'a> DerivativeWorkspace<'a> {
                                 .sum::<RuntimeResult<Complex64>>()?,
                         )
                     } else {
-                        let rhs_tangent = self.vector_tangent_value(plan.rhs, plan.dimension)?;
+                        let rhs_tangent =
+                            self.vector_tangent_value(plan.rhs(), plan.dimension())?;
                         Value::Scalar(
                             inverse_row
                                 .iter()
@@ -4794,334 +4707,6 @@ fn matrix_at_optional(
             message: "required cache prerequisite was not evaluated".into(),
         }),
     }
-}
-
-impl CpuBackend {
-    fn solve_component_plans(
-        &self,
-        model: &CompiledModel,
-    ) -> (
-        Vec<Option<SolveComponentPlan>>,
-        Vec<Option<Vec<ExprId>>>,
-        Vec<SolveRowMatrixPlan>,
-        Vec<(ExprId, usize, usize)>,
-    ) {
-        let mut components = vec![None; model.graph().nodes().len()];
-        let mut rhs_elements = vec![None; model.graph().nodes().len()];
-        let mut row_slots = HashMap::<(ExprId, usize), usize>::new();
-        let mut row_keys = Vec::new();
-        let mut matrix_slots = HashMap::<ExprId, usize>::new();
-        let mut matrices = Vec::<SolveRowMatrixPlan>::new();
-
-        for (node_index, node) in model.graph().nodes().iter().enumerate() {
-            let ExprNode::Component { input, index } = node else {
-                continue;
-            };
-            let Some(ExprNode::Solve { matrix, rhs }) = model.graph().node(*input) else {
-                continue;
-            };
-            let matrix_facts = model
-                .node_facts(*matrix)
-                .expect("compiled model facts cover every graph node");
-            let matrix_dependency = matrix_facts.dependency;
-            if !matrix_dependency.depends_on_event
-                || matrix_dependency.depends_on_free_params
-                || matrix_dependency.depends_on_fixed_params
-            {
-                continue;
-            }
-            let rhs_facts = model
-                .node_facts(*rhs)
-                .expect("compiled model facts cover every graph node");
-            let rhs_dependency = rhs_facts.dependency;
-            if !rhs_dependency.depends_on_free_params && !rhs_dependency.depends_on_fixed_params {
-                continue;
-            }
-            let ValueKind::Matrix { rows, cols } = matrix_facts.value_kind else {
-                continue;
-            };
-            let ValueKind::Vector { len } = rhs_facts.value_kind else {
-                continue;
-            };
-            if rows == 0 || rows != cols || rows != len || *index >= rows {
-                continue;
-            }
-
-            let row_slot = if let Some(slot) = row_slots.get(&(*matrix, *index)) {
-                *slot
-            } else {
-                let slot = row_keys.len();
-                row_slots.insert((*matrix, *index), slot);
-                row_keys.push((*matrix, *index, rows));
-                let matrix_slot = if let Some(slot) = matrix_slots.get(matrix) {
-                    *slot
-                } else {
-                    let slot = matrices.len();
-                    matrix_slots.insert(*matrix, slot);
-                    matrices.push(SolveRowMatrixPlan {
-                        matrix: *matrix,
-                        dimension: rows,
-                        rows: Vec::new(),
-                    });
-                    slot
-                };
-                matrices[matrix_slot].rows.push((slot, *index));
-                slot
-            };
-            components[node_index] = Some(SolveComponentPlan {
-                rhs: *rhs,
-                row_slot,
-                dimension: rows,
-            });
-            if let Some(ExprNode::Vector { elements }) = model.graph().node(*rhs) {
-                rhs_elements[rhs.index()] = Some(elements.clone());
-            }
-        }
-
-        (components, rhs_elements, matrices, row_keys)
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn scalar_kernel_ir(
-        &self,
-        model: &CompiledModel,
-        evaluation_nodes: &[ExprId],
-        cache_slots: &[Option<usize>],
-        parameter_slots: &[Option<ParamId>],
-        solve_components: &[Option<SolveComponentPlan>],
-        solve_rhs_elements: &[Option<Vec<ExprId>>],
-    ) -> Option<ScalarKernelIr> {
-        let mut value_ids = vec![None; model.graph().nodes().len()];
-        let mut values = Vec::with_capacity(evaluation_nodes.len());
-
-        for id in evaluation_nodes {
-            let index = id.index();
-            let value_id = |id: ExprId| value_ids[id.index()];
-            let instruction = if let Some(cache_slot) = cache_slots[index] {
-                KernelInstruction::Cached(cache_slot)
-            } else {
-                match model.graph().node(*id)? {
-                    ExprNode::RealConst(value) => KernelInstruction::RealConstant(*value),
-                    ExprNode::ComplexConst(value) => KernelInstruction::ComplexConstant(*value),
-                    ExprNode::ScalarParam(_) => {
-                        KernelInstruction::Parameter(parameter_slots[index]?)
-                    }
-                    ExprNode::Unary { op, input } => KernelInstruction::Unary {
-                        op: *op,
-                        input: value_id(*input)?,
-                    },
-                    ExprNode::Binary { op, lhs, rhs } => KernelInstruction::Binary {
-                        op: *op,
-                        lhs: value_id(*lhs)?,
-                        rhs: value_id(*rhs)?,
-                    },
-                    ExprNode::NaryAdd { terms } => KernelInstruction::Add(
-                        terms
-                            .iter()
-                            .map(|term| value_id(*term))
-                            .collect::<Option<_>>()?,
-                    ),
-                    ExprNode::NaryMul { factors } => KernelInstruction::Mul(
-                        factors
-                            .iter()
-                            .map(|factor| value_id(*factor))
-                            .collect::<Option<_>>()?,
-                    ),
-                    ExprNode::Complex { re, im } => KernelInstruction::Complex {
-                        re: value_id(*re)?,
-                        im: value_id(*im)?,
-                    },
-                    ExprNode::Vector { elements } => KernelInstruction::Vector(
-                        elements
-                            .iter()
-                            .map(|element| value_id(*element))
-                            .collect::<Option<_>>()?,
-                    ),
-                    ExprNode::Matrix {
-                        rows,
-                        cols,
-                        elements,
-                    } => KernelInstruction::Matrix {
-                        rows: *rows,
-                        cols: *cols,
-                        elements: elements
-                            .iter()
-                            .map(|element| value_id(*element))
-                            .collect::<Option<_>>()?,
-                    },
-                    ExprNode::Component {
-                        input,
-                        index: component,
-                    } => {
-                        if let Some(solve) = solve_components[index]
-                            && let Some(elements) = solve_rhs_elements[solve.rhs.index()].as_ref()
-                        {
-                            KernelInstruction::SolveRow {
-                                row_slot: solve.row_slot,
-                                rhs: elements
-                                    .iter()
-                                    .map(|element| value_id(*element))
-                                    .collect::<Option<_>>()?,
-                            }
-                        } else {
-                            KernelInstruction::Component {
-                                input: value_id(*input)?,
-                                index: *component,
-                            }
-                        }
-                    }
-                    ExprNode::MatrixElement { input, row, col } => {
-                        KernelInstruction::MatrixElement {
-                            input: value_id(*input)?,
-                            row: *row,
-                            col: *col,
-                        }
-                    }
-                    ExprNode::MatMul { lhs, rhs } => KernelInstruction::MatMul {
-                        lhs: value_id(*lhs)?,
-                        rhs: value_id(*rhs)?,
-                    },
-                    ExprNode::MatVec { matrix, vector } => KernelInstruction::MatVec {
-                        matrix: value_id(*matrix)?,
-                        vector: value_id(*vector)?,
-                    },
-                    ExprNode::Dot { lhs, rhs } => KernelInstruction::Dot {
-                        lhs: value_id(*lhs)?,
-                        rhs: value_id(*rhs)?,
-                    },
-                    ExprNode::Solve { matrix, rhs } => KernelInstruction::Solve {
-                        matrix: value_id(*matrix)?,
-                        rhs: value_id(*rhs)?,
-                    },
-                    // Event leaves are always materialized by the cache schedule before
-                    // final-evaluation IR is lowered.
-                    ExprNode::EventScalar(_) | ExprNode::EventP4Component { .. } => return None,
-                }
-            };
-            let facts = model.node_facts(*id)?;
-            let kind = match facts.value_kind {
-                ValueKind::Real => KernelValueKind::Real,
-                ValueKind::Complex => KernelValueKind::Complex,
-                ValueKind::Vector { len } => KernelValueKind::Vector { len },
-                ValueKind::Matrix { rows, cols } => KernelValueKind::Matrix { rows, cols },
-            };
-            let class = if facts.dependency.depends_on_event {
-                KernelValueClass::Event
-            } else {
-                KernelValueClass::Invariant
-            };
-            let kernel_id = KernelValueId::from_index(values.len());
-            values.push(KernelValue {
-                kind,
-                class,
-                instruction,
-            });
-            value_ids[index] = Some(kernel_id);
-        }
-
-        Some(
-            ScalarKernelIr::new(values, value_ids[model.graph().root().index()]?)
-                .expect("runtime lowering must produce valid scalar kernel IR"),
-        )
-    }
-}
-
-fn cached_evaluation_schedule(
-    graph: &ExprGraph,
-    cache_slots: &[Option<usize>],
-    solve_components: &[Option<SolveComponentPlan>],
-    solve_rhs_elements: &[Option<Vec<ExprId>>],
-) -> (Vec<ExprId>, Vec<Option<usize>>) {
-    let mut required = vec![false; graph.nodes().len()];
-    mark_cached_evaluation_node(
-        graph,
-        graph.root(),
-        cache_slots,
-        solve_components,
-        solve_rhs_elements,
-        &mut required,
-    );
-    let nodes = required
-        .into_iter()
-        .enumerate()
-        .filter_map(|(index, required)| {
-            required.then(|| ExprId::from_index(index).expect("graph too large"))
-        })
-        .collect::<Vec<_>>();
-    let mut value_slots = vec![None; graph.nodes().len()];
-    for (slot, id) in nodes.iter().enumerate() {
-        value_slots[id.index()] = Some(slot);
-    }
-    (nodes, value_slots)
-}
-
-fn mark_cached_evaluation_node(
-    graph: &ExprGraph,
-    id: ExprId,
-    cache_slots: &[Option<usize>],
-    solve_components: &[Option<SolveComponentPlan>],
-    solve_rhs_elements: &[Option<Vec<ExprId>>],
-    required: &mut [bool],
-) {
-    if required[id.index()] {
-        return;
-    }
-    required[id.index()] = true;
-    if cache_slots[id.index()].is_some() {
-        return;
-    }
-    if let Some(plan) = solve_components[id.index()] {
-        if let Some(elements) = &solve_rhs_elements[plan.rhs.index()] {
-            for element in elements {
-                mark_cached_evaluation_node(
-                    graph,
-                    *element,
-                    cache_slots,
-                    solve_components,
-                    solve_rhs_elements,
-                    required,
-                );
-            }
-        } else {
-            mark_cached_evaluation_node(
-                graph,
-                plan.rhs,
-                cache_slots,
-                solve_components,
-                solve_rhs_elements,
-                required,
-            );
-        }
-        return;
-    }
-    if let Some(node) = graph.node(id) {
-        for child in node_children(node) {
-            mark_cached_evaluation_node(
-                graph,
-                child,
-                cache_slots,
-                solve_components,
-                solve_rhs_elements,
-                required,
-            );
-        }
-    }
-}
-
-fn mark_required(graph: &ExprGraph, id: ExprId, required: &mut [bool]) {
-    if required[id.index()] {
-        return;
-    }
-    required[id.index()] = true;
-    if let Some(node) = graph.node(id) {
-        for child in node_children(node) {
-            mark_required(graph, child, required);
-        }
-    }
-}
-
-fn node_children(node: &ExprNode) -> Vec<ExprId> {
-    node.child_ids()
 }
 
 fn matrix_values_row_major(matrix: &DMatrix<Complex64>) -> Vec<Complex64> {
