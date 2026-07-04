@@ -9,4 +9,7 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+laddu-runtime = { path = "../laddu-runtime" }
+pollster.workspace = true
 thiserror.workspace = true
+wgpu.workspace = true
