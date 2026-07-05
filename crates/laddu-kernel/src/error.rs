@@ -11,6 +11,10 @@ pub enum KernelError {
     RootOutOfBounds { root: usize, len: usize },
     #[error("gradient output value {output} is out of bounds for {len} values")]
     GradientOutOfBounds { output: usize, len: usize },
+    #[error("cache kernel contains no outputs")]
+    EmptyCacheOutputs,
+    #[error("cache output value {output} is out of bounds for {len} values")]
+    CacheOutputOutOfBounds { output: usize, len: usize },
     #[error("gradient output value {output} must be real, but has kind {actual:?}")]
     GradientKindMismatch {
         output: usize,

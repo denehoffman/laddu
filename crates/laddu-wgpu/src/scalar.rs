@@ -614,7 +614,9 @@ mod tests {
             ..ExecutionOptions::default()
         })
         .unwrap();
-        let plan = CpuBackend.prepare_for_execution(&model, &execution).unwrap();
+        let plan = CpuBackend
+            .prepare_for_execution(&model, &execution)
+            .unwrap();
         let cpu = plan.evaluate_batch(&params, &batch).unwrap();
 
         assert_eq!(gpu.len(), cpu.len());

@@ -5,8 +5,8 @@ use laddu_expr::{
     parameters::{ParamId, ParamLayout},
 };
 use laddu_kernel::ir::{
-    KernelInstruction, KernelValue, KernelValueClass, KernelValueId, KernelValueKind,
-    ScalarKernelIr,
+    CacheKernelIr, KernelInstruction, KernelValue, KernelValueClass, KernelValueId,
+    KernelValueKind, ScalarKernelIr,
 };
 
 use crate::{CachePlan, CompileResult, CompiledModel};
@@ -63,6 +63,8 @@ pub struct ExecutablePlan {
     evaluation_nodes: Vec<ExprId>,
     value_slots: Vec<Option<usize>>,
     scalar_kernel: Option<ScalarKernelIr>,
+    cache_kernel: Option<CacheKernelIr>,
+    cache_input_nodes: Vec<ExprId>,
     cache_materialization_nodes: Vec<ExprId>,
     solve_components: Vec<Option<SolveComponentPlan>>,
     solve_rhs_elements: Vec<Option<Vec<ExprId>>>,
@@ -116,6 +118,8 @@ impl ExecutablePlan {
             Self::mark_required(&graph, plan.matrix, &mut cache_required_nodes);
         }
         let cache_materialization_nodes = Self::ids_from_flags(cache_required_nodes)?;
+        let (cache_kernel, cache_input_nodes) =
+            Self::cache_kernel_ir(model, &cache_materialization_nodes)?;
 
         let mut factor_matrix_slots = vec![None; graph.nodes().len()];
         let mut factor_matrices = Vec::new();
@@ -162,6 +166,8 @@ impl ExecutablePlan {
             evaluation_nodes,
             value_slots,
             scalar_kernel,
+            cache_kernel,
+            cache_input_nodes,
             cache_materialization_nodes,
             solve_components,
             solve_rhs_elements,
@@ -204,6 +210,14 @@ impl ExecutablePlan {
 
     pub fn scalar_kernel(&self) -> Option<&ScalarKernelIr> {
         self.scalar_kernel.as_ref()
+    }
+
+    pub fn cache_kernel(&self) -> Option<&CacheKernelIr> {
+        self.cache_kernel.as_ref()
+    }
+
+    pub fn cache_input_nodes(&self) -> &[ExprId] {
+        &self.cache_input_nodes
     }
 
     pub fn cache_materialization_nodes(&self) -> &[ExprId] {
@@ -488,6 +502,109 @@ impl ExecutablePlan {
         )?))
     }
 
+    fn cache_kernel_ir(
+        model: &CompiledModel,
+        nodes: &[ExprId],
+    ) -> CompileResult<(Option<CacheKernelIr>, Vec<ExprId>)> {
+        if model.cache_plan().is_empty() {
+            return Ok((None, Vec::new()));
+        }
+        let mut value_ids = vec![None; model.graph().nodes().len()];
+        let mut values = Vec::with_capacity(nodes.len());
+        let mut inputs = Vec::new();
+        for id in nodes {
+            let index = id.index();
+            let operand = |child: ExprId| {
+                value_ids[child.index()].ok_or_else(|| {
+                    crate::CompileError::InvalidExecutablePlan(format!(
+                        "cache node {index} depends on unscheduled node {}",
+                        child.index()
+                    ))
+                })
+            };
+            let node = model.graph().node(*id).ok_or_else(|| {
+                crate::CompileError::InvalidExecutablePlan(format!(
+                    "cache node {index} is out of bounds"
+                ))
+            })?;
+            let instruction = match node {
+                ExprNode::EventScalar(_) | ExprNode::EventP4Component { .. } => {
+                    let slot = inputs.len();
+                    inputs.push(*id);
+                    KernelInstruction::Cached(slot)
+                }
+                ExprNode::RealConst(value) => KernelInstruction::RealConstant(*value),
+                ExprNode::ComplexConst(value) => KernelInstruction::ComplexConstant(*value),
+                ExprNode::Unary { op, input } => KernelInstruction::Unary {
+                    op: *op,
+                    input: operand(*input)?,
+                },
+                ExprNode::Binary { op, lhs, rhs } => KernelInstruction::Binary {
+                    op: *op,
+                    lhs: operand(*lhs)?,
+                    rhs: operand(*rhs)?,
+                },
+                ExprNode::NaryAdd { terms } => KernelInstruction::Add(
+                    terms
+                        .iter()
+                        .map(|term| operand(*term))
+                        .collect::<CompileResult<_>>()?,
+                ),
+                ExprNode::NaryMul { factors } => KernelInstruction::Mul(
+                    factors
+                        .iter()
+                        .map(|factor| operand(*factor))
+                        .collect::<CompileResult<_>>()?,
+                ),
+                ExprNode::Complex { re, im } => KernelInstruction::Complex {
+                    re: operand(*re)?,
+                    im: operand(*im)?,
+                },
+                unsupported => {
+                    let _ = unsupported;
+                    return Ok((None, Vec::new()));
+                }
+            };
+            let facts = model.node_facts(*id).ok_or_else(|| {
+                crate::CompileError::InvalidExecutablePlan(format!(
+                    "facts for cache node {index} are missing"
+                ))
+            })?;
+            let kind = match facts.value_kind {
+                ValueKind::Real => KernelValueKind::Real,
+                ValueKind::Complex => KernelValueKind::Complex,
+                ValueKind::Vector { .. } | ValueKind::Matrix { .. } => {
+                    return Ok((None, Vec::new()));
+                }
+            };
+            let kernel_id = KernelValueId::from_index(values.len());
+            values.push(KernelValue {
+                kind,
+                class: if facts.dependency.depends_on_event {
+                    KernelValueClass::Event
+                } else {
+                    KernelValueClass::Invariant
+                },
+                instruction,
+            });
+            value_ids[index] = Some(kernel_id);
+        }
+        let outputs = model
+            .cache_plan()
+            .entries()
+            .iter()
+            .map(|entry| {
+                value_ids[entry.node().index()].ok_or_else(|| {
+                    crate::CompileError::InvalidExecutablePlan(format!(
+                        "cache output node {} is not scheduled",
+                        entry.node().index()
+                    ))
+                })
+            })
+            .collect::<CompileResult<Vec<_>>>()?;
+        Ok((Some(CacheKernelIr::new(values, outputs)?), inputs))
+    }
+
     fn evaluation_schedule(
         graph: &ExprGraph,
         cache_slots: &[Option<usize>],
@@ -622,6 +739,25 @@ mod tests {
                 .iter()
                 .any(|value| matches!(value.instruction, KernelInstruction::Parameter(_)))
         );
+    }
+
+    #[test]
+    fn executable_plan_lowers_computed_scalar_cache_kernel() {
+        let model = CompiledModel::from_expr(&event_scalar("x").sin()).unwrap();
+        let plan = ExecutablePlan::from_model(&model).unwrap();
+        let kernel = plan.cache_kernel().unwrap();
+
+        assert_eq!(plan.cache_input_nodes().len(), 1);
+        assert_eq!(kernel.outputs().len(), model.cache_plan().len());
+        assert!(kernel.values().iter().any(|value| {
+            matches!(
+                value.instruction,
+                KernelInstruction::Unary {
+                    op: laddu_expr::UnaryOp::Sin,
+                    ..
+                }
+            )
+        }));
     }
 
     #[test]

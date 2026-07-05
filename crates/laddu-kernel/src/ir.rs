@@ -393,6 +393,12 @@ pub struct ScalarKernelIr {
     root: KernelValueId,
 }
 
+#[derive(Clone, Debug)]
+pub struct CacheKernelIr {
+    values: Vec<KernelValue>,
+    outputs: Vec<KernelValueId>,
+}
+
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum OutputComponent {
     Real,
@@ -475,6 +481,35 @@ impl ScalarKernelIr {
     }
     pub fn root(&self) -> KernelValueId {
         self.root
+    }
+}
+
+impl CacheKernelIr {
+    pub fn new(
+        values: Vec<KernelValue>,
+        outputs: Vec<KernelValueId>,
+    ) -> Result<Self, KernelIrError> {
+        let Some(first) = outputs.first().copied() else {
+            return Err(KernelIrError::EmptyCacheOutputs);
+        };
+        ScalarKernelIr::validate_values(&values, first)?;
+        for output in &outputs {
+            if output.index() >= values.len() {
+                return Err(KernelIrError::CacheOutputOutOfBounds {
+                    output: output.index(),
+                    len: values.len(),
+                });
+            }
+        }
+        Ok(Self { values, outputs })
+    }
+
+    pub fn values(&self) -> &[KernelValue] {
+        &self.values
+    }
+
+    pub fn outputs(&self) -> &[KernelValueId] {
+        &self.outputs
     }
 }
 
@@ -696,6 +731,36 @@ mod tests {
         assert_eq!(gradient.outputs(), &[output]);
         assert_eq!(gradient.component(), OutputComponent::Real);
         assert_eq!(gradient.values().len(), 2);
+    }
+
+    #[test]
+    fn cache_kernel_preserves_multiple_typed_outputs() {
+        let values = vec![
+            KernelValue {
+                kind: KernelValueKind::Real,
+                class: KernelValueClass::Event,
+                instruction: KernelInstruction::Cached(0),
+            },
+            KernelValue {
+                kind: KernelValueKind::Real,
+                class: KernelValueClass::Event,
+                instruction: KernelInstruction::Unary {
+                    op: UnaryOp::Sin,
+                    input: KernelValueId::from_index(0),
+                },
+            },
+        ];
+        let kernel = CacheKernelIr::new(
+            values,
+            vec![KernelValueId::from_index(0), KernelValueId::from_index(1)],
+        )
+        .unwrap();
+
+        assert_eq!(kernel.outputs().len(), 2);
+        assert_eq!(
+            kernel.values()[kernel.outputs()[1].index()].kind,
+            KernelValueKind::Real
+        );
     }
 
     #[test]
