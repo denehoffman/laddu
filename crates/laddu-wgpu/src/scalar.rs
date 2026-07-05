@@ -3,17 +3,22 @@ use std::sync::mpsc;
 use laddu_compile::{CompiledModel, ExecutablePlan, ReductionPlan, ReductionTransform};
 use laddu_data::data::{EventBatch, accurate::AccurateF64};
 use laddu_expr::{BinaryOp, ExprNode, P4Component, UnaryOp, parameters::ParamValues};
-use laddu_kernel::ir::{KernelInstruction, KernelValueId, KernelValueKind, ScalarKernelIr};
+use laddu_kernel::ir::{
+    CacheKernelIr, KernelInstruction, KernelValue, KernelValueId, KernelValueKind, ScalarKernelIr,
+};
 use wgpu::util::DeviceExt;
 
 use crate::{WgpuContext, WgpuError, WgpuResult};
 
 #[derive(Debug)]
 pub struct WgpuScalarKernel {
+    cache_pipeline: Option<wgpu::ComputePipeline>,
+    cache_bind_group_layout: Option<wgpu::BindGroupLayout>,
     pipeline: wgpu::ComputePipeline,
     bind_group_layout: wgpu::BindGroupLayout,
     reduction_pipeline: wgpu::ComputePipeline,
     reduction_bind_group_layout: wgpu::BindGroupLayout,
+    cache_slots: usize,
     event_inputs: Vec<EventInput>,
 }
 
@@ -31,10 +36,9 @@ impl WgpuScalarKernel {
             .scalar_kernel()
             .ok_or(WgpuError::MissingScalarKernel)?;
         let event_inputs = executable
-            .cache_plan()
-            .entries()
+            .cache_input_nodes()
             .iter()
-            .map(|entry| match executable.graph().node(entry.node()) {
+            .map(|node| match executable.graph().node(*node) {
                 Some(ExprNode::EventScalar(name)) => Ok(EventInput::Scalar(name.to_string())),
                 Some(ExprNode::EventP4Component { name, component }) => {
                     Ok(EventInput::P4(name.to_string(), *component))
@@ -44,7 +48,20 @@ impl WgpuScalarKernel {
                 ))),
             })
             .collect::<WgpuResult<Vec<_>>>()?;
-        let source = Self::wgsl(ir, event_inputs.len())?;
+        let cache_slots = executable.cache_plan().len();
+        if cache_slots > 0 && executable.cache_kernel().is_none() {
+            return Err(WgpuError::UnsupportedInstruction(
+                "cache materialization contains unsupported aggregate operations".to_string(),
+            ));
+        }
+        let (cache_pipeline, cache_bind_group_layout) = executable
+            .cache_kernel()
+            .map(|ir| Self::compile_cache_pipeline(context, ir, event_inputs.len()))
+            .transpose()?
+            .map_or((None, None), |(pipeline, layout)| {
+                (Some(pipeline), Some(layout))
+            });
+        let source = Self::wgsl(ir, cache_slots)?;
         let module = context
             .device()
             .create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -140,12 +157,57 @@ impl WgpuScalarKernel {
                     cache: None,
                 });
         Ok(Self {
+            cache_pipeline,
+            cache_bind_group_layout,
             pipeline,
             bind_group_layout,
             reduction_pipeline,
             reduction_bind_group_layout,
+            cache_slots,
             event_inputs,
         })
+    }
+
+    fn compile_cache_pipeline(
+        context: &WgpuContext,
+        ir: &CacheKernelIr,
+        input_slots: usize,
+    ) -> WgpuResult<(wgpu::ComputePipeline, wgpu::BindGroupLayout)> {
+        let source = Self::cache_wgsl(ir, input_slots)?;
+        let module = context
+            .device()
+            .create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("laddu cache kernel"),
+                source: wgpu::ShaderSource::Wgsl(source.into()),
+            });
+        let bind_group_layout =
+            context
+                .device()
+                .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                    label: Some("laddu cache bindings"),
+                    entries: &[
+                        Self::storage_binding(0, true),
+                        Self::storage_binding(1, false),
+                    ],
+                });
+        let layout = context
+            .device()
+            .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("laddu cache pipeline layout"),
+                bind_group_layouts: &[Some(&bind_group_layout)],
+                immediate_size: 0,
+            });
+        let pipeline = context
+            .device()
+            .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("laddu cache pipeline"),
+                layout: Some(&layout),
+                module: &module,
+                entry_point: Some("main"),
+                compilation_options: Default::default(),
+                cache: None,
+            });
+        Ok((pipeline, bind_group_layout))
     }
 
     fn storage_binding(binding: u32, read_only: bool) -> wgpu::BindGroupLayoutEntry {
@@ -172,8 +234,8 @@ impl WgpuScalarKernel {
         params: &ParamValues,
         batch: &EventBatch,
     ) -> WgpuResult<Vec<(f64, f64)>> {
-        let cache = self.pack_batch(batch)?;
-        self.evaluate_packed(context, params, &cache, batch.len())
+        let inputs = self.pack_batch(batch)?;
+        self.evaluate_packed(context, params, &inputs, batch.len())
     }
 
     pub fn reduce_batch(
@@ -196,7 +258,7 @@ impl WgpuScalarKernel {
         } else {
             parameters
         };
-        let cache = self.pack_batch(batch)?;
+        let inputs = self.pack_batch(batch)?;
         let weights = (0..batch.len())
             .map(|row| batch.weights_at(row) as f32)
             .collect::<Vec<_>>();
@@ -214,13 +276,7 @@ impl WgpuScalarKernel {
                     contents: bytemuck::cast_slice(&parameters),
                     usage: wgpu::BufferUsages::STORAGE,
                 });
-        let cache_buffer = context
-            .device()
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("laddu event cache"),
-                contents: bytemuck::cast_slice(&cache),
-                usage: wgpu::BufferUsages::STORAGE,
-            });
+        let (input_buffer, cache_buffer) = self.cache_buffers(context, &inputs, batch.len());
         let weights_buffer =
             context
                 .device()
@@ -290,6 +346,13 @@ impl WgpuScalarKernel {
                 ],
             });
         let mut encoder = context.device().create_command_encoder(&Default::default());
+        self.encode_cache_materialization(
+            context,
+            &mut encoder,
+            &input_buffer,
+            &cache_buffer,
+            batch.len(),
+        );
         {
             let mut pass = encoder.begin_compute_pass(&Default::default());
             pass.set_pipeline(&self.reduction_pipeline);
@@ -329,7 +392,7 @@ impl WgpuScalarKernel {
     }
 
     fn pack_batch(&self, batch: &EventBatch) -> WgpuResult<Vec<f32>> {
-        let mut cache = Vec::with_capacity(batch.len() * self.event_inputs.len() * 2);
+        let mut inputs = Vec::with_capacity(batch.len() * self.event_inputs.len() * 2);
         for row in 0..batch.len() {
             for input in &self.event_inputs {
                 let value = match input {
@@ -354,20 +417,20 @@ impl WgpuScalarKernel {
                         }
                     }
                 };
-                cache.extend([value as f32, 0.0]);
+                inputs.extend([value as f32, 0.0]);
             }
         }
-        if cache.is_empty() {
-            cache.extend([0.0, 0.0]);
+        if inputs.is_empty() {
+            inputs.extend([0.0, 0.0]);
         }
-        Ok(cache)
+        Ok(inputs)
     }
 
     fn evaluate_packed(
         &self,
         context: &WgpuContext,
         params: &ParamValues,
-        cache: &[f32],
+        inputs: &[f32],
         events: usize,
     ) -> WgpuResult<Vec<(f64, f64)>> {
         if events == 0 {
@@ -387,13 +450,7 @@ impl WgpuScalarKernel {
                     contents: bytemuck::cast_slice(&values),
                     usage: wgpu::BufferUsages::STORAGE,
                 });
-        let cache_buffer = context
-            .device()
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("laddu event cache"),
-                contents: bytemuck::cast_slice(cache),
-                usage: wgpu::BufferUsages::STORAGE,
-            });
+        let (input_buffer, cache_buffer) = self.cache_buffers(context, inputs, events);
         let output_size = (events * 8) as u64;
         let output = context.device().create_buffer(&wgpu::BufferDescriptor {
             label: Some("laddu scalar output"),
@@ -428,6 +485,13 @@ impl WgpuScalarKernel {
                 ],
             });
         let mut encoder = context.device().create_command_encoder(&Default::default());
+        self.encode_cache_materialization(
+            context,
+            &mut encoder,
+            &input_buffer,
+            &cache_buffer,
+            events,
+        );
         {
             let mut pass = encoder.begin_compute_pass(&Default::default());
             pass.set_pipeline(&self.pipeline);
@@ -463,12 +527,78 @@ impl WgpuScalarKernel {
         Ok(values)
     }
 
-    fn wgsl(ir: &ScalarKernelIr, cache_slots: usize) -> WgpuResult<String> {
-        let mut source = String::from(
-            "@group(0) @binding(0) var<storage, read> p: array<f32>;\n@group(0) @binding(1) var<storage, read> cache: array<vec2<f32>>;\n@group(0) @binding(2) var<storage, read_write> out: array<vec2<f32>>;\n@group(0) @binding(3) var<storage, read> weights: array<f32>;\n@group(0) @binding(4) var<storage, read> config: array<u32>;\n@group(0) @binding(5) var<storage, read_write> partials: array<f32>;\n@group(0) @binding(6) var<storage, read_write> reduction_error: array<atomic<u32>>;\nvar<workgroup> sums: array<f32, 64>;\nfn cmul(a: vec2<f32>, b: vec2<f32>) -> vec2<f32> { return vec2(a.x*b.x-a.y*b.y, a.x*b.y+a.y*b.x); }\nfn cdiv(a: vec2<f32>, b: vec2<f32>) -> vec2<f32> { let d=b.x*b.x+b.y*b.y; return vec2((a.x*b.x+a.y*b.y)/d, (a.y*b.x-a.x*b.y)/d); }\nfn model(row: u32) -> vec2<f32> {\n",
-        );
+    fn cache_buffers(
+        &self,
+        context: &WgpuContext,
+        inputs: &[f32],
+        events: usize,
+    ) -> (wgpu::Buffer, wgpu::Buffer) {
+        let input = context
+            .device()
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("laddu event inputs"),
+                contents: bytemuck::cast_slice(inputs),
+                usage: wgpu::BufferUsages::STORAGE,
+            });
+        let cache_size = (events * self.cache_slots * 8).max(8) as u64;
+        let cache = context.device().create_buffer(&wgpu::BufferDescriptor {
+            label: Some("laddu event cache"),
+            size: cache_size,
+            usage: wgpu::BufferUsages::STORAGE,
+            mapped_at_creation: false,
+        });
+        (input, cache)
+    }
+
+    fn encode_cache_materialization(
+        &self,
+        context: &WgpuContext,
+        encoder: &mut wgpu::CommandEncoder,
+        input: &wgpu::Buffer,
+        cache: &wgpu::Buffer,
+        events: usize,
+    ) {
+        let (Some(pipeline), Some(layout)) = (&self.cache_pipeline, &self.cache_bind_group_layout)
+        else {
+            return;
+        };
+        let bind_group = context
+            .device()
+            .create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("laddu cache bind group"),
+                layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: input.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: cache.as_entire_binding(),
+                    },
+                ],
+            });
+        let mut pass = encoder.begin_compute_pass(&Default::default());
+        pass.set_pipeline(pipeline);
+        pass.set_bind_group(0, &bind_group, &[]);
+        pass.dispatch_workgroups((events as u32).div_ceil(64), 1, 1);
+    }
+
+    fn scalar_prelude() -> &'static str {
+        "fn cmul(a: vec2<f32>, b: vec2<f32>) -> vec2<f32> { return vec2(a.x*b.x-a.y*b.y, a.x*b.y+a.y*b.x); }\n\
+fn cdiv(a: vec2<f32>, b: vec2<f32>) -> vec2<f32> { let d=b.x*b.x+b.y*b.y; return vec2((a.x*b.x+a.y*b.y)/d, (a.y*b.x-a.x*b.y)/d); }\n\
+fn csqrt(z: vec2<f32>) -> vec2<f32> { let m=length(z); let re=sqrt(max(0.0, 0.5*(m+z.x))); let im=sqrt(max(0.0, 0.5*(m-z.x))); return vec2(re, select(-im, im, z.y >= 0.0)); }\n\
+fn cexp(z: vec2<f32>) -> vec2<f32> { let e=exp(z.x); return vec2(e*cos(z.y), e*sin(z.y)); }\n\
+fn csin(z: vec2<f32>) -> vec2<f32> { return vec2(sin(z.x)*cosh(z.y), cos(z.x)*sinh(z.y)); }\n\
+fn ccos(z: vec2<f32>) -> vec2<f32> { return vec2(cos(z.x)*cosh(z.y), -sin(z.x)*sinh(z.y)); }\n\
+fn clog(z: vec2<f32>) -> vec2<f32> { return vec2(log(length(z)), atan2(z.y, z.x)); }\n\
+fn cpowi(z: vec2<f32>, exponent: i32) -> vec2<f32> { var result=vec2(1.0, 0.0); var base=z; var n=abs(exponent); loop { if (n == 0) { break; } if ((n & 1) == 1) { result=cmul(result, base); } base=cmul(base, base); n=n/2; } if (exponent < 0) { return cdiv(vec2(1.0, 0.0), result); } return result; }\n"
+    }
+
+    fn emit_values(values: &[KernelValue], cached: impl Fn(usize) -> String) -> WgpuResult<String> {
+        let mut source = String::new();
         let v = |id: KernelValueId| format!("v{}", id.index());
-        for (index, value) in ir.values().iter().enumerate() {
+        for (index, value) in values.iter().enumerate() {
             if !matches!(value.kind, KernelValueKind::Real | KernelValueKind::Complex) {
                 return Err(WgpuError::UnsupportedInstruction(format!(
                     "{:?}",
@@ -476,9 +606,7 @@ impl WgpuScalarKernel {
                 )));
             }
             let expr = match &value.instruction {
-                KernelInstruction::Cached(slot) => {
-                    format!("cache[row * {cache_slots}u + {slot}u]")
-                }
+                KernelInstruction::Cached(slot) => cached(*slot),
                 KernelInstruction::RealConstant(x) => format!("vec2<f32>({:?}, 0.0)", *x as f32),
                 KernelInstruction::ComplexConstant(x) => {
                     format!("vec2<f32>({:?}, {:?})", x.re as f32, x.im as f32)
@@ -504,6 +632,30 @@ impl WgpuScalarKernel {
                     op: UnaryOp::NormSqr,
                     input,
                 } => format!("vec2<f32>(dot({0}, {0}), 0.0)", v(*input)),
+                KernelInstruction::Unary {
+                    op: UnaryOp::Sqrt,
+                    input,
+                } => format!("csqrt({})", v(*input)),
+                KernelInstruction::Unary {
+                    op: UnaryOp::Exp,
+                    input,
+                } => format!("cexp({})", v(*input)),
+                KernelInstruction::Unary {
+                    op: UnaryOp::Sin,
+                    input,
+                } => format!("csin({})", v(*input)),
+                KernelInstruction::Unary {
+                    op: UnaryOp::Cos,
+                    input,
+                } => format!("ccos({})", v(*input)),
+                KernelInstruction::Unary {
+                    op: UnaryOp::Log,
+                    input,
+                } => format!("clog({})", v(*input)),
+                KernelInstruction::Unary {
+                    op: UnaryOp::PowI(power),
+                    input,
+                } => format!("cpowi({}, {power})", v(*input)),
                 KernelInstruction::Binary { op, lhs, rhs } => match op {
                     BinaryOp::Add => format!("{} + {}", v(*lhs), v(*rhs)),
                     BinaryOp::Sub => format!("{} - {}", v(*lhs), v(*rhs)),
@@ -532,6 +684,37 @@ impl WgpuScalarKernel {
             };
             source.push_str(&format!("let v{index} = {expr};\n"));
         }
+        Ok(source)
+    }
+
+    fn cache_wgsl(ir: &CacheKernelIr, input_slots: usize) -> WgpuResult<String> {
+        let output_slots = ir.outputs().len();
+        let mut source = format!(
+            "@group(0) @binding(0) var<storage, read> inputs: array<vec2<f32>>;\n@group(0) @binding(1) var<storage, read_write> cache: array<vec2<f32>>;\n{}@compute @workgroup_size(64) fn main(@builtin(global_invocation_id) gid: vec3<u32>) {{\nlet row=gid.x;\nif (row >= arrayLength(&cache)/{output_slots}u) {{ return; }}\n",
+            Self::scalar_prelude()
+        );
+        source.push_str(&Self::emit_values(ir.values(), |slot| {
+            format!("inputs[row * {input_slots}u + {slot}u]")
+        })?);
+        for (slot, output) in ir.outputs().iter().enumerate() {
+            source.push_str(&format!(
+                "cache[row * {output_slots}u + {slot}u] = v{};\n",
+                output.index()
+            ));
+        }
+        source.push_str("}\n");
+        Ok(source)
+    }
+
+    fn wgsl(ir: &ScalarKernelIr, cache_slots: usize) -> WgpuResult<String> {
+        let mut source = format!(
+            "@group(0) @binding(0) var<storage, read> p: array<f32>;\n@group(0) @binding(1) var<storage, read> cache: array<vec2<f32>>;\n@group(0) @binding(2) var<storage, read_write> out: array<vec2<f32>>;\n@group(0) @binding(3) var<storage, read> weights: array<f32>;\n@group(0) @binding(4) var<storage, read> config: array<u32>;\n@group(0) @binding(5) var<storage, read_write> partials: array<f32>;\n@group(0) @binding(6) var<storage, read_write> reduction_error: array<atomic<u32>>;\nvar<workgroup> sums: array<f32, 64>;\n{}fn model(row: u32) -> vec2<f32> {{\n",
+            Self::scalar_prelude()
+        );
+        source.push_str(&Self::emit_values(ir.values(), |slot| {
+            format!("cache[row * {cache_slots}u + {slot}u]")
+        })?);
+        let v = |id: KernelValueId| format!("v{}", id.index());
         source.push_str(&format!(
             "return {};\n}}\n@compute @workgroup_size(64) fn main(@builtin(global_invocation_id) gid: vec3<u32>) {{\nif (gid.x >= arrayLength(&out)) {{ return; }}\nout[gid.x] = model(gid.x);\n}}\n@compute @workgroup_size(64) fn reduce(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgroup_id) wid: vec3<u32>) {{\nvar contribution = 0.0;\nif (gid.x < arrayLength(&weights)) {{\nlet value = model(gid.x).x;\nif (config[0] == 0u) {{ contribution = value; }} else if (value <= 0.0) {{ atomicMin(&reduction_error[0], gid.x); }} else if (config[0] == 1u) {{ contribution = value; }} else {{ contribution = log(value); }}\ncontribution *= weights[gid.x];\n}}\nsums[lid.x] = contribution;\nworkgroupBarrier();\nvar stride = 32u;\nloop {{\nif (lid.x < stride) {{ sums[lid.x] += sums[lid.x + stride]; }}\nworkgroupBarrier();\nif (stride == 1u) {{ break; }}\nstride /= 2u;\n}}\nif (lid.x == 0u) {{ partials[wid.x] = sums[0]; }}\n}}\n",
             v(ir.root())
@@ -653,5 +836,49 @@ mod tests {
             ),
             Err(crate::WgpuError::NonPositiveEvent(0))
         ));
+    }
+
+    #[test]
+    #[ignore = "requires a WGPU-compatible hardware adapter"]
+    fn gpu_materializes_computed_event_cache() {
+        let expression = (event_scalar("x").sin() + event_scalar("y").cos()).exp();
+        let model = CompiledModel::from_expr(&expression).unwrap();
+        let params = model.params().default_values();
+        let schema = Arc::new(Schema::new(std::iter::empty::<&str>(), ["x", "y"], false).unwrap());
+        let batch = EventBatch::from_events(
+            schema,
+            (0..70).map(|index| {
+                OwnedEvent::new(
+                    vec![],
+                    vec![index as f64 * 0.03125, 1.0 - index as f64 * 0.0125],
+                )
+            }),
+        )
+        .unwrap();
+        let context = WgpuBackend::default()
+            .open(&GpuOptions::default(), Precision::F32)
+            .unwrap();
+        let kernel = WgpuScalarKernel::compile(&context, &model).unwrap();
+
+        assert!(kernel.cache_pipeline.is_some());
+        assert_eq!(kernel.event_inputs.len(), 2);
+
+        let gpu = kernel.evaluate_batch(&context, &params, &batch).unwrap();
+        let execution = Execution::local(ExecutionOptions {
+            device: Device::Cpu(CpuOptions::default()),
+            precision: Precision::F64,
+            ..ExecutionOptions::default()
+        })
+        .unwrap();
+        let cpu = CpuBackend
+            .prepare_for_execution(&model, &execution)
+            .unwrap()
+            .evaluate_batch(&params, &batch)
+            .unwrap();
+
+        for (gpu, cpu) in gpu.iter().zip(cpu) {
+            assert!((gpu.0 - cpu.re).abs() <= 1.0e-5 * cpu.re.abs().max(1.0));
+            assert!((gpu.1 - cpu.im).abs() <= 1.0e-5 * cpu.im.abs().max(1.0));
+        }
     }
 }
