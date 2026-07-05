@@ -27,4 +27,8 @@ pub enum WgpuError {
     BufferMap(String),
     #[error("failed while waiting for WGPU execution: {0}")]
     DevicePoll(String),
+    #[error("event batch is missing required column `{0}`")]
+    MissingEventColumn(String),
+    #[error("GPU positive reduction failed at local event {0}")]
+    NonPositiveEvent(usize),
 }

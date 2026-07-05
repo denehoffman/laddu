@@ -11,6 +11,7 @@ rust-version.workspace = true
 [dependencies]
 bytemuck.workspace = true
 laddu-compile = { path = "../laddu-compile" }
+laddu-data = { path = "../laddu-data" }
 laddu-expr = { path = "../laddu-expr" }
 laddu-kernel = { path = "../laddu-kernel" }
 laddu-runtime = { path = "../laddu-runtime" }

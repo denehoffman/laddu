@@ -1634,6 +1634,7 @@ version = "0.1.0"
 dependencies = [
  "bytemuck",
  "laddu-compile",
+ "laddu-data",
  "laddu-expr",
  "laddu-kernel",
  "laddu-runtime",
