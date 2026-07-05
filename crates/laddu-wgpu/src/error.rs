@@ -17,4 +17,14 @@ pub enum WgpuError {
     },
     #[error("failed to create a WGPU device: {0}")]
     RequestDevice(String),
+    #[error("the model does not contain a scalar kernel")]
+    MissingScalarKernel,
+    #[error("WGPU scalar lowering does not support {0}")]
+    UnsupportedInstruction(String),
+    #[error("parameter error: {0}")]
+    Parameter(String),
+    #[error("failed to map the WGPU result buffer: {0}")]
+    BufferMap(String),
+    #[error("failed while waiting for WGPU execution: {0}")]
+    DevicePoll(String),
 }

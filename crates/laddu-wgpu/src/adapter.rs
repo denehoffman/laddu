@@ -86,7 +86,9 @@ pub struct WgpuBackend {
 impl Default for WgpuBackend {
     fn default() -> Self {
         Self {
-            instance: wgpu::Instance::default(),
+            instance: wgpu::Instance::new(
+                wgpu::InstanceDescriptor::new_without_display_handle_from_env(),
+            ),
         }
     }
 }
@@ -104,19 +106,31 @@ impl WgpuBackend {
         if options.backend == GpuBackend::Cuda {
             return Err(WgpuError::CudaBackendRequested);
         }
-        let adapters = pollster::block_on(self.instance.enumerate_adapters(wgpu::Backends::all()));
-        if adapters.is_empty() {
-            return Err(WgpuError::NoAdapters);
-        }
-        let infos = adapters
-            .iter()
-            .enumerate()
-            .map(|(index, adapter)| WgpuAdapterInfo::from_adapter(index, adapter))
-            .collect::<Vec<_>>();
-        let index = Self::select_adapter_index(&infos, &options.device)
-            .ok_or_else(|| WgpuError::AdapterNotFound(options.device.clone()))?;
-        let adapter = &adapters[index];
-        let info = infos[index].clone();
+        let adapter = match &options.device {
+            GpuDeviceSelector::Auto => {
+                pollster::block_on(self.instance.request_adapter(&wgpu::RequestAdapterOptions {
+                    power_preference: wgpu::PowerPreference::HighPerformance,
+                    ..wgpu::RequestAdapterOptions::default()
+                }))
+                .map_err(|_| WgpuError::NoAdapters)?
+            }
+            selector => {
+                let adapters =
+                    pollster::block_on(self.instance.enumerate_adapters(wgpu::Backends::all()));
+                let infos = adapters
+                    .iter()
+                    .enumerate()
+                    .map(|(index, adapter)| WgpuAdapterInfo::from_adapter(index, adapter))
+                    .collect::<Vec<_>>();
+                let index = Self::select_adapter_index(&infos, selector)
+                    .ok_or_else(|| WgpuError::AdapterNotFound(selector.clone()))?;
+                adapters
+                    .into_iter()
+                    .nth(index)
+                    .ok_or(WgpuError::NoAdapters)?
+            }
+        };
+        let info = WgpuAdapterInfo::from_adapter(0, &adapter);
         let precision = match precision {
             Precision::Auto | Precision::F32 => Precision::F32,
             Precision::F64 if info.supports_f64 && info.backend == "Vulkan" => Precision::F64,

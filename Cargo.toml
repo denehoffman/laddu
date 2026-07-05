@@ -17,6 +17,7 @@ approx = "0.5.1"
 arrow = "59.0.0"
 auto_ops = "0.3.0"
 bitcode = { version = "0.6.9", features = ["serde"] }
+bytemuck = "1.25.0"
 criterion = { version = "4.4.1", package = "codspeed-criterion-compat", features = [
   "html_reports",
 ] }

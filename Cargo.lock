@@ -1632,6 +1632,10 @@ dependencies = [
 name = "laddu-wgpu"
 version = "0.1.0"
 dependencies = [
+ "bytemuck",
+ "laddu-compile",
+ "laddu-expr",
+ "laddu-kernel",
  "laddu-runtime",
  "pollster",
  "thiserror",

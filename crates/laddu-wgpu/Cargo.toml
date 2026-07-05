@@ -9,6 +9,10 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+bytemuck.workspace = true
+laddu-compile = { path = "../laddu-compile" }
+laddu-expr = { path = "../laddu-expr" }
+laddu-kernel = { path = "../laddu-kernel" }
 laddu-runtime = { path = "../laddu-runtime" }
 pollster.workspace = true
 thiserror.workspace = true
