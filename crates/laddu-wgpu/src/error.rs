@@ -15,6 +15,8 @@ pub enum WgpuError {
         adapter: String,
         precision: laddu_runtime::Precision,
     },
+    #[error("WGPU scalar kernels do not yet implement {0:?} arithmetic")]
+    UnsupportedKernelPrecision(laddu_runtime::Precision),
     #[error("failed to create a WGPU device: {0}")]
     RequestDevice(String),
     #[error("GPU memory budget must be greater than zero")]

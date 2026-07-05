@@ -30,6 +30,7 @@ enum EventInput {
 
 impl WgpuScalarKernel {
     pub fn compile(context: &WgpuContext, model: &CompiledModel) -> WgpuResult<Self> {
+        Self::validate_precision(context.precision())?;
         let executable = ExecutablePlan::from_model(model)
             .map_err(|error| WgpuError::UnsupportedInstruction(error.to_string()))?;
         let ir = executable
@@ -166,6 +167,13 @@ impl WgpuScalarKernel {
             cache_slots,
             event_inputs,
         })
+    }
+
+    fn validate_precision(precision: laddu_runtime::Precision) -> WgpuResult<()> {
+        match precision {
+            laddu_runtime::Precision::F32 => Ok(()),
+            unsupported => Err(WgpuError::UnsupportedKernelPrecision(unsupported)),
+        }
     }
 
     fn compile_cache_pipeline(
@@ -814,6 +822,15 @@ mod tests {
     };
 
     use crate::{WgpuBackend, WgpuScalarKernel};
+
+    #[test]
+    fn scalar_kernel_rejects_unimplemented_precisions() {
+        assert!(WgpuScalarKernel::validate_precision(Precision::F32).is_ok());
+        assert!(matches!(
+            WgpuScalarKernel::validate_precision(Precision::F64),
+            Err(crate::WgpuError::UnsupportedKernelPrecision(Precision::F64))
+        ));
+    }
 
     #[test]
     #[ignore = "requires a WGPU-compatible hardware adapter"]
