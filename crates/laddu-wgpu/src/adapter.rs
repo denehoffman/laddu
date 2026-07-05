@@ -56,6 +56,7 @@ impl WgpuAdapterInfo {
 pub struct WgpuContext {
     info: WgpuAdapterInfo,
     precision: Precision,
+    memory_budget: Option<usize>,
     pub(crate) device: wgpu::Device,
     pub(crate) queue: wgpu::Queue,
 }
@@ -67,6 +68,10 @@ impl WgpuContext {
 
     pub fn precision(&self) -> Precision {
         self.precision
+    }
+
+    pub fn memory_budget(&self) -> Option<usize> {
+        self.memory_budget
     }
 
     pub fn device(&self) -> &wgpu::Device {
@@ -105,6 +110,9 @@ impl WgpuBackend {
     pub fn open(&self, options: &GpuOptions, precision: Precision) -> WgpuResult<WgpuContext> {
         if options.backend == GpuBackend::Cuda {
             return Err(WgpuError::CudaBackendRequested);
+        }
+        if options.memory_budget == Some(0) {
+            return Err(WgpuError::InvalidMemoryBudget);
         }
         let adapter = match &options.device {
             GpuDeviceSelector::Auto => {
@@ -155,6 +163,7 @@ impl WgpuBackend {
         Ok(WgpuContext {
             info,
             precision,
+            memory_budget: options.memory_budget,
             device,
             queue,
         })
@@ -233,5 +242,20 @@ mod tests {
             ),
             Some(2)
         );
+    }
+
+    #[test]
+    fn zero_memory_budget_is_rejected_before_adapter_selection() {
+        let error = WgpuBackend::default()
+            .open(
+                &GpuOptions {
+                    memory_budget: Some(0),
+                    ..GpuOptions::default()
+                },
+                Precision::F32,
+            )
+            .unwrap_err();
+
+        assert!(matches!(error, WgpuError::InvalidMemoryBudget));
     }
 }

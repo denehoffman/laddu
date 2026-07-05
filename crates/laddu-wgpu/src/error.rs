@@ -17,6 +17,12 @@ pub enum WgpuError {
     },
     #[error("failed to create a WGPU device: {0}")]
     RequestDevice(String),
+    #[error("GPU memory budget must be greater than zero")]
+    InvalidMemoryBudget,
+    #[error(
+        "GPU memory budget {available} bytes is too small; at least {required} bytes are required"
+    )]
+    MemoryBudgetTooSmall { required: usize, available: usize },
     #[error("the model does not contain a scalar kernel")]
     MissingScalarKernel,
     #[error("WGPU scalar lowering does not support {0}")]

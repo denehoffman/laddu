@@ -234,8 +234,15 @@ impl WgpuScalarKernel {
         params: &ParamValues,
         batch: &EventBatch,
     ) -> WgpuResult<Vec<(f64, f64)>> {
-        let inputs = self.pack_batch(batch)?;
-        self.evaluate_packed(context, params, &inputs, batch.len())
+        let chunk_len = self.max_chunk_events(context, params, false)?;
+        let mut values = Vec::with_capacity(batch.len());
+        for start in (0..batch.len()).step_by(chunk_len) {
+            let end = (start + chunk_len).min(batch.len());
+            let chunk = batch.slice(start, end);
+            let inputs = self.pack_batch(&chunk)?;
+            values.extend(self.evaluate_packed(context, params, &inputs, chunk.len())?);
+        }
+        Ok(values)
     }
 
     pub fn reduce_batch(
@@ -248,6 +255,29 @@ impl WgpuScalarKernel {
         if batch.is_empty() {
             return Ok(0.0);
         }
+        let chunk_len = self.max_chunk_events(context, params, true)?;
+        let mut total = AccurateF64::zero();
+        for start in (0..batch.len()).step_by(chunk_len) {
+            let end = (start + chunk_len).min(batch.len());
+            let chunk = batch.slice(start, end);
+            match self.reduce_chunk(context, params, &chunk, reduction) {
+                Ok(value) => total.push(value),
+                Err(WgpuError::NonPositiveEvent(index)) => {
+                    return Err(WgpuError::NonPositiveEvent(start + index));
+                }
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(total.finish())
+    }
+
+    fn reduce_chunk(
+        &self,
+        context: &WgpuContext,
+        params: &ParamValues,
+        batch: &EventBatch,
+        reduction: ReductionPlan,
+    ) -> WgpuResult<f64> {
         let parameters = params
             .as_slice()
             .iter()
@@ -389,6 +419,52 @@ impl WgpuScalarKernel {
             total.push(f32::from_bits(*bits) as f64);
         }
         Ok(total.finish())
+    }
+
+    fn max_chunk_events(
+        &self,
+        context: &WgpuContext,
+        params: &ParamValues,
+        reduction: bool,
+    ) -> WgpuResult<usize> {
+        let input_bytes = self.event_inputs.len() * size_of::<[f32; 2]>();
+        let cache_bytes = self.cache_slots * size_of::<[f32; 2]>();
+        let result_bytes = if reduction {
+            size_of::<f32>() + 1
+        } else {
+            2 * size_of::<[f32; 2]>()
+        };
+        let per_event = input_bytes + cache_bytes + result_bytes;
+        let parameter_bytes = params.as_slice().len().max(1) * size_of::<f32>();
+        let fixed_bytes = parameter_bytes + if reduction { 16 } else { 0 };
+        let max_binding = context
+            .info()
+            .max_buffer_size
+            .min(context.info().max_storage_buffer_binding_size as u64)
+            .min(usize::MAX as u64) as usize;
+        let mut max_events = u32::MAX as usize;
+        for width in [input_bytes, cache_bytes, if reduction { 4 } else { 8 }] {
+            if width > 0 {
+                max_events = max_events.min(max_binding / width);
+            }
+        }
+        if let Some(budget) = context.memory_budget() {
+            let available = budget.saturating_sub(fixed_bytes);
+            max_events = max_events.min(available / per_event.max(1));
+            if max_events == 0 {
+                return Err(WgpuError::MemoryBudgetTooSmall {
+                    required: fixed_bytes + per_event.max(1),
+                    available: budget,
+                });
+            }
+        }
+        if max_events == 0 {
+            return Err(WgpuError::MemoryBudgetTooSmall {
+                required: fixed_bytes + per_event.max(1),
+                available: max_binding,
+            });
+        }
+        Ok(max_events)
     }
 
     fn pack_batch(&self, batch: &EventBatch) -> WgpuResult<Vec<f32>> {
@@ -787,9 +863,16 @@ mod tests {
         )
         .unwrap();
         let context = WgpuBackend::default()
-            .open(&GpuOptions::default(), Precision::F32)
+            .open(
+                &GpuOptions {
+                    memory_budget: Some(256),
+                    ..GpuOptions::default()
+                },
+                Precision::F32,
+            )
             .unwrap();
         let kernel = WgpuScalarKernel::compile(&context, &model).unwrap();
+        assert!(kernel.max_chunk_events(&context, &params, false).unwrap() < batch.len());
         let gpu = kernel.evaluate_batch(&context, &params, &batch).unwrap();
         let execution = Execution::local(ExecutionOptions {
             device: Device::Cpu(CpuOptions::default()),
@@ -824,7 +907,13 @@ mod tests {
 
         let invalid = EventBatch::from_events(
             Arc::new(Schema::new(std::iter::empty::<&str>(), ["x", "y"], false).unwrap()),
-            [OwnedEvent::new(vec![], vec![0.0, 0.0])],
+            (0..12).map(|index| {
+                if index == 11 {
+                    OwnedEvent::new(vec![], vec![0.0, 0.0])
+                } else {
+                    OwnedEvent::new(vec![], vec![1.0, 2.0])
+                }
+            }),
         )
         .unwrap();
         assert!(matches!(
@@ -834,7 +923,7 @@ mod tests {
                 &invalid,
                 ReductionPlan::weighted_positive_real()
             ),
-            Err(crate::WgpuError::NonPositiveEvent(0))
+            Err(crate::WgpuError::NonPositiveEvent(11))
         ));
     }
 
