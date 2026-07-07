@@ -18,7 +18,7 @@ pub struct WgpuScalarKernel {
     bind_group_layout: wgpu::BindGroupLayout,
     reduction_pipeline: wgpu::ComputePipeline,
     reduction_bind_group_layout: wgpu::BindGroupLayout,
-    cache_slots: usize,
+    cache_width: usize,
     event_inputs: Vec<EventInput>,
 }
 
@@ -74,10 +74,15 @@ impl WgpuScalarKernel {
                 ))),
             })
             .collect::<WgpuResult<Vec<_>>>()?;
-        let cache_slots = executable.cache_plan().len();
-        if cache_slots > 0 && executable.cache_kernel().is_none() {
+        let mut cache_offsets = Vec::with_capacity(executable.cache_plan().len());
+        let mut cache_width = 0;
+        for entry in executable.cache_plan().entries() {
+            cache_offsets.push(cache_width);
+            cache_width += entry.storage_kind().width();
+        }
+        if cache_width > 0 && executable.cache_kernel().is_none() {
             return Err(WgpuError::UnsupportedInstruction(
-                "cache materialization contains unsupported aggregate operations".to_string(),
+                "cache materialization contains unsupported operations".to_string(),
             ));
         }
         let (cache_pipeline, cache_bind_group_layout) = executable
@@ -87,7 +92,7 @@ impl WgpuScalarKernel {
             .map_or((None, None), |(pipeline, layout)| {
                 (Some(pipeline), Some(layout))
             });
-        let source = Self::wgsl(ir, cache_slots)?;
+        let source = Self::wgsl(ir, &cache_offsets, cache_width)?;
         let module = context
             .device()
             .create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -189,7 +194,7 @@ impl WgpuScalarKernel {
             bind_group_layout,
             reduction_pipeline,
             reduction_bind_group_layout,
-            cache_slots,
+            cache_width,
             event_inputs,
         })
     }
@@ -335,7 +340,7 @@ impl WgpuScalarKernel {
             context.queue().submit([encoder.finish()]);
             resident_bytes += inputs.len() * size_of::<f32>()
                 + weights.len() * size_of::<f32>()
-                + (chunk.len() * self.cache_slots * size_of::<[f32; 2]>()).max(8)
+                + (chunk.len() * self.cache_width * size_of::<[f32; 2]>()).max(8)
                 + params.as_slice().len().max(1) * size_of::<f32>()
                 + chunk.len().div_ceil(64) * size_of::<f32>() * 2
                 + 8;
@@ -782,7 +787,7 @@ impl WgpuScalarKernel {
         reduction: bool,
     ) -> WgpuResult<usize> {
         let input_bytes = self.event_inputs.len() * size_of::<[f32; 2]>();
-        let cache_bytes = self.cache_slots * size_of::<[f32; 2]>();
+        let cache_bytes = self.cache_width * size_of::<[f32; 2]>();
         let result_bytes = if reduction {
             size_of::<f32>() + 1
         } else {
@@ -970,7 +975,7 @@ impl WgpuScalarKernel {
                 contents: bytemuck::cast_slice(inputs),
                 usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             });
-        let cache_size = (events * self.cache_slots * 8).max(8) as u64;
+        let cache_size = (events * self.cache_width * 8).max(8) as u64;
         let cache = context.device().create_buffer(&wgpu::BufferDescriptor {
             label: Some("laddu event cache"),
             size: cache_size,
@@ -1025,18 +1030,22 @@ fn clog(z: vec2<f32>) -> vec2<f32> { return vec2(log(length(z)), atan2(z.y, z.x)
 fn cpowi(z: vec2<f32>, exponent: i32) -> vec2<f32> { var result=vec2(1.0, 0.0); var base=z; var n=abs(exponent); loop { if (n == 0) { break; } if ((n & 1) == 1) { result=cmul(result, base); } base=cmul(base, base); n=n/2; } if (exponent < 0) { return cdiv(vec2(1.0, 0.0), result); } return result; }\n"
     }
 
-    fn emit_values(values: &[KernelValue], cached: impl Fn(usize) -> String) -> WgpuResult<String> {
+    fn aggregate(elements: impl IntoIterator<Item = String>, width: usize) -> String {
+        format!(
+            "array<vec2<f32>, {width}>({})",
+            elements.into_iter().collect::<Vec<_>>().join(", ")
+        )
+    }
+
+    fn emit_values(
+        values: &[KernelValue],
+        cached: impl Fn(usize, KernelValueKind) -> String,
+    ) -> WgpuResult<String> {
         let mut source = String::new();
         let v = |id: KernelValueId| format!("v{}", id.index());
         for (index, value) in values.iter().enumerate() {
-            if !matches!(value.kind, KernelValueKind::Real | KernelValueKind::Complex) {
-                return Err(WgpuError::UnsupportedInstruction(format!(
-                    "{:?}",
-                    value.instruction
-                )));
-            }
             let expr = match &value.instruction {
-                KernelInstruction::Cached(slot) => cached(*slot),
+                KernelInstruction::Cached(slot) => cached(*slot, value.kind),
                 KernelInstruction::RealConstant(x) => format!("vec2<f32>({:?}, 0.0)", *x as f32),
                 KernelInstruction::ComplexConstant(x) => {
                     format!("vec2<f32>({:?}, {:?})", x.re as f32, x.im as f32)
@@ -1106,6 +1115,81 @@ fn cpowi(z: vec2<f32>, exponent: i32) -> vec2<f32> { var result=vec2(1.0, 0.0); 
                 KernelInstruction::Complex { re, im } => {
                     format!("vec2<f32>({}.x, {}.x)", v(*re), v(*im))
                 }
+                KernelInstruction::Vector(elements) => {
+                    Self::aggregate(elements.iter().map(|element| v(*element)), elements.len())
+                }
+                KernelInstruction::Matrix { elements, .. } => {
+                    Self::aggregate(elements.iter().map(|element| v(*element)), elements.len())
+                }
+                KernelInstruction::Component { input, index } => {
+                    format!("{}[{index}]", v(*input))
+                }
+                KernelInstruction::MatrixElement { input, row, col } => {
+                    let KernelValueKind::Matrix { cols, .. } = values[input.index()].kind else {
+                        unreachable!("matrix-element IR was validated")
+                    };
+                    format!("{}[{}]", v(*input), row * cols + col)
+                }
+                KernelInstruction::Dot { lhs, rhs } => {
+                    let KernelValueKind::Vector { len } = values[lhs.index()].kind else {
+                        unreachable!("dot-product IR was validated")
+                    };
+                    (0..len)
+                        .map(|element| {
+                            format!("cmul({}[{element}], {}[{element}])", v(*lhs), v(*rhs))
+                        })
+                        .reduce(|a, b| format!("{a} + {b}"))
+                        .unwrap()
+                }
+                KernelInstruction::MatVec { matrix, vector } => {
+                    let KernelValueKind::Matrix { rows, cols } = values[matrix.index()].kind else {
+                        unreachable!("matrix-vector IR was validated")
+                    };
+                    Self::aggregate(
+                        (0..rows).map(|row| {
+                            (0..cols)
+                                .map(|col| {
+                                    format!(
+                                        "cmul({}[{}], {}[{col}])",
+                                        v(*matrix),
+                                        row * cols + col,
+                                        v(*vector)
+                                    )
+                                })
+                                .reduce(|a, b| format!("{a} + {b}"))
+                                .unwrap()
+                        }),
+                        rows,
+                    )
+                }
+                KernelInstruction::MatMul { lhs, rhs } => {
+                    let KernelValueKind::Matrix { rows, cols: inner } = values[lhs.index()].kind
+                    else {
+                        unreachable!("matrix-matrix IR was validated")
+                    };
+                    let KernelValueKind::Matrix { cols, .. } = values[rhs.index()].kind else {
+                        unreachable!("matrix-matrix IR was validated")
+                    };
+                    Self::aggregate(
+                        (0..rows).flat_map(|row| {
+                            (0..cols).map(move |col| {
+                                (0..inner)
+                                    .map(|element| {
+                                        format!(
+                                            "cmul({}[{}], {}[{}])",
+                                            v(*lhs),
+                                            row * inner + element,
+                                            v(*rhs),
+                                            element * cols + col
+                                        )
+                                    })
+                                    .reduce(|a, b| format!("{a} + {b}"))
+                                    .unwrap()
+                            })
+                        }),
+                        rows * cols,
+                    )
+                }
                 instruction => {
                     return Err(WgpuError::UnsupportedInstruction(format!(
                         "{instruction:?}"
@@ -1118,31 +1202,58 @@ fn cpowi(z: vec2<f32>, exponent: i32) -> vec2<f32> { var result=vec2(1.0, 0.0); 
     }
 
     fn cache_wgsl(ir: &CacheKernelIr, input_slots: usize) -> WgpuResult<String> {
-        let output_slots = ir.outputs().len();
+        let mut output_offsets = Vec::with_capacity(ir.outputs().len());
+        let mut output_width = 0;
+        for output in ir.outputs() {
+            output_offsets.push(output_width);
+            output_width += ir.values()[output.index()].kind.width();
+        }
         let mut source = format!(
-            "@group(0) @binding(0) var<storage, read> inputs: array<vec2<f32>>;\n@group(0) @binding(1) var<storage, read_write> cache: array<vec2<f32>>;\n{}@compute @workgroup_size(64) fn main(@builtin(global_invocation_id) gid: vec3<u32>) {{\nlet row=gid.x;\nif (row >= arrayLength(&cache)/{output_slots}u) {{ return; }}\n",
+            "@group(0) @binding(0) var<storage, read> inputs: array<vec2<f32>>;\n@group(0) @binding(1) var<storage, read_write> cache: array<vec2<f32>>;\n{}@compute @workgroup_size(64) fn main(@builtin(global_invocation_id) gid: vec3<u32>) {{\nlet row=gid.x;\nif (row >= arrayLength(&cache)/{output_width}u) {{ return; }}\n",
             Self::scalar_prelude()
         );
-        source.push_str(&Self::emit_values(ir.values(), |slot| {
+        source.push_str(&Self::emit_values(ir.values(), |slot, _| {
             format!("inputs[row * {input_slots}u + {slot}u]")
         })?);
         for (slot, output) in ir.outputs().iter().enumerate() {
-            source.push_str(&format!(
-                "cache[row * {output_slots}u + {slot}u] = v{};\n",
-                output.index()
-            ));
+            let width = ir.values()[output.index()].kind.width();
+            for element in 0..width {
+                let value = if width == 1 {
+                    format!("v{}", output.index())
+                } else {
+                    format!("v{}[{element}]", output.index())
+                };
+                source.push_str(&format!(
+                    "cache[row * {output_width}u + {}u] = {value};\n",
+                    output_offsets[slot] + element
+                ));
+            }
         }
         source.push_str("}\n");
         Ok(source)
     }
 
-    fn wgsl(ir: &ScalarKernelIr, cache_slots: usize) -> WgpuResult<String> {
+    fn wgsl(
+        ir: &ScalarKernelIr,
+        cache_offsets: &[usize],
+        cache_width: usize,
+    ) -> WgpuResult<String> {
         let mut source = format!(
             "@group(0) @binding(0) var<storage, read> p: array<f32>;\n@group(0) @binding(1) var<storage, read> cache: array<vec2<f32>>;\n@group(0) @binding(2) var<storage, read_write> out: array<vec2<f32>>;\n@group(0) @binding(3) var<storage, read> weights: array<f32>;\n@group(0) @binding(4) var<storage, read> config: array<u32>;\n@group(0) @binding(5) var<storage, read_write> partials: array<f32>;\n@group(0) @binding(6) var<storage, read_write> reduction_error: array<atomic<u32>>;\nvar<workgroup> sums: array<f32, 64>;\n{}fn model(row: u32) -> vec2<f32> {{\n",
             Self::scalar_prelude()
         );
-        source.push_str(&Self::emit_values(ir.values(), |slot| {
-            format!("cache[row * {cache_slots}u + {slot}u]")
+        source.push_str(&Self::emit_values(ir.values(), |slot, kind| {
+            let offset = cache_offsets[slot];
+            if kind.width() == 1 {
+                format!("cache[row * {cache_width}u + {offset}u]")
+            } else {
+                Self::aggregate(
+                    (0..kind.width()).map(|element| {
+                        format!("cache[row * {cache_width}u + {}u]", offset + element)
+                    }),
+                    kind.width(),
+                )
+            }
         })?);
         let v = |id: KernelValueId| format!("v{}", id.index());
         source.push_str(&format!(
@@ -1176,7 +1287,9 @@ mod tests {
         data::{Dataset, EventBatch, OwnedEvent},
         schema::Schema,
     };
-    use laddu_expr::{Expr, complex, event_scalar, parameter};
+    use laddu_expr::{
+        Expr, complex, dot, event_scalar, matmul, matrix, matvec, parameter, solve, vector,
+    };
     use laddu_runtime::{CpuBackend, CpuOptions, Device, Execution, ExecutionOptions, Precision};
 
     use crate::{WgpuBackend, WgpuOptions, WgpuPrecision, WgpuScalarKernel};
@@ -1189,6 +1302,65 @@ mod tests {
             Err(crate::WgpuError::UnsupportedKernelPrecision(
                 WgpuPrecision::F64
             ))
+        ));
+    }
+
+    #[test]
+    fn aggregate_wgsl_uses_flattened_cache_offsets_and_rejects_solves() {
+        let cached_matrix = matrix([
+            [event_scalar("x"), event_scalar("y")],
+            [event_scalar("y") + 1.0, event_scalar("x") - 1.0],
+        ]);
+        let matrix_term = dot(
+            matvec(cached_matrix, vector([parameter!("a"), parameter!("b")])),
+            vector([1.0, 2.0]),
+        );
+        let vector_term = dot(
+            vector([event_scalar("x") + 2.0, event_scalar("y") - 2.0]),
+            vector([parameter!("c"), parameter!("d")]),
+        );
+        let expression = matrix_term + vector_term;
+        let model = CompiledModel::from_expr_with_options(
+            &expression,
+            &laddu_compile::CompileOptions::without_optimizations(),
+        )
+        .unwrap();
+        let executable = laddu_compile::ExecutablePlan::from_model(&model).unwrap();
+        let mut offsets = Vec::new();
+        let mut width = 0;
+        for entry in executable.cache_plan().entries() {
+            offsets.push(width);
+            width += entry.storage_kind().width();
+        }
+        let source =
+            WgpuScalarKernel::wgsl(executable.scalar_kernel().unwrap(), &offsets, width).unwrap();
+        let cache_source = WgpuScalarKernel::cache_wgsl(
+            executable.cache_kernel().unwrap(),
+            executable.cache_input_nodes().len(),
+        )
+        .unwrap();
+
+        assert_eq!(width, 6);
+        assert!(source.contains("array<vec2<f32>, 4>"));
+        assert!(source.contains("array<vec2<f32>, 2>"));
+        assert!(source.contains("cache[row * 6u + 5u]"));
+        assert!(source.contains("cmul("));
+        assert!(cache_source.contains("arrayLength(&cache)/6u"));
+        assert!(cache_source.contains("cache[row * 6u + 5u]"));
+
+        let solve_model = CompiledModel::from_expr_with_options(
+            &solve(matrix([[1.0, 0.0], [0.0, 1.0]]), vector([1.0, 2.0])).component(0),
+            &laddu_compile::CompileOptions::without_optimizations(),
+        )
+        .unwrap();
+        let solve_ir = laddu_compile::ExecutablePlan::from_model(&solve_model)
+            .unwrap()
+            .scalar_kernel()
+            .unwrap()
+            .clone();
+        assert!(matches!(
+            WgpuScalarKernel::wgsl(&solve_ir, &[], 0),
+            Err(crate::WgpuError::UnsupportedInstruction(_))
         ));
     }
 
@@ -1329,6 +1501,82 @@ mod tests {
         assert!(kernel.cache_pipeline.is_some());
         assert_eq!(kernel.event_inputs.len(), 2);
 
+        let gpu = kernel.evaluate_batch(&context, &params, &batch).unwrap();
+        let execution = Execution::local(ExecutionOptions {
+            device: Device::Cpu(CpuOptions::default()),
+            precision: Precision::F64,
+            ..ExecutionOptions::default()
+        })
+        .unwrap();
+        let cpu = CpuBackend
+            .prepare_for_execution(&model, &execution)
+            .unwrap()
+            .evaluate_batch(&params, &batch)
+            .unwrap();
+
+        for (gpu, cpu) in gpu.iter().zip(cpu) {
+            assert!((gpu.0 - cpu.re).abs() <= 1.0e-5 * cpu.re.abs().max(1.0));
+            assert!((gpu.1 - cpu.im).abs() <= 1.0e-5 * cpu.im.abs().max(1.0));
+        }
+    }
+
+    #[test]
+    #[ignore = "requires a WGPU-compatible hardware adapter"]
+    fn gpu_aggregate_algebra_matches_f32_cpu_with_cached_rectangular_matrices() {
+        let cached_matrix = matrix([
+            [
+                event_scalar("x"),
+                event_scalar("y"),
+                event_scalar("x") + 1.0,
+            ],
+            [
+                event_scalar("y") - 0.5,
+                event_scalar("x") * 2.0,
+                event_scalar("y") + 2.0,
+            ],
+        ]);
+        let projected = matvec(
+            cached_matrix.clone(),
+            vector([
+                parameter!("a", initial: 0.5),
+                parameter!("b", initial: -0.25),
+                parameter!("c", initial: 1.5),
+            ]),
+        );
+        let remixed = matmul(
+            matrix([[1.0, 2.0], [-1.0, 0.5], [0.25, -0.75]]),
+            cached_matrix,
+        )
+        .matrix_element(2, 1);
+        let expression = dot(projected, vector([1.0, -2.0])) + remixed;
+        let model = CompiledModel::from_expr_with_options(
+            &expression,
+            &laddu_compile::CompileOptions::without_optimizations(),
+        )
+        .unwrap();
+        let params = model.params().default_values();
+        let schema = Arc::new(Schema::new(std::iter::empty::<&str>(), ["x", "y"], false).unwrap());
+        let batch = EventBatch::from_events(
+            schema,
+            (0..70).map(|index| {
+                OwnedEvent::new(
+                    vec![],
+                    vec![index as f64 * 0.03125, 1.0 - index as f64 * 0.0125],
+                )
+            }),
+        )
+        .unwrap();
+        let context = WgpuBackend::default()
+            .open(
+                &WgpuOptions {
+                    memory_budget: Some(512),
+                    ..WgpuOptions::default()
+                },
+                WgpuPrecision::F32,
+            )
+            .unwrap();
+        let kernel = WgpuScalarKernel::compile(&context, &model).unwrap();
+        assert!(kernel.max_chunk_events(&context, &params, false).unwrap() < batch.len());
         let gpu = kernel.evaluate_batch(&context, &params, &batch).unwrap();
         let execution = Execution::local(ExecutionOptions {
             device: Device::Cpu(CpuOptions::default()),

@@ -560,6 +560,45 @@ impl ExecutablePlan {
                     re: operand(*re)?,
                     im: operand(*im)?,
                 },
+                ExprNode::Vector { elements } => KernelInstruction::Vector(
+                    elements
+                        .iter()
+                        .map(|element| operand(*element))
+                        .collect::<CompileResult<_>>()?,
+                ),
+                ExprNode::Matrix {
+                    rows,
+                    cols,
+                    elements,
+                } => KernelInstruction::Matrix {
+                    rows: *rows,
+                    cols: *cols,
+                    elements: elements
+                        .iter()
+                        .map(|element| operand(*element))
+                        .collect::<CompileResult<_>>()?,
+                },
+                ExprNode::Component { input, index } => KernelInstruction::Component {
+                    input: operand(*input)?,
+                    index: *index,
+                },
+                ExprNode::MatrixElement { input, row, col } => KernelInstruction::MatrixElement {
+                    input: operand(*input)?,
+                    row: *row,
+                    col: *col,
+                },
+                ExprNode::MatMul { lhs, rhs } => KernelInstruction::MatMul {
+                    lhs: operand(*lhs)?,
+                    rhs: operand(*rhs)?,
+                },
+                ExprNode::MatVec { matrix, vector } => KernelInstruction::MatVec {
+                    matrix: operand(*matrix)?,
+                    vector: operand(*vector)?,
+                },
+                ExprNode::Dot { lhs, rhs } => KernelInstruction::Dot {
+                    lhs: operand(*lhs)?,
+                    rhs: operand(*rhs)?,
+                },
                 unsupported => {
                     let _ = unsupported;
                     return Ok((None, Vec::new()));
@@ -573,9 +612,8 @@ impl ExecutablePlan {
             let kind = match facts.value_kind {
                 ValueKind::Real => KernelValueKind::Real,
                 ValueKind::Complex => KernelValueKind::Complex,
-                ValueKind::Vector { .. } | ValueKind::Matrix { .. } => {
-                    return Ok((None, Vec::new()));
-                }
+                ValueKind::Vector { len } => KernelValueKind::Vector { len },
+                ValueKind::Matrix { rows, cols } => KernelValueKind::Matrix { rows, cols },
             };
             let kernel_id = KernelValueId::from_index(values.len());
             values.push(KernelValue {
@@ -712,7 +750,7 @@ impl ExecutablePlan {
 
 #[cfg(test)]
 mod tests {
-    use laddu_expr::{event_scalar, matrix, parameter, solve, vector};
+    use laddu_expr::{event_scalar, matrix, matvec, parameter, solve, vector};
 
     use super::*;
 
@@ -757,6 +795,42 @@ mod tests {
                     ..
                 }
             )
+        }));
+    }
+
+    #[test]
+    fn executable_plan_lowers_aggregate_cache_kernel() {
+        let cached_matrix = matrix([
+            [event_scalar("x"), event_scalar("y")],
+            [event_scalar("y") + 1.0, event_scalar("x") - 1.0],
+        ]);
+        let expression =
+            matvec(cached_matrix, vector([parameter!("a"), parameter!("b")])).component(1);
+        let model = CompiledModel::from_expr_with_options(
+            &expression,
+            &crate::CompileOptions::without_optimizations(),
+        )
+        .unwrap();
+        let plan = ExecutablePlan::from_model(&model).unwrap();
+        let cache = plan.cache_kernel().unwrap();
+
+        assert!(cache.values().iter().any(|value| {
+            matches!(
+                value.instruction,
+                KernelInstruction::Matrix {
+                    rows: 2,
+                    cols: 2,
+                    ..
+                }
+            ) && value.kind == KernelValueKind::Matrix { rows: 2, cols: 2 }
+        }));
+        assert!(plan.scalar_kernel().unwrap().values().iter().any(|value| {
+            matches!(value.instruction, KernelInstruction::Cached(_))
+                && value.kind == KernelValueKind::Matrix { rows: 2, cols: 2 }
+        }));
+        assert!(plan.scalar_kernel().unwrap().values().iter().any(|value| {
+            matches!(value.instruction, KernelInstruction::MatVec { .. })
+                && value.kind == KernelValueKind::Vector { len: 2 }
         }));
     }
 

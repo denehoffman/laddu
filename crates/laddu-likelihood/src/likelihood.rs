@@ -930,13 +930,13 @@ mod tests {
     use std::sync::Arc;
 
     use approx::assert_relative_eq;
-    use laddu_compile::CompiledModel;
+    use laddu_compile::{CompileOptions, CompiledModel};
     use laddu_data::{
         data::{CacheStorage, Dataset, EventBatch, OwnedEvent},
         schema::Schema,
     };
     use laddu_expr::{
-        complex, event_scalar, matrix, parameter, parameters::Parameter, solve, vector,
+        complex, dot, event_scalar, matrix, matvec, parameter, parameters::Parameter, solve, vector,
     };
     use laddu_runtime::{CpuOptions, Device, ExecutionOptions, Precision, ThreadPolicy};
     #[cfg(feature = "wgpu")]
@@ -1726,7 +1726,65 @@ mod tests {
 
     #[cfg(feature = "wgpu")]
     #[test]
-    fn explicit_wgpu_reports_unsupported_aggregate_model() {
+    #[ignore = "requires a WGPU-compatible hardware adapter"]
+    fn wgpu_aggregate_likelihood_matches_cpu() {
+        let expression = dot(
+            matvec(
+                matrix([[event_scalar("x"), event_scalar("x") + 1.0]]),
+                vector([
+                    parameter!("a", initial: 0.5),
+                    parameter!("b", initial: 1.25),
+                ]),
+            ),
+            vector([1.0]),
+        )
+        .norm_sqr();
+        let model = CompiledModel::from_expr_with_options(
+            &expression,
+            &CompileOptions::without_optimizations(),
+        )
+        .unwrap();
+        let data = weighted_dataset(&[(0.25, 0.5), (0.75, 1.5), (1.25, 2.0)]);
+        let cpu = single_term_likelihood_with_execution(
+            "aggregate",
+            &model,
+            &data,
+            &data,
+            Execution::local(ExecutionOptions {
+                device: Device::Cpu(CpuOptions::default()),
+                precision: Precision::F64,
+                ..ExecutionOptions::default()
+            })
+            .unwrap(),
+        );
+        let gpu = single_term_likelihood_with_execution(
+            "aggregate",
+            &model,
+            &data,
+            &data,
+            Execution::local(ExecutionOptions {
+                device: Device::Gpu(GpuOptions {
+                    backend: GpuBackend::Wgpu,
+                    memory_budget: Some(256),
+                    ..GpuOptions::default()
+                }),
+                precision: Precision::F32,
+                ..ExecutionOptions::default()
+            })
+            .unwrap(),
+        );
+        let params = cpu.default_params();
+
+        assert_relative_eq!(
+            gpu.nll(&params).unwrap(),
+            cpu.nll(&params).unwrap(),
+            epsilon = 2.0e-5
+        );
+    }
+
+    #[cfg(feature = "wgpu")]
+    #[test]
+    fn explicit_wgpu_reports_unsupported_solve_model() {
         let x = event_scalar("x");
         let model = CompiledModel::from_expr(
             &solve(
