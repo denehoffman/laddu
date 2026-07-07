@@ -126,8 +126,8 @@ fn value_kind(node: &ExprNode, facts: &[NodeFacts]) -> ValueKind {
                 ValueKind::Complex
             }
         }
-        ExprNode::Complex { .. } | ExprNode::EventScalar(_) => ValueKind::Complex,
-        ExprNode::EventP4Component { .. } => ValueKind::Real,
+        ExprNode::Complex { .. } => ValueKind::Complex,
+        ExprNode::EventScalar(_) | ExprNode::EventP4Component { .. } => ValueKind::Real,
         ExprNode::Unary { op, input } => match op {
             UnaryOp::Real | UnaryOp::Imag | UnaryOp::NormSqr => ValueKind::Real,
             UnaryOp::Neg
@@ -214,8 +214,7 @@ fn number_class(node: &ExprNode, facts: &[NodeFacts]) -> NumberClass {
             }
         }
         ExprNode::Complex { .. } => NumberClass::Complex,
-        ExprNode::EventScalar(_) => NumberClass::Unknown,
-        ExprNode::EventP4Component { .. } => NumberClass::Real,
+        ExprNode::EventScalar(_) | ExprNode::EventP4Component { .. } => NumberClass::Real,
         ExprNode::Unary { op, input } => {
             let input = facts[input.index()].number_class;
             match op {

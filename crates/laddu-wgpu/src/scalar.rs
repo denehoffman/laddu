@@ -23,6 +23,31 @@ pub struct WgpuScalarKernel {
 }
 
 #[derive(Clone, Debug)]
+pub struct WgpuPreparedBatch {
+    chunks: Vec<WgpuPreparedChunk>,
+    len: usize,
+    resident_bytes: usize,
+}
+
+#[derive(Clone, Debug)]
+struct WgpuPreparedChunk {
+    input: wgpu::Buffer,
+    cache: wgpu::Buffer,
+    weights: wgpu::Buffer,
+    scratch: ReductionScratch,
+    events: usize,
+}
+
+#[derive(Clone, Debug)]
+struct ReductionScratch {
+    params: wgpu::Buffer,
+    config: wgpu::Buffer,
+    partials: wgpu::Buffer,
+    error: wgpu::Buffer,
+    staging: wgpu::Buffer,
+}
+
+#[derive(Clone, Debug)]
 enum EventInput {
     Scalar(String),
     P4(String, P4Component),
@@ -169,9 +194,9 @@ impl WgpuScalarKernel {
         })
     }
 
-    fn validate_precision(precision: laddu_runtime::Precision) -> WgpuResult<()> {
+    fn validate_precision(precision: crate::WgpuPrecision) -> WgpuResult<()> {
         match precision {
-            laddu_runtime::Precision::F32 => Ok(()),
+            crate::WgpuPrecision::F32 => Ok(()),
             unsupported => Err(WgpuError::UnsupportedKernelPrecision(unsupported)),
         }
     }
@@ -279,11 +304,352 @@ impl WgpuScalarKernel {
         Ok(total.finish())
     }
 
+    pub fn prepare_batch(
+        &self,
+        context: &WgpuContext,
+        params: &ParamValues,
+        batch: &EventBatch,
+    ) -> WgpuResult<WgpuPreparedBatch> {
+        let chunk_len = self.max_chunk_events(context, params, true)?;
+        let mut chunks = Vec::new();
+        let mut resident_bytes = 0;
+        for start in (0..batch.len()).step_by(chunk_len) {
+            let end = (start + chunk_len).min(batch.len());
+            let chunk = batch.slice(start, end);
+            let inputs = self.pack_batch(&chunk)?;
+            let weights = (0..chunk.len())
+                .map(|row| chunk.weights_at(row) as f32)
+                .collect::<Vec<_>>();
+            let (input, cache) = self.cache_buffers(context, &inputs, chunk.len());
+            let weights_buffer =
+                context
+                    .device()
+                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("laddu resident event weights"),
+                        contents: bytemuck::cast_slice(&weights),
+                        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                    });
+            let scratch = Self::reduction_scratch(context, params, chunk.len());
+            let mut encoder = context.device().create_command_encoder(&Default::default());
+            self.encode_cache_materialization(context, &mut encoder, &input, &cache, chunk.len());
+            context.queue().submit([encoder.finish()]);
+            resident_bytes += inputs.len() * size_of::<f32>()
+                + weights.len() * size_of::<f32>()
+                + (chunk.len() * self.cache_slots * size_of::<[f32; 2]>()).max(8)
+                + params.as_slice().len().max(1) * size_of::<f32>()
+                + chunk.len().div_ceil(64) * size_of::<f32>() * 2
+                + 8;
+            chunks.push(WgpuPreparedChunk {
+                input,
+                cache,
+                weights: weights_buffer,
+                scratch,
+                events: chunk.len(),
+            });
+        }
+        Ok(WgpuPreparedBatch {
+            chunks,
+            len: batch.len(),
+            resident_bytes,
+        })
+    }
+
+    pub fn refresh_batch(
+        &self,
+        context: &WgpuContext,
+        params: &ParamValues,
+        batch: &EventBatch,
+        prepared: &mut WgpuPreparedBatch,
+    ) -> WgpuResult<bool> {
+        let chunk_len = self.max_chunk_events(context, params, true)?;
+        let expected = batch.len().div_ceil(chunk_len);
+        if prepared.chunks.len() != expected {
+            return Ok(false);
+        }
+        for (chunk_index, start) in (0..batch.len()).step_by(chunk_len).enumerate() {
+            let end = (start + chunk_len).min(batch.len());
+            let batch_chunk = batch.slice(start, end);
+            let prepared_chunk = &prepared.chunks[chunk_index];
+            if prepared_chunk.events != batch_chunk.len() {
+                return Ok(false);
+            }
+            let inputs = self.pack_batch(&batch_chunk)?;
+            let weights = (0..batch_chunk.len())
+                .map(|row| batch_chunk.weights_at(row) as f32)
+                .collect::<Vec<_>>();
+            context
+                .queue()
+                .write_buffer(&prepared_chunk.input, 0, bytemuck::cast_slice(&inputs));
+            context.queue().write_buffer(
+                &prepared_chunk.weights,
+                0,
+                bytemuck::cast_slice(&weights),
+            );
+            let mut encoder = context.device().create_command_encoder(&Default::default());
+            self.encode_cache_materialization(
+                context,
+                &mut encoder,
+                &prepared_chunk.input,
+                &prepared_chunk.cache,
+                prepared_chunk.events,
+            );
+            context.queue().submit([encoder.finish()]);
+        }
+        prepared.len = batch.len();
+        Ok(true)
+    }
+
+    pub fn reduce_prepared_batch(
+        &self,
+        context: &WgpuContext,
+        params: &ParamValues,
+        batch: &WgpuPreparedBatch,
+        reduction: ReductionPlan,
+    ) -> WgpuResult<f64> {
+        let mut total = AccurateF64::zero();
+        let mut offset = 0;
+        for chunk in &batch.chunks {
+            match self.reduce_prepared_chunk(context, params, chunk, reduction) {
+                Ok(value) => total.push(value),
+                Err(WgpuError::NonPositiveEvent(index)) => {
+                    return Err(WgpuError::NonPositiveEvent(offset + index));
+                }
+                Err(error) => return Err(error),
+            }
+            offset += chunk.events;
+        }
+        Ok(total.finish())
+    }
+
+    fn reduce_prepared_chunk(
+        &self,
+        context: &WgpuContext,
+        params: &ParamValues,
+        chunk: &WgpuPreparedChunk,
+        reduction: ReductionPlan,
+    ) -> WgpuResult<f64> {
+        let parameters = Self::parameter_values(params);
+        let mode = Self::reduction_mode(reduction);
+        context
+            .queue()
+            .write_buffer(&chunk.scratch.params, 0, bytemuck::cast_slice(&parameters));
+        context
+            .queue()
+            .write_buffer(&chunk.scratch.config, 0, bytemuck::bytes_of(&mode));
+        context
+            .queue()
+            .write_buffer(&chunk.scratch.error, 0, bytemuck::bytes_of(&u32::MAX));
+        self.execute_prepared_reduce(
+            context,
+            &chunk.cache,
+            &chunk.weights,
+            chunk.events,
+            &chunk.scratch,
+        )
+    }
+
+    fn parameter_values(params: &ParamValues) -> Vec<f32> {
+        let values = params
+            .as_slice()
+            .iter()
+            .map(|value| *value as f32)
+            .collect::<Vec<_>>();
+        if values.is_empty() { vec![0.0] } else { values }
+    }
+
+    fn reduction_mode(reduction: ReductionPlan) -> u32 {
+        match reduction.transform() {
+            ReductionTransform::Real => 0,
+            ReductionTransform::PositiveReal => 1,
+            ReductionTransform::LogPositiveReal => 2,
+        }
+    }
+
+    fn reduction_scratch(
+        context: &WgpuContext,
+        params: &ParamValues,
+        events: usize,
+    ) -> ReductionScratch {
+        let parameters = Self::parameter_values(params);
+        let groups = events.div_ceil(64);
+        let params = context
+            .device()
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("laddu prepared parameters"),
+                contents: bytemuck::cast_slice(&parameters),
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            });
+        let config = context
+            .device()
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("laddu prepared reduction config"),
+                contents: bytemuck::bytes_of(&0_u32),
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            });
+        let partials = context.device().create_buffer(&wgpu::BufferDescriptor {
+            label: Some("laddu prepared reduction partials"),
+            size: (groups * 4).max(4) as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+        let error = context
+            .device()
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("laddu prepared reduction error"),
+                contents: bytemuck::bytes_of(&u32::MAX),
+                usage: wgpu::BufferUsages::STORAGE
+                    | wgpu::BufferUsages::COPY_SRC
+                    | wgpu::BufferUsages::COPY_DST,
+            });
+        let staging = context.device().create_buffer(&wgpu::BufferDescriptor {
+            label: Some("laddu prepared reduction readback"),
+            size: (groups * 4 + 4).max(8) as u64,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        ReductionScratch {
+            params,
+            config,
+            partials,
+            error,
+            staging,
+        }
+    }
+
+    fn execute_prepared_reduce(
+        &self,
+        context: &WgpuContext,
+        cache: &wgpu::Buffer,
+        weights: &wgpu::Buffer,
+        events: usize,
+        scratch: &ReductionScratch,
+    ) -> WgpuResult<f64> {
+        let groups = events.div_ceil(64);
+        let bind_group = context
+            .device()
+            .create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("laddu prepared reduction bind group"),
+                layout: &self.reduction_bind_group_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: scratch.params.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: cache.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: weights.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 4,
+                        resource: scratch.config.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 5,
+                        resource: scratch.partials.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 6,
+                        resource: scratch.error.as_entire_binding(),
+                    },
+                ],
+            });
+        let mut encoder = context.device().create_command_encoder(&Default::default());
+        {
+            let mut pass = encoder.begin_compute_pass(&Default::default());
+            pass.set_pipeline(&self.reduction_pipeline);
+            pass.set_bind_group(0, &bind_group, &[]);
+            pass.dispatch_workgroups(groups as u32, 1, 1);
+        }
+        encoder.copy_buffer_to_buffer(
+            &scratch.partials,
+            0,
+            &scratch.staging,
+            0,
+            (groups * 4) as u64,
+        );
+        encoder.copy_buffer_to_buffer(&scratch.error, 0, &scratch.staging, (groups * 4) as u64, 4);
+        context.queue().submit([encoder.finish()]);
+        let slice = scratch.staging.slice(..(groups * 4 + 4) as u64);
+        let (sender, receiver) = mpsc::channel();
+        slice.map_async(wgpu::MapMode::Read, move |result| {
+            let _ = sender.send(result);
+        });
+        context
+            .device()
+            .poll(wgpu::PollType::Wait {
+                submission_index: None,
+                timeout: None,
+            })
+            .map_err(|error| WgpuError::DevicePoll(error.to_string()))?;
+        receiver
+            .recv()
+            .map_err(|error| WgpuError::BufferMap(error.to_string()))?
+            .map_err(|error| WgpuError::BufferMap(error.to_string()))?;
+        let mapped = slice.get_mapped_range();
+        let words: &[u32] = bytemuck::cast_slice(&mapped);
+        let invalid = words[groups];
+        let mut total = AccurateF64::zero();
+        for bits in &words[..groups] {
+            total.push(f32::from_bits(*bits) as f64);
+        }
+        drop(mapped);
+        scratch.staging.unmap();
+        if invalid != u32::MAX {
+            return Err(WgpuError::NonPositiveEvent(invalid as usize));
+        }
+        Ok(total.finish())
+    }
+
     fn reduce_chunk(
         &self,
         context: &WgpuContext,
         params: &ParamValues,
         batch: &EventBatch,
+        reduction: ReductionPlan,
+    ) -> WgpuResult<f64> {
+        let inputs = self.pack_batch(batch)?;
+        let weights = (0..batch.len())
+            .map(|row| batch.weights_at(row) as f32)
+            .collect::<Vec<_>>();
+        let (input_buffer, cache_buffer) = self.cache_buffers(context, &inputs, batch.len());
+        let weights_buffer =
+            context
+                .device()
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("laddu event weights"),
+                    contents: bytemuck::cast_slice(&weights),
+                    usage: wgpu::BufferUsages::STORAGE,
+                });
+        let mut encoder = context.device().create_command_encoder(&Default::default());
+        self.encode_cache_materialization(
+            context,
+            &mut encoder,
+            &input_buffer,
+            &cache_buffer,
+            batch.len(),
+        );
+        context.queue().submit([encoder.finish()]);
+        self.reduce_buffers(
+            context,
+            params,
+            &cache_buffer,
+            &weights_buffer,
+            batch.len(),
+            reduction,
+        )
+    }
+
+    fn reduce_buffers(
+        &self,
+        context: &WgpuContext,
+        params: &ParamValues,
+        cache_buffer: &wgpu::Buffer,
+        weights_buffer: &wgpu::Buffer,
+        events: usize,
         reduction: ReductionPlan,
     ) -> WgpuResult<f64> {
         let parameters = params
@@ -296,31 +662,18 @@ impl WgpuScalarKernel {
         } else {
             parameters
         };
-        let inputs = self.pack_batch(batch)?;
-        let weights = (0..batch.len())
-            .map(|row| batch.weights_at(row) as f32)
-            .collect::<Vec<_>>();
         let mode = match reduction.transform() {
             ReductionTransform::Real => 0_u32,
             ReductionTransform::PositiveReal => 1,
             ReductionTransform::LogPositiveReal => 2,
         };
-        let groups = batch.len().div_ceil(64);
+        let groups = events.div_ceil(64);
         let params_buffer =
             context
                 .device()
                 .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                     label: Some("laddu parameters"),
                     contents: bytemuck::cast_slice(&parameters),
-                    usage: wgpu::BufferUsages::STORAGE,
-                });
-        let (input_buffer, cache_buffer) = self.cache_buffers(context, &inputs, batch.len());
-        let weights_buffer =
-            context
-                .device()
-                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("laddu event weights"),
-                    contents: bytemuck::cast_slice(&weights),
                     usage: wgpu::BufferUsages::STORAGE,
                 });
         let config_buffer =
@@ -384,13 +737,6 @@ impl WgpuScalarKernel {
                 ],
             });
         let mut encoder = context.device().create_command_encoder(&Default::default());
-        self.encode_cache_materialization(
-            context,
-            &mut encoder,
-            &input_buffer,
-            &cache_buffer,
-            batch.len(),
-        );
         {
             let mut pass = encoder.begin_compute_pass(&Default::default());
             pass.set_pipeline(&self.reduction_pipeline);
@@ -622,7 +968,7 @@ impl WgpuScalarKernel {
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("laddu event inputs"),
                 contents: bytemuck::cast_slice(inputs),
-                usage: wgpu::BufferUsages::STORAGE,
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             });
         let cache_size = (events * self.cache_slots * 8).max(8) as u64;
         let cache = context.device().create_buffer(&wgpu::BufferDescriptor {
@@ -807,6 +1153,20 @@ fn cpowi(z: vec2<f32>, exponent: i32) -> vec2<f32> { var result=vec2(1.0, 0.0); 
     }
 }
 
+impl WgpuPreparedBatch {
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    pub fn resident_bytes(&self) -> usize {
+        self.resident_bytes
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
@@ -817,18 +1177,18 @@ mod tests {
         schema::Schema,
     };
     use laddu_expr::{Expr, complex, event_scalar, parameter};
-    use laddu_runtime::{
-        CpuBackend, CpuOptions, Device, Execution, ExecutionOptions, GpuOptions, Precision,
-    };
+    use laddu_runtime::{CpuBackend, CpuOptions, Device, Execution, ExecutionOptions, Precision};
 
-    use crate::{WgpuBackend, WgpuScalarKernel};
+    use crate::{WgpuBackend, WgpuOptions, WgpuPrecision, WgpuScalarKernel};
 
     #[test]
     fn scalar_kernel_rejects_unimplemented_precisions() {
-        assert!(WgpuScalarKernel::validate_precision(Precision::F32).is_ok());
+        assert!(WgpuScalarKernel::validate_precision(WgpuPrecision::F32).is_ok());
         assert!(matches!(
-            WgpuScalarKernel::validate_precision(Precision::F64),
-            Err(crate::WgpuError::UnsupportedKernelPrecision(Precision::F64))
+            WgpuScalarKernel::validate_precision(WgpuPrecision::F64),
+            Err(crate::WgpuError::UnsupportedKernelPrecision(
+                WgpuPrecision::F64
+            ))
         ));
     }
 
@@ -841,7 +1201,7 @@ mod tests {
         let model = CompiledModel::from_expr(&expression).unwrap();
         let params = model.params().default_values();
         let context = WgpuBackend::default()
-            .open(&GpuOptions::default(), Precision::F32)
+            .open(&WgpuOptions::default(), WgpuPrecision::F32)
             .unwrap();
         let kernel = WgpuScalarKernel::compile(&context, &model).unwrap();
         let gpu = kernel.evaluate(&context, &params).unwrap();
@@ -881,11 +1241,11 @@ mod tests {
         .unwrap();
         let context = WgpuBackend::default()
             .open(
-                &GpuOptions {
+                &WgpuOptions {
                     memory_budget: Some(256),
-                    ..GpuOptions::default()
+                    ..WgpuOptions::default()
                 },
-                Precision::F32,
+                WgpuPrecision::F32,
             )
             .unwrap();
         let kernel = WgpuScalarKernel::compile(&context, &model).unwrap();
@@ -962,7 +1322,7 @@ mod tests {
         )
         .unwrap();
         let context = WgpuBackend::default()
-            .open(&GpuOptions::default(), Precision::F32)
+            .open(&WgpuOptions::default(), WgpuPrecision::F32)
             .unwrap();
         let kernel = WgpuScalarKernel::compile(&context, &model).unwrap();
 

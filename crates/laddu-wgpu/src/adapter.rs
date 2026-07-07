@@ -1,6 +1,27 @@
-use laddu_runtime::{GpuBackend, GpuDeviceSelector, GpuOptions, Precision};
-
 use crate::{WgpuError, WgpuResult};
+
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub enum WgpuPrecision {
+    #[default]
+    Auto,
+    F32,
+    F64,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum WgpuDeviceSelector {
+    #[default]
+    Auto,
+    Index(usize),
+    PciBusId(String),
+    Name(String),
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct WgpuOptions {
+    pub device: WgpuDeviceSelector,
+    pub memory_budget: Option<usize>,
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WgpuAdapterInfo {
@@ -55,7 +76,7 @@ impl WgpuAdapterInfo {
 #[derive(Debug)]
 pub struct WgpuContext {
     info: WgpuAdapterInfo,
-    precision: Precision,
+    precision: WgpuPrecision,
     memory_budget: Option<usize>,
     pub(crate) device: wgpu::Device,
     pub(crate) queue: wgpu::Queue,
@@ -66,7 +87,7 @@ impl WgpuContext {
         &self.info
     }
 
-    pub fn precision(&self) -> Precision {
+    pub fn precision(&self) -> WgpuPrecision {
         self.precision
     }
 
@@ -107,15 +128,12 @@ impl WgpuBackend {
             .collect()
     }
 
-    pub fn open(&self, options: &GpuOptions, precision: Precision) -> WgpuResult<WgpuContext> {
-        if options.backend == GpuBackend::Cuda {
-            return Err(WgpuError::CudaBackendRequested);
-        }
+    pub fn open(&self, options: &WgpuOptions, precision: WgpuPrecision) -> WgpuResult<WgpuContext> {
         if options.memory_budget == Some(0) {
             return Err(WgpuError::InvalidMemoryBudget);
         }
         let adapter = match &options.device {
-            GpuDeviceSelector::Auto => {
+            WgpuDeviceSelector::Auto => {
                 pollster::block_on(self.instance.request_adapter(&wgpu::RequestAdapterOptions {
                     power_preference: wgpu::PowerPreference::HighPerformance,
                     ..wgpu::RequestAdapterOptions::default()
@@ -140,16 +158,18 @@ impl WgpuBackend {
         };
         let info = WgpuAdapterInfo::from_adapter(0, &adapter);
         let precision = match precision {
-            Precision::Auto | Precision::F32 => Precision::F32,
-            Precision::F64 if info.supports_f64 && info.backend == "Vulkan" => Precision::F64,
-            Precision::F64 => {
+            WgpuPrecision::Auto | WgpuPrecision::F32 => WgpuPrecision::F32,
+            WgpuPrecision::F64 if info.supports_f64 && info.backend == "Vulkan" => {
+                WgpuPrecision::F64
+            }
+            WgpuPrecision::F64 => {
                 return Err(WgpuError::UnsupportedPrecision {
                     adapter: info.name,
                     precision,
                 });
             }
         };
-        let required_features = if precision == Precision::F64 {
+        let required_features = if precision == WgpuPrecision::F64 {
             wgpu::Features::SHADER_F64
         } else {
             wgpu::Features::empty()
@@ -171,19 +191,19 @@ impl WgpuBackend {
 
     fn select_adapter_index(
         adapters: &[WgpuAdapterInfo],
-        selector: &GpuDeviceSelector,
+        selector: &WgpuDeviceSelector,
     ) -> Option<usize> {
         match selector {
-            GpuDeviceSelector::Auto => adapters
+            WgpuDeviceSelector::Auto => adapters
                 .iter()
                 .min_by_key(|adapter| (adapter.hardware_priority(), adapter.index))
                 .map(|adapter| adapter.index),
-            GpuDeviceSelector::Index(index) => adapters.get(*index).map(|adapter| adapter.index),
-            GpuDeviceSelector::PciBusId(id) => adapters
+            WgpuDeviceSelector::Index(index) => adapters.get(*index).map(|adapter| adapter.index),
+            WgpuDeviceSelector::PciBusId(id) => adapters
                 .iter()
                 .find(|adapter| adapter.pci_bus_id.eq_ignore_ascii_case(id))
                 .map(|adapter| adapter.index),
-            GpuDeviceSelector::Name(name) => adapters
+            WgpuDeviceSelector::Name(name) => adapters
                 .iter()
                 .find(|adapter| adapter.name.eq_ignore_ascii_case(name))
                 .map(|adapter| adapter.index),
@@ -221,24 +241,24 @@ mod tests {
             adapter(2, "discrete", "DiscreteGpu", "0000:01:00.0"),
         ];
         assert_eq!(
-            WgpuBackend::select_adapter_index(&adapters, &GpuDeviceSelector::Auto),
+            WgpuBackend::select_adapter_index(&adapters, &WgpuDeviceSelector::Auto),
             Some(2)
         );
         assert_eq!(
-            WgpuBackend::select_adapter_index(&adapters, &GpuDeviceSelector::Index(1)),
+            WgpuBackend::select_adapter_index(&adapters, &WgpuDeviceSelector::Index(1)),
             Some(1)
         );
         assert_eq!(
             WgpuBackend::select_adapter_index(
                 &adapters,
-                &GpuDeviceSelector::PciBusId("0000:01:00.0".into())
+                &WgpuDeviceSelector::PciBusId("0000:01:00.0".into())
             ),
             Some(2)
         );
         assert_eq!(
             WgpuBackend::select_adapter_index(
                 &adapters,
-                &GpuDeviceSelector::Name("DISCRETE".into())
+                &WgpuDeviceSelector::Name("DISCRETE".into())
             ),
             Some(2)
         );
@@ -248,11 +268,11 @@ mod tests {
     fn zero_memory_budget_is_rejected_before_adapter_selection() {
         let error = WgpuBackend::default()
             .open(
-                &GpuOptions {
+                &WgpuOptions {
                     memory_budget: Some(0),
-                    ..GpuOptions::default()
+                    ..WgpuOptions::default()
                 },
-                Precision::F32,
+                WgpuPrecision::F32,
             )
             .unwrap_err();
 

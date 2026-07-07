@@ -27,7 +27,7 @@ amplitudes = ["dep:laddu-amplitudes"]
 likelihood = ["dep:laddu-likelihood"]
 jit = ["laddu-runtime/jit"]
 mpi = ["laddu-data/mpi", "laddu-runtime/mpi", "laddu-likelihood?/mpi"]
-wgpu = ["dep:laddu-wgpu"]
+wgpu = ["dep:laddu-wgpu", "laddu-runtime/wgpu", "laddu-likelihood?/wgpu"]
 
 [dev-dependencies]
 criterion.workspace = true

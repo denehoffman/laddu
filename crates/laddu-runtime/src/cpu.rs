@@ -42,9 +42,9 @@ use crate::jit::{JitCacheView, JitGradientKernel, JitScalarKernel};
 const SCALAR_BLOCK_SIZE: usize = 32;
 
 pub trait EventLookup {
-    fn scalar(&self, name: &str) -> Option<Complex64>;
+    fn scalar(&self, name: &str) -> Option<f64>;
 
-    fn p4_component(&self, name: &str, component: P4Component) -> Option<Complex64> {
+    fn p4_component(&self, name: &str, component: P4Component) -> Option<f64> {
         let key = format!("{}.{}", name, component.label());
         self.scalar(&key)
     }
@@ -52,22 +52,16 @@ pub trait EventLookup {
 
 impl<F> EventLookup for F
 where
-    F: for<'a> Fn(&'a str) -> Option<Complex64>,
+    F: for<'a> Fn(&'a str) -> Option<f64>,
 {
-    fn scalar(&self, name: &str) -> Option<Complex64> {
+    fn scalar(&self, name: &str) -> Option<f64> {
         self(name)
     }
 }
 
-impl EventLookup for HashMap<String, Complex64> {
-    fn scalar(&self, name: &str) -> Option<Complex64> {
-        self.get(name).copied()
-    }
-}
-
 impl EventLookup for HashMap<String, f64> {
-    fn scalar(&self, name: &str) -> Option<Complex64> {
-        self.get(name).copied().map(Complex64::from)
+    fn scalar(&self, name: &str) -> Option<f64> {
+        self.get(name).copied()
     }
 }
 
@@ -3169,11 +3163,11 @@ impl CpuPlan {
                     let Some(event) = event else {
                         return Err(RuntimeError::MissingEventScalar(name.to_string()));
                     };
-                    Value::Scalar(
+                    Value::Scalar(Complex64::from(
                         event
                             .scalar(name)
                             .ok_or_else(|| RuntimeError::MissingEventScalar(name.to_string()))?,
-                    )
+                    ))
                 }
                 ExprNode::EventP4Component { name, component } => {
                     let Some(event) = event else {
@@ -3182,9 +3176,14 @@ impl CpuPlan {
                             component.label()
                         )));
                     };
-                    Value::Scalar(event.p4_component(name, *component).ok_or_else(|| {
-                        RuntimeError::MissingEventScalar(format!("{name}.{}", component.label()))
-                    })?)
+                    Value::Scalar(Complex64::from(
+                        event.p4_component(name, *component).ok_or_else(|| {
+                            RuntimeError::MissingEventScalar(format!(
+                                "{name}.{}",
+                                component.label()
+                            ))
+                        })?,
+                    ))
                 }
                 ExprNode::Unary { op, input } => {
                     let input = scalar_at(&values, input.index())?;
@@ -4371,6 +4370,25 @@ pub struct PreparedDatasetStats {
 }
 
 impl PreparedDatasetStats {
+    #[cfg(feature = "wgpu")]
+    pub(crate) fn new(
+        local_events: usize,
+        global_events: usize,
+        local_batches: usize,
+        sum_weights: f64,
+        resident_bytes: usize,
+        storage: CacheStorage,
+    ) -> Self {
+        Self {
+            local_events,
+            global_events,
+            local_batches,
+            sum_weights,
+            resident_bytes,
+            storage,
+        }
+    }
+
     pub fn local_events(&self) -> usize {
         self.local_events
     }
@@ -5121,7 +5139,7 @@ mod tests {
         let model = CompiledModel::from_expr(&expr).unwrap();
         let params = Arc::new(model.params().clone()).default_values();
         let plan = CpuBackend.prepare(&model);
-        let event = HashMap::from([("x".to_owned(), Complex64::from(3.0))]);
+        let event = HashMap::from([("x".to_owned(), 3.0)]);
 
         assert_eq!(
             plan.evaluate_with_event(&params, &event).unwrap(),
@@ -5397,10 +5415,10 @@ mod tests {
         let real_model =
             CompiledModel::from_expr(&(parameter!("scale") * event_scalar("x").real().sin()))
                 .unwrap();
-        let complex_model = CompiledModel::from_expr(
-            &(parameter!("scale") * complex(event_scalar("x").sin(), event_scalar("x").cos())),
-        )
-        .unwrap();
+        let x = event_scalar("x");
+        let complex_model =
+            CompiledModel::from_expr(&(parameter!("scale") * complex(x.clone().sin(), x.cos())))
+                .unwrap();
         let batch = EventBatch::from_events(
             Arc::new(Schema::new(std::iter::empty::<&str>(), ["x"], false).unwrap()),
             [
@@ -5483,7 +5501,7 @@ mod tests {
         let plan = CpuBackend.prepare(&model);
         assert!(plan.solve_components.iter().any(Option::is_some));
 
-        let event = HashMap::from([("x".to_owned(), Complex64::from(0.75))]);
+        let event = HashMap::from([("x".to_owned(), 0.75)]);
         let direct = plan
             .evaluate_with_event_and_gradient(&params, &event)
             .unwrap();
@@ -5989,7 +6007,7 @@ mod tests {
         let unoptimized = CompiledModel::from_expr_with_options(&expr, &no_optimization).unwrap();
         let optimized_params = Arc::new(optimized.params().clone()).default_values();
         let unoptimized_params = Arc::new(unoptimized.params().clone()).default_values();
-        let event = HashMap::from([("mass".to_owned(), Complex64::from(2.0))]);
+        let event = HashMap::from([("mass".to_owned(), 2.0)]);
 
         let optimized = CpuBackend
             .prepare(&optimized)

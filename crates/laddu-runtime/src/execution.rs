@@ -3,6 +3,8 @@ use std::sync::Arc;
 use laddu_data::io::{Partitioning, ReadPlan};
 use rayon::{ThreadPool, ThreadPoolBuilder};
 
+#[cfg(feature = "wgpu")]
+use crate::RuntimeError;
 use crate::{ExecutionError, RuntimeResult};
 
 #[cfg(feature = "mpi")]
@@ -89,16 +91,22 @@ pub struct Execution {
     jit: JitPolicy,
     pool: Option<Arc<ThreadPool>>,
     partitioning: Partitioning,
+    #[cfg(feature = "wgpu")]
+    wgpu: Option<Arc<laddu_wgpu::WgpuContext>>,
     #[cfg(feature = "mpi")]
     communicator: Option<Arc<SimpleCommunicator>>,
 }
 
 impl std::fmt::Debug for Execution {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        #[cfg(feature = "wgpu")]
+        let resolved_device = if self.wgpu.is_some() { "wgpu" } else { "cpu" };
+        #[cfg(not(feature = "wgpu"))]
+        let resolved_device = "cpu";
         formatter
             .debug_struct("Execution")
             .field("requested_device", &self.requested_device)
-            .field("resolved_device", &"cpu")
+            .field("resolved_device", &resolved_device)
             .field("precision", &self.precision)
             .field("threads", &self.threads)
             .field("jit", &self.jit)
@@ -117,6 +125,8 @@ impl Default for Execution {
             jit: JitPolicy::Auto,
             pool: None,
             partitioning: Partitioning::default(),
+            #[cfg(feature = "wgpu")]
+            wgpu: None,
             #[cfg(feature = "mpi")]
             communicator: None,
         }
@@ -125,14 +135,52 @@ impl Default for Execution {
 
 impl Execution {
     pub fn local(options: ExecutionOptions) -> RuntimeResult<Self> {
+        #[cfg(feature = "wgpu")]
+        let mut wgpu = None;
         let cpu = match &options.device {
             Device::Auto => CpuOptions::default(),
             Device::Cpu(options) => options.clone(),
-            Device::Gpu(options) => {
-                return Err(ExecutionError::GpuUnavailable(options.backend).into());
+            Device::Gpu(gpu_options) => {
+                #[cfg(feature = "wgpu")]
+                {
+                    if gpu_options.backend == GpuBackend::Cuda {
+                        return Err(ExecutionError::GpuUnavailable(gpu_options.backend).into());
+                    }
+                    let selector = match &gpu_options.device {
+                        GpuDeviceSelector::Auto => laddu_wgpu::WgpuDeviceSelector::Auto,
+                        GpuDeviceSelector::Index(index) => {
+                            laddu_wgpu::WgpuDeviceSelector::Index(*index)
+                        }
+                        GpuDeviceSelector::PciBusId(id) => {
+                            laddu_wgpu::WgpuDeviceSelector::PciBusId(id.clone())
+                        }
+                        GpuDeviceSelector::Name(name) => {
+                            laddu_wgpu::WgpuDeviceSelector::Name(name.clone())
+                        }
+                    };
+                    let precision = match options.precision {
+                        Precision::Auto => laddu_wgpu::WgpuPrecision::Auto,
+                        Precision::F32 => laddu_wgpu::WgpuPrecision::F32,
+                        Precision::F64 => laddu_wgpu::WgpuPrecision::F64,
+                    };
+                    let context = laddu_wgpu::WgpuBackend::default()
+                        .open(
+                            &laddu_wgpu::WgpuOptions {
+                                device: selector,
+                                memory_budget: gpu_options.memory_budget,
+                            },
+                            precision,
+                        )
+                        .map_err(|error| RuntimeError::Wgpu(error.to_string()))?;
+                    wgpu = Some(Arc::new(context));
+                    CpuOptions::default()
+                }
+                #[cfg(not(feature = "wgpu"))]
+                return Err(ExecutionError::GpuUnavailable(gpu_options.backend).into());
             }
         };
         let precision = match options.precision {
+            Precision::Auto if matches!(options.device, Device::Gpu(_)) => Precision::F32,
             Precision::Auto => Precision::F64,
             precision => precision,
         };
@@ -157,6 +205,8 @@ impl Execution {
             jit: cpu.jit,
             pool,
             partitioning: options.partitioning,
+            #[cfg(feature = "wgpu")]
+            wgpu,
             #[cfg(feature = "mpi")]
             communicator: None,
         })
@@ -168,12 +218,21 @@ impl Execution {
         C: Communicator,
     {
         let mut execution = Self::local(options)?;
+        #[cfg(feature = "wgpu")]
+        if execution.wgpu.is_some() {
+            return Err(ExecutionError::UnsupportedDistributedGpu.into());
+        }
         execution.communicator = Some(Arc::new(world.duplicate()));
         Ok(execution)
     }
 
     pub fn requested_device(&self) -> &Device {
         &self.requested_device
+    }
+
+    #[cfg(feature = "wgpu")]
+    pub(crate) fn wgpu_context(&self) -> Option<&Arc<laddu_wgpu::WgpuContext>> {
+        self.wgpu.as_ref()
     }
 
     pub fn precision(&self) -> Precision {
@@ -272,7 +331,9 @@ impl Execution {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{RuntimeError, execution::GpuBackend};
+    #[cfg(not(feature = "wgpu"))]
+    use crate::RuntimeError;
+    use crate::execution::GpuBackend;
 
     #[test]
     fn execution_selects_nested_cpu_options() {
@@ -301,6 +362,7 @@ mod tests {
 
     #[test]
     fn unavailable_execution_modes_return_capability_errors() {
+        #[cfg(not(feature = "wgpu"))]
         assert!(matches!(
             Execution::local(ExecutionOptions {
                 device: Device::Gpu(GpuOptions {
@@ -313,6 +375,17 @@ mod tests {
                 GpuBackend::Wgpu
             )))
         ));
+        #[cfg(feature = "wgpu")]
+        assert!(
+            Execution::local(ExecutionOptions {
+                device: Device::Gpu(GpuOptions {
+                    backend: GpuBackend::Wgpu,
+                    ..GpuOptions::default()
+                }),
+                ..ExecutionOptions::default()
+            })
+            .is_ok()
+        );
         let f32 = Execution::local(ExecutionOptions {
             device: Device::Cpu(CpuOptions::default()),
             precision: Precision::F32,

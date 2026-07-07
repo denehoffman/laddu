@@ -6,7 +6,7 @@ use laddu_data::data::Dataset;
 #[cfg(test)]
 use laddu_expr::parameters::ParamError;
 use laddu_expr::parameters::{ParamId, ParamLayout, ParamRegistry, ParamValues};
-use laddu_runtime::{CpuBackend, CpuPlan, CpuPreparedDataset, Execution};
+use laddu_runtime::{Execution, PreparedDataset, PreparedModel};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LikelihoodName(String);
@@ -283,13 +283,13 @@ impl Likelihood {
 pub struct NllTerm {
     name: LikelihoodName,
     model: CompiledModel,
-    plan: Option<CpuPlan>,
+    plan: Option<PreparedModel>,
     local_params: Arc<ParamLayout>,
     projection: Option<ParamProjection>,
     data_source: Dataset,
     accepted_mc_source: Dataset,
-    data: Option<CpuPreparedDataset>,
-    accepted_mc: Option<CpuPreparedDataset>,
+    data: Option<PreparedDataset>,
+    accepted_mc: Option<PreparedDataset>,
     data_weight_sum: Option<f64>,
     execution: Option<Execution>,
 }
@@ -326,19 +326,19 @@ impl NllTerm {
         })
     }
 
-    pub fn data(&self) -> LikelihoodResult<&CpuPreparedDataset> {
+    pub fn data(&self) -> LikelihoodResult<&PreparedDataset> {
         self.data
             .as_ref()
             .ok_or_else(|| LikelihoodError::UnresolvedTerm(self.name().to_owned()))
     }
 
-    fn plan(&self) -> LikelihoodResult<&CpuPlan> {
+    fn plan(&self) -> LikelihoodResult<&PreparedModel> {
         self.plan
             .as_ref()
             .ok_or_else(|| LikelihoodError::UnresolvedTerm(self.name().to_owned()))
     }
 
-    pub fn accepted_mc(&self) -> LikelihoodResult<&CpuPreparedDataset> {
+    pub fn accepted_mc(&self) -> LikelihoodResult<&PreparedDataset> {
         self.accepted_mc
             .as_ref()
             .ok_or_else(|| LikelihoodError::UnresolvedTerm(self.name().to_owned()))
@@ -386,7 +386,7 @@ impl NllTerm {
     fn weighted_intensity_sum(
         &self,
         params: &ParamValues,
-        dataset: &CpuPreparedDataset,
+        dataset: &PreparedDataset,
         name: &'static str,
     ) -> LikelihoodResult<f64> {
         self.reduce(
@@ -400,7 +400,7 @@ impl NllTerm {
     fn reduce(
         &self,
         params: &ParamValues,
-        dataset: &CpuPreparedDataset,
+        dataset: &PreparedDataset,
         reduction: ReductionPlan,
         name: &'static str,
     ) -> LikelihoodResult<f64> {
@@ -452,7 +452,7 @@ impl LikelihoodTerm for NllTerm {
             &self.local_params,
             self.name(),
         )?);
-        let plan = CpuBackend.prepare_for_execution(&self.model, execution)?;
+        let plan = PreparedModel::prepare(&self.model, execution)?;
         self.data = Some(plan.prepare_dataset(execution, &self.data_source)?);
         self.accepted_mc = Some(plan.prepare_dataset(execution, &self.accepted_mc_source)?);
         self.plan = Some(plan);
@@ -735,10 +735,10 @@ enum PenaltyKind {
 #[derive(Clone, Debug)]
 pub struct CrossSectionIntegrals {
     name: LikelihoodName,
-    plan: CpuPlan,
+    plan: PreparedModel,
     projection: ParamProjection,
-    accepted_mc: CpuPreparedDataset,
-    generated_mc: CpuPreparedDataset,
+    accepted_mc: PreparedDataset,
+    generated_mc: PreparedDataset,
     data_weight_sum: f64,
     execution: Execution,
 }
@@ -748,11 +748,11 @@ impl CrossSectionIntegrals {
         self.name.as_str()
     }
 
-    pub fn accepted_mc(&self) -> &CpuPreparedDataset {
+    pub fn accepted_mc(&self) -> &PreparedDataset {
         &self.accepted_mc
     }
 
-    pub fn generated_mc(&self) -> &CpuPreparedDataset {
+    pub fn generated_mc(&self) -> &PreparedDataset {
         &self.generated_mc
     }
 
@@ -800,7 +800,7 @@ impl CrossSectionIntegrals {
     fn weighted_intensity_sum(
         &self,
         params: &ParamValues,
-        dataset: &CpuPreparedDataset,
+        dataset: &PreparedDataset,
         name: &'static str,
     ) -> LikelihoodResult<f64> {
         self.plan
@@ -939,6 +939,8 @@ mod tests {
         complex, event_scalar, matrix, parameter, parameters::Parameter, solve, vector,
     };
     use laddu_runtime::{CpuOptions, Device, ExecutionOptions, Precision, ThreadPolicy};
+    #[cfg(feature = "wgpu")]
+    use laddu_runtime::{GpuBackend, GpuOptions};
 
     use super::*;
 
@@ -1635,5 +1637,129 @@ mod tests {
             .unwrap_err();
 
         assert!(matches!(err, LikelihoodError::NotIntensityTerm(ref name) if name == "ridge"));
+    }
+
+    #[cfg(feature = "wgpu")]
+    #[test]
+    fn wgpu_scalar_likelihood_matches_cpu_and_reuses_preparation() {
+        let model = CompiledModel::from_expr(
+            &(event_scalar("x") * parameter!("scale", initial: 0.5) + 2.0),
+        )
+        .unwrap();
+        let data = weighted_dataset_batches(
+            &(0..70)
+                .map(|index| (index as f64 * 0.01, 1.0 + index as f64 * 0.001))
+                .collect::<Vec<_>>(),
+            &[31, 70],
+        );
+        let accepted = weighted_dataset(&[(0.25, 0.5), (0.75, 1.5), (1.25, 2.0)]);
+        let cpu = single_term_likelihood_with_execution(
+            "scalar",
+            &model,
+            &data,
+            &accepted,
+            Execution::local(ExecutionOptions {
+                device: Device::Cpu(CpuOptions::default()),
+                precision: Precision::F32,
+                ..ExecutionOptions::default()
+            })
+            .unwrap(),
+        );
+        let gpu = single_term_likelihood_with_execution(
+            "scalar",
+            &model,
+            &data,
+            &accepted,
+            Execution::local(ExecutionOptions {
+                device: Device::Gpu(GpuOptions {
+                    backend: GpuBackend::Wgpu,
+                    memory_budget: Some(256),
+                    ..GpuOptions::default()
+                }),
+                precision: Precision::F32,
+                ..ExecutionOptions::default()
+            })
+            .unwrap(),
+        );
+        let streaming_gpu = single_term_likelihood_with_execution(
+            "scalar",
+            &model,
+            &data.clone().streaming(),
+            &accepted.clone().streaming(),
+            Execution::local(ExecutionOptions {
+                device: Device::Gpu(GpuOptions {
+                    backend: GpuBackend::Wgpu,
+                    memory_budget: Some(256),
+                    ..GpuOptions::default()
+                }),
+                precision: Precision::F32,
+                ..ExecutionOptions::default()
+            })
+            .unwrap(),
+        );
+        let params = cpu.default_params();
+        let expected = cpu.nll(&params).unwrap();
+        let first = gpu.nll(&params).unwrap();
+        let second = gpu.nll(&params).unwrap();
+
+        assert_relative_eq!(first, expected, epsilon = 2.0e-5);
+        assert_eq!(first, second);
+        assert_relative_eq!(
+            streaming_gpu.nll(&params).unwrap(),
+            expected,
+            epsilon = 2.0e-5
+        );
+        assert_relative_eq!(
+            streaming_gpu.nll(&params).unwrap(),
+            expected,
+            epsilon = 2.0e-5
+        );
+        assert!(matches!(
+            gpu.nll_with_gradient(&params),
+            Err(LikelihoodError::Runtime(
+                laddu_runtime::RuntimeError::Execution(
+                    laddu_runtime::ExecutionError::UnsupportedGpuGradient
+                )
+            ))
+        ));
+    }
+
+    #[cfg(feature = "wgpu")]
+    #[test]
+    fn explicit_wgpu_reports_unsupported_aggregate_model() {
+        let x = event_scalar("x");
+        let model = CompiledModel::from_expr(
+            &solve(
+                matrix([
+                    [x.clone() + 2.0, x.clone() * 0.0],
+                    [x.clone() * 0.0, x + 3.0],
+                ]),
+                vector([1.0, 2.0]),
+            )
+            .component(0),
+        )
+        .unwrap();
+        let data = weighted_dataset(&[(0.5, 1.0)]);
+        let execution = Execution::local(ExecutionOptions {
+            device: Device::Gpu(GpuOptions {
+                backend: GpuBackend::Wgpu,
+                ..GpuOptions::default()
+            }),
+            precision: Precision::F32,
+            ..ExecutionOptions::default()
+        })
+        .unwrap();
+        let error = Likelihood::with_execution(
+            [NllTerm::new("aggregate", &model, &data, &data)
+                .unwrap()
+                .boxed()],
+            execution,
+        )
+        .unwrap_err();
+
+        assert!(matches!(
+            error,
+            LikelihoodError::Runtime(laddu_runtime::RuntimeError::Wgpu(_))
+        ));
     }
 }

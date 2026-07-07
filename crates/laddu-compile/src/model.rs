@@ -812,10 +812,7 @@ mod tests {
         let compiled = CompiledModel::from_expr(&x.real().real()).unwrap();
         assert!(matches!(
             compiled.graph().node(compiled.graph().root()),
-            Some(ExprNode::Unary {
-                op: laddu_expr::UnaryOp::Real,
-                ..
-            })
+            Some(ExprNode::EventScalar(name)) if name.as_ref() == "z"
         ));
     }
 
@@ -1519,7 +1516,9 @@ mod tests {
         };
         assert!(matches!(
             one_iteration.graph().node(*one_iteration_exp_input),
-            Some(ExprNode::NaryAdd { .. })
+            Some(ExprNode::NaryMul { factors }) if factors.len() == 2
+                && factors.iter().any(|id| matches!(one_iteration.graph().node(*id), Some(ExprNode::ComplexConst(value)) if *value == Complex64::I))
+                && factors.iter().any(|id| matches!(one_iteration.graph().node(*id), Some(ExprNode::NaryAdd { .. })))
         ));
 
         let ExprNode::Unary {
@@ -1810,13 +1809,11 @@ mod tests {
                 op: UnaryOp::Sin,
                 input,
             }) if matches!(compiled.graph().node(*input),
-                Some(ExprNode::Unary { op: UnaryOp::Real, input })
-                    if matches!(compiled.graph().node(*input),
-                        Some(ExprNode::EventScalar(name)) if name.as_ref() == "x"))
+                Some(ExprNode::EventScalar(name)) if name.as_ref() == "x")
         ));
         assert_eq!(entry.storage_kind(), CacheStorageKind::Real);
         assert_eq!(compiled.cache_plan().bytes_per_event(), size_of::<f64>());
-        assert_eq!(compiled.cache_plan().materialization_nodes().len(), 3);
+        assert_eq!(compiled.cache_plan().materialization_nodes().len(), 2);
         assert_eq!(
             compiled.cache_plan().materialization_nodes().last(),
             Some(&entry.node())
@@ -1885,7 +1882,7 @@ mod tests {
 
         assert_eq!(
             compiled.node_facts(event_id).unwrap().value_kind,
-            ValueKind::Complex
+            ValueKind::Real
         );
         assert!(
             compiled

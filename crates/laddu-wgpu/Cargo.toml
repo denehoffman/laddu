@@ -14,7 +14,9 @@ laddu-compile = { path = "../laddu-compile" }
 laddu-data = { path = "../laddu-data" }
 laddu-expr = { path = "../laddu-expr" }
 laddu-kernel = { path = "../laddu-kernel" }
-laddu-runtime = { path = "../laddu-runtime" }
 pollster.workspace = true
 thiserror.workspace = true
 wgpu.workspace = true
+
+[dev-dependencies]
+laddu-runtime = { path = "../laddu-runtime" }
