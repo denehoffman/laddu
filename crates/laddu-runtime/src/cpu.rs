@@ -37,7 +37,7 @@ mod gradient_interpreter;
 use gradient_interpreter::GradientInterpreter;
 
 #[cfg(feature = "jit")]
-use crate::jit::{JitCacheView, JitGradientKernel, JitScalarKernel};
+use crate::jit::{JitCacheView, JitGradientKernel, JitPrecision, JitScalarKernel};
 
 const SCALAR_BLOCK_SIZE: usize = 32;
 
@@ -109,12 +109,24 @@ enum ScalarExecutor {
 }
 
 impl ScalarExecutor {
-    fn prepare(plan: &ScalarKernelIr, mode: CpuExecutionMode) -> Option<Self> {
+    fn prepare(
+        plan: &ScalarKernelIr,
+        mode: CpuExecutionMode,
+        precision: Precision,
+    ) -> Option<Self> {
         match mode {
             CpuExecutionMode::Auto => {
                 #[cfg(feature = "jit")]
-                if let Ok(Some(kernel)) = JitScalarKernel::compile(plan) {
-                    return Some(Self::Jit(kernel));
+                {
+                    let jit_precision = match precision {
+                        Precision::F32 => JitPrecision::F32,
+                        Precision::Auto | Precision::F64 => JitPrecision::F64,
+                    };
+                    if let Ok(Some(kernel)) =
+                        JitScalarKernel::compile_with_precision(plan, jit_precision)
+                    {
+                        return Some(Self::Jit(kernel));
+                    }
                 }
                 ScalarEvaluationPlan::from_kernel_ir(plan).map(Self::Interpreter)
             }
@@ -999,18 +1011,12 @@ impl CpuBackend {
             JitPolicy::Auto | JitPolicy::Enabled => CpuExecutionMode::Auto,
             JitPolicy::Disabled => CpuExecutionMode::Interpreter,
         };
-        let mut plan = self.prepare_with_execution_mode(
-            model,
-            if execution.precision() == Precision::F32 {
-                CpuExecutionMode::Interpreter
-            } else {
-                mode
-            },
-        );
+        let plan = self
+            .prepare_with_modes_precision(model, AutodiffMode::Forward, mode, execution.precision())
+            .map_err(|error| RuntimeError::Data(error.to_string()))?;
         if execution.precision() == Precision::F32 && !plan.supports_f32_scalar_execution() {
             return Err(crate::ExecutionError::UnsupportedCpuF32Model.into());
         }
-        plan.precision = execution.precision();
         Ok(plan)
     }
 
@@ -1042,21 +1048,39 @@ impl CpuBackend {
         autodiff_mode: AutodiffMode,
         execution_mode: CpuExecutionMode,
     ) -> AutodiffResult<CpuPlan> {
+        self.prepare_with_modes_precision(model, autodiff_mode, execution_mode, Precision::F64)
+    }
+
+    fn prepare_with_modes_precision(
+        &self,
+        model: &CompiledModel,
+        autodiff_mode: AutodiffMode,
+        execution_mode: CpuExecutionMode,
+        precision: Precision,
+    ) -> AutodiffResult<CpuPlan> {
         let executable = ExecutablePlan::from_model(model)
             .map_err(|error| laddu_autodiff::AutodiffError::InvalidKernel(error.to_string()))?;
         let scalar_kernel = executable.scalar_kernel().cloned();
         let scalar_executor = scalar_kernel
             .as_ref()
-            .and_then(|kernel| ScalarExecutor::prepare(kernel, execution_mode));
-        let gradient_executor =
-            GradientExecutor::prepare(scalar_kernel.as_ref(), model.params(), execution_mode)?;
+            .and_then(|kernel| ScalarExecutor::prepare(kernel, execution_mode, precision));
+        let gradient_execution_mode = if precision == Precision::F32 {
+            CpuExecutionMode::Interpreter
+        } else {
+            execution_mode
+        };
+        let gradient_executor = GradientExecutor::prepare(
+            scalar_kernel.as_ref(),
+            model.params(),
+            gradient_execution_mode,
+        )?;
         let constant_factors = executable
             .constant_factor_matrices()
             .iter()
             .map(|_| Arc::new(OnceLock::new()))
             .collect();
         Ok(CpuPlan {
-            precision: Precision::F64,
+            precision,
             graph: executable.graph().clone(),
             params: executable.params().clone(),
             parameter_slots: executable.parameter_slots().to_vec(),
@@ -1397,14 +1421,14 @@ impl CpuPlan {
         invariant: Option<&ScalarInvariantValues>,
         workspace: &mut ScalarEventWorkspace,
     ) -> RuntimeResult<Complex64> {
-        if self.precision == Precision::F32 {
-            return self.evaluate_f32_scalar(params, Some((cache, row)));
-        }
         #[cfg(feature = "jit")]
         if let Some(kernel) = self.scalar_jit_kernel() {
             let mut output = Vec::with_capacity(1);
             kernel.evaluate(params, cache, row, row + 1, &mut output)?;
             return Ok(output[0]);
+        }
+        if self.precision == Precision::F32 {
+            return self.evaluate_f32_scalar(params, Some((cache, row)));
         }
         if let (Some(plan), Some(invariant)) = (self.scalar_interpreter_plan(), invariant) {
             return self.evaluate_scalar_cache_row(cache, row, plan, invariant, workspace);
@@ -1502,14 +1526,6 @@ impl CpuPlan {
         output: &mut Vec<Complex64>,
         #[cfg(feature = "jit")] jit_cache: Option<&JitCacheView>,
     ) -> RuntimeResult<()> {
-        if self.precision == Precision::F32 {
-            output.clear();
-            output.reserve(end - start);
-            for row in start..end {
-                output.push(self.evaluate_f32_scalar(params, Some((cache, row)))?);
-            }
-            return Ok(());
-        }
         #[cfg(feature = "jit")]
         if let Some(kernel) = self.scalar_jit_kernel() {
             let owned;
@@ -1520,6 +1536,14 @@ impl CpuPlan {
                 &owned
             };
             return kernel.evaluate_prepared(params, jit_cache, start, end, output);
+        }
+        if self.precision == Precision::F32 {
+            output.clear();
+            output.reserve(end - start);
+            for row in start..end {
+                output.push(self.evaluate_f32_scalar(params, Some((cache, row)))?);
+            }
+            return Ok(());
         }
         if let (Some(plan), Some(invariant)) = (self.scalar_interpreter_plan(), invariant) {
             return evaluate_scalar_cache_block(
@@ -2801,12 +2825,6 @@ impl CpuPlan {
         params: &ParamValues,
         event: Option<&dyn EventLookup>,
     ) -> RuntimeResult<Complex64> {
-        if self.precision == Precision::F32 {
-            if event.is_some() {
-                return Err(crate::ExecutionError::UnsupportedCpuF32Model.into());
-            }
-            return self.evaluate_f32_scalar(params, None);
-        }
         #[cfg(feature = "jit")]
         if event.is_none()
             && let Some(kernel) = self.scalar_jit_kernel()
@@ -2819,6 +2837,12 @@ impl CpuPlan {
                 )));
             }
             return kernel.evaluate_invariant(params);
+        }
+        if self.precision == Precision::F32 {
+            if event.is_some() {
+                return Err(crate::ExecutionError::UnsupportedCpuF32Model.into());
+            }
+            return self.evaluate_f32_scalar(params, None);
         }
         let values = self.evaluate_values(params, event)?;
         scalar_at(&values, self.graph.root().index())
@@ -5564,6 +5588,53 @@ mod tests {
         assert_eq!(gradient.gradient(), &[Complex64::ONE, Complex64::ONE]);
     }
 
+    #[cfg(feature = "jit")]
+    #[test]
+    fn cpu_f32_auto_jit_matches_f32_interpreter_for_parameter_arithmetic() {
+        let x = laddu_expr::Expr::from(parameter!("x", initial: 16_777_216.0));
+        let y = laddu_expr::Expr::from(parameter!("y", initial: 1.0));
+        let model = CompiledModel::from_expr(&(x + y)).unwrap();
+        let params = model.params().default_values();
+        let automatic_execution = Execution::local(crate::ExecutionOptions {
+            device: crate::Device::Cpu(crate::CpuOptions::default()),
+            precision: Precision::F32,
+            ..crate::ExecutionOptions::default()
+        })
+        .unwrap();
+        let interpreter_execution = Execution::local(crate::ExecutionOptions {
+            device: crate::Device::Cpu(crate::CpuOptions {
+                jit: crate::JitPolicy::Disabled,
+                ..crate::CpuOptions::default()
+            }),
+            precision: Precision::F32,
+            ..crate::ExecutionOptions::default()
+        })
+        .unwrap();
+        let automatic = CpuBackend
+            .prepare_for_execution(&model, &automatic_execution)
+            .unwrap();
+        let interpreted = CpuBackend
+            .prepare_for_execution(&model, &interpreter_execution)
+            .unwrap();
+
+        let Some(ScalarExecutor::Jit(kernel)) = &automatic.scalar_executor else {
+            panic!("f32 auto execution should select scalar JIT");
+        };
+        assert_eq!(kernel.precision(), JitPrecision::F32);
+        assert!(matches!(
+            automatic.gradient_executor,
+            GradientExecutor::Interpreter(_)
+        ));
+        assert!(matches!(
+            interpreted.scalar_executor,
+            Some(ScalarExecutor::Interpreter(_))
+        ));
+        assert_eq!(
+            automatic.evaluate(&params).unwrap(),
+            interpreted.evaluate(&params).unwrap()
+        );
+    }
+
     #[test]
     fn cpu_f32_reduces_event_scalar_arithmetic_with_f64_accumulation() {
         let scale = laddu_expr::Expr::from(parameter!("scale", initial: 1.0));
@@ -5667,6 +5738,67 @@ mod tests {
             .unwrap();
         assert_eq!(reduction.value(), 16_777_218.0);
         assert_eq!(reduction.gradient(), &[(1.0_f32.sin() as f64)]);
+    }
+
+    #[cfg(feature = "jit")]
+    #[test]
+    fn cpu_f32_auto_jit_matches_f32_interpreter_for_cached_linear_algebra() {
+        let scale = laddu_expr::Expr::from(parameter!("scale", initial: 1.25));
+        let matrix = matrix([
+            [event_scalar("x") + 2.0, complex(0.25, -0.5)],
+            [0.5.into(), scale.clone() + 3.0],
+        ]);
+        let rhs = vector([1.0.into(), scale]);
+        let model = CompiledModel::from_expr(&dot(
+            vector([1.0.into(), complex(0.0, 1.0)]),
+            solve(matrix, rhs),
+        ))
+        .unwrap();
+        let params = model.params().default_values();
+        let automatic_execution = Execution::local(crate::ExecutionOptions {
+            device: crate::Device::Cpu(crate::CpuOptions::default()),
+            precision: Precision::F32,
+            ..crate::ExecutionOptions::default()
+        })
+        .unwrap();
+        let interpreter_execution = Execution::local(crate::ExecutionOptions {
+            device: crate::Device::Cpu(crate::CpuOptions {
+                jit: crate::JitPolicy::Disabled,
+                ..crate::CpuOptions::default()
+            }),
+            precision: Precision::F32,
+            ..crate::ExecutionOptions::default()
+        })
+        .unwrap();
+        let automatic = CpuBackend
+            .prepare_for_execution(&model, &automatic_execution)
+            .unwrap();
+        let interpreted = CpuBackend
+            .prepare_for_execution(&model, &interpreter_execution)
+            .unwrap();
+        let batch = EventBatch::from_events(
+            Arc::new(Schema::new(std::iter::empty::<&str>(), ["x"], false).unwrap()),
+            [OwnedEvent::new(vec![], vec![0.75])],
+        )
+        .unwrap();
+        let automatic_cache = automatic.cache_event_batch(&batch).unwrap();
+        let interpreted_cache = interpreted.cache_event_batch(&batch).unwrap();
+
+        let Some(ScalarExecutor::Jit(kernel)) = &automatic.scalar_executor else {
+            panic!("f32 auto execution should select scalar JIT");
+        };
+        assert_eq!(kernel.precision(), JitPrecision::F32);
+        let actual = automatic.evaluate_cache(&params, &automatic_cache).unwrap();
+        let expected = interpreted
+            .evaluate_cache(&params, &interpreted_cache)
+            .unwrap();
+        assert_eq!(actual.len(), expected.len());
+        for (actual, expected) in actual.iter().zip(expected) {
+            assert!(
+                (actual - expected).norm() < 1.0e-6,
+                "{actual} != {expected}"
+            );
+        }
     }
 
     #[cfg(feature = "jit")]

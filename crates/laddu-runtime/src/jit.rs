@@ -23,7 +23,7 @@ use laddu_kernel::ir::{
     KernelValueKind, OutputComponent, ScalarKernelIr,
 };
 use nalgebra::{DMatrix, DVector};
-use num::complex::Complex64;
+use num::complex::{Complex32, Complex64};
 
 use crate::{CpuBatchCache, RuntimeError, RuntimeResult};
 
@@ -77,6 +77,8 @@ pub(crate) struct JitGradientKernel {
 struct JitScalarCode {
     _module: Mutex<JITModule>,
     function: BlockJitFn,
+    #[cfg(test)]
+    precision: JitPrecision,
 }
 
 struct JitGradientCode {
@@ -125,20 +127,104 @@ struct FunctionHelpers {
     solve: FuncRef,
 }
 
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub(crate) enum JitPrecision {
+    F32,
+    F64,
+}
+
+impl JitPrecision {
+    fn real_type(self) -> Type {
+        match self {
+            Self::F32 => types::F32,
+            Self::F64 => types::F64,
+        }
+    }
+
+    fn complex_size(self) -> usize {
+        match self {
+            Self::F32 => size_of::<Complex32>(),
+            Self::F64 => size_of::<Complex64>(),
+        }
+    }
+
+    fn imaginary_offset(self) -> i32 {
+        match self {
+            Self::F32 => size_of::<f32>() as i32,
+            Self::F64 => size_of::<f64>() as i32,
+        }
+    }
+
+    fn zero(self, builder: &mut FunctionBuilder<'_>) -> cranelift::prelude::Value {
+        match self {
+            Self::F32 => builder.ins().f32const(0.0),
+            Self::F64 => builder.ins().f64const(0.0),
+        }
+    }
+
+    fn one(self, builder: &mut FunctionBuilder<'_>) -> cranelift::prelude::Value {
+        match self {
+            Self::F32 => builder.ins().f32const(1.0),
+            Self::F64 => builder.ins().f64const(1.0),
+        }
+    }
+
+    fn constant(self, builder: &mut FunctionBuilder<'_>, value: f64) -> cranelift::prelude::Value {
+        match self {
+            Self::F32 => builder.ins().f32const(value as f32),
+            Self::F64 => builder.ins().f64const(value),
+        }
+    }
+
+    fn promote_to_f64(
+        self,
+        builder: &mut FunctionBuilder<'_>,
+        value: cranelift::prelude::Value,
+    ) -> cranelift::prelude::Value {
+        match self {
+            Self::F32 => builder.ins().fpromote(types::F64, value),
+            Self::F64 => value,
+        }
+    }
+
+    fn demote_from_f64(
+        self,
+        builder: &mut FunctionBuilder<'_>,
+        value: cranelift::prelude::Value,
+    ) -> cranelift::prelude::Value {
+        match self {
+            Self::F32 => builder.ins().fdemote(types::F32, value),
+            Self::F64 => value,
+        }
+    }
+}
+
 impl JitScalarKernel {
-    pub(crate) fn compile(ir: &ScalarKernelIr) -> Result<Option<Self>, String> {
+    pub(crate) fn compile_with_precision(
+        ir: &ScalarKernelIr,
+        precision: JitPrecision,
+    ) -> Result<Option<Self>, String> {
         let mut jit_builder =
             JITBuilder::new(default_libcall_names()).map_err(|error| error.to_string())?;
-        jit_builder.symbol("laddu_jit_unary", unary_helper as *const u8);
-        jit_builder.symbol("laddu_jit_binary", binary_helper as *const u8);
-        jit_builder.symbol("laddu_jit_solve", solve_helper as *const u8);
+        match precision {
+            JitPrecision::F32 => {
+                jit_builder.symbol("laddu_jit_unary_f32", unary_helper_f32 as *const u8);
+                jit_builder.symbol("laddu_jit_binary_f32", binary_helper_f32 as *const u8);
+                jit_builder.symbol("laddu_jit_solve_f32", solve_helper_f32 as *const u8);
+            }
+            JitPrecision::F64 => {
+                jit_builder.symbol("laddu_jit_unary_f64", unary_helper as *const u8);
+                jit_builder.symbol("laddu_jit_binary_f64", binary_helper as *const u8);
+                jit_builder.symbol("laddu_jit_solve_f64", solve_helper as *const u8);
+            }
+        }
         let mut module = JITModule::new(jit_builder);
         let pointer_type = module.target_config().pointer_type();
         if pointer_type != types::I64 {
             return Ok(None);
         }
 
-        let helpers = declare_helpers(&mut module, pointer_type)?;
+        let helpers = declare_helpers(&mut module, pointer_type, precision)?;
         let mut signature = module.make_signature();
         for _ in 0..3 {
             signature.params.push(AbiParam::new(pointer_type));
@@ -162,7 +248,7 @@ impl JitScalarKernel {
                 solve: module.declare_func_in_func(helpers.solve, &mut context.func),
             };
             let mut builder = FunctionBuilder::new(&mut context.func, &mut function_context);
-            emit_kernel(&mut builder, ir, pointer_type, &function_helpers)?;
+            emit_kernel(&mut builder, ir, pointer_type, precision, &function_helpers)?;
             builder.finalize();
         }
 
@@ -178,6 +264,8 @@ impl JitScalarKernel {
             code: Arc::new(JitScalarCode {
                 _module: Mutex::new(module),
                 function,
+                #[cfg(test)]
+                precision,
             }),
         }))
     }
@@ -243,6 +331,11 @@ impl JitScalarKernel {
             Err(RuntimeError::JitExecution(status))
         }
     }
+
+    #[cfg(test)]
+    pub(crate) fn precision(&self) -> JitPrecision {
+        self.code.precision
+    }
 }
 
 impl JitGradientKernel {
@@ -265,16 +358,16 @@ impl JitGradientKernel {
     fn compile_component(ir: &GradientKernelIr) -> Result<JitGradientCode, String> {
         let mut jit_builder =
             JITBuilder::new(default_libcall_names()).map_err(|error| error.to_string())?;
-        jit_builder.symbol("laddu_jit_unary", unary_helper as *const u8);
-        jit_builder.symbol("laddu_jit_binary", binary_helper as *const u8);
-        jit_builder.symbol("laddu_jit_solve", solve_helper as *const u8);
+        jit_builder.symbol("laddu_jit_unary_f64", unary_helper as *const u8);
+        jit_builder.symbol("laddu_jit_binary_f64", binary_helper as *const u8);
+        jit_builder.symbol("laddu_jit_solve_f64", solve_helper as *const u8);
         let mut module = JITModule::new(jit_builder);
         let pointer_type = module.target_config().pointer_type();
         if pointer_type != types::I64 {
             return Err("gradient JIT requires 64-bit pointers".into());
         }
 
-        let helpers = declare_helpers(&mut module, pointer_type)?;
+        let helpers = declare_helpers(&mut module, pointer_type, JitPrecision::F64)?;
         let mut signature = module.make_signature();
         for _ in 0..6 {
             signature.params.push(AbiParam::new(pointer_type));
@@ -398,29 +491,46 @@ impl JitCacheView {
     }
 }
 
-fn declare_helpers(module: &mut JITModule, pointer_type: Type) -> Result<HelperFunctions, String> {
+fn declare_helpers(
+    module: &mut JITModule,
+    pointer_type: Type,
+    precision: JitPrecision,
+) -> Result<HelperFunctions, String> {
+    let real_type = precision.real_type();
+    let unary_name = match precision {
+        JitPrecision::F32 => "laddu_jit_unary_f32",
+        JitPrecision::F64 => "laddu_jit_unary_f64",
+    };
+    let binary_name = match precision {
+        JitPrecision::F32 => "laddu_jit_binary_f32",
+        JitPrecision::F64 => "laddu_jit_binary_f64",
+    };
+    let solve_name = match precision {
+        JitPrecision::F32 => "laddu_jit_solve_f32",
+        JitPrecision::F64 => "laddu_jit_solve_f64",
+    };
     let mut unary = module.make_signature();
     unary.params.extend([
         AbiParam::new(types::I32),
         AbiParam::new(types::I32),
-        AbiParam::new(types::F64),
-        AbiParam::new(types::F64),
+        AbiParam::new(real_type),
+        AbiParam::new(real_type),
         AbiParam::new(pointer_type),
     ]);
     let unary = module
-        .declare_function("laddu_jit_unary", Linkage::Import, &unary)
+        .declare_function(unary_name, Linkage::Import, &unary)
         .map_err(|e| e.to_string())?;
     let mut binary = module.make_signature();
     binary.params.extend([
         AbiParam::new(types::I32),
-        AbiParam::new(types::F64),
-        AbiParam::new(types::F64),
-        AbiParam::new(types::F64),
-        AbiParam::new(types::F64),
+        AbiParam::new(real_type),
+        AbiParam::new(real_type),
+        AbiParam::new(real_type),
+        AbiParam::new(real_type),
         AbiParam::new(pointer_type),
     ]);
     let binary = module
-        .declare_function("laddu_jit_binary", Linkage::Import, &binary)
+        .declare_function(binary_name, Linkage::Import, &binary)
         .map_err(|e| e.to_string())?;
     let mut solve = module.make_signature();
     solve.params.extend([
@@ -431,7 +541,7 @@ fn declare_helpers(module: &mut JITModule, pointer_type: Type) -> Result<HelperF
     ]);
     solve.returns.push(AbiParam::new(types::I32));
     let solve = module
-        .declare_function("laddu_jit_solve", Linkage::Import, &solve)
+        .declare_function(solve_name, Linkage::Import, &solve)
         .map_err(|e| e.to_string())?;
     Ok(HelperFunctions {
         unary,
@@ -444,6 +554,7 @@ fn emit_kernel(
     builder: &mut FunctionBuilder<'_>,
     ir: &ScalarKernelIr,
     pointer_type: Type,
+    precision: JitPrecision,
     helpers: &FunctionHelpers,
 ) -> Result<(), String> {
     let entry = builder.create_block();
@@ -476,6 +587,7 @@ fn emit_kernel(
                 solve_rows,
                 invariant_row,
                 pointer_type,
+                precision,
                 helpers,
                 failed,
             )?);
@@ -504,6 +616,7 @@ fn emit_kernel(
                 solve_rows,
                 row,
                 pointer_type,
+                precision,
                 helpers,
                 failed,
             )?);
@@ -518,12 +631,14 @@ fn emit_kernel(
         .ins()
         .imul_imm(output_row, size_of::<Complex64>() as i64);
     let output_ptr = builder.ins().iadd(output, byte_offset);
+    let result_re = precision.promote_to_f64(builder, result.re);
+    let result_im = precision.promote_to_f64(builder, result.im);
     builder
         .ins()
-        .store(MemFlagsData::trusted(), result.re, output_ptr, 0);
+        .store(MemFlagsData::trusted(), result_re, output_ptr, 0);
     builder
         .ins()
-        .store(MemFlagsData::trusted(), result.im, output_ptr, 8);
+        .store(MemFlagsData::trusted(), result_im, output_ptr, 8);
     let next = builder.ins().iadd_imm(row, 1);
     let next_arg = BlockArg::from(next);
     builder.ins().jump(loop_header, &[next_arg]);
@@ -583,6 +698,7 @@ fn emit_gradient_kernel(
                 solve_rows,
                 invariant_row,
                 pointer_type,
+                JitPrecision::F64,
                 helpers,
                 failed,
             )?);
@@ -610,6 +726,7 @@ fn emit_gradient_kernel(
                 solve_rows,
                 row,
                 pointer_type,
+                JitPrecision::F64,
                 helpers,
                 failed,
             )?);
@@ -672,6 +789,7 @@ fn emit_instruction(
     solve_rows: cranelift::prelude::Value,
     row: cranelift::prelude::Value,
     pointer_type: Type,
+    precision: JitPrecision,
     helpers: &FunctionHelpers,
     failed: Block,
 ) -> Result<LoweredValue, String> {
@@ -688,29 +806,36 @@ fn emit_instruction(
             .ok_or_else(|| "scalar operand is empty".into())
     };
     let zero = |builder: &mut FunctionBuilder<'_>| ComplexValue {
-        re: builder.ins().f64const(0.0),
-        im: builder.ins().f64const(0.0),
+        re: precision.zero(builder),
+        im: precision.zero(builder),
     };
     let elements = match &value.instruction {
-        KernelInstruction::Cached(slot) => {
-            load_descriptor(builder, cache, *slot, value.kind, row, pointer_type)?
-        }
+        KernelInstruction::Cached(slot) => load_descriptor(
+            builder,
+            cache,
+            *slot,
+            value.kind,
+            row,
+            pointer_type,
+            precision,
+        )?,
         KernelInstruction::RealConstant(number) => vec![ComplexValue {
-            re: builder.ins().f64const(*number),
-            im: builder.ins().f64const(0.0),
+            re: precision.constant(builder, *number),
+            im: precision.zero(builder),
         }],
         KernelInstruction::ComplexConstant(number) => vec![ComplexValue {
-            re: builder.ins().f64const(number.re),
-            im: builder.ins().f64const(number.im),
+            re: precision.constant(builder, number.re),
+            im: precision.constant(builder, number.im),
         }],
         KernelInstruction::Parameter(id) => {
             let offset = i32::try_from(id.index() * size_of::<f64>())
                 .map_err(|_| "parameter offset exceeds JIT address range")?;
+            let re = builder
+                .ins()
+                .load(types::F64, MemFlagsData::trusted(), parameters, offset);
             vec![ComplexValue {
-                re: builder
-                    .ins()
-                    .load(types::F64, MemFlagsData::trusted(), parameters, offset),
-                im: builder.ins().f64const(0.0),
+                re: precision.demote_from_f64(builder, re),
+                im: precision.zero(builder),
             }]
         }
         KernelInstruction::Unary { op, input } => vec![emit_unary(
@@ -718,6 +843,7 @@ fn emit_instruction(
             *op,
             scalar(*input)?,
             pointer_type,
+            precision,
             helpers.unary,
         )],
         KernelInstruction::Binary { op, lhs, rhs } => vec![emit_binary(
@@ -726,6 +852,7 @@ fn emit_instruction(
             scalar(*lhs)?,
             scalar(*rhs)?,
             pointer_type,
+            precision,
             helpers.binary,
         )],
         KernelInstruction::Add(terms) => {
@@ -737,8 +864,8 @@ fn emit_instruction(
         }
         KernelInstruction::Mul(factors) => {
             let mut out = ComplexValue {
-                re: builder.ins().f64const(1.0),
-                im: builder.ins().f64const(0.0),
+                re: precision.one(builder),
+                im: precision.zero(builder),
             };
             for factor in factors {
                 out = mul(builder, out, scalar(*factor)?);
@@ -826,6 +953,7 @@ fn emit_instruction(
                 &matrix.elements,
                 &rhs.elements,
                 pointer_type,
+                precision,
                 helpers.solve,
                 failed,
             )?
@@ -838,6 +966,7 @@ fn emit_instruction(
                 KernelValueKind::Vector { len: rhs.len() },
                 row,
                 pointer_type,
+                precision,
             )?;
             let mut sum = zero(builder);
             for (coefficient, rhs) in inverse.iter().zip(rhs) {
@@ -860,6 +989,7 @@ fn emit_instruction(
                 *len,
                 row,
                 pointer_type,
+                precision,
             )?;
             vec![mul_conj(builder, scalar(*adjoint)?, coefficient)]
         }
@@ -878,6 +1008,7 @@ fn load_complex_descriptor_element(
     width: usize,
     row: cranelift::prelude::Value,
     pointer_type: Type,
+    precision: JitPrecision,
 ) -> Result<ComplexValue, String> {
     let descriptor_offset = i32::try_from(slot * size_of::<CacheDescriptor>())
         .map_err(|_| "cache descriptor offset exceeds JIT address range")?;
@@ -893,13 +1024,15 @@ fn load_complex_descriptor_element(
         .ins()
         .imul_imm(element_offset, size_of::<Complex64>() as i64);
     let pointer = builder.ins().iadd(base, byte_offset);
+    let re = builder
+        .ins()
+        .load(types::F64, MemFlagsData::trusted(), pointer, 0);
+    let im = builder
+        .ins()
+        .load(types::F64, MemFlagsData::trusted(), pointer, 8);
     Ok(ComplexValue {
-        re: builder
-            .ins()
-            .load(types::F64, MemFlagsData::trusted(), pointer, 0),
-        im: builder
-            .ins()
-            .load(types::F64, MemFlagsData::trusted(), pointer, 8),
+        re: precision.demote_from_f64(builder, re),
+        im: precision.demote_from_f64(builder, im),
     })
 }
 
@@ -910,6 +1043,7 @@ fn load_descriptor(
     kind: KernelValueKind,
     row: cranelift::prelude::Value,
     pointer_type: Type,
+    precision: JitPrecision,
 ) -> Result<Vec<ComplexValue>, String> {
     let descriptor_size = size_of::<CacheDescriptor>();
     let descriptor_offset = i32::try_from(slot * descriptor_size)
@@ -934,17 +1068,20 @@ fn load_descriptor(
     for index in 0..width {
         let offset = i32::try_from(index * element_size)
             .map_err(|_| "cached value offset exceeds JIT address range")?;
-        out.push(ComplexValue {
-            re: builder
+        let re = builder
+            .ins()
+            .load(types::F64, MemFlagsData::trusted(), row_ptr, offset);
+        let im = if real {
+            precision.zero(builder)
+        } else {
+            let im = builder
                 .ins()
-                .load(types::F64, MemFlagsData::trusted(), row_ptr, offset),
-            im: if real {
-                builder.ins().f64const(0.0)
-            } else {
-                builder
-                    .ins()
-                    .load(types::F64, MemFlagsData::trusted(), row_ptr, offset + 8)
-            },
+                .load(types::F64, MemFlagsData::trusted(), row_ptr, offset + 8);
+            precision.demote_from_f64(builder, im)
+        };
+        out.push(ComplexValue {
+            re: precision.demote_from_f64(builder, re),
+            im,
         });
     }
     Ok(out)
@@ -985,6 +1122,7 @@ fn emit_unary(
     op: UnaryOp,
     input: ComplexValue,
     pointer_type: Type,
+    precision: JitPrecision,
     helper: FuncRef,
 ) -> ComplexValue {
     match op {
@@ -994,11 +1132,11 @@ fn emit_unary(
         },
         UnaryOp::Real => ComplexValue {
             re: input.re,
-            im: builder.ins().f64const(0.0),
+            im: precision.zero(builder),
         },
         UnaryOp::Imag => ComplexValue {
             re: input.im,
-            im: builder.ins().f64const(0.0),
+            im: precision.zero(builder),
         },
         UnaryOp::Conj => ComplexValue {
             re: input.re,
@@ -1009,14 +1147,14 @@ fn emit_unary(
             let im2 = builder.ins().fmul(input.im, input.im);
             ComplexValue {
                 re: builder.ins().fadd(re2, im2),
-                im: builder.ins().f64const(0.0),
+                im: precision.zero(builder),
             }
         }
         _ => {
             let (code, power) = unary_code(op);
             let slot = builder.create_sized_stack_slot(StackSlotData::new(
                 StackSlotKind::ExplicitSlot,
-                16,
+                precision.complex_size() as u32,
                 3,
             ));
             let out = builder.ins().stack_addr(pointer_type, slot, 0);
@@ -1026,8 +1164,12 @@ fn emit_unary(
                 .ins()
                 .call(helper, &[code, power, input.re, input.im, out]);
             ComplexValue {
-                re: builder.ins().stack_load(types::F64, slot, 0),
-                im: builder.ins().stack_load(types::F64, slot, 8),
+                re: builder.ins().stack_load(precision.real_type(), slot, 0),
+                im: builder.ins().stack_load(
+                    precision.real_type(),
+                    slot,
+                    precision.imaginary_offset(),
+                ),
             }
         }
     }
@@ -1039,6 +1181,7 @@ fn emit_binary(
     lhs: ComplexValue,
     rhs: ComplexValue,
     pointer_type: Type,
+    precision: JitPrecision,
     helper: FuncRef,
 ) -> ComplexValue {
     match op {
@@ -1066,7 +1209,7 @@ fn emit_binary(
         BinaryOp::Atan2 => {
             let slot = builder.create_sized_stack_slot(StackSlotData::new(
                 StackSlotKind::ExplicitSlot,
-                16,
+                precision.complex_size() as u32,
                 3,
             ));
             let out = builder.ins().stack_addr(pointer_type, slot, 0);
@@ -1075,8 +1218,12 @@ fn emit_binary(
                 .ins()
                 .call(helper, &[code, lhs.re, lhs.im, rhs.re, rhs.im, out]);
             ComplexValue {
-                re: builder.ins().stack_load(types::F64, slot, 0),
-                im: builder.ins().stack_load(types::F64, slot, 8),
+                re: builder.ins().stack_load(precision.real_type(), slot, 0),
+                im: builder.ins().stack_load(
+                    precision.real_type(),
+                    slot,
+                    precision.imaginary_offset(),
+                ),
             }
         }
     }
@@ -1087,12 +1234,15 @@ fn emit_solve(
     matrix: &[ComplexValue],
     rhs: &[ComplexValue],
     pointer_type: Type,
+    precision: JitPrecision,
     helper: FuncRef,
     failed: Block,
 ) -> Result<Vec<ComplexValue>, String> {
-    let matrix_size = u32::try_from(matrix.len() * size_of::<Complex64>())
+    let complex_size = precision.complex_size();
+    let imag_offset = precision.imaginary_offset();
+    let matrix_size = u32::try_from(matrix.len() * complex_size)
         .map_err(|_| "matrix is too large for JIT stack storage")?;
-    let vector_size = u32::try_from(rhs.len() * size_of::<Complex64>())
+    let vector_size = u32::try_from(rhs.len() * complex_size)
         .map_err(|_| "vector is too large for JIT stack storage")?;
     let matrix_slot = builder.create_sized_stack_slot(StackSlotData::new(
         StackSlotKind::ExplicitSlot,
@@ -1110,20 +1260,20 @@ fn emit_solve(
         3,
     ));
     for (index, value) in matrix.iter().enumerate() {
+        let offset = index * complex_size;
         builder
             .ins()
-            .stack_store(value.re, matrix_slot, (index * 16) as i32);
+            .stack_store(value.re, matrix_slot, offset as i32);
         builder
             .ins()
-            .stack_store(value.im, matrix_slot, (index * 16 + 8) as i32);
+            .stack_store(value.im, matrix_slot, offset as i32 + imag_offset);
     }
     for (index, value) in rhs.iter().enumerate() {
+        let offset = index * complex_size;
+        builder.ins().stack_store(value.re, rhs_slot, offset as i32);
         builder
             .ins()
-            .stack_store(value.re, rhs_slot, (index * 16) as i32);
-        builder
-            .ins()
-            .stack_store(value.im, rhs_slot, (index * 16 + 8) as i32);
+            .stack_store(value.im, rhs_slot, offset as i32 + imag_offset);
     }
     let dimension = builder.ins().iconst(pointer_type, rhs.len() as i64);
     let matrix_ptr = builder.ins().stack_addr(pointer_type, matrix_slot, 0);
@@ -1139,13 +1289,16 @@ fn emit_solve(
     builder.switch_to_block(success);
     let mut out = Vec::with_capacity(rhs.len());
     for index in 0..rhs.len() {
+        let offset = index * complex_size;
         out.push(ComplexValue {
             re: builder
                 .ins()
-                .stack_load(types::F64, out_slot, (index * 16) as i32),
-            im: builder
-                .ins()
-                .stack_load(types::F64, out_slot, (index * 16 + 8) as i32),
+                .stack_load(precision.real_type(), out_slot, offset as i32),
+            im: builder.ins().stack_load(
+                precision.real_type(),
+                out_slot,
+                offset as i32 + imag_offset,
+            ),
         });
     }
     Ok(out)
@@ -1177,6 +1330,26 @@ unsafe extern "C" fn unary_helper(code: i32, power: i32, re: f64, im: f64, out: 
     unsafe { out.write(result) };
 }
 
+unsafe extern "C" fn unary_helper_f32(
+    code: i32,
+    power: i32,
+    re: f32,
+    im: f32,
+    out: *mut Complex32,
+) {
+    let value = Complex32::new(re, im);
+    let result = match code {
+        0 => value.sqrt(),
+        1 => value.exp(),
+        2 => value.sin(),
+        3 => value.cos(),
+        4 => value.ln(),
+        5 => value.powi(power),
+        _ => Complex32::new(f32::NAN, f32::NAN),
+    };
+    unsafe { out.write(result) };
+}
+
 unsafe extern "C" fn binary_helper(
     code: i32,
     lhs_re: f64,
@@ -1188,6 +1361,21 @@ unsafe extern "C" fn binary_helper(
     let result = match code {
         0 => Complex64::from(lhs_re.atan2(rhs_re)),
         _ => Complex64::new(f64::NAN, f64::NAN),
+    };
+    unsafe { out.write(result) };
+}
+
+unsafe extern "C" fn binary_helper_f32(
+    code: i32,
+    lhs_re: f32,
+    _lhs_im: f32,
+    rhs_re: f32,
+    _rhs_im: f32,
+    out: *mut Complex32,
+) {
+    let result = match code {
+        0 => Complex32::from(lhs_re.atan2(rhs_re)),
+        _ => Complex32::new(f32::NAN, f32::NAN),
     };
     unsafe { out.write(result) };
 }
@@ -1209,6 +1397,25 @@ unsafe extern "C" fn solve_helper(
     if !solved {
         return 1;
     }
+    0
+}
+
+unsafe extern "C" fn solve_helper_f32(
+    dimension: usize,
+    matrix: *mut Complex32,
+    rhs: *const Complex32,
+    out: *mut Complex32,
+) -> i32 {
+    let matrix = unsafe { std::slice::from_raw_parts(matrix, dimension * dimension) };
+    let rhs = unsafe { std::slice::from_raw_parts(rhs, dimension) };
+    let out = unsafe { std::slice::from_raw_parts_mut(out, dimension) };
+    let Some(solution) = DMatrix::from_row_slice(dimension, dimension, matrix)
+        .lu()
+        .solve(&DVector::from_row_slice(rhs))
+    else {
+        return 1;
+    };
+    out.copy_from_slice(solution.as_slice());
     0
 }
 
