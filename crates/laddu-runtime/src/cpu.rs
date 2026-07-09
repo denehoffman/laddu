@@ -5304,6 +5304,98 @@ mod tests {
         (plan.evaluate(&plus).unwrap() - plan.evaluate(&minus).unwrap()) / (2.0 * h)
     }
 
+    #[cfg(feature = "jit")]
+    fn f32_execution(jit: JitPolicy) -> Execution {
+        Execution::local(crate::ExecutionOptions {
+            device: crate::Device::Cpu(crate::CpuOptions {
+                jit,
+                ..crate::CpuOptions::default()
+            }),
+            precision: Precision::F32,
+            ..crate::ExecutionOptions::default()
+        })
+        .unwrap()
+    }
+
+    #[cfg(feature = "jit")]
+    fn f32_jit_and_interpreter(model: &CompiledModel) -> (CpuPlan, CpuPlan) {
+        let automatic = CpuBackend
+            .prepare_for_execution(model, &f32_execution(JitPolicy::Auto))
+            .unwrap();
+        let interpreted = CpuBackend
+            .prepare_for_execution(model, &f32_execution(JitPolicy::Disabled))
+            .unwrap();
+
+        let Some(ScalarExecutor::Jit(kernel)) = &automatic.scalar_executor else {
+            panic!("f32 auto execution should select scalar JIT");
+        };
+        assert_eq!(kernel.precision(), JitPrecision::F32);
+        assert!(matches!(
+            automatic.gradient_executor,
+            GradientExecutor::Interpreter(_)
+        ));
+        if interpreted.scalar_executor.is_some() {
+            assert!(matches!(
+                interpreted.scalar_executor,
+                Some(ScalarExecutor::Interpreter(_))
+            ));
+        }
+        (automatic, interpreted)
+    }
+
+    #[cfg(feature = "jit")]
+    fn f64_jit_and_interpreter(model: &CompiledModel) -> (CpuPlan, CpuPlan) {
+        let automatic = CpuBackend.prepare(model);
+        let interpreted =
+            CpuBackend.prepare_with_execution_mode(model, CpuExecutionMode::Interpreter);
+
+        if automatic.scalar_executor.is_some() {
+            assert!(matches!(
+                automatic.scalar_executor,
+                Some(ScalarExecutor::Jit(_))
+            ));
+        }
+        if interpreted.scalar_executor.is_some() {
+            assert!(matches!(
+                interpreted.scalar_executor,
+                Some(ScalarExecutor::Interpreter(_))
+            ));
+        }
+        (automatic, interpreted)
+    }
+
+    #[cfg(feature = "jit")]
+    fn assert_complex_close(actual: Complex64, expected: Complex64) {
+        assert!(
+            (actual - expected).norm() < 1.0e-6,
+            "{actual} != {expected}"
+        );
+    }
+
+    #[cfg(feature = "jit")]
+    fn assert_complex_slices_close(actual: &[Complex64], expected: &[Complex64]) {
+        assert_eq!(actual.len(), expected.len());
+        for (actual, expected) in actual.iter().zip(expected) {
+            assert_complex_close(*actual, *expected);
+        }
+    }
+
+    #[cfg(feature = "jit")]
+    fn assert_complex_close_f64(actual: Complex64, expected: Complex64) {
+        assert!(
+            (actual - expected).norm() < 1.0e-10,
+            "{actual} != {expected}"
+        );
+    }
+
+    #[cfg(feature = "jit")]
+    fn assert_complex_slices_close_f64(actual: &[Complex64], expected: &[Complex64]) {
+        assert_eq!(actual.len(), expected.len());
+        for (actual, expected) in actual.iter().zip(expected) {
+            assert_complex_close_f64(*actual, *expected);
+        }
+    }
+
     #[test]
     fn evaluates_scalar_expression_with_parameters() {
         let expr = (2.0 * parameter!("x", initial: 3.0)
@@ -5595,43 +5687,38 @@ mod tests {
         let y = laddu_expr::Expr::from(parameter!("y", initial: 1.0));
         let model = CompiledModel::from_expr(&(x + y)).unwrap();
         let params = model.params().default_values();
-        let automatic_execution = Execution::local(crate::ExecutionOptions {
-            device: crate::Device::Cpu(crate::CpuOptions::default()),
-            precision: Precision::F32,
-            ..crate::ExecutionOptions::default()
-        })
-        .unwrap();
-        let interpreter_execution = Execution::local(crate::ExecutionOptions {
-            device: crate::Device::Cpu(crate::CpuOptions {
-                jit: crate::JitPolicy::Disabled,
-                ..crate::CpuOptions::default()
-            }),
-            precision: Precision::F32,
-            ..crate::ExecutionOptions::default()
-        })
-        .unwrap();
-        let automatic = CpuBackend
-            .prepare_for_execution(&model, &automatic_execution)
-            .unwrap();
-        let interpreted = CpuBackend
-            .prepare_for_execution(&model, &interpreter_execution)
-            .unwrap();
+        let (automatic, interpreted) = f32_jit_and_interpreter(&model);
 
-        let Some(ScalarExecutor::Jit(kernel)) = &automatic.scalar_executor else {
-            panic!("f32 auto execution should select scalar JIT");
-        };
-        assert_eq!(kernel.precision(), JitPrecision::F32);
-        assert!(matches!(
-            automatic.gradient_executor,
-            GradientExecutor::Interpreter(_)
-        ));
-        assert!(matches!(
-            interpreted.scalar_executor,
-            Some(ScalarExecutor::Interpreter(_))
-        ));
         assert_eq!(
             automatic.evaluate(&params).unwrap(),
             interpreted.evaluate(&params).unwrap()
+        );
+    }
+
+    #[cfg(feature = "jit")]
+    #[test]
+    fn cpu_f32_auto_jit_matches_f32_interpreter_for_unary_and_binary_ops() {
+        let x = laddu_expr::Expr::from(parameter!("x", initial: 0.8));
+        let y = laddu_expr::Expr::from(parameter!("y", initial: -0.35));
+        let z = complex(x.clone(), y.clone());
+        let expression = x.clone().sqrt()
+            + x.clone().log()
+            + x.clone().powi(-2)
+            + x.clone().sin()
+            + x.clone().cos()
+            + x.clone().exp()
+            + z.clone().conj().real()
+            + z.clone().imag()
+            + z.norm_sqr()
+            + atan2(y.clone(), x.clone())
+            + complex(x.clone(), y.clone()) / complex(1.25, -0.5);
+        let model = CompiledModel::from_expr(&expression).unwrap();
+        let params = model.params().default_values();
+        let (automatic, interpreted) = f32_jit_and_interpreter(&model);
+
+        assert_complex_close(
+            automatic.evaluate(&params).unwrap(),
+            interpreted.evaluate(&params).unwrap(),
         );
     }
 
@@ -5755,27 +5842,7 @@ mod tests {
         ))
         .unwrap();
         let params = model.params().default_values();
-        let automatic_execution = Execution::local(crate::ExecutionOptions {
-            device: crate::Device::Cpu(crate::CpuOptions::default()),
-            precision: Precision::F32,
-            ..crate::ExecutionOptions::default()
-        })
-        .unwrap();
-        let interpreter_execution = Execution::local(crate::ExecutionOptions {
-            device: crate::Device::Cpu(crate::CpuOptions {
-                jit: crate::JitPolicy::Disabled,
-                ..crate::CpuOptions::default()
-            }),
-            precision: Precision::F32,
-            ..crate::ExecutionOptions::default()
-        })
-        .unwrap();
-        let automatic = CpuBackend
-            .prepare_for_execution(&model, &automatic_execution)
-            .unwrap();
-        let interpreted = CpuBackend
-            .prepare_for_execution(&model, &interpreter_execution)
-            .unwrap();
+        let (automatic, interpreted) = f32_jit_and_interpreter(&model);
         let batch = EventBatch::from_events(
             Arc::new(Schema::new(std::iter::empty::<&str>(), ["x"], false).unwrap()),
             [OwnedEvent::new(vec![], vec![0.75])],
@@ -5784,20 +5851,99 @@ mod tests {
         let automatic_cache = automatic.cache_event_batch(&batch).unwrap();
         let interpreted_cache = interpreted.cache_event_batch(&batch).unwrap();
 
-        let Some(ScalarExecutor::Jit(kernel)) = &automatic.scalar_executor else {
-            panic!("f32 auto execution should select scalar JIT");
-        };
-        assert_eq!(kernel.precision(), JitPrecision::F32);
         let actual = automatic.evaluate_cache(&params, &automatic_cache).unwrap();
         let expected = interpreted
             .evaluate_cache(&params, &interpreted_cache)
             .unwrap();
-        assert_eq!(actual.len(), expected.len());
-        for (actual, expected) in actual.iter().zip(expected) {
-            assert!(
-                (actual - expected).norm() < 1.0e-6,
-                "{actual} != {expected}"
-            );
+        assert_complex_slices_close(&actual, &expected);
+    }
+
+    #[cfg(feature = "jit")]
+    #[test]
+    fn cpu_f32_auto_jit_matches_f32_interpreter_for_event_cache_ops() {
+        let scale = laddu_expr::Expr::from(parameter!("scale", initial: 1.75));
+        let x = event_scalar("x");
+        let y = event_scalar("y");
+        let expression = ((x.clone() + scale.clone()).sin()
+            + (y.clone() - 0.25).cos()
+            + (x.clone() * y.clone()).exp()
+            + atan2(y.clone(), x.clone() + 1.0))
+            / complex(scale, -0.5);
+        let model = CompiledModel::from_expr(&expression).unwrap();
+        let params = model.params().default_values();
+        let (automatic, interpreted) = f32_jit_and_interpreter(&model);
+        let batch = EventBatch::from_events(
+            Arc::new(Schema::new(std::iter::empty::<&str>(), ["x", "y"], false).unwrap()),
+            [
+                OwnedEvent::new(vec![], vec![0.25, -0.5]),
+                OwnedEvent::new(vec![], vec![0.75, 0.125]),
+                OwnedEvent::new(vec![], vec![1.5, 0.5]),
+            ],
+        )
+        .unwrap();
+        let automatic_cache = automatic.cache_event_batch(&batch).unwrap();
+        let interpreted_cache = interpreted.cache_event_batch(&batch).unwrap();
+
+        assert_complex_slices_close(
+            &automatic.evaluate_cache(&params, &automatic_cache).unwrap(),
+            &interpreted
+                .evaluate_cache(&params, &interpreted_cache)
+                .unwrap(),
+        );
+    }
+
+    #[cfg(feature = "jit")]
+    #[test]
+    fn cpu_f32_auto_jit_matches_f32_interpreter_for_reductions_and_gradients() {
+        let scale = laddu_expr::Expr::from(parameter!("scale", initial: 1.25));
+        let offset = laddu_expr::Expr::from(parameter!("offset", initial: 0.5));
+        let x = event_scalar("x");
+        let expression = (x.clone() * scale.clone() + offset.clone()).sin()
+            + complex(scale, offset).norm_sqr()
+            + 2.0;
+        let model = CompiledModel::from_expr(&expression).unwrap();
+        let params = model.params().default_values();
+        let (automatic, interpreted) = f32_jit_and_interpreter(&model);
+        let auto_execution = f32_execution(JitPolicy::Auto);
+        let interpreter_execution = f32_execution(JitPolicy::Disabled);
+        let dataset = Dataset::from_batch(
+            EventBatch::from_events(
+                Arc::new(Schema::new(std::iter::empty::<&str>(), ["x"], true).unwrap()),
+                [
+                    OwnedEvent::weighted(vec![], vec![0.25], 0.5),
+                    OwnedEvent::weighted(vec![], vec![0.75], 1.5),
+                    OwnedEvent::weighted(vec![], vec![1.25], 2.0),
+                ],
+            )
+            .unwrap(),
+        );
+        let automatic_data = automatic
+            .prepare_dataset(&auto_execution, &dataset)
+            .unwrap();
+        let interpreted_data = interpreted
+            .prepare_dataset(&interpreter_execution, &dataset)
+            .unwrap();
+
+        let actual = automatic
+            .reduce_with_gradient(
+                &auto_execution,
+                &params,
+                &automatic_data,
+                ReductionPlan::weighted_real(),
+            )
+            .unwrap();
+        let expected = interpreted
+            .reduce_with_gradient(
+                &interpreter_execution,
+                &params,
+                &interpreted_data,
+                ReductionPlan::weighted_real(),
+            )
+            .unwrap();
+        assert!((actual.value() - expected.value()).abs() < 1.0e-6);
+        assert_eq!(actual.gradient().len(), expected.gradient().len());
+        for (actual, expected) in actual.gradient().iter().zip(expected.gradient()) {
+            assert!((actual - expected).abs() < 1.0e-6);
         }
     }
 
@@ -5841,6 +5987,148 @@ mod tests {
         assert!(matches!(plan.scalar_executor, Some(ScalarExecutor::Jit(_))));
         let params = Arc::new(model.params().clone()).default_values();
         assert_eq!(plan.evaluate(&params).unwrap(), Complex64::from(2.0).exp());
+    }
+
+    #[cfg(feature = "jit")]
+    #[test]
+    fn cpu_f64_auto_jit_matches_interpreter_for_unary_binary_ops_and_gradients() {
+        let x = laddu_expr::Expr::from(parameter!("x", initial: 0.8));
+        let y = laddu_expr::Expr::from(parameter!("y", initial: -0.35));
+        let z = complex(x.clone(), y.clone());
+        let expression = x.clone().sqrt()
+            + x.clone().log()
+            + x.clone().powi(-2)
+            + x.clone().sin()
+            + x.clone().cos()
+            + x.clone().exp()
+            + z.clone().conj().real()
+            + z.clone().imag()
+            + z.norm_sqr()
+            + atan2(y.clone(), x.clone())
+            + complex(x.clone(), y.clone()) / complex(1.25, -0.5);
+        let model = CompiledModel::from_expr(&expression).unwrap();
+        let params = model.params().default_values();
+        let (automatic, interpreted) = f64_jit_and_interpreter(&model);
+
+        assert_complex_close_f64(
+            automatic.evaluate(&params).unwrap(),
+            interpreted.evaluate(&params).unwrap(),
+        );
+        let actual_gradient = automatic.evaluate_with_gradient(&params).unwrap();
+        let expected_gradient = interpreted.evaluate_with_gradient(&params).unwrap();
+        assert_complex_close_f64(actual_gradient.value(), expected_gradient.value());
+        assert_complex_slices_close_f64(actual_gradient.gradient(), expected_gradient.gradient());
+    }
+
+    #[cfg(feature = "jit")]
+    #[test]
+    fn cpu_f64_auto_jit_matches_interpreter_for_event_cache_ops_and_gradients() {
+        let scale = laddu_expr::Expr::from(parameter!("scale", initial: 1.75));
+        let x = event_scalar("x");
+        let y = event_scalar("y");
+        let expression = ((x.clone() + scale.clone()).sin()
+            + (y.clone() - 0.25).cos()
+            + (x.clone() * y.clone()).exp()
+            + atan2(y.clone(), x.clone() + 1.0))
+            / complex(scale, -0.5);
+        let model = CompiledModel::from_expr(&expression).unwrap();
+        let params = model.params().default_values();
+        let (automatic, interpreted) = f64_jit_and_interpreter(&model);
+        let batch = EventBatch::from_events(
+            Arc::new(Schema::new(std::iter::empty::<&str>(), ["x", "y"], false).unwrap()),
+            [
+                OwnedEvent::new(vec![], vec![0.25, -0.5]),
+                OwnedEvent::new(vec![], vec![0.75, 0.125]),
+                OwnedEvent::new(vec![], vec![1.5, 0.5]),
+            ],
+        )
+        .unwrap();
+        let automatic_cache = automatic.cache_event_batch(&batch).unwrap();
+        let interpreted_cache = interpreted.cache_event_batch(&batch).unwrap();
+
+        assert_complex_slices_close_f64(
+            &automatic.evaluate_cache(&params, &automatic_cache).unwrap(),
+            &interpreted
+                .evaluate_cache(&params, &interpreted_cache)
+                .unwrap(),
+        );
+        for (actual, expected) in automatic
+            .evaluate_cache_with_gradient(&params, &automatic_cache)
+            .unwrap()
+            .iter()
+            .zip(
+                interpreted
+                    .evaluate_cache_with_gradient(&params, &interpreted_cache)
+                    .unwrap(),
+            )
+        {
+            assert_complex_close_f64(actual.value(), expected.value());
+            assert_complex_slices_close_f64(actual.gradient(), expected.gradient());
+        }
+    }
+
+    #[cfg(feature = "jit")]
+    #[test]
+    fn cpu_f64_auto_jit_matches_interpreter_for_reductions_and_gradients() {
+        let scale = laddu_expr::Expr::from(parameter!("scale", initial: 1.25));
+        let offset = laddu_expr::Expr::from(parameter!("offset", initial: 0.5));
+        let x = event_scalar("x");
+        let expression = (x.clone() * scale.clone() + offset.clone()).sin()
+            + complex(scale, offset).norm_sqr()
+            + 2.0;
+        let model = CompiledModel::from_expr(&expression).unwrap();
+        let params = model.params().default_values();
+        let (automatic, interpreted) = f64_jit_and_interpreter(&model);
+        assert!(matches!(
+            automatic.gradient_executor,
+            GradientExecutor::Jit(_)
+        ));
+        let execution = Execution::default();
+        let interpreter_execution = Execution::local(crate::ExecutionOptions {
+            device: crate::Device::Cpu(crate::CpuOptions {
+                jit: JitPolicy::Disabled,
+                ..crate::CpuOptions::default()
+            }),
+            ..crate::ExecutionOptions::default()
+        })
+        .unwrap();
+        let dataset = Dataset::from_batch(
+            EventBatch::from_events(
+                Arc::new(Schema::new(std::iter::empty::<&str>(), ["x"], true).unwrap()),
+                [
+                    OwnedEvent::weighted(vec![], vec![0.25], 0.5),
+                    OwnedEvent::weighted(vec![], vec![0.75], 1.5),
+                    OwnedEvent::weighted(vec![], vec![1.25], 2.0),
+                ],
+            )
+            .unwrap(),
+        );
+        let automatic_data = automatic.prepare_dataset(&execution, &dataset).unwrap();
+        let interpreted_data = interpreted
+            .prepare_dataset(&interpreter_execution, &dataset)
+            .unwrap();
+
+        let actual = automatic
+            .reduce_with_gradient(
+                &execution,
+                &params,
+                &automatic_data,
+                ReductionPlan::weighted_real(),
+            )
+            .unwrap();
+        let expected = interpreted
+            .reduce_with_gradient(
+                &interpreter_execution,
+                &params,
+                &interpreted_data,
+                ReductionPlan::weighted_real(),
+            )
+            .unwrap();
+        assert!((actual.value() - expected.value()).abs() < 1.0e-10);
+        assert_eq!(actual.gradient().len(), expected.gradient().len());
+        for (actual, expected) in actual.gradient().iter().zip(expected.gradient()) {
+            assert!((actual - expected).abs() < 1.0e-10);
+        }
     }
 
     #[test]

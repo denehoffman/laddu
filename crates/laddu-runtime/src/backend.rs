@@ -379,3 +379,116 @@ impl WgpuPlan {
 fn wgpu_error(error: laddu_wgpu::WgpuError) -> RuntimeError {
     RuntimeError::Wgpu(error.to_string())
 }
+
+#[cfg(all(test, feature = "wgpu"))]
+mod tests {
+    use std::sync::Arc;
+
+    use laddu_compile::{CompiledModel, ReductionPlan};
+    use laddu_data::{
+        data::{Dataset, EventBatch, OwnedEvent},
+        schema::Schema,
+    };
+    use laddu_expr::{complex, event_scalar, parameter};
+
+    use super::*;
+    use crate::{CpuOptions, Device, ExecutionOptions, GpuBackend, GpuOptions, Precision};
+
+    #[test]
+    #[ignore = "requires a WGPU-compatible hardware adapter"]
+    fn wgpu_resident_and_streaming_reductions_match_f32_cpu() {
+        let scale = laddu_expr::Expr::from(parameter!("scale", initial: 1.25));
+        let offset = laddu_expr::Expr::from(parameter!("offset", initial: 0.5));
+        let x = event_scalar("x");
+        let expression = (x.clone() * scale.clone() + offset.clone()).sin()
+            + complex(scale, offset).norm_sqr()
+            + 2.0;
+        let model = CompiledModel::from_expr(&expression).unwrap();
+        let params = model.params().default_values();
+        let schema = Arc::new(Schema::new(std::iter::empty::<&str>(), ["x"], true).unwrap());
+        let dataset = Dataset::from_batches(vec![
+            EventBatch::from_events(
+                schema.clone(),
+                [
+                    OwnedEvent::weighted(vec![], vec![0.25], 0.5),
+                    OwnedEvent::weighted(vec![], vec![0.75], 1.5),
+                ],
+            )
+            .unwrap(),
+            EventBatch::from_events(schema, [OwnedEvent::weighted(vec![], vec![1.25], 2.0)])
+                .unwrap(),
+        ])
+        .unwrap();
+        let wgpu_execution = Execution::local(ExecutionOptions {
+            device: Device::Gpu(GpuOptions {
+                backend: GpuBackend::Wgpu,
+                memory_budget: Some(256),
+                ..GpuOptions::default()
+            }),
+            precision: Precision::F32,
+            ..ExecutionOptions::default()
+        })
+        .unwrap();
+        let cpu_execution = Execution::local(ExecutionOptions {
+            device: Device::Cpu(CpuOptions::default()),
+            precision: Precision::F32,
+            ..ExecutionOptions::default()
+        })
+        .unwrap();
+        let wgpu = PreparedModel::prepare(&model, &wgpu_execution).unwrap();
+        let cpu = PreparedModel::prepare(&model, &cpu_execution).unwrap();
+        let resident = wgpu
+            .prepare_dataset(&wgpu_execution, &dataset.clone().resident())
+            .unwrap();
+        let streaming = wgpu
+            .prepare_dataset(&wgpu_execution, &dataset.clone().streaming())
+            .unwrap();
+        let cpu_data = cpu.prepare_dataset(&cpu_execution, &dataset).unwrap();
+
+        assert_eq!(resident.stats().storage(), CacheStorage::Resident);
+        assert_eq!(streaming.stats().storage(), CacheStorage::Streaming);
+        assert!(resident.stats().resident_bytes() > 0);
+        assert_eq!(streaming.stats().resident_bytes(), 0);
+
+        let cpu_reduction = cpu
+            .reduce_with_gradient(
+                &cpu_execution,
+                &params,
+                &cpu_data,
+                ReductionPlan::weighted_real(),
+            )
+            .unwrap();
+        let resident_reduction = wgpu
+            .reduce_with_gradient(
+                &wgpu_execution,
+                &params,
+                &resident,
+                ReductionPlan::weighted_real(),
+            )
+            .unwrap();
+        let streaming_reduction = wgpu
+            .reduce_with_gradient(
+                &wgpu_execution,
+                &params,
+                &streaming,
+                ReductionPlan::weighted_real(),
+            )
+            .unwrap();
+
+        for actual in [&resident_reduction, &streaming_reduction] {
+            assert!((actual.value() - cpu_reduction.value()).abs() <= 1.0e-4);
+            assert_eq!(actual.gradient().len(), cpu_reduction.gradient().len());
+            for (actual, expected) in actual.gradient().iter().zip(cpu_reduction.gradient()) {
+                assert!((actual - expected).abs() <= 1.0e-4);
+            }
+        }
+        assert!((resident_reduction.value() - streaming_reduction.value()).abs() <= 1.0e-6);
+        for (resident, streaming) in resident_reduction
+            .gradient()
+            .iter()
+            .zip(streaming_reduction.gradient())
+        {
+            assert!((resident - streaming).abs() <= 1.0e-6);
+        }
+    }
+}

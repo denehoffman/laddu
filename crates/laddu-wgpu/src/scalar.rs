@@ -1996,7 +1996,7 @@ mod tests {
         let gpu = kernel.evaluate_batch(&context, &params, &batch).unwrap();
         let execution = Execution::local(ExecutionOptions {
             device: Device::Cpu(CpuOptions::default()),
-            precision: Precision::F64,
+            precision: Precision::F32,
             ..ExecutionOptions::default()
         })
         .unwrap();
@@ -2072,7 +2072,7 @@ mod tests {
         let gpu = kernel.evaluate_batch(&context, &params, &batch).unwrap();
         let execution = Execution::local(ExecutionOptions {
             device: Device::Cpu(CpuOptions::default()),
-            precision: Precision::F64,
+            precision: Precision::F32,
             ..ExecutionOptions::default()
         })
         .unwrap();
@@ -2119,7 +2119,7 @@ mod tests {
         let gpu = kernel.evaluate_batch(&context, &params, &batch).unwrap();
         let execution = Execution::local(ExecutionOptions {
             device: Device::Cpu(CpuOptions::default()),
-            precision: Precision::F64,
+            precision: Precision::F32,
             ..ExecutionOptions::default()
         })
         .unwrap();
