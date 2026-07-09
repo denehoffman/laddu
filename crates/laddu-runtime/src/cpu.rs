@@ -4,7 +4,7 @@ use std::{
     sync::{Arc, OnceLock},
 };
 
-use laddu_autodiff::{AutodiffMode, AutodiffPlan, AutodiffResult};
+use laddu_autodiff::{AutodiffMode, AutodiffPlan, AutodiffResult, gradient_ir};
 use laddu_compile::{
     CachePlan, CompiledModel, ExecutablePlan, ReductionPlan, ReductionTransform,
     SolveComponentPlan, SolveRowMatrixPlan,
@@ -22,7 +22,7 @@ use laddu_expr::{
 };
 use laddu_kernel::ir::{
     KernelInstruction, KernelValue, KernelValueClass, KernelValueId, KernelValueKind,
-    ScalarKernelIr,
+    OutputComponent, ScalarKernelIr,
 };
 use nalgebra::{DMatrix, DVector, Dyn, LU};
 use num::{
@@ -1167,37 +1167,10 @@ impl CpuPlan {
         self.scalar_kernel.as_ref().is_some_and(|kernel| {
             kernel.values().iter().all(|value| {
                 matches!(value.kind, KernelValueKind::Real | KernelValueKind::Complex)
-                    && match &value.instruction {
-                        KernelInstruction::Cached(slot) => self
-                            .cache_plan
-                            .entries()
-                            .get(*slot)
-                            .and_then(|entry| self.graph.node(entry.node()))
-                            .is_some_and(|node| {
-                                matches!(
-                                    node,
-                                    ExprNode::EventScalar(_) | ExprNode::EventP4Component { .. }
-                                )
-                            }),
-                        KernelInstruction::RealConstant(_)
-                        | KernelInstruction::ComplexConstant(_)
-                        | KernelInstruction::Parameter(_)
-                        | KernelInstruction::Unary { .. }
-                        | KernelInstruction::Binary { .. }
-                        | KernelInstruction::Add(_)
-                        | KernelInstruction::Mul(_)
-                        | KernelInstruction::Complex { .. } => true,
-                        KernelInstruction::Vector(_)
-                        | KernelInstruction::Matrix { .. }
-                        | KernelInstruction::Component { .. }
-                        | KernelInstruction::MatrixElement { .. }
-                        | KernelInstruction::MatMul { .. }
-                        | KernelInstruction::MatVec { .. }
-                        | KernelInstruction::Dot { .. }
-                        | KernelInstruction::Solve { .. }
-                        | KernelInstruction::SolveRow { .. }
-                        | KernelInstruction::SolveRowAdjointElement { .. } => false,
-                    }
+                    || !matches!(
+                        value.instruction,
+                        KernelInstruction::SolveRowAdjointElement { .. }
+                    )
             })
         })
     }
@@ -1266,6 +1239,9 @@ impl CpuPlan {
     }
 
     pub fn evaluate_with_gradient(&self, params: &ParamValues) -> RuntimeResult<ValueGradient> {
+        if self.precision == Precision::F32 {
+            return self.evaluate_f32_gradient(params, None);
+        }
         self.require_f64_gradient()?;
         #[cfg(feature = "jit")]
         if let (Some(value_kernel), Some(gradient_kernel)) =
@@ -1304,6 +1280,9 @@ impl CpuPlan {
         params: &ParamValues,
         event: &impl EventLookup,
     ) -> RuntimeResult<ValueGradient> {
+        if self.precision == Precision::F32 {
+            return Err(crate::ExecutionError::UnsupportedCpuF32Model.into());
+        }
         self.require_f64_gradient()?;
         let values = self.evaluate_values(params, Some(event))?;
         self.value_gradient(values, None)
@@ -1866,8 +1845,11 @@ impl CpuPlan {
         cache: &CpuBatchCache,
         row: usize,
     ) -> RuntimeResult<ValueGradient> {
-        self.require_f64_gradient()?;
         self.check_batch_cache(cache)?;
+        if self.precision == Precision::F32 {
+            return self.evaluate_f32_gradient(params, Some((cache, row)));
+        }
+        self.require_f64_gradient()?;
         self.evaluate_cache_row_with_gradient_unchecked(params, cache, row)
     }
 
@@ -1877,6 +1859,9 @@ impl CpuPlan {
         cache: &CpuBatchCache,
         row: usize,
     ) -> RuntimeResult<ValueGradient> {
+        if self.precision == Precision::F32 {
+            return self.evaluate_f32_gradient(params, Some((cache, row)));
+        }
         #[cfg(feature = "jit")]
         if self.gradient_jit_kernel().is_some() {
             return self
@@ -1900,8 +1885,13 @@ impl CpuPlan {
         params: &ParamValues,
         cache: &CpuBatchCache,
     ) -> RuntimeResult<Vec<ValueGradient>> {
-        self.require_f64_gradient()?;
         self.check_batch_cache(cache)?;
+        if self.precision == Precision::F32 {
+            return (0..cache.len())
+                .map(|row| self.evaluate_f32_gradient(params, Some((cache, row))))
+                .collect();
+        }
+        self.require_f64_gradient()?;
         #[cfg(feature = "jit")]
         if self.gradient_jit_kernel().is_some() {
             return self.evaluate_cache_gradient_jit(params, cache, 0, cache.len());
@@ -2103,7 +2093,6 @@ impl CpuPlan {
         dataset: &CpuPreparedDataset,
         reduction: ReductionPlan,
     ) -> RuntimeResult<ReductionEvaluation> {
-        self.require_f64_gradient()?;
         let (value, gradient) =
             self.try_reduce_weighted_with_gradient(execution, params, dataset, |value| {
                 reduction
@@ -2263,8 +2252,9 @@ impl CpuPlan {
         F: FnMut(Complex64) -> Result<(f64, f64), E>,
     {
         #[cfg(feature = "jit")]
-        if let (Some(value_kernel), Some(gradient_kernel)) =
-            (self.scalar_jit_kernel(), self.gradient_jit_kernel())
+        if self.precision != Precision::F32
+            && let (Some(value_kernel), Some(gradient_kernel)) =
+                (self.scalar_jit_kernel(), self.gradient_jit_kernel())
         {
             return self.try_weighted_real_sum_with_jit_gradient_cached(
                 params,
@@ -2274,7 +2264,8 @@ impl CpuPlan {
                 gradient_kernel,
             );
         }
-        if let Some(interpreter) = self.gradient_interpreter()
+        if self.precision != Precision::F32
+            && let Some(interpreter) = self.gradient_interpreter()
             && let Some(mut state) = interpreter.prepare_real_blocks(params)?
         {
             let mut total = RealGradientAccumulator::zero(self.free_parameter_count());
@@ -2549,8 +2540,9 @@ impl CpuPlan {
         F: Fn(Complex64) -> Result<(f64, f64), E> + Send + Sync,
     {
         #[cfg(feature = "jit")]
-        if let (Some(value_kernel), Some(gradient_kernel)) =
-            (self.scalar_jit_kernel(), self.gradient_jit_kernel())
+        if self.precision != Precision::F32
+            && let (Some(value_kernel), Some(gradient_kernel)) =
+                (self.scalar_jit_kernel(), self.gradient_jit_kernel())
         {
             return self.par_try_weighted_real_sum_with_jit_gradient_cached(
                 params,
@@ -2560,7 +2552,8 @@ impl CpuPlan {
                 gradient_kernel,
             );
         }
-        if let Some(interpreter) = self.gradient_interpreter()
+        if self.precision != Precision::F32
+            && let Some(interpreter) = self.gradient_interpreter()
             && let Some(state) = interpreter.prepare_real_blocks(params)?
         {
             let mut total = RealGradientAccumulator::zero(self.free_parameter_count());
@@ -2847,41 +2840,278 @@ impl CpuPlan {
             .scalar_kernel
             .as_ref()
             .ok_or(crate::ExecutionError::UnsupportedCpuF32Model)?;
-        let mut values = Vec::with_capacity(kernel.values().len());
-        for value in kernel.values() {
-            let get = |id: KernelValueId| values[id.index()];
+        let values = self.evaluate_f32_kernel_values(kernel.values(), params, cache)?;
+        let value = f32_scalar_at(&values, kernel.root())?;
+        Ok(Complex64::new(value.re as f64, value.im as f64))
+    }
+
+    fn evaluate_f32_kernel_values(
+        &self,
+        kernel_values: &[KernelValue],
+        params: &ParamValues,
+        cache: Option<(&CpuBatchCache, usize)>,
+    ) -> RuntimeResult<Vec<F32Value>> {
+        let mut values = Vec::with_capacity(kernel_values.len());
+        for (index, value) in kernel_values.iter().enumerate() {
             let result = match &value.instruction {
                 KernelInstruction::Cached(slot) => {
                     let (cache, row) =
                         cache.ok_or(crate::ExecutionError::UnsupportedCpuF32Model)?;
-                    let value = cache.scalar(*slot, row)?;
-                    Complex32::new(value.re as f32, value.im as f32)
+                    F32Value::from_value(cache.value(*slot, row)?)
                 }
-                KernelInstruction::RealConstant(value) => Complex32::from(*value as f32),
+                KernelInstruction::RealConstant(value) => {
+                    F32Value::Scalar(Complex32::from(*value as f32))
+                }
                 KernelInstruction::ComplexConstant(value) => {
-                    Complex32::new(value.re as f32, value.im as f32)
+                    F32Value::Scalar(Complex32::new(value.re as f32, value.im as f32))
                 }
-                KernelInstruction::Parameter(id) => Complex32::from(
+                KernelInstruction::Parameter(id) => F32Value::Scalar(Complex32::from(
                     params
                         .get(*id)
                         .map_err(|error| RuntimeError::Parameter(error.to_string()))?
                         as f32,
+                )),
+                KernelInstruction::Unary { op, input } => {
+                    F32Value::Scalar(eval_unary(*op, f32_scalar_at(&values, *input)?))
+                }
+                KernelInstruction::Binary { op, lhs, rhs } => F32Value::Scalar(eval_binary(
+                    *op,
+                    f32_scalar_at(&values, *lhs)?,
+                    f32_scalar_at(&values, *rhs)?,
+                )),
+                KernelInstruction::Add(terms) => F32Value::Scalar(
+                    terms
+                        .iter()
+                        .map(|id| f32_scalar_at(&values, *id))
+                        .sum::<RuntimeResult<Complex32>>()?,
                 ),
-                KernelInstruction::Unary { op, input } => eval_unary(*op, get(*input)),
-                KernelInstruction::Binary { op, lhs, rhs } => {
-                    eval_binary(*op, get(*lhs), get(*rhs))
-                }
-                KernelInstruction::Add(terms) => terms.iter().map(|id| get(*id)).sum::<Complex32>(),
                 KernelInstruction::Mul(factors) => {
-                    factors.iter().map(|id| get(*id)).product::<Complex32>()
+                    F32Value::Scalar(factors.iter().try_fold(Complex32::ONE, |product, id| {
+                        Ok::<_, RuntimeError>(product * f32_scalar_at(&values, *id)?)
+                    })?)
                 }
-                KernelInstruction::Complex { re, im } => Complex32::new(get(*re).re, get(*im).re),
-                _ => return Err(crate::ExecutionError::UnsupportedCpuF32Model.into()),
+                KernelInstruction::Complex { re, im } => F32Value::Scalar(Complex32::new(
+                    f32_scalar_at(&values, *re)?.re,
+                    f32_scalar_at(&values, *im)?.re,
+                )),
+                KernelInstruction::Vector(elements) => F32Value::Vector(
+                    elements
+                        .iter()
+                        .map(|id| f32_scalar_at(&values, *id))
+                        .collect::<RuntimeResult<_>>()?,
+                ),
+                KernelInstruction::Matrix {
+                    rows,
+                    cols,
+                    elements,
+                } => F32Value::Matrix {
+                    rows: *rows,
+                    cols: *cols,
+                    values: elements
+                        .iter()
+                        .map(|id| f32_scalar_at(&values, *id))
+                        .collect::<RuntimeResult<_>>()?,
+                },
+                KernelInstruction::Component {
+                    input,
+                    index: element,
+                } => {
+                    let vector = f32_vector_at(&values, *input)?;
+                    F32Value::Scalar(*vector.get(*element).ok_or_else(|| {
+                        RuntimeError::InvalidShape {
+                            index,
+                            message: format!(
+                                "component index {element} out of bounds for len {}",
+                                vector.len()
+                            ),
+                        }
+                    })?)
+                }
+                KernelInstruction::MatrixElement { input, row, col } => {
+                    let (rows, cols, matrix) = f32_matrix_at(&values, *input)?;
+                    if *row >= rows || *col >= cols {
+                        return Err(RuntimeError::InvalidShape {
+                            index,
+                            message: format!(
+                                "matrix element ({row}, {col}) out of bounds for shape {rows}x{cols}"
+                            ),
+                        });
+                    }
+                    F32Value::Scalar(matrix[row * cols + col])
+                }
+                KernelInstruction::Dot { lhs, rhs } => {
+                    let lhs = f32_vector_at(&values, *lhs)?;
+                    let rhs = f32_vector_at(&values, *rhs)?;
+                    if lhs.len() != rhs.len() {
+                        return Err(RuntimeError::InvalidShape {
+                            index,
+                            message: format!(
+                                "cannot dot len {} vector with len {} vector",
+                                lhs.len(),
+                                rhs.len()
+                            ),
+                        });
+                    }
+                    F32Value::Scalar(lhs.iter().zip(rhs).map(|(lhs, rhs)| lhs * rhs).sum())
+                }
+                KernelInstruction::MatVec { matrix, vector } => {
+                    let (rows, cols, matrix) = f32_matrix_at(&values, *matrix)?;
+                    let vector = f32_vector_at(&values, *vector)?;
+                    if cols != vector.len() {
+                        return Err(RuntimeError::InvalidShape {
+                            index,
+                            message: format!(
+                                "cannot multiply {rows}x{cols} matrix by len {} vector",
+                                vector.len()
+                            ),
+                        });
+                    }
+                    let output = DMatrix::from_row_slice(rows, cols, matrix)
+                        * DVector::from_row_slice(vector);
+                    F32Value::Vector(output.iter().copied().collect())
+                }
+                KernelInstruction::MatMul { lhs, rhs } => {
+                    let (lhs_rows, lhs_cols, lhs) = f32_matrix_at(&values, *lhs)?;
+                    let (rhs_rows, rhs_cols, rhs) = f32_matrix_at(&values, *rhs)?;
+                    if lhs_cols != rhs_rows {
+                        return Err(RuntimeError::InvalidShape {
+                            index,
+                            message: format!(
+                                "cannot multiply {lhs_rows}x{lhs_cols} by {rhs_rows}x{rhs_cols}"
+                            ),
+                        });
+                    }
+                    let output = DMatrix::from_row_slice(lhs_rows, lhs_cols, lhs)
+                        * DMatrix::from_row_slice(rhs_rows, rhs_cols, rhs);
+                    F32Value::Matrix {
+                        rows: output.nrows(),
+                        cols: output.ncols(),
+                        values: matrix_values_row_major_f32(&output),
+                    }
+                }
+                KernelInstruction::Solve { matrix, rhs } => {
+                    let (rows, cols, matrix) = f32_matrix_at(&values, *matrix)?;
+                    let rhs = f32_vector_at(&values, *rhs)?;
+                    if rows != cols || rows != rhs.len() {
+                        return Err(RuntimeError::InvalidShape {
+                            index,
+                            message: format!(
+                                "cannot solve {rows}x{cols} matrix against len {} vector",
+                                rhs.len()
+                            ),
+                        });
+                    }
+                    let solution = DMatrix::from_row_slice(rows, cols, matrix)
+                        .lu()
+                        .solve(&DVector::from_row_slice(rhs))
+                        .ok_or(RuntimeError::SingularMatrix(index))?;
+                    F32Value::Vector(solution.iter().copied().collect())
+                }
+                KernelInstruction::SolveRow { row_slot, rhs } => {
+                    let (cache, row) =
+                        cache.ok_or(crate::ExecutionError::UnsupportedCpuF32Model)?;
+                    let inverse = cache.solve_row(*row_slot, row)?;
+                    if inverse.len() != rhs.len() {
+                        return Err(RuntimeError::InvalidShape {
+                            index,
+                            message: format!(
+                                "specialized solve row has len {}, expected {}",
+                                inverse.len(),
+                                rhs.len()
+                            ),
+                        });
+                    }
+                    F32Value::Scalar(
+                        inverse
+                            .iter()
+                            .zip(rhs)
+                            .map(|(coefficient, rhs)| {
+                                Ok::<_, RuntimeError>(
+                                    Complex32::new(coefficient.re as f32, coefficient.im as f32)
+                                        * f32_scalar_at(&values, *rhs)?,
+                                )
+                            })
+                            .sum::<RuntimeResult<Complex32>>()?,
+                    )
+                }
+                KernelInstruction::SolveRowAdjointElement {
+                    row_slot,
+                    index: element,
+                    len,
+                    adjoint,
+                } => {
+                    let (cache, row) =
+                        cache.ok_or(crate::ExecutionError::UnsupportedCpuF32Model)?;
+                    let inverse = cache.solve_row(*row_slot, row)?;
+                    if inverse.len() != *len {
+                        return Err(RuntimeError::InvalidShape {
+                            index,
+                            message: format!(
+                                "specialized solve row has len {}, expected {len}",
+                                inverse.len()
+                            ),
+                        });
+                    }
+                    let coefficient = inverse[*element];
+                    F32Value::Scalar(
+                        f32_scalar_at(&values, *adjoint)?
+                            * Complex32::new(coefficient.re as f32, coefficient.im as f32).conj(),
+                    )
+                }
             };
             values.push(result);
         }
-        let value = values[kernel.root().index()];
-        Ok(Complex64::new(value.re as f64, value.im as f64))
+        Ok(values)
+    }
+
+    fn evaluate_f32_gradient(
+        &self,
+        params: &ParamValues,
+        cache: Option<(&CpuBatchCache, usize)>,
+    ) -> RuntimeResult<ValueGradient> {
+        let kernel = self
+            .scalar_kernel
+            .as_ref()
+            .ok_or(crate::ExecutionError::UnsupportedCpuF32Model)?;
+        let (value, real) =
+            self.evaluate_f32_gradient_component(kernel, params, cache, OutputComponent::Real)?;
+        let imag = if kernel.values()[kernel.root().index()].kind == KernelValueKind::Complex {
+            self.evaluate_f32_gradient_component(kernel, params, cache, OutputComponent::Imag)?
+                .1
+        } else {
+            vec![0.0; real.len()]
+        };
+        Ok(ValueGradient {
+            value,
+            gradient: real
+                .into_iter()
+                .zip(imag)
+                .map(|(re, im)| Complex64::new(re as f64, im as f64))
+                .collect(),
+        })
+    }
+
+    fn evaluate_f32_gradient_component(
+        &self,
+        kernel: &ScalarKernelIr,
+        params: &ParamValues,
+        cache: Option<(&CpuBatchCache, usize)>,
+        component: OutputComponent,
+    ) -> RuntimeResult<(Complex64, Vec<f32>)> {
+        let ir = gradient_ir(kernel, self.params.free_params(), component).map_err(|error| {
+            RuntimeError::InvalidShape {
+                index: self.graph.root().index(),
+                message: error.to_string(),
+            }
+        })?;
+        let values = self.evaluate_f32_kernel_values(ir.values(), params, cache)?;
+        let value = f32_scalar_at(&values, ir.primal_root())?;
+        let gradient = ir
+            .outputs()
+            .iter()
+            .map(|output| Ok(f32_scalar_at(&values, *output)?.re))
+            .collect::<RuntimeResult<_>>()?;
+        Ok((Complex64::new(value.re as f64, value.im as f64), gradient))
     }
 
     fn value_gradient(
@@ -3650,6 +3880,47 @@ enum Value {
         cols: usize,
         values: Vec<Complex64>,
     },
+}
+
+#[derive(Clone, Debug, PartialEq)]
+enum F32Value {
+    Scalar(Complex32),
+    Vector(Vec<Complex32>),
+    Matrix {
+        rows: usize,
+        cols: usize,
+        values: Vec<Complex32>,
+    },
+}
+
+impl F32Value {
+    fn from_value(value: Value) -> Self {
+        match value {
+            Value::Scalar(value) => Self::Scalar(Complex32::new(value.re as f32, value.im as f32)),
+            Value::Vector(values) => Self::Vector(
+                values
+                    .into_iter()
+                    .map(|value| Complex32::new(value.re as f32, value.im as f32))
+                    .collect(),
+            ),
+            Value::Matrix { rows, cols, values } => Self::Matrix {
+                rows,
+                cols,
+                values: values
+                    .into_iter()
+                    .map(|value| Complex32::new(value.re as f32, value.im as f32))
+                    .collect(),
+            },
+        }
+    }
+
+    fn kind(&self) -> &'static str {
+        match self {
+            Self::Scalar(_) => "scalar",
+            Self::Vector(_) => "vector",
+            Self::Matrix { .. } => "matrix",
+        }
+    }
 }
 
 type DynamicLu = LU<Complex64, Dyn, Dyn>;
@@ -4811,6 +5082,42 @@ impl Value {
     }
 }
 
+fn f32_scalar_at(values: &[F32Value], id: KernelValueId) -> RuntimeResult<Complex32> {
+    match &values[id.index()] {
+        F32Value::Scalar(value) => Ok(*value),
+        value => Err(RuntimeError::TypeMismatch {
+            index: id.index(),
+            expected: "scalar",
+            actual: value.kind(),
+        }),
+    }
+}
+
+fn f32_vector_at(values: &[F32Value], id: KernelValueId) -> RuntimeResult<&[Complex32]> {
+    match &values[id.index()] {
+        F32Value::Vector(values) => Ok(values),
+        value => Err(RuntimeError::TypeMismatch {
+            index: id.index(),
+            expected: "vector",
+            actual: value.kind(),
+        }),
+    }
+}
+
+fn f32_matrix_at(
+    values: &[F32Value],
+    id: KernelValueId,
+) -> RuntimeResult<(usize, usize, &[Complex32])> {
+    match &values[id.index()] {
+        F32Value::Matrix { rows, cols, values } => Ok((*rows, *cols, values)),
+        value => Err(RuntimeError::TypeMismatch {
+            index: id.index(),
+            expected: "matrix",
+            actual: value.kind(),
+        }),
+    }
+}
+
 fn scalar_at(values: &[Value], index: usize) -> RuntimeResult<Complex64> {
     match &values[index] {
         Value::Scalar(value) => Ok(*value),
@@ -4893,6 +5200,16 @@ fn matrix_at_optional(
 }
 
 fn matrix_values_row_major(matrix: &DMatrix<Complex64>) -> Vec<Complex64> {
+    let mut values = Vec::with_capacity(matrix.nrows() * matrix.ncols());
+    for row in 0..matrix.nrows() {
+        for col in 0..matrix.ncols() {
+            values.push(matrix[(row, col)]);
+        }
+    }
+    values
+}
+
+fn matrix_values_row_major_f32(matrix: &DMatrix<Complex32>) -> Vec<Complex32> {
     let mut values = Vec::with_capacity(matrix.nrows() * matrix.ncols());
     for row in 0..matrix.nrows() {
         for col in 0..matrix.ncols() {
@@ -5242,12 +5559,9 @@ mod tests {
 
         assert_eq!(f32_plan.evaluate(&params).unwrap().re, 16_777_216.0);
         assert_eq!(f64_plan.evaluate(&params).unwrap().re, 16_777_217.0);
-        assert!(matches!(
-            f32_plan.evaluate_with_gradient(&params),
-            Err(RuntimeError::Execution(
-                crate::ExecutionError::UnsupportedCpuF32Gradient
-            ))
-        ));
+        let gradient = f32_plan.evaluate_with_gradient(&params).unwrap();
+        assert_eq!(gradient.value().re, 16_777_216.0);
+        assert_eq!(gradient.gradient(), &[Complex64::ONE, Complex64::ONE]);
     }
 
     #[test]
@@ -5289,20 +5603,70 @@ mod tests {
     }
 
     #[test]
-    fn cpu_f32_rejects_computed_f64_cache_entries() {
-        let model = CompiledModel::from_expr(&event_scalar("x").sin()).unwrap();
+    fn cpu_f32_evaluates_complex_linear_algebra() {
+        let scale = laddu_expr::Expr::from(parameter!("scale", initial: 1.25));
+        let lhs = matrix([
+            [scale.clone() + 2.0, complex(0.25, -0.5)],
+            [0.5.into(), scale.clone() + 3.0],
+        ]);
+        let rhs = vector([1.0.into(), scale]);
+        let model = CompiledModel::from_expr(&dot(
+            vector([1.0.into(), complex(0.0, 1.0)]),
+            solve(lhs, rhs),
+        ))
+        .unwrap();
+        let params = model.params().default_values();
         let execution = Execution::local(crate::ExecutionOptions {
             device: crate::Device::Cpu(crate::CpuOptions::default()),
             precision: Precision::F32,
             ..crate::ExecutionOptions::default()
         })
         .unwrap();
-        assert!(matches!(
-            CpuBackend.prepare_for_execution(&model, &execution),
-            Err(RuntimeError::Execution(
-                crate::ExecutionError::UnsupportedCpuF32Model
-            ))
-        ));
+        let f32_plan = CpuBackend
+            .prepare_for_execution(&model, &execution)
+            .unwrap();
+        let f64_plan = CpuBackend.prepare(&model);
+
+        let actual = f32_plan.evaluate(&params).unwrap();
+        let expected = f64_plan.evaluate(&params).unwrap();
+        assert!((actual.re - expected.re).abs() < 1.0e-6);
+        assert!((actual.im - expected.im).abs() < 1.0e-6);
+    }
+
+    #[test]
+    fn cpu_f32_evaluates_computed_event_cache_entries() {
+        let scale = laddu_expr::Expr::from(parameter!("scale", initial: 2.0));
+        let model =
+            CompiledModel::from_expr(&(event_scalar("x").sin() * scale + 16_777_216.0)).unwrap();
+        let execution = Execution::local(crate::ExecutionOptions {
+            device: crate::Device::Cpu(crate::CpuOptions::default()),
+            precision: Precision::F32,
+            ..crate::ExecutionOptions::default()
+        })
+        .unwrap();
+        let plan = CpuBackend
+            .prepare_for_execution(&model, &execution)
+            .unwrap();
+        let params = model.params().default_values();
+        let dataset = Dataset::from_batch(
+            EventBatch::from_events(
+                Arc::new(Schema::new(std::iter::empty::<&str>(), ["x"], false).unwrap()),
+                [OwnedEvent::new(vec![], vec![1.0])],
+            )
+            .unwrap(),
+        );
+        let prepared = plan.prepare_dataset(&execution, &dataset).unwrap();
+
+        let reduction = plan
+            .reduce_with_gradient(
+                &execution,
+                &params,
+                &prepared,
+                ReductionPlan::weighted_real(),
+            )
+            .unwrap();
+        assert_eq!(reduction.value(), 16_777_218.0);
+        assert_eq!(reduction.gradient(), &[(1.0_f32.sin() as f64)]);
     }
 
     #[cfg(feature = "jit")]
