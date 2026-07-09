@@ -4,7 +4,8 @@ use laddu_compile::{CompiledModel, ExecutablePlan, ReductionPlan, ReductionTrans
 use laddu_data::data::{EventBatch, accurate::AccurateF64};
 use laddu_expr::{BinaryOp, ExprNode, P4Component, UnaryOp, parameters::ParamValues};
 use laddu_kernel::ir::{
-    CacheKernelIr, KernelInstruction, KernelValue, KernelValueId, KernelValueKind, ScalarKernelIr,
+    CacheKernelIr, GradientKernelIr, KernelInstruction, KernelValue, KernelValueId,
+    KernelValueKind, OutputComponent, ScalarKernelIr,
 };
 use wgpu::util::DeviceExt;
 
@@ -17,8 +18,10 @@ pub struct WgpuScalarKernel {
     pipeline: wgpu::ComputePipeline,
     bind_group_layout: wgpu::BindGroupLayout,
     reduction_pipeline: wgpu::ComputePipeline,
+    gradient_reduction_pipeline: Option<wgpu::ComputePipeline>,
     reduction_bind_group_layout: wgpu::BindGroupLayout,
     cache_width: usize,
+    partial_width: usize,
     event_inputs: Vec<EventInput>,
 }
 
@@ -44,6 +47,7 @@ struct ReductionScratch {
     config: wgpu::Buffer,
     partials: wgpu::Buffer,
     error: wgpu::Buffer,
+    solve_error: wgpu::Buffer,
     staging: wgpu::Buffer,
 }
 
@@ -56,7 +60,7 @@ enum EventInput {
 impl WgpuScalarKernel {
     pub fn compile(context: &WgpuContext, model: &CompiledModel) -> WgpuResult<Self> {
         Self::validate_precision(context.precision())?;
-        let executable = ExecutablePlan::from_model(model)
+        let executable = ExecutablePlan::from_model_without_solve_rows(model)
             .map_err(|error| WgpuError::UnsupportedInstruction(error.to_string()))?;
         let ir = executable
             .scalar_kernel()
@@ -115,6 +119,7 @@ impl WgpuScalarKernel {
                             },
                             count: None,
                         },
+                        Self::storage_binding(7, false),
                         wgpu::BindGroupLayoutEntry {
                             binding: 1,
                             visibility: wgpu::ShaderStages::COMPUTE,
@@ -166,6 +171,7 @@ impl WgpuScalarKernel {
                         Self::storage_binding(4, true),
                         Self::storage_binding(5, false),
                         Self::storage_binding(6, false),
+                        Self::storage_binding(7, false),
                     ],
                 });
         let reduction_layout =
@@ -187,14 +193,43 @@ impl WgpuScalarKernel {
                     compilation_options: Default::default(),
                     cache: None,
                 });
+        let free_parameters = model.params().free_params();
+        let gradient_reduction_pipeline = if free_parameters.is_empty() {
+            None
+        } else {
+            let gradient = laddu_autodiff::gradient_ir(ir, free_parameters, OutputComponent::Real)
+                .map_err(|error| WgpuError::UnsupportedInstruction(error.to_string()))?;
+            let gradient_source = Self::gradient_wgsl(&gradient, &cache_offsets, cache_width)?;
+            let gradient_module =
+                context
+                    .device()
+                    .create_shader_module(wgpu::ShaderModuleDescriptor {
+                        label: Some("laddu scalar gradient kernel"),
+                        source: wgpu::ShaderSource::Wgsl(gradient_source.into()),
+                    });
+            Some(
+                context
+                    .device()
+                    .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                        label: Some("laddu gradient reduction pipeline"),
+                        layout: Some(&reduction_layout),
+                        module: &gradient_module,
+                        entry_point: Some("reduce_gradient"),
+                        compilation_options: Default::default(),
+                        cache: None,
+                    }),
+            )
+        };
         Ok(Self {
             cache_pipeline,
             cache_bind_group_layout,
             pipeline,
             bind_group_layout,
             reduction_pipeline,
+            gradient_reduction_pipeline,
             reduction_bind_group_layout,
             cache_width,
+            partial_width: free_parameters.len() + 1,
             event_inputs,
         })
     }
@@ -226,6 +261,7 @@ impl WgpuScalarKernel {
                     entries: &[
                         Self::storage_binding(0, true),
                         Self::storage_binding(1, false),
+                        Self::storage_binding(2, false),
                     ],
                 });
         let layout = context
@@ -261,6 +297,39 @@ impl WgpuScalarKernel {
         }
     }
 
+    fn read_error(context: &WgpuContext, error: &wgpu::Buffer) -> WgpuResult<Option<usize>> {
+        let staging = context.device().create_buffer(&wgpu::BufferDescriptor {
+            label: Some("laddu error readback"),
+            size: 4,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        let mut encoder = context.device().create_command_encoder(&Default::default());
+        encoder.copy_buffer_to_buffer(error, 0, &staging, 0, 4);
+        context.queue().submit([encoder.finish()]);
+        let slice = staging.slice(..);
+        let (sender, receiver) = mpsc::channel();
+        slice.map_async(wgpu::MapMode::Read, move |result| {
+            let _ = sender.send(result);
+        });
+        context
+            .device()
+            .poll(wgpu::PollType::Wait {
+                submission_index: None,
+                timeout: None,
+            })
+            .map_err(|error| WgpuError::DevicePoll(error.to_string()))?;
+        receiver
+            .recv()
+            .map_err(|error| WgpuError::BufferMap(error.to_string()))?
+            .map_err(|error| WgpuError::BufferMap(error.to_string()))?;
+        let mapped = slice.get_mapped_range();
+        let value = u32::from_ne_bytes(mapped[..4].try_into().expect("error is four bytes"));
+        drop(mapped);
+        staging.unmap();
+        Ok((value != u32::MAX).then_some(value as usize))
+    }
+
     pub fn evaluate(&self, context: &WgpuContext, params: &ParamValues) -> WgpuResult<(f64, f64)> {
         self.evaluate_packed(context, params, &[0.0, 0.0], 1)
             .map(|mut values| values.remove(0))
@@ -278,7 +347,13 @@ impl WgpuScalarKernel {
             let end = (start + chunk_len).min(batch.len());
             let chunk = batch.slice(start, end);
             let inputs = self.pack_batch(&chunk)?;
-            values.extend(self.evaluate_packed(context, params, &inputs, chunk.len())?);
+            match self.evaluate_packed(context, params, &inputs, chunk.len()) {
+                Ok(chunk_values) => values.extend(chunk_values),
+                Err(WgpuError::SingularMatrixEvent(index)) => {
+                    return Err(WgpuError::SingularMatrixEvent(start + index));
+                }
+                Err(error) => return Err(error),
+            }
         }
         Ok(values)
     }
@@ -302,6 +377,9 @@ impl WgpuScalarKernel {
                 Ok(value) => total.push(value),
                 Err(WgpuError::NonPositiveEvent(index)) => {
                     return Err(WgpuError::NonPositiveEvent(start + index));
+                }
+                Err(WgpuError::SingularMatrixEvent(index)) => {
+                    return Err(WgpuError::SingularMatrixEvent(start + index));
                 }
                 Err(error) => return Err(error),
             }
@@ -334,15 +412,25 @@ impl WgpuScalarKernel {
                         contents: bytemuck::cast_slice(&weights),
                         usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
                     });
-            let scratch = Self::reduction_scratch(context, params, chunk.len());
+            let scratch = self.reduction_scratch(context, params, chunk.len());
             let mut encoder = context.device().create_command_encoder(&Default::default());
-            self.encode_cache_materialization(context, &mut encoder, &input, &cache, chunk.len());
+            self.encode_cache_materialization(
+                context,
+                &mut encoder,
+                &input,
+                &cache,
+                &scratch.solve_error,
+                chunk.len(),
+            );
             context.queue().submit([encoder.finish()]);
+            if let Some(index) = Self::read_error(context, &scratch.solve_error)? {
+                return Err(WgpuError::SingularMatrixEvent(start + index));
+            }
             resident_bytes += inputs.len() * size_of::<f32>()
                 + weights.len() * size_of::<f32>()
                 + (chunk.len() * self.cache_width * size_of::<[f32; 2]>()).max(8)
                 + params.as_slice().len().max(1) * size_of::<f32>()
-                + chunk.len().div_ceil(64) * size_of::<f32>() * 2
+                + chunk.len().div_ceil(64) * self.partial_width * size_of::<f32>() * 2
                 + 8;
             chunks.push(WgpuPreparedChunk {
                 input,
@@ -391,14 +479,23 @@ impl WgpuScalarKernel {
                 bytemuck::cast_slice(&weights),
             );
             let mut encoder = context.device().create_command_encoder(&Default::default());
+            context.queue().write_buffer(
+                &prepared_chunk.scratch.solve_error,
+                0,
+                bytemuck::bytes_of(&u32::MAX),
+            );
             self.encode_cache_materialization(
                 context,
                 &mut encoder,
                 &prepared_chunk.input,
                 &prepared_chunk.cache,
+                &prepared_chunk.scratch.solve_error,
                 prepared_chunk.events,
             );
             context.queue().submit([encoder.finish()]);
+            if let Some(index) = Self::read_error(context, &prepared_chunk.scratch.solve_error)? {
+                return Err(WgpuError::SingularMatrixEvent(start + index));
+            }
         }
         prepared.len = batch.len();
         Ok(true)
@@ -419,11 +516,86 @@ impl WgpuScalarKernel {
                 Err(WgpuError::NonPositiveEvent(index)) => {
                     return Err(WgpuError::NonPositiveEvent(offset + index));
                 }
+                Err(WgpuError::SingularMatrixEvent(index)) => {
+                    return Err(WgpuError::SingularMatrixEvent(offset + index));
+                }
                 Err(error) => return Err(error),
             }
             offset += chunk.events;
         }
         Ok(total.finish())
+    }
+
+    pub fn reduce_prepared_batch_with_gradient(
+        &self,
+        context: &WgpuContext,
+        params: &ParamValues,
+        batch: &WgpuPreparedBatch,
+        reduction: ReductionPlan,
+    ) -> WgpuResult<(f64, Vec<f64>)> {
+        if self.partial_width == 1 {
+            return self
+                .reduce_prepared_batch(context, params, batch, reduction)
+                .map(|value| (value, Vec::new()));
+        }
+        let gradient_len = self.partial_width - 1;
+        let mut total = AccurateF64::zero();
+        let mut gradient = (0..gradient_len)
+            .map(|_| AccurateF64::zero())
+            .collect::<Vec<_>>();
+        let mut offset = 0;
+        for chunk in &batch.chunks {
+            match self.reduce_prepared_chunk_with_gradient(context, params, chunk, reduction) {
+                Ok((value, values)) => {
+                    total.push(value);
+                    for (sum, value) in gradient.iter_mut().zip(values) {
+                        sum.push(value);
+                    }
+                }
+                Err(WgpuError::NonPositiveEvent(index)) => {
+                    return Err(WgpuError::NonPositiveEvent(offset + index));
+                }
+                Err(WgpuError::SingularMatrixEvent(index)) => {
+                    return Err(WgpuError::SingularMatrixEvent(offset + index));
+                }
+                Err(error) => return Err(error),
+            }
+            offset += chunk.events;
+        }
+        Ok((
+            total.finish(),
+            gradient.into_iter().map(AccurateF64::finish).collect(),
+        ))
+    }
+
+    fn reduce_prepared_chunk_with_gradient(
+        &self,
+        context: &WgpuContext,
+        params: &ParamValues,
+        chunk: &WgpuPreparedChunk,
+        reduction: ReductionPlan,
+    ) -> WgpuResult<(f64, Vec<f64>)> {
+        let parameters = Self::parameter_values(params);
+        let mode = Self::reduction_mode(reduction);
+        context
+            .queue()
+            .write_buffer(&chunk.scratch.params, 0, bytemuck::cast_slice(&parameters));
+        context
+            .queue()
+            .write_buffer(&chunk.scratch.config, 0, bytemuck::bytes_of(&mode));
+        context
+            .queue()
+            .write_buffer(&chunk.scratch.error, 0, bytemuck::bytes_of(&u32::MAX));
+        context
+            .queue()
+            .write_buffer(&chunk.scratch.solve_error, 0, bytemuck::bytes_of(&u32::MAX));
+        self.execute_prepared_gradient_reduce(
+            context,
+            &chunk.cache,
+            &chunk.weights,
+            chunk.events,
+            &chunk.scratch,
+        )
     }
 
     fn reduce_prepared_chunk(
@@ -444,6 +616,9 @@ impl WgpuScalarKernel {
         context
             .queue()
             .write_buffer(&chunk.scratch.error, 0, bytemuck::bytes_of(&u32::MAX));
+        context
+            .queue()
+            .write_buffer(&chunk.scratch.solve_error, 0, bytemuck::bytes_of(&u32::MAX));
         self.execute_prepared_reduce(
             context,
             &chunk.cache,
@@ -471,6 +646,7 @@ impl WgpuScalarKernel {
     }
 
     fn reduction_scratch(
+        &self,
         context: &WgpuContext,
         params: &ParamValues,
         events: usize,
@@ -493,7 +669,7 @@ impl WgpuScalarKernel {
             });
         let partials = context.device().create_buffer(&wgpu::BufferDescriptor {
             label: Some("laddu prepared reduction partials"),
-            size: (groups * 4).max(4) as u64,
+            size: (groups * self.partial_width * 4).max(4) as u64,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
             mapped_at_creation: false,
         });
@@ -506,9 +682,18 @@ impl WgpuScalarKernel {
                     | wgpu::BufferUsages::COPY_SRC
                     | wgpu::BufferUsages::COPY_DST,
             });
+        let solve_error = context
+            .device()
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("laddu prepared solve error"),
+                contents: bytemuck::bytes_of(&u32::MAX),
+                usage: wgpu::BufferUsages::STORAGE
+                    | wgpu::BufferUsages::COPY_SRC
+                    | wgpu::BufferUsages::COPY_DST,
+            });
         let staging = context.device().create_buffer(&wgpu::BufferDescriptor {
             label: Some("laddu prepared reduction readback"),
-            size: (groups * 4 + 4).max(8) as u64,
+            size: (groups * self.partial_width * 4 + 8).max(8) as u64,
             usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
             mapped_at_creation: false,
         });
@@ -517,6 +702,7 @@ impl WgpuScalarKernel {
             config,
             partials,
             error,
+            solve_error,
             staging,
         }
     }
@@ -560,6 +746,10 @@ impl WgpuScalarKernel {
                         binding: 6,
                         resource: scratch.error.as_entire_binding(),
                     },
+                    wgpu::BindGroupEntry {
+                        binding: 7,
+                        resource: scratch.solve_error.as_entire_binding(),
+                    },
                 ],
             });
         let mut encoder = context.device().create_command_encoder(&Default::default());
@@ -577,8 +767,15 @@ impl WgpuScalarKernel {
             (groups * 4) as u64,
         );
         encoder.copy_buffer_to_buffer(&scratch.error, 0, &scratch.staging, (groups * 4) as u64, 4);
+        encoder.copy_buffer_to_buffer(
+            &scratch.solve_error,
+            0,
+            &scratch.staging,
+            (groups * 4 + 4) as u64,
+            4,
+        );
         context.queue().submit([encoder.finish()]);
-        let slice = scratch.staging.slice(..(groups * 4 + 4) as u64);
+        let slice = scratch.staging.slice(..(groups * 4 + 8) as u64);
         let (sender, receiver) = mpsc::channel();
         slice.map_async(wgpu::MapMode::Read, move |result| {
             let _ = sender.send(result);
@@ -597,6 +794,7 @@ impl WgpuScalarKernel {
         let mapped = slice.get_mapped_range();
         let words: &[u32] = bytemuck::cast_slice(&mapped);
         let invalid = words[groups];
+        let singular = words[groups + 1];
         let mut total = AccurateF64::zero();
         for bits in &words[..groups] {
             total.push(f32::from_bits(*bits) as f64);
@@ -606,7 +804,129 @@ impl WgpuScalarKernel {
         if invalid != u32::MAX {
             return Err(WgpuError::NonPositiveEvent(invalid as usize));
         }
+        if singular != u32::MAX {
+            return Err(WgpuError::SingularMatrixEvent(singular as usize));
+        }
         Ok(total.finish())
+    }
+
+    fn execute_prepared_gradient_reduce(
+        &self,
+        context: &WgpuContext,
+        cache: &wgpu::Buffer,
+        weights: &wgpu::Buffer,
+        events: usize,
+        scratch: &ReductionScratch,
+    ) -> WgpuResult<(f64, Vec<f64>)> {
+        let pipeline = self.gradient_reduction_pipeline.as_ref().ok_or_else(|| {
+            WgpuError::UnsupportedInstruction("model has no free parameters".into())
+        })?;
+        let groups = events.div_ceil(64);
+        let partial_words = groups * self.partial_width;
+        let bind_group = context
+            .device()
+            .create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("laddu prepared gradient reduction bind group"),
+                layout: &self.reduction_bind_group_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: scratch.params.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: cache.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: weights.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 4,
+                        resource: scratch.config.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 5,
+                        resource: scratch.partials.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 6,
+                        resource: scratch.error.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 7,
+                        resource: scratch.solve_error.as_entire_binding(),
+                    },
+                ],
+            });
+        let mut encoder = context.device().create_command_encoder(&Default::default());
+        {
+            let mut pass = encoder.begin_compute_pass(&Default::default());
+            pass.set_pipeline(pipeline);
+            pass.set_bind_group(0, &bind_group, &[]);
+            pass.dispatch_workgroups(groups as u32, 1, 1);
+        }
+        encoder.copy_buffer_to_buffer(
+            &scratch.partials,
+            0,
+            &scratch.staging,
+            0,
+            (partial_words * 4) as u64,
+        );
+        encoder.copy_buffer_to_buffer(
+            &scratch.error,
+            0,
+            &scratch.staging,
+            (partial_words * 4) as u64,
+            4,
+        );
+        encoder.copy_buffer_to_buffer(
+            &scratch.solve_error,
+            0,
+            &scratch.staging,
+            (partial_words * 4 + 4) as u64,
+            4,
+        );
+        context.queue().submit([encoder.finish()]);
+        let slice = scratch.staging.slice(..(partial_words * 4 + 8) as u64);
+        let (sender, receiver) = mpsc::channel();
+        slice.map_async(wgpu::MapMode::Read, move |result| {
+            let _ = sender.send(result);
+        });
+        context
+            .device()
+            .poll(wgpu::PollType::Wait {
+                submission_index: None,
+                timeout: None,
+            })
+            .map_err(|error| WgpuError::DevicePoll(error.to_string()))?;
+        receiver
+            .recv()
+            .map_err(|error| WgpuError::BufferMap(error.to_string()))?
+            .map_err(|error| WgpuError::BufferMap(error.to_string()))?;
+        let mapped = slice.get_mapped_range();
+        let words: &[u32] = bytemuck::cast_slice(&mapped);
+        let invalid = words[partial_words];
+        let singular = words[partial_words + 1];
+        let mut sums = (0..self.partial_width)
+            .map(|_| AccurateF64::zero())
+            .collect::<Vec<_>>();
+        for group in 0..groups {
+            for component in 0..self.partial_width {
+                sums[component]
+                    .push(f32::from_bits(words[group * self.partial_width + component]) as f64);
+            }
+        }
+        drop(mapped);
+        scratch.staging.unmap();
+        if invalid != u32::MAX {
+            return Err(WgpuError::NonPositiveEvent(invalid as usize));
+        }
+        if singular != u32::MAX {
+            return Err(WgpuError::SingularMatrixEvent(singular as usize));
+        }
+        let mut values = sums.into_iter().map(AccurateF64::finish);
+        Ok((values.next().unwrap_or(0.0), values.collect()))
     }
 
     fn reduce_chunk(
@@ -621,6 +941,13 @@ impl WgpuScalarKernel {
             .map(|row| batch.weights_at(row) as f32)
             .collect::<Vec<_>>();
         let (input_buffer, cache_buffer) = self.cache_buffers(context, &inputs, batch.len());
+        let solve_error = context
+            .device()
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("laddu batch solve error"),
+                contents: bytemuck::bytes_of(&u32::MAX),
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            });
         let weights_buffer =
             context
                 .device()
@@ -635,6 +962,7 @@ impl WgpuScalarKernel {
             &mut encoder,
             &input_buffer,
             &cache_buffer,
+            &solve_error,
             batch.len(),
         );
         context.queue().submit([encoder.finish()]);
@@ -643,17 +971,20 @@ impl WgpuScalarKernel {
             params,
             &cache_buffer,
             &weights_buffer,
+            &solve_error,
             batch.len(),
             reduction,
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn reduce_buffers(
         &self,
         context: &WgpuContext,
         params: &ParamValues,
         cache_buffer: &wgpu::Buffer,
         weights_buffer: &wgpu::Buffer,
+        solve_error: &wgpu::Buffer,
         events: usize,
         reduction: ReductionPlan,
     ) -> WgpuResult<f64> {
@@ -702,7 +1033,7 @@ impl WgpuScalarKernel {
                 contents: bytemuck::bytes_of(&u32::MAX),
                 usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
             });
-        let staging_size = (groups * 4 + 4) as u64;
+        let staging_size = (groups * 4 + 8) as u64;
         let staging = context.device().create_buffer(&wgpu::BufferDescriptor {
             label: Some("laddu reduction readback"),
             size: staging_size,
@@ -739,6 +1070,10 @@ impl WgpuScalarKernel {
                         binding: 6,
                         resource: error.as_entire_binding(),
                     },
+                    wgpu::BindGroupEntry {
+                        binding: 7,
+                        resource: solve_error.as_entire_binding(),
+                    },
                 ],
             });
         let mut encoder = context.device().create_command_encoder(&Default::default());
@@ -750,6 +1085,7 @@ impl WgpuScalarKernel {
         }
         encoder.copy_buffer_to_buffer(&partials, 0, &staging, 0, (groups * 4) as u64);
         encoder.copy_buffer_to_buffer(&error, 0, &staging, (groups * 4) as u64, 4);
+        encoder.copy_buffer_to_buffer(solve_error, 0, &staging, (groups * 4 + 4) as u64, 4);
         context.queue().submit([encoder.finish()]);
         let slice = staging.slice(..);
         let (sender, receiver) = mpsc::channel();
@@ -770,8 +1106,12 @@ impl WgpuScalarKernel {
         let mapped = slice.get_mapped_range();
         let words: &[u32] = bytemuck::cast_slice(&mapped);
         let invalid = words[groups];
+        let singular = words[groups + 1];
         if invalid != u32::MAX {
             return Err(WgpuError::NonPositiveEvent(invalid as usize));
+        }
+        if singular != u32::MAX {
+            return Err(WgpuError::SingularMatrixEvent(singular as usize));
         }
         let mut total = AccurateF64::zero();
         for bits in &words[..groups] {
@@ -789,7 +1129,7 @@ impl WgpuScalarKernel {
         let input_bytes = self.event_inputs.len() * size_of::<[f32; 2]>();
         let cache_bytes = self.cache_width * size_of::<[f32; 2]>();
         let result_bytes = if reduction {
-            size_of::<f32>() + 1
+            self.partial_width * size_of::<f32>() + 1
         } else {
             2 * size_of::<[f32; 2]>()
         };
@@ -799,12 +1139,16 @@ impl WgpuScalarKernel {
         let max_binding = context
             .info()
             .max_buffer_size
-            .min(context.info().max_storage_buffer_binding_size as u64)
+            .min(context.info().max_storage_buffer_binding_size)
             .min(usize::MAX as u64) as usize;
         let mut max_events = u32::MAX as usize;
-        for width in [input_bytes, cache_bytes, if reduction { 4 } else { 8 }] {
-            if width > 0 {
-                max_events = max_events.min(max_binding / width);
+        for width in [
+            input_bytes,
+            cache_bytes,
+            if reduction { self.partial_width * 4 } else { 8 },
+        ] {
+            if let Some(events) = max_binding.checked_div(width) {
+                max_events = max_events.min(events);
             }
         }
         if let Some(budget) = context.memory_budget() {
@@ -895,10 +1239,17 @@ impl WgpuScalarKernel {
         });
         let staging = context.device().create_buffer(&wgpu::BufferDescriptor {
             label: Some("laddu scalar readback"),
-            size: output_size,
+            size: output_size + 4,
             usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
             mapped_at_creation: false,
         });
+        let solve_error = context
+            .device()
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("laddu scalar solve error"),
+                contents: bytemuck::bytes_of(&u32::MAX),
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            });
         let bind_group = context
             .device()
             .create_bind_group(&wgpu::BindGroupDescriptor {
@@ -917,6 +1268,10 @@ impl WgpuScalarKernel {
                         binding: 2,
                         resource: output.as_entire_binding(),
                     },
+                    wgpu::BindGroupEntry {
+                        binding: 7,
+                        resource: solve_error.as_entire_binding(),
+                    },
                 ],
             });
         let mut encoder = context.device().create_command_encoder(&Default::default());
@@ -925,6 +1280,7 @@ impl WgpuScalarKernel {
             &mut encoder,
             &input_buffer,
             &cache_buffer,
+            &solve_error,
             events,
         );
         {
@@ -934,6 +1290,7 @@ impl WgpuScalarKernel {
             pass.dispatch_workgroups((events as u32).div_ceil(64), 1, 1);
         }
         encoder.copy_buffer_to_buffer(&output, 0, &staging, 0, output_size);
+        encoder.copy_buffer_to_buffer(&solve_error, 0, &staging, output_size, 4);
         context.queue().submit([encoder.finish()]);
         let slice = staging.slice(..);
         let (sender, receiver) = mpsc::channel();
@@ -952,13 +1309,21 @@ impl WgpuScalarKernel {
             .map_err(|error| WgpuError::BufferMap(error.to_string()))?
             .map_err(|error| WgpuError::BufferMap(error.to_string()))?;
         let mapped = slice.get_mapped_range();
-        let result: &[f32] = bytemuck::cast_slice(&mapped);
+        let result: &[f32] = bytemuck::cast_slice(&mapped[..output_size as usize]);
         let values = result
             .chunks_exact(2)
             .map(|value| (value[0] as f64, value[1] as f64))
             .collect();
+        let singular = u32::from_ne_bytes(
+            mapped[output_size as usize..output_size as usize + 4]
+                .try_into()
+                .expect("solve error readback is four bytes"),
+        );
         drop(mapped);
         staging.unmap();
+        if singular != u32::MAX {
+            return Err(WgpuError::SingularMatrixEvent(singular as usize));
+        }
         Ok(values)
     }
 
@@ -991,6 +1356,7 @@ impl WgpuScalarKernel {
         encoder: &mut wgpu::CommandEncoder,
         input: &wgpu::Buffer,
         cache: &wgpu::Buffer,
+        solve_error: &wgpu::Buffer,
         events: usize,
     ) {
         let (Some(pipeline), Some(layout)) = (&self.cache_pipeline, &self.cache_bind_group_layout)
@@ -1010,6 +1376,10 @@ impl WgpuScalarKernel {
                     wgpu::BindGroupEntry {
                         binding: 1,
                         resource: cache.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: solve_error.as_entire_binding(),
                     },
                 ],
             });
@@ -1044,6 +1414,17 @@ fn cpowi(z: vec2<f32>, exponent: i32) -> vec2<f32> { var result=vec2(1.0, 0.0); 
         let mut source = String::new();
         let v = |id: KernelValueId| format!("v{}", id.index());
         for (index, value) in values.iter().enumerate() {
+            if let KernelInstruction::Solve { matrix, rhs } = &value.instruction {
+                let KernelValueKind::Matrix { rows, cols } = values[matrix.index()].kind else {
+                    unreachable!("solve IR was validated")
+                };
+                if rows > 16 {
+                    return Err(WgpuError::SolveDimensionTooLarge { dimension: rows });
+                }
+                debug_assert_eq!(rows, cols);
+                source.push_str(&Self::emit_solve(index, &v(*matrix), &v(*rhs), rows));
+                continue;
+            }
             let expr = match &value.instruction {
                 KernelInstruction::Cached(slot) => cached(*slot, value.kind),
                 KernelInstruction::RealConstant(x) => format!("vec2<f32>({:?}, 0.0)", *x as f32),
@@ -1201,6 +1582,27 @@ fn cpowi(z: vec2<f32>, exponent: i32) -> vec2<f32> { var result=vec2(1.0, 0.0); 
         Ok(source)
     }
 
+    fn emit_solve(index: usize, matrix: &str, rhs: &str, dimension: usize) -> String {
+        let mut source = format!(
+            "var lu{index} = {matrix};\nvar x{index} = {rhs};\nvar piv{index}: array<u32, {dimension}>;\n"
+        );
+        for row in 0..dimension {
+            source.push_str(&format!("piv{index}[{row}] = {row}u;\n"));
+        }
+        source.push_str(&format!(
+            "for (var k{index}=0u; k{index}<{dimension}u; k{index}++) {{\n\
+var best{index}=k{index};\nvar best_norm{index}=dot(lu{index}[k{index}*{dimension}u+k{index}], lu{index}[k{index}*{dimension}u+k{index}]);\n\
+for (var r{index}=k{index}+1u; r{index}<{dimension}u; r{index}++) {{ let candidate=dot(lu{index}[r{index}*{dimension}u+k{index}], lu{index}[r{index}*{dimension}u+k{index}]); if (candidate > best_norm{index}) {{ best_norm{index}=candidate; best{index}=r{index}; }} }}\n\
+if (best{index} != k{index}) {{ for (var c{index}=0u; c{index}<{dimension}u; c{index}++) {{ let swap=lu{index}[k{index}*{dimension}u+c{index}]; lu{index}[k{index}*{dimension}u+c{index}]=lu{index}[best{index}*{dimension}u+c{index}]; lu{index}[best{index}*{dimension}u+c{index}]=swap; }} let ps=piv{index}[k{index}]; piv{index}[k{index}]=piv{index}[best{index}]; piv{index}[best{index}]=ps; }}\nif (!(best_norm{index} > 0.0)) {{ atomicMin(&solve_error[0], row); lu{index}[k{index}*{dimension}u+k{index}]=vec2(1.0, 0.0); }}\n\
+for (var r{index}=k{index}+1u; r{index}<{dimension}u; r{index}++) {{ let factor=cdiv(lu{index}[r{index}*{dimension}u+k{index}], lu{index}[k{index}*{dimension}u+k{index}]); lu{index}[r{index}*{dimension}u+k{index}]=factor; for (var c{index}=k{index}+1u; c{index}<{dimension}u; c{index}++) {{ lu{index}[r{index}*{dimension}u+c{index}] -= cmul(factor, lu{index}[k{index}*{dimension}u+c{index}]); }} }}\n}}\n"
+        ));
+        source.push_str(&format!(
+            "var y{index}: array<vec2<f32>, {dimension}>;\nfor (var i{index}=0u; i{index}<{dimension}u; i{index}++) {{ var sum=x{index}[piv{index}[i{index}]]; for (var j{index}=0u; j{index}<i{index}; j{index}++) {{ sum -= cmul(lu{index}[i{index}*{dimension}u+j{index}], y{index}[j{index}]); }} y{index}[i{index}]=sum; }}\n\
+for (var ri{index}=0u; ri{index}<{dimension}u; ri{index}++) {{ let i={dimension}u-1u-ri{index}; var sum=y{index}[i]; for (var j{index}=i+1u; j{index}<{dimension}u; j{index}++) {{ sum -= cmul(lu{index}[i*{dimension}u+j{index}], x{index}[j{index}]); }} x{index}[i]=cdiv(sum, lu{index}[i*{dimension}u+i]); }}\nlet v{index}=x{index};\n"
+        ));
+        source
+    }
+
     fn cache_wgsl(ir: &CacheKernelIr, input_slots: usize) -> WgpuResult<String> {
         let mut output_offsets = Vec::with_capacity(ir.outputs().len());
         let mut output_width = 0;
@@ -1209,7 +1611,7 @@ fn cpowi(z: vec2<f32>, exponent: i32) -> vec2<f32> { var result=vec2(1.0, 0.0); 
             output_width += ir.values()[output.index()].kind.width();
         }
         let mut source = format!(
-            "@group(0) @binding(0) var<storage, read> inputs: array<vec2<f32>>;\n@group(0) @binding(1) var<storage, read_write> cache: array<vec2<f32>>;\n{}@compute @workgroup_size(64) fn main(@builtin(global_invocation_id) gid: vec3<u32>) {{\nlet row=gid.x;\nif (row >= arrayLength(&cache)/{output_width}u) {{ return; }}\n",
+            "@group(0) @binding(0) var<storage, read> inputs: array<vec2<f32>>;\n@group(0) @binding(1) var<storage, read_write> cache: array<vec2<f32>>;\n@group(0) @binding(2) var<storage, read_write> solve_error: array<atomic<u32>>;\n{}@compute @workgroup_size(64) fn main(@builtin(global_invocation_id) gid: vec3<u32>) {{\nlet row=gid.x;\nif (row >= arrayLength(&cache)/{output_width}u) {{ return; }}\n",
             Self::scalar_prelude()
         );
         source.push_str(&Self::emit_values(ir.values(), |slot, _| {
@@ -1233,13 +1635,50 @@ fn cpowi(z: vec2<f32>, exponent: i32) -> vec2<f32> { var result=vec2(1.0, 0.0); 
         Ok(source)
     }
 
+    fn gradient_wgsl(
+        ir: &GradientKernelIr,
+        cache_offsets: &[usize],
+        cache_width: usize,
+    ) -> WgpuResult<String> {
+        let width = ir.outputs().len() + 1;
+        let mut source = format!(
+            "@group(0) @binding(0) var<storage, read> p: array<f32>;\n@group(0) @binding(1) var<storage, read> cache: array<vec2<f32>>;\n@group(0) @binding(3) var<storage, read> weights: array<f32>;\n@group(0) @binding(4) var<storage, read> config: array<u32>;\n@group(0) @binding(5) var<storage, read_write> partials: array<f32>;\n@group(0) @binding(6) var<storage, read_write> reduction_error: array<atomic<u32>>;\n@group(0) @binding(7) var<storage, read_write> solve_error: array<atomic<u32>>;\nvar<workgroup> sums: array<f32, 64>;\n{}fn model_gradient(row: u32) -> array<f32, {width}> {{\n",
+            Self::scalar_prelude()
+        );
+        source.push_str(&Self::emit_values(ir.values(), |slot, kind| {
+            let offset = cache_offsets[slot];
+            if kind.width() == 1 {
+                format!("cache[row * {cache_width}u + {offset}u]")
+            } else {
+                Self::aggregate(
+                    (0..kind.width()).map(|element| {
+                        format!("cache[row * {cache_width}u + {}u]", offset + element)
+                    }),
+                    kind.width(),
+                )
+            }
+        })?);
+        let outputs = std::iter::once(format!("v{}.x", ir.primal_root().index()))
+            .chain(
+                ir.outputs()
+                    .iter()
+                    .map(|output| format!("v{}.x", output.index())),
+            )
+            .collect::<Vec<_>>()
+            .join(", ");
+        source.push_str(&format!(
+            "return array<f32, {width}>({outputs});\n}}\n@compute @workgroup_size(64) fn reduce_gradient(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgroup_id) wid: vec3<u32>) {{\nvar result: array<f32, {width}>;\nvar scale=0.0;\nif (gid.x < arrayLength(&weights)) {{ result=model_gradient(gid.x); let value=result[0]; if (config[0] == 0u) {{ scale=1.0; }} else if (value <= 0.0) {{ atomicMin(&reduction_error[0], gid.x); }} else if (config[0] == 1u) {{ scale=1.0; }} else {{ scale=1.0/value; }} result[0]=select(value, log(value), config[0] == 2u); scale *= weights[gid.x]; result[0] *= weights[gid.x]; }}\nfor (var component=0u; component<{width}u; component++) {{ if (component == 0u) {{ sums[lid.x]=result[0]; }} else {{ sums[lid.x]=result[component]*scale; }} workgroupBarrier(); var stride=32u; loop {{ if (lid.x < stride) {{ sums[lid.x] += sums[lid.x+stride]; }} workgroupBarrier(); if (stride == 1u) {{ break; }} stride/=2u; }} if (lid.x == 0u) {{ partials[wid.x*{width}u+component]=sums[0]; }} workgroupBarrier(); }}\n}}\n"
+        ));
+        Ok(source)
+    }
+
     fn wgsl(
         ir: &ScalarKernelIr,
         cache_offsets: &[usize],
         cache_width: usize,
     ) -> WgpuResult<String> {
         let mut source = format!(
-            "@group(0) @binding(0) var<storage, read> p: array<f32>;\n@group(0) @binding(1) var<storage, read> cache: array<vec2<f32>>;\n@group(0) @binding(2) var<storage, read_write> out: array<vec2<f32>>;\n@group(0) @binding(3) var<storage, read> weights: array<f32>;\n@group(0) @binding(4) var<storage, read> config: array<u32>;\n@group(0) @binding(5) var<storage, read_write> partials: array<f32>;\n@group(0) @binding(6) var<storage, read_write> reduction_error: array<atomic<u32>>;\nvar<workgroup> sums: array<f32, 64>;\n{}fn model(row: u32) -> vec2<f32> {{\n",
+            "@group(0) @binding(0) var<storage, read> p: array<f32>;\n@group(0) @binding(1) var<storage, read> cache: array<vec2<f32>>;\n@group(0) @binding(2) var<storage, read_write> out: array<vec2<f32>>;\n@group(0) @binding(3) var<storage, read> weights: array<f32>;\n@group(0) @binding(4) var<storage, read> config: array<u32>;\n@group(0) @binding(5) var<storage, read_write> partials: array<f32>;\n@group(0) @binding(6) var<storage, read_write> reduction_error: array<atomic<u32>>;\n@group(0) @binding(7) var<storage, read_write> solve_error: array<atomic<u32>>;\nvar<workgroup> sums: array<f32, 64>;\n{}fn model(row: u32) -> vec2<f32> {{\n",
             Self::scalar_prelude()
         );
         source.push_str(&Self::emit_values(ir.values(), |slot, kind| {
@@ -1288,7 +1727,8 @@ mod tests {
         schema::Schema,
     };
     use laddu_expr::{
-        Expr, complex, dot, event_scalar, matmul, matrix, matvec, parameter, solve, vector,
+        Expr, complex, dot, event_scalar, matmul, matrix, matrix_from_flat, matvec, parameter,
+        solve, vector,
     };
     use laddu_runtime::{CpuBackend, CpuOptions, Device, Execution, ExecutionOptions, Precision};
 
@@ -1306,7 +1746,7 @@ mod tests {
     }
 
     #[test]
-    fn aggregate_wgsl_uses_flattened_cache_offsets_and_rejects_solves() {
+    fn aggregate_wgsl_uses_flattened_cache_offsets_and_lowers_solves() {
         let cached_matrix = matrix([
             [event_scalar("x"), event_scalar("y")],
             [event_scalar("y") + 1.0, event_scalar("x") - 1.0],
@@ -1353,14 +1793,66 @@ mod tests {
             &laddu_compile::CompileOptions::without_optimizations(),
         )
         .unwrap();
-        let solve_ir = laddu_compile::ExecutablePlan::from_model(&solve_model)
+        let solve_ir = laddu_compile::ExecutablePlan::from_model_without_solve_rows(&solve_model)
             .unwrap()
             .scalar_kernel()
             .unwrap()
             .clone();
+        let solve_source = WgpuScalarKernel::wgsl(&solve_ir, &[], 0).unwrap();
+        assert!(solve_source.contains("var lu"));
+        assert!(solve_source.contains("var piv"));
+        assert!(solve_source.contains("cdiv("));
+
+        let maximum = 16;
+        let maximum_matrix = matrix_from_flat(
+            maximum,
+            maximum,
+            (0..maximum * maximum).map(|index| {
+                Expr::from(if index / maximum == index % maximum {
+                    1.0
+                } else {
+                    0.0
+                })
+            }),
+        )
+        .unwrap();
+        let maximum_model = CompiledModel::from_expr_with_options(
+            &solve(
+                maximum_matrix,
+                vector((0..maximum).map(|_| Expr::from(1.0))),
+            )
+            .component(0),
+            &laddu_compile::CompileOptions::without_optimizations(),
+        )
+        .unwrap();
+        let maximum_plan =
+            laddu_compile::ExecutablePlan::from_model_without_solve_rows(&maximum_model).unwrap();
+        assert!(WgpuScalarKernel::wgsl(maximum_plan.scalar_kernel().unwrap(), &[], 0).is_ok());
+
+        let dimension = 17;
+        let oversized_matrix = matrix_from_flat(
+            dimension,
+            dimension,
+            (0..dimension * dimension).map(|index| {
+                Expr::from(if index / dimension == index % dimension {
+                    1.0
+                } else {
+                    0.0
+                })
+            }),
+        )
+        .unwrap();
+        let oversized_rhs = vector((0..dimension).map(|_| Expr::from(1.0)));
+        let oversized_model = CompiledModel::from_expr_with_options(
+            &solve(oversized_matrix, oversized_rhs).component(0),
+            &laddu_compile::CompileOptions::without_optimizations(),
+        )
+        .unwrap();
+        let oversized =
+            laddu_compile::ExecutablePlan::from_model_without_solve_rows(&oversized_model).unwrap();
         assert!(matches!(
-            WgpuScalarKernel::wgsl(&solve_ir, &[], 0),
-            Err(crate::WgpuError::UnsupportedInstruction(_))
+            WgpuScalarKernel::wgsl(oversized.scalar_kernel().unwrap(), &[], 0),
+            Err(crate::WgpuError::SolveDimensionTooLarge { dimension: 17 })
         ));
     }
 
@@ -1594,5 +2086,68 @@ mod tests {
             assert!((gpu.0 - cpu.re).abs() <= 1.0e-5 * cpu.re.abs().max(1.0));
             assert!((gpu.1 - cpu.im).abs() <= 1.0e-5 * cpu.im.abs().max(1.0));
         }
+    }
+
+    #[test]
+    #[ignore = "requires a WGPU-compatible hardware adapter"]
+    fn gpu_fused_solve_matches_cpu() {
+        let expression = solve(
+            matrix([
+                [event_scalar("x"), 1.0.into()],
+                [complex(0.5, 0.25), event_scalar("x") + 2.0],
+            ]),
+            vector([
+                Expr::from(parameter!("a", initial: 1.25)),
+                complex(parameter!("b", initial: -0.4), 0.5),
+            ]),
+        )
+        .component(1);
+        let model = CompiledModel::from_expr(&expression).unwrap();
+        let params = model.params().default_values();
+        let schema = Arc::new(Schema::new(std::iter::empty::<&str>(), ["x"], false).unwrap());
+        let batch = EventBatch::from_events(
+            schema,
+            [0.0, 0.5, 1.25]
+                .into_iter()
+                .map(|x| OwnedEvent::new(vec![], vec![x])),
+        )
+        .unwrap();
+        let context = WgpuBackend::default()
+            .open(&WgpuOptions::default(), WgpuPrecision::F32)
+            .unwrap();
+        let kernel = WgpuScalarKernel::compile(&context, &model).unwrap();
+        let gpu = kernel.evaluate_batch(&context, &params, &batch).unwrap();
+        let execution = Execution::local(ExecutionOptions {
+            device: Device::Cpu(CpuOptions::default()),
+            precision: Precision::F64,
+            ..ExecutionOptions::default()
+        })
+        .unwrap();
+        let cpu = CpuBackend
+            .prepare_for_execution(&model, &execution)
+            .unwrap()
+            .evaluate_batch(&params, &batch)
+            .unwrap();
+        for (gpu, cpu) in gpu.iter().zip(cpu) {
+            assert!((gpu.0 - cpu.re).abs() <= 2.0e-5 * cpu.re.abs().max(1.0));
+            assert!((gpu.1 - cpu.im).abs() <= 2.0e-5 * cpu.im.abs().max(1.0));
+        }
+
+        let singular_model = CompiledModel::from_expr(
+            &solve(
+                matrix([
+                    [event_scalar("x"), 2.0.into()],
+                    [event_scalar("x") * 2.0, 4.0.into()],
+                ]),
+                vector([1.0, 2.0]),
+            )
+            .component(0),
+        )
+        .unwrap();
+        let singular = WgpuScalarKernel::compile(&context, &singular_model).unwrap();
+        assert!(matches!(
+            singular.evaluate_batch(&context, &singular_model.params().default_values(), &batch),
+            Err(crate::WgpuError::SingularMatrixEvent(0))
+        ));
     }
 }

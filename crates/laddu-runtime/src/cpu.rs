@@ -1095,6 +1095,11 @@ pub struct ReductionEvaluation {
 }
 
 impl ReductionEvaluation {
+    #[cfg(feature = "wgpu")]
+    pub(crate) fn new(value: f64, gradient: Vec<f64>) -> Self {
+        Self { value, gradient }
+    }
+
     pub fn value(&self) -> f64 {
         self.value
     }

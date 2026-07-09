@@ -936,7 +936,8 @@ mod tests {
         schema::Schema,
     };
     use laddu_expr::{
-        complex, dot, event_scalar, matrix, matvec, parameter, parameters::Parameter, solve, vector,
+        Expr, complex, dot, event_scalar, matrix, matvec, parameter, parameters::Parameter, solve,
+        vector,
     };
     use laddu_runtime::{CpuOptions, Device, ExecutionOptions, Precision, ThreadPolicy};
     #[cfg(feature = "wgpu")]
@@ -1714,14 +1715,34 @@ mod tests {
             expected,
             epsilon = 2.0e-5
         );
-        assert!(matches!(
-            gpu.nll_with_gradient(&params),
-            Err(LikelihoodError::Runtime(
-                laddu_runtime::RuntimeError::Execution(
-                    laddu_runtime::ExecutionError::UnsupportedGpuGradient
-                )
-            ))
-        ));
+        let gradient = gpu.nll_with_gradient(&params).unwrap();
+        let streaming_gradient = streaming_gpu.nll_with_gradient(&params).unwrap();
+        assert_relative_eq!(gradient.value(), expected, epsilon = 2.0e-5);
+        assert_relative_eq!(
+            gradient.gradient()[0],
+            streaming_gradient.gradient()[0],
+            epsilon = 2.0e-5
+        );
+        let cpu_f64 = single_term_likelihood_with_execution(
+            "scalar",
+            &model,
+            &data,
+            &accepted,
+            Execution::local(ExecutionOptions {
+                device: Device::Cpu(CpuOptions::default()),
+                precision: Precision::F64,
+                ..ExecutionOptions::default()
+            })
+            .unwrap(),
+        );
+        let expected_gradient = cpu_f64
+            .nll_with_gradient(&cpu_f64.default_params())
+            .unwrap();
+        assert_relative_eq!(
+            gradient.gradient()[0],
+            expected_gradient.gradient()[0],
+            epsilon = 5.0e-4
+        );
     }
 
     #[cfg(feature = "wgpu")]
@@ -1784,40 +1805,56 @@ mod tests {
 
     #[cfg(feature = "wgpu")]
     #[test]
-    fn explicit_wgpu_reports_unsupported_solve_model() {
+    #[ignore = "requires a WGPU-compatible hardware adapter"]
+    fn explicit_wgpu_solve_likelihood_value_and_gradient_match_cpu() {
         let x = event_scalar("x");
-        let model = CompiledModel::from_expr(
-            &solve(
-                matrix([
-                    [x.clone() + 2.0, x.clone() * 0.0],
-                    [x.clone() * 0.0, x + 3.0],
-                ]),
-                vector([1.0, 2.0]),
-            )
-            .component(0),
+        let amplitude = laddu_amplitudes::f_vector(
+            x.clone() + 4.0,
+            vector([1.0]),
+            matrix([[x.clone() + 0.5, 0.25.into()], [0.1.into(), x + 1.0]]),
+            vector([Expr::from(parameter!("scale", initial: 1.25)), 2.0.into()]),
+            matrix([
+                [complex(0.0, -0.2), 0.0.into()],
+                [0.0.into(), complex(0.0, -0.1)],
+            ]),
         )
-        .unwrap();
-        let data = weighted_dataset(&[(0.5, 1.0)]);
-        let execution = Execution::local(ExecutionOptions {
-            device: Device::Gpu(GpuOptions {
+        .unwrap()
+        .component(0)
+        .norm_sqr();
+        let model = CompiledModel::from_expr(&amplitude).unwrap();
+        let data = weighted_dataset(&[(0.5, 1.0), (1.0, 0.75), (1.5, 1.25)]);
+        let accepted = weighted_dataset(&[(0.25, 0.5), (0.75, 1.0), (1.25, 1.5)]);
+        let make = |device, precision| {
+            single_term_likelihood_with_execution(
+                "solve",
+                &model,
+                &data,
+                &accepted,
+                Execution::local(ExecutionOptions {
+                    device,
+                    precision,
+                    ..ExecutionOptions::default()
+                })
+                .unwrap(),
+            )
+        };
+        let cpu = make(Device::Cpu(CpuOptions::default()), Precision::F64);
+        let gpu = make(
+            Device::Gpu(GpuOptions {
                 backend: GpuBackend::Wgpu,
+                memory_budget: Some(512),
                 ..GpuOptions::default()
             }),
-            precision: Precision::F32,
-            ..ExecutionOptions::default()
-        })
-        .unwrap();
-        let error = Likelihood::with_execution(
-            [NllTerm::new("aggregate", &model, &data, &data)
-                .unwrap()
-                .boxed()],
-            execution,
-        )
-        .unwrap_err();
-
-        assert!(matches!(
-            error,
-            LikelihoodError::Runtime(laddu_runtime::RuntimeError::Wgpu(_))
-        ));
+            Precision::F32,
+        );
+        let params = cpu.default_params();
+        let expected = cpu.nll_with_gradient(&params).unwrap();
+        let actual = gpu.nll_with_gradient(&params).unwrap();
+        assert_relative_eq!(actual.value(), expected.value(), epsilon = 2.0e-4);
+        assert_relative_eq!(
+            actual.gradient()[0],
+            expected.gradient()[0],
+            epsilon = 5.0e-4
+        );
     }
 }

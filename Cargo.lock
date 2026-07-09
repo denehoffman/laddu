@@ -1581,6 +1581,7 @@ name = "laddu-likelihood"
 version = "0.1.0"
 dependencies = [
  "approx",
+ "laddu-amplitudes",
  "laddu-compile",
  "laddu-data",
  "laddu-expr",
@@ -1634,6 +1635,7 @@ name = "laddu-wgpu"
 version = "0.1.0"
 dependencies = [
  "bytemuck",
+ "laddu-autodiff",
  "laddu-compile",
  "laddu-data",
  "laddu-expr",

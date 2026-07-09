@@ -27,6 +27,10 @@ pub enum WgpuError {
     MissingScalarKernel,
     #[error("WGPU scalar lowering does not support {0}")]
     UnsupportedInstruction(String),
+    #[error(
+        "WGPU fused solves support matrices through 16x16, but the model requires {dimension}x{dimension}; use CPU execution"
+    )]
+    SolveDimensionTooLarge { dimension: usize },
     #[error("parameter error: {0}")]
     Parameter(String),
     #[error("failed to map the WGPU result buffer: {0}")]
@@ -37,4 +41,6 @@ pub enum WgpuError {
     MissingEventColumn(String),
     #[error("GPU positive reduction failed at local event {0}")]
     NonPositiveEvent(usize),
+    #[error("GPU solve is singular at local event {0}")]
+    SingularMatrixEvent(usize),
 }

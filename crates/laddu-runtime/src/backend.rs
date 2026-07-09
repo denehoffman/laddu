@@ -4,8 +4,6 @@ use laddu_data::data::Dataset;
 use laddu_data::data::{CacheStorage, accurate::AccurateF64};
 use laddu_expr::parameters::ParamValues;
 
-#[cfg(feature = "wgpu")]
-use crate::ExecutionError;
 use crate::{
     CpuBackend, CpuPlan, CpuPreparedDataset, Execution, PreparedDatasetStats, ReductionEvaluation,
     RuntimeError, RuntimeResult,
@@ -104,8 +102,8 @@ impl PreparedModel {
                 plan.reduce_with_gradient(execution, params, dataset, reduction)
             }
             #[cfg(feature = "wgpu")]
-            (Self::Wgpu(_), PreparedDataset::Wgpu(_)) => {
-                Err(ExecutionError::UnsupportedGpuGradient.into())
+            (Self::Wgpu(plan), PreparedDataset::Wgpu(dataset)) => {
+                plan.reduce_with_gradient(execution, params, dataset, reduction)
             }
             _ => Err(RuntimeError::InvalidShape {
                 index: 0,
@@ -292,6 +290,88 @@ impl WgpuPlan {
             }
         }
         Ok(execution.sum_f64(total.finish()))
+    }
+
+    fn reduce_with_gradient(
+        &self,
+        execution: &Execution,
+        params: &ParamValues,
+        dataset: &WgpuPreparedDataset,
+        reduction: ReductionPlan,
+    ) -> RuntimeResult<ReductionEvaluation> {
+        let mut total = AccurateF64::zero();
+        let mut gradient = (0..params.layout().n_free())
+            .map(|_| AccurateF64::zero())
+            .collect::<Vec<_>>();
+        let mut consume = |batch: &laddu_wgpu::WgpuPreparedBatch| -> RuntimeResult<()> {
+            let (value, values) = self
+                .kernel
+                .reduce_prepared_batch_with_gradient(&self.context, params, batch, reduction)
+                .map_err(wgpu_error)?;
+            total.push(value);
+            for (sum, value) in gradient.iter_mut().zip(values) {
+                sum.push(value);
+            }
+            Ok(())
+        };
+        match dataset {
+            WgpuPreparedDataset::Resident { batches, .. } => {
+                for batch in batches {
+                    consume(batch)?;
+                }
+            }
+            WgpuPreparedDataset::Streaming {
+                dataset,
+                read_plan,
+                workspace,
+                ..
+            } => {
+                let mut workspace = workspace.lock().map_err(|_| {
+                    RuntimeError::Wgpu("streaming workspace lock is poisoned".into())
+                })?;
+                let mut batch_index = 0;
+                for batch in dataset
+                    .batches_with_plan(*read_plan)
+                    .map_err(|error| RuntimeError::Data(error.to_string()))?
+                {
+                    let batch = batch.map_err(|error| RuntimeError::Data(error.to_string()))?;
+                    if let Some(prepared) = workspace.get_mut(batch_index) {
+                        if !self
+                            .kernel
+                            .refresh_batch(
+                                &self.context,
+                                &self.preparation_params,
+                                &batch,
+                                prepared,
+                            )
+                            .map_err(wgpu_error)?
+                        {
+                            *prepared = self
+                                .kernel
+                                .prepare_batch(&self.context, &self.preparation_params, &batch)
+                                .map_err(wgpu_error)?;
+                        }
+                    } else {
+                        workspace.push(
+                            self.kernel
+                                .prepare_batch(&self.context, &self.preparation_params, &batch)
+                                .map_err(wgpu_error)?,
+                        );
+                    }
+                    consume(&workspace[batch_index])?;
+                    batch_index += 1;
+                }
+                workspace.truncate(batch_index);
+            }
+        }
+        let gradient = gradient
+            .into_iter()
+            .map(|sum| execution.sum_f64(sum.finish()))
+            .collect();
+        Ok(ReductionEvaluation::new(
+            execution.sum_f64(total.finish()),
+            gradient,
+        ))
     }
 }
 

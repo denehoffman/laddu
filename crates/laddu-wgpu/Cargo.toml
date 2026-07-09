@@ -10,6 +10,7 @@ rust-version.workspace = true
 
 [dependencies]
 bytemuck.workspace = true
+laddu-autodiff = { path = "../laddu-autodiff" }
 laddu-compile = { path = "../laddu-compile" }
 laddu-data = { path = "../laddu-data" }
 laddu-expr = { path = "../laddu-expr" }

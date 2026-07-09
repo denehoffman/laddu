@@ -78,6 +78,21 @@ pub struct ExecutablePlan {
 
 impl ExecutablePlan {
     pub fn from_model(model: &CompiledModel) -> CompileResult<Self> {
+        Self::from_model_with_solve_rows(model, true)
+    }
+
+    /// Build an executable plan without the CPU-oriented cached solve-row specialization.
+    ///
+    /// Backends with inexpensive fused solves can use this form to keep the original `Solve`
+    /// instruction and consume an ordinarily cached event-dependent matrix directly.
+    pub fn from_model_without_solve_rows(model: &CompiledModel) -> CompileResult<Self> {
+        Self::from_model_with_solve_rows(model, false)
+    }
+
+    fn from_model_with_solve_rows(
+        model: &CompiledModel,
+        specialize_solve_rows: bool,
+    ) -> CompileResult<Self> {
         let graph = model.graph().clone();
         let params = model.params().clone();
         let cache_plan = model.cache_plan().clone();
@@ -94,7 +109,16 @@ impl ExecutablePlan {
             cache_slots[entry.node().index()] = Some(slot);
         }
         let (solve_components, solve_rhs_elements, solve_row_matrices, solve_row_keys) =
-            Self::solve_component_plans(model);
+            if specialize_solve_rows {
+                Self::solve_component_plans(model)
+            } else {
+                (
+                    vec![None; graph.nodes().len()],
+                    vec![None; graph.nodes().len()],
+                    Vec::new(),
+                    Vec::new(),
+                )
+            };
         let (evaluation_nodes, value_slots) = Self::evaluation_schedule(
             &graph,
             &cache_slots,
@@ -597,6 +621,10 @@ impl ExecutablePlan {
                 },
                 ExprNode::Dot { lhs, rhs } => KernelInstruction::Dot {
                     lhs: operand(*lhs)?,
+                    rhs: operand(*rhs)?,
+                },
+                ExprNode::Solve { matrix, rhs } => KernelInstruction::Solve {
+                    matrix: operand(*matrix)?,
                     rhs: operand(*rhs)?,
                 },
                 unsupported => {

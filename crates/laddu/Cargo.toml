@@ -38,6 +38,7 @@ rayon.workspace = true
 [[bench]]
 name = "kmatrix_benchmark"
 harness = false
+required-features = ["jit", "wgpu"]
 
 [[bench]]
 name = "jit_benchmark"
