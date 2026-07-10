@@ -1014,7 +1014,12 @@ impl CpuBackend {
             JitPolicy::Disabled => CpuExecutionMode::Interpreter,
         };
         let plan = self
-            .prepare_with_modes_precision(model, AutodiffMode::Forward, mode, execution.precision())
+            .prepare_with_modes_precision(
+                model,
+                execution.autodiff_mode(),
+                mode,
+                execution.precision(),
+            )
             .map_err(|error| RuntimeError::Data(error.to_string()))?;
         if execution.precision() == Precision::F32 && !plan.supports_f32_scalar_execution() {
             return Err(crate::ExecutionError::UnsupportedCpuF32Model.into());
@@ -4581,6 +4586,9 @@ impl<'a> ReverseDerivativeWorkspace<'a> {
         let Some(adjoint) = self.adjoints[index].take() else {
             return Ok(());
         };
+        if self.cached_factors.is_some() && self.plan.cache_slots[index].is_some() {
+            return Ok(());
+        }
         let node = self.plan.graph.nodes()[index].clone();
         match node {
             ExprNode::Unary { op, input } => {
@@ -6468,6 +6476,49 @@ mod tests {
     }
 
     #[test]
+    fn reverse_cached_event_materialization_is_a_leaf() {
+        let event_sum = event_scalar("x") + event_scalar("y").sin();
+        let scale = laddu_expr::Expr::from(parameter!("scale", initial: 1.25));
+        let expression = scale * event_sum;
+        let model = CompiledModel::from_expr(&expression).unwrap();
+        let params = Arc::new(model.params().clone()).default_values();
+        let forward = CpuBackend.prepare_with_execution_mode(&model, CpuExecutionMode::Interpreter);
+        let reverse = CpuBackend
+            .prepare_with_autodiff_mode(&model, AutodiffMode::Reverse)
+            .unwrap();
+        let batch = EventBatch::from_events(
+            Arc::new(Schema::new(std::iter::empty::<&str>(), ["x", "y"], false).unwrap()),
+            [OwnedEvent::new(vec![], vec![0.5, 0.25])],
+        )
+        .unwrap();
+        assert!(
+            reverse
+                .cache_slots
+                .iter()
+                .enumerate()
+                .any(|(index, slot)| slot.is_some() && reverse.cached_value_slots[index].is_some())
+        );
+
+        let expected = forward
+            .evaluate_cache_row_with_gradient(
+                &params,
+                &forward.cache_event_batch(&batch).unwrap(),
+                0,
+            )
+            .unwrap();
+        let actual = reverse
+            .evaluate_cache_row_with_gradient(
+                &params,
+                &reverse.cache_event_batch(&batch).unwrap(),
+                0,
+            )
+            .unwrap();
+
+        assert_eq!(actual.value(), expected.value());
+        assert_gradient_close(actual.gradient(), expected.gradient(), 1.0e-12);
+    }
+
+    #[test]
     fn reverse_f32_gradients_are_not_enabled() {
         let expression = laddu_expr::Expr::from(parameter!("x", initial: 0.4)).sin();
         let model = CompiledModel::from_expr(&expression).unwrap();
@@ -7442,6 +7493,51 @@ mod tests {
         for (actual, expected) in ir_gradient.iter().zip(cached.gradient()) {
             assert!((actual - expected).norm() < 1.0e-12);
         }
+    }
+
+    #[test]
+    fn reverse_cached_solve_component_matches_forward_nonsymmetric_solve() {
+        let expression = solve(
+            matrix([
+                [event_scalar("x") + 2.0, Complex64::I.into()],
+                [Complex64::new(2.0, -1.0).into(), 3.0.into()],
+            ]),
+            vector([
+                parameter!("p", initial: 1.5),
+                parameter!("q", initial: -0.25),
+            ]),
+        )
+        .component(1);
+        let model = CompiledModel::from_expr(&expression).unwrap();
+        let params = Arc::new(model.params().clone()).default_values();
+        let forward = CpuBackend.prepare_with_execution_mode(&model, CpuExecutionMode::Interpreter);
+        let reverse = CpuBackend
+            .prepare_with_autodiff_mode(&model, AutodiffMode::Reverse)
+            .unwrap();
+        assert!(reverse.solve_components.iter().any(Option::is_some));
+
+        let batch = EventBatch::from_events(
+            Arc::new(Schema::new(std::iter::empty::<&str>(), ["x"], false).unwrap()),
+            [OwnedEvent::new(vec![], vec![0.75])],
+        )
+        .unwrap();
+        let expected = forward
+            .evaluate_cache_row_with_gradient(
+                &params,
+                &forward.cache_event_batch(&batch).unwrap(),
+                0,
+            )
+            .unwrap();
+        let actual = reverse
+            .evaluate_cache_row_with_gradient(
+                &params,
+                &reverse.cache_event_batch(&batch).unwrap(),
+                0,
+            )
+            .unwrap();
+
+        assert!((actual.value() - expected.value()).norm() < 1.0e-12);
+        assert_gradient_close(actual.gradient(), expected.gradient(), 1.0e-12);
     }
 
     #[cfg(feature = "jit")]

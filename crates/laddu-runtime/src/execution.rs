@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use laddu_autodiff::AutodiffMode;
 use laddu_data::io::{Partitioning, ReadPlan};
 use rayon::{ThreadPool, ThreadPoolBuilder};
 
@@ -80,6 +81,7 @@ pub enum Device {
 pub struct ExecutionOptions {
     pub device: Device,
     pub precision: Precision,
+    pub autodiff: AutodiffMode,
     pub partitioning: Partitioning,
 }
 
@@ -87,6 +89,7 @@ pub struct ExecutionOptions {
 pub struct Execution {
     requested_device: Device,
     precision: Precision,
+    autodiff: AutodiffMode,
     threads: ThreadPolicy,
     jit: JitPolicy,
     pool: Option<Arc<ThreadPool>>,
@@ -108,6 +111,7 @@ impl std::fmt::Debug for Execution {
             .field("requested_device", &self.requested_device)
             .field("resolved_device", &resolved_device)
             .field("precision", &self.precision)
+            .field("autodiff", &self.autodiff)
             .field("threads", &self.threads)
             .field("jit", &self.jit)
             .field("partitioning", &self.partitioning)
@@ -121,6 +125,7 @@ impl Default for Execution {
         Self {
             requested_device: Device::Auto,
             precision: Precision::F64,
+            autodiff: AutodiffMode::Forward,
             threads: ThreadPolicy::Auto,
             jit: JitPolicy::Auto,
             pool: None,
@@ -188,6 +193,11 @@ impl Execution {
         if cpu.jit == JitPolicy::Enabled {
             return Err(ExecutionError::JitUnavailable.into());
         }
+        if options.autodiff == AutodiffMode::Reverse
+            && (precision != Precision::F64 || matches!(options.device, Device::Gpu(_)))
+        {
+            return Err(ExecutionError::UnsupportedReverseAutodiff.into());
+        }
         let pool = match cpu.threads {
             ThreadPolicy::Fixed(0) => return Err(ExecutionError::ZeroThreads.into()),
             ThreadPolicy::Fixed(threads) => Some(Arc::new(
@@ -201,6 +211,7 @@ impl Execution {
         Ok(Self {
             requested_device: options.device,
             precision,
+            autodiff: options.autodiff,
             threads: cpu.threads,
             jit: cpu.jit,
             pool,
@@ -233,6 +244,10 @@ impl Execution {
 
     pub fn precision(&self) -> Precision {
         self.precision
+    }
+
+    pub fn autodiff_mode(&self) -> AutodiffMode {
+        self.autodiff
     }
 
     pub fn thread_policy(&self) -> ThreadPolicy {
@@ -389,5 +404,23 @@ mod tests {
         })
         .unwrap();
         assert_eq!(f32.precision(), Precision::F32);
+
+        let reverse = Execution::local(ExecutionOptions {
+            autodiff: AutodiffMode::Reverse,
+            ..ExecutionOptions::default()
+        })
+        .unwrap();
+        assert_eq!(reverse.autodiff_mode(), AutodiffMode::Reverse);
+
+        assert!(matches!(
+            Execution::local(ExecutionOptions {
+                precision: Precision::F32,
+                autodiff: AutodiffMode::Reverse,
+                ..ExecutionOptions::default()
+            }),
+            Err(RuntimeError::Execution(
+                ExecutionError::UnsupportedReverseAutodiff
+            ))
+        ));
     }
 }
