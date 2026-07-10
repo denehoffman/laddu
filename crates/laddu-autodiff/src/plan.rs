@@ -1,4 +1,4 @@
-use crate::{AutodiffError, AutodiffResult};
+use crate::AutodiffResult;
 use laddu_compile::CompiledModel;
 use laddu_expr::{ExprId, ExprNode};
 
@@ -16,10 +16,6 @@ pub struct AutodiffPlan {
 
 impl AutodiffPlan {
     pub fn from_model(model: &CompiledModel, mode: AutodiffMode) -> AutodiffResult<Self> {
-        if mode != AutodiffMode::Forward {
-            return Err(AutodiffError::UnsupportedMode(mode));
-        }
-
         let parameter_count = model.params().n_free();
         let mut node_dependencies = Vec::<Vec<bool>>::with_capacity(model.graph().nodes().len());
 
@@ -130,12 +126,12 @@ mod tests {
     }
 
     #[test]
-    fn rejects_unimplemented_reverse_mode() {
+    fn accepts_reverse_mode() {
         let expression = parameter!("x").into();
         let model = CompiledModel::from_expr(&expression).unwrap();
-        assert_eq!(
-            AutodiffPlan::from_model(&model, AutodiffMode::Reverse).unwrap_err(),
-            AutodiffError::UnsupportedMode(AutodiffMode::Reverse)
-        );
+        let plan = AutodiffPlan::from_model(&model, AutodiffMode::Reverse).unwrap();
+
+        assert_eq!(plan.mode(), AutodiffMode::Reverse);
+        assert_eq!(plan.parameter_count(), 1);
     }
 }
