@@ -1304,11 +1304,6 @@ impl CpuPlan {
     }
 
     pub fn evaluate_with_gradient(&self, params: &ParamValues) -> RuntimeResult<ValueGradient> {
-        if self.autodiff.mode() == AutodiffMode::Reverse {
-            self.require_f64_gradient()?;
-            let values = self.evaluate_values(params, None)?;
-            return self.value_gradient(values, None);
-        }
         if self.precision == Precision::F32 {
             return self.evaluate_f32_gradient(params, F32KernelInput::Cache(None));
         }
@@ -2337,8 +2332,7 @@ impl CpuPlan {
         F: FnMut(Complex64) -> Result<(f64, f64), E>,
     {
         #[cfg(feature = "jit")]
-        if self.autodiff.mode() == AutodiffMode::Forward
-            && self.precision != Precision::F32
+        if self.precision != Precision::F32
             && let (Some(value_kernel), Some(gradient_kernel)) =
                 (self.scalar_jit_kernel(), self.gradient_jit_kernel())
         {
@@ -2350,8 +2344,7 @@ impl CpuPlan {
                 gradient_kernel,
             );
         }
-        if self.autodiff.mode() == AutodiffMode::Forward
-            && self.precision != Precision::F32
+        if self.precision != Precision::F32
             && let Some(interpreter) = self.gradient_interpreter()
             && let Some(mut state) = interpreter.prepare_real_blocks(params)?
         {
@@ -2371,8 +2364,7 @@ impl CpuPlan {
             }
             return Ok(total.finish());
         }
-        if self.autodiff.mode() == AutodiffMode::Forward
-            && self.precision == Precision::F32
+        if self.precision == Precision::F32
             && let Some(ir) = self.f32_gradient_real.as_ref()
         {
             let mut total = RealGradientAccumulator::zero(self.free_parameter_count());
@@ -2648,8 +2640,7 @@ impl CpuPlan {
         F: Fn(Complex64) -> Result<(f64, f64), E> + Send + Sync,
     {
         #[cfg(feature = "jit")]
-        if self.autodiff.mode() == AutodiffMode::Forward
-            && self.precision != Precision::F32
+        if self.precision != Precision::F32
             && let (Some(value_kernel), Some(gradient_kernel)) =
                 (self.scalar_jit_kernel(), self.gradient_jit_kernel())
         {
@@ -2661,8 +2652,7 @@ impl CpuPlan {
                 gradient_kernel,
             );
         }
-        if self.autodiff.mode() == AutodiffMode::Forward
-            && self.precision != Precision::F32
+        if self.precision != Precision::F32
             && let Some(interpreter) = self.gradient_interpreter()
             && let Some(state) = interpreter.prepare_real_blocks(params)?
         {
@@ -2711,8 +2701,7 @@ impl CpuPlan {
             }
             return Ok(total.finish());
         }
-        if self.autodiff.mode() == AutodiffMode::Forward
-            && self.precision == Precision::F32
+        if self.precision == Precision::F32
             && let Some(ir) = self.f32_gradient_real.as_ref()
         {
             let mut total = RealGradientAccumulator::zero(self.free_parameter_count());
@@ -6620,7 +6609,7 @@ mod tests {
     }
 
     #[test]
-    fn reverse_f32_gradients_are_not_enabled() {
+    fn reverse_f32_gradients_match_forward() {
         let expression = laddu_expr::Expr::from(parameter!("x", initial: 0.4)).sin();
         let model = CompiledModel::from_expr(&expression).unwrap();
         let params = Arc::new(model.params().clone()).default_values();
@@ -6632,13 +6621,19 @@ mod tests {
                 Precision::F32,
             )
             .unwrap();
+        let forward = CpuBackend
+            .prepare_with_modes_precision(
+                &model,
+                AutodiffMode::Forward,
+                CpuExecutionMode::Interpreter,
+                Precision::F32,
+            )
+            .unwrap();
 
-        assert!(matches!(
-            reverse.evaluate_with_gradient(&params),
-            Err(RuntimeError::Execution(
-                crate::ExecutionError::UnsupportedCpuF32Gradient
-            ))
-        ));
+        assert_eq!(
+            reverse.evaluate_with_gradient(&params).unwrap(),
+            forward.evaluate_with_gradient(&params).unwrap()
+        );
     }
 
     #[cfg(feature = "jit")]

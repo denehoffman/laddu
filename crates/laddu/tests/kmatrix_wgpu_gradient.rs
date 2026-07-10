@@ -5,6 +5,7 @@ use laddu::{
         KopfA0Channel, KopfA2Channel, KopfF0Channel, KopfF2Channel, kopf_a0, kopf_a2, kopf_f0,
         kopf_f2,
     },
+    autodiff::AutodiffMode,
     compile::CompiledModel,
     complex,
     data::{
@@ -227,27 +228,59 @@ fn likelihood(term: &NllTerm, execution: Execution) -> Likelihood {
 }
 
 fn cpu_f32_execution() -> Execution {
+    cpu_execution(Precision::F32, JitPolicy::Disabled, AutodiffMode::Forward)
+}
+
+fn cpu_execution(precision: Precision, jit: JitPolicy, autodiff: AutodiffMode) -> Execution {
     Execution::local(ExecutionOptions {
         device: Device::Cpu(CpuOptions {
             threads: ThreadPolicy::Serial,
-            jit: JitPolicy::Disabled,
+            jit,
         }),
-        precision: Precision::F32,
+        precision,
+        autodiff,
         ..ExecutionOptions::default()
     })
     .unwrap()
 }
 
 fn wgpu_execution() -> Execution {
+    wgpu_execution_with_autodiff(AutodiffMode::Forward)
+}
+
+fn wgpu_execution_with_autodiff(autodiff: AutodiffMode) -> Execution {
     Execution::local(ExecutionOptions {
         device: Device::Gpu(GpuOptions {
             backend: GpuBackend::Wgpu,
             ..GpuOptions::default()
         }),
         precision: Precision::F32,
+        autodiff,
         ..ExecutionOptions::default()
     })
     .unwrap()
+}
+
+fn assert_evaluation_close(
+    label: &str,
+    actual: &laddu::likelihood::LikelihoodEvaluation,
+    expected: &laddu::likelihood::LikelihoodEvaluation,
+    tolerance: f64,
+) {
+    let value_scale = expected.value().abs().max(1.0);
+    assert!(
+        (actual.value() - expected.value()).abs() / value_scale < tolerance,
+        "{label}: value {} versus {}",
+        actual.value(),
+        expected.value()
+    );
+    let (index, actual_value, expected_value, relative) =
+        worst_gradient_difference(actual.gradient(), expected.gradient());
+    assert!(
+        relative < tolerance,
+        "{label}: gradient[{index}] {actual_value} versus {expected_value} ({:.3}%)",
+        relative * 100.0
+    );
 }
 
 #[test]
@@ -277,20 +310,24 @@ fn wgpu_f32_parameter_dependent_solve_gradient_matches_cpu_f32() {
         .unwrap(),
     );
     let term = NllTerm::new("solve", &model, &data, &data).unwrap();
-    let cpu = likelihood(&term, cpu_f32_execution());
-    let wgpu = likelihood(&term, wgpu_execution());
-    let params = cpu.default_params();
+    for autodiff in [AutodiffMode::Forward, AutodiffMode::Reverse] {
+        let cpu = likelihood(
+            &term,
+            cpu_execution(Precision::F32, JitPolicy::Disabled, autodiff),
+        );
+        let wgpu = likelihood(&term, wgpu_execution_with_autodiff(autodiff));
+        let params = cpu.default_params();
+        let expected = cpu.nll_with_gradient(&params).unwrap();
+        let actual = wgpu.nll_with_gradient(&params).unwrap();
+        let (index, actual_value, expected_value, relative) =
+            worst_gradient_difference(actual.gradient(), expected.gradient());
 
-    let expected = cpu.nll_with_gradient(&params).unwrap();
-    let actual = wgpu.nll_with_gradient(&params).unwrap();
-    let (index, actual_value, expected_value, relative) =
-        worst_gradient_difference(actual.gradient(), expected.gradient());
-
-    assert!(
-        relative < 5.0e-3,
-        "gradient[{index}] {actual_value} versus {expected_value} ({:.3}%)",
-        relative * 100.0
-    );
+        assert!(
+            relative < 5.0e-3,
+            "{autodiff:?} gradient[{index}] {actual_value} versus {expected_value} ({:.3}%)",
+            relative * 100.0
+        );
+    }
 }
 
 fn worst_gradient_difference(actual: &[f64], expected: &[f64]) -> (usize, f64, f64, f64) {
@@ -338,5 +375,80 @@ fn kmatrix_wgpu_f32_nll_gradient_matches_finite_difference() {
         actual.value(),
         expected.value(),
         relative * 100.0
+    );
+}
+
+#[cfg(feature = "jit")]
+#[test]
+fn kmatrix_reverse_gradient_modes_match_precision_baselines() {
+    let term = kmatrix_term();
+    let params = likelihood(&term, cpu_f32_execution()).params_with(|_| 0.25);
+    let f64_baseline = likelihood(
+        &term,
+        cpu_execution(Precision::F64, JitPolicy::Disabled, AutodiffMode::Forward),
+    )
+    .nll_with_gradient(&params)
+    .unwrap();
+    let f32_baseline = likelihood(&term, cpu_f32_execution())
+        .nll_with_gradient(&params)
+        .unwrap();
+
+    for (label, execution) in [
+        (
+            "cpu reverse f64 interpreter",
+            cpu_execution(Precision::F64, JitPolicy::Disabled, AutodiffMode::Reverse),
+        ),
+        (
+            "cpu reverse f64 jit",
+            cpu_execution(Precision::F64, JitPolicy::Enabled, AutodiffMode::Reverse),
+        ),
+    ] {
+        let actual = likelihood(&term, execution)
+            .nll_with_gradient(&params)
+            .unwrap();
+        assert_evaluation_close(label, &actual, &f64_baseline, 1.0e-10);
+    }
+
+    for (label, execution) in [
+        (
+            "cpu reverse f32 interpreter",
+            cpu_execution(Precision::F32, JitPolicy::Disabled, AutodiffMode::Reverse),
+        ),
+        (
+            "cpu reverse f32 jit",
+            cpu_execution(Precision::F32, JitPolicy::Enabled, AutodiffMode::Reverse),
+        ),
+    ] {
+        let actual = likelihood(&term, execution)
+            .nll_with_gradient(&params)
+            .unwrap();
+        assert_evaluation_close(label, &actual, &f32_baseline, 5.0e-3);
+    }
+
+    let wgpu_term = kmatrix_term();
+    let wgpu_forward = likelihood(
+        &wgpu_term,
+        wgpu_execution_with_autodiff(AutodiffMode::Forward),
+    )
+    .nll_with_gradient(&params)
+    .unwrap();
+    let wgpu_reverse = likelihood(
+        &wgpu_term,
+        wgpu_execution_with_autodiff(AutodiffMode::Reverse),
+    )
+    .nll_with_gradient(&params)
+    .unwrap();
+    assert_evaluation_close(
+        "wgpu reverse versus forward",
+        &wgpu_reverse,
+        &wgpu_forward,
+        1.0e-6,
+    );
+
+    assert_evaluation_close(
+        "f32 versus f64 forward",
+        &f32_baseline,
+        &f64_baseline,
+        5.0e-3,
     );
 }

@@ -193,11 +193,6 @@ impl Execution {
         if cpu.jit == JitPolicy::Enabled {
             return Err(ExecutionError::JitUnavailable.into());
         }
-        if options.autodiff == AutodiffMode::Reverse
-            && (precision != Precision::F64 || matches!(options.device, Device::Gpu(_)))
-        {
-            return Err(ExecutionError::UnsupportedReverseAutodiff.into());
-        }
         let pool = match cpu.threads {
             ThreadPolicy::Fixed(0) => return Err(ExecutionError::ZeroThreads.into()),
             ThreadPolicy::Fixed(threads) => Some(Arc::new(
@@ -412,15 +407,13 @@ mod tests {
         .unwrap();
         assert_eq!(reverse.autodiff_mode(), AutodiffMode::Reverse);
 
-        assert!(matches!(
-            Execution::local(ExecutionOptions {
-                precision: Precision::F32,
-                autodiff: AutodiffMode::Reverse,
-                ..ExecutionOptions::default()
-            }),
-            Err(RuntimeError::Execution(
-                ExecutionError::UnsupportedReverseAutodiff
-            ))
-        ));
+        let reverse_f32 = Execution::local(ExecutionOptions {
+            precision: Precision::F32,
+            autodiff: AutodiffMode::Reverse,
+            ..ExecutionOptions::default()
+        })
+        .unwrap();
+        assert_eq!(reverse_f32.precision(), Precision::F32);
+        assert_eq!(reverse_f32.autodiff_mode(), AutodiffMode::Reverse);
     }
 }
