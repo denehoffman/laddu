@@ -5337,8 +5337,8 @@ mod tests {
         schema::Schema,
     };
     use laddu_expr::{
-        P4Component, atan2, complex, dot, event_p4_component, event_scalar, matrix, parameter,
-        polar_complex, solve, vector,
+        P4Component, atan2, complex, dot, event_p4_component, event_scalar, matmul, matrix, matvec,
+        parameter, polar_complex, solve, vector,
     };
 
     use super::*;
@@ -5604,6 +5604,39 @@ mod tests {
         for (parameter, derivative) in result.gradient().iter().enumerate() {
             let expected = finite_difference(&plan, &params, parameter);
             assert!((derivative - expected).norm() < 1.0e-7);
+        }
+    }
+
+    #[test]
+    fn forward_gradients_cover_matrix_vector_and_dot_operations() {
+        let a = laddu_expr::Expr::from(parameter!("a", initial: 0.7));
+        let b = laddu_expr::Expr::from(parameter!("b", initial: -0.2));
+        let c = laddu_expr::Expr::from(parameter!("c", initial: 1.1));
+        let d = laddu_expr::Expr::from(parameter!("d", initial: 0.4));
+        let x = laddu_expr::Expr::from(parameter!("x", initial: -0.3));
+        let y = laddu_expr::Expr::from(parameter!("y", initial: 0.9));
+        let left = matrix([
+            [a.clone(), complex(b.clone(), 0.2)],
+            [1.3.into(), c.clone()],
+        ]);
+        let right = matrix([[complex(0.5, -0.1), d.clone()], [b.clone(), 0.8.into()]]);
+        let product = matmul(left, right);
+        let input_vector = vector([x.clone(), complex(y.clone(), -0.4)]);
+        let projected = matvec(product.clone(), input_vector);
+        let expression = dot(projected.clone(), vector([complex(0.25, 0.3), c.clone()]))
+            + product.matrix_element(1, 0)
+            + projected.component(1);
+        let model = CompiledModel::from_expr(&expression).unwrap();
+        let params = Arc::new(model.params().clone()).default_values();
+        let plan = CpuBackend.prepare(&model);
+        let result = plan.evaluate_with_gradient(&params).unwrap();
+
+        for (parameter, derivative) in result.gradient().iter().enumerate() {
+            let expected = finite_difference(&plan, &params, parameter);
+            assert!(
+                (derivative - expected).norm() < 1.0e-7,
+                "{derivative} != {expected}"
+            );
         }
     }
 
