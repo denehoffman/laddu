@@ -23,5 +23,6 @@ laddu-amplitudes = { path = "../laddu-amplitudes" }
 mpi_test.workspace = true
 
 [features]
+jit = ["laddu-runtime/jit"]
 mpi = ["dep:mpi", "laddu-data/mpi", "laddu-runtime/mpi"]
 wgpu = ["laddu-runtime/wgpu"]

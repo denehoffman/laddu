@@ -25,7 +25,7 @@ thiserror.workspace = true
 default = ["amplitudes", "likelihood"]
 amplitudes = ["dep:laddu-amplitudes"]
 likelihood = ["dep:laddu-likelihood"]
-jit = ["laddu-runtime/jit"]
+jit = ["laddu-runtime/jit", "laddu-likelihood?/jit"]
 mpi = ["laddu-data/mpi", "laddu-runtime/mpi", "laddu-likelihood?/mpi"]
 wgpu = ["dep:laddu-wgpu", "laddu-runtime/wgpu", "laddu-likelihood?/wgpu"]
 

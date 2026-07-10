@@ -939,7 +939,7 @@ mod tests {
         Expr, complex, dot, event_scalar, matrix, matvec, parameter, parameters::Parameter, solve,
         vector,
     };
-    use laddu_runtime::{CpuOptions, Device, ExecutionOptions, Precision, ThreadPolicy};
+    use laddu_runtime::{CpuOptions, Device, ExecutionOptions, JitPolicy, Precision, ThreadPolicy};
     #[cfg(feature = "wgpu")]
     use laddu_runtime::{GpuBackend, GpuOptions};
 
@@ -1007,6 +1007,31 @@ mod tests {
             execution,
         )
         .unwrap()
+    }
+
+    fn cpu_execution(precision: Precision, threads: ThreadPolicy, jit: JitPolicy) -> Execution {
+        Execution::local(ExecutionOptions {
+            device: Device::Cpu(CpuOptions {
+                threads,
+                jit,
+                ..CpuOptions::default()
+            }),
+            precision,
+            ..ExecutionOptions::default()
+        })
+        .unwrap()
+    }
+
+    fn assert_evaluation_close(
+        actual: &LikelihoodEvaluation,
+        expected: &LikelihoodEvaluation,
+        epsilon: f64,
+    ) {
+        assert_relative_eq!(actual.value(), expected.value(), epsilon = epsilon);
+        assert_eq!(actual.gradient().len(), expected.gradient().len());
+        for (actual, expected) in actual.gradient().iter().zip(expected.gradient()) {
+            assert_relative_eq!(actual, expected, epsilon = epsilon);
+        }
     }
 
     fn finite_difference_nll(
@@ -1173,6 +1198,124 @@ mod tests {
     }
 
     #[test]
+    fn f32_cpu_likelihood_matches_across_resident_streaming_and_batches() {
+        let x = event_scalar("x");
+        let coupling = laddu_expr::Expr::from(parameter!("coupling", initial: 0.35));
+        let matrix = matrix([
+            [x.clone() + 2.0, complex(coupling.clone(), 0.15)],
+            [complex(-0.2, coupling), 3.5.into()],
+        ]);
+        let amplitude = solve(matrix, vector([x.sin() + 1.0, complex(x.cos(), 0.5)])).component(1);
+        let model = CompiledModel::from_expr(&(amplitude.norm_sqr() + 0.25)).unwrap();
+        let values = [
+            (0.15, 0.7),
+            (0.35, 1.2),
+            (0.65, 0.5),
+            (0.95, 1.8),
+            (1.25, 0.9),
+            (1.55, 1.1),
+            (1.85, 0.6),
+        ];
+        let one_batch = weighted_dataset_batches(&values, &[values.len()]);
+        let two_batches = weighted_dataset_batches(&values, &[3, values.len()]);
+        let streaming = weighted_dataset_batches(&values, &[2, 5, values.len()]).streaming();
+        let interpreter = cpu_execution(Precision::F32, ThreadPolicy::Serial, JitPolicy::Disabled);
+        let threaded = cpu_execution(Precision::F32, ThreadPolicy::Fixed(2), JitPolicy::Disabled);
+
+        let reference = single_term_likelihood_with_execution(
+            "reference",
+            &model,
+            &one_batch,
+            &one_batch,
+            interpreter.clone(),
+        );
+        let expected = reference
+            .nll_with_gradient(&reference.default_params())
+            .unwrap();
+
+        let cases = [
+            single_term_likelihood_with_execution(
+                "resident",
+                &model,
+                &two_batches,
+                &two_batches,
+                interpreter.clone(),
+            ),
+            single_term_likelihood_with_execution(
+                "streaming",
+                &model,
+                &streaming,
+                &streaming,
+                interpreter.clone(),
+            ),
+            single_term_likelihood_with_execution(
+                "mixed",
+                &model,
+                &two_batches,
+                &streaming,
+                threaded,
+            ),
+        ];
+
+        for likelihood in cases {
+            let actual = likelihood
+                .nll_with_gradient(&likelihood.default_params())
+                .unwrap();
+            assert_evaluation_close(&actual, &expected, 5.0e-5);
+        }
+
+        #[cfg(feature = "jit")]
+        {
+            let jit = cpu_execution(Precision::F32, ThreadPolicy::Fixed(2), JitPolicy::Enabled);
+            for likelihood in [
+                single_term_likelihood_with_execution(
+                    "jit-resident",
+                    &model,
+                    &two_batches,
+                    &two_batches,
+                    jit.clone(),
+                ),
+                single_term_likelihood_with_execution(
+                    "jit-streaming",
+                    &model,
+                    &streaming,
+                    &streaming,
+                    jit.clone(),
+                ),
+                single_term_likelihood_with_execution(
+                    "jit-mixed",
+                    &model,
+                    &two_batches,
+                    &streaming,
+                    jit,
+                ),
+            ] {
+                let actual = likelihood
+                    .nll_with_gradient(&likelihood.default_params())
+                    .unwrap();
+                assert_evaluation_close(&actual, &expected, 5.0e-5);
+            }
+        }
+
+        let streaming_likelihood = single_term_likelihood_with_execution(
+            "streaming-stats",
+            &model,
+            &streaming,
+            &streaming,
+            interpreter,
+        );
+        let streaming_stats = streaming_likelihood.terms()[0]
+            .as_intensity()
+            .unwrap()
+            .data()
+            .unwrap()
+            .stats();
+        assert_eq!(streaming_stats.storage(), CacheStorage::Streaming);
+        assert_eq!(streaming_stats.resident_bytes(), 0);
+        assert_eq!(streaming_stats.local_batches(), 3);
+    }
+
+    #[test]
     fn likelihood_nll_uses_configured_f32_scalar_execution() {
         let dataset = weighted_dataset(&[(1.0, 1.0), (2.0, 1.0)]);
         let scale = laddu_expr::Expr::from(parameter!("scale", initial: 1.0));
@@ -1182,15 +1325,7 @@ mod tests {
             &model,
             &dataset,
             &dataset,
-            Execution::local(ExecutionOptions {
-                device: Device::Cpu(CpuOptions {
-                    threads: ThreadPolicy::Serial,
-                    ..CpuOptions::default()
-                }),
-                precision: Precision::F32,
-                ..ExecutionOptions::default()
-            })
-            .unwrap(),
+            cpu_execution(Precision::F32, ThreadPolicy::Serial, JitPolicy::Auto),
         );
 
         let expected = 2.0 * 5.0_f64.ln() - 2.0_f32.ln() as f64 - 3.0_f32.ln() as f64;
