@@ -1434,6 +1434,100 @@ mod tests {
         assert!(stats.local_events() <= 1 || world.size() <= 2);
     }
 
+    #[cfg(all(feature = "mpi", feature = "wgpu"))]
+    #[mpi_test::mpi_test(np = [2, 3])]
+    fn mpi_wgpu_likelihood_matches_local_wgpu_reference_across_storage_modes() {
+        use mpi::traits::Communicator;
+
+        let universe = mpi::initialize().unwrap();
+        let world = universe.world();
+        let values = [
+            (0.15, 0.7),
+            (0.35, 1.2),
+            (0.65, 0.5),
+            (0.95, 1.8),
+            (1.25, 0.9),
+            (1.55, 1.1),
+            (1.85, 0.6),
+        ];
+        let accepted_values = [
+            (0.25, 0.5),
+            (0.55, 1.0),
+            (0.85, 1.5),
+            (1.15, 0.75),
+            (1.45, 1.25),
+        ];
+        let data = weighted_dataset_batches(&values, &[2, 5, values.len()]);
+        let accepted = weighted_dataset_batches(&accepted_values, &[1, 3, accepted_values.len()]);
+        let streaming_data = data.clone().streaming();
+        let streaming_accepted = accepted.clone().streaming();
+        let x = event_scalar("x");
+        let scale = laddu_expr::Expr::from(parameter!("scale", initial: 0.5));
+        let offset = laddu_expr::Expr::from(parameter!("offset", initial: 1.25));
+        let model = CompiledModel::from_expr(&((x * scale + offset + 2.0).powi(2) + 0.1)).unwrap();
+
+        let local = single_term_likelihood_with_execution(
+            "local",
+            &model,
+            &data,
+            &accepted,
+            wgpu_execution(Some(256)),
+        );
+        let expected = local.nll_with_gradient(&local.default_params()).unwrap();
+
+        let make_distributed = |name, data: &Dataset, accepted: &Dataset| {
+            single_term_likelihood_with_execution(
+                name,
+                &model,
+                data,
+                accepted,
+                Execution::distributed(
+                    ExecutionOptions {
+                        device: Device::Gpu(GpuOptions {
+                            backend: GpuBackend::Wgpu,
+                            memory_budget: Some(256),
+                            ..GpuOptions::default()
+                        }),
+                        precision: Precision::F32,
+                        partitioning: laddu_data::io::Partitioning::Contiguous,
+                    },
+                    &world,
+                )
+                .unwrap(),
+            )
+        };
+        let resident = make_distributed("resident", &data, &accepted);
+        let streaming = make_distributed("streaming", &streaming_data, &streaming_accepted);
+        let mixed = make_distributed("mixed", &data, &streaming_accepted);
+
+        for likelihood in [&resident, &streaming, &mixed] {
+            let actual = likelihood
+                .nll_with_gradient(&likelihood.default_params())
+                .unwrap();
+            assert_evaluation_close(&actual, &expected, 5.0e-4);
+        }
+
+        let stats = resident.terms()[0]
+            .as_intensity()
+            .unwrap()
+            .data()
+            .unwrap()
+            .stats();
+        assert_eq!(stats.global_events(), values.len());
+        assert!(stats.local_events() <= values.len().div_ceil(world.size() as usize));
+        assert_eq!(stats.storage(), CacheStorage::Resident);
+
+        let streaming_stats = streaming.terms()[0]
+            .as_intensity()
+            .unwrap()
+            .data()
+            .unwrap()
+            .stats();
+        assert_eq!(streaming_stats.global_events(), values.len());
+        assert_eq!(streaming_stats.storage(), CacheStorage::Streaming);
+        assert_eq!(streaming_stats.resident_bytes(), 0);
+    }
+
     #[cfg(feature = "mpi")]
     #[mpi_test::mpi_test(np = [2, 3])]
     fn mpi_likelihood_propagates_a_rank_local_error_without_deadlocking() {

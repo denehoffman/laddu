@@ -54,8 +54,6 @@ pub enum ExecutionError {
     GpuUnavailable(crate::GpuBackend),
     #[error("GPU gradients are not implemented yet")]
     UnsupportedGpuGradient,
-    #[error("distributed GPU execution is not implemented yet")]
-    UnsupportedDistributedGpu,
     #[error("CPU JIT execution was requested but the `jit` feature is unavailable")]
     JitUnavailable,
 }

@@ -218,10 +218,6 @@ impl Execution {
         C: Communicator,
     {
         let mut execution = Self::local(options)?;
-        #[cfg(feature = "wgpu")]
-        if execution.wgpu.is_some() {
-            return Err(ExecutionError::UnsupportedDistributedGpu.into());
-        }
         execution.communicator = Some(Arc::new(world.duplicate()));
         Ok(execution)
     }
