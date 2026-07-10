@@ -21,8 +21,8 @@ use laddu_expr::{
     parameters::{ParamId, ParamLayout, ParamValues},
 };
 use laddu_kernel::ir::{
-    KernelInstruction, KernelValue, KernelValueClass, KernelValueId, KernelValueKind,
-    OutputComponent, ScalarKernelIr,
+    GradientKernelIr, KernelInstruction, KernelValue, KernelValueClass, KernelValueId,
+    KernelValueKind, OutputComponent, ScalarKernelIr,
 };
 use nalgebra::{DMatrix, DVector, Dyn, LU};
 use num::{
@@ -90,6 +90,8 @@ pub struct CpuPlan {
     scalar_executor: Option<ScalarExecutor>,
     #[cfg_attr(not(feature = "jit"), allow(dead_code))]
     gradient_executor: GradientExecutor,
+    f32_gradient_real: Option<GradientKernelIr>,
+    f32_gradient_imag: Option<GradientKernelIr>,
     cache_materialization_nodes: Vec<ExprId>,
     solve_components: Vec<Option<SolveComponentPlan>>,
     solve_rhs_elements: Vec<Option<Vec<ExprId>>>,
@@ -1081,6 +1083,29 @@ impl CpuBackend {
             model.params(),
             gradient_execution_mode,
         )?;
+        let f32_gradient_real = if precision == Precision::F32 {
+            scalar_kernel
+                .as_ref()
+                .map(|kernel| {
+                    gradient_ir(kernel, model.params().free_params(), OutputComponent::Real)
+                })
+                .transpose()?
+        } else {
+            None
+        };
+        let f32_gradient_imag = if precision == Precision::F32
+            && scalar_kernel.as_ref().is_some_and(|kernel| {
+                kernel.values()[kernel.root().index()].kind == KernelValueKind::Complex
+            }) {
+            scalar_kernel
+                .as_ref()
+                .map(|kernel| {
+                    gradient_ir(kernel, model.params().free_params(), OutputComponent::Imag)
+                })
+                .transpose()?
+        } else {
+            None
+        };
         let constant_factors = executable
             .constant_factor_matrices()
             .iter()
@@ -1099,6 +1124,8 @@ impl CpuBackend {
             scalar_kernel,
             scalar_executor,
             gradient_executor,
+            f32_gradient_real,
+            f32_gradient_imag,
             cache_materialization_nodes: executable.cache_materialization_nodes().to_vec(),
             solve_components: executable.solve_components().to_vec(),
             solve_rhs_elements: executable.solve_rhs_elements().to_vec(),
@@ -1175,6 +1202,13 @@ impl RealGradientAccumulator {
         self.value.push(weight * value);
         for (sum, model_derivative) in self.gradient.iter_mut().zip(model_gradient) {
             sum.push(weight * derivative * model_derivative.re);
+        }
+    }
+
+    fn push_f32(&mut self, weight: f64, value: f64, derivative: f64, model_gradient: &[f32]) {
+        self.value.push(weight * value);
+        for (sum, model_derivative) in self.gradient.iter_mut().zip(model_gradient) {
+            sum.push(weight * derivative * f64::from(*model_derivative));
         }
     }
 
@@ -2337,6 +2371,27 @@ impl CpuPlan {
             }
             return Ok(total.finish());
         }
+        if self.autodiff.mode() == AutodiffMode::Forward
+            && self.precision == Precision::F32
+            && let Some(ir) = self.f32_gradient_real.as_ref()
+        {
+            let mut total = RealGradientAccumulator::zero(self.free_parameter_count());
+            let mut gradient = Vec::new();
+            for batch in dataset.batches() {
+                self.check_batch_cache(batch.cache())?;
+                for row in 0..batch.len() {
+                    let (value, model_gradient) = self.evaluate_f32_gradient_component_prepared(
+                        ir,
+                        params,
+                        F32KernelInput::Cache(Some((batch.cache(), row))),
+                        &mut gradient,
+                    )?;
+                    let (value, derivative) = transform(value)?;
+                    total.push_f32(batch.weights()[row], value, derivative, model_gradient);
+                }
+            }
+            return Ok(total.finish());
+        }
         let mut total = RealGradientAccumulator::zero(self.free_parameter_count());
         for batch in dataset.batches() {
             self.check_batch_cache(batch.cache())?;
@@ -2650,6 +2705,56 @@ impl CpuPlan {
                         |(mut lhs, state), (rhs, _)| {
                             lhs.merge(rhs);
                             Ok::<_, E>((lhs, state))
+                        },
+                    )?;
+                total.merge(partial.0);
+            }
+            return Ok(total.finish());
+        }
+        if self.autodiff.mode() == AutodiffMode::Forward
+            && self.precision == Precision::F32
+            && let Some(ir) = self.f32_gradient_real.as_ref()
+        {
+            let mut total = RealGradientAccumulator::zero(self.free_parameter_count());
+            for batch in dataset.batches() {
+                self.check_batch_cache(batch.cache())?;
+                let partial = (0..batch.len())
+                    .into_par_iter()
+                    .try_fold(
+                        || {
+                            (
+                                RealGradientAccumulator::zero(self.free_parameter_count()),
+                                Vec::new(),
+                            )
+                        },
+                        |(mut accumulator, mut gradient), row| {
+                            let (value, model_gradient) = self
+                                .evaluate_f32_gradient_component_prepared(
+                                    ir,
+                                    params,
+                                    F32KernelInput::Cache(Some((batch.cache(), row))),
+                                    &mut gradient,
+                                )?;
+                            let (value, derivative) = transform(value)?;
+                            accumulator.push_f32(
+                                batch.weights()[row],
+                                value,
+                                derivative,
+                                model_gradient,
+                            );
+                            Ok::<_, E>((accumulator, gradient))
+                        },
+                    )
+                    .try_reduce(
+                        || {
+                            (
+                                RealGradientAccumulator::zero(self.free_parameter_count()),
+                                Vec::new(),
+                            )
+                        },
+                        |(mut lhs, gradient), (rhs, _)| {
+                            lhs.merge(rhs);
+                            Ok::<_, E>((lhs, gradient))
                         },
                     )?;
                 total.merge(partial.0);
@@ -3162,15 +3267,17 @@ impl CpuPlan {
         params: &ParamValues,
         input: F32KernelInput<'_>,
     ) -> RuntimeResult<ValueGradient> {
-        let kernel = self
-            .scalar_kernel
+        let real_ir = self
+            .f32_gradient_real
             .as_ref()
             .ok_or(crate::ExecutionError::UnsupportedCpuF32Model)?;
-        let (value, real) =
-            self.evaluate_f32_gradient_component(kernel, params, input, OutputComponent::Real)?;
-        let imag = if kernel.values()[kernel.root().index()].kind == KernelValueKind::Complex {
-            self.evaluate_f32_gradient_component(kernel, params, input, OutputComponent::Imag)?
-                .1
+        let mut real = Vec::new();
+        let (value, _) =
+            self.evaluate_f32_gradient_component_prepared(real_ir, params, input, &mut real)?;
+        let imag = if let Some(imag_ir) = self.f32_gradient_imag.as_ref() {
+            let mut imag = Vec::new();
+            self.evaluate_f32_gradient_component_prepared(imag_ir, params, input, &mut imag)?;
+            imag
         } else {
             vec![0.0; real.len()]
         };
@@ -3184,26 +3291,20 @@ impl CpuPlan {
         })
     }
 
-    fn evaluate_f32_gradient_component(
+    fn evaluate_f32_gradient_component_prepared<'a>(
         &self,
-        kernel: &ScalarKernelIr,
+        ir: &GradientKernelIr,
         params: &ParamValues,
         input: F32KernelInput<'_>,
-        component: OutputComponent,
-    ) -> RuntimeResult<(Complex64, Vec<f32>)> {
-        let ir = gradient_ir(kernel, self.params.free_params(), component).map_err(|error| {
-            RuntimeError::InvalidShape {
-                index: self.graph.root().index(),
-                message: error.to_string(),
-            }
-        })?;
+        gradient: &'a mut Vec<f32>,
+    ) -> RuntimeResult<(Complex64, &'a [f32])> {
         let values = self.evaluate_f32_kernel_values(ir.values(), params, input)?;
         let value = f32_scalar_at(&values, ir.primal_root())?;
-        let gradient = ir
-            .outputs()
-            .iter()
-            .map(|output| Ok(f32_scalar_at(&values, *output)?.re))
-            .collect::<RuntimeResult<_>>()?;
+        gradient.clear();
+        gradient.reserve(ir.outputs().len());
+        for output in ir.outputs() {
+            gradient.push(f32_scalar_at(&values, *output)?.re);
+        }
         Ok((Complex64::new(value.re as f64, value.im as f64), gradient))
     }
 
