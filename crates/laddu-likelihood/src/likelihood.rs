@@ -1022,6 +1022,20 @@ mod tests {
         .unwrap()
     }
 
+    #[cfg(feature = "wgpu")]
+    fn wgpu_execution(memory_budget: Option<usize>) -> Execution {
+        Execution::local(ExecutionOptions {
+            device: Device::Gpu(GpuOptions {
+                backend: GpuBackend::Wgpu,
+                memory_budget,
+                ..GpuOptions::default()
+            }),
+            precision: Precision::F32,
+            ..ExecutionOptions::default()
+        })
+        .unwrap()
+    }
+
     fn assert_evaluation_close(
         actual: &LikelihoodEvaluation,
         expected: &LikelihoodEvaluation,
@@ -1777,107 +1791,83 @@ mod tests {
 
     #[cfg(feature = "wgpu")]
     #[test]
-    fn wgpu_scalar_likelihood_matches_cpu_and_reuses_preparation() {
-        let model = CompiledModel::from_expr(
-            &(event_scalar("x") * parameter!("scale", initial: 0.5) + 2.0),
-        )
-        .unwrap();
+    fn wgpu_scalar_likelihood_matches_cpu_across_storage_modes() {
+        let x = event_scalar("x");
+        let scale = laddu_expr::Expr::from(parameter!("scale", initial: 0.5));
+        let offset = laddu_expr::Expr::from(parameter!("offset", initial: 1.25));
+        let model = CompiledModel::from_expr(&(x * scale + offset + 2.0)).unwrap();
         let data = weighted_dataset_batches(
             &(0..70)
                 .map(|index| (index as f64 * 0.01, 1.0 + index as f64 * 0.001))
                 .collect::<Vec<_>>(),
             &[31, 70],
         );
-        let accepted = weighted_dataset(&[(0.25, 0.5), (0.75, 1.5), (1.25, 2.0)]);
+        let accepted = weighted_dataset_batches(&[(0.25, 0.5), (0.75, 1.5), (1.25, 2.0)], &[1, 3]);
+        let streaming_data = data.clone().streaming();
+        let streaming_accepted = accepted.clone().streaming();
         let cpu = single_term_likelihood_with_execution(
             "scalar",
             &model,
             &data,
             &accepted,
-            Execution::local(ExecutionOptions {
-                device: Device::Cpu(CpuOptions::default()),
-                precision: Precision::F32,
-                ..ExecutionOptions::default()
-            })
-            .unwrap(),
+            cpu_execution(Precision::F32, ThreadPolicy::Auto, JitPolicy::Disabled),
         );
+        let params = cpu.default_params();
+        let expected = cpu.nll_with_gradient(&params).unwrap();
         let gpu = single_term_likelihood_with_execution(
-            "scalar",
+            "resident",
             &model,
             &data,
             &accepted,
-            Execution::local(ExecutionOptions {
-                device: Device::Gpu(GpuOptions {
-                    backend: GpuBackend::Wgpu,
-                    memory_budget: Some(256),
-                    ..GpuOptions::default()
-                }),
-                precision: Precision::F32,
-                ..ExecutionOptions::default()
-            })
-            .unwrap(),
+            wgpu_execution(Some(256)),
         );
         let streaming_gpu = single_term_likelihood_with_execution(
-            "scalar",
+            "streaming",
             &model,
-            &data.clone().streaming(),
-            &accepted.clone().streaming(),
-            Execution::local(ExecutionOptions {
-                device: Device::Gpu(GpuOptions {
-                    backend: GpuBackend::Wgpu,
-                    memory_budget: Some(256),
-                    ..GpuOptions::default()
-                }),
-                precision: Precision::F32,
-                ..ExecutionOptions::default()
-            })
-            .unwrap(),
+            &streaming_data,
+            &streaming_accepted,
+            wgpu_execution(Some(256)),
         );
-        let params = cpu.default_params();
-        let expected = cpu.nll(&params).unwrap();
-        let first = gpu.nll(&params).unwrap();
-        let second = gpu.nll(&params).unwrap();
+        let mixed_gpu = single_term_likelihood_with_execution(
+            "mixed",
+            &model,
+            &data,
+            &streaming_accepted,
+            wgpu_execution(Some(256)),
+        );
+        let first = gpu.nll_with_gradient(&params).unwrap();
+        let second = gpu.nll_with_gradient(&params).unwrap();
 
-        assert_relative_eq!(first, expected, epsilon = 2.0e-5);
-        assert_eq!(first, second);
-        assert_relative_eq!(
-            streaming_gpu.nll(&params).unwrap(),
-            expected,
-            epsilon = 2.0e-5
-        );
-        assert_relative_eq!(
-            streaming_gpu.nll(&params).unwrap(),
-            expected,
-            epsilon = 2.0e-5
-        );
-        let gradient = gpu.nll_with_gradient(&params).unwrap();
+        assert_evaluation_close(&first, &expected, 5.0e-4);
+        assert_eq!(second, first);
         let streaming_gradient = streaming_gpu.nll_with_gradient(&params).unwrap();
-        assert_relative_eq!(gradient.value(), expected, epsilon = 2.0e-5);
-        assert_relative_eq!(
-            gradient.gradient()[0],
-            streaming_gradient.gradient()[0],
-            epsilon = 2.0e-5
-        );
+        let mixed_gradient = mixed_gpu.nll_with_gradient(&params).unwrap();
+        assert_evaluation_close(&streaming_gradient, &expected, 5.0e-4);
+        assert_evaluation_close(&mixed_gradient, &expected, 5.0e-4);
+        assert_evaluation_close(&streaming_gradient, &first, 2.0e-5);
+        assert_evaluation_close(&mixed_gradient, &first, 2.0e-5);
+
+        let streaming_term = streaming_gpu.terms()[0].as_intensity().unwrap();
+        let streaming_data_stats = streaming_term.data().unwrap().stats();
+        let streaming_accepted_stats = streaming_term.accepted_mc().unwrap().stats();
+        assert_eq!(streaming_data_stats.storage(), CacheStorage::Streaming);
+        assert_eq!(streaming_data_stats.resident_bytes(), 0);
+        assert_eq!(streaming_data_stats.local_batches(), 2);
+        assert_eq!(streaming_accepted_stats.storage(), CacheStorage::Streaming);
+        assert_eq!(streaming_accepted_stats.resident_bytes(), 0);
+        assert_eq!(streaming_accepted_stats.local_batches(), 2);
+
         let cpu_f64 = single_term_likelihood_with_execution(
             "scalar",
             &model,
             &data,
             &accepted,
-            Execution::local(ExecutionOptions {
-                device: Device::Cpu(CpuOptions::default()),
-                precision: Precision::F64,
-                ..ExecutionOptions::default()
-            })
-            .unwrap(),
+            cpu_execution(Precision::F64, ThreadPolicy::Auto, JitPolicy::Disabled),
         );
         let expected_gradient = cpu_f64
             .nll_with_gradient(&cpu_f64.default_params())
             .unwrap();
-        assert_relative_eq!(
-            gradient.gradient()[0],
-            expected_gradient.gradient()[0],
-            epsilon = 5.0e-4
-        );
+        assert_evaluation_close(&first, &expected_gradient, 5.0e-4);
     }
 
     #[cfg(feature = "wgpu")]
