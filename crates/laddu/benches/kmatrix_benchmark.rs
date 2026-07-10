@@ -12,7 +12,7 @@ use laddu::{
     },
     event_scalar,
     expr::{Expr, cis},
-    likelihood::{Likelihood, LikelihoodTerm, NllTerm},
+    likelihood::{Likelihood, LikelihoodEvaluation, LikelihoodTerm, NllTerm},
     parameter,
     physics::{
         channel::Channel,
@@ -28,35 +28,55 @@ use laddu::{
 
 #[derive(Copy, Clone)]
 enum BenchmarkBackend {
-    CpuInterpreter(usize),
-    CpuJit(usize),
+    CpuInterpreter {
+        threads: usize,
+        precision: Precision,
+    },
+    CpuJit {
+        threads: usize,
+        precision: Precision,
+    },
     Wgpu,
 }
 
 impl BenchmarkBackend {
     fn name(self) -> String {
         match self {
-            Self::CpuInterpreter(threads) => format!("cpu-interpreter/{threads}-threads"),
-            Self::CpuJit(threads) => format!("cpu-jit/{threads}-threads"),
+            Self::CpuInterpreter { threads, precision } => {
+                format!(
+                    "cpu-interpreter-{}/{threads}-threads",
+                    precision_name(precision)
+                )
+            }
+            Self::CpuJit { threads, precision } => {
+                format!("cpu-jit-{}/{threads}-threads", precision_name(precision))
+            }
             Self::Wgpu => "wgpu-f32".to_string(),
+        }
+    }
+
+    fn precision(self) -> Precision {
+        match self {
+            Self::CpuInterpreter { precision, .. } | Self::CpuJit { precision, .. } => precision,
+            Self::Wgpu => Precision::F32,
         }
     }
 
     fn execution(self) -> Execution {
         let (device, precision) = match self {
-            Self::CpuInterpreter(threads) => (
+            Self::CpuInterpreter { threads, precision } => (
                 Device::Cpu(CpuOptions {
                     threads: ThreadPolicy::Fixed(threads),
                     jit: JitPolicy::Disabled,
                 }),
-                Precision::F64,
+                precision,
             ),
-            Self::CpuJit(threads) => (
+            Self::CpuJit { threads, precision } => (
                 Device::Cpu(CpuOptions {
                     threads: ThreadPolicy::Fixed(threads),
                     jit: JitPolicy::Enabled,
                 }),
-                Precision::F64,
+                precision,
             ),
             Self::Wgpu => (
                 Device::Gpu(GpuOptions {
@@ -73,26 +93,37 @@ impl BenchmarkBackend {
         })
         .unwrap()
     }
-
-    fn is_wgpu(self) -> bool {
-        matches!(self, Self::Wgpu)
-    }
 }
 
 fn benchmark_backends() -> Vec<BenchmarkBackend> {
     let maximum = num_cpus::get().max(1);
-    let mut backends = vec![
-        BenchmarkBackend::CpuInterpreter(1),
-        BenchmarkBackend::CpuJit(1),
-    ];
+    let mut backends = cpu_backends(1).to_vec();
     if maximum != 1 {
-        backends.extend([
-            BenchmarkBackend::CpuInterpreter(maximum),
-            BenchmarkBackend::CpuJit(maximum),
-        ]);
+        backends.extend(cpu_backends(maximum));
     }
     backends.push(BenchmarkBackend::Wgpu);
     backends
+}
+
+fn cpu_backends(threads: usize) -> [BenchmarkBackend; 4] {
+    [
+        BenchmarkBackend::CpuInterpreter {
+            threads,
+            precision: Precision::F64,
+        },
+        BenchmarkBackend::CpuJit {
+            threads,
+            precision: Precision::F64,
+        },
+        BenchmarkBackend::CpuInterpreter {
+            threads,
+            precision: Precision::F32,
+        },
+        BenchmarkBackend::CpuJit {
+            threads,
+            precision: Precision::F32,
+        },
+    ]
 }
 
 fn likelihood(term: &NllTerm, backend: BenchmarkBackend) -> Likelihood {
@@ -386,65 +417,197 @@ fn close_f32(actual: f64, expected: f64) -> bool {
     (actual - expected).abs() <= 2.0e-3 * expected.abs().max(1.0)
 }
 
+fn precision_name(precision: Precision) -> &'static str {
+    match precision {
+        Precision::F64 => "f64",
+        Precision::F32 => "f32",
+        Precision::Auto => "auto",
+    }
+}
+
+fn relative_error(actual: f64, expected: f64) -> f64 {
+    (actual - expected).abs() / expected.abs().max(1.0)
+}
+
 fn validate_nll_parity(likelihoods: &[(BenchmarkBackend, Likelihood)]) {
     let params = likelihoods[0].1.params_with(|_| 0.25);
-    let expected = likelihoods[0].1.nll(&params).unwrap();
-    for (backend, likelihood) in &likelihoods[1..] {
-        let actual = likelihood.nll(&params).unwrap();
-        assert!(
-            close_f32(actual, expected),
-            "{} NLL {actual} differs from CPU interpreter {expected}",
-            backend.name()
-        );
+    let values = likelihoods
+        .iter()
+        .map(|(backend, likelihood)| (*backend, likelihood.nll(&params)))
+        .collect::<Vec<_>>();
+
+    let f64_reference = values
+        .iter()
+        .find(|(backend, result)| backend.precision() == Precision::F64 && result.is_ok())
+        .map(|(backend, result)| (*backend, *result.as_ref().unwrap()));
+    let f32_reference = values
+        .iter()
+        .find(|(backend, result)| backend.precision() == Precision::F32 && result.is_ok())
+        .map(|(backend, result)| (*backend, *result.as_ref().unwrap()));
+
+    for (backend, result) in &values {
+        let actual = match result {
+            Ok(value) => *value,
+            Err(error) => {
+                eprintln!("{} NLL unavailable: {error}", backend.name());
+                continue;
+            }
+        };
+        match backend.precision() {
+            Precision::F64 => {
+                let (reference_backend, expected) = f64_reference.unwrap();
+                assert!(
+                    relative_error(actual, expected) <= 1.0e-10,
+                    "{} NLL {actual} differs from {} {expected}",
+                    backend.name(),
+                    reference_backend.name()
+                );
+            }
+            Precision::F32 => {
+                let (reference_backend, expected) = f32_reference.unwrap();
+                assert!(
+                    close_f32(actual, expected),
+                    "{} NLL {actual} differs from {} {expected}",
+                    backend.name(),
+                    reference_backend.name()
+                );
+                if let Some((f64_backend, f64_expected)) = f64_reference {
+                    eprintln!(
+                        "{} NLL differs from {} by {:.3}% ({actual} versus {f64_expected})",
+                        backend.name(),
+                        f64_backend.name(),
+                        relative_error(actual, f64_expected) * 100.0
+                    );
+                }
+            }
+            Precision::Auto => unreachable!("benchmark backends choose an explicit precision"),
+        }
     }
+
+    for (_, result) in values {
+        result.unwrap();
+    }
+}
+
+fn worst_gradient_difference(actual: &[f64], expected: &[f64]) -> (usize, f64, f64, f64) {
+    actual
+        .iter()
+        .zip(expected)
+        .enumerate()
+        .map(|(index, (actual, expected))| {
+            (
+                index,
+                *actual,
+                *expected,
+                relative_error(*actual, *expected),
+            )
+        })
+        .max_by(|left, right| left.3.total_cmp(&right.3))
+        .unwrap_or((0, 0.0, 0.0, 0.0))
+}
+
+fn validate_gradient_against_reference(
+    backend: BenchmarkBackend,
+    actual: &LikelihoodEvaluation,
+    reference_backend: BenchmarkBackend,
+    expected: &LikelihoodEvaluation,
+    tolerance: f64,
+) {
+    assert!(
+        relative_error(actual.value(), expected.value()) <= tolerance,
+        "{} NLL {} differs from {} {}",
+        backend.name(),
+        actual.value(),
+        reference_backend.name(),
+        expected.value()
+    );
+    assert_eq!(actual.gradient().len(), expected.gradient().len());
+    let worst = worst_gradient_difference(actual.gradient(), expected.gradient());
+    assert!(
+        worst.3 <= tolerance,
+        "{} gradient[{}] {} differs from {} {} by {:.3}%",
+        backend.name(),
+        worst.0,
+        worst.1,
+        reference_backend.name(),
+        worst.2,
+        worst.3 * 100.0
+    );
+}
+
+fn warn_gradient_difference(
+    backend: BenchmarkBackend,
+    actual: &LikelihoodEvaluation,
+    reference_backend: BenchmarkBackend,
+    expected: &LikelihoodEvaluation,
+) {
+    let worst = worst_gradient_difference(actual.gradient(), expected.gradient());
+    eprintln!(
+        "{} worst gradient discrepancy versus {}: gradient[{}] {} versus {} ({:.3}%)",
+        backend.name(),
+        reference_backend.name(),
+        worst.0,
+        worst.1,
+        worst.2,
+        worst.3 * 100.0
+    );
 }
 
 fn validate_gradient_parity(likelihoods: &[(BenchmarkBackend, Likelihood)]) {
     let params = likelihoods[0].1.params_with(|_| 0.25);
-    let expected = likelihoods[0].1.nll_with_gradient(&params).unwrap();
-    for (backend, likelihood) in &likelihoods[1..] {
-        let actual = likelihood.nll_with_gradient(&params).unwrap();
-        assert!(
-            close_f32(actual.value(), expected.value()),
-            "{} NLL {} differs from CPU interpreter {}",
-            backend.name(),
-            actual.value(),
-            expected.value()
-        );
-        assert_eq!(actual.gradient().len(), expected.gradient().len());
-        let mut worst = (0_usize, 0.0_f64, 0.0_f64, 0.0_f64);
-        for (index, (actual, expected)) in actual
-            .gradient()
-            .iter()
-            .zip(expected.gradient())
-            .enumerate()
-        {
-            let relative_error = (*actual - *expected).abs() / expected.abs().max(1.0);
-            if relative_error > worst.3 {
-                worst = (index, *actual, *expected, relative_error);
+    let values = likelihoods
+        .iter()
+        .map(|(backend, likelihood)| (*backend, likelihood.nll_with_gradient(&params)))
+        .collect::<Vec<_>>();
+
+    let f64_reference = values
+        .iter()
+        .find(|(backend, result)| backend.precision() == Precision::F64 && result.is_ok())
+        .map(|(backend, result)| (*backend, result.as_ref().unwrap()));
+    let f32_reference = values
+        .iter()
+        .find(|(backend, result)| backend.precision() == Precision::F32 && result.is_ok())
+        .map(|(backend, result)| (*backend, result.as_ref().unwrap()));
+
+    for (backend, result) in &values {
+        let actual = match result {
+            Ok(value) => value,
+            Err(error) => {
+                eprintln!("{} gradient unavailable: {error}", backend.name());
+                continue;
             }
+        };
+        match backend.precision() {
+            Precision::F64 => {
+                let (reference_backend, expected) = f64_reference.unwrap();
+                validate_gradient_against_reference(
+                    *backend,
+                    actual,
+                    reference_backend,
+                    expected,
+                    1.0e-10,
+                );
+            }
+            Precision::F32 => {
+                let (reference_backend, expected) = f32_reference.unwrap();
+                validate_gradient_against_reference(
+                    *backend,
+                    actual,
+                    reference_backend,
+                    expected,
+                    2.0e-3,
+                );
+                assert!(actual.gradient().iter().all(|value| value.is_finite()));
+                if let Some((f64_backend, f64_expected)) = f64_reference {
+                    warn_gradient_difference(*backend, actual, f64_backend, f64_expected);
+                }
+            }
+            Precision::Auto => unreachable!("benchmark backends choose an explicit precision"),
         }
-        if backend.is_wgpu() {
-            eprintln!(
-                "{} worst gradient discrepancy: gradient[{}] {} versus CPU interpreter {} ({:.3}%)",
-                backend.name(),
-                worst.0,
-                worst.1,
-                worst.2,
-                worst.3 * 100.0
-            );
-            assert!(actual.gradient().iter().all(|value| value.is_finite()));
-        } else {
-            assert!(
-                worst.3 <= 1.0e-10,
-                "{} gradient[{}] {} differs from CPU interpreter {} by {:.3}%",
-                backend.name(),
-                worst.0,
-                worst.1,
-                worst.2,
-                worst.3 * 100.0
-            );
-        }
+    }
+
+    for (_, result) in values {
+        result.unwrap();
     }
 }
 
