@@ -1264,7 +1264,7 @@ impl CpuPlan {
 
     pub fn evaluate_with_gradient(&self, params: &ParamValues) -> RuntimeResult<ValueGradient> {
         if self.precision == Precision::F32 {
-            return self.evaluate_f32_gradient(params, None);
+            return self.evaluate_f32_gradient(params, F32KernelInput::Cache(None));
         }
         self.require_f64_gradient()?;
         #[cfg(feature = "jit")]
@@ -1305,7 +1305,7 @@ impl CpuPlan {
         event: &impl EventLookup,
     ) -> RuntimeResult<ValueGradient> {
         if self.precision == Precision::F32 {
-            return Err(crate::ExecutionError::UnsupportedCpuF32Model.into());
+            return self.evaluate_f32_gradient(params, F32KernelInput::Event(event));
         }
         self.require_f64_gradient()?;
         let values = self.evaluate_values(params, Some(event))?;
@@ -1428,7 +1428,7 @@ impl CpuPlan {
             return Ok(output[0]);
         }
         if self.precision == Precision::F32 {
-            return self.evaluate_f32_scalar(params, Some((cache, row)));
+            return self.evaluate_f32_scalar(params, F32KernelInput::Cache(Some((cache, row))));
         }
         if let (Some(plan), Some(invariant)) = (self.scalar_interpreter_plan(), invariant) {
             return self.evaluate_scalar_cache_row(cache, row, plan, invariant, workspace);
@@ -1541,7 +1541,9 @@ impl CpuPlan {
             output.clear();
             output.reserve(end - start);
             for row in start..end {
-                output.push(self.evaluate_f32_scalar(params, Some((cache, row)))?);
+                output.push(
+                    self.evaluate_f32_scalar(params, F32KernelInput::Cache(Some((cache, row))))?,
+                );
             }
             return Ok(());
         }
@@ -1871,7 +1873,7 @@ impl CpuPlan {
     ) -> RuntimeResult<ValueGradient> {
         self.check_batch_cache(cache)?;
         if self.precision == Precision::F32 {
-            return self.evaluate_f32_gradient(params, Some((cache, row)));
+            return self.evaluate_f32_gradient(params, F32KernelInput::Cache(Some((cache, row))));
         }
         self.require_f64_gradient()?;
         self.evaluate_cache_row_with_gradient_unchecked(params, cache, row)
@@ -1884,7 +1886,7 @@ impl CpuPlan {
         row: usize,
     ) -> RuntimeResult<ValueGradient> {
         if self.precision == Precision::F32 {
-            return self.evaluate_f32_gradient(params, Some((cache, row)));
+            return self.evaluate_f32_gradient(params, F32KernelInput::Cache(Some((cache, row))));
         }
         #[cfg(feature = "jit")]
         if self.gradient_jit_kernel().is_some() {
@@ -1912,7 +1914,9 @@ impl CpuPlan {
         self.check_batch_cache(cache)?;
         if self.precision == Precision::F32 {
             return (0..cache.len())
-                .map(|row| self.evaluate_f32_gradient(params, Some((cache, row))))
+                .map(|row| {
+                    self.evaluate_f32_gradient(params, F32KernelInput::Cache(Some((cache, row))))
+                })
                 .collect();
         }
         self.require_f64_gradient()?;
@@ -2839,10 +2843,11 @@ impl CpuPlan {
             return kernel.evaluate_invariant(params);
         }
         if self.precision == Precision::F32 {
-            if event.is_some() {
-                return Err(crate::ExecutionError::UnsupportedCpuF32Model.into());
-            }
-            return self.evaluate_f32_scalar(params, None);
+            let input = match event {
+                Some(event) => F32KernelInput::Event(event),
+                None => F32KernelInput::Cache(None),
+            };
+            return self.evaluate_f32_scalar(params, input);
         }
         let values = self.evaluate_values(params, event)?;
         scalar_at(&values, self.graph.root().index())
@@ -2858,13 +2863,13 @@ impl CpuPlan {
     fn evaluate_f32_scalar(
         &self,
         params: &ParamValues,
-        cache: Option<(&CpuBatchCache, usize)>,
+        input: F32KernelInput<'_>,
     ) -> RuntimeResult<Complex64> {
         let kernel = self
             .scalar_kernel
             .as_ref()
             .ok_or(crate::ExecutionError::UnsupportedCpuF32Model)?;
-        let values = self.evaluate_f32_kernel_values(kernel.values(), params, cache)?;
+        let values = self.evaluate_f32_kernel_values(kernel.values(), params, input)?;
         let value = f32_scalar_at(&values, kernel.root())?;
         Ok(Complex64::new(value.re as f64, value.im as f64))
     }
@@ -2873,16 +2878,17 @@ impl CpuPlan {
         &self,
         kernel_values: &[KernelValue],
         params: &ParamValues,
-        cache: Option<(&CpuBatchCache, usize)>,
+        input: F32KernelInput<'_>,
     ) -> RuntimeResult<Vec<F32Value>> {
         let mut values = Vec::with_capacity(kernel_values.len());
         for (index, value) in kernel_values.iter().enumerate() {
             let result = match &value.instruction {
-                KernelInstruction::Cached(slot) => {
-                    let (cache, row) =
-                        cache.ok_or(crate::ExecutionError::UnsupportedCpuF32Model)?;
-                    F32Value::from_value(cache.value(*slot, row)?)
-                }
+                KernelInstruction::Cached(slot) => self.evaluate_f32_cached_value(
+                    *slot,
+                    params,
+                    input,
+                    crate::ExecutionError::UnsupportedCpuF32Model,
+                )?,
                 KernelInstruction::RealConstant(value) => {
                     F32Value::Scalar(Complex32::from(*value as f32))
                 }
@@ -3032,8 +3038,9 @@ impl CpuPlan {
                     F32Value::Vector(solution.iter().copied().collect())
                 }
                 KernelInstruction::SolveRow { row_slot, rhs } => {
-                    let (cache, row) =
-                        cache.ok_or(crate::ExecutionError::UnsupportedCpuF32Model)?;
+                    let (cache, row) = input
+                        .cache()
+                        .ok_or(crate::ExecutionError::UnsupportedCpuF32Model)?;
                     let inverse = cache.solve_row(*row_slot, row)?;
                     if inverse.len() != rhs.len() {
                         return Err(RuntimeError::InvalidShape {
@@ -3064,8 +3071,9 @@ impl CpuPlan {
                     len,
                     adjoint,
                 } => {
-                    let (cache, row) =
-                        cache.ok_or(crate::ExecutionError::UnsupportedCpuF32Model)?;
+                    let (cache, row) = input
+                        .cache()
+                        .ok_or(crate::ExecutionError::UnsupportedCpuF32Model)?;
                     let inverse = cache.solve_row(*row_slot, row)?;
                     if inverse.len() != *len {
                         return Err(RuntimeError::InvalidShape {
@@ -3088,19 +3096,53 @@ impl CpuPlan {
         Ok(values)
     }
 
+    fn evaluate_f32_cached_value(
+        &self,
+        slot: usize,
+        params: &ParamValues,
+        input: F32KernelInput<'_>,
+        missing_input: crate::ExecutionError,
+    ) -> RuntimeResult<F32Value> {
+        match input {
+            F32KernelInput::Cache(Some((cache, row))) => {
+                Ok(F32Value::from_value(cache.value(slot, row)?))
+            }
+            F32KernelInput::Cache(None) => Err(missing_input.into()),
+            F32KernelInput::Event(event) => {
+                let entry =
+                    self.cache_plan
+                        .entries()
+                        .get(slot)
+                        .ok_or(RuntimeError::InvalidShape {
+                            index: self.graph.root().index(),
+                            message: format!("cache slot {slot} is out of bounds"),
+                        })?;
+                let values = self.evaluate_values(params, Some(event))?;
+                let value = values
+                    .get(entry.node().index())
+                    .ok_or(RuntimeError::InvalidShape {
+                        index: entry.node().index(),
+                        message: "cached node is out of bounds".into(),
+                    })?
+                    .clone();
+                Ok(F32Value::from_value(value))
+            }
+        }
+    }
+
     fn evaluate_f32_gradient(
         &self,
         params: &ParamValues,
-        cache: Option<(&CpuBatchCache, usize)>,
+        input: F32KernelInput<'_>,
     ) -> RuntimeResult<ValueGradient> {
         let kernel = self
             .scalar_kernel
             .as_ref()
             .ok_or(crate::ExecutionError::UnsupportedCpuF32Model)?;
         let (value, real) =
-            self.evaluate_f32_gradient_component(kernel, params, cache, OutputComponent::Real)?;
+            self.evaluate_f32_gradient_component(kernel, params, input, OutputComponent::Real)?;
         let imag = if kernel.values()[kernel.root().index()].kind == KernelValueKind::Complex {
-            self.evaluate_f32_gradient_component(kernel, params, cache, OutputComponent::Imag)?
+            self.evaluate_f32_gradient_component(kernel, params, input, OutputComponent::Imag)?
                 .1
         } else {
             vec![0.0; real.len()]
@@ -3119,7 +3161,7 @@ impl CpuPlan {
         &self,
         kernel: &ScalarKernelIr,
         params: &ParamValues,
-        cache: Option<(&CpuBatchCache, usize)>,
+        input: F32KernelInput<'_>,
         component: OutputComponent,
     ) -> RuntimeResult<(Complex64, Vec<f32>)> {
         let ir = gradient_ir(kernel, self.params.free_params(), component).map_err(|error| {
@@ -3128,7 +3170,7 @@ impl CpuPlan {
                 message: error.to_string(),
             }
         })?;
-        let values = self.evaluate_f32_kernel_values(ir.values(), params, cache)?;
+        let values = self.evaluate_f32_kernel_values(ir.values(), params, input)?;
         let value = f32_scalar_at(&values, ir.primal_root())?;
         let gradient = ir
             .outputs()
@@ -3904,6 +3946,21 @@ enum Value {
         cols: usize,
         values: Vec<Complex64>,
     },
+}
+
+#[derive(Clone, Copy)]
+enum F32KernelInput<'a> {
+    Cache(Option<(&'a CpuBatchCache, usize)>),
+    Event(&'a dyn EventLookup),
+}
+
+impl<'a> F32KernelInput<'a> {
+    fn cache(self) -> Option<(&'a CpuBatchCache, usize)> {
+        match self {
+            Self::Cache(cache) => cache,
+            Self::Event(_) => None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -5825,6 +5882,46 @@ mod tests {
             .unwrap();
         assert_eq!(reduction.value(), 16_777_218.0);
         assert_eq!(reduction.gradient(), &[(1.0_f32.sin() as f64)]);
+    }
+
+    #[test]
+    fn cpu_f32_direct_event_gradient_matches_cached_event_gradient() {
+        let scale = laddu_expr::Expr::from(parameter!("scale", initial: 1.5));
+        let offset = laddu_expr::Expr::from(parameter!("offset", initial: -0.25));
+        let x = event_scalar("x");
+        let expression =
+            (x.clone().sin() * scale.clone() + offset.clone()).exp() + complex(scale, x).norm_sqr();
+        let model = CompiledModel::from_expr(&expression).unwrap();
+        let execution = Execution::local(crate::ExecutionOptions {
+            device: crate::Device::Cpu(crate::CpuOptions::default()),
+            precision: Precision::F32,
+            ..crate::ExecutionOptions::default()
+        })
+        .unwrap();
+        let plan = CpuBackend
+            .prepare_for_execution(&model, &execution)
+            .unwrap();
+        let params = model.params().default_values();
+        let event = HashMap::from([("x".to_owned(), 0.75)]);
+        let batch = EventBatch::from_events(
+            Arc::new(Schema::new(std::iter::empty::<&str>(), ["x"], false).unwrap()),
+            [OwnedEvent::new(vec![], vec![0.75])],
+        )
+        .unwrap();
+        let cache = plan.cache_event_batch(&batch).unwrap();
+
+        let direct_value = plan.evaluate_with_event(&params, &event).unwrap();
+        let direct = plan
+            .evaluate_with_event_and_gradient(&params, &event)
+            .unwrap();
+        let cached_value = plan.evaluate_cache_row(&params, &cache, 0).unwrap();
+        let cached = plan
+            .evaluate_cache_row_with_gradient(&params, &cache, 0)
+            .unwrap();
+
+        assert_eq!(direct_value, cached_value);
+        assert_eq!(direct.value(), cached.value());
+        assert_eq!(direct.gradient(), cached.gradient());
     }
 
     #[cfg(feature = "jit")]
