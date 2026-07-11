@@ -1490,6 +1490,7 @@ mod tests {
                         }),
                         precision: Precision::F32,
                         partitioning: laddu_data::io::Partitioning::Contiguous,
+                        ..ExecutionOptions::default()
                     },
                     &world,
                 )

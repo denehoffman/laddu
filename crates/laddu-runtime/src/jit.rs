@@ -85,6 +85,8 @@ struct JitGradientCode {
     _module: Mutex<JITModule>,
     function: GradientBlockJitFn,
     parameter_count: usize,
+    #[cfg(test)]
+    precision: JitPrecision,
 }
 
 impl fmt::Debug for JitScalarKernel {
@@ -206,18 +208,7 @@ impl JitScalarKernel {
     ) -> Result<Option<Self>, String> {
         let mut jit_builder =
             JITBuilder::new(default_libcall_names()).map_err(|error| error.to_string())?;
-        match precision {
-            JitPrecision::F32 => {
-                jit_builder.symbol("laddu_jit_unary_f32", unary_helper_f32 as *const u8);
-                jit_builder.symbol("laddu_jit_binary_f32", binary_helper_f32 as *const u8);
-                jit_builder.symbol("laddu_jit_solve_f32", solve_helper_f32 as *const u8);
-            }
-            JitPrecision::F64 => {
-                jit_builder.symbol("laddu_jit_unary_f64", unary_helper as *const u8);
-                jit_builder.symbol("laddu_jit_binary_f64", binary_helper as *const u8);
-                jit_builder.symbol("laddu_jit_solve_f64", solve_helper as *const u8);
-            }
-        }
+        register_helper_symbols(&mut jit_builder, precision);
         let mut module = JITModule::new(jit_builder);
         let pointer_type = module.target_config().pointer_type();
         if pointer_type != types::I64 {
@@ -339,9 +330,10 @@ impl JitScalarKernel {
 }
 
 impl JitGradientKernel {
-    pub(crate) fn compile(
+    pub(crate) fn compile_with_precision(
         ir: &ScalarKernelIr,
         free_params: &[ParamId],
+        precision: JitPrecision,
     ) -> Result<Option<Self>, String> {
         let real = gradient_ir(ir, free_params, OutputComponent::Real)
             .map_err(|error| error.to_string())?;
@@ -349,25 +341,26 @@ impl JitGradientKernel {
             .map_err(|error| error.to_string())?;
         Ok(Some(Self {
             code: [
-                Arc::new(Self::compile_component(&real)?),
-                Arc::new(Self::compile_component(&imag)?),
+                Arc::new(Self::compile_component(&real, precision)?),
+                Arc::new(Self::compile_component(&imag, precision)?),
             ],
         }))
     }
 
-    fn compile_component(ir: &GradientKernelIr) -> Result<JitGradientCode, String> {
+    fn compile_component(
+        ir: &GradientKernelIr,
+        precision: JitPrecision,
+    ) -> Result<JitGradientCode, String> {
         let mut jit_builder =
             JITBuilder::new(default_libcall_names()).map_err(|error| error.to_string())?;
-        jit_builder.symbol("laddu_jit_unary_f64", unary_helper as *const u8);
-        jit_builder.symbol("laddu_jit_binary_f64", binary_helper as *const u8);
-        jit_builder.symbol("laddu_jit_solve_f64", solve_helper as *const u8);
+        register_helper_symbols(&mut jit_builder, precision);
         let mut module = JITModule::new(jit_builder);
         let pointer_type = module.target_config().pointer_type();
         if pointer_type != types::I64 {
             return Err("gradient JIT requires 64-bit pointers".into());
         }
 
-        let helpers = declare_helpers(&mut module, pointer_type, JitPrecision::F64)?;
+        let helpers = declare_helpers(&mut module, pointer_type, precision)?;
         let mut signature = module.make_signature();
         for _ in 0..6 {
             signature.params.push(AbiParam::new(pointer_type));
@@ -388,7 +381,7 @@ impl JitGradientKernel {
                 solve: module.declare_func_in_func(helpers.solve, &mut context.func),
             };
             let mut builder = FunctionBuilder::new(&mut context.func, &mut function_context);
-            emit_gradient_kernel(&mut builder, ir, pointer_type, &function_helpers)?;
+            emit_gradient_kernel(&mut builder, ir, pointer_type, precision, &function_helpers)?;
             builder.finalize();
         }
 
@@ -404,6 +397,8 @@ impl JitGradientKernel {
             _module: Mutex::new(module),
             function,
             parameter_count: ir.outputs().len(),
+            #[cfg(test)]
+            precision,
         })
     }
 
@@ -467,6 +462,11 @@ impl JitGradientKernel {
             Err(RuntimeError::JitExecution(status))
         }
     }
+
+    #[cfg(test)]
+    pub(crate) fn precision(&self) -> JitPrecision {
+        self.code[0].precision
+    }
 }
 
 impl JitCacheView {
@@ -488,6 +488,21 @@ impl JitCacheView {
             })
             .collect();
         Self { values, solve_rows }
+    }
+}
+
+fn register_helper_symbols(builder: &mut JITBuilder, precision: JitPrecision) {
+    match precision {
+        JitPrecision::F32 => {
+            builder.symbol("laddu_jit_unary_f32", unary_helper_f32 as *const u8);
+            builder.symbol("laddu_jit_binary_f32", binary_helper_f32 as *const u8);
+            builder.symbol("laddu_jit_solve_f32", solve_helper_f32 as *const u8);
+        }
+        JitPrecision::F64 => {
+            builder.symbol("laddu_jit_unary_f64", unary_helper as *const u8);
+            builder.symbol("laddu_jit_binary_f64", binary_helper as *const u8);
+            builder.symbol("laddu_jit_solve_f64", solve_helper as *const u8);
+        }
     }
 }
 
@@ -657,6 +672,7 @@ fn emit_gradient_kernel(
     builder: &mut FunctionBuilder<'_>,
     ir: &GradientKernelIr,
     pointer_type: Type,
+    precision: JitPrecision,
     helpers: &FunctionHelpers,
 ) -> Result<(), String> {
     let entry = builder.create_block();
@@ -698,7 +714,7 @@ fn emit_gradient_kernel(
                 solve_rows,
                 invariant_row,
                 pointer_type,
-                JitPrecision::F64,
+                precision,
                 helpers,
                 failed,
             )?);
@@ -726,7 +742,7 @@ fn emit_gradient_kernel(
                 solve_rows,
                 row,
                 pointer_type,
-                JitPrecision::F64,
+                precision,
                 helpers,
                 failed,
             )?);
@@ -739,7 +755,7 @@ fn emit_gradient_kernel(
         .imul_imm(output_row, (ir.outputs().len() * size_of::<f64>()) as i64);
     let output_ptr = builder.ins().iadd(output, row_offset);
     for (index, output) in ir.outputs().iter().enumerate() {
-        let derivative = lowered_scalar(&values, *output)?.re;
+        let derivative = precision.promote_to_f64(builder, lowered_scalar(&values, *output)?.re);
         let offset = i32::try_from(index * size_of::<f64>())
             .map_err(|_| "gradient output offset exceeds JIT address range")?;
         builder

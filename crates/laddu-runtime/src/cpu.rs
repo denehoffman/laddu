@@ -90,8 +90,10 @@ pub struct CpuPlan {
     scalar_executor: Option<ScalarExecutor>,
     #[cfg_attr(not(feature = "jit"), allow(dead_code))]
     gradient_executor: GradientExecutor,
-    f32_gradient_real: Option<GradientKernelIr>,
-    f32_gradient_imag: Option<GradientKernelIr>,
+    // Direct EventLookup evaluation cannot use block JIT kernels, so f32 plans retain
+    // an interpreter fallback even when cached and invariant gradients use the JIT.
+    f32_gradient_fallback_real: Option<GradientKernelIr>,
+    f32_gradient_fallback_imag: Option<GradientKernelIr>,
     cache_materialization_nodes: Vec<ExprId>,
     solve_components: Vec<Option<SolveComponentPlan>>,
     solve_rhs_elements: Vec<Option<Vec<ExprId>>>,
@@ -153,13 +155,21 @@ impl GradientExecutor {
         plan: Option<&ScalarKernelIr>,
         params: &ParamLayout,
         mode: CpuExecutionMode,
+        precision: Precision,
     ) -> AutodiffResult<Self> {
         #[cfg(not(feature = "jit"))]
-        let _ = (plan, params, mode);
+        let _ = (plan, params, mode, precision);
         #[cfg(feature = "jit")]
         if mode == CpuExecutionMode::Auto
             && let Some(plan) = plan
-            && let Ok(Some(kernel)) = JitGradientKernel::compile(plan, params.free_params())
+            && let Ok(Some(kernel)) = JitGradientKernel::compile_with_precision(
+                plan,
+                params.free_params(),
+                match precision {
+                    Precision::F32 => JitPrecision::F32,
+                    Precision::Auto | Precision::F64 => JitPrecision::F64,
+                },
+            )
         {
             return Ok(Self::Jit(kernel));
         }
@@ -1073,17 +1083,13 @@ impl CpuBackend {
         let scalar_executor = scalar_kernel
             .as_ref()
             .and_then(|kernel| ScalarExecutor::prepare(kernel, execution_mode, precision));
-        let gradient_execution_mode = if precision == Precision::F32 {
-            CpuExecutionMode::Interpreter
-        } else {
-            execution_mode
-        };
         let gradient_executor = GradientExecutor::prepare(
             scalar_kernel.as_ref(),
             model.params(),
-            gradient_execution_mode,
+            execution_mode,
+            precision,
         )?;
-        let f32_gradient_real = if precision == Precision::F32 {
+        let f32_gradient_fallback_real = if precision == Precision::F32 {
             scalar_kernel
                 .as_ref()
                 .map(|kernel| {
@@ -1093,7 +1099,7 @@ impl CpuBackend {
         } else {
             None
         };
-        let f32_gradient_imag = if precision == Precision::F32
+        let f32_gradient_fallback_imag = if precision == Precision::F32
             && scalar_kernel.as_ref().is_some_and(|kernel| {
                 kernel.values()[kernel.root().index()].kind == KernelValueKind::Complex
             }) {
@@ -1124,8 +1130,8 @@ impl CpuBackend {
             scalar_kernel,
             scalar_executor,
             gradient_executor,
-            f32_gradient_real,
-            f32_gradient_imag,
+            f32_gradient_fallback_real,
+            f32_gradient_fallback_imag,
             cache_materialization_nodes: executable.cache_materialization_nodes().to_vec(),
             solve_components: executable.solve_components().to_vec(),
             solve_rhs_elements: executable.solve_rhs_elements().to_vec(),
@@ -1304,10 +1310,6 @@ impl CpuPlan {
     }
 
     pub fn evaluate_with_gradient(&self, params: &ParamValues) -> RuntimeResult<ValueGradient> {
-        if self.precision == Precision::F32 {
-            return self.evaluate_f32_gradient(params, F32KernelInput::Cache(None));
-        }
-        self.require_f64_gradient()?;
         #[cfg(feature = "jit")]
         if let (Some(value_kernel), Some(gradient_kernel)) =
             (self.scalar_jit_kernel(), self.gradient_jit_kernel())
@@ -1324,6 +1326,10 @@ impl CpuPlan {
                 .collect();
             return Ok(ValueGradient { value, gradient });
         }
+        if self.precision == Precision::F32 {
+            return self.evaluate_f32_gradient(params, F32KernelInput::Cache(None));
+        }
+        self.require_f64_gradient()?;
         if let Some(interpreter) = self.gradient_interpreter() {
             let (value, gradient) = interpreter.evaluate(params, None)?;
             return Ok(ValueGradient { value, gradient });
@@ -1913,10 +1919,6 @@ impl CpuPlan {
         row: usize,
     ) -> RuntimeResult<ValueGradient> {
         self.check_batch_cache(cache)?;
-        if self.precision == Precision::F32 {
-            return self.evaluate_f32_gradient(params, F32KernelInput::Cache(Some((cache, row))));
-        }
-        self.require_f64_gradient()?;
         self.evaluate_cache_row_with_gradient_unchecked(params, cache, row)
     }
 
@@ -1926,14 +1928,6 @@ impl CpuPlan {
         cache: &CpuBatchCache,
         row: usize,
     ) -> RuntimeResult<ValueGradient> {
-        if self.autodiff.mode() == AutodiffMode::Reverse {
-            self.require_f64_gradient()?;
-            let values = self.evaluate_values_from_cache(params, cache, row)?;
-            return self.value_gradient(values, Some((cache, row)));
-        }
-        if self.precision == Precision::F32 {
-            return self.evaluate_f32_gradient(params, F32KernelInput::Cache(Some((cache, row))));
-        }
         #[cfg(feature = "jit")]
         if self.gradient_jit_kernel().is_some() {
             return self
@@ -1943,6 +1937,14 @@ impl CpuPlan {
                     index: row,
                     message: "single-row JIT gradient produced no value".into(),
                 });
+        }
+        if self.precision == Precision::F32 {
+            return self.evaluate_f32_gradient(params, F32KernelInput::Cache(Some((cache, row))));
+        }
+        if self.autodiff.mode() == AutodiffMode::Reverse {
+            self.require_f64_gradient()?;
+            let values = self.evaluate_values_from_cache(params, cache, row)?;
+            return self.value_gradient(values, Some((cache, row)));
         }
         if let Some(interpreter) = self.gradient_interpreter() {
             let (value, gradient) = interpreter.evaluate(params, Some((cache, row)))?;
@@ -1958,11 +1960,9 @@ impl CpuPlan {
         cache: &CpuBatchCache,
     ) -> RuntimeResult<Vec<ValueGradient>> {
         self.check_batch_cache(cache)?;
-        if self.autodiff.mode() == AutodiffMode::Reverse {
-            self.require_f64_gradient()?;
-            return (0..cache.len())
-                .map(|row| self.evaluate_cache_row_with_gradient_unchecked(params, cache, row))
-                .collect();
+        #[cfg(feature = "jit")]
+        if self.gradient_jit_kernel().is_some() {
+            return self.evaluate_cache_gradient_jit(params, cache, 0, cache.len());
         }
         if self.precision == Precision::F32 {
             return (0..cache.len())
@@ -1972,10 +1972,6 @@ impl CpuPlan {
                 .collect();
         }
         self.require_f64_gradient()?;
-        #[cfg(feature = "jit")]
-        if self.gradient_jit_kernel().is_some() {
-            return self.evaluate_cache_gradient_jit(params, cache, 0, cache.len());
-        }
         (0..cache.len())
             .map(|row| self.evaluate_cache_row_with_gradient_unchecked(params, cache, row))
             .collect()
@@ -2332,9 +2328,8 @@ impl CpuPlan {
         F: FnMut(Complex64) -> Result<(f64, f64), E>,
     {
         #[cfg(feature = "jit")]
-        if self.precision != Precision::F32
-            && let (Some(value_kernel), Some(gradient_kernel)) =
-                (self.scalar_jit_kernel(), self.gradient_jit_kernel())
+        if let (Some(value_kernel), Some(gradient_kernel)) =
+            (self.scalar_jit_kernel(), self.gradient_jit_kernel())
         {
             return self.try_weighted_real_sum_with_jit_gradient_cached(
                 params,
@@ -2365,7 +2360,7 @@ impl CpuPlan {
             return Ok(total.finish());
         }
         if self.precision == Precision::F32
-            && let Some(ir) = self.f32_gradient_real.as_ref()
+            && let Some(ir) = self.f32_gradient_fallback_real.as_ref()
         {
             let mut total = RealGradientAccumulator::zero(self.free_parameter_count());
             let mut gradient = Vec::new();
@@ -2640,9 +2635,8 @@ impl CpuPlan {
         F: Fn(Complex64) -> Result<(f64, f64), E> + Send + Sync,
     {
         #[cfg(feature = "jit")]
-        if self.precision != Precision::F32
-            && let (Some(value_kernel), Some(gradient_kernel)) =
-                (self.scalar_jit_kernel(), self.gradient_jit_kernel())
+        if let (Some(value_kernel), Some(gradient_kernel)) =
+            (self.scalar_jit_kernel(), self.gradient_jit_kernel())
         {
             return self.par_try_weighted_real_sum_with_jit_gradient_cached(
                 params,
@@ -2702,7 +2696,7 @@ impl CpuPlan {
             return Ok(total.finish());
         }
         if self.precision == Precision::F32
-            && let Some(ir) = self.f32_gradient_real.as_ref()
+            && let Some(ir) = self.f32_gradient_fallback_real.as_ref()
         {
             let mut total = RealGradientAccumulator::zero(self.free_parameter_count());
             for batch in dataset.batches() {
@@ -3257,13 +3251,13 @@ impl CpuPlan {
         input: F32KernelInput<'_>,
     ) -> RuntimeResult<ValueGradient> {
         let real_ir = self
-            .f32_gradient_real
+            .f32_gradient_fallback_real
             .as_ref()
             .ok_or(crate::ExecutionError::UnsupportedCpuF32Model)?;
         let mut real = Vec::new();
         let (value, _) =
             self.evaluate_f32_gradient_component_prepared(real_ir, params, input, &mut real)?;
-        let imag = if let Some(imag_ir) = self.f32_gradient_imag.as_ref() {
+        let imag = if let Some(imag_ir) = self.f32_gradient_fallback_imag.as_ref() {
             let mut imag = Vec::new();
             self.evaluate_f32_gradient_component_prepared(imag_ir, params, input, &mut imag)?;
             imag
@@ -6332,10 +6326,10 @@ mod tests {
             panic!("f32 auto execution should select scalar JIT");
         };
         assert_eq!(kernel.precision(), JitPrecision::F32);
-        assert!(matches!(
-            automatic.gradient_executor,
-            GradientExecutor::Interpreter(_)
-        ));
+        let GradientExecutor::Jit(kernel) = &automatic.gradient_executor else {
+            panic!("f32 auto execution should select gradient JIT");
+        };
+        assert_eq!(kernel.precision(), JitPrecision::F32);
         if interpreted.scalar_executor.is_some() {
             assert!(matches!(
                 interpreted.scalar_executor,
@@ -6634,6 +6628,65 @@ mod tests {
             reverse.evaluate_with_gradient(&params).unwrap(),
             forward.evaluate_with_gradient(&params).unwrap()
         );
+    }
+
+    #[cfg(feature = "jit")]
+    #[test]
+    fn reverse_jit_gradients_match_interpreters_in_both_precisions() {
+        let event = event_scalar("x");
+        let scale = laddu_expr::Expr::from(parameter!("scale", initial: 0.4));
+        let phase = laddu_expr::Expr::from(parameter!("phase", initial: -0.2));
+        let expression = complex(
+            (event.clone() * scale.clone()).sin(),
+            (event.clone() + phase).cos(),
+        )
+        .norm_sqr()
+            + event * scale;
+        let model = CompiledModel::from_expr(&expression).unwrap();
+        let params = Arc::new(model.params().clone()).default_values();
+        let schema = Arc::new(Schema::new(std::iter::empty::<&str>(), ["x"], true).unwrap());
+        let batch = EventBatch::from_events(
+            schema,
+            [
+                OwnedEvent::weighted(vec![], vec![0.25], 0.5),
+                OwnedEvent::weighted(vec![], vec![0.75], 1.5),
+            ],
+        )
+        .unwrap();
+
+        for (precision, tolerance) in [(Precision::F32, 1.0e-6), (Precision::F64, 1.0e-12)] {
+            let jit = CpuBackend
+                .prepare_with_modes_precision(
+                    &model,
+                    AutodiffMode::Reverse,
+                    CpuExecutionMode::Auto,
+                    precision,
+                )
+                .unwrap();
+            let interpreter = CpuBackend
+                .prepare_with_modes_precision(
+                    &model,
+                    AutodiffMode::Reverse,
+                    CpuExecutionMode::Interpreter,
+                    precision,
+                )
+                .unwrap();
+            assert!(matches!(jit.gradient_executor, GradientExecutor::Jit(_)));
+
+            let actual = jit
+                .evaluate_cache_with_gradient(&params, &jit.cache_event_batch(&batch).unwrap())
+                .unwrap();
+            let expected = interpreter
+                .evaluate_cache_with_gradient(
+                    &params,
+                    &interpreter.cache_event_batch(&batch).unwrap(),
+                )
+                .unwrap();
+            for (actual, expected) in actual.iter().zip(expected) {
+                assert!((actual.value() - expected.value()).norm() < tolerance);
+                assert_gradient_close(actual.gradient(), expected.gradient(), tolerance);
+            }
+        }
     }
 
     #[cfg(feature = "jit")]
@@ -8045,7 +8098,7 @@ mod tests {
                 assert!((actual - expected).norm() < 1.0e-12);
             }
         }
-        for row in 0..actual.len() {
+        for (row, actual) in actual.iter().enumerate() {
             for parameter in 0..params.layout().n_free() {
                 let h = 1.0e-6;
                 let id = params.layout().free_params()[parameter];
@@ -8058,7 +8111,7 @@ mod tests {
                 let expected = (automatic.evaluate_cache(&plus, &automatic_cache).unwrap()[row]
                     - automatic.evaluate_cache(&minus, &automatic_cache).unwrap()[row])
                     / (2.0 * h);
-                assert!((actual[row].gradient()[parameter] - expected).norm() < 1.0e-8);
+                assert!((actual.gradient()[parameter] - expected).norm() < 1.0e-8);
             }
         }
     }

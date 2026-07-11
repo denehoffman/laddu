@@ -209,7 +209,7 @@ impl<'a> GradientBuilder<'a> {
                 let derivative = self.binary(BinaryOp::Div, one, input)?;
                 self.mul_conj(adjoint, derivative)?
             }
-            UnaryOp::PowI(power) if power == 0 => self.real(0.0)?,
+            UnaryOp::PowI(0) => self.real(0.0)?,
             UnaryOp::PowI(power) if power == i32::MIN => {
                 let scale = self.real(power as f64)?;
                 let numerator = self.mul(scale, output)?;
@@ -319,13 +319,13 @@ impl<'a> GradientBuilder<'a> {
         let KernelValueKind::Matrix { rows, cols } = self.kind(matrix) else {
             unreachable!()
         };
-        for row in 0..rows {
+        for (row, &row_adjoint) in adjoint.iter().enumerate().take(rows) {
             for col in 0..cols {
                 let vector_value = self.component(vector, col)?;
-                let matrix_contribution = self.mul_conj(adjoint[row], vector_value)?;
+                let matrix_contribution = self.mul_conj(row_adjoint, vector_value)?;
                 self.accumulate_element(matrix, row * cols + col, matrix_contribution)?;
                 let matrix_value = self.matrix_element(matrix, row, col)?;
-                let vector_contribution = self.mul_conj(adjoint[row], matrix_value)?;
+                let vector_contribution = self.mul_conj(row_adjoint, matrix_value)?;
                 self.accumulate_element(vector, col, vector_contribution)?;
             }
         }
