@@ -13,4 +13,4 @@ pub use execution::{
     CpuOptions, Device, Execution, ExecutionOptions, GpuBackend, GpuDeviceSelector, GpuOptions,
     JitPolicy, Precision, ThreadPolicy,
 };
-pub use query::{BinSpec, Comparison, DatasetBin, DatasetExprExt, Predicate};
+pub use query::{BinSpec, Comparison, DatasetBin, DatasetExprExt, IntervalClosure, Predicate};

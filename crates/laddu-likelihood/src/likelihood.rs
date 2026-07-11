@@ -41,6 +41,17 @@ impl LikelihoodEvaluation {
     }
 }
 
+/// Backend-neutral differentiable objective over a stable free-parameter layout.
+///
+/// This object-safe interface is intended for downstream optimizers and
+/// samplers. It deliberately does not prescribe parameter transforms,
+/// minimization strategy, or result types.
+pub trait Objective: Debug + Send + Sync {
+    fn parameter_layout(&self) -> &ParamLayout;
+    fn value(&self, free_parameters: &[f64]) -> LikelihoodResult<f64>;
+    fn value_gradient(&self, free_parameters: &[f64]) -> LikelihoodResult<LikelihoodEvaluation>;
+}
+
 pub trait LikelihoodTerm: Debug + Send + Sync {
     fn name(&self) -> &str;
 
@@ -291,6 +302,20 @@ impl Likelihood {
             return Err(LikelihoodError::NotIntensityTerm(term_name.to_owned()));
         };
         term.projection(generated_mc, tags, &self.execution)
+    }
+}
+
+impl Objective for Likelihood {
+    fn parameter_layout(&self) -> &ParamLayout {
+        self.params()
+    }
+
+    fn value(&self, free_parameters: &[f64]) -> LikelihoodResult<f64> {
+        self.nll(free_parameters)
+    }
+
+    fn value_gradient(&self, free_parameters: &[f64]) -> LikelihoodResult<LikelihoodEvaluation> {
+        self.nll_with_gradient(free_parameters)
     }
 }
 

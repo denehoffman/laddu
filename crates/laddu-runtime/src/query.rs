@@ -22,6 +22,16 @@ pub enum Comparison {
     Ne,
 }
 
+/// Determines which endpoints are included by an interval predicate.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub enum IntervalClosure {
+    Open,
+    LeftClosed,
+    RightClosed,
+    #[default]
+    Closed,
+}
+
 #[derive(Clone, Debug)]
 pub enum Predicate {
     Compare {
@@ -32,6 +42,12 @@ pub enum Predicate {
     And(Box<Self>, Box<Self>),
     Or(Box<Self>, Box<Self>),
     Not(Box<Self>),
+    Between {
+        value: Expr,
+        lower: Expr,
+        upper: Expr,
+        closure: IntervalClosure,
+    },
 }
 
 impl Predicate {
@@ -66,6 +82,22 @@ impl Predicate {
     }
     pub fn or(self, rhs: Self) -> Self {
         Self::Or(Box::new(self), Box::new(rhs))
+    }
+    pub fn between(value: impl Into<Expr>, lower: impl Into<Expr>, upper: impl Into<Expr>) -> Self {
+        Self::between_with(value, lower, upper, IntervalClosure::Closed)
+    }
+    pub fn between_with(
+        value: impl Into<Expr>,
+        lower: impl Into<Expr>,
+        upper: impl Into<Expr>,
+        closure: IntervalClosure,
+    ) -> Self {
+        Self::Between {
+            value: value.into(),
+            lower: lower.into(),
+            upper: upper.into(),
+            closure,
+        }
     }
 }
 
@@ -267,6 +299,12 @@ enum CompiledPredicate {
     And(Box<Self>, Box<Self>),
     Or(Box<Self>, Box<Self>),
     Not(Box<Self>),
+    Between {
+        value: Box<QueryExpr>,
+        lower: Box<QueryExpr>,
+        upper: Box<QueryExpr>,
+        closure: IntervalClosure,
+    },
 }
 
 impl CompiledPredicate {
@@ -286,6 +324,17 @@ impl CompiledPredicate {
                 Box::new(Self::prepare(rhs, execution)?),
             ),
             Predicate::Not(inner) => Self::Not(Box::new(Self::prepare(inner, execution)?)),
+            Predicate::Between {
+                value,
+                lower,
+                upper,
+                closure,
+            } => Self::Between {
+                value: Box::new(QueryExpr::prepare(value, execution, true)?),
+                lower: Box::new(QueryExpr::prepare(lower, execution, true)?),
+                upper: Box::new(QueryExpr::prepare(upper, execution, true)?),
+                closure: *closure,
+            },
         })
     }
 
@@ -313,6 +362,28 @@ impl CompiledPredicate {
                 .evaluate_batch(batch)?
                 .into_iter()
                 .map(|v| !v)
+                .collect(),
+            Self::Between {
+                value,
+                lower,
+                upper,
+                closure,
+            } => value
+                .evaluate_batch(batch)?
+                .into_iter()
+                .zip(lower.evaluate_batch(batch)?)
+                .zip(upper.evaluate_batch(batch)?)
+                .map(|((value, lower), upper)| {
+                    let lower_op = match closure {
+                        IntervalClosure::Open | IntervalClosure::RightClosed => Comparison::Gt,
+                        IntervalClosure::LeftClosed | IntervalClosure::Closed => Comparison::Ge,
+                    };
+                    let upper_op = match closure {
+                        IntervalClosure::Open | IntervalClosure::LeftClosed => Comparison::Lt,
+                        IntervalClosure::RightClosed | IntervalClosure::Closed => Comparison::Le,
+                    };
+                    compare(value.re, lower_op, lower.re) && compare(value.re, upper_op, upper.re)
+                })
                 .collect(),
         })
     }
@@ -499,6 +570,29 @@ mod tests {
                 .unwrap(),
             vec![1.0, 2.0]
         );
+    }
+
+    #[test]
+    fn between_predicates_have_explicit_endpoint_semantics() {
+        let dataset = dataset();
+        let execution = Execution::default();
+        let x = event_scalar("x");
+
+        let closed = dataset
+            .select(&Predicate::between(x.clone(), 0.0, 1.0), &execution)
+            .unwrap();
+        assert_eq!(
+            closed.map_events(|event| event.scalar(0)).unwrap(),
+            vec![0.0, 1.0]
+        );
+
+        let open = dataset
+            .select(
+                &Predicate::between_with(x, -1.0, 1.0, IntervalClosure::Open),
+                &execution,
+            )
+            .unwrap();
+        assert_eq!(open.map_events(|event| event.scalar(0)).unwrap(), vec![0.0]);
     }
 
     #[test]

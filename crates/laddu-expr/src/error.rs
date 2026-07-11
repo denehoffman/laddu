@@ -29,6 +29,19 @@ pub enum ParamError {
     InitialRangeOutOfBounds { name: String, min: f64, max: f64 },
     #[error("fixed value {value} for {name} is outside bounds")]
     FixedValueOutOfBounds { name: String, value: f64 },
+    #[error("value {value} for {name} is outside bounds")]
+    ValueOutOfBounds { name: String, value: f64 },
+    #[error("invalid periodic domain for {name}: expected finite min < max, got [{min}, {max})")]
+    InvalidPeriodicDomain { name: String, min: f64, max: f64 },
+    #[error(
+        "value {value} for periodic parameter {name} is outside canonical domain [{min}, {max})"
+    )]
+    ValueOutsidePeriodicDomain {
+        name: String,
+        value: f64,
+        min: f64,
+        max: f64,
+    },
 }
 
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
