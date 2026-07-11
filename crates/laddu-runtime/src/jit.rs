@@ -23,7 +23,10 @@ use laddu_kernel::ir::{
     KernelValueKind, OutputComponent, ScalarKernelIr,
 };
 use nalgebra::{DMatrix, DVector};
-use num::complex::{Complex32, Complex64};
+use num::{
+    complex::{Complex, Complex32, Complex64},
+    traits::Float,
+};
 
 use crate::{CpuBatchCache, RuntimeError, RuntimeResult};
 
@@ -71,7 +74,8 @@ pub(crate) struct JitScalarKernel {
 
 #[derive(Clone)]
 pub(crate) struct JitGradientKernel {
-    code: [Arc<JitGradientCode>; 2],
+    real: Arc<JitGradientCode>,
+    imag: Option<Arc<JitGradientCode>>,
 }
 
 struct JitScalarCode {
@@ -337,14 +341,24 @@ impl JitGradientKernel {
     ) -> Result<Option<Self>, String> {
         let real = gradient_ir(ir, free_params, OutputComponent::Real)
             .map_err(|error| error.to_string())?;
-        let imag = gradient_ir(ir, free_params, OutputComponent::Imag)
+        let imag = (ir.values()[ir.root().index()].kind == KernelValueKind::Complex)
+            .then(|| gradient_ir(ir, free_params, OutputComponent::Imag))
+            .transpose()
             .map_err(|error| error.to_string())?;
-        Ok(Some(Self {
-            code: [
-                Arc::new(Self::compile_component(&real, precision)?),
-                Arc::new(Self::compile_component(&imag, precision)?),
-            ],
-        }))
+        Self::compile_gradient_ir(&real, imag.as_ref(), precision).map(Some)
+    }
+
+    pub(crate) fn compile_gradient_ir(
+        real: &GradientKernelIr,
+        imag: Option<&GradientKernelIr>,
+        precision: JitPrecision,
+    ) -> Result<Self, String> {
+        Ok(Self {
+            real: Arc::new(Self::compile_component(real, precision)?),
+            imag: imag
+                .map(|ir| Self::compile_component(ir, precision).map(Arc::new))
+                .transpose()?,
+        })
     }
 
     fn compile_component(
@@ -411,10 +425,18 @@ impl JitGradientKernel {
         component: usize,
         output: &mut Vec<f64>,
     ) -> RuntimeResult<()> {
-        let code = self
-            .code
-            .get(component)
-            .ok_or(RuntimeError::JitExecution(1))?;
+        let code = match component {
+            0 => &self.real,
+            1 => match &self.imag {
+                Some(code) => code,
+                None => {
+                    output.clear();
+                    output.resize((end - start) * self.real.parameter_count, 0.0);
+                    return Ok(());
+                }
+            },
+            _ => return Err(RuntimeError::JitExecution(1)),
+        };
         output.clear();
         output.resize((end - start) * code.parameter_count, 0.0);
         let status = unsafe {
@@ -440,10 +462,18 @@ impl JitGradientKernel {
         component: usize,
         output: &mut Vec<f64>,
     ) -> RuntimeResult<()> {
-        let code = self
-            .code
-            .get(component)
-            .ok_or(RuntimeError::JitExecution(1))?;
+        let code = match component {
+            0 => &self.real,
+            1 => match &self.imag {
+                Some(code) => code,
+                None => {
+                    output.clear();
+                    output.resize(self.real.parameter_count, 0.0);
+                    return Ok(());
+                }
+            },
+            _ => return Err(RuntimeError::JitExecution(1)),
+        };
         output.clear();
         output.resize(code.parameter_count, 0.0);
         let status = unsafe {
@@ -465,7 +495,12 @@ impl JitGradientKernel {
 
     #[cfg(test)]
     pub(crate) fn precision(&self) -> JitPrecision {
-        self.code[0].precision
+        self.real.precision
+    }
+
+    #[cfg(test)]
+    pub(crate) fn compiled_component_count(&self) -> usize {
+        1 + usize::from(self.imag.is_some())
     }
 }
 
@@ -1422,24 +1457,29 @@ unsafe extern "C" fn solve_helper_f32(
     rhs: *const Complex32,
     out: *mut Complex32,
 ) -> i32 {
-    let matrix = unsafe { std::slice::from_raw_parts(matrix, dimension * dimension) };
+    let matrix = unsafe { std::slice::from_raw_parts_mut(matrix, dimension * dimension) };
     let rhs = unsafe { std::slice::from_raw_parts(rhs, dimension) };
     let out = unsafe { std::slice::from_raw_parts_mut(out, dimension) };
-    let Some(solution) = DMatrix::from_row_slice(dimension, dimension, matrix)
-        .lu()
-        .solve(&DVector::from_row_slice(rhs))
-    else {
-        return 1;
+    let solved = if dimension <= MAX_IN_PLACE_SOLVE_DIMENSION {
+        solve_small_in_place(dimension, matrix, rhs, out)
+    } else {
+        let Some(solution) = DMatrix::from_row_slice(dimension, dimension, matrix)
+            .lu()
+            .solve(&DVector::from_row_slice(rhs))
+        else {
+            return 1;
+        };
+        out.copy_from_slice(solution.as_slice());
+        true
     };
-    out.copy_from_slice(solution.as_slice());
-    0
+    i32::from(!solved)
 }
 
-fn solve_small_in_place(
+fn solve_small_in_place<T: Float>(
     dimension: usize,
-    matrix: &mut [Complex64],
-    rhs: &[Complex64],
-    out: &mut [Complex64],
+    matrix: &mut [Complex<T>],
+    rhs: &[Complex<T>],
+    out: &mut [Complex<T>],
 ) -> bool {
     if dimension == 0
         || matrix.len() != dimension * dimension
@@ -1460,7 +1500,7 @@ fn solve_small_in_place(
                 pivot_norm = norm;
             }
         }
-        if pivot_norm == 0.0 {
+        if pivot_norm == T::zero() {
             return false;
         }
         if pivot_row != pivot_col {
@@ -1474,13 +1514,13 @@ fn solve_small_in_place(
         for row in pivot_col + 1..dimension {
             let row_offset = row * dimension;
             let factor = matrix[row_offset + pivot_col] / pivot;
-            matrix[row_offset + pivot_col] = Complex64::new(0.0, 0.0);
+            matrix[row_offset + pivot_col] = Complex::new(T::zero(), T::zero());
             for col in pivot_col + 1..dimension {
                 let pivot_value = matrix[pivot_col * dimension + col];
-                matrix[row_offset + col] -= factor * pivot_value;
+                matrix[row_offset + col] = matrix[row_offset + col] - factor * pivot_value;
             }
             let pivot_rhs = out[pivot_col];
-            out[row] -= factor * pivot_rhs;
+            out[row] = out[row] - factor * pivot_rhs;
         }
     }
 
@@ -1488,10 +1528,10 @@ fn solve_small_in_place(
         let row_offset = row * dimension;
         let mut value = out[row];
         for col in row + 1..dimension {
-            value -= matrix[row_offset + col] * out[col];
+            value = value - matrix[row_offset + col] * out[col];
         }
         let diagonal = matrix[row_offset + row];
-        if diagonal.norm_sqr() == 0.0 {
+        if diagonal.norm_sqr() == T::zero() {
             return false;
         }
         out[row] = value / diagonal;
@@ -1552,6 +1592,27 @@ mod tests {
         let mut out = [Complex64::new(0.0, 0.0); 2];
 
         assert!(!solve_small_in_place(2, &mut matrix, &rhs, &mut out));
+    }
+
+    #[test]
+    fn small_solve_supports_f32_without_dynamic_allocation() {
+        let mut matrix = vec![
+            Complex32::new(2.0, 0.0),
+            Complex32::new(1.0, -1.0),
+            Complex32::new(0.0, 1.0),
+            Complex32::new(3.0, 0.0),
+        ];
+        let expected = [Complex32::new(0.5, -0.25), Complex32::new(1.0, 0.5)];
+        let rhs = [
+            matrix[0] * expected[0] + matrix[1] * expected[1],
+            matrix[2] * expected[0] + matrix[3] * expected[1],
+        ];
+        let mut actual = [Complex32::new(0.0, 0.0); 2];
+
+        assert!(solve_small_in_place(2, &mut matrix, &rhs, &mut actual));
+        for (actual, expected) in actual.iter().zip(expected) {
+            assert!((*actual - expected).norm() < 1.0e-5);
+        }
     }
 
     #[test]

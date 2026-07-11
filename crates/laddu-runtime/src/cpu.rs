@@ -156,20 +156,26 @@ impl GradientExecutor {
         params: &ParamLayout,
         mode: CpuExecutionMode,
         precision: Precision,
+        gradient_ir: Option<(&GradientKernelIr, Option<&GradientKernelIr>)>,
     ) -> AutodiffResult<Self> {
         #[cfg(not(feature = "jit"))]
-        let _ = (plan, params, mode, precision);
+        let _ = (plan, params, mode, precision, gradient_ir);
         #[cfg(feature = "jit")]
         if mode == CpuExecutionMode::Auto
             && let Some(plan) = plan
-            && let Ok(Some(kernel)) = JitGradientKernel::compile_with_precision(
-                plan,
-                params.free_params(),
-                match precision {
-                    Precision::F32 => JitPrecision::F32,
-                    Precision::Auto | Precision::F64 => JitPrecision::F64,
-                },
-            )
+            && let Ok(kernel) = (if let Some((real, imag)) = gradient_ir {
+                JitGradientKernel::compile_gradient_ir(real, imag, JitPrecision::F32)
+            } else {
+                JitGradientKernel::compile_with_precision(
+                    plan,
+                    params.free_params(),
+                    match precision {
+                        Precision::F32 => JitPrecision::F32,
+                        Precision::Auto | Precision::F64 => JitPrecision::F64,
+                    },
+                )
+                .and_then(|kernel| kernel.ok_or_else(|| "missing gradient kernel".into()))
+            })
         {
             return Ok(Self::Jit(kernel));
         }
@@ -1083,12 +1089,6 @@ impl CpuBackend {
         let scalar_executor = scalar_kernel
             .as_ref()
             .and_then(|kernel| ScalarExecutor::prepare(kernel, execution_mode, precision));
-        let gradient_executor = GradientExecutor::prepare(
-            scalar_kernel.as_ref(),
-            model.params(),
-            execution_mode,
-            precision,
-        )?;
         let f32_gradient_fallback_real = if precision == Precision::F32 {
             scalar_kernel
                 .as_ref()
@@ -1112,6 +1112,15 @@ impl CpuBackend {
         } else {
             None
         };
+        let gradient_executor = GradientExecutor::prepare(
+            scalar_kernel.as_ref(),
+            model.params(),
+            execution_mode,
+            precision,
+            f32_gradient_fallback_real
+                .as_ref()
+                .map(|real| (real, f32_gradient_fallback_imag.as_ref())),
+        )?;
         let constant_factors = executable
             .constant_factor_matrices()
             .iter()
@@ -6971,6 +6980,10 @@ mod tests {
         let model = CompiledModel::from_expr(&(x + y)).unwrap();
         let params = model.params().default_values();
         let (automatic, interpreted) = f32_jit_and_interpreter(&model);
+        let GradientExecutor::Jit(kernel) = &automatic.gradient_executor else {
+            unreachable!("f32_jit_and_interpreter already requires a gradient JIT")
+        };
+        assert_eq!(kernel.compiled_component_count(), 1);
 
         assert_eq!(
             automatic.evaluate(&params).unwrap(),
