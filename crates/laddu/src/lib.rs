@@ -18,6 +18,7 @@ pub use laddu_expr::{
     event_p4_component, event_scalar, matmul, matrix, matrix_from_flat, matvec, polar_complex,
     solve, vector,
 };
+pub use laddu_runtime::{BinSpec, Comparison, DatasetBin, DatasetExprExt, Predicate};
 
 #[cfg(feature = "amplitudes")]
 pub use laddu_amplitudes as amplitudes;
@@ -63,7 +64,8 @@ pub mod prelude {
     #[cfg(feature = "likelihood")]
     pub use laddu_likelihood::{
         CrossSectionIntegrals, LassoPenalty, Likelihood, LikelihoodError, LikelihoodEvaluation,
-        LikelihoodName, LikelihoodResult, LikelihoodTerm, NllTerm, RidgePenalty,
+        LikelihoodName, LikelihoodProjection, LikelihoodResult, LikelihoodTerm, NllTerm,
+        RidgePenalty,
     };
     pub use laddu_physics::channel::{Channel, Edge, EdgeHandle, Vertex, VertexHandle, VertexView};
     pub use laddu_physics::math::{
@@ -71,9 +73,10 @@ pub mod prelude {
         spherical_harmonic,
     };
     pub use laddu_runtime::{
-        CpuBackend, CpuBatchCache, CpuCachedBatch, CpuCachedDataset, CpuExecutionMode, CpuOptions,
-        CpuPlan, CpuPreparedDataset, Device, Execution, ExecutionError, ExecutionOptions,
-        GpuBackend, GpuDeviceSelector, GpuOptions, JitPolicy, Precision, PreparedDatasetStats,
-        ThreadPolicy, ValueGradient,
+        BinSpec, Comparison, CpuBackend, CpuBatchCache, CpuCachedBatch, CpuCachedDataset,
+        CpuExecutionMode, CpuOptions, CpuPlan, CpuPreparedDataset, DatasetBin, DatasetExprExt,
+        Device, Execution, ExecutionError, ExecutionOptions, GpuBackend, GpuDeviceSelector,
+        GpuOptions, JitPolicy, Precision, Predicate, PreparedDatasetStats, ThreadPolicy,
+        ValueGradient,
     };
 }

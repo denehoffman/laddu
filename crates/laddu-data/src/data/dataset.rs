@@ -55,6 +55,20 @@ impl Dataset {
         }
     }
 
+    /// Build a derived dataset while preserving this dataset's read and cache policy.
+    #[doc(hidden)]
+    pub fn with_derived_source<S>(&self, source: S) -> Self
+    where
+        S: EventSource + 'static,
+    {
+        Self {
+            source: Arc::new(source),
+            plan: self.plan,
+            ops: Arc::from([]),
+            cache_storage: self.cache_storage,
+        }
+    }
+
     pub fn from_batch(batch: EventBatch) -> Self {
         Self::new(MemorySource::new(batch))
     }

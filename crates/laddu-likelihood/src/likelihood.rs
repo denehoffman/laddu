@@ -6,7 +6,7 @@ use laddu_data::data::Dataset;
 #[cfg(test)]
 use laddu_expr::parameters::ParamError;
 use laddu_expr::parameters::{ParamId, ParamLayout, ParamRegistry, ParamValues};
-use laddu_runtime::{Execution, PreparedDataset, PreparedModel};
+use laddu_runtime::{Execution, PreparedDataset, PreparedModel, RuntimeError};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LikelihoodName(String);
@@ -277,6 +277,21 @@ impl Likelihood {
         };
         term.cross_section_integrals(generated_mc, &self.execution)
     }
+
+    pub fn projection<'a>(
+        &self,
+        term_name: &str,
+        generated_mc: &Dataset,
+        tags: impl IntoIterator<Item = &'a str>,
+    ) -> LikelihoodResult<LikelihoodProjection> {
+        let Some(term) = self.terms.iter().find(|term| term.name() == term_name) else {
+            return Err(LikelihoodError::MissingTerm(term_name.to_owned()));
+        };
+        let Some(term) = term.as_intensity() else {
+            return Err(LikelihoodError::NotIntensityTerm(term_name.to_owned()));
+        };
+        term.projection(generated_mc, tags, &self.execution)
+    }
 }
 
 #[derive(Clone)]
@@ -305,6 +320,41 @@ impl std::fmt::Debug for NllTerm {
 }
 
 impl NllTerm {
+    fn projection<'a>(
+        &self,
+        generated_mc: &Dataset,
+        tags: impl IntoIterator<Item = &'a str>,
+        execution: &Execution,
+    ) -> LikelihoodResult<LikelihoodProjection> {
+        let projected_model =
+            self.model
+                .project_tags(tags)
+                .map_err(|error| RuntimeError::InvalidShape {
+                    index: 0,
+                    message: error.to_string(),
+                })?;
+        let projected_plan = PreparedModel::prepare(&projected_model, execution)?;
+        let projected_params = ParamProjection::new(
+            Arc::clone(&self.resolved_projection()?.global_layout),
+            projected_model.params(),
+            self.name(),
+        )?;
+        Ok(LikelihoodProjection {
+            name: self.name.clone(),
+            full_plan: self.plan()?.clone(),
+            full_projection: self.resolved_projection()?.clone(),
+            full_accepted_mc: self.accepted_mc()?.clone(),
+            projected_accepted_mc: projected_plan
+                .prepare_dataset(execution, &self.accepted_mc_source)?,
+            projected_generated_mc: projected_plan.prepare_dataset(execution, generated_mc)?,
+            generated_mc_source: generated_mc.clone(),
+            projected_plan,
+            projected_params,
+            data_weight_sum: self.data_weight_sum()?,
+            execution: execution.clone(),
+        })
+    }
+
     pub fn new(
         name: impl Into<String>,
         model: &CompiledModel,
@@ -743,6 +793,131 @@ pub struct CrossSectionIntegrals {
     execution: Execution,
 }
 
+#[derive(Clone)]
+pub struct LikelihoodProjection {
+    name: LikelihoodName,
+    full_plan: PreparedModel,
+    full_projection: ParamProjection,
+    full_accepted_mc: PreparedDataset,
+    projected_plan: PreparedModel,
+    projected_params: ParamProjection,
+    projected_accepted_mc: PreparedDataset,
+    projected_generated_mc: PreparedDataset,
+    generated_mc_source: Dataset,
+    data_weight_sum: f64,
+    execution: Execution,
+}
+
+impl LikelihoodProjection {
+    pub fn name(&self) -> &str {
+        self.name.as_str()
+    }
+
+    pub fn accepted_integral(&self, free: &[f64]) -> LikelihoodResult<f64> {
+        self.projected_integral(free, &self.projected_accepted_mc, "accepted MC")
+    }
+
+    pub fn generated_integral(&self, free: &[f64]) -> LikelihoodResult<f64> {
+        self.projected_integral(free, &self.projected_generated_mc, "generated MC")
+    }
+
+    pub fn acceptance(&self, free: &[f64]) -> LikelihoodResult<f64> {
+        let generated = positive_integral("generated MC", self.generated_integral(free)?)?;
+        let accepted = positive_integral("accepted MC", self.accepted_integral(free)?)?;
+        Ok(accepted / generated)
+    }
+
+    pub fn full_accepted_integral(&self, free: &[f64]) -> LikelihoodResult<f64> {
+        let global = self.full_projection.global_layout.values(free)?;
+        let local = self.full_projection.project(&global)?;
+        self.full_plan
+            .reduce(
+                &self.execution,
+                &local,
+                &self.full_accepted_mc,
+                ReductionPlan::weighted_positive_real(),
+            )
+            .map_err(|error| map_reduction_error("accepted MC", error))
+    }
+
+    pub fn acceptance_corrected_yield(&self, free: &[f64]) -> LikelihoodResult<f64> {
+        let accepted = positive_integral("accepted MC", self.full_accepted_integral(free)?)?;
+        Ok(self.data_weight_sum * self.generated_integral(free)? / accepted)
+    }
+
+    pub fn cross_section(&self, free: &[f64], luminosity: f64) -> LikelihoodResult<f64> {
+        if luminosity <= 0.0 {
+            return Err(LikelihoodError::NonPositiveLuminosity(luminosity));
+        }
+        Ok(self.acceptance_corrected_yield(free)? / luminosity)
+    }
+
+    pub fn weights(&self, free: &[f64], acceptance_corrected: bool) -> LikelihoodResult<Vec<f64>> {
+        let scale = if acceptance_corrected {
+            self.data_weight_sum
+                / positive_integral("accepted MC", self.full_accepted_integral(free)?)?
+        } else {
+            1.0
+        };
+        let intensities = self.intensities(free)?;
+        let mut output = Vec::with_capacity(intensities.len());
+        let mut offset = 0;
+        for batch in self
+            .generated_mc_source
+            .batches()
+            .map_err(|e| LikelihoodError::Runtime(RuntimeError::Data(e.to_string())))?
+        {
+            let batch =
+                batch.map_err(|e| LikelihoodError::Runtime(RuntimeError::Data(e.to_string())))?;
+            output.extend(
+                (0..batch.len())
+                    .map(|row| batch.weights_at(row) * intensities[offset + row] * scale),
+            );
+            offset += batch.len();
+        }
+        Ok(output)
+    }
+
+    pub fn intensities(&self, free: &[f64]) -> LikelihoodResult<Vec<f64>> {
+        let global = self.projected_params.global_layout.values(free)?;
+        let local = self.projected_params.project(&global)?;
+        let mut output = Vec::new();
+        for batch in self
+            .generated_mc_source
+            .batches()
+            .map_err(|e| LikelihoodError::Runtime(RuntimeError::Data(e.to_string())))?
+        {
+            let batch =
+                batch.map_err(|e| LikelihoodError::Runtime(RuntimeError::Data(e.to_string())))?;
+            output.extend(
+                self.projected_plan
+                    .evaluate_batch(&local, &batch)?
+                    .into_iter()
+                    .map(|value| value.re),
+            );
+        }
+        Ok(output)
+    }
+
+    fn projected_integral(
+        &self,
+        free: &[f64],
+        dataset: &PreparedDataset,
+        name: &'static str,
+    ) -> LikelihoodResult<f64> {
+        let global = self.projected_params.global_layout.values(free)?;
+        let local = self.projected_params.project(&global)?;
+        self.projected_plan
+            .reduce(
+                &self.execution,
+                &local,
+                dataset,
+                ReductionPlan::weighted_positive_real(),
+            )
+            .map_err(|error| map_reduction_error(name, error))
+    }
+}
+
 impl CrossSectionIntegrals {
     pub fn name(&self) -> &str {
         self.name.as_str()
@@ -930,15 +1105,18 @@ mod tests {
     use std::sync::Arc;
 
     use approx::assert_relative_eq;
-    use laddu_compile::{CompileOptions, CompiledModel};
+    #[cfg(feature = "wgpu")]
+    use laddu_compile::CompileOptions;
+    use laddu_compile::CompiledModel;
     use laddu_data::{
         data::{CacheStorage, Dataset, EventBatch, OwnedEvent},
         schema::Schema,
     };
     use laddu_expr::{
-        Expr, complex, dot, event_scalar, matrix, matvec, parameter, parameters::Parameter, solve,
-        vector,
+        Expr, complex, event_scalar, matrix, parameter, parameters::Parameter, solve, vector,
     };
+    #[cfg(feature = "wgpu")]
+    use laddu_expr::{dot, matvec};
     use laddu_runtime::{CpuOptions, Device, ExecutionOptions, JitPolicy, Precision, ThreadPolicy};
     #[cfg(feature = "wgpu")]
     use laddu_runtime::{GpuBackend, GpuOptions};
@@ -2021,6 +2199,38 @@ mod tests {
             cpu.nll(&params).unwrap(),
             epsilon = 2.0e-5
         );
+    }
+
+    #[test]
+    fn tagged_projection_produces_partial_weights_and_cross_sections() {
+        let x = event_scalar("x");
+        let selected = (Expr::from(parameter!("a", initial: 2.0)) * x.clone()).tagged("selected");
+        let removed = Expr::from(parameter!("b", initial: 1.0)).tagged("removed");
+        let model = CompiledModel::from_expr(&(selected + removed).norm_sqr()).unwrap();
+        let data = weighted_dataset(&[(1.0, 3.0)]);
+        let accepted = weighted_dataset(&[(1.0, 1.0)]);
+        let generated = weighted_dataset(&[(2.0, 1.0)]);
+        let likelihood =
+            Likelihood::new([
+                Box::new(NllTerm::new("waves", &model, &data, &accepted).unwrap())
+                    as Box<dyn LikelihoodTerm>,
+            ])
+            .unwrap();
+        let params = likelihood.default_params();
+        let projection = likelihood
+            .projection("waves", &generated, ["selected"])
+            .unwrap();
+
+        assert_relative_eq!(projection.full_accepted_integral(&params).unwrap(), 9.0);
+        assert_relative_eq!(projection.generated_integral(&params).unwrap(), 16.0);
+        assert_relative_eq!(projection.acceptance(&params).unwrap(), 0.25);
+        assert_relative_eq!(projection.intensities(&params).unwrap()[0], 16.0);
+        assert_relative_eq!(
+            projection.acceptance_corrected_yield(&params).unwrap(),
+            16.0 / 3.0
+        );
+        assert_relative_eq!(projection.weights(&params, false).unwrap()[0], 16.0);
+        assert_relative_eq!(projection.weights(&params, true).unwrap()[0], 16.0 / 3.0);
     }
 
     #[cfg(feature = "wgpu")]

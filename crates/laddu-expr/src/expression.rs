@@ -410,6 +410,113 @@ impl Expr {
         })
     }
 
+    pub fn tagged_with(self, tags: impl IntoIterator<Item = impl Into<Arc<str>>>) -> Self {
+        tags.into_iter().fold(self, Self::tagged)
+    }
+
+    /// Replace tagged components that do not match any requested tag with zero.
+    ///
+    /// Untagged nodes remain active, while a matching tagged node retains its complete subtree.
+    pub fn project_tags<'a>(&self, tags: impl IntoIterator<Item = &'a str>) -> Self {
+        let tags: Vec<_> = tags.into_iter().collect();
+        self.project_tags_inner(&tags)
+    }
+
+    fn project_tags_inner(&self, tags: &[&str]) -> Self {
+        if !self.node.metadata.tags.is_empty() {
+            return if self
+                .node
+                .metadata
+                .tags
+                .iter()
+                .any(|candidate| tags.contains(&candidate.as_ref()))
+            {
+                self.clone()
+            } else {
+                self.zero_like()
+            };
+        }
+
+        let kind = match &self.node.kind {
+            DagNodeKind::RealConst(_)
+            | DagNodeKind::ComplexConst(_)
+            | DagNodeKind::ScalarParam(_)
+            | DagNodeKind::EventScalar(_)
+            | DagNodeKind::EventP4Component { .. } => return self.clone(),
+            DagNodeKind::Unary { op, input } => DagNodeKind::Unary {
+                op: *op,
+                input: input.project_tags_inner(tags),
+            },
+            DagNodeKind::Binary { op, lhs, rhs } => DagNodeKind::Binary {
+                op: *op,
+                lhs: lhs.project_tags_inner(tags),
+                rhs: rhs.project_tags_inner(tags),
+            },
+            DagNodeKind::Complex { re, im } => DagNodeKind::Complex {
+                re: re.project_tags_inner(tags),
+                im: im.project_tags_inner(tags),
+            },
+            DagNodeKind::Vector { elements } => DagNodeKind::Vector {
+                elements: elements
+                    .iter()
+                    .map(|value| value.project_tags_inner(tags))
+                    .collect(),
+            },
+            DagNodeKind::Matrix {
+                rows,
+                cols,
+                elements,
+            } => DagNodeKind::Matrix {
+                rows: *rows,
+                cols: *cols,
+                elements: elements
+                    .iter()
+                    .map(|value| value.project_tags_inner(tags))
+                    .collect(),
+            },
+            DagNodeKind::Component { input, index } => DagNodeKind::Component {
+                input: input.project_tags_inner(tags),
+                index: *index,
+            },
+            DagNodeKind::MatrixElement { input, row, col } => DagNodeKind::MatrixElement {
+                input: input.project_tags_inner(tags),
+                row: *row,
+                col: *col,
+            },
+            DagNodeKind::MatMul { lhs, rhs } => DagNodeKind::MatMul {
+                lhs: lhs.project_tags_inner(tags),
+                rhs: rhs.project_tags_inner(tags),
+            },
+            DagNodeKind::MatVec { matrix, vector } => DagNodeKind::MatVec {
+                matrix: matrix.project_tags_inner(tags),
+                vector: vector.project_tags_inner(tags),
+            },
+            DagNodeKind::Dot { lhs, rhs } => DagNodeKind::Dot {
+                lhs: lhs.project_tags_inner(tags),
+                rhs: rhs.project_tags_inner(tags),
+            },
+            DagNodeKind::Solve { matrix, rhs } => DagNodeKind::Solve {
+                matrix: matrix.project_tags_inner(tags),
+                rhs: rhs.project_tags_inner(tags),
+            },
+        };
+        Expr::new(kind).with_metadata(|metadata| *metadata = self.node.metadata.clone())
+    }
+
+    fn zero_like(&self) -> Self {
+        match self
+            .shape()
+            .expect("valid expression shapes are cached eagerly")
+        {
+            ExprShape::Scalar => Expr::from(0.0),
+            ExprShape::Vector { len } => vector((0..len).map(|_| Expr::from(0.0))),
+            ExprShape::Matrix { rows, cols } => {
+                matrix_from_flat(rows, cols, (0..rows * cols).map(|_| Expr::from(0.0)))
+                    .expect("zero matrix dimensions match")
+            }
+        }
+    }
+
     pub fn real(&self) -> Self {
         unary(UnaryOp::Real, self)
     }
@@ -1021,6 +1128,141 @@ pub struct ExprGraph {
 }
 
 impl ExprGraph {
+    pub fn project_tags<'a>(&self, tags: impl IntoIterator<Item = &'a str>) -> Self {
+        let tags: Vec<_> = tags.into_iter().collect();
+        let mut nodes = Vec::new();
+        let mut metadata = Vec::new();
+        let mut remapped = HashMap::new();
+        let root = self.project_node(
+            self.root,
+            &tags,
+            false,
+            &mut nodes,
+            &mut metadata,
+            &mut remapped,
+        );
+        Self {
+            root,
+            nodes,
+            metadata,
+        }
+    }
+
+    fn project_node(
+        &self,
+        old: ExprId,
+        tags: &[&str],
+        retain_all: bool,
+        nodes: &mut Vec<ExprNode>,
+        metadata: &mut Vec<ExprMetadata>,
+        remapped: &mut HashMap<(ExprId, bool), ExprId>,
+    ) -> ExprId {
+        if let Some(id) = remapped.get(&(old, retain_all)) {
+            return *id;
+        }
+        let old_metadata = &self.metadata[old.index()];
+        let matches = old_metadata
+            .tags
+            .iter()
+            .any(|tag| tags.contains(&tag.as_ref()));
+        let node = if !retain_all && !old_metadata.tags.is_empty() && !matches {
+            ExprNode::RealConst(0.0)
+        } else {
+            let retain_children = retain_all || matches;
+            let map =
+                |id, nodes: &mut Vec<_>, metadata: &mut Vec<_>, remapped: &mut HashMap<_, _>| {
+                    self.project_node(id, tags, retain_children, nodes, metadata, remapped)
+                };
+            match &self.nodes[old.index()] {
+                ExprNode::RealConst(value) => ExprNode::RealConst(*value),
+                ExprNode::ComplexConst(value) => ExprNode::ComplexConst(*value),
+                ExprNode::ScalarParam(value) => ExprNode::ScalarParam(value.clone()),
+                ExprNode::EventScalar(value) => ExprNode::EventScalar(Arc::clone(value)),
+                ExprNode::EventP4Component { name, component } => ExprNode::EventP4Component {
+                    name: Arc::clone(name),
+                    component: *component,
+                },
+                ExprNode::Unary { op, input } => ExprNode::Unary {
+                    op: *op,
+                    input: map(*input, nodes, metadata, remapped),
+                },
+                ExprNode::Binary { op, lhs, rhs } => ExprNode::Binary {
+                    op: *op,
+                    lhs: map(*lhs, nodes, metadata, remapped),
+                    rhs: map(*rhs, nodes, metadata, remapped),
+                },
+                ExprNode::NaryAdd { terms } => ExprNode::NaryAdd {
+                    terms: terms
+                        .iter()
+                        .map(|id| map(*id, nodes, metadata, remapped))
+                        .collect(),
+                },
+                ExprNode::NaryMul { factors } => ExprNode::NaryMul {
+                    factors: factors
+                        .iter()
+                        .map(|id| map(*id, nodes, metadata, remapped))
+                        .collect(),
+                },
+                ExprNode::Complex { re, im } => ExprNode::Complex {
+                    re: map(*re, nodes, metadata, remapped),
+                    im: map(*im, nodes, metadata, remapped),
+                },
+                ExprNode::Vector { elements } => ExprNode::Vector {
+                    elements: elements
+                        .iter()
+                        .map(|id| map(*id, nodes, metadata, remapped))
+                        .collect(),
+                },
+                ExprNode::Matrix {
+                    rows,
+                    cols,
+                    elements,
+                } => ExprNode::Matrix {
+                    rows: *rows,
+                    cols: *cols,
+                    elements: elements
+                        .iter()
+                        .map(|id| map(*id, nodes, metadata, remapped))
+                        .collect(),
+                },
+                ExprNode::Component { input, index } => ExprNode::Component {
+                    input: map(*input, nodes, metadata, remapped),
+                    index: *index,
+                },
+                ExprNode::MatrixElement { input, row, col } => ExprNode::MatrixElement {
+                    input: map(*input, nodes, metadata, remapped),
+                    row: *row,
+                    col: *col,
+                },
+                ExprNode::MatMul { lhs, rhs } => ExprNode::MatMul {
+                    lhs: map(*lhs, nodes, metadata, remapped),
+                    rhs: map(*rhs, nodes, metadata, remapped),
+                },
+                ExprNode::MatVec { matrix, vector } => ExprNode::MatVec {
+                    matrix: map(*matrix, nodes, metadata, remapped),
+                    vector: map(*vector, nodes, metadata, remapped),
+                },
+                ExprNode::Dot { lhs, rhs } => ExprNode::Dot {
+                    lhs: map(*lhs, nodes, metadata, remapped),
+                    rhs: map(*rhs, nodes, metadata, remapped),
+                },
+                ExprNode::Solve { matrix, rhs } => ExprNode::Solve {
+                    matrix: map(*matrix, nodes, metadata, remapped),
+                    rhs: map(*rhs, nodes, metadata, remapped),
+                },
+            }
+        };
+        let id = ExprId::from_index(nodes.len()).expect("expression graph exceeds ExprId range");
+        nodes.push(node);
+        metadata.push(if matches || retain_all {
+            old_metadata.clone()
+        } else {
+            ExprMetadata::new(old_metadata.source)
+        });
+        remapped.insert((old, retain_all), id);
+        id
+    }
+
     pub fn from_parts(
         root: ExprId,
         nodes: Vec<ExprNode>,

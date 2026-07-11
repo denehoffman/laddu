@@ -1,8 +1,10 @@
 use laddu_compile::{CompiledModel, ReductionPlan};
 use laddu_data::data::Dataset;
+use laddu_data::data::EventBatch;
 #[cfg(feature = "wgpu")]
 use laddu_data::data::{CacheStorage, accurate::AccurateF64};
 use laddu_expr::parameters::ParamValues;
+use num::complex::Complex64;
 
 use crate::{
     CpuBackend, CpuPlan, CpuPreparedDataset, Execution, PreparedDatasetStats, ReductionEvaluation,
@@ -34,6 +36,27 @@ impl PreparedDataset {
 }
 
 impl PreparedModel {
+    pub fn evaluate_batch(
+        &self,
+        params: &ParamValues,
+        batch: &EventBatch,
+    ) -> RuntimeResult<Vec<Complex64>> {
+        match self {
+            Self::Cpu(plan) => plan.evaluate_batch(params, batch),
+            #[cfg(feature = "wgpu")]
+            Self::Wgpu(plan) => plan
+                .kernel
+                .evaluate_batch(&plan.context, params, batch)
+                .map(|values| {
+                    values
+                        .into_iter()
+                        .map(|(re, im)| Complex64::new(re, im))
+                        .collect()
+                })
+                .map_err(wgpu_error),
+        }
+    }
+
     pub fn prepare(model: &CompiledModel, execution: &Execution) -> RuntimeResult<Self> {
         #[cfg(feature = "wgpu")]
         if let Some(context) = execution.wgpu_context() {

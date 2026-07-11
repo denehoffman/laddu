@@ -273,6 +273,10 @@ pub struct CompiledModel {
 }
 
 impl CompiledModel {
+    pub fn project_tags<'a>(&self, tags: impl IntoIterator<Item = &'a str>) -> CompileResult<Self> {
+        Self::from_graph(self.graph.project_tags(tags))
+    }
+
     pub fn from_expr(expr: &Expr) -> CompileResult<Self> {
         Self::from_expr_with_options(expr, &CompileOptions::default())
     }
@@ -586,6 +590,17 @@ mod tests {
             Err(CompileError::Params(ParamError::ParameterConflict { name, .. }))
                 if name == "x"
         ));
+    }
+
+    #[test]
+    fn tag_projection_prunes_unselected_parameters() {
+        let selected = Expr::from(parameter!("selected", initial: 1.0)).tagged("selected");
+        let removed = Expr::from(parameter!("removed", initial: 2.0)).tagged("removed");
+        let model = CompiledModel::from_expr(&(selected + removed + 3.0)).unwrap();
+        let projected = model.project_tags(["selected"]).unwrap();
+
+        assert!(projected.params().id("selected").is_some());
+        assert!(projected.params().id("removed").is_none());
     }
 
     #[test]
