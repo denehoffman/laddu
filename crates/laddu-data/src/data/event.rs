@@ -198,7 +198,7 @@ impl EventBatch {
         let len: usize = batches.iter().map(|b| b.len).sum();
 
         for batch in batches {
-            if &schema != &batch.schema {
+            if schema != batch.schema {
                 return Err(LadduDataError::Schema(
                     "cannot concatenate batches with different schemas".into(),
                 ));
@@ -277,11 +277,10 @@ fn infer_len(
         }
     }
 
-    if let Some(w) = weight {
-        if w.len() != len {
+    if let Some(w) = weight
+        && w.len() != len {
             return Err(LadduDataError::Schema("inconsistent weight length".into()));
         }
-    }
 
     Ok(len)
 }
@@ -526,7 +525,7 @@ mod tests {
 
     fn v(x: f64) -> RealVec4 {
         RealVec4 {
-            x: x,
+            x,
             y: x + 0.1,
             z: x + 0.2,
             t: x + 0.3,

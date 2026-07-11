@@ -1051,6 +1051,7 @@ fn emit_instruction(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn load_complex_descriptor_element(
     builder: &mut FunctionBuilder<'_>,
     descriptors: cranelift::prelude::Value,

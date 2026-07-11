@@ -183,7 +183,7 @@ impl OptimizationPass for CanonicalCsePass {
         let mut keys = HashMap::with_capacity(graph.nodes().len());
 
         for (old_index, node) in graph.nodes().iter().enumerate() {
-            let old_id = ExprId::from_index(old_index).expect("graph too large");
+            let old_id = ExprId::from_index(old_index);
             let node_metadata = graph
                 .metadata(old_id)
                 .expect("graph metadata length is validated")
@@ -323,7 +323,7 @@ impl<'a> RewriteContext<'a> {
     }
 
     pub fn next_id(&self) -> ExprId {
-        ExprId::from_index(self.nodes.len()).expect("graph too large")
+        ExprId::from_index(self.nodes.len())
     }
 
     fn local_node_cost(
@@ -344,8 +344,7 @@ impl<'a> RewriteContext<'a> {
         &self,
         fragment: &[(ExprNode, ExprMetadata)],
     ) -> CompileResult<OptimizationCost> {
-        let root =
-            ExprId::from_index(self.nodes.len() + fragment.len() - 1).expect("graph too large");
+        let root = ExprId::from_index(self.nodes.len() + fragment.len() - 1);
         let mut nodes = self.nodes.to_vec();
         let mut metadata = self.metadata.to_vec();
         nodes.extend(fragment.iter().map(|(node, _)| node.clone()));
@@ -930,6 +929,7 @@ impl TrigIdentityRule {
         None
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn replace_affine_cos_pair(
         &self,
         terms: &[ExprId],
@@ -1100,6 +1100,7 @@ impl TrigIdentityRule {
         None
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn replace_half_angle_pair(
         &self,
         terms: &[ExprId],
@@ -2198,7 +2199,6 @@ impl<'a> ReplacementFragment<'a> {
 
     fn next_id(&self) -> ExprId {
         ExprId::from_index(self.context.next_id().index() + self.nodes.len())
-            .expect("graph too large")
     }
 
     fn is_empty(&self) -> bool {
@@ -3786,10 +3786,10 @@ impl MatrixVectorRule {
     }
 
     fn vector_element(id: ExprId, index: usize, builder: &mut ReplacementFragment<'_>) -> ExprId {
-        if let Some(ExprNode::Vector { elements }) = builder.context.node(id) {
-            if let Some(element) = elements.get(index).copied() {
-                return element;
-            }
+        if let Some(ExprNode::Vector { elements }) = builder.context.node(id)
+            && let Some(element) = elements.get(index).copied()
+        {
+            return element;
         }
         builder.push(
             ExprNode::Component { input: id, index },
@@ -3803,15 +3803,14 @@ impl MatrixVectorRule {
         col: usize,
         builder: &mut ReplacementFragment<'_>,
     ) -> ExprId {
-        if let Some(ExprNode::Matrix { cols, elements, .. }) = builder.context.node(id) {
-            if let Some(element) = row
+        if let Some(ExprNode::Matrix { cols, elements, .. }) = builder.context.node(id)
+            && let Some(element) = row
                 .checked_mul(*cols)
                 .and_then(|base| base.checked_add(col))
                 .and_then(|index| elements.get(index))
                 .copied()
-            {
-                return element;
-            }
+        {
+            return element;
         }
         builder.push(
             ExprNode::MatrixElement {
@@ -3938,7 +3937,7 @@ impl<'a> RewriteBuilder<'a> {
 
         for (old_index, node) in graph.nodes().iter().enumerate() {
             let node = remap_node(node, &old_to_new);
-            let old_id = ExprId::from_index(old_index).expect("graph too large");
+            let old_id = ExprId::from_index(old_index);
             let metadata_for_node = graph
                 .metadata(old_id)
                 .expect("graph metadata length is validated")
@@ -4007,7 +4006,7 @@ fn push_node(
     metadata: &mut Vec<ExprMetadata>,
     facts: &mut Vec<NodeFacts>,
 ) -> ExprId {
-    let id = ExprId::from_index(nodes.len()).expect("graph too large");
+    let id = ExprId::from_index(nodes.len());
     facts.push(NodeFacts::for_node(&node, facts));
     nodes.push(node);
     metadata.push(node_metadata);
@@ -4044,7 +4043,7 @@ fn compact_visit(
     }
 
     let node = remap_compacted_node(graph.node(old_id).expect("valid graph"), old_to_new);
-    let new_id = ExprId::from_index(nodes.len()).expect("graph too large");
+    let new_id = ExprId::from_index(nodes.len());
     nodes.push(node);
     metadata.push(
         graph
@@ -4154,7 +4153,7 @@ fn intern_canonical_node(
         return id;
     }
 
-    let id = ExprId::from_index(nodes.len()).expect("graph too large");
+    let id = ExprId::from_index(nodes.len());
     keys.insert(key, id);
     nodes.push(canonical);
     metadata.push(node_metadata);

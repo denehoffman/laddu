@@ -369,8 +369,10 @@ mod tests {
 
     #[test]
     fn infer_from_columns_can_discard_incomplete_p4_components_and_require_weight() {
-        let mut options = SchemaInferenceOptions::default();
-        options.incomplete_p4_components_are_scalars = false;
+        let options = SchemaInferenceOptions {
+            incomplete_p4_components_are_scalars: false,
+            ..Default::default()
+        };
 
         let schema = Schema::infer_from_columns(
             [
@@ -393,8 +395,10 @@ mod tests {
             vec!["mass"]
         );
 
-        let mut require_weight = SchemaInferenceOptions::default();
-        require_weight.require_weight = true;
+        let require_weight = SchemaInferenceOptions {
+            require_weight: true,
+            ..Default::default()
+        };
 
         let err = Schema::infer_from_columns([col("mass", ColumnType::F64)], &require_weight)
             .unwrap_err();
@@ -406,8 +410,10 @@ mod tests {
     fn physical_columns_and_validation_respect_custom_names_and_float_types_only() {
         let schema = Schema::new(["p"], ["mass"], true).unwrap();
 
-        let mut names = SchemaColumnNames::default();
-        names.weight_column = Name::from("event_weight");
+        let names = SchemaColumnNames {
+            weight_column: Name::from("event_weight"),
+            ..Default::default()
+        };
 
         let physical = schema
             .physical_columns(&names)
@@ -420,8 +426,10 @@ mod tests {
             vec!["p_e", "p_px", "p_py", "p_pz", "mass", "event_weight"]
         );
 
-        let mut options = SchemaInferenceOptions::default();
-        options.column_names = names;
+        let options = SchemaInferenceOptions {
+            column_names: names,
+            ..Default::default()
+        };
 
         let ok = schema.validate_required_columns(
             [

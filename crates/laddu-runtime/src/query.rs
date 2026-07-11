@@ -260,9 +260,9 @@ impl QueryExpr {
 
 enum CompiledPredicate {
     Compare {
-        lhs: QueryExpr,
+        lhs: Box<QueryExpr>,
         op: Comparison,
-        rhs: QueryExpr,
+        rhs: Box<QueryExpr>,
     },
     And(Box<Self>, Box<Self>),
     Or(Box<Self>, Box<Self>),
@@ -273,9 +273,9 @@ impl CompiledPredicate {
     fn prepare(predicate: &Predicate, execution: &Execution) -> RuntimeResult<Self> {
         Ok(match predicate {
             Predicate::Compare { lhs, op, rhs } => Self::Compare {
-                lhs: QueryExpr::prepare(lhs, execution, true)?,
+                lhs: Box::new(QueryExpr::prepare(lhs, execution, true)?),
                 op: *op,
-                rhs: QueryExpr::prepare(rhs, execution, true)?,
+                rhs: Box::new(QueryExpr::prepare(rhs, execution, true)?),
             },
             Predicate::And(lhs, rhs) => Self::And(
                 Box::new(Self::prepare(lhs, execution)?),

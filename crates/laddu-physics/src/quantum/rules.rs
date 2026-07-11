@@ -1388,7 +1388,7 @@ impl SelectionRules {
                 };
 
                 let report = self.rules.evaluate(parent, daughters, l, s);
-                let inferred = AllowedPartialWave::new(wave.clone(), daughters);
+                let inferred = AllowedPartialWave::new(wave, daughters);
 
                 candidates.push(PartialWaveCandidate {
                     wave,
@@ -1528,6 +1528,7 @@ mod tests {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn add_additives(
         particle: ParticleProperties,
         charge: i32,

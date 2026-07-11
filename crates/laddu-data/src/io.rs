@@ -716,11 +716,10 @@ impl OutputPath {
     }
 
     pub fn create_parent_dirs(path: &Path) -> LadduDataResult<()> {
-        if let Some(parent) = path.parent() {
-            if !parent.as_os_str().is_empty() {
+        if let Some(parent) = path.parent()
+            && !parent.as_os_str().is_empty() {
                 fs::create_dir_all(parent).map_err(|e| LadduDataError::Sink(e.to_string()))?;
             }
-        }
 
         Ok(())
     }
@@ -749,7 +748,7 @@ mod tests {
 
     fn v(x: f64) -> RealVec4 {
         RealVec4 {
-            x: x,
+            x,
             y: x,
             z: x,
             t: x,

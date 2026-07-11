@@ -174,7 +174,7 @@ impl Dataset {
             let batch = batch?;
             let base = offset;
             offset += batch.len() as u64;
-            eval_batch(&batch, &self.ops, base, |ev| f(ev))?;
+            eval_batch(&batch, &self.ops, base, &mut f)?;
         }
 
         Ok(())
@@ -399,12 +399,12 @@ fn materialize_batch(
     };
 
     eval_batch(batch, ops, base, |ev| {
-        for col in 0..schema.n_p4s() {
-            p4s[col].push(ev.p4(col));
+        for (col, p4) in p4s.iter_mut().enumerate() {
+            p4.push(ev.p4(col));
         }
 
-        for col in 0..schema.n_scalars() {
-            scalars[col].push(ev.scalar(col));
+        for (col, scalar) in scalars.iter_mut().enumerate() {
+            scalar.push(ev.scalar(col));
         }
 
         if let Some(weights) = weights.as_mut() {
@@ -517,7 +517,7 @@ mod tests {
 
     fn v(x: f64) -> RealVec4 {
         RealVec4 {
-            x: x,
+            x,
             y: x + 0.1,
             z: x + 0.2,
             t: x + 0.3,
@@ -605,7 +605,7 @@ mod tests {
 
     #[test]
     fn deterministic_subsample_and_bootstrap_use_global_event_ids_across_batches() {
-        let seed = 0xBAD5_EED;
+        let seed = 0x0BAD_5EED;
         let bootstrap_seed = 0xB007_57A9;
 
         let dataset = Dataset::from_batches(vec![weighted_batch(0, 3), weighted_batch(3, 3)])

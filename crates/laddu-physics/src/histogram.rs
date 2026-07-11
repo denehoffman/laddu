@@ -55,14 +55,14 @@ impl Histogram {
         limits: (f64, f64),
         weights: Option<&[f64]>,
     ) -> LadduPhysicsResult<Self> {
-        if let Some(weights) = weights {
-            if values.len() != weights.len() {
-                return Err(LadduPhysicsError::invalid_length(
-                    "`weights`",
-                    format!("same length as `values` ({})", values.len()),
-                    weights.len(),
-                ));
-            }
+        if let Some(weights) = weights
+            && values.len() != weights.len()
+        {
+            return Err(LadduPhysicsError::invalid_length(
+                "`weights`",
+                format!("same length as `values` ({})", values.len()),
+                weights.len(),
+            ));
         }
 
         let mut histogram = Self::empty(bins, limits)?;
@@ -80,14 +80,14 @@ impl Histogram {
         bin_edges: Vec<f64>,
         weights: Option<&[f64]>,
     ) -> LadduPhysicsResult<Self> {
-        if let Some(weights) = weights {
-            if values.len() != weights.len() {
-                return Err(LadduPhysicsError::invalid_length(
-                    "`weights`",
-                    format!("same length as `values` ({})", values.len()),
-                    weights.len(),
-                ));
-            }
+        if let Some(weights) = weights
+            && values.len() != weights.len()
+        {
+            return Err(LadduPhysicsError::invalid_length(
+                "`weights`",
+                format!("same length as `values` ({})", values.len()),
+                weights.len(),
+            ));
         }
 
         let mut histogram = Self::empty_with_edges(bin_edges)?;

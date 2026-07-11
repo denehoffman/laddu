@@ -142,7 +142,7 @@ fn spherical_harmonic_expr(l: usize, m: isize, costheta: Expr, phi: Expr) -> Exp
     res *=
         f64::sqrt((2 * l + 1) as f64 / (4.0 * PI) * factorial_ratio_l_minus_over_l_plus(l, abs_m));
 
-    if m < 0 && abs_m % 2 != 0 {
+    if m < 0 && !abs_m.is_multiple_of(2) {
         res = -res;
     }
 

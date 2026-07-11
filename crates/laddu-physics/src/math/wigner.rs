@@ -450,12 +450,12 @@ impl WignerDMatrix {
         for term in self.small_d_terms() {
             let mut expr: Expr = term.coefficient.into();
             if term.cos_power != 0 {
-                expr = expr * ch.powi(term.cos_power);
+                expr *= ch.powi(term.cos_power);
             }
             if term.sin_power != 0 {
-                expr = expr * sh.powi(term.sin_power);
+                expr *= sh.powi(term.sin_power);
             }
-            sum = sum + expr;
+            sum += expr;
         }
 
         sum

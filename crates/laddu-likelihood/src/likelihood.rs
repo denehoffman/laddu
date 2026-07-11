@@ -228,7 +228,7 @@ impl Likelihood {
             Parameters::Slice(free) => &self.params.values(free)?,
             Parameters::ParamValues(param_values) => param_values,
         };
-        self.nll_values(&params)
+        self.nll_values(params)
     }
 
     fn nll_values(&self, params: &ParamValues) -> LikelihoodResult<f64> {
@@ -247,7 +247,7 @@ impl Likelihood {
             Parameters::Slice(free) => &self.params.values(free)?,
             Parameters::ParamValues(param_values) => param_values,
         };
-        self.nll_with_gradient_values(&params)
+        self.nll_with_gradient_values(params)
     }
 
     fn nll_with_gradient_values(
@@ -1329,11 +1329,7 @@ mod tests {
 
     fn cpu_execution(precision: Precision, threads: ThreadPolicy, jit: JitPolicy) -> Execution {
         Execution::local(ExecutionOptions {
-            device: Device::Cpu(CpuOptions {
-                threads,
-                jit,
-                ..CpuOptions::default()
-            }),
+            device: Device::Cpu(CpuOptions { threads, jit }),
             precision,
             ..ExecutionOptions::default()
         })

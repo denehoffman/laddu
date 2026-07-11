@@ -13,7 +13,7 @@ use crate::{
 
 #[derive(Clone, Debug)]
 pub enum PreparedModel {
-    Cpu(CpuPlan),
+    Cpu(Box<CpuPlan>),
     #[cfg(feature = "wgpu")]
     Wgpu(WgpuPlan),
 }
@@ -68,9 +68,9 @@ impl PreparedModel {
                 ),
             }));
         }
-        Ok(Self::Cpu(
+        Ok(Self::Cpu(Box::new(
             CpuBackend.prepare_for_execution(model, execution)?,
-        ))
+        )))
     }
 
     pub fn prepare_dataset(

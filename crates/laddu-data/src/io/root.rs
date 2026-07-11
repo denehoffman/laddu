@@ -370,13 +370,12 @@ impl RootBatchIter {
 
         self.joined = true;
 
-        if let Some(handle) = self.handle.take() {
-            if handle.join().is_err() {
+        if let Some(handle) = self.handle.take()
+            && handle.join().is_err() {
                 return Some(Err(LadduDataError::Source(
                     "ROOT reader thread panicked".into(),
                 )));
             }
-        }
 
         None
     }
@@ -1021,7 +1020,7 @@ mod tests {
 
     fn v(x: f64) -> RealVec4 {
         RealVec4 {
-            x: x,
+            x,
             y: x + 0.1,
             z: x + 0.2,
             t: x + 0.3,

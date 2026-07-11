@@ -127,7 +127,7 @@ impl Isospin {
     /// Returns an error if this property is not known.
     pub fn projection(self) -> LadduPhysicsResult<M> {
         self.projection
-            .ok_or_else(|| LadduPhysicsError::MissingParticleProperty {
+            .ok_or(LadduPhysicsError::MissingParticleProperty {
                 property: "isospin.projection",
             })
     }
@@ -196,7 +196,7 @@ impl ParticleProperties {
     pub fn name(&self) -> LadduPhysicsResult<String> {
         self.name
             .clone()
-            .ok_or_else(|| LadduPhysicsError::MissingParticleProperty { property: "name" })
+            .ok_or(LadduPhysicsError::MissingParticleProperty { property: "name" })
             .clone()
     }
     /// Get the particle's species
@@ -205,7 +205,7 @@ impl ParticleProperties {
     pub fn species(&self) -> LadduPhysicsResult<String> {
         self.species
             .clone()
-            .ok_or_else(|| LadduPhysicsError::MissingParticleProperty {
+            .ok_or(LadduPhysicsError::MissingParticleProperty {
                 property: "species",
             })
             .clone()
@@ -216,7 +216,7 @@ impl ParticleProperties {
     pub fn antiparticle_species(&self) -> LadduPhysicsResult<String> {
         self.antiparticle_species
             .clone()
-            .ok_or_else(|| LadduPhysicsError::MissingParticleProperty {
+            .ok_or(LadduPhysicsError::MissingParticleProperty {
                 property: "antiparticle_species",
             })
             .clone()
@@ -226,7 +226,7 @@ impl ParticleProperties {
     /// Returns an error if this property is not known.
     pub fn self_conjugate(&self) -> LadduPhysicsResult<bool> {
         self.self_conjugate
-            .ok_or_else(|| LadduPhysicsError::MissingParticleProperty {
+            .ok_or(LadduPhysicsError::MissingParticleProperty {
                 property: "self_conjugate",
             })
             .clone()
@@ -236,7 +236,7 @@ impl ParticleProperties {
     /// Returns an error if this property is not known.
     pub fn spin(&self) -> LadduPhysicsResult<J> {
         self.spin
-            .ok_or_else(|| LadduPhysicsError::MissingParticleProperty { property: "spin" })
+            .ok_or(LadduPhysicsError::MissingParticleProperty { property: "spin" })
             .clone()
     }
     /// Get the particle's intrinsic parity
@@ -244,7 +244,7 @@ impl ParticleProperties {
     /// Returns an error if this property is not known.
     pub fn parity(&self) -> LadduPhysicsResult<Parity> {
         self.parity
-            .ok_or_else(|| LadduPhysicsError::MissingParticleProperty { property: "parity" })
+            .ok_or(LadduPhysicsError::MissingParticleProperty { property: "parity" })
             .clone()
     }
     /// Get the particle's intrinsic C-parity
@@ -252,7 +252,7 @@ impl ParticleProperties {
     /// Returns an error if this property is not known.
     pub fn c_parity(&self) -> LadduPhysicsResult<Parity> {
         self.c_parity
-            .ok_or_else(|| LadduPhysicsError::MissingParticleProperty {
+            .ok_or(LadduPhysicsError::MissingParticleProperty {
                 property: "c_parity",
             })
             .clone()
@@ -262,7 +262,7 @@ impl ParticleProperties {
     /// Returns an error if this property is not known.
     pub fn g_parity(&self) -> LadduPhysicsResult<Parity> {
         self.g_parity
-            .ok_or_else(|| LadduPhysicsError::MissingParticleProperty {
+            .ok_or(LadduPhysicsError::MissingParticleProperty {
                 property: "g_parity",
             })
             .clone()
@@ -272,7 +272,7 @@ impl ParticleProperties {
     /// Returns an error if this property is not known.
     pub fn charge(&self) -> LadduPhysicsResult<i32> {
         self.charge
-            .ok_or_else(|| LadduPhysicsError::MissingParticleProperty { property: "charge" })
+            .ok_or(LadduPhysicsError::MissingParticleProperty { property: "charge" })
             .clone()
     }
     /// Get the particle's isospin
@@ -280,7 +280,7 @@ impl ParticleProperties {
     /// Returns an error if this property is not known.
     pub fn isospin(&self) -> LadduPhysicsResult<Isospin> {
         self.isospin
-            .ok_or_else(|| LadduPhysicsError::MissingParticleProperty {
+            .ok_or(LadduPhysicsError::MissingParticleProperty {
                 property: "isospin",
             })
             .clone()
@@ -290,7 +290,7 @@ impl ParticleProperties {
     /// Returns an error if this property is not known.
     pub fn strangeness(&self) -> LadduPhysicsResult<i32> {
         self.strangeness
-            .ok_or_else(|| LadduPhysicsError::MissingParticleProperty {
+            .ok_or(LadduPhysicsError::MissingParticleProperty {
                 property: "strangeness",
             })
             .clone()
@@ -300,7 +300,7 @@ impl ParticleProperties {
     /// Returns an error if this property is not known.
     pub fn charm(&self) -> LadduPhysicsResult<i32> {
         self.charm
-            .ok_or_else(|| LadduPhysicsError::MissingParticleProperty { property: "charm" })
+            .ok_or(LadduPhysicsError::MissingParticleProperty { property: "charm" })
             .clone()
     }
     /// Get the particle's bottomness
@@ -308,7 +308,7 @@ impl ParticleProperties {
     /// Returns an error if this property is not known.
     pub fn bottomness(&self) -> LadduPhysicsResult<i32> {
         self.bottomness
-            .ok_or_else(|| LadduPhysicsError::MissingParticleProperty {
+            .ok_or(LadduPhysicsError::MissingParticleProperty {
                 property: "bottomness",
             })
             .clone()
@@ -318,7 +318,7 @@ impl ParticleProperties {
     /// Returns an error if this property is not known.
     pub fn topness(&self) -> LadduPhysicsResult<i32> {
         self.topness
-            .ok_or_else(|| LadduPhysicsError::MissingParticleProperty {
+            .ok_or(LadduPhysicsError::MissingParticleProperty {
                 property: "topness",
             })
             .clone()
@@ -328,7 +328,7 @@ impl ParticleProperties {
     /// Returns an error if this property is not known.
     pub fn baryon_number(&self) -> LadduPhysicsResult<i32> {
         self.baryon_number
-            .ok_or_else(|| LadduPhysicsError::MissingParticleProperty {
+            .ok_or(LadduPhysicsError::MissingParticleProperty {
                 property: "baryon_number",
             })
             .clone()
@@ -338,7 +338,7 @@ impl ParticleProperties {
     /// Returns an error if this property is not known.
     pub fn electron_lepton_number(&self) -> LadduPhysicsResult<i32> {
         self.electron_lepton_number
-            .ok_or_else(|| LadduPhysicsError::MissingParticleProperty {
+            .ok_or(LadduPhysicsError::MissingParticleProperty {
                 property: "electron_lepton_number",
             })
             .clone()
@@ -348,7 +348,7 @@ impl ParticleProperties {
     /// Returns an error if this property is not known.
     pub fn muon_lepton_number(&self) -> LadduPhysicsResult<i32> {
         self.muon_lepton_number
-            .ok_or_else(|| LadduPhysicsError::MissingParticleProperty {
+            .ok_or(LadduPhysicsError::MissingParticleProperty {
                 property: "muon_lepton_number",
             })
             .clone()
@@ -358,7 +358,7 @@ impl ParticleProperties {
     /// Returns an error if this property is not known.
     pub fn tau_lepton_number(&self) -> LadduPhysicsResult<i32> {
         self.tau_lepton_number
-            .ok_or_else(|| LadduPhysicsError::MissingParticleProperty {
+            .ok_or(LadduPhysicsError::MissingParticleProperty {
                 property: "tau_lepton_number",
             })
             .clone()
@@ -368,7 +368,7 @@ impl ParticleProperties {
     /// Returns an error if this property is not known.
     pub fn statistics(&self) -> LadduPhysicsResult<Statistics> {
         self.statistics
-            .ok_or_else(|| LadduPhysicsError::MissingParticleProperty {
+            .ok_or(LadduPhysicsError::MissingParticleProperty {
                 property: "statistics",
             })
             .clone()
@@ -378,7 +378,7 @@ impl ParticleProperties {
     /// Returns an error if this property is not known.
     pub fn mass(&self) -> LadduPhysicsResult<f64> {
         self.mass
-            .ok_or_else(|| LadduPhysicsError::MissingParticleProperty { property: "mass" })
+            .ok_or(LadduPhysicsError::MissingParticleProperty { property: "mass" })
     }
 
     /// Construct a particle with no specified properties.
@@ -517,13 +517,12 @@ impl ParticleProperties {
     /// Set whether the particle is its own antiparticle.
     pub fn with_self_conjugate(mut self, value: bool) -> LadduPhysicsResult<Self> {
         if value {
-            if let (Some(species), Some(anti)) = (&self.species, &self.antiparticle_species) {
-                if species != anti {
+            if let (Some(species), Some(anti)) = (&self.species, &self.antiparticle_species)
+                && species != anti {
                     return Err(LadduPhysicsError::invalid_relation(
                         "self-conjugate particle cannot have distinct species and antiparticle_species",
                     ));
                 }
-            }
             match (&self.species, &self.antiparticle_species) {
                 (Some(species), None) => self.antiparticle_species = Some(species.clone()),
                 (None, Some(anti)) => self.species = Some(anti.clone()),
@@ -655,13 +654,12 @@ impl ParticleProperties {
     ///
     /// Returns an error if the spin and statistics do not match.
     pub fn with_statistics(mut self, s: Statistics) -> LadduPhysicsResult<Self> {
-        if let Some(spin) = self.spin {
-            if Statistics::from_spin(spin) != s {
+        if let Some(spin) = self.spin
+            && Statistics::from_spin(spin) != s {
                 return Err(LadduPhysicsError::invalid_relation(
                     "spin and statistics must be consistent",
                 ));
             }
-        }
         self.statistics = Some(s);
         Ok(self)
     }

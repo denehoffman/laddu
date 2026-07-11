@@ -18,7 +18,7 @@ use crate::{
     optimize::*,
 };
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct CompileOptions {
     pipeline: OptimizationPipeline,
     cache_policy: CachePolicy,
@@ -65,15 +65,6 @@ impl CompileOptions {
     }
 }
 
-impl Default for CompileOptions {
-    fn default() -> Self {
-        Self {
-            pipeline: OptimizationPipeline::default(),
-            cache_policy: CachePolicy::default(),
-        }
-    }
-}
-
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub enum CachePolicy {
     Off,
@@ -111,7 +102,7 @@ impl CachePlan {
             .iter()
             .enumerate()
             .map(|(index, _)| {
-                let id = ExprId::from_index(index).expect("graph too large");
+                let id = ExprId::from_index(index);
                 let facts = *facts.get(id).expect("facts are complete for graph");
                 policy.accepts(facts)
             })
@@ -135,9 +126,8 @@ impl CachePlan {
             .into_iter()
             .zip(frontier)
             .enumerate()
-            .filter_map(|(index, (cacheable, frontier))| {
-                (cacheable && frontier).then(|| {
-                    let id = ExprId::from_index(index).expect("graph too large");
+            .filter(|&(_index, (cacheable, frontier))| cacheable && frontier ).map(|(index, (_cacheable, _frontier))| {
+                    let id = ExprId::from_index(index);
                     let facts = *facts.get(id).expect("facts are complete for graph");
                     CacheEntry {
                         node: id,
@@ -146,7 +136,6 @@ impl CachePlan {
                         dependency: facts.dependency,
                     }
                 })
-            })
             .collect::<Vec<_>>();
         let mut required = vec![false; graph.nodes().len()];
         for entry in &entries {
@@ -155,9 +144,7 @@ impl CachePlan {
         let materialization_nodes = required
             .into_iter()
             .enumerate()
-            .filter_map(|(index, required)| {
-                required.then(|| ExprId::from_index(index).expect("graph too large"))
-            })
+            .filter(|&(_index, required)| required).map(|(index, _required)| ExprId::from_index(index))
             .collect();
         Self {
             entries,
@@ -377,7 +364,7 @@ fn bake_fixed_parameters(graph: &ExprGraph) -> ExprGraph {
     let metadata = (0..graph.nodes().len())
         .map(|index| {
             graph
-                .metadata(ExprId::from_index(index).expect("graph too large"))
+                .metadata(ExprId::from_index(index))
                 .expect("graph metadata is complete")
                 .clone()
         })
@@ -388,11 +375,8 @@ fn bake_fixed_parameters(graph: &ExprGraph) -> ExprGraph {
 pub fn collect_params(graph: &ExprGraph) -> CompileResult<ParamLayout> {
     let mut registry = ParamRegistry::new();
     for node in graph.nodes() {
-        match node {
-            ExprNode::ScalarParam(spec) => {
-                registry.register(spec.clone())?;
-            }
-            _ => {}
+        if let ExprNode::ScalarParam(spec) = node {
+            registry.register(spec.clone())?;
         }
     }
     Ok(registry.layout()?)
@@ -449,12 +433,12 @@ mod tests {
                 .enumerate()
                 .map(|(index, _)| {
                     graph
-                        .metadata(ExprId::from_index(index).expect("graph too large"))
+                        .metadata(ExprId::from_index(index))
                         .expect("graph metadata length is validated")
                         .clone()
                 })
                 .collect::<Vec<_>>();
-            let root = ExprId::from_index(nodes.len()).expect("graph too large");
+            let root = ExprId::from_index(nodes.len());
             nodes.push(ExprNode::Unary {
                 op: UnaryOp::Exp,
                 input: graph.root(),
@@ -1623,7 +1607,7 @@ mod tests {
         for compiled in [component, element] {
             assert_eq!(compiled.graph().nodes().len(), 1);
             assert!(matches!(
-                compiled.graph().node(ExprId::from_index(0).unwrap()),
+                compiled.graph().node(ExprId::from_index(0)),
                 Some(ExprNode::ScalarParam(parameter)) if parameter.name() == "y"
             ));
         }
@@ -1631,8 +1615,8 @@ mod tests {
 
     #[test]
     fn matrix_vector_identities_and_zeroes_simplify() {
-        let x = Expr::from(event_scalar("x"));
-        let y = Expr::from(event_scalar("y"));
+        let x = event_scalar("x");
+        let y = event_scalar("y");
         let identity = matrix([[1.0, 0.0], [0.0, 1.0]]);
         let zero_matrix = matrix([[0.0, 0.0], [0.0, 0.0]]);
         let vector = vector([x, y]);
@@ -1653,8 +1637,8 @@ mod tests {
 
     #[test]
     fn dot_and_matvec_lower_to_scalar_arithmetic_when_cheaper() {
-        let x = Expr::from(event_scalar("x"));
-        let y = Expr::from(event_scalar("y"));
+        let x = event_scalar("x");
+        let y = event_scalar("y");
         let dot_product =
             CompiledModel::from_expr(&dot(vector([x.clone(), y.clone()]), vector([2.0, 3.0])))
                 .unwrap();
@@ -1767,7 +1751,7 @@ mod tests {
 
     #[test]
     fn matrix_multiplication_identity_and_zero_simplify() {
-        let x = Expr::from(event_scalar("x"));
+        let x = event_scalar("x");
         let matrix_value = matrix([[x, 2.0.into()], [3.0.into(), 4.0.into()]]);
         let identity = matrix([[1.0, 0.0], [0.0, 1.0]]);
         let identity_product = CompiledModel::from_expr(&matmul(identity, matrix_value)).unwrap();
@@ -1912,7 +1896,7 @@ mod tests {
 
     #[test]
     fn event_dependent_cache_policy_excludes_parameter_dependent_values() {
-        let x = Expr::from(event_scalar("x"));
+        let x = event_scalar("x");
         let y = Expr::from(parameter!("y"));
         let fixed = Expr::from(Parameter::fixed("fixed", 2.0));
         let model = x.clone() * 2.0 + x.sin() + y.clone() * event_scalar("x") + fixed * x;
@@ -1975,7 +1959,7 @@ mod tests {
             .nodes()
             .iter()
             .position(|node| matches!(node, ExprNode::EventScalar(name) if name.as_ref() == "mass"))
-            .and_then(ExprId::from_index)
+            .map(ExprId::from_index)
             .unwrap();
         let root_facts = compiled.node_facts(compiled.graph().root()).unwrap();
 

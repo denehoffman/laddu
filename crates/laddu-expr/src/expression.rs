@@ -10,11 +10,11 @@ use serde::{Deserialize, Serialize};
 use crate::{ExprGraphError, ExprShapeError, ParamError, ParamResult, parameters::Parameter};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct ExprId(u32);
+pub struct ExprId(u64);
 
 impl ExprId {
-    pub fn from_index(index: usize) -> Option<Self> {
-        u32::try_from(index).ok().map(Self)
+    pub fn from_index(index: usize) -> Self {
+        Self(index as u64)
     }
 
     pub fn index(self) -> usize {
@@ -1291,7 +1291,7 @@ impl ExprGraph {
                 },
             }
         };
-        let id = ExprId::from_index(nodes.len()).expect("expression graph exceeds ExprId range");
+        let id = ExprId::from_index(nodes.len());
         nodes.push(node);
         metadata.push(if matches || retain_all {
             old_metadata.clone()
@@ -2027,7 +2027,7 @@ impl GraphBuilder {
             }
         };
 
-        let id = ExprId(self.nodes.len() as u32);
+        let id = ExprId::from_index(self.nodes.len());
         self.nodes.push(node);
         self.metadata.push(expr.node.metadata.clone());
         self.ids.insert(key, id);
@@ -2171,14 +2171,14 @@ mod tests {
     fn display_rounds_tiny_float_representation_noise() {
         let metadata = ExprMetadata::new(ExprSourceKind::Const);
         let graph = ExprGraph::from_parts(
-            ExprId::from_index(2).unwrap(),
+            ExprId::from_index(2),
             vec![
                 ExprNode::RealConst(2.9999999999999996),
                 ExprNode::ComplexConst(Complex64::new(0.30000000000000004, 1.9999999999999998)),
                 ExprNode::Binary {
                     op: BinaryOp::Add,
-                    lhs: ExprId::from_index(0).unwrap(),
-                    rhs: ExprId::from_index(1).unwrap(),
+                    lhs: ExprId::from_index(0),
+                    rhs: ExprId::from_index(1),
                 },
             ],
             vec![metadata.clone(), metadata.clone(), metadata],
@@ -2209,12 +2209,12 @@ mod tests {
     fn graph_from_parts_validates_structure() {
         let metadata = ExprMetadata::new(ExprSourceKind::Const);
         let graph = ExprGraph::from_parts(
-            ExprId::from_index(1).unwrap(),
+            ExprId::from_index(1),
             vec![
                 ExprNode::RealConst(1.0),
                 ExprNode::Unary {
                     op: UnaryOp::Neg,
-                    input: ExprId::from_index(0).unwrap(),
+                    input: ExprId::from_index(0),
                 },
             ],
             vec![metadata.clone(), metadata.clone()],
@@ -2229,7 +2229,7 @@ mod tests {
         ));
 
         let err = ExprGraph::from_parts(
-            ExprId::from_index(0).unwrap(),
+            ExprId::from_index(0),
             vec![ExprNode::RealConst(1.0)],
             Vec::new(),
         )
@@ -2237,10 +2237,10 @@ mod tests {
         assert!(matches!(err, ExprGraphError::MetadataLength { .. }));
 
         let err = ExprGraph::from_parts(
-            ExprId::from_index(0).unwrap(),
+            ExprId::from_index(0),
             vec![ExprNode::Unary {
                 op: UnaryOp::Neg,
-                input: ExprId::from_index(0).unwrap(),
+                input: ExprId::from_index(0),
             }],
             vec![metadata],
         )

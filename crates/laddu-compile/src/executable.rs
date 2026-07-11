@@ -280,6 +280,7 @@ impl ExecutablePlan {
         &self.constant_factor_matrices
     }
 
+    #[allow(clippy::type_complexity)]
     fn solve_component_plans(
         model: &CompiledModel,
     ) -> (
@@ -763,15 +764,8 @@ impl ExecutablePlan {
         flags
             .into_iter()
             .enumerate()
-            .filter_map(|(index, required)| {
-                required.then(|| {
-                    ExprId::from_index(index).ok_or_else(|| {
-                        crate::CompileError::InvalidExecutablePlan(
-                            "expression graph exceeds supported node count".into(),
-                        )
-                    })
-                })
-            })
+            .filter(|&(_index, required)| required)
+            .map(|(index, _required)| Ok(ExprId::from_index(index)))
             .collect()
     }
 }

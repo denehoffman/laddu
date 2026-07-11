@@ -1571,6 +1571,7 @@ impl CpuPlan {
         Ok(plan.root().complex_value(invariant, values))
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn evaluate_cache_block_prepared(
         &self,
         params: &ParamValues,
@@ -4650,8 +4651,7 @@ impl<'a> ReverseDerivativeWorkspace<'a> {
             }
         } else {
             for index in (0..self.plan.graph.nodes().len()).rev() {
-                let id =
-                    ExprId::from_index(index).expect("expression graph exceeds ExprId capacity");
+                let id = ExprId::from_index(index);
                 self.propagate_node(id)?;
             }
         }
@@ -5079,7 +5079,7 @@ impl<'a> ReverseDerivativeWorkspace<'a> {
     ) -> RuntimeResult<()> {
         let (rows, cols, matrix_value) = self.primal_matrix(matrix)?;
         let rhs_value = self.primal_vector(rhs)?;
-        let solution = self.primal_vector(ExprId::from_index(index).expect("valid solve index"))?;
+        let solution = self.primal_vector(ExprId::from_index(index))?;
         if rows != cols || rows != rhs_value.len() || rows != adjoint.len() {
             return Err(RuntimeError::InvalidShape {
                 index,

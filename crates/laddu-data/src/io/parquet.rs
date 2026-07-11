@@ -506,19 +506,12 @@ pub struct ParquetSink {
 }
 
 #[derive(Clone, Debug)]
+#[derive(Default)]
 pub struct ParquetWriteOptions {
     pub writer_properties: Option<WriterProperties>,
     pub schema_write: SchemaWriteOptions,
 }
 
-impl Default for ParquetWriteOptions {
-    fn default() -> Self {
-        Self {
-            writer_properties: None,
-            schema_write: SchemaWriteOptions::default(),
-        }
-    }
-}
 
 impl ParquetSink {
     pub fn create(path: impl Into<PathBuf>) -> Self {
@@ -773,7 +766,7 @@ mod tests {
 
     fn v(x: f64) -> RealVec4 {
         RealVec4 {
-            x: x,
+            x,
             y: x + 0.1,
             z: x + 0.2,
             t: x + 0.3,

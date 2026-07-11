@@ -42,7 +42,7 @@ impl AutodiffPlan {
 
         let mut active_nodes = vec![Vec::new(); parameter_count];
         for (index, dependencies) in node_dependencies.iter().enumerate() {
-            let id = ExprId::from_index(index).expect("expression graph exceeds ExprId capacity");
+            let id = ExprId::from_index(index);
             for (parameter, active) in dependencies.iter().copied().enumerate() {
                 if active {
                     active_nodes[parameter].push(id);
