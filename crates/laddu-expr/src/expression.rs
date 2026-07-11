@@ -7,7 +7,7 @@ use std::{
 use num::complex::Complex64;
 use serde::{Deserialize, Serialize};
 
-use crate::{ExprGraphError, ExprShapeError, parameters::Parameter};
+use crate::{ExprGraphError, ExprShapeError, ParamError, ParamResult, parameters::Parameter};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ExprId(u32);
@@ -1128,6 +1128,45 @@ pub struct ExprGraph {
 }
 
 impl ExprGraph {
+    /// Return a copy of this graph with the named scalar parameter fixed.
+    pub fn fix_parameter(&self, name: &str, value: f64) -> ParamResult<Self> {
+        self.map_parameter(name, |parameter| {
+            if !parameter.bounds_spec().contains(value) {
+                return Err(ParamError::FixedValueOutOfBounds {
+                    name: name.to_owned(),
+                    value,
+                });
+            }
+            Ok(parameter.clone().with_fixed_value(value))
+        })
+    }
+
+    /// Return a copy of this graph with the named scalar parameter free.
+    pub fn free_parameter(&self, name: &str) -> ParamResult<Self> {
+        self.map_parameter(name, |parameter| Ok(parameter.clone().with_free()))
+    }
+
+    fn map_parameter(
+        &self,
+        name: &str,
+        mut map: impl FnMut(&Parameter) -> ParamResult<Parameter>,
+    ) -> ParamResult<Self> {
+        let mut found = false;
+        let mut graph = self.clone();
+        for node in &mut graph.nodes {
+            if let ExprNode::ScalarParam(parameter) = node
+                && parameter.name() == name
+            {
+                *parameter = map(parameter)?;
+                found = true;
+            }
+        }
+        if !found {
+            return Err(ParamError::UnknownName(name.to_owned()));
+        }
+        Ok(graph)
+    }
+
     pub fn project_tags<'a>(&self, tags: impl IntoIterator<Item = &'a str>) -> Self {
         let tags: Vec<_> = tags.into_iter().collect();
         let mut nodes = Vec::new();

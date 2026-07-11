@@ -266,6 +266,7 @@ impl CacheEntry {
 
 #[derive(Clone, Debug)]
 pub struct CompiledModel {
+    source_graph: ExprGraph,
     graph: ExprGraph,
     params: ParamLayout,
     facts: GraphFacts,
@@ -274,7 +275,7 @@ pub struct CompiledModel {
 
 impl CompiledModel {
     pub fn project_tags<'a>(&self, tags: impl IntoIterator<Item = &'a str>) -> CompileResult<Self> {
-        Self::from_graph(self.graph.project_tags(tags))
+        Self::from_graph(self.source_graph.project_tags(tags))
     }
 
     pub fn from_expr(expr: &Expr) -> CompileResult<Self> {
@@ -294,10 +295,12 @@ impl CompiledModel {
         options: &CompileOptions,
     ) -> CompileResult<Self> {
         let params = collect_params(&graph)?;
-        let graph = options.pipeline.run(graph)?;
+        let source_graph = graph;
+        let graph = options.pipeline.run(bake_fixed_parameters(&source_graph))?;
         let facts = GraphFacts::analyze(&graph);
         let cache_plan = CachePlan::new(&graph, &facts, options.cache_policy);
         Ok(Self {
+            source_graph,
             graph,
             params,
             facts,
@@ -307,6 +310,35 @@ impl CompiledModel {
 
     pub fn graph(&self) -> &ExprGraph {
         &self.graph
+    }
+
+    /// Fix a parameter by name and recompile the model.
+    pub fn fix_parameter(&self, name: &str, value: f64) -> CompileResult<Self> {
+        self.fix_parameter_with_options(name, value, &CompileOptions::default())
+    }
+
+    /// Fix a parameter by name and recompile with explicit options.
+    pub fn fix_parameter_with_options(
+        &self,
+        name: &str,
+        value: f64,
+        options: &CompileOptions,
+    ) -> CompileResult<Self> {
+        Self::from_graph_with_options(self.source_graph.fix_parameter(name, value)?, options)
+    }
+
+    /// Free a parameter by name and recompile the model.
+    pub fn free_parameter(&self, name: &str) -> CompileResult<Self> {
+        self.free_parameter_with_options(name, &CompileOptions::default())
+    }
+
+    /// Free a parameter by name and recompile with explicit options.
+    pub fn free_parameter_with_options(
+        &self,
+        name: &str,
+        options: &CompileOptions,
+    ) -> CompileResult<Self> {
+        Self::from_graph_with_options(self.source_graph.free_parameter(name)?, options)
     }
 
     pub fn params(&self) -> &ParamLayout {
@@ -328,6 +360,29 @@ impl CompiledModel {
     pub fn node_facts(&self, id: ExprId) -> Option<&NodeFacts> {
         self.facts.get(id)
     }
+}
+
+fn bake_fixed_parameters(graph: &ExprGraph) -> ExprGraph {
+    let nodes = graph
+        .nodes()
+        .iter()
+        .map(|node| match node {
+            ExprNode::ScalarParam(parameter) => match parameter.state() {
+                laddu_expr::parameters::ParamState::Fixed(value) => ExprNode::RealConst(*value),
+                laddu_expr::parameters::ParamState::Free => node.clone(),
+            },
+            _ => node.clone(),
+        })
+        .collect();
+    let metadata = (0..graph.nodes().len())
+        .map(|index| {
+            graph
+                .metadata(ExprId::from_index(index).expect("graph too large"))
+                .expect("graph metadata is complete")
+                .clone()
+        })
+        .collect();
+    ExprGraph::from_parts(graph.root(), nodes, metadata).expect("source graph is valid")
 }
 
 pub fn collect_params(graph: &ExprGraph) -> CompileResult<ParamLayout> {
@@ -1873,6 +1928,42 @@ mod tests {
     }
 
     #[test]
+    fn fixed_parameters_are_baked_and_folded() {
+        let expression = (parameter!("scale") + 1.0) * event_scalar("x");
+        let compiled = CompiledModel::from_expr(&expression)
+            .unwrap()
+            .fix_parameter("scale", 2.0)
+            .unwrap();
+
+        assert_eq!(compiled.params().n_free(), 0);
+        assert!(!compiled.graph().nodes().iter().any(
+            |node| matches!(node, ExprNode::ScalarParam(parameter) if parameter.name() == "scale")
+        ));
+        assert!(
+            compiled
+                .graph()
+                .nodes()
+                .iter()
+                .any(|node| matches!(node, ExprNode::RealConst(value) if *value == 3.0))
+        );
+    }
+
+    #[test]
+    fn freeing_a_compiled_parameter_recompiles_from_the_source_graph() {
+        let expression = parameter!("scale") * event_scalar("x");
+        let fixed = CompiledModel::from_expr(&expression)
+            .unwrap()
+            .fix_parameter("scale", 2.0)
+            .unwrap();
+        let freed = fixed.free_parameter("scale").unwrap();
+
+        assert_eq!(freed.params().n_free(), 1);
+        assert!(freed.graph().nodes().iter().any(
+            |node| matches!(node, ExprNode::ScalarParam(parameter) if parameter.name() == "scale" && parameter.is_free())
+        ));
+    }
+
+    #[test]
     fn facts_track_number_class_and_dependencies() {
         let model =
             event_scalar("mass") * Expr::from(Parameter::fixed("scale", 2.0)) + parameter!("x");
@@ -1884,13 +1975,6 @@ mod tests {
             .nodes()
             .iter()
             .position(|node| matches!(node, ExprNode::EventScalar(name) if name.as_ref() == "mass"))
-            .and_then(ExprId::from_index)
-            .unwrap();
-        let fixed_id = compiled
-            .graph()
-            .nodes()
-            .iter()
-            .position(|node| matches!(node, ExprNode::ScalarParam(parameter) if parameter.name() == "scale"))
             .and_then(ExprId::from_index)
             .unwrap();
         let root_facts = compiled.node_facts(compiled.graph().root()).unwrap();
@@ -1906,12 +1990,15 @@ mod tests {
                 .dependency
                 .depends_on_event
         );
+        assert!(!compiled.graph().nodes().iter().any(
+            |node| matches!(node, ExprNode::ScalarParam(parameter) if parameter.name() == "scale")
+        ));
         assert!(
             compiled
-                .node_facts(fixed_id)
-                .unwrap()
-                .dependency
-                .depends_on_fixed_params
+                .graph()
+                .nodes()
+                .iter()
+                .any(|node| matches!(node, ExprNode::RealConst(value) if *value == 2.0))
         );
         assert!(root_facts.dependency.depends_on_free_params);
         assert!(root_facts.dependency.depends_on_event);

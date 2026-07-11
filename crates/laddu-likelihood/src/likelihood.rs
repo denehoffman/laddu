@@ -582,6 +582,146 @@ impl LikelihoodTerm for NllTerm {
     }
 }
 
+/// An extended unbinned negative-log-likelihood term.
+///
+/// Unlike [`NllTerm`], the normalization is the expected event yield rather
+/// than a shape-only normalization raised to the observed weighted yield.
+#[derive(Clone)]
+pub struct ExtendedNllTerm {
+    inner: NllTerm,
+}
+
+impl std::fmt::Debug for ExtendedNllTerm {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ExtendedNllTerm")
+            .field("name", &self.inner.name)
+            .field("prepared", &self.inner.data.is_some())
+            .finish_non_exhaustive()
+    }
+}
+
+impl ExtendedNllTerm {
+    pub fn new(
+        name: impl Into<String>,
+        model: &CompiledModel,
+        data: &Dataset,
+        accepted_mc: &Dataset,
+    ) -> LikelihoodResult<Self> {
+        Ok(Self {
+            inner: NllTerm::new(name, model, data, accepted_mc)?,
+        })
+    }
+
+    pub fn data(&self) -> LikelihoodResult<&PreparedDataset> {
+        self.inner.data()
+    }
+
+    pub fn accepted_mc(&self) -> LikelihoodResult<&PreparedDataset> {
+        self.inner.accepted_mc()
+    }
+
+    pub fn data_weight_sum(&self) -> LikelihoodResult<f64> {
+        self.inner.data_weight_sum()
+    }
+
+    pub fn data_log_intensity_sum(&self, free: &[f64]) -> LikelihoodResult<f64> {
+        self.inner.data_log_intensity_sum(free)
+    }
+
+    pub fn accepted_normalization(&self, free: &[f64]) -> LikelihoodResult<f64> {
+        self.inner.accepted_normalization(free)
+    }
+}
+
+impl LikelihoodTerm for ExtendedNllTerm {
+    fn name(&self) -> &str {
+        self.inner.name()
+    }
+
+    fn register_params(&self, registry: &mut ParamRegistry) -> LikelihoodResult<()> {
+        self.inner.register_params(registry)
+    }
+
+    fn resolve(
+        &mut self,
+        global_params: Arc<ParamLayout>,
+        execution: &Execution,
+    ) -> LikelihoodResult<()> {
+        self.inner.resolve(global_params, execution)
+    }
+
+    fn nll(&self, params: &ParamValues, execution: &Execution) -> LikelihoodResult<f64> {
+        let local_params = self.inner.local_values(params)?;
+        let normalization = positive_integral(
+            "accepted MC",
+            self.inner
+                .plan()?
+                .reduce(
+                    execution,
+                    &local_params,
+                    self.inner.accepted_mc()?,
+                    ReductionPlan::weighted_positive_real(),
+                )
+                .map_err(|error| map_reduction_error("accepted MC", error))?,
+        )?;
+        let data_log_sum = self
+            .inner
+            .plan()?
+            .reduce(
+                execution,
+                &local_params,
+                self.inner.data()?,
+                ReductionPlan::weighted_log_positive_real(),
+            )
+            .map_err(|error| map_reduction_error("data", error))?;
+        Ok(normalization - data_log_sum)
+    }
+
+    fn nll_with_gradient(
+        &self,
+        params: &ParamValues,
+        gradient: &mut [f64],
+        execution: &Execution,
+    ) -> LikelihoodResult<f64> {
+        let local_params = self.inner.local_values(params)?;
+        let normalization_evaluation = self
+            .inner
+            .plan()?
+            .reduce_with_gradient(
+                execution,
+                &local_params,
+                self.inner.accepted_mc()?,
+                ReductionPlan::weighted_positive_real(),
+            )
+            .map_err(|error| map_reduction_error("accepted MC", error))?;
+        let (normalization, normalization_gradient) = normalization_evaluation.into_parts();
+        let normalization = positive_integral("accepted MC", normalization)?;
+        let data_evaluation = self
+            .inner
+            .plan()?
+            .reduce_with_gradient(
+                execution,
+                &local_params,
+                self.inner.data()?,
+                ReductionPlan::weighted_log_positive_real(),
+            )
+            .map_err(|error| map_reduction_error("data", error))?;
+        let (data_log_sum, data_log_gradient) = data_evaluation.into_parts();
+        let local_gradient = normalization_gradient
+            .into_iter()
+            .zip(data_log_gradient)
+            .map(|(normalization_derivative, data_derivative)| {
+                normalization_derivative - data_derivative
+            })
+            .collect::<Vec<_>>();
+        self.inner
+            .resolved_projection()?
+            .scatter_gradient(&local_gradient, gradient)?;
+        Ok(normalization - data_log_sum)
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct RidgePenalty {
     inner: CpuParameterPenalty,
@@ -1251,6 +1391,31 @@ mod tests {
 
         let expected = 2.0 * 2.0_f64.ln() - 1.0_f64.ln() - 1.5_f64.ln();
         assert_relative_eq!(likelihood.nll(&params).unwrap(), expected);
+    }
+
+    #[test]
+    fn extended_nll_uses_expected_yield_and_has_an_analytic_gradient() {
+        let expr = event_scalar("x") * parameter!("scale", initial: 0.5);
+        let model = CompiledModel::from_expr(&expr).unwrap();
+        let data = weighted_dataset(&[(2.0, 1.0), (3.0, 1.0)]);
+        let accepted_mc = weighted_dataset(&[(4.0, 1.0)]);
+        let likelihood =
+            Likelihood::new([
+                ExtendedNllTerm::new("extended", &model, &data, &accepted_mc)
+                    .unwrap()
+                    .boxed(),
+            ])
+            .unwrap();
+        let params = likelihood.default_params();
+        let evaluation = likelihood.nll_with_gradient(&params).unwrap();
+        let expected = 2.0 - 1.0_f64.ln() - 1.5_f64.ln();
+
+        assert_relative_eq!(evaluation.value(), expected);
+        assert_relative_eq!(
+            evaluation.gradient()[0],
+            finite_difference_nll(&likelihood, &params, 0),
+            epsilon = 1.0e-8
+        );
     }
 
     #[test]

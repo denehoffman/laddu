@@ -118,6 +118,15 @@ impl Parameter {
         self
     }
 
+    fn set_free(&mut self) {
+        self.state = ParamState::Free;
+    }
+
+    pub fn with_free(mut self) -> Self {
+        self.set_free();
+        self
+    }
+
     fn set_initial(&mut self, initial: impl Into<InitialSpec>) {
         self.initial = initial.into();
     }

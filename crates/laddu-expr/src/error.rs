@@ -9,6 +9,8 @@ pub enum ParamError {
     EmptyName,
     #[error("duplicate parameter name: {0}")]
     DuplicateName(String),
+    #[error("unknown parameter: {0}")]
+    UnknownName(String),
     #[error("parameter conflict for {name}: {reason}")]
     ParameterConflict { name: String, reason: String },
     #[error("invalid parameter id #{id} for layout of size {len}")]
