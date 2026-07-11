@@ -13,12 +13,16 @@ pub use laddu_runtime as runtime;
 pub use laddu_expr::parameter;
 pub use laddu_expr::parameters::Parameter;
 pub use laddu_expr::{
-    BinaryOp, ComponentIndex, Expr, ExprGraph, ExprId, ExprMetadata, ExprNode, ExprShape,
-    ExprShapeError, ExprSourceKind, P4Component, UnaryOp, atan2, cis, complex, dot,
-    event_p4_component, event_scalar, matmul, matrix, matrix_from_flat, matvec, polar_complex,
-    solve, vector,
+    BinaryOp, ColorPreset, ComponentIndex, DisplayColor, Expr, ExprGraph, ExprGraphDotDisplay,
+    ExprGraphTreeDisplay, ExprId, ExprMetadata, ExprNode, ExprNodeKind, ExprShape, ExprShapeError,
+    ExprSourceKind, NodeSelector, NodeStyle, NodeStyleRule, P4Component, RepeatedSubtrees, UnaryOp,
+    atan2, cis, complex, dot, event_p4_component, event_scalar, matmul, matrix, matrix_from_flat,
+    matvec, polar_complex, solve, vector,
 };
 pub use laddu_runtime::{BinSpec, Comparison, DatasetBin, DatasetExprExt, Predicate};
+
+#[cfg(feature = "svg")]
+pub use laddu_expr::GraphRenderError;
 
 #[cfg(feature = "amplitudes")]
 pub use laddu_amplitudes as amplitudes;
@@ -55,12 +59,15 @@ pub mod prelude {
         ParamState, ParamValues, Parameter,
     };
     pub use laddu_expr::{
-        BinaryOp, ComponentIndex, Expr, ExprGraph, ExprId, ExprMetadata, ExprNode, ExprShape,
-        ExprShapeError, ExprSourceKind, P4Component, UnaryOp, atan2, cis, complex, dot,
-        event_p4_component, event_scalar, matmul, matrix, matrix_from_flat, matvec, polar_complex,
-        solve, vector,
+        BinaryOp, ColorPreset, ComponentIndex, DisplayColor, Expr, ExprGraph, ExprGraphDotDisplay,
+        ExprGraphTreeDisplay, ExprId, ExprMetadata, ExprNode, ExprNodeKind, ExprShape,
+        ExprShapeError, ExprSourceKind, NodeSelector, NodeStyle, NodeStyleRule, P4Component,
+        RepeatedSubtrees, UnaryOp, atan2, cis, complex, dot, event_p4_component, event_scalar,
+        matmul, matrix, matrix_from_flat, matvec, polar_complex, solve, vector,
     };
     pub use laddu_kernel::{KernelSpec, kernel};
+    #[cfg(feature = "svg")]
+    pub use laddu_expr::GraphRenderError;
     #[cfg(feature = "likelihood")]
     pub use laddu_likelihood::{
         CrossSectionIntegrals, LassoPenalty, Likelihood, LikelihoodError, LikelihoodEvaluation,

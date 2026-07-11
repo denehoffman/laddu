@@ -299,6 +299,14 @@ impl CompiledModel {
         &self.graph
     }
 
+    pub fn display_tree(&self) -> laddu_expr::ExprGraphTreeDisplay<'_> {
+        self.graph.display_tree()
+    }
+
+    pub fn display_dot(&self) -> laddu_expr::ExprGraphDotDisplay<'_> {
+        self.graph.display_dot()
+    }
+
     /// Fix a parameter by name and recompile the model.
     pub fn fix_parameter(&self, name: &str, value: f64) -> CompileResult<Self> {
         self.fix_parameter_with_options(name, value, &CompileOptions::default())

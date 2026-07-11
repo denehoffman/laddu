@@ -1361,8 +1361,12 @@ impl ExprGraph {
         self.metadata.get(id.index())
     }
 
-    pub fn display_tree(&self) -> ExprGraphTreeDisplay<'_> {
-        ExprGraphTreeDisplay { graph: self }
+    pub fn display_tree(&self) -> crate::ExprGraphTreeDisplay<'_> {
+        crate::ExprGraphTreeDisplay::new(self)
+    }
+
+    pub fn display_dot(&self) -> crate::ExprGraphDotDisplay<'_> {
+        crate::ExprGraphDotDisplay::new(self)
     }
 
     fn format_expression(&self, id: ExprId) -> String {
@@ -1734,39 +1738,7 @@ impl ExprGraph {
         }
     }
 
-    fn fmt_node(
-        &self,
-        f: &mut fmt::Formatter<'_>,
-        id: ExprId,
-        prefix: &str,
-        edge: Option<(&str, bool)>,
-    ) -> fmt::Result {
-        let Some(node) = self.node(id) else {
-            return write_tree_line(f, prefix, edge, &format!("#{} <missing node>", id.index()));
-        };
-        let line = self.node_label(id, node);
-        write_tree_line(f, prefix, edge, &line)?;
-
-        let children = node_children(node);
-        let child_prefix = match edge {
-            Some((_, true)) => format!("{prefix}   "),
-            Some((_, false)) => format!("{prefix}┃  "),
-            None => prefix.to_owned(),
-        };
-
-        for (index, (label, child)) in children.iter().enumerate() {
-            self.fmt_node(
-                f,
-                *child,
-                &child_prefix,
-                Some((label.as_str(), index + 1 == children.len())),
-            )?;
-        }
-
-        Ok(())
-    }
-
-    fn node_label(&self, id: ExprId, node: &ExprNode) -> String {
+    pub(crate) fn node_label(&self, id: ExprId, node: &ExprNode) -> String {
         let mut label = match node {
             ExprNode::RealConst(value) => {
                 format!(
@@ -1843,17 +1815,6 @@ impl fmt::Display for ExprGraph {
     }
 }
 
-pub struct ExprGraphTreeDisplay<'a> {
-    graph: &'a ExprGraph,
-}
-
-impl fmt::Display for ExprGraphTreeDisplay<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "ExprGraph(root=#{})", self.graph.root.index())?;
-        self.graph.fmt_node(f, self.graph.root, "", None)
-    }
-}
-
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum ExprPrecedence {
     Lowest,
@@ -1865,21 +1826,7 @@ enum ExprPrecedence {
     Atom,
 }
 
-fn write_tree_line(
-    f: &mut fmt::Formatter<'_>,
-    prefix: &str,
-    edge: Option<(&str, bool)>,
-    text: &str,
-) -> fmt::Result {
-    if let Some((label, is_last)) = edge {
-        let connector = if is_last { "┗" } else { "┣" };
-        writeln!(f, "{prefix}{connector} {label}: {text}")
-    } else {
-        writeln!(f, "{text}")
-    }
-}
-
-fn node_children(node: &ExprNode) -> Vec<(String, ExprId)> {
+pub(crate) fn node_children(node: &ExprNode) -> Vec<(String, ExprId)> {
     match node {
         ExprNode::RealConst(_)
         | ExprNode::ComplexConst(_)

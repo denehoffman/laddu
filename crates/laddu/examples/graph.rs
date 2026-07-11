@@ -1,7 +1,9 @@
 use std::error::Error;
 
 use laddu::compile::CompiledModel;
-use laddu::parameter;
+use laddu::{
+    ColorPreset, DisplayColor, NodeSelector, NodeStyle, NodeStyleRule, RepeatedSubtrees, parameter,
+};
 use laddu_physics::math::{WignerDMatrix, spherical_harmonic};
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -10,17 +12,29 @@ fn main() -> Result<(), Box<dyn Error>> {
     let phi = parameter!("phi");
     let model =
         (w.D(&costheta, &phi, -&phi) * spherical_harmonic(4, 2, &costheta, &phi)?).norm_sqr();
-    println!(
-        "Raw graph:\n{}\n\n{}",
-        model.to_graph().display_tree(),
-        model.to_graph()
-    );
+    let raw = model.to_graph();
+    println!("Raw graph:\n{}\n\n{}", raw.display_tree(), raw);
 
     let compiled = CompiledModel::from_expr(&model)?;
     println!(
         "Optimized graph:\n{}\n\n{}",
-        compiled.graph().display_tree(),
+        compiled.display_tree(),
         compiled.graph()
     );
+
+    let highlighted = NodeStyleRule::new(
+        NodeSelector::Name("costheta".to_owned()),
+        NodeStyle::new().with_foreground(DisplayColor::rgb(255, 128, 0)),
+    );
+    let dot = compiled
+        .display_dot()
+        .repeated_subtrees(RepeatedSubtrees::Reference)
+        .with_preset(ColorPreset::Light)
+        .with_style_rule(highlighted);
+    println!("Optimized graph as compact, colored DOT:\n{dot}");
+
+    #[cfg(feature = "svg")]
+    std::fs::write("model.svg", dot.render_svg()?)?;
+
     Ok(())
 }

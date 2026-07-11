@@ -28,6 +28,7 @@ likelihood = ["dep:laddu-likelihood"]
 jit = ["laddu-runtime/jit", "laddu-likelihood?/jit"]
 mpi = ["laddu-data/mpi", "laddu-runtime/mpi", "laddu-likelihood?/mpi"]
 wgpu = ["dep:laddu-wgpu", "laddu-runtime/wgpu", "laddu-likelihood?/wgpu"]
+svg = ["laddu-expr/svg"]
 
 [dev-dependencies]
 criterion.workspace = true
