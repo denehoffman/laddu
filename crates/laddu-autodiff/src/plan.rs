@@ -1,8 +1,9 @@
 use crate::AutodiffResult;
 use laddu_compile::CompiledModel;
 use laddu_expr::{ExprId, ExprNode};
+use serde::{Deserialize, Serialize};
 
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum AutodiffMode {
     #[default]
     Forward,

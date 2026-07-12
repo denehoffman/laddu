@@ -9,10 +9,11 @@ use laddu_data::{
 };
 use laddu_expr::{Expr, ExprShape, ValueKind};
 use num::complex::Complex64;
+use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::{Execution, PreparedModel, RuntimeError, RuntimeResult};
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Comparison {
     Lt,
     Le,
@@ -23,7 +24,7 @@ pub enum Comparison {
 }
 
 /// Determines which endpoints are included by an interval predicate.
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum IntervalClosure {
     Open,
     LeftClosed,
@@ -108,9 +109,20 @@ impl std::ops::Not for Predicate {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(transparent)]
 pub struct BinSpec {
     edges: Arc<[f64]>,
+}
+
+impl<'de> Deserialize<'de> for BinSpec {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let edges = Vec::<f64>::deserialize(deserializer)?;
+        Self::edges(edges).map_err(serde::de::Error::custom)
+    }
 }
 
 impl BinSpec {
@@ -494,6 +506,14 @@ mod tests {
     };
     use laddu_expr::{complex, event_scalar};
     use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[test]
+    fn bin_spec_roundtrip_preserves_validation() {
+        let bins = BinSpec::edges([-1.0, 0.0, 2.0]).unwrap();
+        let json = serde_json::to_string(&bins).unwrap();
+        assert_eq!(serde_json::from_str::<BinSpec>(&json).unwrap(), bins);
+        assert!(serde_json::from_str::<BinSpec>("[0.0,0.0]").is_err());
+    }
 
     #[derive(Clone)]
     struct CountingSource {

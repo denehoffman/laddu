@@ -16,8 +16,10 @@ laddu-data = { path = "../laddu-data" }
 laddu-expr = { path = "../laddu-expr" }
 laddu-kernel = { path = "../laddu-kernel" }
 pollster.workspace = true
+serde.workspace = true
 thiserror.workspace = true
 wgpu.workspace = true
 
 [dev-dependencies]
 laddu-runtime = { path = "../laddu-runtime" }
+serde_json.workspace = true

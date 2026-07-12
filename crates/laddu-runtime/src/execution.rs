@@ -3,6 +3,7 @@ use std::sync::Arc;
 use laddu_autodiff::AutodiffMode;
 use laddu_data::io::{Partitioning, ReadPlan};
 use rayon::{ThreadPool, ThreadPoolBuilder};
+use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "wgpu")]
 use crate::RuntimeError;
@@ -15,7 +16,7 @@ use mpi::{
     traits::{Communicator, CommunicatorCollectives},
 };
 
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Precision {
     #[default]
     Auto,
@@ -23,7 +24,7 @@ pub enum Precision {
     F64,
 }
 
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ThreadPolicy {
     #[default]
     Auto,
@@ -31,7 +32,7 @@ pub enum ThreadPolicy {
     Fixed(usize),
 }
 
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum JitPolicy {
     #[default]
     Auto,
@@ -39,13 +40,13 @@ pub enum JitPolicy {
     Disabled,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CpuOptions {
     pub threads: ThreadPolicy,
     pub jit: JitPolicy,
 }
 
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum GpuBackend {
     #[default]
     Auto,
@@ -53,7 +54,7 @@ pub enum GpuBackend {
     Cuda,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum GpuDeviceSelector {
     #[default]
     Auto,
@@ -62,14 +63,14 @@ pub enum GpuDeviceSelector {
     Name(String),
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GpuOptions {
     pub backend: GpuBackend,
     pub device: GpuDeviceSelector,
     pub memory_budget: Option<usize>,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Device {
     #[default]
     Auto,
@@ -77,7 +78,7 @@ pub enum Device {
     Gpu(GpuOptions),
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExecutionOptions {
     pub device: Device,
     pub precision: Precision,
@@ -340,6 +341,26 @@ mod tests {
     #[cfg(not(feature = "wgpu"))]
     use crate::RuntimeError;
     use crate::execution::GpuBackend;
+
+    #[test]
+    fn execution_options_roundtrip_through_json() {
+        let options = ExecutionOptions {
+            device: Device::Gpu(GpuOptions {
+                backend: GpuBackend::Wgpu,
+                device: GpuDeviceSelector::PciBusId("0000:01:00.0".into()),
+                memory_budget: Some(1 << 30),
+            }),
+            precision: Precision::F64,
+            autodiff: AutodiffMode::Reverse,
+            partitioning: Partitioning::FileGroups,
+        };
+
+        let json = serde_json::to_string(&options).unwrap();
+        assert_eq!(
+            serde_json::from_str::<ExecutionOptions>(&json).unwrap(),
+            options
+        );
+    }
 
     #[test]
     fn execution_selects_nested_cpu_options() {

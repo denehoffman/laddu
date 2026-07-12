@@ -1,6 +1,7 @@
 use crate::{WgpuError, WgpuResult};
+use serde::{Deserialize, Serialize};
 
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum WgpuPrecision {
     #[default]
     Auto,
@@ -8,7 +9,7 @@ pub enum WgpuPrecision {
     F64,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum WgpuDeviceSelector {
     #[default]
     Auto,
@@ -17,13 +18,13 @@ pub enum WgpuDeviceSelector {
     Name(String),
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WgpuOptions {
     pub device: WgpuDeviceSelector,
     pub memory_budget: Option<usize>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WgpuAdapterInfo {
     pub index: usize,
     pub name: String,
@@ -214,6 +215,26 @@ impl WgpuBackend {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn public_adapter_values_roundtrip_through_json() {
+        let options = WgpuOptions {
+            device: WgpuDeviceSelector::Name("accelerator".into()),
+            memory_budget: Some(4096),
+        };
+        let info = adapter(2, "accelerator", "DiscreteGpu", "0000:01:00.0");
+
+        let options_json = serde_json::to_string(&options).unwrap();
+        assert_eq!(
+            serde_json::from_str::<WgpuOptions>(&options_json).unwrap(),
+            options
+        );
+        let info_json = serde_json::to_string(&info).unwrap();
+        assert_eq!(
+            serde_json::from_str::<WgpuAdapterInfo>(&info_json).unwrap(),
+            info
+        );
+    }
 
     fn adapter(index: usize, name: &str, device_type: &str, pci_bus_id: &str) -> WgpuAdapterInfo {
         WgpuAdapterInfo {

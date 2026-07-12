@@ -1518,6 +1518,7 @@ dependencies = [
  "laddu-expr",
  "laddu-kernel",
  "num",
+ "serde",
  "thiserror",
 ]
 
@@ -1628,6 +1629,8 @@ dependencies = [
  "nalgebra",
  "num",
  "rayon",
+ "serde",
+ "serde_json",
  "thiserror",
 ]
 
@@ -1643,6 +1646,8 @@ dependencies = [
  "laddu-kernel",
  "laddu-runtime",
  "pollster",
+ "serde",
+ "serde_json",
  "thiserror",
  "wgpu",
 ]

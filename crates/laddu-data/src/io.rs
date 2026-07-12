@@ -1,3 +1,4 @@
+use serde::{Deserialize, Serialize};
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -11,7 +12,7 @@ pub mod parquet;
 pub mod root;
 
 #[cfg(feature = "mpi")]
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
 pub enum Distribution {
     #[default]
     Serial,
@@ -72,7 +73,7 @@ impl Distribution {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Partitioning {
     /// Each rank reads a contiguous global row range.
     #[default]
@@ -86,7 +87,7 @@ pub enum Partitioning {
     Rows,
 }
 
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
 pub struct ReadPlan {
     pub chunk_size: Option<usize>,
 
@@ -144,7 +145,7 @@ impl ReadPlan {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
 pub struct WritePlan {
     #[cfg(feature = "mpi")]
     pub distribution: Distribution,
@@ -190,14 +191,14 @@ impl WritePlan {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub enum FragmentPartitioning {
     Contiguous,
     RoundRobinFragments,
     StridedRows,
 }
 
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
 pub struct SourceCapabilities {
     pub exact_len: bool,
     pub exact_weighted_total: bool,
