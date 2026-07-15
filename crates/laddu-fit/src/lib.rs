@@ -475,8 +475,12 @@ impl<'a, O: Objective + ?Sized, T, B> FitProblem<'a, O, T, B> {
     }
 
     /// Configure L-BFGS-B with native box constraints while still applying
-    /// scaling and periodic metadata. Periodic coordinates stay unbounded in
-    /// the native box because their canonicalization is handled separately.
+    /// scaling and periodic metadata.
+    ///
+    /// Ganesh cannot map an unbounded native coordinate through a periodic
+    /// transform. When bounded and periodic parameters coexist, this therefore
+    /// falls back to Laddu's smooth bounds transform for the nonperiodic
+    /// coordinates. Models without that combination retain native boxes.
     pub fn configure_lbfgsb<L>(
         &self,
         config: LBFGSBConfig<T, L, B>,
@@ -487,15 +491,23 @@ impl<'a, O: Objective + ?Sized, T, B> FitProblem<'a, O, T, B> {
         B: LinearAlgebra<T>,
     {
         let parameters = free_parameters(self.objective.parameter_layout()).collect::<Vec<_>>();
+        let has_bounds = parameters.iter().any(|parameter| {
+            parameter.periodic_domain().is_none()
+                && (parameter.bounds_spec().min.is_some() || parameter.bounds_spec().max.is_some())
+        });
+        let has_periodic = options.periodic
+            && parameters
+                .iter()
+                .any(|parameter| parameter.periodic_domain().is_some());
+        if has_bounds && has_periodic {
+            return self.configure_minimizer(config, options);
+        }
         let mut config = config.with_parameter_names(self.parameter_names());
         options.bounds = false;
         if let Some(transform) = self.minimizer_transform(options)? {
             config = config.with_transform(transform)?;
         }
-        if parameters.iter().any(|parameter| {
-            parameter.periodic_domain().is_none()
-                && (parameter.bounds_spec().min.is_some() || parameter.bounds_spec().max.is_some())
-        }) {
+        if has_bounds {
             config = config.with_bounds(parameters.iter().map(|parameter| {
                 if parameter.periodic_domain().is_some() {
                     (T::literal(f64::NEG_INFINITY), T::infinity())
@@ -819,6 +831,26 @@ mod tests {
             f32_problem.evaluate(&f32_problem.initial(), &()).unwrap(),
             4.0
         );
+    }
+
+    #[test]
+    fn lbfgsb_accepts_mixed_bounded_and_periodic_parameters() {
+        let objective = Quadratic {
+            layout: ParamLayout::new([
+                Parameter::free("magnitude")
+                    .with_initial(0.5)
+                    .with_bounds(0.0, 2.0),
+                Parameter::free("phase")
+                    .with_initial(0.0)
+                    .with_periodic(-std::f64::consts::PI, std::f64::consts::PI),
+            ])
+            .unwrap(),
+        };
+        let problem = FitProblem::<_, f64>::new(&objective);
+
+        problem
+            .configure_lbfgsb(LBFGSBConfig::<f64>::default(), TransformOptions::default())
+            .expect("mixed bounds and periodic metadata should produce a valid transform");
     }
 
     #[derive(Debug)]

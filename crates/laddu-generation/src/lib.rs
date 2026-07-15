@@ -240,7 +240,11 @@ impl ModelEvaluator {
         })
     }
 
-    fn evaluate(&self, batch: &EventBatch) -> GenerationResult<Vec<f64>> {
+    /// Evaluate the positive-real model value for every event in a batch.
+    ///
+    /// This is useful for projecting a fitted model over weighted Monte Carlo
+    /// without regenerating events.
+    pub fn evaluate_batch(&self, batch: &EventBatch) -> GenerationResult<Vec<f64>> {
         let reduction = ReductionPlan::weighted_positive_real();
         self.prepared
             .evaluate_batch(&self.params, batch)?
@@ -1095,7 +1099,7 @@ impl ChannelGenerator {
                         .collect();
                     let batch =
                         EventBatch::new(Arc::clone(&schema), columns, scalar_columns, None)?;
-                    let weights = model.evaluate(&batch)?;
+                    let weights = model.evaluate_batch(&batch)?;
                     for (event, weight) in events.iter_mut().zip(weights) {
                         event.model_weight = weight;
                         event.target_weight = event.proposal_weight * weight;

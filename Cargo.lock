@@ -1537,6 +1537,8 @@ dependencies = [
  "laddu-wgpu",
  "num_cpus",
  "rayon",
+ "serde",
+ "serde_json",
  "thiserror",
 ]
 
