@@ -15,6 +15,7 @@ laddu-compile = { path = "../laddu-compile" }
 laddu-data = { path = "../laddu-data" }
 laddu-expr = { path = "../laddu-expr" }
 laddu-fit = { path = "../laddu-fit", optional = true }
+laddu-generation = { path = "../laddu-generation", optional = true }
 laddu-kernel = { path = "../laddu-kernel" }
 laddu-likelihood = { path = "../laddu-likelihood", optional = true }
 laddu-physics = { path = "../laddu-physics" }
@@ -27,9 +28,10 @@ default = ["amplitudes", "likelihood"]
 amplitudes = ["dep:laddu-amplitudes"]
 likelihood = ["dep:laddu-likelihood"]
 fit = ["likelihood", "dep:laddu-fit"]
-jit = ["laddu-runtime/jit", "laddu-likelihood?/jit"]
+generation = ["dep:laddu-generation"]
+jit = ["laddu-runtime/jit", "laddu-likelihood?/jit", "laddu-generation?/jit"]
 mpi = ["laddu-data/mpi", "laddu-runtime/mpi", "laddu-likelihood?/mpi"]
-wgpu = ["dep:laddu-wgpu", "laddu-runtime/wgpu", "laddu-likelihood?/wgpu"]
+wgpu = ["dep:laddu-wgpu", "laddu-runtime/wgpu", "laddu-likelihood?/wgpu", "laddu-generation?/wgpu"]
 svg = ["laddu-expr/svg"]
 
 [dev-dependencies]
@@ -47,3 +49,7 @@ required-features = ["jit", "wgpu"]
 name = "jit_benchmark"
 harness = false
 required-features = ["jit"]
+
+[[example]]
+name = "generate_ksks"
+required-features = ["generation"]

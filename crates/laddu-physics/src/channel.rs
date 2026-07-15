@@ -1,12 +1,16 @@
-use std::collections::{HashSet, VecDeque};
+use std::{
+    collections::{HashSet, VecDeque},
+    sync::Arc,
+};
 
 use indexmap::IndexMap;
 use laddu_expr::Expr;
 
 use crate::{
     LadduPhysicsError, LadduPhysicsResult,
+    generation::{InitialMomentum, MassProposal, ScalarSource, VertexProposal},
     quantum::{MandelstamChannel, ParticleProperties},
-    vectors::{Vec3, Vec4},
+    vectors::{RealVec3, RealVec4, Vec3, Vec4},
 };
 
 #[derive(Clone, Debug)]
@@ -66,8 +70,53 @@ impl Channel {
         self.vertices.values()
     }
 
+    /// Iterate over edges consumed by the graph but not produced by any vertex.
+    pub fn initial_edges(&self) -> impl Iterator<Item = &Edge> {
+        let consumed = self
+            .vertices
+            .values()
+            .flat_map(|vertex| vertex.incoming.iter().map(String::as_str))
+            .collect::<HashSet<_>>();
+        let produced = self
+            .vertices
+            .values()
+            .flat_map(|vertex| vertex.outgoing.iter().map(String::as_str))
+            .collect::<HashSet<_>>();
+        self.edges
+            .values()
+            .filter(move |edge| consumed.contains(edge.name()) && !produced.contains(edge.name()))
+    }
+
+    /// Validate all channel vertices.
+    ///
+    /// Consumers such as event generators call this automatically.
+    pub fn validate(&self) -> LadduPhysicsResult<()> {
+        for name in self.vertices.keys() {
+            self.validate_vertex(name)?;
+        }
+        for edge in self.initial_edges() {
+            edge.initial_momentum
+                .as_ref()
+                .ok_or_else(|| {
+                    LadduPhysicsError::invalid_relation(format!(
+                        "initial edge `{}` has no momentum source",
+                        edge.name()
+                    ))
+                })?
+                .validate(edge.name(), edge.properties())?;
+        }
+        Ok(())
+    }
+
     pub fn properties(&self, edge: &str) -> LadduPhysicsResult<Option<&ParticleProperties>> {
         Ok(self.require_edge(edge)?.properties.as_ref())
+    }
+
+    /// Return the particle definition attached to an edge.
+    pub fn particle(&self, edge: &str) -> LadduPhysicsResult<&ParticleProperties> {
+        self.properties(edge)?.ok_or_else(|| {
+            LadduPhysicsError::invalid_relation(format!("edge `{edge}` has no particle properties"))
+        })
     }
 
     pub fn p4(&self, edge: &str) -> LadduPhysicsResult<Vec4> {
@@ -299,6 +348,9 @@ pub struct Edge {
     name: String,
     p4: Option<Vec4>,
     properties: Option<ParticleProperties>,
+    output: bool,
+    mass_proposal: Option<Arc<dyn MassProposal>>,
+    initial_momentum: Option<InitialMomentum>,
 }
 
 impl Edge {
@@ -307,6 +359,9 @@ impl Edge {
             name,
             p4: None,
             properties: None,
+            output: false,
+            mass_proposal: None,
+            initial_momentum: None,
         }
     }
 
@@ -321,6 +376,18 @@ impl Edge {
     pub fn properties(&self) -> Option<&ParticleProperties> {
         self.properties.as_ref()
     }
+
+    pub fn is_output(&self) -> bool {
+        self.output
+    }
+
+    pub fn mass_proposal(&self) -> Option<&Arc<dyn MassProposal>> {
+        self.mass_proposal.as_ref()
+    }
+
+    pub fn initial_momentum(&self) -> Option<&InitialMomentum> {
+        self.initial_momentum.as_ref()
+    }
 }
 
 pub struct EdgeHandle<'a> {
@@ -333,9 +400,49 @@ impl EdgeHandle<'_> {
         self
     }
 
-    pub fn properties(&mut self, properties: ParticleProperties) -> &mut Self {
-        self.edge.properties = Some(properties);
+    pub fn properties(&mut self, properties: &ParticleProperties) -> &mut Self {
+        self.edge.properties = Some(properties.clone());
         self
+    }
+
+    pub fn output(&mut self) -> &mut Self {
+        self.edge.output = true;
+        self
+    }
+
+    pub fn generated_only(&mut self) -> &mut Self {
+        self.edge.output = false;
+        self
+    }
+
+    pub fn mass_proposal(&mut self, proposal: impl MassProposal + 'static) -> &mut Self {
+        self.edge.mass_proposal = Some(Arc::new(proposal));
+        self
+    }
+
+    pub fn initial(&mut self, source: InitialMomentum) -> &mut Self {
+        self.edge.initial_momentum = Some(source);
+        self
+    }
+
+    pub fn initial_p4(&mut self, p4: RealVec4) -> &mut Self {
+        self.initial(InitialMomentum::p4(p4))
+    }
+
+    pub fn initial_momentum(&mut self, momentum: RealVec3) -> &mut Self {
+        self.initial(InitialMomentum::momentum(momentum))
+    }
+
+    pub fn initial_energy_direction(&mut self, energy: f64, direction: RealVec3) -> &mut Self {
+        self.initial(InitialMomentum::energy_direction(energy, direction))
+    }
+
+    pub fn initial_energy_source_direction(
+        &mut self,
+        energy: ScalarSource,
+        direction: RealVec3,
+    ) -> &mut Self {
+        self.initial(InitialMomentum::energy_source_direction(energy, direction))
     }
 }
 
@@ -344,6 +451,7 @@ pub struct Vertex {
     name: String,
     incoming: Vec<String>,
     outgoing: Vec<String>,
+    generation: Option<Arc<dyn VertexProposal>>,
 }
 
 impl Vertex {
@@ -352,6 +460,7 @@ impl Vertex {
             name,
             incoming: Vec::new(),
             outgoing: Vec::new(),
+            generation: None,
         }
     }
 
@@ -365,6 +474,10 @@ impl Vertex {
 
     pub fn outgoing(&self) -> &[String] {
         &self.outgoing
+    }
+
+    pub fn generation(&self) -> Option<&Arc<dyn VertexProposal>> {
+        self.generation.as_ref()
     }
 
     fn contains(&self, edge: &str) -> bool {
@@ -395,6 +508,15 @@ pub struct VertexHandle<'a> {
 }
 
 impl VertexHandle<'_> {
+    pub fn generation(&mut self, proposal: impl VertexProposal + 'static) -> &mut Self {
+        self.channel
+            .vertices
+            .get_mut(&self.name)
+            .expect("vertex handle references an existing vertex")
+            .generation = Some(Arc::new(proposal));
+        self
+    }
+
     pub fn incoming(&mut self, edges: impl IntoIterator<Item = impl AsRef<str>>) -> &mut Self {
         let edges = edges
             .into_iter()
@@ -477,6 +599,10 @@ impl<'a> VertexView<'a> {
         let p = self.vec3(edge)?;
         let z = z_axis.unit();
         Ok(p.dot(&z) / p.mag())
+    }
+
+    pub fn theta(&self, edge: &str, z_axis: Vec3, y_hint: Vec3) -> LadduPhysicsResult<Expr> {
+        Ok(self.costheta(edge, z_axis, y_hint)?.acos())
     }
 
     pub fn phi(&self, edge: &str, z_axis: Vec3, y_hint: Vec3) -> LadduPhysicsResult<Expr> {
@@ -669,6 +795,10 @@ mod tests {
             eval(vertex.costheta("a", Vec3::z(), Vec3::y()).unwrap()),
             0.0
         );
+        assert_relative_eq!(
+            eval(vertex.theta("a", Vec3::z(), Vec3::y()).unwrap()),
+            std::f64::consts::FRAC_PI_2
+        );
         assert_relative_eq!(eval(vertex.phi("a", Vec3::z(), Vec3::y()).unwrap()), 0.0);
     }
 
@@ -780,11 +910,60 @@ mod tests {
         let mut channel = Channel::new("KsKs");
         channel
             .edge("ks1")
-            .properties(ParticleProperties::unknown().with_name("K_S"));
+            .properties(&ParticleProperties::unknown().with_name("K_S"));
 
         assert_eq!(
             channel.properties("ks1").unwrap().unwrap().name().unwrap(),
             "K_S"
         );
+    }
+
+    #[test]
+    fn channel_validation_requires_a_source_for_every_initial_edge() {
+        let mut channel = Channel::new("decay");
+        channel
+            .edge("parent")
+            .properties(&ParticleProperties::unknown().with_mass(2.0));
+        channel
+            .edge("a")
+            .properties(&ParticleProperties::unknown().with_mass(0.2));
+        channel
+            .edge("b")
+            .properties(&ParticleProperties::unknown().with_mass(0.4));
+        channel
+            .vertex("decay")
+            .incoming(["parent"])
+            .outgoing(["a", "b"]);
+
+        assert!(matches!(
+            channel.validate(),
+            Err(LadduPhysicsError::InvalidRelation { relation })
+                if relation.contains("initial edge `parent` has no momentum source")
+        ));
+    }
+
+    #[test]
+    fn channel_validation_accepts_annotated_initial_edges() {
+        let mut channel = Channel::new("production");
+        channel
+            .edge("beam")
+            .properties(&ParticleProperties::unknown().with_mass(0.0))
+            .initial_energy_source_direction(ScalarSource::uniform(8.0, 9.0), RealVec3::z());
+        channel
+            .edge("target")
+            .properties(&ParticleProperties::unknown().with_mass(1.0))
+            .initial_momentum(RealVec3::default());
+        channel
+            .edge("x")
+            .properties(&ParticleProperties::unknown().with_mass(1.5));
+        channel
+            .edge("recoil")
+            .properties(&ParticleProperties::unknown().with_mass(1.0));
+        channel
+            .vertex("production")
+            .incoming(["beam", "target"])
+            .outgoing(["x", "recoil"]);
+
+        channel.validate().unwrap();
     }
 }

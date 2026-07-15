@@ -549,6 +549,10 @@ impl Expr {
         unary(UnaryOp::Cos, self)
     }
 
+    pub fn acos(&self) -> Self {
+        atan2((Expr::from(1.0) - self.powi(2)).sqrt(), self)
+    }
+
     pub fn log(&self) -> Self {
         unary(UnaryOp::Log, self)
     }
@@ -1015,6 +1019,10 @@ pub fn event_p4_component(name: impl Into<Arc<str>>, component: P4Component) -> 
 
 pub fn atan2(y: impl Into<Expr>, x: impl Into<Expr>) -> Expr {
     binary(BinaryOp::Atan2, y, x)
+}
+
+pub fn acos(value: impl Into<Expr>) -> Expr {
+    value.into().acos()
 }
 
 pub fn vector<E>(elements: impl IntoIterator<Item = E>) -> Expr

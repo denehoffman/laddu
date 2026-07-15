@@ -1529,6 +1529,7 @@ dependencies = [
  "laddu-data",
  "laddu-expr",
  "laddu-fit",
+ "laddu-generation",
  "laddu-kernel",
  "laddu-likelihood",
  "laddu-physics",
@@ -1622,6 +1623,19 @@ dependencies = [
  "laddu-expr",
  "laddu-likelihood",
  "parking_lot",
+ "thiserror",
+]
+
+[[package]]
+name = "laddu-generation"
+version = "0.1.0"
+dependencies = [
+ "laddu-compile",
+ "laddu-data",
+ "laddu-expr",
+ "laddu-physics",
+ "laddu-runtime",
+ "rayon",
  "thiserror",
 ]
 

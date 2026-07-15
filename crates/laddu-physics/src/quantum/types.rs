@@ -367,6 +367,11 @@ impl J {
         self.0
     }
 
+    /// Return the number of projections, $2J + 1$.
+    pub const fn multiplicity(self) -> u32 {
+        self.0 + 1
+    }
+
     /// Return whether this quantum number represents an integer value.
     pub const fn is_integer(self) -> bool {
         self.0 & 1 == 0
@@ -481,6 +486,11 @@ impl L {
     /// Return the integer orbital angular momentum.
     pub const fn value(self) -> u32 {
         self.0
+    }
+
+    /// Return the number of projections, $2L + 1$.
+    pub const fn multiplicity(self) -> u32 {
+        2 * self.0 + 1
     }
 
     /// Enumerate the valid signed projections for this orbital angular momentum.
@@ -691,6 +701,8 @@ impl_m_conversions!();
 
 // Operations
 #[rustfmt::skip]
+impl_op_ex!(+ |j1: &J, j2: &J| -> J { J::half(j1.doubled() + j2.doubled()) });
+#[rustfmt::skip]
 impl_op_ex!(+ |m1: &M, m2: &M| -> M { M::half(m1.doubled() + m2.doubled()) });
 #[rustfmt::skip]
 impl_op_ex!(- |m1: &M, m2: &M| -> M { M::half(m1.doubled() - m2.doubled()) });
@@ -816,6 +828,13 @@ mod tests {
         assert_eq!(f64::from(J::half(3)), 1.5);
         assert_eq!(f32::from(L::int(2)), 2.0);
         assert_eq!(f64::from(M::half(-1)), -0.5);
+    }
+
+    #[test]
+    fn angular_momenta_add_and_report_multiplicities() {
+        assert_eq!(J::int(1) + J::half(1), J::half(3));
+        assert_eq!(J::half(3).multiplicity(), 4);
+        assert_eq!(L::int(2).multiplicity(), 5);
     }
 
     #[test]

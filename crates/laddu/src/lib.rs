@@ -10,14 +10,17 @@ pub use laddu_kernel as kernel;
 pub use laddu_physics as physics;
 pub use laddu_runtime as runtime;
 
+#[cfg(feature = "generation")]
+pub use laddu_generation as generation;
+
 pub use laddu_expr::parameter;
 pub use laddu_expr::parameters::Parameter;
 pub use laddu_expr::{
     BinaryOp, ColorPreset, ComponentIndex, DisplayColor, Expr, ExprGraph, ExprGraphDotDisplay,
     ExprGraphTreeDisplay, ExprId, ExprMetadata, ExprNode, ExprNodeKind, ExprShape, ExprShapeError,
     ExprSourceKind, NodeSelector, NodeStyle, NodeStyleRule, P4Component, RepeatedSubtrees, UnaryOp,
-    atan2, cis, complex, dot, event_p4_component, event_scalar, matmul, matrix, matrix_from_flat,
-    matvec, polar_complex, solve, vector,
+    acos, atan2, cis, complex, dot, event_p4_component, event_scalar, matmul, matrix,
+    matrix_from_flat, matvec, polar_complex, solve, vector,
 };
 pub use laddu_runtime::{
     BinSpec, Comparison, DatasetBin, DatasetExprExt, IntervalClosure, Predicate,
@@ -75,8 +78,8 @@ pub mod prelude {
         BinaryOp, ColorPreset, ComponentIndex, DisplayColor, Expr, ExprGraph, ExprGraphDotDisplay,
         ExprGraphTreeDisplay, ExprId, ExprMetadata, ExprNode, ExprNodeKind, ExprShape,
         ExprShapeError, ExprSourceKind, NodeSelector, NodeStyle, NodeStyleRule, P4Component,
-        RepeatedSubtrees, UnaryOp, atan2, cis, complex, dot, event_p4_component, event_scalar,
-        matmul, matrix, matrix_from_flat, matvec, polar_complex, solve, vector,
+        RepeatedSubtrees, UnaryOp, acos, atan2, cis, complex, dot, event_p4_component,
+        event_scalar, matmul, matrix, matrix_from_flat, matvec, polar_complex, solve, vector,
     };
     #[cfg(feature = "fit")]
     pub use laddu_fit::{
@@ -84,24 +87,36 @@ pub mod prelude {
         LadduTransformConfig, McmcResult, MinimizationResult, StochasticFitProblem,
         TransformOptions, ganesh,
     };
+    #[cfg(feature = "generation")]
+    pub use laddu_generation::{
+        ChannelGenerator, EnvelopeKind, EnvelopeMode, EnvelopeOverflow, FixedMass, GenerationError,
+        GenerationReport, GenerationResult, InitialMomentum, InitialMomentumResult, MassProposal,
+        ModelEvaluator, NamedMass, NamedMomentum, ProposalResult, ProposalRng,
+        ScalarProposalResult, ScalarSource, TComponent, TDistribution, TwoBodyDecay,
+        TwoBodyScattering, UniformMass, UnweightedConfig, VertexProposal, WeightedConfig,
+    };
     #[cfg(feature = "likelihood")]
     pub use laddu_likelihood::{
         CrossSectionIntegrals, ExtendedNllTerm, LassoPenalty, Likelihood, LikelihoodError,
         LikelihoodEvaluation, LikelihoodName, LikelihoodProjection, LikelihoodResult,
         LikelihoodTerm, NllTerm, Objective, RidgePenalty, StochasticObjective,
     };
+    pub use laddu_physics::quantum::builtin as particles;
     pub use laddu_physics::{
-        LadduPhysicsError, LadduPhysicsResult, clebsch_gordan, j, l, m, s,
+        LadduPhysicsError, LadduPhysicsResult,
         channel::{Channel, Edge, EdgeHandle, Vertex, VertexHandle, VertexView},
+        clebsch_gordan,
         histogram::Histogram,
+        j, l, m,
         math::*,
         quantum::*,
+        s,
         vectors::{RealVec3, RealVec4, Vec3, Vec4},
     };
-    pub use laddu_physics::quantum::builtin as particles;
     pub use laddu_runtime::{
         BinSpec, Comparison, CpuOptions, DatasetBin, DatasetExprExt, Device, Execution,
         ExecutionError, ExecutionOptions, GpuBackend, GpuDeviceSelector, GpuOptions,
-        IntervalClosure, JitPolicy, Precision, Predicate, RuntimeError, RuntimeResult, ThreadPolicy,
+        IntervalClosure, JitPolicy, Precision, Predicate, RuntimeError, RuntimeResult,
+        ThreadPolicy,
     };
 }
