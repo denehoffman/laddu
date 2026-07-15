@@ -127,6 +127,8 @@ pub struct Parameter {
     initial: InitialSpec,
     bounds: Bounds,
     periodic: Option<PeriodicDomain>,
+    #[serde(default)]
+    scale: Option<f64>,
     unit: Option<Arc<str>>,
     latex: Option<Arc<str>>,
     description: Option<Arc<str>>,
@@ -140,6 +142,7 @@ impl Parameter {
             initial: InitialSpec::Default,
             bounds: Bounds::default(),
             periodic: None,
+            scale: None,
             unit: None,
             latex: None,
             description: None,
@@ -153,6 +156,7 @@ impl Parameter {
             initial: InitialSpec::Value(value),
             bounds: Bounds::default(),
             periodic: None,
+            scale: None,
             unit: None,
             latex: None,
             description: None,
@@ -198,6 +202,15 @@ impl Parameter {
 
     pub fn with_periodic(mut self, min: f64, max: f64) -> Self {
         self.periodic = Some(PeriodicDomain::new(min, max));
+        self
+    }
+
+    /// Set the characteristic optimizer scale for this parameter.
+    ///
+    /// The scale is metadata: fit integrations may use it to condition the
+    /// optimizer coordinate system, while direct model evaluation is unchanged.
+    pub fn with_scale(mut self, scale: f64) -> Self {
+        self.scale = Some(scale);
         self
     }
 
@@ -256,6 +269,10 @@ impl Parameter {
         self.periodic
     }
 
+    pub fn scale(&self) -> Option<f64> {
+        self.scale
+    }
+
     pub fn unit_label(&self) -> Option<&str> {
         self.unit.as_deref()
     }
@@ -308,6 +325,14 @@ impl ParamLayout {
             spec.bounds.validate(spec.name())?;
             if let Some(periodic) = spec.periodic {
                 periodic.validate(spec.name())?;
+            }
+            if let Some(scale) = spec.scale
+                && (!scale.is_finite() || scale <= 0.0)
+            {
+                return Err(ParamError::InvalidScale {
+                    name: spec.name().to_owned(),
+                    scale,
+                });
             }
             validate_initial(spec)?;
             let id = ParamId(index as u32);
@@ -731,6 +756,11 @@ macro_rules! parameter {
         $crate::parameter!(@parse $p, [fixed = $f, initial = $i]; $($($rest)*)?);
     }};
 
+    (@parse $p:ident, [fixed = $f:tt, initial = $i:tt]; scale : $value:expr $(, $($rest:tt)*)?) => {{
+        $p = $p.with_scale($value);
+        $crate::parameter!(@parse $p, [fixed = $f, initial = $i]; $($($rest)*)?);
+    }};
+
     (@parse $p:ident, [fixed = $f:tt, initial = $i:tt]; unit : $value:expr $(, $($rest:tt)*)?) => {{
         $p = $p.with_unit($value);
         $crate::parameter!(@parse $p, [fixed = $f, initial = $i]; $($($rest)*)?);
@@ -758,6 +788,16 @@ mod tests {
 
         assert_eq!(positional.state(), &ParamState::Fixed(1.25));
         assert_eq!(named.state(), &ParamState::Fixed(-0.5));
+    }
+
+    #[test]
+    fn parameter_scale_is_validated_and_supported_by_the_macro() {
+        let scaled = crate::parameter!("scaled", initial: 2.0, scale: 0.25);
+        let layout = ParamLayout::new([scaled]).unwrap();
+        assert_eq!(layout.specs()[0].scale(), Some(0.25));
+
+        let error = ParamLayout::new([Parameter::free("bad").with_scale(0.0)]).unwrap_err();
+        assert!(matches!(error, ParamError::InvalidScale { .. }));
     }
 
     #[test]

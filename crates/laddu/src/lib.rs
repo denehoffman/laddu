@@ -32,6 +32,9 @@ pub use laddu_amplitudes as amplitudes;
 #[cfg(feature = "likelihood")]
 pub use laddu_likelihood as likelihood;
 
+#[cfg(feature = "fit")]
+pub use laddu_fit as fit;
+
 #[cfg(feature = "wgpu")]
 pub use laddu_wgpu as wgpu;
 
@@ -59,7 +62,7 @@ pub mod prelude {
             parquet::{ParquetSink, ParquetSource},
             root::{RootSink, RootSource},
         },
-        schema::{ColumnType, FloatType, Schema},
+        schema::{ColumnType, Schema},
     };
     #[cfg(feature = "svg")]
     pub use laddu_expr::GraphRenderError;
@@ -75,11 +78,17 @@ pub mod prelude {
         RepeatedSubtrees, UnaryOp, atan2, cis, complex, dot, event_p4_component, event_scalar,
         matmul, matrix, matrix_from_flat, matvec, polar_complex, solve, vector,
     };
+    #[cfg(feature = "fit")]
+    pub use laddu_fit::{
+        FitError, FitProblem, FitResult, LadduMinimizerConfig, LadduSamplerConfig,
+        LadduTransformConfig, McmcResult, MinimizationResult, StochasticFitProblem,
+        TransformOptions, ganesh,
+    };
     #[cfg(feature = "likelihood")]
     pub use laddu_likelihood::{
         CrossSectionIntegrals, ExtendedNllTerm, LassoPenalty, Likelihood, LikelihoodError,
         LikelihoodEvaluation, LikelihoodName, LikelihoodProjection, LikelihoodResult,
-        LikelihoodTerm, NllTerm, Objective, RidgePenalty,
+        LikelihoodTerm, NllTerm, Objective, RidgePenalty, StochasticObjective,
     };
     pub use laddu_physics::{
         LadduPhysicsError, LadduPhysicsResult, clebsch_gordan, j, l, m, s,

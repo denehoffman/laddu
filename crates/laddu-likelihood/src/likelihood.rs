@@ -28,6 +28,10 @@ pub struct LikelihoodEvaluation {
 }
 
 impl LikelihoodEvaluation {
+    pub fn new(value: f64, gradient: Vec<f64>) -> Self {
+        Self { value, gradient }
+    }
+
     pub fn value(&self) -> f64 {
         self.value
     }
@@ -50,6 +54,19 @@ pub trait Objective: Debug + Send + Sync {
     fn parameter_layout(&self) -> &ParamLayout;
     fn value(&self, free_parameters: &[f64]) -> LikelihoodResult<f64>;
     fn value_gradient(&self, free_parameters: &[f64]) -> LikelihoodResult<LikelihoodEvaluation>;
+}
+
+/// An objective that can provide an unbiased stochastic value and gradient.
+///
+/// The `seed` identifies one deterministic batch. Implementations must use the
+/// same batch for the returned value and gradient.
+pub trait StochasticObjective: Objective {
+    fn stochastic_value_gradient(
+        &self,
+        free_parameters: &[f64],
+        fraction: f64,
+        seed: u64,
+    ) -> LikelihoodResult<LikelihoodEvaluation>;
 }
 
 pub trait LikelihoodTerm: Debug + Send + Sync {
@@ -121,6 +138,19 @@ pub trait LikelihoodTerm: Debug + Send + Sync {
             gradient[free_index] += derivative;
         }
         Ok(value)
+    }
+
+    /// Evaluate a stochastic term contribution. Non-data terms remain exact by
+    /// default; intensity terms override this to batch only observed events.
+    fn stochastic_nll_with_gradient(
+        &self,
+        params: &ParamValues,
+        gradient: &mut [f64],
+        execution: &Execution,
+        _fraction: f64,
+        _seed: u64,
+    ) -> LikelihoodResult<f64> {
+        self.nll_with_gradient(params, gradient, execution)
     }
 
     fn as_intensity(&self) -> Option<&NllTerm> {
@@ -275,6 +305,37 @@ impl Likelihood {
         Ok(LikelihoodEvaluation { value, gradient })
     }
 
+    pub fn stochastic_nll_with_gradient(
+        &self,
+        free_parameters: &[f64],
+        fraction: f64,
+        seed: u64,
+    ) -> LikelihoodResult<LikelihoodEvaluation> {
+        if !(fraction > 0.0 && fraction <= 1.0) {
+            return Err(LikelihoodError::InvalidBatchFraction(fraction));
+        }
+        let params = self.params.values(free_parameters)?;
+        let mut gradient = vec![0.0; self.params.n_free()];
+        let value = self
+            .terms
+            .iter()
+            .enumerate()
+            .try_fold(0.0, |sum, (term_index, term)| {
+                let term_seed =
+                    seed.wrapping_add((term_index as u64).wrapping_mul(0x9E3779B97F4A7C15));
+                Ok::<_, LikelihoodError>(
+                    sum + term.stochastic_nll_with_gradient(
+                        &params,
+                        &mut gradient,
+                        &self.execution,
+                        fraction,
+                        term_seed,
+                    )?,
+                )
+            })?;
+        Ok(LikelihoodEvaluation::new(value, gradient))
+    }
+
     pub fn cross_section_integrals(
         &self,
         term_name: &str,
@@ -316,6 +377,17 @@ impl Objective for Likelihood {
 
     fn value_gradient(&self, free_parameters: &[f64]) -> LikelihoodResult<LikelihoodEvaluation> {
         self.nll_with_gradient(free_parameters)
+    }
+}
+
+impl StochasticObjective for Likelihood {
+    fn stochastic_value_gradient(
+        &self,
+        free_parameters: &[f64],
+        fraction: f64,
+        seed: u64,
+    ) -> LikelihoodResult<LikelihoodEvaluation> {
+        self.stochastic_nll_with_gradient(free_parameters, fraction, seed)
     }
 }
 
@@ -484,6 +556,31 @@ impl NllTerm {
             .map_err(|error| map_reduction_error(name, error))
     }
 
+    fn stochastic_data_evaluation(
+        &self,
+        params: &ParamValues,
+        execution: &Execution,
+        fraction: f64,
+        seed: u64,
+    ) -> LikelihoodResult<(f64, Vec<f64>)> {
+        let selected = self.data_source.clone().subsample(fraction, seed)?;
+        let prepared = self.plan()?.prepare_dataset(execution, &selected)?;
+        let evaluation = self
+            .plan()?
+            .reduce_with_gradient(
+                execution,
+                params,
+                &prepared,
+                ReductionPlan::weighted_log_positive_real(),
+            )
+            .map_err(|error| map_reduction_error("data batch", error))?;
+        let (value, gradient) = evaluation.into_parts();
+        Ok((
+            value / fraction,
+            gradient.into_iter().map(|value| value / fraction).collect(),
+        ))
+    }
+
     fn local_values(&self, params: &ParamValues) -> LikelihoodResult<ParamValues> {
         self.resolved_projection()?.project(params)
     }
@@ -589,6 +686,38 @@ impl LikelihoodTerm for NllTerm {
             )
             .map_err(|error| map_reduction_error("data", error))?;
         let (data_log_sum, data_log_gradient) = data_evaluation.into_parts();
+        let data_weight_sum = self.data_weight_sum()?;
+        let local_gradient = normalization_gradient
+            .into_iter()
+            .zip(data_log_gradient)
+            .map(|(normalization_derivative, data_derivative)| {
+                data_weight_sum * normalization_derivative / normalization - data_derivative
+            })
+            .collect::<Vec<_>>();
+        self.resolved_projection()?
+            .scatter_gradient(&local_gradient, gradient)?;
+        Ok(data_weight_sum * normalization.ln() - data_log_sum)
+    }
+
+    fn stochastic_nll_with_gradient(
+        &self,
+        params: &ParamValues,
+        gradient: &mut [f64],
+        execution: &Execution,
+        fraction: f64,
+        seed: u64,
+    ) -> LikelihoodResult<f64> {
+        let local_params = self.local_values(params)?;
+        let normalization_evaluation = self.plan()?.reduce_with_gradient(
+            execution,
+            &local_params,
+            self.accepted_mc()?,
+            ReductionPlan::weighted_positive_real(),
+        )?;
+        let (normalization, normalization_gradient) = normalization_evaluation.into_parts();
+        let normalization = positive_integral("accepted MC", normalization)?;
+        let (data_log_sum, data_log_gradient) =
+            self.stochastic_data_evaluation(&local_params, execution, fraction, seed)?;
         let data_weight_sum = self.data_weight_sum()?;
         let local_gradient = normalization_gradient
             .into_iter()
@@ -733,6 +862,39 @@ impl LikelihoodTerm for ExtendedNllTerm {
             )
             .map_err(|error| map_reduction_error("data", error))?;
         let (data_log_sum, data_log_gradient) = data_evaluation.into_parts();
+        let local_gradient = normalization_gradient
+            .into_iter()
+            .zip(data_log_gradient)
+            .map(|(normalization_derivative, data_derivative)| {
+                normalization_derivative - data_derivative
+            })
+            .collect::<Vec<_>>();
+        self.inner
+            .resolved_projection()?
+            .scatter_gradient(&local_gradient, gradient)?;
+        Ok(normalization - data_log_sum)
+    }
+
+    fn stochastic_nll_with_gradient(
+        &self,
+        params: &ParamValues,
+        gradient: &mut [f64],
+        execution: &Execution,
+        fraction: f64,
+        seed: u64,
+    ) -> LikelihoodResult<f64> {
+        let local_params = self.inner.local_values(params)?;
+        let normalization_evaluation = self.inner.plan()?.reduce_with_gradient(
+            execution,
+            &local_params,
+            self.inner.accepted_mc()?,
+            ReductionPlan::weighted_positive_real(),
+        )?;
+        let (normalization, normalization_gradient) = normalization_evaluation.into_parts();
+        let normalization = positive_integral("accepted MC", normalization)?;
+        let (data_log_sum, data_log_gradient) =
+            self.inner
+                .stochastic_data_evaluation(&local_params, execution, fraction, seed)?;
         let local_gradient = normalization_gradient
             .into_iter()
             .zip(data_log_gradient)
@@ -1481,6 +1643,26 @@ mod tests {
             finite_difference_nll(&likelihood, &params, 0),
             epsilon = 1.0e-8
         );
+    }
+
+    #[test]
+    fn full_fraction_stochastic_evaluation_matches_exact_likelihood() {
+        let scale = laddu_expr::Expr::from(parameter!("scale", initial: 0.7));
+        let model = CompiledModel::from_expr(&(event_scalar("x") + scale).powi(2)).unwrap();
+        let data = weighted_dataset(&[(0.3, 1.0), (1.1, 2.0), (1.8, 0.5)]);
+        let accepted_mc = weighted_dataset(&[(0.5, 1.5), (1.7, 0.8)]);
+        let likelihood = single_term_likelihood("data", &model, &data, &accepted_mc);
+        let params = likelihood.default_params();
+        let exact = likelihood.nll_with_gradient(&params).unwrap();
+        let stochastic = likelihood
+            .stochastic_nll_with_gradient(&params, 1.0, 42)
+            .unwrap();
+
+        assert_evaluation_close(&stochastic, &exact, 1.0e-12);
+        assert!(matches!(
+            likelihood.stochastic_nll_with_gradient(&params, 0.0, 42),
+            Err(LikelihoodError::InvalidBatchFraction(0.0))
+        ));
     }
 
     #[test]

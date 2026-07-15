@@ -1,0 +1,16 @@
+[package]
+name = "laddu-fit"
+version = "0.1.0"
+authors.workspace = true
+edition.workspace = true
+homepage.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+ganesh.workspace = true
+laddu-expr = { path = "../laddu-expr" }
+laddu-likelihood = { path = "../laddu-likelihood" }
+parking_lot.workspace = true
+thiserror.workspace = true

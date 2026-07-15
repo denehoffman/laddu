@@ -1,3 +1,4 @@
+use laddu_data::LadduDataError;
 use laddu_expr::parameters::ParamError;
 use laddu_runtime::RuntimeError;
 use thiserror::Error;
@@ -6,6 +7,8 @@ pub type LikelihoodResult<T> = Result<T, LikelihoodError>;
 
 #[derive(Debug, Error)]
 pub enum LikelihoodError {
+    #[error(transparent)]
+    Data(#[from] LadduDataError),
     #[error(transparent)]
     Runtime(#[from] RuntimeError),
     #[error(transparent)]
@@ -32,4 +35,6 @@ pub enum LikelihoodError {
     GradientLengthMismatch { expected: usize, actual: usize },
     #[error("likelihood term has not been resolved: {0}")]
     UnresolvedTerm(String),
+    #[error("stochastic batch fraction must be in (0, 1], got {0}")]
+    InvalidBatchFraction(f64),
 }

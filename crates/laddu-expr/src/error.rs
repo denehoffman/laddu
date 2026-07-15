@@ -33,6 +33,8 @@ pub enum ParamError {
     ValueOutOfBounds { name: String, value: f64 },
     #[error("invalid periodic domain for {name}: expected finite min < max, got [{min}, {max})")]
     InvalidPeriodicDomain { name: String, min: f64, max: f64 },
+    #[error("invalid scale for {name}: expected a finite positive value, got {scale}")]
+    InvalidScale { name: String, scale: f64 },
     #[error(
         "value {value} for periodic parameter {name} is outside canonical domain [{min}, {max})"
     )]

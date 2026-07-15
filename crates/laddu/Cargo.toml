@@ -14,6 +14,7 @@ laddu-autodiff = { path = "../laddu-autodiff" }
 laddu-compile = { path = "../laddu-compile" }
 laddu-data = { path = "../laddu-data" }
 laddu-expr = { path = "../laddu-expr" }
+laddu-fit = { path = "../laddu-fit", optional = true }
 laddu-kernel = { path = "../laddu-kernel" }
 laddu-likelihood = { path = "../laddu-likelihood", optional = true }
 laddu-physics = { path = "../laddu-physics" }
@@ -25,6 +26,7 @@ thiserror.workspace = true
 default = ["amplitudes", "likelihood"]
 amplitudes = ["dep:laddu-amplitudes"]
 likelihood = ["dep:laddu-likelihood"]
+fit = ["likelihood", "dep:laddu-fit"]
 jit = ["laddu-runtime/jit", "laddu-likelihood?/jit"]
 mpi = ["laddu-data/mpi", "laddu-runtime/mpi", "laddu-likelihood?/mpi"]
 wgpu = ["dep:laddu-wgpu", "laddu-runtime/wgpu", "laddu-likelihood?/wgpu"]
