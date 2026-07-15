@@ -18,7 +18,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let compiled = CompiledModel::from_expr(&model)?;
     println!(
         "Optimized graph:\n{}\n\n{}",
-        compiled.display_tree(),
+        compiled.display_tree().with_preset(ColorPreset::Dark),
         compiled.graph()
     );
 
