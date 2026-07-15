@@ -7,7 +7,7 @@ use std::{error::Error, f64::consts::PI, path::PathBuf};
 
 use laddu::prelude::*;
 
-const EVENTS: usize = 1_000;
+const EVENTS: usize = 1_000_000;
 const SEED: u64 = 0x4b53_4b53;
 
 // PDG 2025 values queried with the local `pdg` CLI.
@@ -41,7 +41,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     };
     let unweighted = UnweightedConfig {
         events: EVENTS,
-        max_proposals: 2_000_000,
+        max_proposals: None,
         batch_size: 2_048,
         seed: SEED.wrapping_add(1),
         diagnostics: true,

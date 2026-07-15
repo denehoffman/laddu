@@ -1630,12 +1630,14 @@ dependencies = [
 name = "laddu-generation"
 version = "0.1.0"
 dependencies = [
+ "codspeed-criterion-compat",
  "laddu-compile",
  "laddu-data",
  "laddu-expr",
  "laddu-physics",
  "laddu-runtime",
  "rayon",
+ "smallvec",
  "thiserror",
 ]
 

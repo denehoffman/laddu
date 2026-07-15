@@ -12,19 +12,17 @@ use laddu_data::{
     schema::Schema,
 };
 use laddu_expr::{ExprNode, parameters::ParamValues};
-use laddu_physics::{
-    LadduPhysicsError,
-    channel::{Channel, Vertex},
-    vectors::RealVec4,
-};
+use laddu_physics::{LadduPhysicsError, channel::Channel, vectors::RealVec4};
 use laddu_runtime::{Execution, PreparedModel};
 use rayon::prelude::*;
+use smallvec::SmallVec;
 use thiserror::Error;
 
 pub use laddu_physics::generation::{
-    FixedMass, InitialMomentum, InitialMomentumResult, MassProposal, MassProposalResult, NamedMass,
-    NamedMomentum, ProposalResult, ProposalRng, ScalarProposalResult, ScalarSource, TComponent,
-    TDistribution, TwoBodyDecay, TwoBodyScattering, UniformMass, VertexProposal,
+    AdaptiveTwoBodyDecay, FixedMass, InitialMomentum, InitialMomentumResult, MassProposal,
+    MassProposalResult, NamedMass, NamedMomentum, ProposalResult, ProposalRng,
+    ScalarProposalResult, ScalarSource, TComponent, TDistribution, TwoBodyDecay, TwoBodyScattering,
+    UniformMass, VertexProposal,
 };
 
 pub type GenerationResult<T> = Result<T, GenerationError>;
@@ -119,7 +117,11 @@ impl WeightedConfig {
 #[derive(Clone, Copy, Debug)]
 pub struct UnweightedConfig {
     pub events: usize,
-    pub max_proposals: usize,
+    /// Optional safeguard limiting production proposals.
+    ///
+    /// `None` allows generation to continue until the requested event count is
+    /// reached. Pilot proposals are not included in this limit.
+    pub max_proposals: Option<usize>,
     pub batch_size: usize,
     pub seed: u64,
     pub diagnostics: bool,
@@ -127,15 +129,23 @@ pub struct UnweightedConfig {
 }
 
 impl UnweightedConfig {
-    pub fn new(events: usize, max_proposals: usize) -> Self {
+    /// Create an unweighted-generation configuration without a proposal limit.
+    pub fn new(events: usize) -> Self {
         Self {
             events,
-            max_proposals,
+            max_proposals: None,
             batch_size: 1024,
             seed: 0,
             diagnostics: false,
             envelope_overflow: EnvelopeOverflow::Error,
         }
+    }
+
+    /// Stop with [`GenerationError::Exhausted`] after at most `max_proposals`
+    /// production proposals.
+    pub fn with_max_proposals(mut self, max_proposals: usize) -> Self {
+        self.max_proposals = Some(max_proposals);
+        self
     }
 }
 
@@ -157,6 +167,10 @@ pub enum EnvelopeMode {
     Strict {
         max_weight: f64,
     },
+    /// Estimate an envelope from pilot proposals.
+    ///
+    /// Density-aware built-in proposals may use one deterministic pilot pass
+    /// for importance adaptation and a second pass for the final envelope.
     Pilot {
         proposals: usize,
         safety_factor: f64,
@@ -249,17 +263,176 @@ impl ModelEvaluator {
 
 #[derive(Debug)]
 pub struct ChannelGenerator {
-    channel: Channel,
-    plan: Vec<usize>,
+    edges: Vec<EdgePlan>,
+    vertices: Vec<VertexPlan>,
     edge_names: Vec<String>,
+    output_indices: Vec<usize>,
     output_names: Vec<String>,
-    root_edges: HashSet<String>,
+    root_indices: Vec<usize>,
     scalar_sources: Vec<(String, ScalarSource)>,
 }
 
 #[derive(Clone, Debug)]
+struct EdgePlan {
+    name: String,
+    initial: Option<InitialMomentum>,
+    mass: EdgeMassPlan,
+}
+
+#[derive(Clone, Debug)]
+enum EdgeMassPlan {
+    Fixed(f64),
+    Proposed(Arc<dyn MassProposal>),
+}
+
+#[derive(Clone, Debug)]
+struct AdaptiveMassProposal {
+    base: Arc<dyn MassProposal>,
+    low: f64,
+    high: f64,
+    counts: Arc<[f64]>,
+    defensive_fraction: f64,
+}
+
+impl AdaptiveMassProposal {
+    fn bin_width(&self) -> f64 {
+        (self.high - self.low) / self.counts.len() as f64
+    }
+
+    fn truncated_total(&self, minimum: f64, maximum: f64) -> f64 {
+        let width = self.bin_width();
+        self.counts
+            .iter()
+            .enumerate()
+            .map(|(bin, count)| {
+                let bin_low = self.low + bin as f64 * width;
+                let bin_high = bin_low + width;
+                let overlap = maximum.min(bin_high) - minimum.max(bin_low);
+                if overlap > 0.0 {
+                    count * overlap / width
+                } else {
+                    0.0
+                }
+            })
+            .sum()
+    }
+
+    fn adaptive_density(&self, minimum: f64, maximum: f64, mass: f64) -> f64 {
+        if mass < self.low || mass > self.high || mass < minimum || mass > maximum {
+            return 0.0;
+        }
+        let width = self.bin_width();
+        let bin = (((mass - self.low) / width) as usize).min(self.counts.len() - 1);
+        let total = self.truncated_total(minimum, maximum);
+        if total > 0.0 {
+            self.counts[bin] / (width * total)
+        } else {
+            0.0
+        }
+    }
+
+    fn sample_adaptive(&self, minimum: f64, maximum: f64, rng: &mut ProposalRng) -> Option<f64> {
+        let width = self.bin_width();
+        let total = self.truncated_total(minimum, maximum);
+        if total <= 0.0 {
+            return None;
+        }
+        let mut threshold = rng.uniform() * total;
+        for (bin, count) in self.counts.iter().enumerate() {
+            let bin_low = self.low + bin as f64 * width;
+            let bin_high = bin_low + width;
+            let low = minimum.max(bin_low);
+            let high = maximum.min(bin_high);
+            let weight = if high > low {
+                count * (high - low) / width
+            } else {
+                0.0
+            };
+            if threshold <= weight && weight > 0.0 {
+                return Some(low + rng.uniform() * (high - low));
+            }
+            threshold -= weight;
+        }
+        None
+    }
+}
+
+impl MassProposal for AdaptiveMassProposal {
+    fn propose(
+        &self,
+        minimum: f64,
+        maximum: f64,
+        rng: &mut ProposalRng,
+    ) -> laddu_physics::LadduPhysicsResult<MassProposalResult> {
+        let adaptive_available = self.truncated_total(minimum, maximum) > 0.0;
+        let use_base = !adaptive_available || rng.uniform() < self.defensive_fraction;
+        let mass = if use_base {
+            self.base.propose(minimum, maximum, rng)?.mass
+        } else {
+            self.sample_adaptive(minimum, maximum, rng)
+                .expect("positive adaptive mass support must be sampleable")
+        };
+        let Some(base_density) = self.base.density(minimum, maximum, mass)? else {
+            return Err(LadduPhysicsError::invalid_relation(
+                "adaptive mass proposal lost access to its base density",
+            ));
+        };
+        let density = if adaptive_available {
+            self.defensive_fraction * base_density
+                + (1.0 - self.defensive_fraction) * self.adaptive_density(minimum, maximum, mass)
+        } else {
+            base_density
+        };
+        if !density.is_finite() || density <= 0.0 {
+            return Err(LadduPhysicsError::invalid_value(
+                "adaptive mass-proposal density",
+                "finite and positive",
+                density,
+            ));
+        }
+        Ok(MassProposalResult {
+            mass,
+            weight: density.recip(),
+        })
+    }
+
+    fn density(
+        &self,
+        minimum: f64,
+        maximum: f64,
+        mass: f64,
+    ) -> laddu_physics::LadduPhysicsResult<Option<f64>> {
+        let Some(base_density) = self.base.density(minimum, maximum, mass)? else {
+            return Ok(None);
+        };
+        let adaptive_available = self.truncated_total(minimum, maximum) > 0.0;
+        Ok(Some(if adaptive_available {
+            self.defensive_fraction * base_density
+                + (1.0 - self.defensive_fraction) * self.adaptive_density(minimum, maximum, mass)
+        } else {
+            base_density
+        }))
+    }
+}
+
+#[derive(Clone, Debug)]
+struct VertexPlan {
+    name: String,
+    incoming: Vec<usize>,
+    outgoing: Vec<usize>,
+    proposal: Arc<dyn VertexProposal>,
+    adaptive_decay: bool,
+}
+
+#[derive(Clone, Debug)]
+struct ProposalAdaptations {
+    masses: Vec<Option<AdaptiveMassProposal>>,
+    vertices: Vec<Option<AdaptiveTwoBodyDecay>>,
+}
+
+#[derive(Clone, Debug)]
 struct GeneratedEvent {
-    p4s: HashMap<String, RealVec4>,
+    p4s: Vec<RealVec4>,
     scalars: Vec<f64>,
     proposal_weight: f64,
     model_weight: f64,
@@ -304,12 +477,88 @@ impl ChannelGenerator {
             .map(|edge| edge.name().to_owned())
             .collect::<HashSet<_>>();
         let plan = topological_plan(&channel, &root_edges)?;
+        let edge_indices = edge_names
+            .iter()
+            .enumerate()
+            .map(|(index, name)| (name.as_str(), index))
+            .collect::<HashMap<_, _>>();
+        let output_indices = output_names
+            .iter()
+            .map(|name| edge_indices[name.as_str()])
+            .collect::<Vec<_>>();
+        let root_indices = channel
+            .initial_edges()
+            .map(|edge| edge_indices[edge.name()])
+            .collect::<Vec<_>>();
+        let edges = channel
+            .edges()
+            .map(|edge| {
+                let mass = if let Some(proposal) = edge.mass_proposal() {
+                    EdgeMassPlan::Proposed(Arc::clone(proposal))
+                } else {
+                    let properties = edge.properties().ok_or_else(|| {
+                        GenerationError::InvalidChannel(format!(
+                            "edge `{}` has neither particle properties nor a mass proposal",
+                            edge.name()
+                        ))
+                    })?;
+                    EdgeMassPlan::Fixed(
+                        properties
+                            .mass()
+                            .map_err(|source| GenerationError::ChannelValidation { source })?,
+                    )
+                };
+                Ok(EdgePlan {
+                    name: edge.name().to_owned(),
+                    initial: edge.initial_momentum().cloned(),
+                    mass,
+                })
+            })
+            .collect::<GenerationResult<Vec<_>>>()?;
+        let channel_vertices = channel.vertices().collect::<Vec<_>>();
+        let vertices = plan
+            .into_iter()
+            .map(|vertex_index| {
+                let vertex = channel_vertices[vertex_index];
+                let incoming = vertex
+                    .incoming()
+                    .iter()
+                    .map(|name| edge_indices[name.as_str()])
+                    .collect::<Vec<_>>();
+                let outgoing = vertex
+                    .outgoing()
+                    .iter()
+                    .map(|name| edge_indices[name.as_str()])
+                    .collect::<Vec<_>>();
+                let (proposal, adaptive_decay): (Arc<dyn VertexProposal>, bool) =
+                    match vertex.generation() {
+                        Some(proposal) => (Arc::clone(proposal), false),
+                        None if incoming.len() == 1 && outgoing.len() == 2 => {
+                            (Arc::new(TwoBodyDecay::isotropic()), true)
+                        }
+                        None => {
+                            return Err(GenerationError::InvalidChannel(format!(
+                                "vertex `{}` has no generation proposal",
+                                vertex.name()
+                            )));
+                        }
+                    };
+                Ok(VertexPlan {
+                    name: vertex.name().to_owned(),
+                    incoming,
+                    outgoing,
+                    proposal,
+                    adaptive_decay,
+                })
+            })
+            .collect::<GenerationResult<Vec<_>>>()?;
         Ok(Self {
-            channel,
-            plan,
+            edges,
+            vertices,
             edge_names,
+            output_indices,
             output_names,
-            root_edges,
+            root_indices,
             scalar_sources: Vec::new(),
         })
     }
@@ -360,16 +609,19 @@ impl ChannelGenerator {
         let schema = self.output_schema(true, config.diagnostics)?;
         sink.begin(Arc::clone(&schema), WritePlan::default())?;
         let mut report = report(config.events, config.seed, config.batch_size);
-        for start in (0..config.events).step_by(config.batch_size) {
-            let count = config.batch_size.min(config.events - start);
+        let work_batch = config.batch_size.max(16_384);
+        for start in (0..config.events).step_by(work_batch) {
+            let count = work_batch.min(config.events - start);
             let mut events = self.propose_range(start as u64, count, config.seed, 0)?;
             self.apply_model(&mut events, model)?;
             update_report(&mut report, &events);
             report.proposals += events.len();
             report.produced += events.len();
-            let batch =
-                self.output_batch(&events, Arc::clone(&schema), true, config.diagnostics)?;
-            sink.write_batch(&batch)?;
+            for chunk in events.chunks(config.batch_size) {
+                let batch =
+                    self.output_batch(chunk, Arc::clone(&schema), true, config.diagnostics)?;
+                sink.write_batch(&batch)?;
+            }
         }
         sink.finish()?;
         Ok(report)
@@ -383,11 +635,15 @@ impl ChannelGenerator {
         sink: &mut dyn EventSink,
     ) -> GenerationResult<GenerationReport> {
         validate_common(config.events, config.batch_size)?;
-        if config.max_proposals < config.events {
+        if config
+            .max_proposals
+            .is_some_and(|max_proposals| max_proposals < config.events)
+        {
             return Err(GenerationError::InvalidConfiguration(
                 "max_proposals must be at least the requested event count".into(),
             ));
         }
+        let mut adaptations = None;
         let (mut bound, kind, pilot_count) = match envelope {
             EnvelopeMode::Strict { max_weight } => {
                 validate_bound(max_weight)?;
@@ -400,13 +656,35 @@ impl ChannelGenerator {
                 if proposals == 0 || !safety_factor.is_finite() || safety_factor <= 1.0 {
                     return Err(GenerationError::InvalidConfiguration("pilot proposals must be nonzero and safety_factor must be finite and greater than one".into()));
                 }
-                let mut pilot = self.propose_range(0, proposals, config.seed, 1)?;
-                self.apply_model(&mut pilot, Some(model))?;
-                let observed = pilot
+                let mut adaptation_pilot = self.propose_range(0, proposals, config.seed, 1)?;
+                self.apply_model(&mut adaptation_pilot, Some(model))?;
+                let learned = self.learn_mass_adaptations(&adaptation_pilot)?;
+                let has_adaptation = learned.masses.iter().any(Option::is_some)
+                    || learned.vertices.iter().any(Option::is_some);
+                let mut envelope_pilot = if has_adaptation {
+                    self.propose_range_with_adaptation(
+                        0,
+                        proposals,
+                        config.seed,
+                        2,
+                        Some(&learned),
+                    )?
+                } else {
+                    adaptation_pilot
+                };
+                if has_adaptation {
+                    self.apply_model(&mut envelope_pilot, Some(model))?;
+                    adaptations = Some(learned);
+                }
+                let observed = envelope_pilot
                     .iter()
                     .map(|event| event.target_weight)
                     .fold(0.0, f64::max);
-                (observed * safety_factor, EnvelopeKind::Pilot, proposals)
+                (
+                    observed * safety_factor,
+                    EnvelopeKind::Pilot,
+                    proposals * if has_adaptation { 2 } else { 1 },
+                )
             }
         };
         if let EnvelopeOverflow::Grow { safety_factor } = config.envelope_overflow
@@ -424,10 +702,38 @@ impl ChannelGenerator {
         report.pilot_proposals = pilot_count;
         let mut proposal_index = 0_usize;
         let mut buffered = Vec::new();
-        while report.produced < config.events && proposal_index < config.max_proposals {
-            let count = config.batch_size.min(config.max_proposals - proposal_index);
-            let mut events = self.propose_range(proposal_index as u64, count, config.seed, 0)?;
+        let work_batch = config.batch_size.max(32_768);
+        while report.produced < config.events
+            && config
+                .max_proposals
+                .is_none_or(|max_proposals| proposal_index < max_proposals)
+        {
+            let count = config.max_proposals.map_or(work_batch, |max_proposals| {
+                work_batch.min(max_proposals - proposal_index)
+            });
+            let mut events = self.propose_range_with_adaptation(
+                proposal_index as u64,
+                count,
+                config.seed,
+                0,
+                adaptations.as_ref(),
+            )?;
             self.apply_model(&mut events, Some(model))?;
+            let remaining_before_overflow = config.events - report.produced;
+            if let Some(last_needed) = events
+                .iter()
+                .enumerate()
+                .filter(|(_, event)| {
+                    acceptance_uniform(config.seed, event.index) * bound <= event.target_weight
+                })
+                .nth(remaining_before_overflow - 1)
+                .map(|(position, _)| position + 1)
+                && !events[..last_needed]
+                    .iter()
+                    .any(|event| event.target_weight > bound)
+            {
+                events.truncate(last_needed);
+            }
             update_report(&mut report, &events);
             if let Some(overflow) = events
                 .iter()
@@ -456,6 +762,7 @@ impl ChannelGenerator {
                 }
             }
             let remaining = config.events - report.produced;
+            let proposal_count = events.len();
             let accepted = events
                 .into_iter()
                 .filter(|event| {
@@ -463,19 +770,21 @@ impl ChannelGenerator {
                 })
                 .take(remaining)
                 .collect::<Vec<_>>();
-            report.proposals += count;
+            report.proposals += proposal_count;
             report.produced += accepted.len();
             report.rejected = report.proposals - report.produced;
-            proposal_index += count;
+            proposal_index += proposal_count;
             match config.envelope_overflow {
                 EnvelopeOverflow::Error if !accepted.is_empty() => {
-                    let batch = self.output_batch(
-                        &accepted,
-                        Arc::clone(&schema),
-                        false,
-                        config.diagnostics,
-                    )?;
-                    sink.write_batch(&batch)?;
+                    for chunk in accepted.chunks(config.batch_size) {
+                        let batch = self.output_batch(
+                            chunk,
+                            Arc::clone(&schema),
+                            false,
+                            config.diagnostics,
+                        )?;
+                        sink.write_batch(&batch)?;
+                    }
                 }
                 EnvelopeOverflow::Grow { .. } => {
                     buffered.extend(accepted);
@@ -531,30 +840,63 @@ impl ChannelGenerator {
         seed: u64,
         stream: u64,
     ) -> GenerationResult<Vec<GeneratedEvent>> {
+        self.propose_range_with_adaptation(start, count, seed, stream, None)
+    }
+
+    fn propose_range_with_adaptation(
+        &self,
+        start: u64,
+        count: usize,
+        seed: u64,
+        stream: u64,
+        adaptations: Option<&ProposalAdaptations>,
+    ) -> GenerationResult<Vec<GeneratedEvent>> {
         (0..count)
             .into_par_iter()
-            .map(|offset| self.propose(start + offset as u64, seed, stream))
+            .map(|offset| self.propose(start + offset as u64, seed, stream, adaptations))
             .collect()
     }
 
-    fn propose(&self, index: u64, seed: u64, stream: u64) -> GenerationResult<GeneratedEvent> {
+    fn propose(
+        &self,
+        index: u64,
+        seed: u64,
+        stream: u64,
+        adaptations: Option<&ProposalAdaptations>,
+    ) -> GenerationResult<GeneratedEvent> {
         let mut rng = ProposalRng::new(derive_seed(seed, stream, index, 0));
-        let mut p4s = HashMap::with_capacity(self.root_edges.len());
+        let mut p4s = vec![RealVec4::new(0.0, 0.0, 0.0, 0.0); self.edges.len()];
         let mut proposal_weight = 1.0;
-        for edge in self.channel.initial_edges() {
+        for &edge_index in &self.root_indices {
+            let edge = &self.edges[edge_index];
             let source = edge
-                .initial_momentum()
+                .initial
+                .as_ref()
                 .ok_or_else(|| GenerationError::InitialState {
                     index,
                     source: LadduPhysicsError::invalid_relation(format!(
                         "initial edge `{}` has no momentum source",
-                        edge.name()
+                        edge.name
                     )),
                 })?;
             let sampled = source
-                .sample(edge.name(), edge.properties(), &mut rng)
+                .sample_prevalidated(
+                    match edge.mass {
+                        EdgeMassPlan::Fixed(mass) => mass,
+                        EdgeMassPlan::Proposed(_) => {
+                            return Err(GenerationError::InitialState {
+                                index,
+                                source: LadduPhysicsError::invalid_relation(format!(
+                                    "initial edge `{}` cannot use a generated mass",
+                                    edge.name
+                                )),
+                            });
+                        }
+                    },
+                    &mut rng,
+                )
                 .map_err(|source| GenerationError::InitialState { index, source })?;
-            p4s.insert(edge.name().to_owned(), sampled.p4);
+            p4s[edge_index] = sampled.p4;
             proposal_weight *= sampled.weight;
         }
         if !proposal_weight.is_finite() || proposal_weight <= 0.0 {
@@ -567,13 +909,18 @@ impl ChannelGenerator {
                 ),
             });
         }
-        let total_initial: RealVec4 = p4s.values().copied().sum();
+        let total_initial: RealVec4 = self.root_indices.iter().map(|&edge| p4s[edge]).sum();
         let maximum_mass = total_initial
             .m()
             .map_err(|source| GenerationError::Kinematics { index, source })?;
-        let mut masses = HashMap::new();
-        for (edge_index, edge) in self.channel.edges().enumerate() {
-            let mass = if let Some(proposal) = edge.mass_proposal() {
+        let mut masses = Vec::with_capacity(self.edges.len());
+        for (edge_index, edge) in self.edges.iter().enumerate() {
+            let mass = if let EdgeMassPlan::Proposed(base_proposal) = &edge.mass {
+                let proposal: &dyn MassProposal = adaptations
+                    .and_then(|adaptations| adaptations.masses[edge_index].as_ref())
+                    .map_or(base_proposal.as_ref(), |proposal| {
+                        proposal as &dyn MassProposal
+                    });
                 let mut mass_rng =
                     ProposalRng::new(derive_seed(seed, stream, index, 1 + edge_index as u64));
                 let result =
@@ -581,32 +928,20 @@ impl ChannelGenerator {
                         .propose(0.0, maximum_mass, &mut mass_rng)
                         .map_err(|source| GenerationError::MassProposal {
                             index,
-                            edge: edge.name().to_owned(),
+                            edge: edge.name.clone(),
                             source,
                         })?;
                 proposal_weight *= result.weight;
                 result.mass
+            } else if let EdgeMassPlan::Fixed(mass) = edge.mass {
+                mass
             } else {
-                edge.properties()
-                    .ok_or_else(|| GenerationError::MassProposal {
-                        index,
-                        edge: edge.name().to_owned(),
-                        source: LadduPhysicsError::invalid_relation(format!(
-                            "edge `{}` has neither particle properties nor a mass proposal",
-                            edge.name()
-                        )),
-                    })?
-                    .mass()
-                    .map_err(|source| GenerationError::MassProposal {
-                        index,
-                        edge: edge.name().to_owned(),
-                        source,
-                    })?
+                unreachable!()
             };
             if !mass.is_finite() || mass < 0.0 {
                 return Err(GenerationError::MassProposal {
                     index,
-                    edge: edge.name().to_owned(),
+                    edge: edge.name.clone(),
                     source: LadduPhysicsError::invalid_value(
                         "mass",
                         "finite and nonnegative",
@@ -614,62 +949,49 @@ impl ChannelGenerator {
                     ),
                 });
             }
-            masses.insert(edge.name().to_owned(), mass);
+            masses.push(mass);
         }
-        for edge in &self.root_edges {
-            validate_p4(edge, p4s[edge], masses[edge], index)?;
+        for &edge in &self.root_indices {
+            validate_p4(&self.edges[edge].name, p4s[edge], masses[edge], index)?;
         }
-        let vertices = self.channel.vertices().collect::<Vec<_>>();
-        for (step, vertex_index) in self.plan.iter().copied().enumerate() {
-            let vertex = vertices[vertex_index];
+        for (step, vertex) in self.vertices.iter().enumerate() {
             let incoming = vertex
-                .incoming()
+                .incoming
                 .iter()
-                .map(|name| {
-                    p4s.get(name)
-                        .copied()
-                        .map(|p4| NamedMomentum { name, p4 })
-                        .ok_or_else(|| GenerationError::VertexProposal {
-                            index,
-                            vertex: vertex.name().to_owned(),
-                            source: LadduPhysicsError::invalid_relation(format!(
-                                "missing generated momentum for `{name}`"
-                            )),
-                        })
+                .map(|&edge| NamedMomentum {
+                    name: &self.edges[edge].name,
+                    p4: p4s[edge],
                 })
-                .collect::<GenerationResult<Vec<_>>>()?;
+                .collect::<SmallVec<[_; 2]>>();
             let outgoing = vertex
-                .outgoing()
+                .outgoing
                 .iter()
-                .map(|name| NamedMass {
-                    name,
-                    mass: masses[name],
+                .map(|&edge| NamedMass {
+                    name: &self.edges[edge].name,
+                    mass: masses[edge],
                 })
-                .collect::<Vec<_>>();
+                .collect::<SmallVec<[_; 2]>>();
             let mut vertex_rng =
                 ProposalRng::new(derive_seed(seed, stream, index, 10_000 + step as u64));
-            let result = match vertex.generation() {
-                Some(proposal) => proposal.propose(&incoming, &outgoing, &mut vertex_rng),
-                None if vertex.incoming().len() == 1 && vertex.outgoing().len() == 2 => {
-                    TwoBodyDecay::isotropic().propose(&incoming, &outgoing, &mut vertex_rng)
-                }
-                None => Err(LadduPhysicsError::invalid_relation(format!(
-                    "vertex `{}` has no generation proposal",
-                    vertex.name()
-                ))),
-            }
-            .map_err(|source| GenerationError::VertexProposal {
-                index,
-                vertex: vertex.name().to_owned(),
-                source,
-            })?;
-            if result.outgoing.len() != vertex.outgoing().len()
+            let proposal: &dyn VertexProposal = adaptations
+                .and_then(|adaptations| adaptations.vertices[step].as_ref())
+                .map_or(vertex.proposal.as_ref(), |proposal| {
+                    proposal as &dyn VertexProposal
+                });
+            let result = proposal
+                .propose(&incoming, &outgoing, &mut vertex_rng)
+                .map_err(|source| GenerationError::VertexProposal {
+                    index,
+                    vertex: vertex.name.clone(),
+                    source,
+                })?;
+            if result.outgoing.len() != vertex.outgoing.len()
                 || !result.weight.is_finite()
                 || result.weight <= 0.0
             {
                 return Err(GenerationError::VertexProposal {
                     index,
-                    vertex: vertex.name().to_owned(),
+                    vertex: vertex.name.clone(),
                     source: LadduPhysicsError::invalid_relation(format!(
                         "proposal returned {} outgoing momenta and weight {}",
                         result.outgoing.len(),
@@ -678,11 +1000,11 @@ impl ChannelGenerator {
                 });
             }
             proposal_weight *= result.weight;
-            for (name, p4) in vertex.outgoing().iter().cloned().zip(result.outgoing) {
-                validate_p4(name.as_str(), p4, masses[&name], index)?;
-                p4s.insert(name, p4);
+            for (&edge, p4) in vertex.outgoing.iter().zip(result.outgoing) {
+                validate_p4(&self.edges[edge].name, p4, masses[edge], index)?;
+                p4s[edge] = p4;
             }
-            validate_conservation(vertex, &p4s, index)?;
+            validate_indexed_conservation(vertex, &p4s, index)?;
         }
         let mut scalars = Vec::with_capacity(self.scalar_sources.len());
         for (scalar_index, (column, source)) in self.scalar_sources.iter().enumerate() {
@@ -748,36 +1070,202 @@ impl ChannelGenerator {
                 scalar_names,
                 false,
             )?);
-            let columns = self
-                .edge_names
-                .iter()
-                .map(|name| {
-                    Arc::<[RealVec4]>::from(
-                        events
-                            .iter()
-                            .map(|event| event.p4s[name])
-                            .collect::<Vec<_>>(),
-                    )
-                })
-                .collect();
-            let scalar_columns = (0..self.scalar_sources.len())
-                .map(|column| {
-                    Arc::<[f64]>::from(
-                        events
-                            .iter()
-                            .map(|event| event.scalars[column])
-                            .collect::<Vec<_>>(),
-                    )
-                })
-                .collect();
-            let batch = EventBatch::new(schema, columns, scalar_columns, None)?;
-            let weights = model.evaluate(&batch)?;
-            for (event, weight) in events.iter_mut().zip(weights) {
-                event.model_weight = weight;
-                event.target_weight = event.proposal_weight * weight;
-            }
+            events
+                .par_chunks_mut(4_096)
+                .try_for_each(|events| -> GenerationResult<()> {
+                    let columns = (0..self.edge_names.len())
+                        .map(|edge| {
+                            Arc::<[RealVec4]>::from(
+                                events
+                                    .iter()
+                                    .map(|event| event.p4s[edge])
+                                    .collect::<Vec<_>>(),
+                            )
+                        })
+                        .collect();
+                    let scalar_columns = (0..self.scalar_sources.len())
+                        .map(|column| {
+                            Arc::<[f64]>::from(
+                                events
+                                    .iter()
+                                    .map(|event| event.scalars[column])
+                                    .collect::<Vec<_>>(),
+                            )
+                        })
+                        .collect();
+                    let batch =
+                        EventBatch::new(Arc::clone(&schema), columns, scalar_columns, None)?;
+                    let weights = model.evaluate(&batch)?;
+                    for (event, weight) in events.iter_mut().zip(weights) {
+                        event.model_weight = weight;
+                        event.target_weight = event.proposal_weight * weight;
+                    }
+                    Ok(())
+                })?;
         }
         Ok(())
+    }
+
+    fn learn_mass_adaptations(
+        &self,
+        pilot: &[GeneratedEvent],
+    ) -> GenerationResult<ProposalAdaptations> {
+        const BINS: usize = 64;
+        const DEFENSIVE_FRACTION: f64 = 0.2;
+        const MINIMUM_GAIN: f64 = 1.02;
+
+        let mut best: Option<(usize, f64, AdaptiveMassProposal)> = None;
+        let old_sum: f64 = pilot.iter().map(|event| event.target_weight).sum();
+        let old_max = pilot
+            .iter()
+            .map(|event| event.target_weight)
+            .fold(0.0, f64::max);
+        if pilot.is_empty() || old_sum <= 0.0 || old_max <= 0.0 {
+            return Ok(ProposalAdaptations {
+                masses: vec![None; self.edges.len()],
+                vertices: vec![None; self.vertices.len()],
+            });
+        }
+        let old_efficiency = old_sum / (pilot.len() as f64 * old_max);
+
+        for (edge_index, edge) in self.edges.iter().enumerate() {
+            let EdgeMassPlan::Proposed(base) = &edge.mass else {
+                continue;
+            };
+            let masses = pilot
+                .iter()
+                .map(|event| {
+                    event.p4s[edge_index]
+                        .m()
+                        .map_err(|source| GenerationError::Kinematics {
+                            index: event.index,
+                            source,
+                        })
+                })
+                .collect::<GenerationResult<Vec<_>>>()?;
+            let low = masses.iter().copied().fold(f64::INFINITY, f64::min);
+            let high = masses.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+            if !low.is_finite() || !high.is_finite() || high <= low {
+                continue;
+            }
+            let width = (high - low) / BINS as f64;
+            let mut counts = vec![0.0; BINS];
+            for (&mass, event) in masses.iter().zip(pilot) {
+                let bin = (((mass - low) / width) as usize).min(BINS - 1);
+                counts[bin] += event.target_weight;
+            }
+            if counts.iter().filter(|count| **count > 0.0).count() < 2 {
+                continue;
+            }
+            let candidate = AdaptiveMassProposal {
+                base: Arc::clone(base),
+                low,
+                high,
+                counts: counts.into(),
+                defensive_fraction: DEFENSIVE_FRACTION,
+            };
+            let mut new_sum = 0.0;
+            let mut new_max: f64 = 0.0;
+            let mut density_available = true;
+            for (event, &mass) in pilot.iter().zip(&masses) {
+                let total_initial: RealVec4 =
+                    self.root_indices.iter().map(|&edge| event.p4s[edge]).sum();
+                let maximum = total_initial
+                    .m()
+                    .map_err(|source| GenerationError::Kinematics {
+                        index: event.index,
+                        source,
+                    })?;
+                let Some(base_density) = base.density(0.0, maximum, mass)? else {
+                    density_available = false;
+                    break;
+                };
+                let Some(new_density) = candidate.density(0.0, maximum, mass)? else {
+                    density_available = false;
+                    break;
+                };
+                if base_density <= 0.0 || new_density <= 0.0 {
+                    density_available = false;
+                    break;
+                }
+                let adjusted = event.target_weight * base_density / new_density;
+                new_sum += adjusted;
+                new_max = new_max.max(adjusted);
+            }
+            if !density_available || new_sum <= 0.0 || new_max <= 0.0 {
+                continue;
+            }
+            let new_efficiency = new_sum / (pilot.len() as f64 * new_max);
+            let gain = new_efficiency / old_efficiency;
+            if gain >= MINIMUM_GAIN
+                && best
+                    .as_ref()
+                    .is_none_or(|(_, best_gain, _)| gain > *best_gain)
+            {
+                best = Some((edge_index, gain, candidate));
+            }
+        }
+
+        let mut masses = vec![None; self.edges.len()];
+        if let Some((edge, _, proposal)) = best {
+            masses[edge] = Some(proposal);
+        }
+        let mut vertices = vec![None; self.vertices.len()];
+        for (vertex_index, vertex) in self.vertices.iter().enumerate() {
+            if !vertex.adaptive_decay {
+                continue;
+            }
+            let mut counts = vec![0.0; 32];
+            let mut costhetas = Vec::with_capacity(pilot.len());
+            for event in pilot {
+                let parent = event.p4s[vertex.incoming[0]];
+                let inverse_beta =
+                    -parent
+                        .beta()
+                        .map_err(|source| GenerationError::Kinematics {
+                            index: event.index,
+                            source,
+                        })?;
+                let rest = event.p4s[vertex.outgoing[0]].boost(&inverse_beta);
+                let momentum = rest.vec3();
+                let magnitude = momentum.mag();
+                if magnitude <= 0.0 || !magnitude.is_finite() {
+                    costhetas.push(None);
+                    continue;
+                }
+                let costheta = (momentum.pz() / magnitude).clamp(-1.0, 1.0);
+                costhetas.push(Some(costheta));
+                let bin =
+                    (((costheta + 1.0) * 0.5 * counts.len() as f64) as usize).min(counts.len() - 1);
+                counts[bin] += event.target_weight;
+            }
+            let total: f64 = counts.iter().sum();
+            let width = 2.0 / counts.len() as f64;
+            let mut new_sum = 0.0;
+            let mut new_max: f64 = 0.0;
+            for (event, costheta) in pilot.iter().zip(&costhetas) {
+                let Some(costheta) = costheta else {
+                    continue;
+                };
+                let bin = (((costheta + 1.0) / width) as usize).min(counts.len() - 1);
+                let learned_density = counts[bin] / (total * width);
+                let density =
+                    DEFENSIVE_FRACTION * 0.5 + (1.0 - DEFENSIVE_FRACTION) * learned_density;
+                let adjusted = event.target_weight * 0.5 / density;
+                new_sum += adjusted;
+                new_max = new_max.max(adjusted);
+            }
+            let new_efficiency = new_sum / (pilot.len() as f64 * new_max);
+            if counts.iter().filter(|count| **count > 0.0).count() >= 2
+                && new_efficiency / old_efficiency >= MINIMUM_GAIN
+            {
+                vertices[vertex_index] = Some(
+                    AdaptiveTwoBodyDecay::new(counts.into(), DEFENSIVE_FRACTION)
+                        .map_err(GenerationError::Physics)?,
+                );
+            }
+        }
+        Ok(ProposalAdaptations { masses, vertices })
     }
 
     fn output_schema(&self, weighted: bool, diagnostics: bool) -> GenerationResult<Arc<Schema>> {
@@ -808,13 +1296,13 @@ impl ChannelGenerator {
         diagnostics: bool,
     ) -> GenerationResult<EventBatch> {
         let p4s = self
-            .output_names
+            .output_indices
             .iter()
-            .map(|name| {
+            .map(|&edge| {
                 Arc::<[RealVec4]>::from(
                     events
                         .iter()
-                        .map(|event| event.p4s[name])
+                        .map(|event| event.p4s[edge])
                         .collect::<Vec<_>>(),
                 )
             })
@@ -978,27 +1466,26 @@ fn validate_p4(name: &str, p4: RealVec4, mass: f64, index: u64) -> GenerationRes
     }
     Ok(())
 }
-fn validate_conservation(
-    vertex: &Vertex,
-    p4s: &HashMap<String, RealVec4>,
+fn validate_indexed_conservation(
+    vertex: &VertexPlan,
+    p4s: &[RealVec4],
     index: u64,
 ) -> GenerationResult<()> {
-    let incoming: RealVec4 = vertex.incoming().iter().map(|name| p4s[name]).sum();
-    let outgoing: RealVec4 = vertex.outgoing().iter().map(|name| p4s[name]).sum();
-    let scale = 1.0 + incoming.t.abs();
-    if [
-        incoming.x - outgoing.x,
-        incoming.y - outgoing.y,
-        incoming.z - outgoing.z,
-        incoming.t - outgoing.t,
-    ]
-    .into_iter()
-    .any(|delta| delta.abs() > 1e-9 * scale)
+    let incoming: RealVec4 = vertex.incoming.iter().map(|&edge| p4s[edge]).sum();
+    let outgoing: RealVec4 = vertex.outgoing.iter().map(|&edge| p4s[edge]).sum();
+    let residual = incoming - outgoing;
+    let scale = incoming.t.abs().max(1.0);
+    if residual.t.abs() > 1e-9 * scale
+        || residual.x.abs() > 1e-9 * scale
+        || residual.y.abs() > 1e-9 * scale
+        || residual.z.abs() > 1e-9 * scale
     {
-        return Err(GenerationError::VertexProposal {
+        return Err(GenerationError::Kinematics {
             index,
-            vertex: vertex.name().to_owned(),
-            source: LadduPhysicsError::invalid_relation("four-momentum is not conserved"),
+            source: LadduPhysicsError::invalid_relation(format!(
+                "vertex `{}` violates four-momentum conservation by {residual:?}",
+                vertex.name
+            )),
         });
     }
     Ok(())
@@ -1088,6 +1575,81 @@ mod tests {
     }
 
     #[test]
+    fn unweighted_generation_is_thread_and_batch_size_independent() {
+        let generator = decay_generator();
+        let model = CompiledModel::from_expr(&laddu_expr::Expr::from(1.0)).unwrap();
+        let evaluator = ModelEvaluator::prepare(
+            &model,
+            model.params().default_values(),
+            &Execution::default(),
+        )
+        .unwrap();
+        let mut first = UnweightedConfig::new(32).with_max_proposals(20_000);
+        first.seed = 91;
+        first.batch_size = 7;
+        let mut second = first;
+        second.batch_size = 29;
+        let one_thread = rayon::ThreadPoolBuilder::new()
+            .num_threads(1)
+            .build()
+            .unwrap();
+        let four_threads = rayon::ThreadPoolBuilder::new()
+            .num_threads(4)
+            .build()
+            .unwrap();
+        let (a, _) = one_thread
+            .install(|| {
+                generator.generate_unweighted_dataset(
+                    first,
+                    &evaluator,
+                    EnvelopeMode::Strict { max_weight: 1.0 },
+                )
+            })
+            .unwrap();
+        let (b, _) = four_threads
+            .install(|| {
+                generator.generate_unweighted_dataset(
+                    second,
+                    &evaluator,
+                    EnvelopeMode::Strict { max_weight: 1.0 },
+                )
+            })
+            .unwrap();
+        let mut av = Vec::new();
+        a.for_each_event(|event| av.push(event.p4(0))).unwrap();
+        let mut bv = Vec::new();
+        b.for_each_event(|event| bv.push(event.p4(0))).unwrap();
+        assert_eq!(av, bv);
+    }
+
+    #[test]
+    fn adaptive_mass_density_is_normalized_and_matches_returned_weight() {
+        let proposal = AdaptiveMassProposal {
+            base: Arc::new(UniformMass::new(0.0, 4.0)),
+            low: 1.0,
+            high: 3.0,
+            counts: Arc::from([1.0, 3.0, 7.0, 1.0]),
+            defensive_fraction: 0.2,
+        };
+        let steps = 20_000;
+        let dx = 4.0 / steps as f64;
+        let integral: f64 = (0..steps)
+            .map(|step| {
+                let mass = (step as f64 + 0.5) * dx;
+                proposal.density(0.0, 4.0, mass).unwrap().unwrap() * dx
+            })
+            .sum();
+        assert!((integral - 1.0).abs() < 1e-10);
+
+        let mut rng = ProposalRng::new(123);
+        for _ in 0..1_000 {
+            let sampled = proposal.propose(0.0, 4.0, &mut rng).unwrap();
+            let density = proposal.density(0.0, 4.0, sampled.mass).unwrap().unwrap();
+            assert!((sampled.weight * density - 1.0).abs() < 1e-12);
+        }
+    }
+
+    #[test]
     fn strict_envelope_rejects_overflow() {
         let generator = decay_generator();
         let model = CompiledModel::from_expr(&laddu_expr::Expr::from(1.0)).unwrap();
@@ -1099,11 +1661,58 @@ mod tests {
         .unwrap();
         assert!(matches!(
             generator.generate_unweighted_dataset(
-                UnweightedConfig::new(2, 10),
+                UnweightedConfig::new(2).with_max_proposals(10),
                 &evaluator,
                 EnvelopeMode::Strict { max_weight: 1e-12 },
             ),
             Err(GenerationError::EnvelopeOverflow { .. })
+        ));
+    }
+
+    #[test]
+    fn unweighted_generation_is_unlimited_by_default() {
+        let generator = decay_generator();
+        let model = CompiledModel::from_expr(&laddu_expr::Expr::from(1.0)).unwrap();
+        let evaluator = ModelEvaluator::prepare(
+            &model,
+            model.params().default_values(),
+            &Execution::default(),
+        )
+        .unwrap();
+        let config = UnweightedConfig::new(32);
+        assert_eq!(config.max_proposals, None);
+        let (_, report) = generator
+            .generate_unweighted_dataset(
+                config,
+                &evaluator,
+                EnvelopeMode::Strict { max_weight: 1.0 },
+            )
+            .unwrap();
+        assert_eq!(report.produced, 32);
+        assert!(report.proposals >= 32);
+    }
+
+    #[test]
+    fn explicit_proposal_limit_can_exhaust_generation() {
+        let generator = decay_generator();
+        let model = CompiledModel::from_expr(&laddu_expr::Expr::from(1.0)).unwrap();
+        let evaluator = ModelEvaluator::prepare(
+            &model,
+            model.params().default_values(),
+            &Execution::default(),
+        )
+        .unwrap();
+        assert!(matches!(
+            generator.generate_unweighted_dataset(
+                UnweightedConfig::new(16).with_max_proposals(16),
+                &evaluator,
+                EnvelopeMode::Strict { max_weight: 1.0 },
+            ),
+            Err(GenerationError::Exhausted {
+                requested: 16,
+                proposals: 16,
+                ..
+            })
         ));
     }
 
@@ -1117,7 +1726,7 @@ mod tests {
             &Execution::default(),
         )
         .unwrap();
-        let mut config = UnweightedConfig::new(16, 10_000);
+        let mut config = UnweightedConfig::new(16).with_max_proposals(10_000);
         config.envelope_overflow = EnvelopeOverflow::Grow { safety_factor: 1.5 };
         let (dataset, report) = generator
             .generate_unweighted_dataset(

@@ -1,6 +1,6 @@
 //! Kinematic proposal primitives used by Monte Carlo generators.
 
-use std::{f64::consts::PI, fmt::Debug};
+use std::{f64::consts::PI, fmt::Debug, sync::Arc};
 
 use crate::{
     LadduPhysicsError, LadduPhysicsResult,
@@ -74,6 +74,14 @@ pub trait MassProposal: Debug + Send + Sync {
         maximum: f64,
         rng: &mut ProposalRng,
     ) -> LadduPhysicsResult<MassProposalResult>;
+
+    /// Evaluate the proposal density when it is available.
+    ///
+    /// Custom proposals may retain the default `None`; density-aware generators
+    /// use this hook only for optional importance adaptation.
+    fn density(&self, _minimum: f64, _maximum: f64, _mass: f64) -> LadduPhysicsResult<Option<f64>> {
+        Ok(None)
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -140,6 +148,28 @@ impl MassProposal for UniformMass {
             weight: width,
         })
     }
+
+    fn density(&self, minimum: f64, maximum: f64, mass: f64) -> LadduPhysicsResult<Option<f64>> {
+        if !self.low.is_finite() || !self.high.is_finite() || self.high <= self.low {
+            return Err(LadduPhysicsError::invalid_relation(format!(
+                "uniform mass proposal requires finite low < high, got [{}, {}]",
+                self.low, self.high
+            )));
+        }
+        let low = self.low.max(minimum);
+        let high = self.high.min(maximum);
+        if high <= low {
+            return Err(LadduPhysicsError::invalid_relation(format!(
+                "uniform mass support [{}, {}] does not overlap the allowed interval [{minimum}, {maximum}]",
+                self.low, self.high
+            )));
+        }
+        Ok(Some(if mass >= low && mass <= high {
+            (high - low).recip()
+        } else {
+            0.0
+        }))
+    }
 }
 
 /// Extensible kinematic proposal attached to a channel vertex.
@@ -185,6 +215,93 @@ impl VertexProposal for TwoBodyDecay {
         Ok(ProposalResult {
             outgoing: vec![first.boost(&beta), second.boost(&beta)],
             weight: p / (4.0 * PI * mass),
+        })
+    }
+}
+
+/// Density-adapted two-body decay used by the channel generator after a pilot run.
+#[derive(Clone, Debug)]
+#[doc(hidden)]
+pub struct AdaptiveTwoBodyDecay {
+    counts: Arc<[f64]>,
+    total: f64,
+    defensive_fraction: f64,
+}
+
+impl AdaptiveTwoBodyDecay {
+    pub fn new(counts: Arc<[f64]>, defensive_fraction: f64) -> LadduPhysicsResult<Self> {
+        let total: f64 = counts.iter().sum();
+        if counts.is_empty()
+            || counts
+                .iter()
+                .any(|count| !count.is_finite() || *count < 0.0)
+            || !total.is_finite()
+            || total <= 0.0
+            || !defensive_fraction.is_finite()
+            || !(0.0..=1.0).contains(&defensive_fraction)
+        {
+            return Err(LadduPhysicsError::invalid_relation(
+                "adaptive decay requires nonnegative finite counts with positive total and a defensive fraction in [0, 1]",
+            ));
+        }
+        Ok(Self {
+            counts,
+            total,
+            defensive_fraction,
+        })
+    }
+
+    fn sample_costheta(&self, rng: &mut ProposalRng) -> (f64, f64) {
+        let width = 2.0 / self.counts.len() as f64;
+        let costheta = if rng.uniform() < self.defensive_fraction {
+            2.0 * rng.uniform() - 1.0
+        } else {
+            let mut threshold = rng.uniform() * self.total;
+            let mut selected = self.counts.len() - 1;
+            for (bin, count) in self.counts.iter().enumerate() {
+                if threshold <= *count {
+                    selected = bin;
+                    break;
+                }
+                threshold -= count;
+            }
+            -1.0 + (selected as f64 + rng.uniform()) * width
+        };
+        let bin = (((costheta + 1.0) / width) as usize).min(self.counts.len() - 1);
+        let learned_density = self.counts[bin] / (self.total * width);
+        let density =
+            self.defensive_fraction * 0.5 + (1.0 - self.defensive_fraction) * learned_density;
+        (costheta, density)
+    }
+}
+
+impl VertexProposal for AdaptiveTwoBodyDecay {
+    fn propose(
+        &self,
+        incoming: &[NamedMomentum<'_>],
+        outgoing: &[NamedMass<'_>],
+        rng: &mut ProposalRng,
+    ) -> LadduPhysicsResult<ProposalResult> {
+        if incoming.len() != 1 || outgoing.len() != 2 {
+            return Err(LadduPhysicsError::invalid_relation(format!(
+                "adaptive decay requires one incoming and two outgoing edges, got {} incoming and {} outgoing",
+                incoming.len(),
+                outgoing.len()
+            )));
+        }
+        let parent = incoming[0].p4;
+        let mass = parent.m()?;
+        let p = two_body_momentum(mass, outgoing[0].mass, outgoing[1].mass)?;
+        let (cos_theta, density) = self.sample_costheta(rng);
+        let sin_theta = (1.0 - cos_theta * cos_theta).sqrt();
+        let phi = 2.0 * PI * rng.uniform();
+        let direction = RealVec3::new(sin_theta * phi.cos(), sin_theta * phi.sin(), cos_theta);
+        let first = on_shell(direction, p, outgoing[0].mass);
+        let second = on_shell(-direction, p, outgoing[1].mass);
+        let beta = parent.beta()?;
+        Ok(ProposalResult {
+            outgoing: vec![first.boost(&beta), second.boost(&beta)],
+            weight: p / (4.0 * PI * mass) * 0.5 / density,
         })
     }
 }
@@ -421,7 +538,6 @@ impl ScalarSource {
     }
 
     pub fn sample(&self, rng: &mut ProposalRng) -> LadduPhysicsResult<ScalarProposalResult> {
-        self.support()?;
         match self {
             Self::Constant(value) if value.is_finite() => Ok(ScalarProposalResult {
                 value: *value,
@@ -566,18 +682,35 @@ impl InitialMomentum {
         rng: &mut ProposalRng,
     ) -> LadduPhysicsResult<InitialMomentumResult> {
         self.validate(edge, properties)?;
+        self.sample_prevalidated(particle_mass(edge, properties)?, rng)
+    }
+
+    /// Sample after channel validation has already established the source and
+    /// particle-mass invariants.
+    #[doc(hidden)]
+    pub fn sample_prevalidated(
+        &self,
+        mass: f64,
+        rng: &mut ProposalRng,
+    ) -> LadduPhysicsResult<InitialMomentumResult> {
         match self {
             Self::P4(p4) => Ok(InitialMomentumResult {
                 p4: *p4,
                 weight: 1.0,
             }),
             Self::Momentum(momentum) => Ok(InitialMomentumResult {
-                p4: momentum.with_mass(particle_mass(edge, properties)?),
+                p4: momentum.with_mass(mass),
                 weight: 1.0,
             }),
             Self::EnergyDirection { energy, direction } => {
-                let mass = particle_mass(edge, properties)?;
                 let sampled = energy.sample(rng)?;
+                if sampled.value < mass {
+                    return Err(LadduPhysicsError::invalid_value(
+                        "sampled initial-state energy",
+                        format!("at or above the particle mass {mass}"),
+                        sampled.value,
+                    ));
+                }
                 let momentum =
                     direction.unit()? * (sampled.value * sampled.value - mass * mass).sqrt();
                 Ok(InitialMomentumResult {
@@ -633,7 +766,7 @@ impl TDistribution {
         }
     }
 
-    fn normalized(&self) -> LadduPhysicsResult<Vec<(f64, &TComponent)>> {
+    fn normalization(&self) -> LadduPhysicsResult<f64> {
         if self.components.is_empty() {
             return Err(LadduPhysicsError::invalid_length(
                 "t-distribution components",
@@ -659,11 +792,7 @@ impl TDistribution {
             ));
         }
         let sum: f64 = self.components.iter().map(|(weight, _)| weight).sum();
-        Ok(self
-            .components
-            .iter()
-            .map(|(weight, component)| (weight / sum, component))
-            .collect())
+        Ok(sum)
     }
 
     fn sample(&self, low: f64, high: f64, rng: &mut ProposalRng) -> LadduPhysicsResult<(f64, f64)> {
@@ -672,24 +801,24 @@ impl TDistribution {
                 "physical t interval must have finite bounds with low < high, got [{low}, {high}]"
             )));
         }
-        let components = self.normalized()?;
+        let normalization = self.normalization()?;
         let choice = rng.uniform();
         let mut cumulative = 0.0;
-        let mut selected = components.len() - 1;
-        for (index, (weight, _)) in components.iter().enumerate() {
-            cumulative += weight;
+        let mut selected = self.components.len() - 1;
+        for (index, (weight, _)) in self.components.iter().enumerate() {
+            cumulative += weight / normalization;
             if choice < cumulative {
                 selected = index;
                 break;
             }
         }
-        let t = components[selected].1.sample(low, high, rng.uniform())?;
-        let density: f64 = components
-            .iter()
-            .map(|(weight, component)| component.density(low, high, t).map(|q| weight * q))
-            .collect::<Result<Vec<_>, _>>()?
-            .into_iter()
-            .sum();
+        let t = self.components[selected]
+            .1
+            .sample(low, high, rng.uniform())?;
+        let mut density = 0.0;
+        for (weight, component) in &self.components {
+            density += weight / normalization * component.density(low, high, t)?;
+        }
         if !density.is_finite() || density <= 0.0 {
             return Err(LadduPhysicsError::invalid_value(
                 "t-proposal density",
@@ -924,10 +1053,47 @@ mod tests {
     }
 
     #[test]
+    fn adaptive_decay_preserves_the_phase_space_integral() {
+        let incoming = [NamedMomentum {
+            name: "parent",
+            p4: RealVec4::new(0.0, 0.0, 0.0, 2.0),
+        }];
+        let outgoing = [
+            NamedMass {
+                name: "a",
+                mass: 0.2,
+            },
+            NamedMass {
+                name: "b",
+                mass: 0.4,
+            },
+        ];
+        let adaptive =
+            AdaptiveTwoBodyDecay::new(Arc::from([1.0, 2.0, 8.0, 20.0, 8.0, 2.0, 1.0]), 0.2)
+                .unwrap();
+        let baseline = TwoBodyDecay::isotropic()
+            .propose(&incoming, &outgoing, &mut ProposalRng::new(1))
+            .unwrap()
+            .weight;
+        let mut rng = ProposalRng::new(2);
+        let samples = 100_000;
+        let mean = (0..samples)
+            .map(|_| {
+                adaptive
+                    .propose(&incoming, &outgoing, &mut rng)
+                    .unwrap()
+                    .weight
+            })
+            .sum::<f64>()
+            / samples as f64;
+        assert!((mean / baseline - 1.0).abs() < 0.01);
+    }
+
+    #[test]
     fn proposal_failures_use_structured_physics_errors() {
         let empty = TDistribution::mixture([]);
         assert!(matches!(
-            empty.normalized(),
+            empty.normalization(),
             Err(LadduPhysicsError::InvalidLength { .. })
         ));
 

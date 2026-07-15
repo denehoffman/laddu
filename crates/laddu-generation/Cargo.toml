@@ -15,8 +15,16 @@ laddu-expr = { path = "../laddu-expr" }
 laddu-physics = { path = "../laddu-physics" }
 laddu-runtime = { path = "../laddu-runtime" }
 rayon.workspace = true
+smallvec.workspace = true
 thiserror.workspace = true
 
 [features]
 jit = ["laddu-runtime/jit"]
 wgpu = ["laddu-runtime/wgpu"]
+
+[dev-dependencies]
+criterion.workspace = true
+
+[[bench]]
+name = "generation"
+harness = false
