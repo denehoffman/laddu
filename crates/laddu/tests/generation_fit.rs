@@ -48,11 +48,35 @@ fn generated_two_wave_sample_recovers_injected_coupling() {
     assert!((magnitude - F2_MAGNITUDE_TRUTH).abs() < 0.15);
     assert!(wrapped_phase_residual(phase, F2_PHASE_TRUTH).abs() < 0.35);
 
-    assert_eq!(result.projection.bin_edges.len(), 51);
+    assert_eq!(result.projection.data.histogram.bin_edges().len(), 51);
     assert_eq!(result.projection.projections.len(), 3);
-    let data_yield = result.projection.data.values.iter().sum::<f64>();
-    let fit_yield = result.projection.projections[0].values.iter().sum::<f64>();
+    let data_yield = result
+        .projection
+        .data
+        .histogram
+        .counts()
+        .iter()
+        .sum::<f64>();
+    let fit_yield = result.projection.projections[0]
+        .histogram
+        .counts()
+        .iter()
+        .sum::<f64>();
     assert!((fit_yield - data_yield).abs() < 1e-9 * data_yield);
-    assert!(result.projection.projections[1].values.iter().sum::<f64>() > 0.0);
-    assert!(result.projection.projections[2].values.iter().sum::<f64>() > 0.0);
+    assert!(
+        result.projection.projections[1]
+            .histogram
+            .counts()
+            .iter()
+            .sum::<f64>()
+            > 0.0
+    );
+    assert!(
+        result.projection.projections[2]
+            .histogram
+            .counts()
+            .iter()
+            .sum::<f64>()
+            > 0.0
+    );
 }

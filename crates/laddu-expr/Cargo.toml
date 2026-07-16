@@ -19,3 +19,6 @@ layout-rs = { workspace = true, optional = true }
 
 [features]
 svg = ["dep:layout-rs"]
+
+[dev-dependencies]
+serde_json.workspace = true

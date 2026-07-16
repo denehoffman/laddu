@@ -15,6 +15,7 @@ laddu-expr = { path = "../laddu-expr" }
 laddu-physics = { path = "../laddu-physics" }
 laddu-runtime = { path = "../laddu-runtime" }
 rayon.workspace = true
+serde.workspace = true
 smallvec.workspace = true
 thiserror.workspace = true
 

@@ -1,5 +1,6 @@
 //! Kinematic proposal primitives used by Monte Carlo generators.
 
+use serde::{Deserialize, Serialize};
 use std::{f64::consts::PI, fmt::Debug, sync::Arc};
 
 use crate::{
@@ -10,7 +11,7 @@ use crate::{
 };
 
 /// Deterministic, portable random-number stream for generation proposals.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ProposalRng {
     state: u64,
 }
@@ -82,9 +83,14 @@ pub trait MassProposal: Debug + Send + Sync {
     fn density(&self, _minimum: f64, _maximum: f64, _mass: f64) -> LadduPhysicsResult<Option<f64>> {
         Ok(None)
     }
+
+    #[doc(hidden)]
+    fn serde_spec(&self) -> Option<MassProposalSpec> {
+        None
+    }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct FixedMass(pub f64);
 
 impl MassProposal for FixedMass {
@@ -106,10 +112,14 @@ impl MassProposal for FixedMass {
             weight: 1.0,
         })
     }
+
+    fn serde_spec(&self) -> Option<MassProposalSpec> {
+        Some(MassProposalSpec::Fixed { mass: self.0 })
+    }
 }
 
 /// A uniform invariant-mass proposal, truncated to the kinematically allowed interval.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct UniformMass {
     low: f64,
     high: f64,
@@ -170,6 +180,30 @@ impl MassProposal for UniformMass {
             0.0
         }))
     }
+
+    fn serde_spec(&self) -> Option<MassProposalSpec> {
+        Some(MassProposalSpec::Uniform {
+            low: self.low,
+            high: self.high,
+        })
+    }
+}
+
+#[doc(hidden)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum MassProposalSpec {
+    Fixed { mass: f64 },
+    Uniform { low: f64, high: f64 },
+}
+
+impl MassProposalSpec {
+    pub(crate) fn into_proposal(self) -> Arc<dyn MassProposal> {
+        match self {
+            Self::Fixed { mass } => Arc::new(FixedMass(mass)),
+            Self::Uniform { low, high } => Arc::new(UniformMass::new(low, high)),
+        }
+    }
 }
 
 /// Extensible kinematic proposal attached to a channel vertex.
@@ -180,9 +214,14 @@ pub trait VertexProposal: Debug + Send + Sync {
         outgoing: &[NamedMass<'_>],
         rng: &mut ProposalRng,
     ) -> LadduPhysicsResult<ProposalResult>;
+
+    #[doc(hidden)]
+    fn serde_spec(&self) -> Option<VertexProposalSpec> {
+        None
+    }
 }
 
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
 pub struct TwoBodyDecay;
 
 impl TwoBodyDecay {
@@ -216,6 +255,10 @@ impl VertexProposal for TwoBodyDecay {
             outgoing: vec![first.boost(&beta), second.boost(&beta)],
             weight: p / (4.0 * PI * mass),
         })
+    }
+
+    fn serde_spec(&self) -> Option<VertexProposalSpec> {
+        Some(VertexProposalSpec::TwoBodyDecay)
     }
 }
 
@@ -306,7 +349,7 @@ impl VertexProposal for AdaptiveTwoBodyDecay {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum TComponent {
     Uniform,
     Exponential { slope: f64 },
@@ -463,7 +506,7 @@ impl TComponent {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum ScalarSource {
     Constant(f64),
     Uniform { low: f64, high: f64 },
@@ -578,7 +621,7 @@ impl ScalarSource {
 }
 
 /// A four-momentum source attached to an initial channel edge.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum InitialMomentum {
     /// Use a fixed four-momentum directly.
     P4(RealVec4),
@@ -732,7 +775,7 @@ fn particle_mass(edge: &str, properties: Option<&ParticleProperties>) -> LadduPh
         .mass()
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TDistribution {
     components: Vec<(f64, TComponent)>,
 }
@@ -830,7 +873,7 @@ impl TDistribution {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TwoBodyScattering {
     incoming_edge: String,
     outgoing_edge: String,
@@ -928,6 +971,43 @@ impl VertexProposal for TwoBodyScattering {
             outgoing: result,
             weight: 1.0 / (16.0 * PI * root_s * p_in * q_t),
         })
+    }
+
+    fn serde_spec(&self) -> Option<VertexProposalSpec> {
+        Some(VertexProposalSpec::TwoBodyScattering {
+            incoming_edge: self.incoming_edge.clone(),
+            outgoing_edge: self.outgoing_edge.clone(),
+            distribution: self.distribution.clone(),
+        })
+    }
+}
+
+#[doc(hidden)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum VertexProposalSpec {
+    TwoBodyDecay,
+    TwoBodyScattering {
+        incoming_edge: String,
+        outgoing_edge: String,
+        distribution: TDistribution,
+    },
+}
+
+impl VertexProposalSpec {
+    pub(crate) fn into_proposal(self) -> Arc<dyn VertexProposal> {
+        match self {
+            Self::TwoBodyDecay => Arc::new(TwoBodyDecay),
+            Self::TwoBodyScattering {
+                incoming_edge,
+                outgoing_edge,
+                distribution,
+            } => Arc::new(TwoBodyScattering {
+                incoming_edge,
+                outgoing_edge,
+                distribution,
+            }),
+        }
     }
 }
 

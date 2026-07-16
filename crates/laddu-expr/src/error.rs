@@ -31,8 +31,8 @@ pub enum ParamError {
     FixedValueOutOfBounds { name: String, value: f64 },
     #[error("value {value} for {name} is outside bounds")]
     ValueOutOfBounds { name: String, value: f64 },
-    #[error("invalid periodic domain for {name}: expected finite min < max, got [{min}, {max})")]
-    InvalidPeriodicDomain { name: String, min: f64, max: f64 },
+    #[error("periodic parameter {name} requires finite two-sided bounds with min < max")]
+    PeriodicRequiresFiniteBounds { name: String },
     #[error("invalid scale for {name}: expected a finite positive value, got {scale}")]
     InvalidScale { name: String, scale: f64 },
     #[error(

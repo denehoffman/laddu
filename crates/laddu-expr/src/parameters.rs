@@ -46,54 +46,6 @@ pub struct Bounds {
     pub max: Option<f64>,
 }
 
-/// Canonical half-open domain for a periodic parameter.
-///
-/// Periodicity is metadata and does not imply any particular optimizer
-/// transform. Values can be checked with [`PeriodicDomain::contains`] or
-/// mapped into the canonical interval with [`PeriodicDomain::wrap`].
-#[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct PeriodicDomain {
-    min: f64,
-    max: f64,
-}
-
-impl PeriodicDomain {
-    pub fn new(min: f64, max: f64) -> Self {
-        Self { min, max }
-    }
-
-    pub fn min(self) -> f64 {
-        self.min
-    }
-
-    pub fn max(self) -> f64 {
-        self.max
-    }
-
-    pub fn period(self) -> f64 {
-        self.max - self.min
-    }
-
-    pub fn contains(self, value: f64) -> bool {
-        value.is_finite() && value >= self.min && value < self.max
-    }
-
-    pub fn wrap(self, value: f64) -> f64 {
-        self.min + (value - self.min).rem_euclid(self.period())
-    }
-
-    fn validate(self, name: &str) -> ParamResult<()> {
-        if !self.min.is_finite() || !self.max.is_finite() || self.min >= self.max {
-            return Err(ParamError::InvalidPeriodicDomain {
-                name: name.to_owned(),
-                min: self.min,
-                max: self.max,
-            });
-        }
-        Ok(())
-    }
-}
-
 impl Bounds {
     pub fn new(min: impl Into<Option<f64>>, max: impl Into<Option<f64>>) -> Self {
         Self {
@@ -126,7 +78,8 @@ pub struct Parameter {
     state: ParamState,
     initial: InitialSpec,
     bounds: Bounds,
-    periodic: Option<PeriodicDomain>,
+    #[serde(default)]
+    periodic: bool,
     #[serde(default)]
     scale: Option<f64>,
     unit: Option<Arc<str>>,
@@ -141,7 +94,7 @@ impl Parameter {
             state: ParamState::Free,
             initial: InitialSpec::Default,
             bounds: Bounds::default(),
-            periodic: None,
+            periodic: false,
             scale: None,
             unit: None,
             latex: None,
@@ -155,7 +108,7 @@ impl Parameter {
             state: ParamState::Fixed(value),
             initial: InitialSpec::Value(value),
             bounds: Bounds::default(),
-            periodic: None,
+            periodic: false,
             scale: None,
             unit: None,
             latex: None,
@@ -200,8 +153,14 @@ impl Parameter {
         self
     }
 
-    pub fn with_periodic(mut self, min: f64, max: f64) -> Self {
-        self.periodic = Some(PeriodicDomain::new(min, max));
+    /// Mark this parameter as periodic over its finite two-sided bounds.
+    pub fn with_periodic(mut self) -> Self {
+        self.periodic = true;
+        self
+    }
+
+    pub fn with_periodicity(mut self, periodic: bool) -> Self {
+        self.periodic = periodic;
         self
     }
 
@@ -265,8 +224,18 @@ impl Parameter {
         &self.bounds
     }
 
-    pub fn periodic_domain(&self) -> Option<PeriodicDomain> {
+    pub fn is_periodic(&self) -> bool {
         self.periodic
+    }
+
+    /// Return the validated canonical half-open periodic interval.
+    pub fn periodic_bounds(&self) -> Option<(f64, f64)> {
+        match (self.periodic, self.bounds.min, self.bounds.max) {
+            (true, Some(min), Some(max)) if min.is_finite() && max.is_finite() && min < max => {
+                Some((min, max))
+            }
+            _ => None,
+        }
     }
 
     pub fn scale(&self) -> Option<f64> {
@@ -323,8 +292,15 @@ impl ParamLayout {
                 return Err(ParamError::EmptyName);
             }
             spec.bounds.validate(spec.name())?;
-            if let Some(periodic) = spec.periodic {
-                periodic.validate(spec.name())?;
+            if spec.periodic
+                && !matches!(
+                    (spec.bounds.min, spec.bounds.max),
+                    (Some(min), Some(max)) if min.is_finite() && max.is_finite() && min < max
+                )
+            {
+                return Err(ParamError::PeriodicRequiresFiniteBounds {
+                    name: spec.name().to_owned(),
+                });
             }
             if let Some(scale) = spec.scale
                 && (!scale.is_finite() || scale <= 0.0)
@@ -475,9 +451,10 @@ impl ParamLayout {
             .iter()
             .zip(self.free_params.iter())
             .map(|(value, id)| {
-                self.specs[id.index()]
-                    .periodic
-                    .map_or(*value, |domain| domain.wrap(*value))
+                let parameter = &self.specs[id.index()];
+                parameter.periodic_bounds().map_or(*value, |(min, max)| {
+                    min + (*value - min).rem_euclid(max - min)
+                })
             })
             .collect())
     }
@@ -561,7 +538,7 @@ impl ParamRegistry {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ParamValues {
     layout: Arc<ParamLayout>,
     values: Vec<f64>,
@@ -657,15 +634,15 @@ fn validate_initial(spec: &Parameter) -> ParamResult<()> {
                         max,
                     });
                 }
-                if let Some(domain) = spec.periodic
-                    && (min < domain.min() || max > domain.max())
+                if let Some((domain_min, domain_max)) = spec.periodic_bounds()
+                    && (min < domain_min || max > domain_max)
                 {
-                    let value = if min < domain.min() { min } else { max };
+                    let value = if min < domain_min { min } else { max };
                     return Err(ParamError::ValueOutsidePeriodicDomain {
                         name: spec.name().to_owned(),
                         value,
-                        min: domain.min(),
-                        max: domain.max(),
+                        min: domain_min,
+                        max: domain_max,
                     });
                 }
             }
@@ -675,14 +652,14 @@ fn validate_initial(spec: &Parameter) -> ParamResult<()> {
 }
 
 fn validate_periodic_value(spec: &Parameter, value: f64) -> ParamResult<()> {
-    if let Some(domain) = spec.periodic
-        && !domain.contains(value)
+    if let Some((min, max)) = spec.periodic_bounds()
+        && !(value.is_finite() && value >= min && value < max)
     {
         return Err(ParamError::ValueOutsidePeriodicDomain {
             name: spec.name().to_owned(),
             value,
-            min: domain.min(),
-            max: domain.max(),
+            min,
+            max,
         });
     }
     Ok(())
@@ -695,14 +672,14 @@ fn validate_value(spec: &Parameter, value: f64) -> ParamResult<()> {
             value,
         });
     }
-    if let Some(domain) = spec.periodic
-        && !domain.contains(value)
+    if let Some((min, max)) = spec.periodic_bounds()
+        && !(value.is_finite() && value >= min && value < max)
     {
         return Err(ParamError::ValueOutsidePeriodicDomain {
             name: spec.name().to_owned(),
             value,
-            min: domain.min(),
-            max: domain.max(),
+            min,
+            max,
         });
     }
     Ok(())
@@ -751,8 +728,13 @@ macro_rules! parameter {
         $crate::parameter!(@parse $p, [fixed = $f, initial = $i]; $($($rest)*)?);
     }};
 
-    (@parse $p:ident, [fixed = $f:tt, initial = $i:tt]; periodic : ($min:expr, $max:expr) $(, $($rest:tt)*)?) => {{
-        $p = $p.with_periodic($min, $max);
+    (@parse $p:ident, [fixed = $f:tt, initial = $i:tt]; periodic : $value:expr $(, $($rest:tt)*)?) => {{
+        $p = $p.with_periodicity($value);
+        $crate::parameter!(@parse $p, [fixed = $f, initial = $i]; $($($rest)*)?);
+    }};
+
+    (@parse $p:ident, [fixed = $f:tt, initial = $i:tt]; periodic $(, $($rest:tt)*)?) => {{
+        $p = $p.with_periodic();
         $crate::parameter!(@parse $p, [fixed = $f, initial = $i]; $($($rest)*)?);
     }};
 
@@ -854,9 +836,9 @@ mod tests {
         let tau = std::f64::consts::TAU;
         let phase = Parameter::free("phase")
             .with_initial(0.25)
-            .with_bounds(Some(-10.0), Some(10.0))
-            .with_periodic(0.0, tau);
-        assert_eq!(phase.periodic_domain(), Some(PeriodicDomain::new(0.0, tau)));
+            .with_bounds(0.0, tau)
+            .with_periodic();
+        assert_eq!(phase.periodic_bounds(), Some((0.0, tau)));
 
         let layout = ParamLayout::new([phase]).unwrap();
         assert_eq!(
@@ -873,13 +855,14 @@ mod tests {
     #[test]
     fn invalid_periodic_metadata_and_initial_values_are_rejected() {
         assert!(matches!(
-            ParamLayout::new([Parameter::free("phase").with_periodic(1.0, 1.0)]),
-            Err(ParamError::InvalidPeriodicDomain { .. })
+            ParamLayout::new([Parameter::free("phase").with_periodic()]),
+            Err(ParamError::PeriodicRequiresFiniteBounds { .. })
         ));
         assert!(matches!(
             ParamLayout::new([Parameter::free("phase")
                 .with_initial(std::f64::consts::TAU)
-                .with_periodic(0.0, std::f64::consts::TAU),]),
+                .with_bounds(0.0, std::f64::consts::TAU)
+                .with_periodic(),]),
             Err(ParamError::ValueOutsidePeriodicDomain { .. })
         ));
     }

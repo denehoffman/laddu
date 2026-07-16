@@ -15,6 +15,7 @@ use laddu_expr::{ExprNode, parameters::ParamValues};
 use laddu_physics::{LadduPhysicsError, channel::Channel, vectors::RealVec4};
 use laddu_runtime::{Execution, PreparedModel};
 use rayon::prelude::*;
+use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 use thiserror::Error;
 
@@ -95,7 +96,7 @@ pub enum GenerationError {
     Physics(#[from] LadduPhysicsError),
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct WeightedConfig {
     pub events: usize,
     pub batch_size: usize,
@@ -114,7 +115,7 @@ impl WeightedConfig {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct UnweightedConfig {
     pub events: usize,
     /// Optional safeguard limiting production proposals.
@@ -150,7 +151,7 @@ impl UnweightedConfig {
 }
 
 /// Policy used when an unweighting proposal exceeds the current envelope.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub enum EnvelopeOverflow {
     /// Stop immediately and report [`GenerationError::EnvelopeOverflow`].
     #[default]
@@ -162,7 +163,7 @@ pub enum EnvelopeOverflow {
     Grow { safety_factor: f64 },
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub enum EnvelopeMode {
     Strict {
         max_weight: f64,
@@ -177,13 +178,13 @@ pub enum EnvelopeMode {
     },
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum EnvelopeKind {
     Strict,
     Pilot,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct GenerationReport {
     pub requested: usize,
     pub produced: usize,

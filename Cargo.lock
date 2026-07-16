@@ -1578,6 +1578,7 @@ dependencies = [
  "laddu-expr",
  "laddu-kernel",
  "num",
+ "serde",
  "thiserror",
 ]
 
@@ -1614,6 +1615,7 @@ dependencies = [
  "layout-rs",
  "num",
  "serde",
+ "serde_json",
  "thiserror",
 ]
 
@@ -1624,7 +1626,9 @@ dependencies = [
  "ganesh",
  "laddu-expr",
  "laddu-likelihood",
+ "laddu-runtime",
  "parking_lot",
+ "serde",
  "thiserror",
 ]
 
@@ -1639,6 +1643,7 @@ dependencies = [
  "laddu-physics",
  "laddu-runtime",
  "rayon",
+ "serde",
  "smallvec",
  "thiserror",
 ]
@@ -1686,6 +1691,7 @@ dependencies = [
  "nalgebra",
  "num",
  "serde",
+ "serde_json",
  "thiserror",
 ]
 

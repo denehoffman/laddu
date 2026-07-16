@@ -587,7 +587,7 @@ impl std::iter::Sum<RealVec4> for RealVec4 {
 }
 
 /// Expression-valued vector with three spatial components.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Vec3 {
     pub x: Expr,
     pub y: Expr,
@@ -722,7 +722,7 @@ impl_op_ex!(/ |a: &Vec3, b: &f64| -> Vec3 {
 });
 
 /// Expression-valued four-vector with `---+` metric convention.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Vec4 {
     pub x: Expr,
     pub y: Expr,

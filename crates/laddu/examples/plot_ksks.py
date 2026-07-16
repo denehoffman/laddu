@@ -37,13 +37,13 @@ def main() -> None:
     output = args.output or args.input.with_suffix(".png")
     with args.input.open(encoding="utf-8") as source:
         payload = json.load(source)
-    if payload.get("schema_version") != 1:
+    if payload.get("schema_version") != 2:
         raise ValueError(f"unsupported projection schema: {payload.get('schema_version')!r}")
 
-    edges = np.asarray(payload["bin_edges"], dtype=float)
+    edges = np.asarray(payload["data"]["histogram"]["bin_edges"], dtype=float)
     centers = 0.5 * (edges[:-1] + edges[1:])
     widths = np.diff(edges)
-    data = np.asarray(payload["data"]["values"], dtype=float)
+    data = np.asarray(payload["data"]["histogram"]["counts"], dtype=float)
     if len(edges) != len(data) + 1:
         raise ValueError("bin_edges must contain one more entry than each histogram")
 
@@ -68,7 +68,7 @@ def main() -> None:
         "f2": {"color": "#2ca02c", "linewidth": 1.8, "linestyle": ":"},
     }
     for series in payload["projections"]:
-        values = np.asarray(series["values"], dtype=float)
+        values = np.asarray(series["histogram"]["counts"], dtype=float)
         if len(values) != len(data):
             raise ValueError(f"projection {series['id']!r} has the wrong number of bins")
         ax.stairs(

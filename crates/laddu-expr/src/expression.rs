@@ -580,6 +580,104 @@ impl Expr {
         GraphBuilder::new().build(self)
     }
 
+    /// Rebuild a shareable expression DAG from its serialized graph form.
+    pub fn from_graph(graph: ExprGraph) -> Result<Self, ExprGraphError> {
+        let ExprGraph {
+            root,
+            nodes,
+            metadata,
+        } = graph;
+        let graph = ExprGraph::from_parts(root, nodes, metadata)?;
+        let mut expressions: Vec<Expr> = Vec::with_capacity(graph.nodes.len());
+        for (index, node) in graph.nodes.iter().enumerate() {
+            let child = |id: ExprId| expressions[id.index()].clone();
+            let expression = match node {
+                ExprNode::RealConst(value) => Expr::new(DagNodeKind::RealConst(*value)),
+                ExprNode::ComplexConst(value) => Expr::new(DagNodeKind::ComplexConst(*value)),
+                ExprNode::ScalarParam(parameter) => {
+                    Expr::new(DagNodeKind::ScalarParam(parameter.clone()))
+                }
+                ExprNode::EventScalar(name) => {
+                    Expr::new(DagNodeKind::EventScalar(Arc::clone(name)))
+                }
+                ExprNode::EventP4Component { name, component } => {
+                    Expr::new(DagNodeKind::EventP4Component {
+                        name: Arc::clone(name),
+                        component: *component,
+                    })
+                }
+                ExprNode::Unary { op, input } => Expr::new(DagNodeKind::Unary {
+                    op: *op,
+                    input: child(*input),
+                }),
+                ExprNode::Binary { op, lhs, rhs } => Expr::new(DagNodeKind::Binary {
+                    op: *op,
+                    lhs: child(*lhs),
+                    rhs: child(*rhs),
+                }),
+                ExprNode::NaryAdd { terms } => terms
+                    .iter()
+                    .map(|id| child(*id))
+                    .reduce(|lhs, rhs| binary(BinaryOp::Add, &lhs, &rhs))
+                    .unwrap_or_else(|| Expr::from(0.0)),
+                ExprNode::NaryMul { factors } => factors
+                    .iter()
+                    .map(|id| child(*id))
+                    .reduce(|lhs, rhs| binary(BinaryOp::Mul, &lhs, &rhs))
+                    .unwrap_or_else(|| Expr::from(1.0)),
+                ExprNode::Complex { re, im } => Expr::new(DagNodeKind::Complex {
+                    re: child(*re),
+                    im: child(*im),
+                }),
+                ExprNode::Vector { elements } => Expr::new(DagNodeKind::Vector {
+                    elements: elements.iter().map(|id| child(*id)).collect(),
+                }),
+                ExprNode::Matrix {
+                    rows,
+                    cols,
+                    elements,
+                } => Expr::new(DagNodeKind::Matrix {
+                    rows: *rows,
+                    cols: *cols,
+                    elements: elements.iter().map(|id| child(*id)).collect(),
+                }),
+                ExprNode::Component { input, index } => Expr::new(DagNodeKind::Component {
+                    input: child(*input),
+                    index: *index,
+                }),
+                ExprNode::MatrixElement { input, row, col } => {
+                    Expr::new(DagNodeKind::MatrixElement {
+                        input: child(*input),
+                        row: *row,
+                        col: *col,
+                    })
+                }
+                ExprNode::MatMul { lhs, rhs } => Expr::new(DagNodeKind::MatMul {
+                    lhs: child(*lhs),
+                    rhs: child(*rhs),
+                }),
+                ExprNode::MatVec { matrix, vector } => Expr::new(DagNodeKind::MatVec {
+                    matrix: child(*matrix),
+                    vector: child(*vector),
+                }),
+                ExprNode::Dot { lhs, rhs } => Expr::new(DagNodeKind::Dot {
+                    lhs: child(*lhs),
+                    rhs: child(*rhs),
+                }),
+                ExprNode::Solve { matrix, rhs } => Expr::new(DagNodeKind::Solve {
+                    matrix: child(*matrix),
+                    rhs: child(*rhs),
+                }),
+            };
+            let mut dag = (*expression.node).clone();
+            dag.metadata = graph.metadata[index].clone();
+            expressions.push(Expr {
+                node: Arc::new(dag),
+            });
+        }
+        Ok(expressions[graph.root.index()].clone())
+    }
+
     pub fn shape(&self) -> Result<ExprShape, ExprShapeError> {
         self.node
             .shape
@@ -593,6 +691,24 @@ impl Expr {
         Self {
             node: Arc::new(node),
         }
+    }
+}
+
+impl Serialize for Expr {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        self.to_graph().serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for Expr {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        Expr::from_graph(ExprGraph::deserialize(deserializer)?).map_err(serde::de::Error::custom)
     }
 }
 
@@ -2072,6 +2188,20 @@ mod tests {
         assert_eq!(metadata.name(), Some("event mass"));
         assert_eq!(metadata.tags(), &[Arc::from("data")]);
         assert!(metadata.has_tag("data"));
+    }
+
+    #[test]
+    fn expressions_round_trip_through_serde_with_metadata() {
+        let expression = ((parameter!("x", initial: 1.0) + 2.0).named("offset")
+            * event_scalar("mass").tagged("data"))
+        .tagged("model");
+        let encoded = serde_json::to_string(&expression).unwrap();
+        let decoded: Expr = serde_json::from_str(&encoded).unwrap();
+
+        assert_eq!(
+            serde_json::to_value(expression.to_graph()).unwrap(),
+            serde_json::to_value(decoded.to_graph()).unwrap()
+        );
     }
 
     #[test]

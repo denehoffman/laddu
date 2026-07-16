@@ -74,18 +74,8 @@ pub fn ksks_channel() -> LadduPhysicsResult<Channel> {
 /// helicity channel is coherent in f0/f2 and the external helicities are then
 /// averaged/summed incoherently. The two spin-zero kaons have S=0 and L=J;
 /// only the even J=0,2 waves used here are Bose symmetric under ks1 <-> ks2.
-pub struct KsKsIntensities {
-    pub coherent: Expr,
-    pub f0: Expr,
-    pub f2: Expr,
-}
-
-/// Build the coherent intensity and the two isolated resonance contributions.
-///
-/// The isolated terms retain the same coupling conventions as the coherent
-/// model. Consequently, they need not sum to the coherent intensity when the
-/// interference term is nonzero.
-pub fn ksks_intensities(channel: &Channel) -> LadduPhysicsResult<KsKsIntensities> {
+/// Build one coherent intensity whose amplitude components can be projected by tag.
+pub fn ksks_intensity(channel: &Channel) -> LadduPhysicsResult<Expr> {
     let s = channel.s("X")?;
     let k_short_mass = channel.particle("ks1")?.mass()?;
     let f0 = ParticleProperties::unknown()
@@ -125,13 +115,12 @@ pub fn ksks_intensities(channel: &Channel) -> LadduPhysicsResult<KsKsIntensities
         parameter!(
             "f2_phase",
             initial: 0.0,
-            periodic: (-PI, PI),
+            bounds: (-PI, PI),
+            periodic: true,
             scale: 1.0
         ),
     );
     let mut coherent = Expr::from(0.0);
-    let mut f0_intensity = Expr::from(0.0);
-    let mut f2_intensity = Expr::from(0.0);
     for photon in photon_helicities {
         for &target in &target_helicities {
             for &recoil in &recoil_helicities {
@@ -147,32 +136,29 @@ pub fn ksks_intensities(channel: &Channel) -> LadduPhysicsResult<KsKsIntensities
                             first_kaon,
                             second_kaon,
                             &f0_bw,
-                        )?;
-                        let f2 = sequential_wave(
-                            channel,
-                            &f2,
-                            f2_decay_wave,
-                            photon,
-                            target,
-                            recoil,
-                            first_kaon,
-                            second_kaon,
-                            &f2_bw,
-                        )?;
+                        )?
+                        .tagged("f0");
+                        let f2 = (f2_coupling.clone()
+                            * sequential_wave(
+                                channel,
+                                &f2,
+                                f2_decay_wave,
+                                photon,
+                                target,
+                                recoil,
+                                first_kaon,
+                                second_kaon,
+                                &f2_bw,
+                            )?)
+                        .tagged("f2");
                         // The f0 coupling is the fixed scale and phase reference.
-                        f0_intensity += f0.clone().norm_sqr();
-                        f2_intensity += (f2_coupling.clone() * f2.clone()).norm_sqr();
-                        coherent += (f0 + f2_coupling.clone() * f2).norm_sqr();
+                        coherent += (f0 + f2).norm_sqr();
                     }
                 }
             }
         }
     }
-    Ok(KsKsIntensities {
-        coherent: coherent * 0.25,
-        f0: f0_intensity * 0.25,
-        f2: f2_intensity * 0.25,
-    })
+    Ok(coherent * 0.25)
 }
 
 #[allow(clippy::too_many_arguments)]

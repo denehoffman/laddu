@@ -26,3 +26,4 @@ fastrand-contrib.workspace = true
 laddu-compile = { path = "../laddu-compile" }
 laddu-runtime = { path = "../laddu-runtime" }
 criterion.workspace = true
+serde_json.workspace = true

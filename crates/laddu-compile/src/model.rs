@@ -9,6 +9,7 @@ use laddu_expr::{
     Expr, ExprGraph, ExprId, ExprNode, ValueKind,
     parameters::{ParamLayout, ParamRegistry},
 };
+use serde::{Deserialize, Serialize};
 
 #[cfg(test)]
 use crate::facts::NumberClass;
@@ -126,16 +127,17 @@ impl CachePlan {
             .into_iter()
             .zip(frontier)
             .enumerate()
-            .filter(|&(_index, (cacheable, frontier))| cacheable && frontier ).map(|(index, (_cacheable, _frontier))| {
-                    let id = ExprId::from_index(index);
-                    let facts = *facts.get(id).expect("facts are complete for graph");
-                    CacheEntry {
-                        node: id,
-                        value_kind: facts.value_kind,
-                        evaluation_class: facts.evaluation_class(),
-                        dependency: facts.dependency,
-                    }
-                })
+            .filter(|&(_index, (cacheable, frontier))| cacheable && frontier)
+            .map(|(index, (_cacheable, _frontier))| {
+                let id = ExprId::from_index(index);
+                let facts = *facts.get(id).expect("facts are complete for graph");
+                CacheEntry {
+                    node: id,
+                    value_kind: facts.value_kind,
+                    evaluation_class: facts.evaluation_class(),
+                    dependency: facts.dependency,
+                }
+            })
             .collect::<Vec<_>>();
         let mut required = vec![false; graph.nodes().len()];
         for entry in &entries {
@@ -144,7 +146,8 @@ impl CachePlan {
         let materialization_nodes = required
             .into_iter()
             .enumerate()
-            .filter(|&(_index, required)| required).map(|(index, _required)| ExprId::from_index(index))
+            .filter(|&(_index, required)| required)
+            .map(|(index, _required)| ExprId::from_index(index))
             .collect();
         Self {
             entries,
@@ -258,6 +261,24 @@ pub struct CompiledModel {
     params: ParamLayout,
     facts: GraphFacts,
     cache_plan: CachePlan,
+}
+
+impl Serialize for CompiledModel {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        self.source_graph.serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for CompiledModel {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        Self::from_graph(ExprGraph::deserialize(deserializer)?).map_err(serde::de::Error::custom)
+    }
 }
 
 impl CompiledModel {

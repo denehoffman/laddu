@@ -72,7 +72,7 @@ pub mod prelude {
     pub use laddu_expr::parameter;
     pub use laddu_expr::parameters::{
         Bounds, FreeParamId, InitialSpec, ParamError, ParamId, ParamLayout, ParamRegistry,
-        ParamState, ParamValues, Parameter, PeriodicDomain,
+        ParamState, ParamValues, Parameter,
     };
     pub use laddu_expr::{
         BinaryOp, ColorPreset, ComponentIndex, DisplayColor, Expr, ExprGraph, ExprGraphDotDisplay,
@@ -83,9 +83,10 @@ pub mod prelude {
     };
     #[cfg(feature = "fit")]
     pub use laddu_fit::{
-        FitError, FitProblem, FitResult, LadduMinimizerConfig, LadduSamplerConfig,
-        LadduTransformConfig, McmcResult, MinimizationResult, StochasticFitProblem,
-        TransformOptions, ganesh,
+        CallbackControl, FitError, FitProblem, FitResult, LadduMinimizerConfig, LadduSamplerConfig,
+        LadduTransformConfig, LikelihoodFitExt, McmcResult, MinimizationOptions,
+        MinimizationProgress, MinimizationResult, Minimizer, Sampler, SamplingOptions,
+        StochasticFitProblem, StochasticMinimizationOptions, TransformOptions, ganesh,
     };
     #[cfg(feature = "generation")]
     pub use laddu_generation::{

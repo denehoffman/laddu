@@ -13,3 +13,4 @@ laddu-expr = { path = "../laddu-expr" }
 laddu-kernel = { path = "../laddu-kernel" }
 thiserror.workspace = true
 num.workspace = true
+serde.workspace = true

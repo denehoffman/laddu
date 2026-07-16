@@ -3,22 +3,16 @@
 use std::{
     error::Error,
     fs::{self, File},
-    io::{self, BufWriter},
+    io::BufWriter,
     path::Path,
     time::{Duration, Instant},
 };
 
-use laddu::data::data::BatchEvent;
-use laddu::prelude::ganesh::{
-    algorithms::gradient::{LBFGSB, LBFGSBConfig},
-    core::MaxSteps,
-    traits::Algorithm,
-};
 use laddu::prelude::*;
 use serde::Serialize;
 
 use super::ksks::{
-    F2_MAGNITUDE_TRUTH, F2_PHASE_TRUTH, ksks_channel, ksks_intensities, truth_parameters,
+    F2_MAGNITUDE_TRUTH, F2_PHASE_TRUTH, ksks_channel, ksks_intensity, truth_parameters,
 };
 
 #[derive(Clone, Copy, Debug)]
@@ -48,7 +42,7 @@ impl Default for ClosureConfig {
 pub struct HistogramSeries {
     pub id: &'static str,
     pub label: &'static str,
-    pub values: Vec<f64>,
+    pub histogram: Histogram,
 }
 
 #[derive(Debug, Serialize)]
@@ -64,7 +58,6 @@ pub struct ProjectionHistogram {
     pub title: &'static str,
     pub observable: &'static str,
     pub unit: &'static str,
-    pub bin_edges: Vec<f64>,
     pub data: HistogramSeries,
     pub projections: Vec<HistogramSeries>,
     pub fit_parameters: Vec<FitParameter>,
@@ -102,10 +95,7 @@ pub struct ClosureResult {
 
 impl ClosureResult {
     pub fn fitted(&self, name: &str) -> Option<f64> {
-        self.fit
-            .parameters()
-            .into_iter()
-            .find_map(|(candidate, value)| (candidate == name).then_some(value))
+        self.fit.parameter(name).ok()
     }
 }
 
@@ -127,10 +117,8 @@ pub fn run_closure(
     }
 
     let channel = ksks_channel()?;
-    let intensities = ksks_intensities(&channel)?;
-    let model = CompiledModel::from_expr(&intensities.coherent)?;
-    let f0_model = CompiledModel::from_expr(&intensities.f0)?;
-    let f2_model = CompiledModel::from_expr(&intensities.f2)?;
+    let mass = channel.mass("X")?;
+    let model = CompiledModel::from_expr(&ksks_intensity(&channel)?)?;
     let evaluator = ModelEvaluator::prepare(&model, truth_parameters(&model)?, &execution)?;
     let generator = ChannelGenerator::new(channel)?;
 
@@ -170,31 +158,26 @@ pub fn run_closure(
         execution.clone(),
     )?;
     let likelihood_preparation_time = likelihood_start.elapsed();
-    let initial_evaluation =
-        likelihood.nll_with_gradient(likelihood.default_params().as_slice())?;
+    let initial = likelihood.sample_initial(config.seed.wrapping_add(2));
+    let initial_evaluation = likelihood.nll_with_gradient(&initial)?;
     let (initial_nll, initial_gradient) = initial_evaluation.into_parts();
-
-    let problem = FitProblem::<_, f64>::new(&likelihood);
-    let initial = problem.initial();
-    let fit_config =
-        problem.configure_lbfgsb(LBFGSBConfig::<f64>::default(), TransformOptions::default())?;
     let fit_start = Instant::now();
-    let fit = problem.minimize(
-        &mut LBFGSB::<f64>::default(),
-        initial,
-        fit_config,
-        LBFGSB::<f64>::default_callbacks().with_terminator(MaxSteps(config.max_fit_steps)),
+    let fit = likelihood.minimize(
+        &initial,
+        Some(MinimizationOptions::default().with_max_steps(config.max_fit_steps)),
     )?;
     let fit_time = fit_start.elapsed();
 
     let projection_start = Instant::now();
-    let fitted = fit.parameters();
-    let fitted_magnitude = fitted_parameter(&fitted, "f2_magnitude")?;
-    let fitted_phase = fitted_parameter(&fitted, "f2_phase")?;
+    let fitted_magnitude = fit.parameter("f2_magnitude")?;
+    let fitted_phase = fit.parameter("f2_phase")?;
+    let fitted = fit.raw.x.to_vec();
     let projection = build_projection(
+        &likelihood,
         &data,
         &normalization,
-        [&model, &f0_model, &f2_model],
+        &mass,
+        &fitted,
         fitted_magnitude,
         fitted_phase,
         config.projection_bins,
@@ -217,32 +200,12 @@ pub fn run_closure(
     })
 }
 
-fn fitted_parameter(parameters: &[(String, f64)], name: &str) -> Result<f64, io::Error> {
-    parameters
-        .iter()
-        .find_map(|(candidate, value)| (candidate == name).then_some(*value))
-        .ok_or_else(|| io::Error::other(format!("fit did not return `{name}`")))
-}
-
-fn fitted_parameters(
-    model: &CompiledModel,
-    magnitude: f64,
-    phase: f64,
-) -> Result<ParamValues, ParamError> {
-    let free = model
-        .params()
-        .free_values_with(|parameter| match parameter.name() {
-            "f2_magnitude" => magnitude,
-            "f2_phase" => phase,
-            name => panic!("unexpected free parameter `{name}` in K_S K_S projection"),
-        });
-    model.params().values(&free)
-}
-
 fn build_projection(
+    likelihood: &Likelihood,
     data: &Dataset,
     normalization: &Dataset,
-    models: [&CompiledModel; 3],
+    mass: &Expr,
+    fitted: &[f64],
     fitted_magnitude: f64,
     fitted_phase: f64,
     bins: usize,
@@ -250,98 +213,58 @@ fn build_projection(
 ) -> Result<ProjectionHistogram, Box<dyn Error>> {
     let minimum = 2.0 * particles::K_SHORT.mass()?;
     let maximum = 2.0;
-    let width = (maximum - minimum) / bins as f64;
-    let bin_edges = (0..=bins)
-        .map(|index| minimum + index as f64 * width)
-        .collect::<Vec<_>>();
-    let mut data_values = vec![0.0; bins];
-    for batch in data.batches()? {
-        let batch = batch?;
-        for row in 0..batch.len() {
-            let event = batch.event(row);
-            if let Some(bin) = bin_index(ksks_mass(&event)?, minimum, maximum, bins) {
-                data_values[bin] += event.weight();
-            }
-        }
-    }
-
-    let evaluators = [
-        ModelEvaluator::prepare(
-            models[0],
-            fitted_parameters(models[0], fitted_magnitude, fitted_phase)?,
-            execution,
-        )?,
-        ModelEvaluator::prepare(
-            models[1],
-            fitted_parameters(models[1], fitted_magnitude, fitted_phase)?,
-            execution,
-        )?,
-        ModelEvaluator::prepare(
-            models[2],
-            fitted_parameters(models[2], fitted_magnitude, fitted_phase)?,
-            execution,
-        )?,
-    ];
-    let mut projection_values = [vec![0.0; bins], vec![0.0; bins], vec![0.0; bins]];
-    for batch in normalization.batches()? {
-        let batch = batch?;
-        let values = [
-            evaluators[0].evaluate_batch(&batch)?,
-            evaluators[1].evaluate_batch(&batch)?,
-            evaluators[2].evaluate_batch(&batch)?,
-        ];
-        for (row, ((coherent, f0), f2)) in
-            values[0].iter().zip(&values[1]).zip(&values[2]).enumerate()
-        {
-            let event = batch.event(row);
-            let Some(bin) = bin_index(ksks_mass(&event)?, minimum, maximum, bins) else {
-                continue;
-            };
-            let weight = event.weight();
-            projection_values[0][bin] += weight * coherent;
-            projection_values[1][bin] += weight * f0;
-            projection_values[2][bin] += weight * f2;
-        }
-    }
-
-    let data_yield = data_values.iter().sum::<f64>();
-    let fit_yield = projection_values[0].iter().sum::<f64>();
-    if !fit_yield.is_finite() || fit_yield <= 0.0 {
-        return Err(io::Error::other("fitted projection has nonpositive normalization").into());
-    }
-    let scale = data_yield / fit_yield;
-    for values in &mut projection_values {
-        for value in values {
-            *value *= scale;
-        }
-    }
+    let data_masses = data.evaluate_real(mass, execution)?;
+    let normalization_masses = normalization.evaluate_real(mass, execution)?;
+    let data_weights = dataset_weights(data)?;
+    let coherent = likelihood.projection("ksks", normalization, ["f0", "f2"])?;
+    let f0 = likelihood.projection("ksks", normalization, ["f0"])?;
+    let f2 = likelihood.projection("ksks", normalization, ["f2"])?;
+    let data_histogram =
+        Histogram::from_values(&data_masses, bins, (minimum, maximum), Some(&data_weights))?;
+    let coherent_histogram = Histogram::from_values(
+        &normalization_masses,
+        bins,
+        (minimum, maximum),
+        Some(&coherent.weights(fitted, true)?),
+    )?;
+    let f0_histogram = Histogram::from_values(
+        &normalization_masses,
+        bins,
+        (minimum, maximum),
+        Some(&f0.weights(fitted, true)?),
+    )?;
+    let f2_histogram = Histogram::from_values(
+        &normalization_masses,
+        bins,
+        (minimum, maximum),
+        Some(&f2.weights(fitted, true)?),
+    )?;
 
     Ok(ProjectionHistogram {
-        schema_version: 1,
+        schema_version: 2,
         title: "γp → KₛKₛp closure fit",
         observable: "m(KₛKₛ)",
         unit: "GeV",
-        bin_edges,
         data: HistogramSeries {
             id: "data",
             label: "Pseudo-data",
-            values: data_values,
+            histogram: data_histogram,
         },
         projections: vec![
             HistogramSeries {
                 id: "fit",
                 label: "Coherent fit",
-                values: projection_values[0].clone(),
+                histogram: coherent_histogram,
             },
             HistogramSeries {
                 id: "f0",
                 label: "f₀(1500)",
-                values: projection_values[1].clone(),
+                histogram: f0_histogram,
             },
             HistogramSeries {
                 id: "f2",
                 label: "f₂(1270)",
-                values: projection_values[2].clone(),
+                histogram: f2_histogram,
             },
         ],
         fit_parameters: vec![
@@ -360,22 +283,11 @@ fn build_projection(
     })
 }
 
-fn ksks_mass(event: &BatchEvent<'_>) -> Result<f64, Box<dyn Error>> {
-    let ks1 = event
-        .p4_named("ks1")
-        .ok_or_else(|| io::Error::other("projection dataset is missing `ks1`"))?;
-    let ks2 = event
-        .p4_named("ks2")
-        .ok_or_else(|| io::Error::other("projection dataset is missing `ks2`"))?;
-    Ok((ks1 + ks2).m()?)
-}
-
-fn bin_index(value: f64, minimum: f64, maximum: f64, bins: usize) -> Option<usize> {
-    if !value.is_finite() || value < minimum || value > maximum {
-        return None;
+fn dataset_weights(dataset: &Dataset) -> Result<Vec<f64>, Box<dyn Error>> {
+    let mut weights = Vec::new();
+    for batch in dataset.batches()? {
+        let batch = batch?;
+        weights.extend((0..batch.len()).map(|row| batch.weights_at(row)));
     }
-    if value == maximum {
-        return Some(bins - 1);
-    }
-    Some((((value - minimum) / (maximum - minimum)) * bins as f64) as usize)
+    Ok(weights)
 }

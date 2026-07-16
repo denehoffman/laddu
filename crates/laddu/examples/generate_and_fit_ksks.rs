@@ -1,7 +1,7 @@
 //! Generate a K_S K_S pseudo-dataset and recover its injected wave coupling.
 //!
 //! Run with
-//! `cargo run --release -p laddu --example generate_and_fit_ksks --features generation,fit -- [data events] [normalization events] [projection JSON]`.
+//! `cargo run --release -p laddu --example generate_and_fit_ksks --features generation,fit -- [data events] [normalization events] [projection JSON] [cpu|jit|gpu]`.
 
 mod common;
 
@@ -11,7 +11,69 @@ use common::{
     closure::{ClosureConfig, run_closure, wrapped_phase_residual},
     ksks::{F2_MAGNITUDE_TRUTH, F2_PHASE_TRUTH, print_report},
 };
-use laddu::prelude::Execution;
+use laddu::prelude::{
+    CpuOptions, Device, Execution, ExecutionOptions, GpuBackend, GpuOptions, JitPolicy, Precision,
+    ThreadPolicy,
+};
+
+#[derive(Clone, Copy, Debug)]
+enum Backend {
+    Cpu,
+    Jit,
+    Gpu,
+}
+
+impl Backend {
+    fn parse(argument: Option<String>) -> Result<Self, io::Error> {
+        match argument.as_deref().unwrap_or("cpu") {
+            "cpu" => Ok(Self::Cpu),
+            "jit" => Ok(Self::Jit),
+            "gpu" => Ok(Self::Gpu),
+            backend => Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("unknown backend `{backend}`; expected cpu, jit, or gpu"),
+            )),
+        }
+    }
+
+    fn execution(self) -> Result<Execution, Box<dyn Error>> {
+        let options = match self {
+            Self::Cpu => ExecutionOptions {
+                device: Device::Cpu(CpuOptions {
+                    threads: ThreadPolicy::Auto,
+                    jit: JitPolicy::Disabled,
+                }),
+                precision: Precision::F64,
+                ..ExecutionOptions::default()
+            },
+            Self::Jit => ExecutionOptions {
+                device: Device::Cpu(CpuOptions {
+                    threads: ThreadPolicy::Auto,
+                    jit: JitPolicy::Enabled,
+                }),
+                precision: Precision::F64,
+                ..ExecutionOptions::default()
+            },
+            Self::Gpu => ExecutionOptions {
+                device: Device::Gpu(GpuOptions {
+                    backend: GpuBackend::Wgpu,
+                    ..GpuOptions::default()
+                }),
+                precision: Precision::F32,
+                ..ExecutionOptions::default()
+            },
+        };
+        Ok(Execution::local(options)?)
+    }
+
+    const fn name(self) -> &'static str {
+        match self {
+            Self::Cpu => "CPU interpreter",
+            Self::Jit => "CPU JIT",
+            Self::Gpu => "WGPU",
+        }
+    }
+}
 
 fn event_count(
     argument: Option<String>,
@@ -45,21 +107,23 @@ fn main() -> Result<(), Box<dyn Error>> {
         .next()
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("target/ksks-closure.json"));
+    let backend = Backend::parse(arguments.next())?;
     if arguments.next().is_some() {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
-            "expected at most three arguments: data events, normalization events, and projection JSON",
+            "expected at most four arguments: data events, normalization events, projection JSON, and backend",
         )
         .into());
     }
 
+    println!("execution backend: {}", backend.name());
     let result = run_closure(
         ClosureConfig {
             data_events,
             normalization_events,
             ..defaults
         },
-        Execution::default(),
+        backend.execution()?,
     )?;
 
     print_report("pseudo-data", &result.data_report);
