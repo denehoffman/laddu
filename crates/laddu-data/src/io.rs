@@ -718,9 +718,10 @@ impl OutputPath {
 
     pub fn create_parent_dirs(path: &Path) -> LadduDataResult<()> {
         if let Some(parent) = path.parent()
-            && !parent.as_os_str().is_empty() {
-                fs::create_dir_all(parent).map_err(|e| LadduDataError::Sink(e.to_string()))?;
-            }
+            && !parent.as_os_str().is_empty()
+        {
+            fs::create_dir_all(parent).map_err(|e| LadduDataError::Sink(e.to_string()))?;
+        }
 
         Ok(())
     }

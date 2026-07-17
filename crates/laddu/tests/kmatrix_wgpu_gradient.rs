@@ -14,7 +14,7 @@ use laddu::{
     },
     event_scalar,
     expr::{Expr, cis},
-    likelihood::{Likelihood, LikelihoodTerm, NllTerm},
+    likelihood::{Likelihood, NllTerm},
     matrix, parameter,
     physics::{
         channel::Channel,
@@ -224,7 +224,7 @@ fn kmatrix_term() -> NllTerm {
 }
 
 fn likelihood(term: &NllTerm, execution: Execution) -> Likelihood {
-    Likelihood::with_execution([term.clone().boxed()], execution).unwrap()
+    Likelihood::with_execution([term.clone()], &execution).unwrap()
 }
 
 fn cpu_f32_execution() -> Execution {

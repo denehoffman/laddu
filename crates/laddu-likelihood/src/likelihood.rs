@@ -202,13 +202,43 @@ pub struct Likelihood {
 }
 
 impl Likelihood {
-    pub fn new(terms: impl IntoIterator<Item = Box<dyn LikelihoodTerm>>) -> LikelihoodResult<Self> {
-        Self::with_execution(terms, Execution::default())
+    /// Construct a likelihood from terms of one concrete type.
+    ///
+    /// The terms are boxed internally, so the common case does not require a
+    /// manual [`LikelihoodTerm::boxed`] call.
+    pub fn new<T>(terms: impl IntoIterator<Item = T>) -> LikelihoodResult<Self>
+    where
+        T: LikelihoodTerm + 'static,
+    {
+        Self::with_execution(terms, &Execution::default())
     }
 
-    pub fn with_execution(
+    /// Construct a likelihood containing heterogeneous, already boxed terms.
+    pub fn new_boxed(
         terms: impl IntoIterator<Item = Box<dyn LikelihoodTerm>>,
-        execution: Execution,
+    ) -> LikelihoodResult<Self> {
+        Self::with_execution_boxed(terms, &Execution::default())
+    }
+
+    pub fn with_execution<T>(
+        terms: impl IntoIterator<Item = T>,
+        execution: &Execution,
+    ) -> LikelihoodResult<Self>
+    where
+        T: LikelihoodTerm + 'static,
+    {
+        Self::with_execution_boxed(
+            terms
+                .into_iter()
+                .map(|term| Box::new(term) as Box<dyn LikelihoodTerm>),
+            execution,
+        )
+    }
+
+    /// Construct a heterogeneous likelihood using a borrowed execution setup.
+    pub fn with_execution_boxed(
+        terms: impl IntoIterator<Item = Box<dyn LikelihoodTerm>>,
+        execution: &Execution,
     ) -> LikelihoodResult<Self> {
         let mut terms: Vec<_> = terms.into_iter().collect();
         let mut names = HashSet::new();
@@ -229,7 +259,7 @@ impl Likelihood {
         Ok(Self {
             params,
             terms,
-            execution,
+            execution: execution.clone(),
         })
     }
 
@@ -1492,10 +1522,7 @@ mod tests {
         data: &Dataset,
         accepted_mc: &Dataset,
     ) -> Likelihood {
-        Likelihood::new([NllTerm::new(name, model, data, accepted_mc)
-            .unwrap()
-            .boxed()])
-        .unwrap()
+        Likelihood::new([NllTerm::new(name, model, data, accepted_mc).unwrap()]).unwrap()
     }
 
     fn single_term_likelihood_with_execution(
@@ -1506,10 +1533,8 @@ mod tests {
         execution: Execution,
     ) -> Likelihood {
         Likelihood::with_execution(
-            [NllTerm::new(name, model, data, accepted_mc)
-                .unwrap()
-                .boxed()],
-            execution,
+            [NllTerm::new(name, model, data, accepted_mc).unwrap()],
+            &execution,
         )
         .unwrap()
     }
@@ -1584,9 +1609,7 @@ mod tests {
         let accepted_mc = weighted_dataset(&[(4.0, 1.0)]);
         let likelihood =
             Likelihood::new([
-                ExtendedNllTerm::new("extended", &model, &data, &accepted_mc)
-                    .unwrap()
-                    .boxed(),
+                ExtendedNllTerm::new("extended", &model, &data, &accepted_mc).unwrap(),
             ])
             .unwrap();
         let params = likelihood.default_params();
@@ -1908,21 +1931,21 @@ mod tests {
         let scale = laddu_expr::Expr::from(parameter!("scale", initial: 0.6));
         let model = CompiledModel::from_expr(&(event_scalar("x") + scale).powi(2)).unwrap();
 
-        let reference = Likelihood::new([
+        let reference = Likelihood::new_boxed([
             NllTerm::new("data", &model, &resident, &streaming)
                 .unwrap()
                 .boxed(),
             RidgePenalty::new("ridge", ["scale"], 0.3).unwrap().boxed(),
         ])
         .unwrap();
-        let distributed = Likelihood::with_execution(
+        let distributed = Likelihood::with_execution_boxed(
             [
                 NllTerm::new("data", &model, &resident, &streaming)
                     .unwrap()
                     .boxed(),
                 RidgePenalty::new("ridge", ["scale"], 0.3).unwrap().boxed(),
             ],
-            Execution::distributed(
+            &Execution::distributed(
                 ExecutionOptions {
                     device: Device::Cpu(CpuOptions {
                         threads: ThreadPolicy::Serial,
@@ -2084,10 +2107,8 @@ mod tests {
         let accepted_mc = weighted_dataset_batches(&[(1.0, 1.0), (2.0, 1.0)], &[2]);
         let model = CompiledModel::from_expr(&event_scalar("x")).unwrap();
         let likelihood = Likelihood::with_execution(
-            [NllTerm::new("data", &model, &data, &accepted_mc)
-                .unwrap()
-                .boxed()],
-            Execution::distributed(ExecutionOptions::default(), &world).unwrap(),
+            [NllTerm::new("data", &model, &data, &accepted_mc).unwrap()],
+            &Execution::distributed(ExecutionOptions::default(), &world).unwrap(),
         )
         .unwrap();
 
@@ -2107,12 +2128,8 @@ mod tests {
         let data_b = weighted_dataset(&[(5.0, 2.0)]);
         let accepted_b = weighted_dataset(&[(6.0, 3.0)]);
         let likelihood = Likelihood::new([
-            NllTerm::new("KsKs", &model_a, &data_a, &accepted_a)
-                .unwrap()
-                .boxed(),
-            NllTerm::new("eta_pi", &model_b, &data_b, &accepted_b)
-                .unwrap()
-                .boxed(),
+            NllTerm::new("KsKs", &model_a, &data_a, &accepted_a).unwrap(),
+            NllTerm::new("eta_pi", &model_b, &data_b, &accepted_b).unwrap(),
         ])
         .unwrap();
 
@@ -2136,12 +2153,8 @@ mod tests {
         let data = weighted_dataset(&[(2.0, 1.0)]);
         let accepted = weighted_dataset(&[(4.0, 1.0)]);
         let likelihood = Likelihood::new([
-            NllTerm::new("a", &model_a, &data, &accepted)
-                .unwrap()
-                .boxed(),
-            NllTerm::new("b", &model_b, &data, &accepted)
-                .unwrap()
-                .boxed(),
+            NllTerm::new("a", &model_a, &data, &accepted).unwrap(),
+            NllTerm::new("b", &model_b, &data, &accepted).unwrap(),
         ])
         .unwrap();
         let mut params = likelihood.default_params();
@@ -2171,12 +2184,8 @@ mod tests {
         let data = weighted_dataset(&[(0.5, 1.0), (1.2, 0.7)]);
         let accepted = weighted_dataset(&[(0.8, 1.3), (1.5, 0.9)]);
         let likelihood = Likelihood::new([
-            NllTerm::new("a", &model_a, &data, &accepted)
-                .unwrap()
-                .boxed(),
-            NllTerm::new("b", &model_b, &data, &accepted)
-                .unwrap()
-                .boxed(),
+            NllTerm::new("a", &model_a, &data, &accepted).unwrap(),
+            NllTerm::new("b", &model_b, &data, &accepted).unwrap(),
         ])
         .unwrap();
         let params = likelihood.default_params();
@@ -2202,12 +2211,8 @@ mod tests {
         let data = weighted_dataset(&[(2.0, 1.0)]);
         let accepted = weighted_dataset(&[(4.0, 1.0)]);
         let err = Likelihood::new([
-            NllTerm::new("a", &model_a, &data, &accepted)
-                .unwrap()
-                .boxed(),
-            NllTerm::new("b", &model_b, &data, &accepted)
-                .unwrap()
-                .boxed(),
+            NllTerm::new("a", &model_a, &data, &accepted).unwrap(),
+            NllTerm::new("b", &model_b, &data, &accepted).unwrap(),
         ])
         .unwrap_err();
 
@@ -2230,12 +2235,8 @@ mod tests {
         let data = weighted_dataset(&[(2.0, 1.0)]);
         let accepted = weighted_dataset(&[(4.0, 1.0)]);
         let likelihood = Likelihood::new([
-            NllTerm::new("KsKs", &model_a, &data, &accepted)
-                .unwrap()
-                .boxed(),
-            NllTerm::new("eta_pi", &model_b, &data, &accepted)
-                .unwrap()
-                .boxed(),
+            NllTerm::new("KsKs", &model_a, &data, &accepted).unwrap(),
+            NllTerm::new("eta_pi", &model_b, &data, &accepted).unwrap(),
         ])
         .unwrap();
 
@@ -2251,7 +2252,7 @@ mod tests {
                 .unwrap();
         let data = weighted_dataset(&[(2.0, 1.0), (3.0, 1.0)]);
         let accepted = weighted_dataset(&[(4.0, 1.0)]);
-        let likelihood = Likelihood::new([
+        let likelihood = Likelihood::new_boxed([
             NllTerm::new("data", &model, &data, &accepted)
                 .unwrap()
                 .boxed(),
@@ -2270,10 +2271,8 @@ mod tests {
 
     #[test]
     fn penalty_terms_reject_missing_parameters() {
-        let err = Likelihood::new([RidgePenalty::new("ridge", ["missing"], 1.0)
-            .unwrap()
-            .boxed()])
-        .unwrap_err();
+        let err =
+            Likelihood::new([RidgePenalty::new("ridge", ["missing"], 1.0).unwrap()]).unwrap_err();
 
         assert!(matches!(
             err,
@@ -2344,7 +2343,7 @@ mod tests {
                 .unwrap();
         let data = weighted_dataset(&[(2.0, 1.0)]);
         let accepted = weighted_dataset(&[(4.0, 1.0)]);
-        let likelihood = Likelihood::new([
+        let likelihood = Likelihood::new_boxed([
             NllTerm::new("data", &model, &data, &accepted)
                 .unwrap()
                 .boxed(),
@@ -2368,8 +2367,7 @@ mod tests {
                 .with_initial(0.0)
                 .with_bounds(Some(0.0), None),
             id: None,
-        }
-        .boxed()])
+        }])
         .unwrap();
         let params = likelihood.default_params();
         let evaluation = likelihood.nll_with_gradient(&params).unwrap();
@@ -2416,7 +2414,7 @@ mod tests {
         let data = weighted_dataset(&[(2.0, 1.0)]);
         let accepted = weighted_dataset(&[(4.0, 1.0)]);
         let generated = weighted_dataset(&[(5.0, 1.0)]);
-        let likelihood = Likelihood::new([
+        let likelihood = Likelihood::new_boxed([
             NllTerm::new("data", &model, &data, &accepted)
                 .unwrap()
                 .boxed(),
@@ -2579,11 +2577,7 @@ mod tests {
         let accepted = weighted_dataset(&[(1.0, 1.0)]);
         let generated = weighted_dataset(&[(2.0, 1.0)]);
         let likelihood =
-            Likelihood::new([
-                Box::new(NllTerm::new("waves", &model, &data, &accepted).unwrap())
-                    as Box<dyn LikelihoodTerm>,
-            ])
-            .unwrap();
+            Likelihood::new([NllTerm::new("waves", &model, &data, &accepted).unwrap()]).unwrap();
         let params = likelihood.default_params();
         let projection = likelihood
             .projection("waves", &generated, ["selected"])

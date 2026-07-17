@@ -323,7 +323,9 @@ impl WgpuScalarKernel {
             .recv()
             .map_err(|error| WgpuError::BufferMap(error.to_string()))?
             .map_err(|error| WgpuError::BufferMap(error.to_string()))?;
-        let mapped = slice.get_mapped_range();
+        let mapped = slice
+            .get_mapped_range()
+            .map_err(|error| WgpuError::BufferMap(error.to_string()))?;
         let value = u32::from_ne_bytes(mapped[..4].try_into().expect("error is four bytes"));
         drop(mapped);
         staging.unmap();
@@ -791,7 +793,9 @@ impl WgpuScalarKernel {
             .recv()
             .map_err(|error| WgpuError::BufferMap(error.to_string()))?
             .map_err(|error| WgpuError::BufferMap(error.to_string()))?;
-        let mapped = slice.get_mapped_range();
+        let mapped = slice
+            .get_mapped_range()
+            .map_err(|error| WgpuError::BufferMap(error.to_string()))?;
         let words: &[u32] = bytemuck::cast_slice(&mapped);
         let invalid = words[groups];
         let singular = words[groups + 1];
@@ -904,7 +908,9 @@ impl WgpuScalarKernel {
             .recv()
             .map_err(|error| WgpuError::BufferMap(error.to_string()))?
             .map_err(|error| WgpuError::BufferMap(error.to_string()))?;
-        let mapped = slice.get_mapped_range();
+        let mapped = slice
+            .get_mapped_range()
+            .map_err(|error| WgpuError::BufferMap(error.to_string()))?;
         let words: &[u32] = bytemuck::cast_slice(&mapped);
         let invalid = words[partial_words];
         let singular = words[partial_words + 1];
@@ -1103,7 +1109,9 @@ impl WgpuScalarKernel {
             .recv()
             .map_err(|error| WgpuError::BufferMap(error.to_string()))?
             .map_err(|error| WgpuError::BufferMap(error.to_string()))?;
-        let mapped = slice.get_mapped_range();
+        let mapped = slice
+            .get_mapped_range()
+            .map_err(|error| WgpuError::BufferMap(error.to_string()))?;
         let words: &[u32] = bytemuck::cast_slice(&mapped);
         let invalid = words[groups];
         let singular = words[groups + 1];
@@ -1308,7 +1316,9 @@ impl WgpuScalarKernel {
             .recv()
             .map_err(|error| WgpuError::BufferMap(error.to_string()))?
             .map_err(|error| WgpuError::BufferMap(error.to_string()))?;
-        let mapped = slice.get_mapped_range();
+        let mapped = slice
+            .get_mapped_range()
+            .map_err(|error| WgpuError::BufferMap(error.to_string()))?;
         let result: &[f32] = bytemuck::cast_slice(&mapped[..output_size as usize]);
         let values = result
             .chunks_exact(2)

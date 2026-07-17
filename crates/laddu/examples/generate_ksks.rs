@@ -9,7 +9,7 @@ mod ksks;
 
 use std::{error::Error, path::PathBuf};
 
-use ksks::{ksks_channel, ksks_intensities, print_report, truth_parameters};
+use ksks::{ksks_channel, ksks_intensity, print_report, truth_parameters};
 use laddu::prelude::*;
 
 const EVENTS: usize = 1_000_000;
@@ -23,7 +23,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     std::fs::create_dir_all(&output)?;
 
     let channel = ksks_channel()?;
-    let compiled = CompiledModel::from_expr(&ksks_intensities(&channel)?.coherent)?;
+    let compiled = CompiledModel::from_expr(&ksks_intensity(&channel)?)?;
     let evaluator = ModelEvaluator::prepare(
         &compiled,
         truth_parameters(&compiled)?,
@@ -43,11 +43,11 @@ fn main() -> Result<(), Box<dyn Error>> {
         batch_size: 2_048,
         seed: SEED.wrapping_add(1),
         diagnostics: true,
+        envelope: EnvelopeMode::Pilot {
+            proposals: 50_000,
+            safety_factor: 2.0,
+        },
         envelope_overflow: EnvelopeOverflow::Grow { safety_factor: 1.5 },
-    };
-    let envelope = EnvelopeMode::Pilot {
-        proposals: 50_000,
-        safety_factor: 2.0,
     };
 
     let mut weighted_parquet = ParquetSink::create(output.join("ksks_weighted.parquet"));
@@ -62,19 +62,14 @@ fn main() -> Result<(), Box<dyn Error>> {
     print_report("weighted ROOT", &report);
 
     let mut unweighted_parquet = ParquetSink::create(output.join("ksks_unweighted.parquet"));
-    let report = generator.generate_unweighted_to(
-        unweighted,
-        &evaluator,
-        envelope,
-        &mut unweighted_parquet,
-    )?;
+    let report =
+        generator.generate_unweighted_to(unweighted, &evaluator, &mut unweighted_parquet)?;
     print_report("unweighted Parquet", &report);
 
     let mut unweighted_root = RootSink::builder(output.join("ksks_unweighted.root"))
         .tree("events")
         .build();
-    let report =
-        generator.generate_unweighted_to(unweighted, &evaluator, envelope, &mut unweighted_root)?;
+    let report = generator.generate_unweighted_to(unweighted, &evaluator, &mut unweighted_root)?;
     print_report("unweighted ROOT", &report);
 
     println!("wrote four {EVENTS}-event samples to {}", output.display());

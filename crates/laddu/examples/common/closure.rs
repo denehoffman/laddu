@@ -8,6 +8,11 @@ use std::{
     time::{Duration, Instant},
 };
 
+use laddu::prelude::ganesh::{
+    algorithms::gradient::{LBFGSB, LBFGSBConfig},
+    core::{MaxSteps, MinimizationSummary},
+    traits::{Algorithm, SupportsParameterNames},
+};
 use laddu::prelude::*;
 use serde::Serialize;
 
@@ -84,7 +89,7 @@ pub struct ClosureResult {
     pub normalization_report: GenerationReport,
     pub initial_nll: f64,
     pub initial_gradient: Vec<f64>,
-    pub fit: MinimizationResult,
+    pub fit: MinimizationSummary,
     pub projection: ProjectionHistogram,
     pub data_generation_time: Duration,
     pub normalization_generation_time: Duration,
@@ -95,8 +100,22 @@ pub struct ClosureResult {
 
 impl ClosureResult {
     pub fn fitted(&self, name: &str) -> Option<f64> {
-        self.fit.parameter(name).ok()
+        self.fit
+            .parameter_names
+            .as_ref()?
+            .iter()
+            .position(|candidate| candidate == name)
+            .map(|index| self.fit.x.get(index))
     }
+}
+
+fn fitted_parameter(fit: &MinimizationSummary, name: &str) -> Result<f64, Box<dyn Error>> {
+    let index = fit
+        .parameter_names
+        .as_ref()
+        .and_then(|names| names.iter().position(|candidate| candidate == name))
+        .ok_or_else(|| format!("fit result does not contain parameter `{name}`"))?;
+    Ok(fit.x.get(index))
 }
 
 pub fn wrapped_phase_residual(value: f64, truth: f64) -> f64 {
@@ -130,13 +149,13 @@ pub fn run_closure(
             batch_size: 2_048,
             seed: config.seed,
             diagnostics: false,
+            envelope: EnvelopeMode::Pilot {
+                proposals: config.pilot_proposals,
+                safety_factor: 2.0,
+            },
             envelope_overflow: EnvelopeOverflow::Grow { safety_factor: 1.5 },
         },
         &evaluator,
-        EnvelopeMode::Pilot {
-            proposals: config.pilot_proposals,
-            safety_factor: 2.0,
-        },
     )?;
     let data_generation_time = data_start.elapsed();
 
@@ -154,24 +173,32 @@ pub fn run_closure(
 
     let likelihood_start = Instant::now();
     let likelihood = Likelihood::with_execution(
-        [NllTerm::new("ksks", &model, &data, &normalization)?.boxed()],
-        execution.clone(),
+        [NllTerm::new("ksks", &model, &data, &normalization)?],
+        &execution,
     )?;
     let likelihood_preparation_time = likelihood_start.elapsed();
     let initial = likelihood.sample_initial(config.seed.wrapping_add(2));
     let initial_evaluation = likelihood.nll_with_gradient(&initial)?;
     let (initial_nll, initial_gradient) = initial_evaluation.into_parts();
     let fit_start = Instant::now();
-    let fit = likelihood.minimize(
-        &initial,
-        Some(MinimizationOptions::default().with_max_steps(config.max_fit_steps)),
+    let problem = FitProblem::<_, f64>::new(&likelihood);
+    let fit_config = LBFGSBConfig::<f64>::default()
+        .with_parameter_names(problem.parameter_names())
+        .with_transform(problem.native_transform()?)?
+        .with_bounds(problem.native_bounds())?;
+    let fit = LBFGSB::<f64>::default().process(
+        &problem,
+        &(),
+        problem.vector(&initial),
+        fit_config,
+        LBFGSB::<f64>::default_callbacks().with_terminator(MaxSteps(config.max_fit_steps)),
     )?;
     let fit_time = fit_start.elapsed();
 
     let projection_start = Instant::now();
-    let fitted_magnitude = fit.parameter("f2_magnitude")?;
-    let fitted_phase = fit.parameter("f2_phase")?;
-    let fitted = fit.raw.x.to_vec();
+    let fitted_magnitude = fitted_parameter(&fit, "f2_magnitude")?;
+    let fitted_phase = fitted_parameter(&fit, "f2_phase")?;
+    let fitted = fit.x.to_vec();
     let projection = build_projection(
         &likelihood,
         &data,
@@ -242,28 +269,28 @@ fn build_projection(
 
     Ok(ProjectionHistogram {
         schema_version: 2,
-        title: "γp → KₛKₛp closure fit",
-        observable: "m(KₛKₛ)",
+        title: "$\\gamma p \\to K_S^0 K_S^0 p\\;\\mathrm{closure\\ fit}$",
+        observable: "$m(K_S^0 K_S^0)$",
         unit: "GeV",
         data: HistogramSeries {
             id: "data",
-            label: "Pseudo-data",
+            label: "$\\mathrm{Pseudo\\ data}$",
             histogram: data_histogram,
         },
         projections: vec![
             HistogramSeries {
                 id: "fit",
-                label: "Coherent fit",
+                label: "$\\mathrm{Coherent\\ fit}$",
                 histogram: coherent_histogram,
             },
             HistogramSeries {
                 id: "f0",
-                label: "f₀(1500)",
+                label: "$f_0(1500)$",
                 histogram: f0_histogram,
             },
             HistogramSeries {
                 id: "f2",
-                label: "f₂(1270)",
+                label: "$f_2(1270)$",
                 histogram: f2_histogram,
             },
         ],

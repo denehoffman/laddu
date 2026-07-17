@@ -1,7 +1,4 @@
-use std::{
-    collections::{HashSet, VecDeque},
-    sync::Arc,
-};
+use std::collections::{HashSet, VecDeque};
 
 use indexmap::IndexMap;
 use laddu_expr::Expr;
@@ -9,10 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     LadduPhysicsError, LadduPhysicsResult,
-    generation::{
-        InitialMomentum, MassProposal, MassProposalSpec, ScalarSource, VertexProposal,
-        VertexProposalSpec,
-    },
+    generation::{InitialMomentum, MassProposal, ScalarSource, VertexProposal},
     quantum::{MandelstamChannel, ParticleProperties},
     vectors::{RealVec3, RealVec4, Vec3, Vec4},
 };
@@ -347,77 +341,14 @@ struct FramePath {
     edges: Vec<String>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Edge {
     name: String,
     p4: Option<Vec4>,
     properties: Option<ParticleProperties>,
     output: bool,
-    mass_proposal: Option<Arc<dyn MassProposal>>,
+    mass_proposal: Option<MassProposal>,
     initial_momentum: Option<InitialMomentum>,
-}
-
-impl Serialize for Edge {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        #[derive(Serialize)]
-        struct Repr<'a> {
-            name: &'a str,
-            p4: &'a Option<Vec4>,
-            properties: &'a Option<ParticleProperties>,
-            output: bool,
-            mass_proposal: Option<MassProposalSpec>,
-            initial_momentum: &'a Option<InitialMomentum>,
-        }
-        let mass_proposal = self
-            .mass_proposal
-            .as_ref()
-            .map(|proposal| {
-                proposal.serde_spec().ok_or_else(|| {
-                    serde::ser::Error::custom(
-                        "custom mass proposals cannot be serialized without a serde specification",
-                    )
-                })
-            })
-            .transpose()?;
-        Repr {
-            name: &self.name,
-            p4: &self.p4,
-            properties: &self.properties,
-            output: self.output,
-            mass_proposal,
-            initial_momentum: &self.initial_momentum,
-        }
-        .serialize(serializer)
-    }
-}
-
-impl<'de> Deserialize<'de> for Edge {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        #[derive(Deserialize)]
-        struct Repr {
-            name: String,
-            p4: Option<Vec4>,
-            properties: Option<ParticleProperties>,
-            output: bool,
-            mass_proposal: Option<MassProposalSpec>,
-            initial_momentum: Option<InitialMomentum>,
-        }
-        let repr = Repr::deserialize(deserializer)?;
-        Ok(Self {
-            name: repr.name,
-            p4: repr.p4,
-            properties: repr.properties,
-            output: repr.output,
-            mass_proposal: repr.mass_proposal.map(MassProposalSpec::into_proposal),
-            initial_momentum: repr.initial_momentum,
-        })
-    }
 }
 
 impl Edge {
@@ -448,7 +379,7 @@ impl Edge {
         self.output
     }
 
-    pub fn mass_proposal(&self) -> Option<&Arc<dyn MassProposal>> {
+    pub fn mass_proposal(&self) -> Option<&MassProposal> {
         self.mass_proposal.as_ref()
     }
 
@@ -482,8 +413,8 @@ impl EdgeHandle<'_> {
         self
     }
 
-    pub fn mass_proposal(&mut self, proposal: impl MassProposal + 'static) -> &mut Self {
-        self.edge.mass_proposal = Some(Arc::new(proposal));
+    pub fn mass_proposal(&mut self, proposal: impl Into<MassProposal>) -> &mut Self {
+        self.edge.mass_proposal = Some(proposal.into());
         self
     }
 
@@ -513,67 +444,12 @@ impl EdgeHandle<'_> {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Vertex {
     name: String,
     incoming: Vec<String>,
     outgoing: Vec<String>,
-    generation: Option<Arc<dyn VertexProposal>>,
-}
-
-impl Serialize for Vertex {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        #[derive(Serialize)]
-        struct Repr<'a> {
-            name: &'a str,
-            incoming: &'a [String],
-            outgoing: &'a [String],
-            generation: Option<VertexProposalSpec>,
-        }
-        let generation = self
-            .generation
-            .as_ref()
-            .map(|proposal| {
-                proposal.serde_spec().ok_or_else(|| {
-                    serde::ser::Error::custom(
-                        "custom vertex proposals cannot be serialized without a serde specification",
-                    )
-                })
-            })
-            .transpose()?;
-        Repr {
-            name: &self.name,
-            incoming: &self.incoming,
-            outgoing: &self.outgoing,
-            generation,
-        }
-        .serialize(serializer)
-    }
-}
-
-impl<'de> Deserialize<'de> for Vertex {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        #[derive(Deserialize)]
-        struct Repr {
-            name: String,
-            incoming: Vec<String>,
-            outgoing: Vec<String>,
-            generation: Option<VertexProposalSpec>,
-        }
-        let repr = Repr::deserialize(deserializer)?;
-        Ok(Self {
-            name: repr.name,
-            incoming: repr.incoming,
-            outgoing: repr.outgoing,
-            generation: repr.generation.map(VertexProposalSpec::into_proposal),
-        })
-    }
+    generation: Option<VertexProposal>,
 }
 
 impl Vertex {
@@ -598,7 +474,7 @@ impl Vertex {
         &self.outgoing
     }
 
-    pub fn generation(&self) -> Option<&Arc<dyn VertexProposal>> {
+    pub fn generation(&self) -> Option<&VertexProposal> {
         self.generation.as_ref()
     }
 
@@ -630,12 +506,12 @@ pub struct VertexHandle<'a> {
 }
 
 impl VertexHandle<'_> {
-    pub fn generation(&mut self, proposal: impl VertexProposal + 'static) -> &mut Self {
+    pub fn generation(&mut self, proposal: impl Into<VertexProposal>) -> &mut Self {
         self.channel
             .vertices
             .get_mut(&self.name)
             .expect("vertex handle references an existing vertex")
-            .generation = Some(Arc::new(proposal));
+            .generation = Some(proposal.into());
         self
     }
 
@@ -839,10 +715,7 @@ mod tests {
     use laddu_runtime::CpuBackend;
 
     use super::*;
-    use crate::{
-        generation::TwoBodyDecay,
-        vectors::{RealVec3, RealVec4},
-    };
+    use crate::vectors::{RealVec3, RealVec4};
 
     fn eval(expr: Expr) -> f64 {
         let model = CompiledModel::from_expr(&expr).unwrap();
@@ -1101,7 +974,8 @@ mod tests {
             .initial_p4(RealVec4::new(0.0, 0.0, 0.0, 2.0));
         channel
             .edge("a")
-            .properties(&ParticleProperties::unknown().with_mass(0.2));
+            .properties(&ParticleProperties::unknown().with_mass(0.2))
+            .mass_proposal(0.1..0.3);
         channel
             .edge("b")
             .properties(&ParticleProperties::unknown().with_mass(0.4));
@@ -1109,7 +983,7 @@ mod tests {
             .vertex("decay")
             .incoming(["parent"])
             .outgoing(["a", "b"])
-            .generation(TwoBodyDecay);
+            .generation(VertexProposal::TwoBodyDecay);
 
         let encoded = serde_json::to_string(&channel).unwrap();
         let decoded: Channel = serde_json::from_str(&encoded).unwrap();
@@ -1129,5 +1003,12 @@ mod tests {
                 .initial_momentum()
                 .is_some()
         );
+        assert!(matches!(
+            decoded.require_edge("a").unwrap().mass_proposal(),
+            Some(MassProposal::Uniform {
+                low: 0.1,
+                high: 0.3
+            })
+        ));
     }
 }

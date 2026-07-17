@@ -1,7 +1,7 @@
 //! Kinematic proposal primitives used by Monte Carlo generators.
 
 use serde::{Deserialize, Serialize};
-use std::{f64::consts::PI, fmt::Debug, sync::Arc};
+use std::{f64::consts::PI, sync::Arc};
 
 use crate::{
     LadduPhysicsError, LadduPhysicsResult,
@@ -67,199 +67,170 @@ pub struct MassProposalResult {
     pub weight: f64,
 }
 
-/// Extensible invariant-mass proposal for a generated edge.
-pub trait MassProposal: Debug + Send + Sync {
-    fn propose(
+/// Invariant-mass proposal for a generated edge.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum MassProposal {
+    Fixed { mass: f64 },
+    Uniform { low: f64, high: f64 },
+}
+
+impl MassProposal {
+    pub fn fixed(mass: f64) -> Self {
+        Self::Fixed { mass }
+    }
+
+    pub fn uniform(low: f64, high: f64) -> Self {
+        Self::Uniform { low, high }
+    }
+
+    pub fn propose(
         &self,
         minimum: f64,
         maximum: f64,
         rng: &mut ProposalRng,
-    ) -> LadduPhysicsResult<MassProposalResult>;
+    ) -> LadduPhysicsResult<MassProposalResult> {
+        match *self {
+            Self::Fixed { mass } => {
+                if !mass.is_finite() || mass < minimum || mass > maximum {
+                    return Err(LadduPhysicsError::invalid_value(
+                        "fixed mass",
+                        format!("a finite value in [{minimum}, {maximum}]"),
+                        mass,
+                    ));
+                }
+                Ok(MassProposalResult { mass, weight: 1.0 })
+            }
+            Self::Uniform { low, high } => {
+                let (low, high) = uniform_mass_support(low, high, minimum, maximum)?;
+                let width = high - low;
+                Ok(MassProposalResult {
+                    mass: low + rng.uniform() * width,
+                    weight: width,
+                })
+            }
+        }
+    }
 
     /// Evaluate the proposal density when it is available.
     ///
     /// Custom proposals may retain the default `None`; density-aware generators
     /// use this hook only for optional importance adaptation.
-    fn density(&self, _minimum: f64, _maximum: f64, _mass: f64) -> LadduPhysicsResult<Option<f64>> {
-        Ok(None)
-    }
-
-    #[doc(hidden)]
-    fn serde_spec(&self) -> Option<MassProposalSpec> {
-        None
-    }
-}
-
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
-pub struct FixedMass(pub f64);
-
-impl MassProposal for FixedMass {
-    fn propose(
+    pub fn density(
         &self,
         minimum: f64,
         maximum: f64,
-        _rng: &mut ProposalRng,
-    ) -> LadduPhysicsResult<MassProposalResult> {
-        if !self.0.is_finite() || self.0 < minimum || self.0 > maximum {
-            return Err(LadduPhysicsError::invalid_value(
-                "fixed mass",
-                format!("a finite value in [{minimum}, {maximum}]"),
-                self.0,
-            ));
+        mass: f64,
+    ) -> LadduPhysicsResult<Option<f64>> {
+        match *self {
+            // A point mass has no ordinary continuous density.
+            Self::Fixed { .. } => Ok(None),
+            Self::Uniform { low, high } => {
+                let (low, high) = uniform_mass_support(low, high, minimum, maximum)?;
+                Ok(Some(if mass >= low && mass <= high {
+                    (high - low).recip()
+                } else {
+                    0.0
+                }))
+            }
         }
-        Ok(MassProposalResult {
-            mass: self.0,
-            weight: 1.0,
-        })
-    }
-
-    fn serde_spec(&self) -> Option<MassProposalSpec> {
-        Some(MassProposalSpec::Fixed { mass: self.0 })
     }
 }
 
-/// A uniform invariant-mass proposal, truncated to the kinematically allowed interval.
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
-pub struct UniformMass {
-    low: f64,
-    high: f64,
-}
-
-impl UniformMass {
-    pub fn new(low: f64, high: f64) -> Self {
-        Self { low, high }
+impl From<f64> for MassProposal {
+    fn from(mass: f64) -> Self {
+        Self::fixed(mass)
     }
 }
 
-impl MassProposal for UniformMass {
-    fn propose(
-        &self,
-        minimum: f64,
-        maximum: f64,
-        rng: &mut ProposalRng,
-    ) -> LadduPhysicsResult<MassProposalResult> {
-        if !self.low.is_finite() || !self.high.is_finite() || self.high <= self.low {
-            return Err(LadduPhysicsError::invalid_relation(format!(
-                "uniform mass proposal requires finite low < high, got [{}, {}]",
-                self.low, self.high
-            )));
-        }
-        let low = self.low.max(minimum);
-        let high = self.high.min(maximum);
-        if high <= low {
-            return Err(LadduPhysicsError::invalid_relation(format!(
-                "uniform mass support [{}, {}] does not overlap the allowed interval [{minimum}, {maximum}]",
-                self.low, self.high
-            )));
-        }
-        let width = high - low;
-        Ok(MassProposalResult {
-            mass: low + rng.uniform() * width,
-            weight: width,
-        })
-    }
-
-    fn density(&self, minimum: f64, maximum: f64, mass: f64) -> LadduPhysicsResult<Option<f64>> {
-        if !self.low.is_finite() || !self.high.is_finite() || self.high <= self.low {
-            return Err(LadduPhysicsError::invalid_relation(format!(
-                "uniform mass proposal requires finite low < high, got [{}, {}]",
-                self.low, self.high
-            )));
-        }
-        let low = self.low.max(minimum);
-        let high = self.high.min(maximum);
-        if high <= low {
-            return Err(LadduPhysicsError::invalid_relation(format!(
-                "uniform mass support [{}, {}] does not overlap the allowed interval [{minimum}, {maximum}]",
-                self.low, self.high
-            )));
-        }
-        Ok(Some(if mass >= low && mass <= high {
-            (high - low).recip()
-        } else {
-            0.0
-        }))
-    }
-
-    fn serde_spec(&self) -> Option<MassProposalSpec> {
-        Some(MassProposalSpec::Uniform {
-            low: self.low,
-            high: self.high,
-        })
+impl From<std::ops::Range<f64>> for MassProposal {
+    fn from(range: std::ops::Range<f64>) -> Self {
+        Self::uniform(range.start, range.end)
     }
 }
 
-#[doc(hidden)]
-#[derive(Clone, Debug, Serialize, Deserialize)]
+fn uniform_mass_support(
+    proposal_low: f64,
+    proposal_high: f64,
+    minimum: f64,
+    maximum: f64,
+) -> LadduPhysicsResult<(f64, f64)> {
+    if !proposal_low.is_finite() || !proposal_high.is_finite() || proposal_high <= proposal_low {
+        return Err(LadduPhysicsError::invalid_relation(format!(
+            "uniform mass proposal requires finite low < high, got [{proposal_low}, {proposal_high}]"
+        )));
+    }
+    let low = proposal_low.max(minimum);
+    let high = proposal_high.min(maximum);
+    if high <= low {
+        return Err(LadduPhysicsError::invalid_relation(format!(
+            "uniform mass support [{proposal_low}, {proposal_high}] does not overlap the allowed interval [{minimum}, {maximum}]"
+        )));
+    }
+    Ok((low, high))
+}
+
+/// Kinematic proposal attached to a channel vertex.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
-pub enum MassProposalSpec {
-    Fixed { mass: f64 },
-    Uniform { low: f64, high: f64 },
+pub enum VertexProposal {
+    #[default]
+    TwoBodyDecay,
+    TwoBodyScattering {
+        proposal: TwoBodyScattering,
+    },
 }
 
-impl MassProposalSpec {
-    pub(crate) fn into_proposal(self) -> Arc<dyn MassProposal> {
-        match self {
-            Self::Fixed { mass } => Arc::new(FixedMass(mass)),
-            Self::Uniform { low, high } => Arc::new(UniformMass::new(low, high)),
+impl VertexProposal {
+    pub fn isotropic_decay() -> Self {
+        Self::TwoBodyDecay
+    }
+
+    pub fn t_exchange(
+        pairing: (impl Into<String>, impl Into<String>),
+        distribution: TDistribution,
+    ) -> Self {
+        Self::TwoBodyScattering {
+            proposal: TwoBodyScattering::t_exchange(pairing, distribution),
         }
     }
-}
 
-/// Extensible kinematic proposal attached to a channel vertex.
-pub trait VertexProposal: Debug + Send + Sync {
-    fn propose(
-        &self,
-        incoming: &[NamedMomentum<'_>],
-        outgoing: &[NamedMass<'_>],
-        rng: &mut ProposalRng,
-    ) -> LadduPhysicsResult<ProposalResult>;
-
-    #[doc(hidden)]
-    fn serde_spec(&self) -> Option<VertexProposalSpec> {
-        None
-    }
-}
-
-#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
-pub struct TwoBodyDecay;
-
-impl TwoBodyDecay {
-    pub fn isotropic() -> Self {
-        Self
-    }
-}
-
-impl VertexProposal for TwoBodyDecay {
-    fn propose(
+    pub fn propose(
         &self,
         incoming: &[NamedMomentum<'_>],
         outgoing: &[NamedMass<'_>],
         rng: &mut ProposalRng,
     ) -> LadduPhysicsResult<ProposalResult> {
-        if incoming.len() != 1 || outgoing.len() != 2 {
-            return Err(LadduPhysicsError::invalid_relation(format!(
-                "isotropic decay requires one incoming and two outgoing edges, got {} incoming and {} outgoing",
-                incoming.len(),
-                outgoing.len()
-            )));
+        match self {
+            Self::TwoBodyDecay => propose_two_body_decay(incoming, outgoing, rng),
+            Self::TwoBodyScattering { proposal } => proposal.propose(incoming, outgoing, rng),
         }
-        let parent = incoming[0].p4;
-        let mass = parent.m()?;
-        let p = two_body_momentum(mass, outgoing[0].mass, outgoing[1].mass)?;
-        let direction = rng.isotropic_direction();
-        let first = on_shell(direction, p, outgoing[0].mass);
-        let second = on_shell(-direction, p, outgoing[1].mass);
-        let beta = parent.beta()?;
-        Ok(ProposalResult {
-            outgoing: vec![first.boost(&beta), second.boost(&beta)],
-            weight: p / (4.0 * PI * mass),
-        })
     }
+}
 
-    fn serde_spec(&self) -> Option<VertexProposalSpec> {
-        Some(VertexProposalSpec::TwoBodyDecay)
+fn propose_two_body_decay(
+    incoming: &[NamedMomentum<'_>],
+    outgoing: &[NamedMass<'_>],
+    rng: &mut ProposalRng,
+) -> LadduPhysicsResult<ProposalResult> {
+    if incoming.len() != 1 || outgoing.len() != 2 {
+        return Err(LadduPhysicsError::invalid_relation(format!(
+            "isotropic decay requires one incoming and two outgoing edges, got {} incoming and {} outgoing",
+            incoming.len(),
+            outgoing.len()
+        )));
     }
+    let parent = incoming[0].p4;
+    let mass = parent.m()?;
+    let p = two_body_momentum(mass, outgoing[0].mass, outgoing[1].mass)?;
+    let direction = rng.isotropic_direction();
+    let first = on_shell(direction, p, outgoing[0].mass);
+    let second = on_shell(-direction, p, outgoing[1].mass);
+    let beta = parent.beta()?;
+    Ok(ProposalResult {
+        outgoing: vec![first.boost(&beta), second.boost(&beta)],
+        weight: p / (4.0 * PI * mass),
+    })
 }
 
 /// Density-adapted two-body decay used by the channel generator after a pilot run.
@@ -318,8 +289,8 @@ impl AdaptiveTwoBodyDecay {
     }
 }
 
-impl VertexProposal for AdaptiveTwoBodyDecay {
-    fn propose(
+impl AdaptiveTwoBodyDecay {
+    pub fn propose(
         &self,
         incoming: &[NamedMomentum<'_>],
         outgoing: &[NamedMass<'_>],
@@ -893,8 +864,14 @@ impl TwoBodyScattering {
     }
 }
 
-impl VertexProposal for TwoBodyScattering {
-    fn propose(
+impl From<TwoBodyScattering> for VertexProposal {
+    fn from(proposal: TwoBodyScattering) -> Self {
+        Self::TwoBodyScattering { proposal }
+    }
+}
+
+impl TwoBodyScattering {
+    pub fn propose(
         &self,
         incoming: &[NamedMomentum<'_>],
         outgoing: &[NamedMass<'_>],
@@ -972,43 +949,6 @@ impl VertexProposal for TwoBodyScattering {
             weight: 1.0 / (16.0 * PI * root_s * p_in * q_t),
         })
     }
-
-    fn serde_spec(&self) -> Option<VertexProposalSpec> {
-        Some(VertexProposalSpec::TwoBodyScattering {
-            incoming_edge: self.incoming_edge.clone(),
-            outgoing_edge: self.outgoing_edge.clone(),
-            distribution: self.distribution.clone(),
-        })
-    }
-}
-
-#[doc(hidden)]
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum VertexProposalSpec {
-    TwoBodyDecay,
-    TwoBodyScattering {
-        incoming_edge: String,
-        outgoing_edge: String,
-        distribution: TDistribution,
-    },
-}
-
-impl VertexProposalSpec {
-    pub(crate) fn into_proposal(self) -> Arc<dyn VertexProposal> {
-        match self {
-            Self::TwoBodyDecay => Arc::new(TwoBodyDecay),
-            Self::TwoBodyScattering {
-                incoming_edge,
-                outgoing_edge,
-                distribution,
-            } => Arc::new(TwoBodyScattering {
-                incoming_edge,
-                outgoing_edge,
-                distribution,
-            }),
-        }
-    }
 }
 
 fn two_body_momentum(parent: f64, first: f64, second: f64) -> LadduPhysicsResult<f64> {
@@ -1044,7 +984,7 @@ mod tests {
 
     #[test]
     fn isotropic_decay_conserves_momentum_and_mass() {
-        let proposal = TwoBodyDecay::isotropic();
+        let proposal = VertexProposal::isotropic_decay();
         let incoming = [NamedMomentum {
             name: "x",
             p4: RealVec4::new(0.3, -0.2, 1.0, 2.0),
@@ -1151,7 +1091,7 @@ mod tests {
         let adaptive =
             AdaptiveTwoBodyDecay::new(Arc::from([1.0, 2.0, 8.0, 20.0, 8.0, 2.0, 1.0]), 0.2)
                 .unwrap();
-        let baseline = TwoBodyDecay::isotropic()
+        let baseline = VertexProposal::isotropic_decay()
             .propose(&incoming, &outgoing, &mut ProposalRng::new(1))
             .unwrap()
             .weight;
@@ -1178,12 +1118,12 @@ mod tests {
         ));
 
         assert!(matches!(
-            FixedMass(2.0).propose(0.0, 1.0, &mut ProposalRng::new(0)),
+            MassProposal::fixed(2.0).propose(0.0, 1.0, &mut ProposalRng::new(0)),
             Err(LadduPhysicsError::InvalidValue { .. })
         ));
 
         assert!(matches!(
-            TwoBodyDecay::isotropic().propose(&[], &[], &mut ProposalRng::new(0)),
+            VertexProposal::isotropic_decay().propose(&[], &[], &mut ProposalRng::new(0)),
             Err(LadduPhysicsError::InvalidRelation { .. })
         ));
     }
@@ -1219,7 +1159,7 @@ mod tests {
 
     #[test]
     fn uniform_mass_truncates_to_the_allowed_interval() {
-        let proposal = UniformMass::new(1.0, 2.0);
+        let proposal = MassProposal::uniform(1.0, 2.0);
         let mut rng = ProposalRng::new(41);
         for _ in 0..100 {
             let result = proposal.propose(1.25, 1.75, &mut rng).unwrap();

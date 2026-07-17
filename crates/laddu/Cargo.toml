@@ -24,7 +24,7 @@ laddu-wgpu = { path = "../laddu-wgpu", optional = true }
 thiserror.workspace = true
 
 [features]
-default = ["amplitudes", "likelihood"]
+default = ["amplitudes", "likelihood", "fit", "generation"]
 amplitudes = ["dep:laddu-amplitudes"]
 likelihood = ["dep:laddu-likelihood"]
 fit = ["likelihood", "dep:laddu-fit"]

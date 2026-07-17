@@ -82,19 +82,14 @@ pub mod prelude {
         event_scalar, matmul, matrix, matrix_from_flat, matvec, polar_complex, solve, vector,
     };
     #[cfg(feature = "fit")]
-    pub use laddu_fit::{
-        CallbackControl, FitError, FitProblem, FitResult, LadduMinimizerConfig, LadduSamplerConfig,
-        LadduTransformConfig, LikelihoodFitExt, McmcResult, MinimizationOptions,
-        MinimizationProgress, MinimizationResult, Minimizer, Sampler, SamplingOptions,
-        StochasticFitProblem, StochasticMinimizationOptions, TransformOptions, ganesh,
-    };
+    pub use laddu_fit::{FitError, FitProblem, FitResult, StochasticFitProblem, ganesh};
     #[cfg(feature = "generation")]
     pub use laddu_generation::{
-        ChannelGenerator, EnvelopeKind, EnvelopeMode, EnvelopeOverflow, FixedMass, GenerationError,
+        ChannelGenerator, EnvelopeKind, EnvelopeMode, EnvelopeOverflow, GenerationError,
         GenerationReport, GenerationResult, InitialMomentum, InitialMomentumResult, MassProposal,
         ModelEvaluator, NamedMass, NamedMomentum, ProposalResult, ProposalRng,
-        ScalarProposalResult, ScalarSource, TComponent, TDistribution, TwoBodyDecay,
-        TwoBodyScattering, UniformMass, UnweightedConfig, VertexProposal, WeightedConfig,
+        ScalarProposalResult, ScalarSource, TComponent, TDistribution, TwoBodyScattering,
+        UnweightedConfig, VertexProposal, WeightedConfig,
     };
     #[cfg(feature = "likelihood")]
     pub use laddu_likelihood::{

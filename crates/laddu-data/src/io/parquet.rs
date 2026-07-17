@@ -505,13 +505,11 @@ pub struct ParquetSink {
     resolved_path: Option<PathBuf>,
 }
 
-#[derive(Clone, Debug)]
-#[derive(Default)]
+#[derive(Clone, Debug, Default)]
 pub struct ParquetWriteOptions {
     pub writer_properties: Option<WriterProperties>,
     pub schema_write: SchemaWriteOptions,
 }
-
 
 impl ParquetSink {
     pub fn create(path: impl Into<PathBuf>) -> Self {

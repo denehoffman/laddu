@@ -62,9 +62,11 @@ fn benchmarks(c: &mut Criterion) {
         b.iter(|| {
             generator
                 .generate_unweighted_dataset(
-                    UnweightedConfig::new(4_096).with_max_proposals(100_000),
+                    UnweightedConfig {
+                        envelope: EnvelopeMode::Strict { max_weight: 0.1 },
+                        ..UnweightedConfig::new(4_096).with_max_proposals(100_000)
+                    },
                     &evaluator,
-                    EnvelopeMode::Strict { max_weight: 0.1 },
                 )
                 .unwrap()
         })

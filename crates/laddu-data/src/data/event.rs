@@ -278,9 +278,10 @@ fn infer_len(
     }
 
     if let Some(w) = weight
-        && w.len() != len {
-            return Err(LadduDataError::Schema("inconsistent weight length".into()));
-        }
+        && w.len() != len
+    {
+        return Err(LadduDataError::Schema("inconsistent weight length".into()));
+    }
 
     Ok(len)
 }

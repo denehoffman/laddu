@@ -13,7 +13,7 @@ use laddu::{
     },
     event_scalar,
     expr::{Expr, cis},
-    likelihood::{Likelihood, LikelihoodEvaluation, LikelihoodTerm, NllTerm},
+    likelihood::{Likelihood, LikelihoodEvaluation, NllTerm},
     parameter,
     physics::{
         channel::Channel,
@@ -200,7 +200,7 @@ fn cpu_backends(threads: usize) -> [BenchmarkBackend; 4] {
 }
 
 fn likelihood(term: &NllTerm, backend: BenchmarkBackend) -> Likelihood {
-    Likelihood::with_execution([term.clone().boxed()], backend.execution()).unwrap()
+    Likelihood::with_execution([term.clone()], &backend.execution()).unwrap()
 }
 
 fn reaction_variables() -> (Expr, Expr, Expr, Expr) {

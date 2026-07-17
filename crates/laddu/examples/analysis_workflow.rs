@@ -26,9 +26,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let s_wave = Expr::from(parameter!("S", initial: 1.0)).tagged("S");
     let d_wave = (Expr::from(parameter!("D", initial: 0.5)) * mass).tagged("D");
     let model = CompiledModel::from_expr(&(s_wave + d_wave).norm_sqr())?;
-    let likelihood = Likelihood::new([
-        Box::new(NllTerm::new("waves", &model, &selected, &selected)?) as Box<dyn LikelihoodTerm>,
-    ])?;
+    let likelihood = Likelihood::new([NllTerm::new("waves", &model, &selected, &selected)?])?;
     let projection = likelihood.projection("waves", &selected, ["S"])?;
     let weights = projection.weights(&likelihood.default_params(), true)?;
 

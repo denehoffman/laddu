@@ -139,7 +139,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     println!(
         "NLL: initial {:.8e}, final {:.8e}; initial gradient norm {:.8e}",
         result.initial_nll,
-        result.fit.value(),
+        result.fit.fx,
         result
             .initial_gradient
             .iter()
@@ -164,7 +164,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         wrapped_phase_residual(phase, F2_PHASE_TRUTH),
     );
     println!();
-    println!("{}", result.fit.raw);
+    println!("{}", result.fit);
     result.projection.write_json(&projection_path)?;
     println!("wrote projection data to {}", projection_path.display());
     println!(

@@ -34,8 +34,8 @@ fn generated_two_wave_sample_recovers_injected_coupling() {
             .iter()
             .all(|value| value.is_finite())
     );
-    assert!(result.fit.value().is_finite());
-    assert!(result.fit.value() < result.initial_nll);
+    assert!(result.fit.fx.is_finite());
+    assert!(result.fit.fx < result.initial_nll);
 
     let magnitude = result
         .fitted("f2_magnitude")

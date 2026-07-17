@@ -30,7 +30,7 @@ pub fn ksks_channel() -> LadduPhysicsResult<Channel> {
         .output();
     channel
         .edge("X")
-        .mass_proposal(UniformMass::new(2.0 * k_short_mass, 2.0))
+        .mass_proposal(MassProposal::uniform(2.0 * k_short_mass, 2.0))
         .generated_only();
     channel
         .edge("recoil")
@@ -52,7 +52,7 @@ pub fn ksks_channel() -> LadduPhysicsResult<Channel> {
         .vertex("production")
         .incoming(["gamma", "target"])
         .outgoing(["X", "recoil"])
-        .generation(TwoBodyScattering::t_exchange(
+        .generation(VertexProposal::t_exchange(
             ("gamma", "X"),
             // The exponential component efficiently covers forward t exchange;
             // the uniform defensive component keeps 1/q(t) bounded everywhere.

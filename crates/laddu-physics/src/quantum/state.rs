@@ -518,11 +518,12 @@ impl ParticleProperties {
     pub fn with_self_conjugate(mut self, value: bool) -> LadduPhysicsResult<Self> {
         if value {
             if let (Some(species), Some(anti)) = (&self.species, &self.antiparticle_species)
-                && species != anti {
-                    return Err(LadduPhysicsError::invalid_relation(
-                        "self-conjugate particle cannot have distinct species and antiparticle_species",
-                    ));
-                }
+                && species != anti
+            {
+                return Err(LadduPhysicsError::invalid_relation(
+                    "self-conjugate particle cannot have distinct species and antiparticle_species",
+                ));
+            }
             match (&self.species, &self.antiparticle_species) {
                 (Some(species), None) => self.antiparticle_species = Some(species.clone()),
                 (None, Some(anti)) => self.species = Some(anti.clone()),
@@ -655,11 +656,12 @@ impl ParticleProperties {
     /// Returns an error if the spin and statistics do not match.
     pub fn with_statistics(mut self, s: Statistics) -> LadduPhysicsResult<Self> {
         if let Some(spin) = self.spin
-            && Statistics::from_spin(spin) != s {
-                return Err(LadduPhysicsError::invalid_relation(
-                    "spin and statistics must be consistent",
-                ));
-            }
+            && Statistics::from_spin(spin) != s
+        {
+            return Err(LadduPhysicsError::invalid_relation(
+                "spin and statistics must be consistent",
+            ));
+        }
         self.statistics = Some(s);
         Ok(self)
     }

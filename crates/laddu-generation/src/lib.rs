@@ -20,10 +20,9 @@ use smallvec::SmallVec;
 use thiserror::Error;
 
 pub use laddu_physics::generation::{
-    AdaptiveTwoBodyDecay, FixedMass, InitialMomentum, InitialMomentumResult, MassProposal,
-    MassProposalResult, NamedMass, NamedMomentum, ProposalResult, ProposalRng,
-    ScalarProposalResult, ScalarSource, TComponent, TDistribution, TwoBodyDecay, TwoBodyScattering,
-    UniformMass, VertexProposal,
+    AdaptiveTwoBodyDecay, InitialMomentum, InitialMomentumResult, MassProposal, MassProposalResult,
+    NamedMass, NamedMomentum, ProposalResult, ProposalRng, ScalarProposalResult, ScalarSource,
+    TComponent, TDistribution, TwoBodyScattering, VertexProposal,
 };
 
 pub type GenerationResult<T> = Result<T, GenerationError>;
@@ -126,6 +125,8 @@ pub struct UnweightedConfig {
     pub batch_size: usize,
     pub seed: u64,
     pub diagnostics: bool,
+    /// Strategy used to establish the rejection-sampling envelope.
+    pub envelope: EnvelopeMode,
     pub envelope_overflow: EnvelopeOverflow,
 }
 
@@ -138,6 +139,7 @@ impl UnweightedConfig {
             batch_size: 1024,
             seed: 0,
             diagnostics: false,
+            envelope: EnvelopeMode::default(),
             envelope_overflow: EnvelopeOverflow::Error,
         }
     }
@@ -176,6 +178,15 @@ pub enum EnvelopeMode {
         proposals: usize,
         safety_factor: f64,
     },
+}
+
+impl Default for EnvelopeMode {
+    fn default() -> Self {
+        Self::Pilot {
+            proposals: 10_000,
+            safety_factor: 2.0,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -287,12 +298,12 @@ struct EdgePlan {
 #[derive(Clone, Debug)]
 enum EdgeMassPlan {
     Fixed(f64),
-    Proposed(Arc<dyn MassProposal>),
+    Proposed(MassProposal),
 }
 
 #[derive(Clone, Debug)]
 struct AdaptiveMassProposal {
-    base: Arc<dyn MassProposal>,
+    base: MassProposal,
     low: f64,
     high: f64,
     counts: Arc<[f64]>,
@@ -362,7 +373,7 @@ impl AdaptiveMassProposal {
     }
 }
 
-impl MassProposal for AdaptiveMassProposal {
+impl AdaptiveMassProposal {
     fn propose(
         &self,
         minimum: f64,
@@ -425,7 +436,7 @@ struct VertexPlan {
     name: String,
     incoming: Vec<usize>,
     outgoing: Vec<usize>,
-    proposal: Arc<dyn VertexProposal>,
+    proposal: VertexProposal,
     adaptive_decay: bool,
 }
 
@@ -499,7 +510,7 @@ impl ChannelGenerator {
             .edges()
             .map(|edge| {
                 let mass = if let Some(proposal) = edge.mass_proposal() {
-                    EdgeMassPlan::Proposed(Arc::clone(proposal))
+                    EdgeMassPlan::Proposed(*proposal)
                 } else {
                     let properties = edge.properties().ok_or_else(|| {
                         GenerationError::InvalidChannel(format!(
@@ -535,19 +546,18 @@ impl ChannelGenerator {
                     .iter()
                     .map(|name| edge_indices[name.as_str()])
                     .collect::<Vec<_>>();
-                let (proposal, adaptive_decay): (Arc<dyn VertexProposal>, bool) =
-                    match vertex.generation() {
-                        Some(proposal) => (Arc::clone(proposal), false),
-                        None if incoming.len() == 1 && outgoing.len() == 2 => {
-                            (Arc::new(TwoBodyDecay::isotropic()), true)
-                        }
-                        None => {
-                            return Err(GenerationError::InvalidChannel(format!(
-                                "vertex `{}` has no generation proposal",
-                                vertex.name()
-                            )));
-                        }
-                    };
+                let (proposal, adaptive_decay) = match vertex.generation() {
+                    Some(proposal) => (proposal.clone(), false),
+                    None if incoming.len() == 1 && outgoing.len() == 2 => {
+                        (VertexProposal::TwoBodyDecay, true)
+                    }
+                    None => {
+                        return Err(GenerationError::InvalidChannel(format!(
+                            "vertex `{}` has no generation proposal",
+                            vertex.name()
+                        )));
+                    }
+                };
                 Ok(VertexPlan {
                     name: vertex.name().to_owned(),
                     incoming,
@@ -636,7 +646,6 @@ impl ChannelGenerator {
         &self,
         config: UnweightedConfig,
         model: &ModelEvaluator,
-        envelope: EnvelopeMode,
         sink: &mut dyn EventSink,
     ) -> GenerationResult<GenerationReport> {
         validate_common(config.events, config.batch_size)?;
@@ -649,7 +658,7 @@ impl ChannelGenerator {
             ));
         }
         let mut adaptations = None;
-        let (mut bound, kind, pilot_count) = match envelope {
+        let (mut bound, kind, pilot_count) = match config.envelope {
             EnvelopeMode::Strict { max_weight } => {
                 validate_bound(max_weight)?;
                 (max_weight, EnvelopeKind::Strict, 0)
@@ -831,10 +840,9 @@ impl ChannelGenerator {
         &self,
         config: UnweightedConfig,
         model: &ModelEvaluator,
-        envelope: EnvelopeMode,
     ) -> GenerationResult<(Dataset, GenerationReport)> {
         let mut sink = MemorySink::new();
-        let report = self.generate_unweighted_to(config, model, envelope, &mut sink)?;
+        let report = self.generate_unweighted_to(config, model, &mut sink)?;
         Ok((Dataset::from_batches(sink.into_batches())?, report))
     }
 
@@ -921,21 +929,20 @@ impl ChannelGenerator {
         let mut masses = Vec::with_capacity(self.edges.len());
         for (edge_index, edge) in self.edges.iter().enumerate() {
             let mass = if let EdgeMassPlan::Proposed(base_proposal) = &edge.mass {
-                let proposal: &dyn MassProposal = adaptations
-                    .and_then(|adaptations| adaptations.masses[edge_index].as_ref())
-                    .map_or(base_proposal.as_ref(), |proposal| {
-                        proposal as &dyn MassProposal
-                    });
                 let mut mass_rng =
                     ProposalRng::new(derive_seed(seed, stream, index, 1 + edge_index as u64));
-                let result =
-                    proposal
-                        .propose(0.0, maximum_mass, &mut mass_rng)
-                        .map_err(|source| GenerationError::MassProposal {
-                            index,
-                            edge: edge.name.clone(),
-                            source,
-                        })?;
+                let result = if let Some(proposal) =
+                    adaptations.and_then(|adaptations| adaptations.masses[edge_index].as_ref())
+                {
+                    proposal.propose(0.0, maximum_mass, &mut mass_rng)
+                } else {
+                    base_proposal.propose(0.0, maximum_mass, &mut mass_rng)
+                }
+                .map_err(|source| GenerationError::MassProposal {
+                    index,
+                    edge: edge.name.clone(),
+                    source,
+                })?;
                 proposal_weight *= result.weight;
                 result.mass
             } else if let EdgeMassPlan::Fixed(mass) = edge.mass {
@@ -978,18 +985,20 @@ impl ChannelGenerator {
                 .collect::<SmallVec<[_; 2]>>();
             let mut vertex_rng =
                 ProposalRng::new(derive_seed(seed, stream, index, 10_000 + step as u64));
-            let proposal: &dyn VertexProposal = adaptations
-                .and_then(|adaptations| adaptations.vertices[step].as_ref())
-                .map_or(vertex.proposal.as_ref(), |proposal| {
-                    proposal as &dyn VertexProposal
-                });
-            let result = proposal
-                .propose(&incoming, &outgoing, &mut vertex_rng)
-                .map_err(|source| GenerationError::VertexProposal {
-                    index,
-                    vertex: vertex.name.clone(),
-                    source,
-                })?;
+            let result = if let Some(proposal) =
+                adaptations.and_then(|adaptations| adaptations.vertices[step].as_ref())
+            {
+                proposal.propose(&incoming, &outgoing, &mut vertex_rng)
+            } else {
+                vertex
+                    .proposal
+                    .propose(&incoming, &outgoing, &mut vertex_rng)
+            }
+            .map_err(|source| GenerationError::VertexProposal {
+                index,
+                vertex: vertex.name.clone(),
+                source,
+            })?;
             if result.outgoing.len() != vertex.outgoing.len()
                 || !result.weight.is_finite()
                 || result.weight <= 0.0
@@ -1163,7 +1172,7 @@ impl ChannelGenerator {
                 continue;
             }
             let candidate = AdaptiveMassProposal {
-                base: Arc::clone(base),
+                base: *base,
                 low,
                 high,
                 counts: counts.into(),
@@ -1592,6 +1601,7 @@ mod tests {
         let mut first = UnweightedConfig::new(32).with_max_proposals(20_000);
         first.seed = 91;
         first.batch_size = 7;
+        first.envelope = EnvelopeMode::Strict { max_weight: 1.0 };
         let mut second = first;
         second.batch_size = 29;
         let one_thread = rayon::ThreadPoolBuilder::new()
@@ -1603,22 +1613,10 @@ mod tests {
             .build()
             .unwrap();
         let (a, _) = one_thread
-            .install(|| {
-                generator.generate_unweighted_dataset(
-                    first,
-                    &evaluator,
-                    EnvelopeMode::Strict { max_weight: 1.0 },
-                )
-            })
+            .install(|| generator.generate_unweighted_dataset(first, &evaluator))
             .unwrap();
         let (b, _) = four_threads
-            .install(|| {
-                generator.generate_unweighted_dataset(
-                    second,
-                    &evaluator,
-                    EnvelopeMode::Strict { max_weight: 1.0 },
-                )
-            })
+            .install(|| generator.generate_unweighted_dataset(second, &evaluator))
             .unwrap();
         let mut av = Vec::new();
         a.for_each_event(|event| av.push(event.p4(0))).unwrap();
@@ -1630,7 +1628,7 @@ mod tests {
     #[test]
     fn adaptive_mass_density_is_normalized_and_matches_returned_weight() {
         let proposal = AdaptiveMassProposal {
-            base: Arc::new(UniformMass::new(0.0, 4.0)),
+            base: MassProposal::uniform(0.0, 4.0),
             low: 1.0,
             high: 3.0,
             counts: Arc::from([1.0, 3.0, 7.0, 1.0]),
@@ -1666,9 +1664,11 @@ mod tests {
         .unwrap();
         assert!(matches!(
             generator.generate_unweighted_dataset(
-                UnweightedConfig::new(2).with_max_proposals(10),
+                UnweightedConfig {
+                    envelope: EnvelopeMode::Strict { max_weight: 1e-12 },
+                    ..UnweightedConfig::new(2).with_max_proposals(10)
+                },
                 &evaluator,
-                EnvelopeMode::Strict { max_weight: 1e-12 },
             ),
             Err(GenerationError::EnvelopeOverflow { .. })
         ));
@@ -1684,14 +1684,13 @@ mod tests {
             &Execution::default(),
         )
         .unwrap();
-        let config = UnweightedConfig::new(32);
+        let config = UnweightedConfig {
+            envelope: EnvelopeMode::Strict { max_weight: 1.0 },
+            ..UnweightedConfig::new(32)
+        };
         assert_eq!(config.max_proposals, None);
         let (_, report) = generator
-            .generate_unweighted_dataset(
-                config,
-                &evaluator,
-                EnvelopeMode::Strict { max_weight: 1.0 },
-            )
+            .generate_unweighted_dataset(config, &evaluator)
             .unwrap();
         assert_eq!(report.produced, 32);
         assert!(report.proposals >= 32);
@@ -1709,9 +1708,11 @@ mod tests {
         .unwrap();
         assert!(matches!(
             generator.generate_unweighted_dataset(
-                UnweightedConfig::new(16).with_max_proposals(16),
+                UnweightedConfig {
+                    envelope: EnvelopeMode::Strict { max_weight: 1.0 },
+                    ..UnweightedConfig::new(16).with_max_proposals(16)
+                },
                 &evaluator,
-                EnvelopeMode::Strict { max_weight: 1.0 },
             ),
             Err(GenerationError::Exhausted {
                 requested: 16,
@@ -1732,13 +1733,10 @@ mod tests {
         )
         .unwrap();
         let mut config = UnweightedConfig::new(16).with_max_proposals(10_000);
+        config.envelope = EnvelopeMode::Strict { max_weight: 1e-12 };
         config.envelope_overflow = EnvelopeOverflow::Grow { safety_factor: 1.5 };
         let (dataset, report) = generator
-            .generate_unweighted_dataset(
-                config,
-                &evaluator,
-                EnvelopeMode::Strict { max_weight: 1e-12 },
-            )
+            .generate_unweighted_dataset(config, &evaluator)
             .unwrap();
 
         let mut events = 0;
@@ -1768,7 +1766,7 @@ mod tests {
             .vertex("decay")
             .incoming(["parent"])
             .outgoing(["a", "b"])
-            .generation(TwoBodyDecay::isotropic());
+            .generation(VertexProposal::isotropic_decay());
         assert!(matches!(
             ChannelGenerator::new(channel),
             Err(GenerationError::ChannelValidation {
@@ -1816,7 +1814,7 @@ mod tests {
             .vertex("decay")
             .incoming(["parent"])
             .outgoing(["a", "b"])
-            .generation(TwoBodyDecay::isotropic());
+            .generation(VertexProposal::isotropic_decay());
         assert!(matches!(
             ChannelGenerator::new(channel),
             Err(GenerationError::ChannelValidation {

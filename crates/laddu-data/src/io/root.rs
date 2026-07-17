@@ -371,11 +371,12 @@ impl RootBatchIter {
         self.joined = true;
 
         if let Some(handle) = self.handle.take()
-            && handle.join().is_err() {
-                return Some(Err(LadduDataError::Source(
-                    "ROOT reader thread panicked".into(),
-                )));
-            }
+            && handle.join().is_err()
+        {
+            return Some(Err(LadduDataError::Source(
+                "ROOT reader thread panicked".into(),
+            )));
+        }
 
         None
     }
