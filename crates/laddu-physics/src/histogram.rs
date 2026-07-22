@@ -16,14 +16,16 @@ pub struct Histogram {
 }
 
 impl Histogram {
-    /// Construct and validate a histogram from bin edges and weighted bin counts.
-    pub fn new(bin_edges: Vec<f64>, counts: Vec<f64>) -> LadduPhysicsResult<Self> {
-        Self::new_with_flow(bin_edges, counts, 0.0, 0.0)
+    /// Construct and validate a histogram from weighted bin counts and bin edges.
+    ///
+    /// The argument order matches `numpy.histogram`, so its result can be forwarded directly.
+    pub fn new(counts: Vec<f64>, bin_edges: Vec<f64>) -> LadduPhysicsResult<Self> {
+        Self::new_with_flow(counts, bin_edges, 0.0, 0.0)
     }
 
     pub fn new_with_flow(
-        bin_edges: Vec<f64>,
         counts: Vec<f64>,
+        bin_edges: Vec<f64>,
         underflow: f64,
         overflow: f64,
     ) -> LadduPhysicsResult<Self> {
@@ -46,7 +48,7 @@ impl Histogram {
 
     pub fn empty_with_edges(bin_edges: Vec<f64>) -> LadduPhysicsResult<Self> {
         let counts = vec![0.0; bin_edges.len().saturating_sub(1)];
-        Self::new(bin_edges, counts)
+        Self::new(counts, bin_edges)
     }
 
     pub fn from_values(
@@ -225,7 +227,7 @@ impl Histogram {
             .map(|count| count / total_weight)
             .collect();
 
-        Self::new_with_flow(self.bin_edges.clone(), counts, 0.0, 0.0)
+        Self::new_with_flow(counts, self.bin_edges.clone(), 0.0, 0.0)
     }
 
     /// Return a normalized histogram whose bins plus underflow/overflow sum to 1.
@@ -244,8 +246,8 @@ impl Histogram {
             .collect();
 
         Self::new_with_flow(
-            self.bin_edges.clone(),
             counts,
+            self.bin_edges.clone(),
             self.underflow / total_weight,
             self.overflow / total_weight,
         )
@@ -270,7 +272,7 @@ impl Histogram {
             })
             .collect();
 
-        Self::new_with_flow(self.bin_edges.clone(), counts, 0.0, 0.0)
+        Self::new_with_flow(counts, self.bin_edges.clone(), 0.0, 0.0)
     }
 
     /// Return a signed density histogram.
@@ -292,7 +294,7 @@ impl Histogram {
             })
             .collect();
 
-        Self::new_with_flow(self.bin_edges.clone(), counts, 0.0, 0.0)
+        Self::new_with_flow(counts, self.bin_edges.clone(), 0.0, 0.0)
     }
 
     /// Sample a value from the histogram, assuming counts define bin probabilities.
@@ -528,7 +530,7 @@ mod tests {
 
     #[test]
     fn new_accepts_valid_histograms() {
-        let hist = Histogram::new(vec![0.0, 1.0], vec![2.0]).unwrap();
+        let hist = Histogram::new(vec![2.0], vec![0.0, 1.0]).unwrap();
 
         assert_relative_eq!(hist.counts(), &[2.0][..]);
         assert_relative_eq!(hist.bin_edges(), &[0.0, 1.0][..]);
@@ -538,13 +540,13 @@ mod tests {
 
     #[test]
     fn new_accepts_zero_and_negative_weight_histograms() {
-        assert!(Histogram::new(vec![0.0, 1.0], vec![0.0]).is_ok());
-        assert!(Histogram::new(vec![0.0, 1.0], vec![-1.0]).is_ok());
+        assert!(Histogram::new(vec![0.0], vec![0.0, 1.0]).is_ok());
+        assert!(Histogram::new(vec![-1.0], vec![0.0, 1.0]).is_ok());
     }
 
     #[test]
     fn new_with_flow_accepts_valid_flow() {
-        let hist = Histogram::new_with_flow(vec![0.0, 1.0], vec![2.0], 3.0, 4.0).unwrap();
+        let hist = Histogram::new_with_flow(vec![2.0], vec![0.0, 1.0], 3.0, 4.0).unwrap();
 
         assert_relative_eq!(hist.counts(), &[2.0][..]);
         assert_relative_eq!(hist.underflow(), 3.0);
@@ -555,23 +557,23 @@ mod tests {
 
     #[test]
     fn new_rejects_invalid_structure() {
-        assert!(Histogram::new(vec![0.0], vec![]).is_err());
-        assert!(Histogram::new(vec![0.0, 1.0], vec![1.0, 2.0]).is_err());
-        assert!(Histogram::new(vec![0.0, 0.0], vec![1.0]).is_err());
-        assert!(Histogram::new(vec![0.0, -1.0], vec![1.0]).is_err());
+        assert!(Histogram::new(vec![], vec![0.0]).is_err());
+        assert!(Histogram::new(vec![1.0, 2.0], vec![0.0, 1.0]).is_err());
+        assert!(Histogram::new(vec![1.0], vec![0.0, 0.0]).is_err());
+        assert!(Histogram::new(vec![1.0], vec![0.0, -1.0]).is_err());
     }
 
     #[test]
     fn new_rejects_nonfinite_values() {
-        assert!(Histogram::new(vec![0.0, f64::NAN], vec![1.0]).is_err());
-        assert!(Histogram::new(vec![0.0, f64::INFINITY], vec![1.0]).is_err());
-        assert!(Histogram::new(vec![0.0, 1.0], vec![f64::NAN]).is_err());
-        assert!(Histogram::new(vec![0.0, 1.0], vec![f64::INFINITY]).is_err());
+        assert!(Histogram::new(vec![1.0], vec![0.0, f64::NAN]).is_err());
+        assert!(Histogram::new(vec![1.0], vec![0.0, f64::INFINITY]).is_err());
+        assert!(Histogram::new(vec![f64::NAN], vec![0.0, 1.0]).is_err());
+        assert!(Histogram::new(vec![f64::INFINITY], vec![0.0, 1.0]).is_err());
 
-        assert!(Histogram::new_with_flow(vec![0.0, 1.0], vec![1.0], f64::NAN, 0.0).is_err());
-        assert!(Histogram::new_with_flow(vec![0.0, 1.0], vec![1.0], 0.0, f64::NAN).is_err());
-        assert!(Histogram::new_with_flow(vec![0.0, 1.0], vec![1.0], f64::INFINITY, 0.0).is_err());
-        assert!(Histogram::new_with_flow(vec![0.0, 1.0], vec![1.0], 0.0, f64::INFINITY).is_err());
+        assert!(Histogram::new_with_flow(vec![1.0], vec![0.0, 1.0], f64::NAN, 0.0).is_err());
+        assert!(Histogram::new_with_flow(vec![1.0], vec![0.0, 1.0], 0.0, f64::NAN).is_err());
+        assert!(Histogram::new_with_flow(vec![1.0], vec![0.0, 1.0], f64::INFINITY, 0.0).is_err());
+        assert!(Histogram::new_with_flow(vec![1.0], vec![0.0, 1.0], 0.0, f64::INFINITY).is_err());
     }
 
     #[test]
@@ -742,7 +744,7 @@ mod tests {
 
     #[test]
     fn normalized_scales_counts_by_in_range_weight() {
-        let hist = Histogram::new_with_flow(vec![0.0, 1.0, 2.0], vec![2.0, 6.0], 4.0, 8.0).unwrap();
+        let hist = Histogram::new_with_flow(vec![2.0, 6.0], vec![0.0, 1.0, 2.0], 4.0, 8.0).unwrap();
 
         let normalized = hist.normalized().unwrap();
 
@@ -755,7 +757,7 @@ mod tests {
 
     #[test]
     fn normalized_with_flow_scales_counts_and_flow_by_total_weight_with_flow() {
-        let hist = Histogram::new_with_flow(vec![0.0, 1.0, 2.0], vec![2.0, 6.0], 4.0, 8.0).unwrap();
+        let hist = Histogram::new_with_flow(vec![2.0, 6.0], vec![0.0, 1.0, 2.0], 4.0, 8.0).unwrap();
 
         let normalized = hist.normalized_with_flow().unwrap();
 
@@ -768,14 +770,14 @@ mod tests {
 
     #[test]
     fn normalized_rejects_zero_in_range_weight() {
-        let hist = Histogram::new_with_flow(vec![0.0, 1.0], vec![0.0], 1.0, 1.0).unwrap();
+        let hist = Histogram::new_with_flow(vec![0.0], vec![0.0, 1.0], 1.0, 1.0).unwrap();
 
         assert!(hist.normalized().is_err());
     }
 
     #[test]
     fn density_converts_counts_to_probability_density_and_drops_flow() {
-        let hist = Histogram::new_with_flow(vec![0.0, 1.0, 3.0], vec![2.0, 6.0], 4.0, 8.0).unwrap();
+        let hist = Histogram::new_with_flow(vec![2.0, 6.0], vec![0.0, 1.0, 3.0], 4.0, 8.0).unwrap();
 
         let density = hist.density().unwrap();
 
@@ -789,21 +791,21 @@ mod tests {
 
     #[test]
     fn density_rejects_negative_counts_or_flow() {
-        let negative_count = Histogram::new(vec![0.0, 1.0], vec![-1.0]).unwrap();
+        let negative_count = Histogram::new(vec![-1.0], vec![0.0, 1.0]).unwrap();
         assert!(negative_count.density().is_err());
 
         let negative_underflow =
-            Histogram::new_with_flow(vec![0.0, 1.0], vec![1.0], -1.0, 0.0).unwrap();
+            Histogram::new_with_flow(vec![1.0], vec![0.0, 1.0], -1.0, 0.0).unwrap();
         assert!(negative_underflow.density().is_err());
 
         let negative_overflow =
-            Histogram::new_with_flow(vec![0.0, 1.0], vec![1.0], 0.0, -1.0).unwrap();
+            Histogram::new_with_flow(vec![1.0], vec![0.0, 1.0], 0.0, -1.0).unwrap();
         assert!(negative_overflow.density().is_err());
     }
 
     #[test]
     fn sample_returns_value_inside_histogram_limits() {
-        let hist = Histogram::new(vec![0.0, 1.0, 2.0], vec![1.0, 1.0]).unwrap();
+        let hist = Histogram::new(vec![1.0, 1.0], vec![0.0, 1.0, 2.0]).unwrap();
         let mut rng = Rng::with_seed(12345);
 
         for _ in 0..100 {
@@ -814,10 +816,10 @@ mod tests {
 
     #[test]
     fn sample_rejects_non_probability_like_histograms() {
-        let negative_count = Histogram::new(vec![0.0, 1.0], vec![-1.0]).unwrap();
+        let negative_count = Histogram::new(vec![-1.0], vec![0.0, 1.0]).unwrap();
         assert!(negative_count.sample(&mut Rng::with_seed(1)).is_err());
 
-        let zero_count = Histogram::new(vec![0.0, 1.0], vec![0.0]).unwrap();
+        let zero_count = Histogram::new(vec![0.0], vec![0.0, 1.0]).unwrap();
         assert!(zero_count.sample(&mut Rng::with_seed(1)).is_err());
     }
 

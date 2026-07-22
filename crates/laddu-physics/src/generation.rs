@@ -749,6 +749,10 @@ fn particle_mass(edge: &str, properties: Option<&ParticleProperties>) -> LadduPh
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TDistribution {
     components: Vec<(f64, TComponent)>,
+    #[serde(default)]
+    t_min: Option<f64>,
+    #[serde(default)]
+    t_max: Option<f64>,
 }
 
 impl TDistribution {
@@ -777,7 +781,42 @@ impl TDistribution {
     pub fn mixture(components: impl IntoIterator<Item = (f64, TComponent)>) -> Self {
         Self {
             components: components.into_iter().collect(),
+            t_min: None,
+            t_max: None,
         }
+    }
+
+    /// Restrict this proposal to the intersection of these limits and the
+    /// event-by-event physical t interval.
+    pub fn with_limits(
+        mut self,
+        t_min: Option<f64>,
+        t_max: Option<f64>,
+    ) -> LadduPhysicsResult<Self> {
+        if t_min.is_some_and(|value| !value.is_finite()) {
+            return Err(LadduPhysicsError::invalid_value(
+                "t_min",
+                "finite when specified",
+                t_min.unwrap(),
+            ));
+        }
+        if t_max.is_some_and(|value| !value.is_finite()) {
+            return Err(LadduPhysicsError::invalid_value(
+                "t_max",
+                "finite when specified",
+                t_max.unwrap(),
+            ));
+        }
+        if let (Some(t_min), Some(t_max)) = (t_min, t_max)
+            && t_max <= t_min
+        {
+            return Err(LadduPhysicsError::invalid_relation(format!(
+                "t limits require t_min < t_max, got [{t_min}, {t_max}]"
+            )));
+        }
+        self.t_min = t_min;
+        self.t_max = t_max;
+        Ok(self)
     }
 
     fn normalization(&self) -> LadduPhysicsResult<f64> {
@@ -813,6 +852,15 @@ impl TDistribution {
         if !low.is_finite() || !high.is_finite() || high <= low {
             return Err(LadduPhysicsError::invalid_relation(format!(
                 "physical t interval must have finite bounds with low < high, got [{low}, {high}]"
+            )));
+        }
+        let physical_low = low;
+        let physical_high = high;
+        let low = self.t_min.map_or(low, |t_min| low.max(t_min));
+        let high = self.t_max.map_or(high, |t_max| high.min(t_max));
+        if high <= low {
+            return Err(LadduPhysicsError::invalid_relation(format!(
+                "configured t limits do not overlap the physical interval [{physical_low}, {physical_high}]"
             )));
         }
         let normalization = self.normalization()?;
@@ -1036,6 +1084,29 @@ mod tests {
     }
 
     #[test]
+    fn t_distribution_limits_truncate_the_physical_interval() {
+        let distribution = TDistribution::uniform()
+            .with_limits(Some(-1.25), Some(-0.5))
+            .unwrap();
+        let mut rng = ProposalRng::new(13);
+        for _ in 0..100 {
+            let (t, density) = distribution.sample(-2.0, -0.1, &mut rng).unwrap();
+            assert!((-1.25..=-0.5).contains(&t));
+            assert!((density - 1.0 / 0.75).abs() < 1e-12);
+        }
+        assert!(
+            TDistribution::uniform()
+                .with_limits(Some(-0.5), Some(-1.0))
+                .is_err()
+        );
+        assert!(
+            distribution
+                .sample(-3.0, -2.0, &mut ProposalRng::new(17))
+                .is_err()
+        );
+    }
+
+    #[test]
     fn t_exchange_conserves_momentum_and_is_on_shell() {
         let proposal =
             TwoBodyScattering::t_exchange(("beam", "x"), TDistribution::exponential(2.0));
@@ -1130,7 +1201,7 @@ mod tests {
 
     #[test]
     fn histogram_t_component_truncates_to_the_physical_interval() {
-        let histogram = Histogram::new(vec![-2.0, -1.0, 0.0], vec![1.0, 3.0]).unwrap();
+        let histogram = Histogram::new(vec![1.0, 3.0], vec![-2.0, -1.0, 0.0]).unwrap();
         let distribution = TDistribution::histogram(histogram);
         let mut rng = ProposalRng::new(31);
         for _ in 0..100 {
@@ -1151,7 +1222,7 @@ mod tests {
         assert!((-2.0..4.0).contains(&uniform.value));
         assert_eq!(uniform.weight, 6.0);
 
-        let histogram = Histogram::new(vec![0.0, 1.0, 3.0], vec![1.0, 2.0]).unwrap();
+        let histogram = Histogram::new(vec![1.0, 2.0], vec![0.0, 1.0, 3.0]).unwrap();
         let sampled = ScalarSource::histogram(histogram).sample(&mut rng).unwrap();
         assert!((0.0..3.0).contains(&sampled.value));
         assert!(sampled.weight.is_finite() && sampled.weight > 0.0);
