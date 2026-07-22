@@ -179,20 +179,16 @@ def sequential_wave(
         if coefficient == 0.0:
             continue
 
-        production_d = ld.wigner_d(
+        production_d = ld.WignerD(
             production_spin,
             initial_projection,
             final_projection,
-            production_phi,
-            production_theta,
-        ).conj()
-        decay_d = ld.wigner_d(
+        ).D(production_phi, production_theta).conj()
+        decay_d = ld.WignerD(
             resonance_spin,
             resonance_helicity,
             decay_helicity,
-            decay_phi,
-            decay_theta,
-        ).conj()
+        ).D(decay_phi, decay_theta).conj()
         angular += coefficient * production_d * decay_d
 
     normalization = math.sqrt(production_spin.multiplicity * resonance_spin.multiplicity) / (4.0 * math.pi)
@@ -233,24 +229,26 @@ def build_model(channel: ld.Channel) -> ld.Model:
             for recoil_helicity in recoil_spin.projections():
                 for first_kaon_helicity in first_kaon_spin.projections():
                     for second_kaon_helicity in second_kaon_spin.projections():
-
-                        def wave(
-                            resonance: ld.Particle,
-                            line_shape: ld.Expr,
-                        ) -> ld.Expr:
-                            return sequential_wave(
-                                channel,
-                                resonance,
-                                photon_helicity=photon_helicity,
-                                target_helicity=target_helicity,
-                                recoil_helicity=recoil_helicity,
-                                first_kaon_helicity=first_kaon_helicity,
-                                second_kaon_helicity=second_kaon_helicity,
-                                line_shape=line_shape,
-                            )
-
-                        f0_wave = wave(f0_particle, f0).tagged('f0')
-                        f2_wave = wave(f2_particle, f2).tagged('f2')
+                        f0_wave = sequential_wave(
+                            channel,
+                            f0_particle,
+                            photon_helicity=photon_helicity,
+                            target_helicity=target_helicity,
+                            recoil_helicity=recoil_helicity,
+                            first_kaon_helicity=first_kaon_helicity,
+                            second_kaon_helicity=second_kaon_helicity,
+                            line_shape=f0,
+                        ).tagged('f0')
+                        f2_wave = sequential_wave(
+                            channel,
+                            f2_particle,
+                            photon_helicity=photon_helicity,
+                            target_helicity=target_helicity,
+                            recoil_helicity=recoil_helicity,
+                            first_kaon_helicity=first_kaon_helicity,
+                            second_kaon_helicity=second_kaon_helicity,
+                            line_shape=f2,
+                        ).tagged('f2')
                         coherent += (f0_wave + f2_coupling * f2_wave).norm_sqr()
 
     return ld.Model(coherent * 0.25)
@@ -555,7 +553,7 @@ def main() -> None:
     started = time.perf_counter()
     print('preparing likelihood...', flush=True)
     likelihood = ld.Likelihood([ld.NLL(model, data, normalization, name='ksks')], execution=execution)
-    initial = likelihood.initial(seed=args.seed + 2)
+    initial = likelihood.sample_parameters(seed=args.seed + 2)
     initial_nll, initial_gradient = likelihood.value_and_gradient(initial)
     preparation_time = time.perf_counter() - started
 
@@ -616,8 +614,8 @@ def main() -> None:
     data_path = args.output / 'pseudo-data.parquet'
     normalization_path = args.output / 'normalization.parquet'
     summary_path = args.output / 'fit.json'
-    data.write_parquet(data_path)
-    normalization.write_parquet(normalization_path)
+    data.write_to(ld.ParquetSink(data_path))
+    normalization.write_to(ld.ParquetSink(normalization_path))
     summary_path.write_text(
         json.dumps(
             {
