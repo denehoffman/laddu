@@ -1,4 +1,33 @@
+//! Tools for constructing, compiling, and evaluating amplitude-analysis models.
+//!
+//! Laddu exposes symbolic expressions, event datasets, particle and decay
+//! topology utilities, execution backends, and optional likelihood, fitting,
+//! generation, amplitude, and GPU support through one facade crate. Most
+//! applications can import [`prelude`] and enable only the Cargo features they
+//! need.
+//!
+//! # Example
+//!
+//! ```
+//! use laddu::prelude::*;
+//!
+//! let mass = parameter!("mass");
+//! let intensity = (mass.clone() * mass + 1.0).named("intensity");
+//! let model = CompiledModel::from_expr(&intensity)?;
+//!
+//! assert_eq!(model.params().len(), 1);
+//! # Ok::<(), CompileError>(())
+//! ```
+
 mod error;
+
+#[cfg(feature = "python")]
+/// Shared implementation of Laddu's Python extension modules.
+///
+/// This module is public so the small Maturin distribution crates can expand
+/// [`laddu_python_module!`]. Rust applications should use the crate-level Rust
+/// API instead.
+pub mod python;
 
 pub use error::{LadduError, LadduResult};
 pub use laddu_autodiff as autodiff;

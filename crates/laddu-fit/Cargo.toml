@@ -8,6 +8,9 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
+[lints]
+workspace = true
+
 [dependencies]
 ganesh.workspace = true
 laddu-expr = { path = "../laddu-expr" }
@@ -16,3 +19,7 @@ laddu-runtime = { path = "../laddu-runtime" }
 parking_lot.workspace = true
 serde.workspace = true
 thiserror.workspace = true
+
+[features]
+default = []
+python = ["ganesh/python"]

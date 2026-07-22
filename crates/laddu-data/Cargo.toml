@@ -8,6 +8,9 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
+[lints]
+workspace = true
+
 [dependencies]
 accurate = { workspace = true, optional = true }
 indexmap.workspace = true

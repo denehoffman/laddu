@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/*"]
+members = ["crates/*", "python/laddu", "python/laddu-local", "python/laddu-mpi"]
 default-members = ["crates/*"]
 
 [workspace.package]
@@ -55,6 +55,13 @@ sysinfo = "0.39.6"
 thiserror = "2.0.18"
 typetag = "0.2.22"
 wgpu = "30.0.0"
+
+[workspace.lints.rust]
+missing_docs = "warn"
+
+[workspace.lints.clippy]
+missing_errors_doc = "warn"
+missing_panics_doc = "warn"
 
 
 [profile.release]

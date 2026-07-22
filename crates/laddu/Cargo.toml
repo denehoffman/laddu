@@ -8,6 +8,12 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
+[lints]
+workspace = true
+
+[lib]
+crate-type = ["rlib"]
+
 [dependencies]
 laddu-amplitudes = { path = "../laddu-amplitudes", optional = true }
 laddu-autodiff = { path = "../laddu-autodiff" }
@@ -21,6 +27,14 @@ laddu-likelihood = { path = "../laddu-likelihood", optional = true }
 laddu-physics = { path = "../laddu-physics" }
 laddu-runtime = { path = "../laddu-runtime" }
 laddu-wgpu = { path = "../laddu-wgpu", optional = true }
+mpi = { workspace = true, optional = true }
+num = { workspace = true, optional = true }
+numpy = { workspace = true, optional = true }
+pyo3 = { workspace = true, optional = true, features = [
+  "experimental-inspect",
+  "multiple-pymethods",
+  "num-complex",
+] }
 thiserror.workspace = true
 
 [features]
@@ -30,9 +44,28 @@ likelihood = ["dep:laddu-likelihood"]
 fit = ["likelihood", "dep:laddu-fit"]
 generation = ["dep:laddu-generation"]
 jit = ["laddu-runtime/jit", "laddu-likelihood?/jit", "laddu-generation?/jit"]
-mpi = ["laddu-data/mpi", "laddu-runtime/mpi", "laddu-likelihood?/mpi"]
-wgpu = ["dep:laddu-wgpu", "laddu-runtime/wgpu", "laddu-likelihood?/wgpu", "laddu-generation?/wgpu"]
+mpi = [
+  "dep:mpi",
+  "laddu-data/mpi",
+  "laddu-runtime/mpi",
+  "laddu-likelihood?/mpi",
+]
+wgpu = [
+  "dep:laddu-wgpu",
+  "laddu-runtime/wgpu",
+  "laddu-likelihood?/wgpu",
+  "laddu-generation?/wgpu",
+]
 svg = ["laddu-expr/svg"]
+python = [
+  "amplitudes",
+  "fit",
+  "generation",
+  "laddu-fit/python",
+  "dep:num",
+  "dep:numpy",
+  "dep:pyo3",
+]
 
 [dev-dependencies]
 criterion.workspace = true

@@ -57,6 +57,20 @@ impl PreparedModel {
         }
     }
 
+    pub fn evaluate_batch_with_gradient(
+        &self,
+        params: &ParamValues,
+        batch: &EventBatch,
+    ) -> RuntimeResult<Vec<crate::ValueGradient>> {
+        match self {
+            Self::Cpu(plan) => plan.evaluate_batch_with_gradient(params, batch),
+            #[cfg(feature = "wgpu")]
+            Self::Wgpu(_) => Err(RuntimeError::Wgpu(
+                "event-wise model gradients are not implemented by the WGPU backend".into(),
+            )),
+        }
+    }
+
     pub fn prepare(model: &CompiledModel, execution: &Execution) -> RuntimeResult<Self> {
         #[cfg(feature = "wgpu")]
         if let Some(context) = execution.wgpu_context() {
