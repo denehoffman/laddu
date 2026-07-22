@@ -68,12 +68,50 @@ fn gpu_selector(device: Option<&Bound<'_, PyAny>>) -> PyResult<GpuDeviceSelector
 
 #[pyclass(name = "Execution", module = "laddu", frozen, skip_from_py_object)]
 #[derive(Clone)]
+/// Runtime and distributed-execution configuration.
+///
+/// Parameters
+/// ----------
+/// backend : {'auto', 'cpu', 'jit', 'gpu'}, default='auto'
+///     Evaluation backend. ``'auto'`` may enable JIT compilation when useful.
+/// precision : {'auto', 'f32', 'f64'}, default='auto'
+///     Numeric precision requested from the backend.
+/// autodiff : {'forward', 'reverse'}, default='forward'
+///     Automatic-differentiation strategy.
+/// threads : int, optional
+///     CPU worker count. One selects serial execution.
+/// device : int or str, optional
+///     GPU adapter index, name, or PCI bus ID.
+/// memory_budget : int, optional
+///     GPU allocation budget in bytes.
+/// mpi : bool, optional
+///     Enable MPI when the installed module has MPI support. ``False`` forces
+///     local execution.
+/// partitioning : {'auto', 'contiguous', 'file_groups', 'rows'}, default='auto'
+///     Work distribution policy across MPI ranks.
+///
+/// Examples
+/// --------
+/// >>> import laddu as ld
+/// >>> execution = ld.Execution("cpu", threads=1, precision="f64")
+/// >>> execution.backend
+/// 'cpu'
+/// >>> execution.is_distributed
+/// False
 pub struct PyExecution {
     pub(crate) inner: Execution,
     backend: String,
 }
 
 impl PyExecution {
+    /// Configure an evaluation runtime.
+    ///
+    /// Raises
+    /// ------
+    /// ValueError
+    ///     If an option is invalid or does not apply to the selected backend.
+    /// LadduError
+    ///     If the requested local or distributed runtime cannot be initialized.
     pub(crate) fn default_inner() -> PyResult<Self> {
         Self::new("auto", "auto", "forward", None, None, None, None, "auto")
     }
@@ -193,11 +231,13 @@ impl PyExecution {
     }
 
     #[getter]
+    /// str: Requested backend name.
     fn backend(&self) -> &str {
         &self.backend
     }
 
     #[getter]
+    /// {'auto', 'f32', 'f64'}: Effective numeric precision.
     fn precision(&self) -> &'static str {
         match self.inner.precision() {
             Precision::Auto => "auto",
@@ -207,6 +247,7 @@ impl PyExecution {
     }
 
     #[getter]
+    /// {'forward', 'reverse'}: Automatic-differentiation mode.
     fn autodiff(&self) -> &'static str {
         match self.inner.autodiff_mode() {
             AutodiffMode::Forward => "forward",
@@ -215,22 +256,32 @@ impl PyExecution {
     }
 
     #[getter]
+    /// int: Zero-based rank in the execution world.
     fn rank(&self) -> usize {
         self.inner.rank()
     }
 
     #[getter]
+    /// int: Number of ranks participating in execution.
     fn world_size(&self) -> usize {
         self.inner.nranks()
     }
 
     #[getter]
+    /// bool: Whether more than one rank participates in execution.
     fn is_distributed(&self) -> bool {
         self.inner.is_distributed()
     }
 }
 
 #[pyfunction]
+/// Report features available in the installed module.
+///
+/// Returns
+/// -------
+/// dict[str, bool or str]
+///     Backend kind and availability flags for JIT, GPU, MPI, likelihood,
+///     fitting, and generation support.
 pub fn capabilities(py: Python<'_>) -> PyResult<Bound<'_, PyDict>> {
     let out = PyDict::new(py);
     out.set_item(
@@ -252,6 +303,33 @@ pub fn capabilities(py: Python<'_>) -> PyResult<Bound<'_, PyDict>> {
 
 #[pyclass(name = "Device", module = "laddu.gpu", frozen, skip_from_py_object)]
 #[derive(Clone)]
+/// Description and limits of an available GPU adapter.
+///
+/// Instances are returned by :func:`laddu.gpu.devices` and cannot be created
+/// directly.
+///
+/// Attributes
+/// ----------
+/// index : int
+///     Adapter index accepted by :class:`Execution`.
+/// name : str
+///     Human-readable adapter name.
+/// vendor, device : int
+///     PCI vendor and device identifiers.
+/// device_type : str
+///     Adapter category reported by the graphics API.
+/// pci_bus_id : str
+///     Stable PCI selector when the platform provides one.
+/// driver, driver_info, backend : str
+///     Driver and graphics-backend metadata.
+/// supports_f64 : bool
+///     Whether double-precision shader arithmetic is supported.
+/// max_buffer_size : int
+///     Maximum buffer allocation in bytes.
+/// max_storage_buffer_binding_size : int
+///     Maximum bound storage-buffer size in bytes.
+/// max_compute_workgroup_size_x : int
+///     Maximum workgroup width along the x axis.
 pub struct PyGpuDevice {
     index: usize,
     name: String,
@@ -278,60 +356,74 @@ impl PyGpuDevice {
     }
 
     #[getter]
+    /// int: Adapter index accepted by ``Execution(device=...)``.
     fn index(&self) -> usize {
         self.index
     }
     #[getter]
+    /// str: Human-readable adapter name.
     fn name(&self) -> &str {
         &self.name
     }
     #[getter]
+    /// int: PCI vendor identifier.
     fn vendor(&self) -> u32 {
         self.vendor
     }
     #[getter]
+    /// int: PCI device identifier.
     fn device(&self) -> u32 {
         self.device
     }
     #[getter]
+    /// str: Hardware category reported by the graphics API.
     fn device_type(&self) -> &str {
         &self.device_type
     }
     #[getter]
+    /// str: PCI bus identifier, if available.
     fn pci_bus_id(&self) -> &str {
         &self.pci_bus_id
     }
     #[getter]
+    /// str: Driver name.
     fn driver(&self) -> &str {
         &self.driver
     }
     #[getter]
+    /// str: Additional driver version or description.
     fn driver_info(&self) -> &str {
         &self.driver_info
     }
     #[getter]
+    /// str: Graphics API used by the adapter.
     fn backend(&self) -> &str {
         &self.backend
     }
     #[getter]
+    /// bool: Whether the adapter supports 64-bit floating-point shaders.
     fn supports_f64(&self) -> bool {
         self.supports_f64
     }
     #[getter]
+    /// int: Maximum buffer allocation in bytes.
     fn max_buffer_size(&self) -> u64 {
         self.max_buffer_size
     }
     #[getter]
+    /// int: Maximum storage-buffer binding size in bytes.
     fn max_storage_buffer_binding_size(&self) -> u64 {
         self.max_storage_buffer_binding_size
     }
     #[getter]
+    /// int: Maximum compute workgroup width along the x axis.
     fn max_compute_workgroup_size_x(&self) -> u32 {
         self.max_compute_workgroup_size_x
     }
 }
 
 #[pymodule(submodule)]
+/// GPU discovery and adapter metadata.
 pub mod gpu {
     use super::*;
 
@@ -339,6 +431,12 @@ pub mod gpu {
     use super::PyGpuDevice as Device;
 
     #[pyfunction]
+    /// List GPU adapters visible to the installed graphics backend.
+    ///
+    /// Returns
+    /// -------
+    /// list of Device
+    ///     Available adapters, or an empty list when GPU support is unavailable.
     fn devices() -> Vec<PyGpuDevice> {
         #[cfg(feature = "wgpu")]
         {
@@ -367,6 +465,12 @@ pub mod gpu {
     }
 
     #[pyfunction]
+    /// Return whether at least one compatible GPU adapter is available.
+    ///
+    /// Returns
+    /// -------
+    /// bool
+    ///     ``True`` when :func:`devices` is non-empty.
     fn is_available() -> bool {
         !devices().is_empty()
     }

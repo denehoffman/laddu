@@ -45,12 +45,39 @@ fn configure(dataset: Dataset, chunk_size: Option<usize>, cache: &str) -> PyResu
 
 #[pyclass(name = "ParquetSource", module = "laddu", frozen, skip_from_py_object)]
 #[derive(Clone)]
+/// A configurable Parquet dataset source.
+///
+/// Parameters
+/// ----------
+/// path : path-like
+///     Parquet file, directory, or glob understood by the Arrow reader.
+/// chunk_size : int, optional
+///     Maximum number of events in each streamed batch.
+/// cache : {'resident', 'streaming'}, default='resident'
+///     Keep decoded batches in memory or reread them on each traversal.
+/// nulls : {'error', 'nan'}, default='error'
+///     Reject null scalar values or replace them with NaN.
+/// validate : bool, default=True
+///     Validate every matched file when constructing the source.
+///
+/// Notes
+/// -----
+/// Constructing a source records the read plan. Data are loaded when the
+/// resulting :class:`Dataset` is traversed.
 pub struct PyParquetSource {
     inner: Dataset,
 }
 
 #[pymethods]
 impl PyParquetSource {
+    /// Configure a Parquet source.
+    ///
+    /// Raises
+    /// ------
+    /// ValueError
+    ///     If ``cache`` or ``nulls`` is invalid.
+    /// LadduError
+    ///     If the source cannot be discovered or validated.
     #[new]
     #[pyo3(signature = (path, *, chunk_size=None, cache="resident", nulls="error", validate=true))]
     fn new(
@@ -78,12 +105,34 @@ impl PyParquetSource {
 
 #[pyclass(name = "RootSource", module = "laddu", frozen, skip_from_py_object)]
 #[derive(Clone)]
+/// A configurable ROOT TTree dataset source.
+///
+/// Parameters
+/// ----------
+/// path : path-like
+///     ROOT file, directory, or glob.
+/// tree : str, optional
+///     TTree name. If omitted, the reader discovers a compatible tree.
+/// chunk_size : int, optional
+///     Maximum number of events in each streamed batch.
+/// cache : {'resident', 'streaming'}, default='resident'
+///     Keep decoded batches in memory or reread them on each traversal.
+/// validate : bool, default=True
+///     Validate every matched file when constructing the source.
 pub struct PyRootSource {
     inner: Dataset,
 }
 
 #[pymethods]
 impl PyRootSource {
+    /// Configure a ROOT source.
+    ///
+    /// Raises
+    /// ------
+    /// ValueError
+    ///     If ``cache`` is invalid.
+    /// LadduError
+    ///     If the source, tree, or schema is invalid.
     #[new]
     #[pyo3(signature = (path, *, tree=None, chunk_size=None, cache="resident", validate=true))]
     fn new(
@@ -109,6 +158,14 @@ impl PyRootSource {
 
 #[pyclass(name = "ParquetSink", module = "laddu", frozen, skip_from_py_object)]
 #[derive(Clone)]
+/// A destination for writing a dataset as Parquet.
+///
+/// Parameters
+/// ----------
+/// path : path-like
+///     Output file or dataset directory.
+/// precision : {'f32', 'f64'}, default='f64'
+///     Floating-point storage precision.
 pub struct PyParquetSink {
     path: PathBuf,
     precision: String,
@@ -116,6 +173,12 @@ pub struct PyParquetSink {
 
 #[pymethods]
 impl PyParquetSink {
+    /// Configure a Parquet destination.
+    ///
+    /// Raises
+    /// ------
+    /// ValueError
+    ///     If ``precision`` is not ``'f32'`` or ``'f64'``.
     #[new]
     #[pyo3(signature = (path, *, precision="f64"))]
     fn new(path: PathBuf, precision: &str) -> PyResult<Self> {
@@ -129,6 +192,16 @@ impl PyParquetSink {
 
 #[pyclass(name = "RootSink", module = "laddu", frozen, skip_from_py_object)]
 #[derive(Clone)]
+/// A destination for writing a dataset as a ROOT TTree.
+///
+/// Parameters
+/// ----------
+/// path : path-like
+///     Output ROOT file.
+/// tree : str, default='tree'
+///     Name of the output TTree.
+/// precision : {'f32', 'f64'}, default='f64'
+///     Floating-point storage precision.
 pub struct PyRootSink {
     path: PathBuf,
     tree: String,
@@ -137,6 +210,12 @@ pub struct PyRootSink {
 
 #[pymethods]
 impl PyRootSink {
+    /// Configure a ROOT destination.
+    ///
+    /// Raises
+    /// ------
+    /// ValueError
+    ///     If ``precision`` is not ``'f32'`` or ``'f64'``.
     #[new]
     #[pyo3(signature = (path, *, tree="tree", precision="f64"))]
     fn new(path: PathBuf, tree: &str, precision: &str) -> PyResult<Self> {
@@ -219,12 +298,40 @@ fn scalar_array(values: &Bound<'_, PyAny>, name: &str) -> PyResult<Arc<[f64]>> {
 
 #[pyclass(name = "Dataset", module = "laddu", frozen, skip_from_py_object)]
 #[derive(Clone)]
+/// A reusable collection of weighted physics events.
+///
+/// Parameters
+/// ----------
+/// source : ParquetSource or RootSource
+///     Lazy source that defines the dataset schema and read plan.
+///
+/// Examples
+/// --------
+/// Construct a dataset directly from NumPy arrays:
+///
+/// >>> import laddu as ld
+/// >>> import numpy as np
+/// >>> events = ld.Dataset.from_arrays(
+/// ...     p4s={"beam": np.array([[5.0, 0.0, 0.0, 5.0]])},
+/// ...     scalars={"run": np.array([1.0])},
+/// ... )
+/// >>> len(events)
+/// 1
+/// >>> events.p4_names()
+/// ['beam']
 pub struct PyDataset {
     pub(crate) inner: Dataset,
 }
 
 #[pymethods]
 impl PyDataset {
+    /// Create a dataset from a file source.
+    ///
+    /// Raises
+    /// ------
+    /// TypeError
+    ///     If ``source`` is not a :class:`ParquetSource` or
+    ///     :class:`RootSource`.
     #[new]
     fn new(source: &Bound<'_, PyAny>) -> PyResult<Self> {
         if let Ok(source) = source.extract::<PyRef<'_, PyParquetSource>>() {
@@ -244,6 +351,29 @@ impl PyDataset {
 
     #[staticmethod]
     #[pyo3(signature = (*, p4s, scalars, weights=None))]
+    /// Create an in-memory dataset from NumPy columns.
+    ///
+    /// Parameters
+    /// ----------
+    /// p4s : dict[str, numpy.ndarray]
+    ///     Four-vector columns with shape ``(n_events, 4)`` and components in
+    ///     ``(E, px, py, pz)`` order.
+    /// scalars : dict[str, numpy.ndarray]
+    ///     One-dimensional scalar columns.
+    /// weights : numpy.ndarray, optional
+    ///     One-dimensional event weights. Unit weights are used by default.
+    ///
+    /// Returns
+    /// -------
+    /// Dataset
+    ///     A resident, in-memory dataset.
+    ///
+    /// Raises
+    /// ------
+    /// ValueError
+    ///     If a dtype or shape is invalid, or column lengths differ.
+    /// LadduError
+    ///     If the column names do not form a valid schema.
     fn from_arrays(
         p4s: &Bound<'_, PyDict>,
         scalars: &Bound<'_, PyDict>,
@@ -313,6 +443,12 @@ impl PyDataset {
         )
     }
 
+    /// Return the names of all four-vector columns.
+    ///
+    /// Returns
+    /// -------
+    /// list of str
+    ///     Names in schema order.
     fn p4_names(&self) -> PyResult<Vec<String>> {
         Ok(self
             .inner
@@ -324,6 +460,12 @@ impl PyDataset {
             .collect())
     }
 
+    /// Return the names of all scalar columns.
+    ///
+    /// Returns
+    /// -------
+    /// list of str
+    ///     Names in schema order.
     fn scalar_names(&self) -> PyResult<Vec<String>> {
         Ok(self
             .inner
@@ -336,6 +478,26 @@ impl PyDataset {
     }
 
     #[pyo3(signature = (expr, *, execution=None, real=false))]
+    /// Evaluate an expression for every event.
+    ///
+    /// Parameters
+    /// ----------
+    /// expr : Expr
+    ///     Symbolic expression to evaluate.
+    /// execution : Execution, optional
+    ///     Runtime configuration. Automatic local execution is used by default.
+    /// real : bool, default=False
+    ///     Return ``float64`` real components instead of complex values.
+    ///
+    /// Returns
+    /// -------
+    /// numpy.ndarray
+    ///     One value per event.
+    ///
+    /// Raises
+    /// ------
+    /// LadduError
+    ///     If the expression cannot be compiled or the dataset cannot be read.
     fn evaluate<'py>(
         &self,
         py: Python<'py>,
@@ -362,11 +524,23 @@ impl PyDataset {
         }
     }
 
+    /// Sum the event weights.
+    ///
+    /// Returns
+    /// -------
+    /// float
+    ///     Sum over all explicit or implicit unit weights.
     fn sum_weights(&self, py: Python<'_>) -> PyResult<f64> {
         let dataset = self.inner.clone();
         py.detach(move || dataset.sum_weights()).map_err(to_py_err)
     }
 
+    /// Materialize the event weights.
+    ///
+    /// Returns
+    /// -------
+    /// numpy.ndarray
+    ///     Array with shape ``(n_events,)``.
     fn weights<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray1<f64>>> {
         let dataset = self.inner.clone();
         let weights = py
@@ -387,6 +561,24 @@ impl PyDataset {
     }
 
     #[pyo3(signature = (fraction, *, seed=0))]
+    /// Select a reproducible random fraction of events.
+    ///
+    /// Parameters
+    /// ----------
+    /// fraction : float
+    ///     Selection probability in the closed interval ``[0, 1]``.
+    /// seed : int, default=0
+    ///     Random seed.
+    ///
+    /// Returns
+    /// -------
+    /// Dataset
+    ///     A lazily transformed dataset.
+    ///
+    /// Raises
+    /// ------
+    /// LadduError
+    ///     If ``fraction`` is outside its valid range.
     fn subsample(&self, fraction: f64, seed: u64) -> PyResult<Self> {
         Ok(Self {
             inner: self
@@ -398,6 +590,20 @@ impl PyDataset {
     }
 
     #[pyo3(signature = (*, seed=0))]
+    /// Create a Poisson-bootstrap replica of the dataset.
+    ///
+    /// Each event weight is multiplied by an independent Poisson(1) draw. The
+    /// transformation is deterministic for a given seed.
+    ///
+    /// Parameters
+    /// ----------
+    /// seed : int, default=0
+    ///     Random seed.
+    ///
+    /// Returns
+    /// -------
+    /// Dataset
+    ///     A lazily reweighted dataset.
     fn bootstrap(&self, seed: u64) -> Self {
         Self {
             inner: self.inner.clone().bootstrap(seed),
@@ -405,6 +611,19 @@ impl PyDataset {
     }
 
     #[pyo3(signature = (predicate, *, execution=None))]
+    /// Retain events satisfying a symbolic predicate.
+    ///
+    /// Parameters
+    /// ----------
+    /// predicate : Predicate
+    ///     Event-wise selection condition.
+    /// execution : Execution, optional
+    ///     Runtime configuration.
+    ///
+    /// Returns
+    /// -------
+    /// Dataset
+    ///     The selected events.
     fn select(&self, predicate: &PyPredicate, execution: Option<&PyExecution>) -> PyResult<Self> {
         let execution = execution
             .cloned()
@@ -419,6 +638,21 @@ impl PyDataset {
     }
 
     #[pyo3(signature = (expr, bins, *, execution=None))]
+    /// Partition events into bins of an evaluated expression.
+    ///
+    /// Parameters
+    /// ----------
+    /// expr : Expr
+    ///     Real-valued binning expression.
+    /// bins : Bin
+    ///     Uniform or explicitly edged bin specification.
+    /// execution : Execution, optional
+    ///     Runtime configuration.
+    ///
+    /// Returns
+    /// -------
+    /// list of BinnedDataset
+    ///     Bin metadata and the events assigned to each bin.
     fn bin_by(
         &self,
         expr: &PyExpr,
@@ -445,6 +679,19 @@ impl PyDataset {
             .collect())
     }
 
+    /// Write all events to a configured file destination.
+    ///
+    /// Parameters
+    /// ----------
+    /// sink : ParquetSink or RootSink
+    ///     Output format and path.
+    ///
+    /// Raises
+    /// ------
+    /// TypeError
+    ///     If ``sink`` has an unsupported type.
+    /// LadduError
+    ///     If reading or writing fails.
     fn write_to(&self, py: Python<'_>, sink: &Bound<'_, PyAny>) -> PyResult<()> {
         let dataset = self.inner.clone();
         if let Ok(sink) = sink.extract::<PyRef<'_, PyParquetSink>>() {
@@ -471,6 +718,19 @@ impl PyDataset {
 }
 
 #[pyclass(name = "BinnedDataset", module = "laddu", frozen, skip_from_py_object)]
+/// A dataset and the numeric interval that selected it.
+///
+/// Attributes
+/// ----------
+/// index : int
+///     Zero-based bin index.
+/// low : float
+///     Inclusive lower edge.
+/// high : float
+///     Exclusive upper edge, except where the binning policy includes the final
+///     boundary.
+/// dataset : Dataset
+///     Events assigned to this interval.
 pub struct PyBinDataset {
     #[pyo3(get)]
     index: usize,
@@ -484,6 +744,27 @@ pub struct PyBinDataset {
 
 #[pyfunction]
 #[pyo3(signature = (path, *, chunk_size=None, cache="resident", nulls="error", validate=true))]
+/// Read a Parquet dataset.
+///
+/// This is shorthand for ``Dataset(ParquetSource(...))``.
+///
+/// Parameters
+/// ----------
+/// path : path-like
+///     Parquet file, directory, or glob.
+/// chunk_size : int, optional
+///     Maximum streamed batch size.
+/// cache : {'resident', 'streaming'}, default='resident'
+///     Dataset cache policy.
+/// nulls : {'error', 'nan'}, default='error'
+///     Null-value policy.
+/// validate : bool, default=True
+///     Validate every matched file.
+///
+/// Returns
+/// -------
+/// Dataset
+///     Configured dataset.
 pub fn read_parquet(
     path: &Bound<'_, PyAny>,
     chunk_size: Option<usize>,
@@ -505,6 +786,27 @@ pub fn read_parquet(
 
 #[pyfunction]
 #[pyo3(signature = (path, *, tree=None, chunk_size=None, cache="resident", validate=true))]
+/// Read a ROOT TTree dataset.
+///
+/// This is shorthand for ``Dataset(RootSource(...))``.
+///
+/// Parameters
+/// ----------
+/// path : path-like
+///     ROOT file, directory, or glob.
+/// tree : str, optional
+///     TTree name, or automatic discovery when omitted.
+/// chunk_size : int, optional
+///     Maximum streamed batch size.
+/// cache : {'resident', 'streaming'}, default='resident'
+///     Dataset cache policy.
+/// validate : bool, default=True
+///     Validate every matched file.
+///
+/// Returns
+/// -------
+/// Dataset
+///     Configured dataset.
 pub fn read_root(
     path: &Bound<'_, PyAny>,
     tree: Option<&str>,
@@ -523,6 +825,7 @@ pub fn read_root(
 }
 
 #[pymodule]
+/// Dataset sources, sinks, transformations, and file-reading helpers.
 pub mod data {
     #[pymodule_export]
     use super::{
