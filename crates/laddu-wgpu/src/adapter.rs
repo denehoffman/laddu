@@ -1,43 +1,69 @@
 use crate::{WgpuError, WgpuResult};
 use serde::{Deserialize, Serialize};
 
+/// Floating-point precision requested for WebGPU execution.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum WgpuPrecision {
+    /// Select a supported precision automatically.
     #[default]
     Auto,
+    /// Use 32-bit floating-point arithmetic.
     F32,
+    /// Use 64-bit floating-point arithmetic.
     F64,
 }
 
+/// Rule used to select a WebGPU adapter.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum WgpuDeviceSelector {
+    /// Select a high-performance adapter automatically.
     #[default]
     Auto,
+    /// Select the adapter at the given enumeration index.
     Index(usize),
+    /// Select an adapter by PCI bus identifier.
     PciBusId(String),
+    /// Select an adapter whose name matches the supplied string.
     Name(String),
 }
 
+/// Options used when opening a WebGPU execution context.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WgpuOptions {
+    /// Adapter selection rule.
     pub device: WgpuDeviceSelector,
+    /// Optional upper bound, in bytes, for resident allocations.
     pub memory_budget: Option<usize>,
 }
 
+/// Capabilities and identifying information for a WebGPU adapter.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WgpuAdapterInfo {
+    /// Zero-based adapter enumeration index.
     pub index: usize,
+    /// Human-readable adapter name.
     pub name: String,
+    /// PCI vendor identifier.
     pub vendor: u32,
+    /// PCI device identifier.
     pub device: u32,
+    /// Adapter device-class description.
     pub device_type: String,
+    /// PCI bus identifier, when reported by the backend.
     pub pci_bus_id: String,
+    /// Driver name.
     pub driver: String,
+    /// Additional driver version or implementation information.
     pub driver_info: String,
+    /// Graphics API backend name.
     pub backend: String,
+    /// Whether shader `f64` arithmetic is supported.
     pub supports_f64: bool,
+    /// Maximum buffer allocation size in bytes.
     pub max_buffer_size: u64,
+    /// Maximum storage-buffer binding size in bytes.
     pub max_storage_buffer_binding_size: u64,
+    /// Maximum number of invocations along a workgroup's x dimension.
     pub max_compute_workgroup_size_x: u32,
 }
 
@@ -74,6 +100,7 @@ impl WgpuAdapterInfo {
     }
 }
 
+/// An opened WebGPU device, queue, and resolved execution configuration.
 #[derive(Debug)]
 pub struct WgpuContext {
     info: WgpuAdapterInfo,
@@ -84,27 +111,33 @@ pub struct WgpuContext {
 }
 
 impl WgpuContext {
+    /// Returns information about the selected adapter.
     pub fn info(&self) -> &WgpuAdapterInfo {
         &self.info
     }
 
+    /// Returns the resolved shader precision.
     pub fn precision(&self) -> WgpuPrecision {
         self.precision
     }
 
+    /// Returns the configured resident-memory budget in bytes.
     pub fn memory_budget(&self) -> Option<usize> {
         self.memory_budget
     }
 
+    /// Returns the underlying WebGPU device.
     pub fn device(&self) -> &wgpu::Device {
         &self.device
     }
 
+    /// Returns the underlying WebGPU submission queue.
     pub fn queue(&self) -> &wgpu::Queue {
         &self.queue
     }
 }
 
+/// Discovers WebGPU adapters and opens execution contexts.
 #[derive(Clone, Debug)]
 pub struct WgpuBackend {
     instance: wgpu::Instance,
@@ -121,6 +154,7 @@ impl Default for WgpuBackend {
 }
 
 impl WgpuBackend {
+    /// Enumerates all available adapters and their capabilities.
     pub fn adapters(&self) -> Vec<WgpuAdapterInfo> {
         pollster::block_on(self.instance.enumerate_adapters(wgpu::Backends::all()))
             .iter()
@@ -129,6 +163,7 @@ impl WgpuBackend {
             .collect()
     }
 
+    /// Selects an adapter and opens a device using the requested precision.
     pub fn open(&self, options: &WgpuOptions, precision: WgpuPrecision) -> WgpuResult<WgpuContext> {
         if options.memory_budget == Some(0) {
             return Err(WgpuError::InvalidMemoryBudget);

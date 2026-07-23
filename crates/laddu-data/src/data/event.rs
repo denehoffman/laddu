@@ -4,6 +4,7 @@ use laddu_physics::vectors::RealVec4;
 
 use crate::{LadduDataError, LadduDataResult, schema::Schema};
 
+/// Immutable columnar batch of events sharing one schema.
 #[derive(Clone, Debug)]
 pub struct EventBatch {
     schema: Arc<Schema>,
@@ -14,6 +15,7 @@ pub struct EventBatch {
 }
 
 impl EventBatch {
+    /// Validates column counts and lengths and constructs a batch.
     pub fn new(
         schema: Arc<Schema>,
         p4s: Vec<Arc<[RealVec4]>>,
@@ -43,6 +45,7 @@ impl EventBatch {
         })
     }
 
+    /// Collects owned row events into a columnar batch.
     pub fn from_events<I>(schema: Arc<Schema>, events: I) -> LadduDataResult<Self>
     where
         I: IntoIterator<Item = OwnedEvent>,
@@ -52,56 +55,69 @@ impl EventBatch {
         builder.finish()
     }
 
+    /// Returns the shared logical schema.
     pub fn schema(&self) -> &Arc<Schema> {
         &self.schema
     }
 
+    /// Returns the number of rows.
     pub fn len(&self) -> usize {
         self.len
     }
 
+    /// Returns whether the batch contains no rows.
     pub fn is_empty(&self) -> bool {
         self.len == 0
     }
 
+    /// Returns a four-momentum column by index.
     pub fn vec4_column(&self, index: usize) -> &[RealVec4] {
         &self.p4s[index]
     }
 
+    /// Returns a scalar column by index.
     pub fn scalar_column(&self, index: usize) -> &[f64] {
         &self.scalars[index]
     }
 
+    /// Returns the optional explicit weight column.
     pub fn weights_column(&self) -> Option<&[f64]> {
         self.weights.as_deref()
     }
 
+    /// Returns a four-momentum column by logical name.
     pub fn vec4_column_named(&self, name: &str) -> Option<&[RealVec4]> {
         let i = self.schema.p4_index(name)?;
         Some(self.vec4_column(i))
     }
 
+    /// Returns a scalar column by logical name.
     pub fn scalar_column_named(&self, name: &str) -> Option<&[f64]> {
         let i = self.schema.scalar_index(name)?;
         Some(self.scalar_column(i))
     }
 
+    /// Returns one four-momentum cell.
     pub fn p4_at(&self, col: usize, row: usize) -> RealVec4 {
         self.p4s[col][row]
     }
 
+    /// Returns one scalar cell.
     pub fn scalar_at(&self, col: usize, row: usize) -> f64 {
         self.scalars[col][row]
     }
 
+    /// Returns the explicit row weight, or one when weights are absent.
     pub fn weights_at(&self, row: usize) -> f64 {
         self.weights.as_ref().map_or(1.0, |w| w[row])
     }
 
+    /// Returns a borrowed view of one row.
     pub fn event(&self, row: usize) -> BatchEvent<'_> {
         BatchEvent { batch: self, row }
     }
 
+    /// Copies selected rows into a new batch in the requested order.
     pub fn select(&self, rows: &[usize]) -> Self {
         let p4s = self
             .p4s
@@ -129,6 +145,7 @@ impl EventBatch {
         }
     }
 
+    /// Copies rows satisfying `keep` into a new batch.
     pub fn filter<F>(&self, keep: F) -> Self
     where
         F: Fn(BatchEvent<'_>) -> bool,
@@ -138,6 +155,7 @@ impl EventBatch {
         self.select(&rows)
     }
 
+    /// Returns a batch sharing value columns with newly computed weights.
     pub fn reweight<F>(&self, f: F) -> Self
     where
         F: Fn(usize, f64) -> f64,
@@ -153,6 +171,7 @@ impl EventBatch {
         }
     }
 
+    /// Copies the half-open row range `start..end` into a new batch.
     pub fn slice(&self, start: usize, end: usize) -> Self {
         assert!(start <= end);
         assert!(end <= self.len);
@@ -187,6 +206,7 @@ impl EventBatch {
         }
     }
 
+    /// Concatenates schema-compatible batches.
     pub fn concat(batches: &[Self]) -> LadduDataResult<Self> {
         if batches.is_empty() {
             return Err(LadduDataError::InvalidArgument(
@@ -286,6 +306,7 @@ fn infer_len(
     Ok(len)
 }
 
+/// Borrowed view of one row in an [`EventBatch`].
 #[derive(Copy, Clone, Debug)]
 pub struct BatchEvent<'a> {
     batch: &'a EventBatch,
@@ -293,37 +314,45 @@ pub struct BatchEvent<'a> {
 }
 
 impl<'a> BatchEvent<'a> {
+    /// Returns the row index.
     pub fn row(&self) -> usize {
         self.row
     }
 
+    /// Returns the backing batch.
     pub fn batch(&self) -> &'a EventBatch {
         self.batch
     }
 
+    /// Returns a four-momentum value by column index.
     pub fn p4(&self, col: usize) -> RealVec4 {
         self.batch.p4_at(col, self.row)
     }
 
+    /// Returns a scalar value by column index.
     pub fn scalar(&self, col: usize) -> f64 {
         self.batch.scalar_at(col, self.row)
     }
 
+    /// Returns the row weight, defaulting to one.
     pub fn weight(&self) -> f64 {
         self.batch.weights_at(self.row)
     }
 
+    /// Returns a four-momentum value by logical name.
     pub fn p4_named(&self, name: &str) -> Option<RealVec4> {
         let col = self.batch.schema.p4_index(name)?;
         Some(self.p4(col))
     }
 
+    /// Returns a scalar value by logical name.
     pub fn scalar_named(&self, name: &str) -> Option<f64> {
         let col = self.batch.schema.scalar_index(name)?;
         Some(self.scalar(col))
     }
 }
 
+/// Borrowed event view with a possibly transformed weight.
 #[derive(Copy, Clone, Debug)]
 pub struct Event<'a> {
     pub(super) batch: &'a EventBatch,
@@ -332,41 +361,52 @@ pub struct Event<'a> {
 }
 
 impl<'a> Event<'a> {
+    /// Returns the row index in the backing batch.
     pub fn row(&self) -> usize {
         self.row
     }
 
+    /// Returns a four-momentum value by column index.
     pub fn p4(&self, col: usize) -> RealVec4 {
         self.batch.p4_at(col, self.row)
     }
 
+    /// Returns a scalar value by column index.
     pub fn scalar(&self, col: usize) -> f64 {
         self.batch.scalar_at(col, self.row)
     }
 
+    /// Returns this view's effective weight.
     pub fn weight(&self) -> f64 {
         self.weight
     }
 
+    /// Returns a four-momentum value by logical name.
     pub fn p4_named(&self, name: &str) -> Option<RealVec4> {
         let col = self.batch.schema.p4_index(name)?;
         Some(self.p4(col))
     }
 
+    /// Returns a scalar value by logical name.
     pub fn scalar_named(&self, name: &str) -> Option<f64> {
         let col = self.batch.schema.scalar_index(name)?;
         Some(self.scalar(col))
     }
 }
 
+/// Owned row-oriented event used while constructing batches.
 #[derive(Clone, Debug)]
 pub struct OwnedEvent {
+    /// Four-momentum values in schema order.
     pub p4s: Vec<RealVec4>,
+    /// Scalar values in schema order.
     pub scalars: Vec<f64>,
+    /// Optional explicit event weight.
     pub weight: Option<f64>,
 }
 
 impl OwnedEvent {
+    /// Creates an unweighted owned event.
     pub fn new(p4s: Vec<RealVec4>, scalars: Vec<f64>) -> Self {
         Self {
             p4s,
@@ -375,6 +415,7 @@ impl OwnedEvent {
         }
     }
 
+    /// Creates an owned event with an explicit weight.
     pub fn weighted(p4s: Vec<RealVec4>, scalars: Vec<f64>, weight: f64) -> Self {
         Self {
             p4s,
@@ -384,6 +425,7 @@ impl OwnedEvent {
     }
 }
 
+/// Incremental builder for a columnar [`EventBatch`].
 pub struct EventBatchBuilder {
     schema: Arc<Schema>,
     p4s: Vec<Vec<RealVec4>>,
@@ -393,6 +435,7 @@ pub struct EventBatchBuilder {
 }
 
 impl EventBatchBuilder {
+    /// Creates an empty builder.
     pub fn new(schema: Arc<Schema>) -> Self {
         let p4s = (0..schema.n_p4s()).map(|_| Vec::new()).collect();
         let scalars = (0..schema.n_scalars()).map(|_| Vec::new()).collect();
@@ -406,6 +449,7 @@ impl EventBatchBuilder {
         }
     }
 
+    /// Creates an empty builder with per-column capacity.
     pub fn with_capacity(schema: Arc<Schema>, capacity: usize) -> Self {
         let p4s = (0..schema.n_p4s())
             .map(|_| Vec::with_capacity(capacity))
@@ -424,6 +468,7 @@ impl EventBatchBuilder {
         }
     }
 
+    /// Appends an unweighted event from ordered values.
     pub fn push<P, S>(&mut self, p4s: P, scalars: S) -> LadduDataResult<&mut Self>
     where
         P: IntoIterator<Item = RealVec4>,
@@ -435,6 +480,7 @@ impl EventBatchBuilder {
         ))
     }
 
+    /// Appends a weighted event from ordered values.
     pub fn push_weighted<P, S>(
         &mut self,
         p4s: P,
@@ -452,6 +498,7 @@ impl EventBatchBuilder {
         ))
     }
 
+    /// Validates and appends one owned event.
     pub fn push_event(&mut self, event: OwnedEvent) -> LadduDataResult<&mut Self> {
         if event.p4s.len() != self.schema.n_p4s() {
             return Err(LadduDataError::Schema(
@@ -500,6 +547,7 @@ impl EventBatchBuilder {
         Ok(self)
     }
 
+    /// Appends all owned events from an iterator.
     pub fn extend<I>(&mut self, events: I) -> LadduDataResult<&mut Self>
     where
         I: IntoIterator<Item = OwnedEvent>,
@@ -511,6 +559,7 @@ impl EventBatchBuilder {
         Ok(self)
     }
 
+    /// Finalizes the builder into an immutable batch.
     pub fn finish(self) -> LadduDataResult<EventBatch> {
         let p4s = self.p4s.into_iter().map(Arc::from).collect();
         let scalars = self.scalars.into_iter().map(Arc::from).collect();

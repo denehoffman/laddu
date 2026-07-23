@@ -15,12 +15,14 @@ use crate::{
 
 const DEFAULT_MAX_ITERATIONS: usize = 16;
 
+/// Ordered optimization passes repeatedly applied until convergence.
 pub struct OptimizationPipeline {
     passes: Vec<Box<dyn OptimizationPass>>,
     max_iterations: usize,
 }
 
 impl OptimizationPipeline {
+    /// Creates an empty single-iteration pipeline.
     pub fn new() -> Self {
         Self {
             passes: Vec::new(),
@@ -28,6 +30,7 @@ impl OptimizationPipeline {
         }
     }
 
+    /// Creates the default cost-aware optimization pipeline.
     pub fn with_default_passes() -> Self {
         Self::new()
             .with_pass(RewritePass::simplify())
@@ -45,6 +48,7 @@ impl OptimizationPipeline {
             .with_max_iterations(DEFAULT_MAX_ITERATIONS)
     }
 
+    /// Creates the candidate pipeline used to test norm-squared expansion.
     pub fn norm_sqr_expansion_candidate() -> Self {
         Self::new()
             .with_pass(RewritePass::norm_sqr_expansion())
@@ -63,28 +67,34 @@ impl OptimizationPipeline {
             .with_max_iterations(8)
     }
 
+    /// Appends an optimization pass.
     pub fn add_pass(&mut self, pass: impl OptimizationPass + 'static) {
         self.passes.push(Box::new(pass));
     }
 
+    /// Returns this pipeline with an appended pass.
     pub fn with_pass(mut self, pass: impl OptimizationPass + 'static) -> Self {
         self.add_pass(pass);
         self
     }
 
+    /// Sets the maximum fixed-point iterations, clamped to at least one.
     pub fn set_max_iterations(&mut self, max_iterations: usize) {
         self.max_iterations = max_iterations.max(1);
     }
 
+    /// Returns this pipeline with a new iteration limit.
     pub fn with_max_iterations(mut self, max_iterations: usize) -> Self {
         self.set_max_iterations(max_iterations);
         self
     }
 
+    /// Returns the fixed-point iteration limit.
     pub fn max_iterations(&self) -> usize {
         self.max_iterations
     }
 
+    /// Runs all passes until convergence or the iteration limit.
     pub fn run(&self, mut graph: ExprGraph) -> CompileResult<ExprGraph> {
         for _ in 0..self.max_iterations {
             let previous = graph.clone();
@@ -98,6 +108,7 @@ impl OptimizationPipeline {
         Ok(graph)
     }
 
+    /// Returns whether the pipeline contains no passes.
     pub fn is_empty(&self) -> bool {
         self.passes.is_empty()
     }
@@ -122,21 +133,27 @@ fn graph_shape_eq(lhs: &ExprGraph, rhs: &ExprGraph) -> bool {
     lhs.root() == rhs.root() && lhs.nodes() == rhs.nodes()
 }
 
+/// One whole-graph transformation in an [`OptimizationPipeline`].
 pub trait OptimizationPass: Send + Sync {
+    /// Returns a stable diagnostic name.
     fn name(&self) -> &'static str;
+    /// Transforms `graph`.
     fn run(&self, graph: ExprGraph) -> CompileResult<ExprGraph>;
 }
 
+/// Runs a candidate pipeline only when it strictly improves static cost.
 pub struct CostGatePass {
     name: &'static str,
     candidate: OptimizationPipeline,
 }
 
 impl CostGatePass {
+    /// Creates a cost gate named `"cost-gate"`.
     pub fn new(candidate: OptimizationPipeline) -> Self {
         Self::named("cost-gate", candidate)
     }
 
+    /// Creates a cost gate with a diagnostic name.
     pub fn named(name: &'static str, candidate: OptimizationPipeline) -> Self {
         Self { name, candidate }
     }
@@ -168,6 +185,7 @@ impl OptimizationPass for CostGatePass {
     }
 }
 
+/// Canonical common-subexpression-elimination pass.
 #[derive(Copy, Clone, Debug, Default)]
 pub struct CanonicalCsePass;
 
@@ -203,12 +221,14 @@ impl OptimizationPass for CanonicalCsePass {
     }
 }
 
+/// Whole-graph pass applying local rewrite rules in order.
 pub struct RewritePass {
     name: &'static str,
     rules: Vec<Box<dyn RewriteRule>>,
 }
 
 impl RewritePass {
+    /// Creates an empty named rewrite pass.
     pub fn new(name: &'static str) -> Self {
         Self {
             name,
@@ -216,6 +236,7 @@ impl RewritePass {
         }
     }
 
+    /// Creates the standard scalar and linear-algebra simplification pass.
     pub fn simplify() -> Self {
         Self::new("simplify")
             .with_rule(ConstantFoldScalarRule)
@@ -225,34 +246,42 @@ impl RewritePass {
             .with_rule(MatrixVectorRule)
     }
 
+    /// Creates a common-product factoring pass.
     pub fn factor_common_products() -> Self {
         Self::new("factor-common-products").with_rule(FactorCommonProductRule)
     }
 
+    /// Creates a like-term combination pass.
     pub fn combine_like_terms() -> Self {
         Self::new("combine-like-terms").with_rule(CombineLikeTermsRule)
     }
 
+    /// Creates an associative addition/multiplication normalization pass.
     pub fn normalize_add_mul() -> Self {
         Self::new("normalize-add-mul").with_rule(NormalizeAddMulRule)
     }
 
+    /// Creates an exponential-identity pass.
     pub fn exponential() -> Self {
         Self::new("exponential").with_rule(ExponentialRule)
     }
 
+    /// Creates a conjugation simplification pass.
     pub fn conjugation() -> Self {
         Self::new("conjugation").with_rule(ConjugationRule)
     }
 
+    /// Creates a norm-squared expansion pass.
     pub fn norm_sqr_expansion() -> Self {
         Self::new("norm-sqr-expansion").with_rule(NormSqrExpansionRule)
     }
 
+    /// Appends a rewrite rule.
     pub fn add_rule(&mut self, rule: impl RewriteRule + 'static) {
         self.rules.push(Box::new(rule));
     }
 
+    /// Returns this pass with an appended rewrite rule.
     pub fn with_rule(mut self, rule: impl RewriteRule + 'static) -> Self {
         self.add_rule(rule);
         self
@@ -279,9 +308,12 @@ impl OptimizationPass for RewritePass {
     }
 }
 
+/// Local transformation of one expression node.
 pub trait RewriteRule: Send + Sync {
+    /// Returns a stable diagnostic name.
     fn name(&self) -> &'static str;
 
+    /// Chooses how to emit the current node.
     fn rewrite(
         &self,
         node: &ExprNode,
@@ -290,19 +322,28 @@ pub trait RewriteRule: Send + Sync {
     ) -> CompileResult<Rewrite>;
 }
 
+/// Emission selected by a [`RewriteRule`].
 #[derive(Clone, Debug, PartialEq)]
 pub enum Rewrite {
+    /// Emit the current node unchanged.
     Keep,
+    /// Replace the current node with an existing node.
     Alias(ExprId),
+    /// Replace the current node with one new node.
     Replace {
+        /// Replacement node.
         node: ExprNode,
+        /// Replacement metadata.
         metadata: ExprMetadata,
     },
+    /// Replace the current node with a topologically ordered fragment.
     ReplaceMany {
+        /// Replacement nodes paired with metadata; the final node is the result.
         nodes: Vec<(ExprNode, ExprMetadata)>,
     },
 }
 
+/// Read-only view of nodes already emitted during rewriting.
 pub struct RewriteContext<'a> {
     nodes: &'a [ExprNode],
     metadata: &'a [ExprMetadata],
@@ -310,18 +351,22 @@ pub struct RewriteContext<'a> {
 }
 
 impl<'a> RewriteContext<'a> {
+    /// Returns a previously emitted node.
     pub fn node(&self, id: ExprId) -> Option<&'a ExprNode> {
         self.nodes.get(id.index())
     }
 
+    /// Returns metadata for a previously emitted node.
     pub fn metadata(&self, id: ExprId) -> Option<&'a ExprMetadata> {
         self.metadata.get(id.index())
     }
 
+    /// Returns inferred facts for a previously emitted node.
     pub fn facts(&self, id: ExprId) -> Option<&'a NodeFacts> {
         self.facts.get(id.index())
     }
 
+    /// Returns the identifier the next emitted node will receive.
     pub fn next_id(&self) -> ExprId {
         ExprId::from_index(self.nodes.len())
     }
@@ -361,6 +406,7 @@ impl<'a> RewriteContext<'a> {
     }
 }
 
+/// Folds scalar operations whose operands are constants.
 #[derive(Copy, Clone, Debug, Default)]
 pub struct ConstantFoldScalarRule;
 
@@ -480,6 +526,7 @@ impl ConstantFoldScalarRule {
     }
 }
 
+/// Eliminates scalar arithmetic identities such as adding zero.
 #[derive(Copy, Clone, Debug, Default)]
 pub struct AlgebraicIdentityRule;
 
@@ -803,6 +850,7 @@ impl AlgebraicIdentityRule {
     }
 }
 
+/// Simplifies trigonometric identities.
 #[derive(Copy, Clone, Debug, Default)]
 pub struct TrigIdentityRule;
 
@@ -2210,6 +2258,7 @@ impl<'a> ReplacementFragment<'a> {
     }
 }
 
+/// Combines additive terms with identical symbolic factors.
 #[derive(Copy, Clone, Debug, Default)]
 pub struct CombineLikeTermsRule;
 
@@ -2300,6 +2349,7 @@ struct LikeTermGroup {
     factors: Vec<PowerFactor>,
 }
 
+/// Factors products shared by additive terms.
 #[derive(Copy, Clone, Debug, Default)]
 pub struct FactorCommonProductRule;
 
@@ -2813,6 +2863,7 @@ impl PowerFactor {
     }
 }
 
+/// Rewrites compatible exponential expressions.
 #[derive(Copy, Clone, Debug, Default)]
 pub struct ExponentialRule;
 
@@ -3281,6 +3332,7 @@ impl PhaseProduct {
     }
 }
 
+/// Expands squared norms into forms that may expose common subexpressions.
 #[derive(Copy, Clone, Debug, Default)]
 pub struct NormSqrExpansionRule;
 
@@ -3320,6 +3372,7 @@ impl RewriteRule for NormSqrExpansionRule {
     }
 }
 
+/// Simplifies and distributes complex conjugation.
 #[derive(Copy, Clone, Debug, Default)]
 pub struct ConjugationRule;
 
@@ -3437,6 +3490,7 @@ impl ConjugationRule {
     }
 }
 
+/// Simplifies matrix and vector construction/extraction operations.
 #[derive(Copy, Clone, Debug, Default)]
 pub struct MatrixVectorRule;
 
@@ -3870,6 +3924,7 @@ impl MatrixVectorRule {
     }
 }
 
+/// Propagates known real, imaginary, and complex facts through expressions.
 #[derive(Copy, Clone, Debug, Default)]
 pub struct ComplexFactRule;
 

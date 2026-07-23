@@ -9,32 +9,60 @@ use serde::{Deserialize, Serialize};
 
 use crate::{ExprGraphError, ExprShapeError, ParamError, ParamResult, parameters::Parameter};
 
+/// Stable identifier for a node in a serialized [`ExprGraph`].
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ExprId(u64);
 
 impl ExprId {
+    /// Creates an identifier from a zero-based node index.
     pub fn from_index(index: usize) -> Self {
         Self(index as u64)
     }
 
+    /// Returns the zero-based node index.
     pub fn index(self) -> usize {
         self.0 as usize
     }
 }
 
+/// Runtime value category produced by an expression node.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ValueKind {
+    /// A real scalar.
     Real,
+    /// A complex scalar.
     Complex,
-    Vector { len: usize },
-    Matrix { rows: usize, cols: usize },
+    /// A vector with a fixed number of elements.
+    Vector {
+        /// Number of vector elements.
+        len: usize,
+    },
+    /// A matrix with fixed dimensions.
+    Matrix {
+        /// Number of rows.
+        rows: usize,
+        /// Number of columns.
+        cols: usize,
+    },
 }
 
+/// Structural shape of an expression.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ExprShape {
+    /// A scalar expression.
     Scalar,
-    Vector { len: usize },
-    Matrix { rows: usize, cols: usize },
+    /// A vector expression.
+    Vector {
+        /// Number of vector elements.
+        len: usize,
+    },
+    /// A matrix expression.
+    Matrix {
+        /// Number of rows.
+        rows: usize,
+        /// Number of columns.
+        cols: usize,
+    },
 }
 
 impl fmt::Display for ExprShape {
@@ -47,7 +75,9 @@ impl fmt::Display for ExprShape {
     }
 }
 
+/// Converts a component selector into a zero-based index.
 pub trait ComponentIndex {
+    /// Returns the selected zero-based component index.
     fn component_index(self) -> usize;
 }
 
@@ -98,22 +128,35 @@ impl P4Component {
     }
 }
 
+/// Unary operation in an expression graph.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum UnaryOp {
+    /// Arithmetic negation.
     Neg,
+    /// Real part.
     Real,
+    /// Imaginary part.
     Imag,
+    /// Complex conjugate.
     Conj,
+    /// Squared complex norm.
     NormSqr,
+    /// Principal square root.
     Sqrt,
+    /// Exponential.
     Exp,
+    /// Sine.
     Sin,
+    /// Cosine.
     Cos,
+    /// Natural logarithm.
     Log,
+    /// Integer power.
     PowI(i32),
 }
 
 impl UnaryOp {
+    /// Applies this operation to a scalar complex value.
     pub fn evaluate(&self, value: Complex64) -> Complex64 {
         match self {
             Self::Neg => -value,
@@ -131,16 +174,23 @@ impl UnaryOp {
     }
 }
 
+/// Binary operation in an expression graph.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum BinaryOp {
+    /// Addition.
     Add,
+    /// Subtraction.
     Sub,
+    /// Multiplication.
     Mul,
+    /// Division.
     Div,
+    /// Two-argument arctangent of the real parts.
     Atan2,
 }
 
 impl BinaryOp {
+    /// Applies this operation to two scalar complex values.
     pub fn evaluate(&self, a: Complex64, b: Complex64) -> Complex64 {
         match self {
             Self::Add => a + b,
@@ -152,66 +202,113 @@ impl BinaryOp {
     }
 }
 
+/// Serialized node in a topologically ordered [`ExprGraph`].
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum ExprNode {
+    /// A real constant.
     RealConst(f64),
+    /// A complex constant.
     ComplexConst(Complex64),
+    /// A scalar fit parameter.
     ScalarParam(Parameter),
+    /// A named scalar event column.
     EventScalar(Arc<str>),
+    /// One component of a named event four-momentum.
     EventP4Component {
+        /// Event column base name.
         name: Arc<str>,
+        /// Requested four-momentum component.
         component: P4Component,
     },
+    /// A unary operation.
     Unary {
+        /// Operation to apply.
         op: UnaryOp,
+        /// Input node.
         input: ExprId,
     },
+    /// A binary operation.
     Binary {
+        /// Operation to apply.
         op: BinaryOp,
+        /// Left operand.
         lhs: ExprId,
+        /// Right operand.
         rhs: ExprId,
     },
+    /// A sum of zero or more terms.
     NaryAdd {
+        /// Term nodes.
         terms: Vec<ExprId>,
     },
+    /// A product of zero or more factors.
     NaryMul {
+        /// Factor nodes.
         factors: Vec<ExprId>,
     },
+    /// A complex scalar assembled from real and imaginary expressions.
     Complex {
+        /// Real component.
         re: ExprId,
+        /// Imaginary component.
         im: ExprId,
     },
+    /// A vector assembled from scalar elements.
     Vector {
+        /// Scalar element nodes.
         elements: Vec<ExprId>,
     },
+    /// A row-major matrix assembled from scalar elements.
     Matrix {
+        /// Number of rows.
         rows: usize,
+        /// Number of columns.
         cols: usize,
+        /// Row-major scalar elements.
         elements: Vec<ExprId>,
     },
+    /// A vector component selection.
     Component {
+        /// Vector input.
         input: ExprId,
+        /// Zero-based component index.
         index: usize,
     },
+    /// A matrix element selection.
     MatrixElement {
+        /// Matrix input.
         input: ExprId,
+        /// Zero-based row index.
         row: usize,
+        /// Zero-based column index.
         col: usize,
     },
+    /// Matrix-matrix multiplication.
     MatMul {
+        /// Left matrix.
         lhs: ExprId,
+        /// Right matrix.
         rhs: ExprId,
     },
+    /// Matrix-vector multiplication.
     MatVec {
+        /// Matrix operand.
         matrix: ExprId,
+        /// Vector operand.
         vector: ExprId,
     },
+    /// Vector dot product.
     Dot {
+        /// Left vector.
         lhs: ExprId,
+        /// Right vector.
         rhs: ExprId,
     },
+    /// Solution of a linear system.
     Solve {
+        /// Coefficient matrix.
         matrix: ExprId,
+        /// Right-hand-side vector or matrix.
         rhs: ExprId,
     },
 }
@@ -227,6 +324,7 @@ impl From<Complex64> for ExprNode {
 }
 
 impl ExprNode {
+    /// Creates the most compact constant-node representation for `value`.
     pub fn from_folded_const(value: Complex64) -> Self {
         if value.im == 0.0 && value.im.is_sign_positive() {
             Self::RealConst(value.re)
@@ -235,6 +333,7 @@ impl ExprNode {
         }
     }
 
+    /// Returns the node's scalar constant value, if it is a constant.
     pub fn const_value(&self) -> Option<Complex64> {
         match self {
             ExprNode::RealConst(value) => Some(Complex64::from(*value)),
@@ -243,16 +342,19 @@ impl ExprNode {
         }
     }
 
+    /// Returns whether `node` is the scalar constant zero.
     pub fn is_zero(node: &ExprNode) -> bool {
         node.const_value()
             .is_some_and(|value| value == Complex64::ZERO)
     }
 
+    /// Returns whether `node` is the scalar constant one.
     pub fn is_one(node: &ExprNode) -> bool {
         node.const_value()
             .is_some_and(|value| value == Complex64::ONE)
     }
 
+    /// Returns the identifiers of this node's direct dependencies.
     pub fn child_ids(&self) -> Vec<ExprId> {
         match self {
             Self::RealConst(_)
@@ -276,19 +378,30 @@ impl ExprNode {
     }
 }
 
+/// Broad origin category recorded in [`ExprMetadata`].
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ExprSourceKind {
+    /// Constant literal.
     Const,
+    /// Fit parameter.
     Param,
+    /// Event data.
     Event,
+    /// Unary operation.
     Unary,
+    /// Binary or n-ary operation.
     Binary,
+    /// Complex-number construction.
     Complex,
+    /// Vector construction or selection.
     Vector,
+    /// Matrix construction or selection.
     Matrix,
+    /// Linear-algebra operation.
     LinearAlgebra,
 }
 
+/// User-facing annotations and origin information for an expression node.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExprMetadata {
     source: ExprSourceKind,
@@ -297,6 +410,7 @@ pub struct ExprMetadata {
 }
 
 impl ExprMetadata {
+    /// Creates metadata for the given source category.
     pub fn new(source: ExprSourceKind) -> Self {
         Self {
             source,
@@ -305,23 +419,28 @@ impl ExprMetadata {
         }
     }
 
+    /// Returns the node's source category.
     pub fn source(&self) -> ExprSourceKind {
         self.source
     }
 
+    /// Returns the optional user-assigned name.
     pub fn name(&self) -> Option<&str> {
         self.name.as_deref()
     }
 
+    /// Returns the user-assigned tags.
     pub fn tags(&self) -> &[Arc<str>] {
         &self.tags
     }
 
+    /// Returns whether the metadata contains `tag`.
     pub fn has_tag(&self, tag: &str) -> bool {
         self.tags.iter().any(|candidate| candidate.as_ref() == tag)
     }
 }
 
+/// Shareable symbolic expression represented internally as a directed acyclic graph.
 #[derive(Clone, Debug)]
 pub struct Expr {
     node: Arc<DagNode>,
@@ -404,10 +523,12 @@ impl Expr {
         }
     }
 
+    /// Assigns a display name to the expression root.
     pub fn named(self, name: impl Into<Arc<str>>) -> Self {
         self.with_metadata(|metadata| metadata.name = Some(name.into()))
     }
 
+    /// Adds a tag to the expression root.
     pub fn tagged(self, tag: impl Into<Arc<str>>) -> Self {
         let tag = tag.into();
         self.with_metadata(|metadata| {
@@ -417,6 +538,7 @@ impl Expr {
         })
     }
 
+    /// Adds each supplied tag to the expression root.
     pub fn tagged_with(self, tags: impl IntoIterator<Item = impl Into<Arc<str>>>) -> Self {
         tags.into_iter().fold(self, Self::tagged)
     }
@@ -524,50 +646,62 @@ impl Expr {
         }
     }
 
+    /// Returns an expression for the real part.
     pub fn real(&self) -> Self {
         unary(UnaryOp::Real, self)
     }
 
+    /// Returns an expression for the imaginary part.
     pub fn imag(&self) -> Self {
         unary(UnaryOp::Imag, self)
     }
 
+    /// Returns an expression for the complex conjugate.
     pub fn conj(&self) -> Self {
         unary(UnaryOp::Conj, self)
     }
 
+    /// Returns an expression for the squared complex norm.
     pub fn norm_sqr(&self) -> Self {
         unary(UnaryOp::NormSqr, self)
     }
 
+    /// Returns an expression for the principal square root.
     pub fn sqrt(&self) -> Self {
         unary(UnaryOp::Sqrt, self)
     }
 
+    /// Returns an expression for the exponential.
     pub fn exp(&self) -> Self {
         unary(UnaryOp::Exp, self)
     }
 
+    /// Returns an expression for the sine.
     pub fn sin(&self) -> Self {
         unary(UnaryOp::Sin, self)
     }
 
+    /// Returns an expression for the cosine.
     pub fn cos(&self) -> Self {
         unary(UnaryOp::Cos, self)
     }
 
+    /// Returns an expression for the principal arccosine.
     pub fn acos(&self) -> Self {
         atan2((Expr::from(1.0) - self.powi(2)).sqrt(), self)
     }
 
+    /// Returns an expression for the natural logarithm.
     pub fn log(&self) -> Self {
         unary(UnaryOp::Log, self)
     }
 
+    /// Returns an expression raised to an integer power.
     pub fn powi(&self, power: i32) -> Self {
         unary(UnaryOp::PowI(power), self)
     }
 
+    /// Selects a component from a vector-valued expression.
     pub fn component(&self, index: impl ComponentIndex) -> Self {
         Expr::new(DagNodeKind::Component {
             input: self.clone(),
@@ -575,6 +709,7 @@ impl Expr {
         })
     }
 
+    /// Selects an element from a matrix-valued expression.
     pub fn matrix_element(&self, row: usize, col: usize) -> Self {
         Expr::new(DagNodeKind::MatrixElement {
             input: self.clone(),
@@ -583,6 +718,7 @@ impl Expr {
         })
     }
 
+    /// Serializes the shareable expression DAG into a topologically ordered graph.
     pub fn to_graph(&self) -> ExprGraph {
         GraphBuilder::new().build(self)
     }
@@ -685,6 +821,7 @@ impl Expr {
         Ok(expressions[graph.root.index()].clone())
     }
 
+    /// Determines and validates the expression's structural shape.
     pub fn shape(&self) -> Result<ExprShape, ExprShapeError> {
         self.node
             .shape
@@ -1114,10 +1251,12 @@ impl From<&Parameter> for Expr {
     }
 }
 
+/// Constructs `cos(phase) + i sin(phase)`.
 pub fn cis(phase: Expr) -> Expr {
     phase.cos() + Complex64::I * phase.sin()
 }
 
+/// Constructs a complex scalar from real and imaginary expressions.
 pub fn complex(re: impl Into<Expr>, im: impl Into<Expr>) -> Expr {
     Expr::new(DagNodeKind::Complex {
         re: re.into(),
@@ -1125,14 +1264,17 @@ pub fn complex(re: impl Into<Expr>, im: impl Into<Expr>) -> Expr {
     })
 }
 
+/// Constructs a complex scalar from magnitude and phase expressions.
 pub fn polar_complex(mag: impl Into<Expr>, phase: impl Into<Expr>) -> Expr {
     mag.into() * (Complex64::I * phase.into()).exp()
 }
 
+/// References a named scalar column in each event.
 pub fn event_scalar(name: impl Into<Arc<str>>) -> Expr {
     Expr::new(DagNodeKind::EventScalar(name.into()))
 }
 
+/// References one component of a named event four-momentum.
 pub fn event_p4_component(name: impl Into<Arc<str>>, component: P4Component) -> Expr {
     Expr::new(DagNodeKind::EventP4Component {
         name: name.into(),
@@ -1140,14 +1282,17 @@ pub fn event_p4_component(name: impl Into<Arc<str>>, component: P4Component) -> 
     })
 }
 
+/// Constructs the two-argument arctangent `atan2(y, x)`.
 pub fn atan2(y: impl Into<Expr>, x: impl Into<Expr>) -> Expr {
     binary(BinaryOp::Atan2, y, x)
 }
 
+/// Constructs the principal arccosine of `value`.
 pub fn acos(value: impl Into<Expr>) -> Expr {
     value.into().acos()
 }
 
+/// Constructs a vector expression from scalar elements.
 pub fn vector<E>(elements: impl IntoIterator<Item = E>) -> Expr
 where
     E: Into<Expr>,
@@ -1158,6 +1303,7 @@ where
     })
 }
 
+/// Constructs a row-major matrix expression from a nested array.
 pub fn matrix<const R: usize, const C: usize, E>(elements: [[E; C]; R]) -> Expr
 where
     E: Into<Expr>,
@@ -1170,6 +1316,11 @@ where
     })
 }
 
+/// Constructs a row-major matrix from a flat sequence.
+///
+/// Returns an error when either dimension is zero, the dimension product
+/// overflows, the element count differs from `rows * cols`, or an element is
+/// not scalar-valued.
 pub fn matrix_from_flat<E>(
     rows: usize,
     cols: usize,
@@ -1208,6 +1359,7 @@ where
     }))
 }
 
+/// Constructs a matrix-matrix multiplication expression.
 pub fn matmul(lhs: impl Into<Expr>, rhs: impl Into<Expr>) -> Expr {
     Expr::new(DagNodeKind::MatMul {
         lhs: lhs.into(),
@@ -1215,6 +1367,7 @@ pub fn matmul(lhs: impl Into<Expr>, rhs: impl Into<Expr>) -> Expr {
     })
 }
 
+/// Constructs a matrix-vector multiplication expression.
 pub fn matvec(matrix: impl Into<Expr>, vector: impl Into<Expr>) -> Expr {
     Expr::new(DagNodeKind::MatVec {
         matrix: matrix.into(),
@@ -1222,6 +1375,7 @@ pub fn matvec(matrix: impl Into<Expr>, vector: impl Into<Expr>) -> Expr {
     })
 }
 
+/// Constructs a vector dot-product expression.
 pub fn dot(lhs: impl Into<Expr>, rhs: impl Into<Expr>) -> Expr {
     Expr::new(DagNodeKind::Dot {
         lhs: lhs.into(),
@@ -1229,6 +1383,7 @@ pub fn dot(lhs: impl Into<Expr>, rhs: impl Into<Expr>) -> Expr {
     })
 }
 
+/// Constructs an expression that solves a linear system.
 pub fn solve(matrix: impl Into<Expr>, rhs: impl Into<Expr>) -> Expr {
     Expr::new(DagNodeKind::Solve {
         matrix: matrix.into(),
@@ -1251,6 +1406,7 @@ fn binary(op: BinaryOp, lhs: impl Into<Expr>, rhs: impl Into<Expr>) -> Expr {
     })
 }
 
+/// Topologically ordered, serializable representation of an [`Expr`] DAG.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ExprGraph {
     root: ExprId,
@@ -1298,6 +1454,10 @@ impl ExprGraph {
         Ok(graph)
     }
 
+    /// Replaces tagged components that match none of `tags` with zero.
+    ///
+    /// Untagged nodes remain active, and a matching tagged node retains its
+    /// entire subtree.
     pub fn project_tags<'a>(&self, tags: impl IntoIterator<Item = &'a str>) -> Self {
         let tags: Vec<_> = tags.into_iter().collect();
         let mut nodes = Vec::new();
@@ -1433,6 +1593,10 @@ impl ExprGraph {
         id
     }
 
+    /// Validates and constructs a graph from its serialized parts.
+    ///
+    /// Child nodes must precede their parents, metadata must have one entry per
+    /// node, and `root` must identify an existing node.
     pub fn from_parts(
         root: ExprId,
         nodes: Vec<ExprNode>,
@@ -1476,26 +1640,32 @@ impl ExprGraph {
         })
     }
 
+    /// Returns the root node identifier.
     pub fn root(&self) -> ExprId {
         self.root
     }
 
+    /// Returns the node identified by `id`, if it exists.
     pub fn node(&self, id: ExprId) -> Option<&ExprNode> {
         self.nodes.get(id.index())
     }
 
+    /// Returns all nodes in topological order.
     pub fn nodes(&self) -> &[ExprNode] {
         &self.nodes
     }
 
+    /// Returns the metadata associated with `id`, if it exists.
     pub fn metadata(&self, id: ExprId) -> Option<&ExprMetadata> {
         self.metadata.get(id.index())
     }
 
+    /// Creates a configurable indented-tree display.
     pub fn display_tree(&self) -> crate::ExprGraphTreeDisplay<'_> {
         crate::ExprGraphTreeDisplay::new(self)
     }
 
+    /// Creates a configurable Graphviz DOT display.
     pub fn display_dot(&self) -> crate::ExprGraphDotDisplay<'_> {
         crate::ExprGraphDotDisplay::new(self)
     }

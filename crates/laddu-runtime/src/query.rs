@@ -13,45 +13,70 @@ use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::{Execution, PreparedModel, RuntimeError, RuntimeResult};
 
+/// Comparison operation used by a dataset predicate.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Comparison {
+    /// Less than.
     Lt,
+    /// Less than or equal to.
     Le,
+    /// Greater than.
     Gt,
+    /// Greater than or equal to.
     Ge,
+    /// Equal to.
     Eq,
+    /// Not equal to.
     Ne,
 }
 
 /// Determines which endpoints are included by an interval predicate.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum IntervalClosure {
+    /// Exclude both endpoints.
     Open,
+    /// Include only the lower endpoint.
     LeftClosed,
+    /// Include only the upper endpoint.
     RightClosed,
+    /// Include both endpoints.
     #[default]
     Closed,
 }
 
+/// Boolean expression used to select events from a dataset.
 #[derive(Clone, Debug)]
 pub enum Predicate {
+    /// Compare two scalar expressions.
     Compare {
+        /// Left-hand expression.
         lhs: Expr,
+        /// Comparison operation.
         op: Comparison,
+        /// Right-hand expression.
         rhs: Expr,
     },
+    /// Require both child predicates to hold.
     And(Box<Self>, Box<Self>),
+    /// Require either child predicate to hold.
     Or(Box<Self>, Box<Self>),
+    /// Negate a predicate.
     Not(Box<Self>),
+    /// Test whether a value lies between two bounds.
     Between {
+        /// Expression whose value is tested.
         value: Expr,
+        /// Lower bound expression.
         lower: Expr,
+        /// Upper bound expression.
         upper: Expr,
+        /// Endpoint inclusion policy.
         closure: IntervalClosure,
     },
 }
 
 impl Predicate {
+    /// Creates a comparison predicate.
     pub fn compare(lhs: impl Into<Expr>, op: Comparison, rhs: impl Into<Expr>) -> Self {
         Self::Compare {
             lhs: lhs.into(),
@@ -60,33 +85,43 @@ impl Predicate {
         }
     }
 
+    /// Creates a less-than predicate.
     pub fn lt(lhs: impl Into<Expr>, rhs: impl Into<Expr>) -> Self {
         Self::compare(lhs, Comparison::Lt, rhs)
     }
+    /// Creates a less-than-or-equal predicate.
     pub fn le(lhs: impl Into<Expr>, rhs: impl Into<Expr>) -> Self {
         Self::compare(lhs, Comparison::Le, rhs)
     }
+    /// Creates a greater-than predicate.
     pub fn gt(lhs: impl Into<Expr>, rhs: impl Into<Expr>) -> Self {
         Self::compare(lhs, Comparison::Gt, rhs)
     }
+    /// Creates a greater-than-or-equal predicate.
     pub fn ge(lhs: impl Into<Expr>, rhs: impl Into<Expr>) -> Self {
         Self::compare(lhs, Comparison::Ge, rhs)
     }
+    /// Creates an equality predicate.
     pub fn eq(lhs: impl Into<Expr>, rhs: impl Into<Expr>) -> Self {
         Self::compare(lhs, Comparison::Eq, rhs)
     }
+    /// Creates an inequality predicate.
     pub fn ne(lhs: impl Into<Expr>, rhs: impl Into<Expr>) -> Self {
         Self::compare(lhs, Comparison::Ne, rhs)
     }
+    /// Combines this predicate with `rhs` using logical AND.
     pub fn and(self, rhs: Self) -> Self {
         Self::And(Box::new(self), Box::new(rhs))
     }
+    /// Combines this predicate with `rhs` using logical OR.
     pub fn or(self, rhs: Self) -> Self {
         Self::Or(Box::new(self), Box::new(rhs))
     }
+    /// Creates a closed-interval predicate.
     pub fn between(value: impl Into<Expr>, lower: impl Into<Expr>, upper: impl Into<Expr>) -> Self {
         Self::between_with(value, lower, upper, IntervalClosure::Closed)
     }
+    /// Creates an interval predicate with an explicit endpoint policy.
     pub fn between_with(
         value: impl Into<Expr>,
         lower: impl Into<Expr>,
@@ -109,6 +144,7 @@ impl std::ops::Not for Predicate {
     }
 }
 
+/// Validated, monotonically increasing bin edges.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(transparent)]
 pub struct BinSpec {
@@ -126,6 +162,7 @@ impl<'de> Deserialize<'de> for BinSpec {
 }
 
 impl BinSpec {
+    /// Creates `count` uniformly spaced bins spanning `[min, max]`.
     pub fn uniform(count: usize, min: f64, max: f64) -> RuntimeResult<Self> {
         if count == 0 || !min.is_finite() || !max.is_finite() || min >= max {
             return Err(query_error(
@@ -136,6 +173,7 @@ impl BinSpec {
         Self::edges((0..=count).map(|i| min + i as f64 * width))
     }
 
+    /// Creates bins from explicit, strictly increasing finite edges.
     pub fn edges(edges: impl IntoIterator<Item = f64>) -> RuntimeResult<Self> {
         let edges: Vec<_> = edges.into_iter().collect();
         if edges.len() < 2
@@ -151,9 +189,11 @@ impl BinSpec {
         })
     }
 
+    /// Returns the number of bins.
     pub fn bin_count(&self) -> usize {
         self.edges.len() - 1
     }
+    /// Returns the validated bin edges.
     pub fn edges_slice(&self) -> &[f64] {
         &self.edges
     }
@@ -172,6 +212,7 @@ impl BinSpec {
     }
 }
 
+/// A lazily filtered dataset corresponding to one bin.
 #[derive(Clone)]
 pub struct DatasetBin {
     index: usize,
@@ -181,27 +222,37 @@ pub struct DatasetBin {
 }
 
 impl DatasetBin {
+    /// Returns the zero-based bin index.
     pub fn index(&self) -> usize {
         self.index
     }
+    /// Returns the bin's lower edge.
     pub fn lower(&self) -> f64 {
         self.lower
     }
+    /// Returns the bin's upper edge.
     pub fn upper(&self) -> f64 {
         self.upper
     }
+    /// Returns the dataset containing events in this bin.
     pub fn dataset(&self) -> &Dataset {
         &self.dataset
     }
+    /// Consumes the bin and returns its dataset.
     pub fn into_dataset(self) -> Dataset {
         self.dataset
     }
 }
 
+/// Expression-based query operations for datasets.
 pub trait DatasetExprExt {
+    /// Evaluates a scalar expression for every event.
     fn evaluate_expr(&self, expr: &Expr, execution: &Execution) -> RuntimeResult<Vec<Complex64>>;
+    /// Evaluates a real scalar expression for every event.
     fn evaluate_real(&self, expr: &Expr, execution: &Execution) -> RuntimeResult<Vec<f64>>;
+    /// Creates a lazily filtered dataset containing events that satisfy `predicate`.
     fn select(&self, predicate: &Predicate, execution: &Execution) -> RuntimeResult<Dataset>;
+    /// Splits the dataset into lazy datasets according to an expression and bin specification.
     fn bin_by(
         &self,
         expr: &Expr,

@@ -7,6 +7,7 @@ use num::complex::Complex64;
 
 use crate::{AutodiffError, AutodiffResult};
 
+/// Differentiates a scalar kernel with respect to free parameters.
 pub fn gradient_ir(
     primal: &ScalarKernelIr,
     free_params: &[ParamId],

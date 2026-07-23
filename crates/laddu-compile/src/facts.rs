@@ -3,12 +3,14 @@ use laddu_expr::{
     parameters::{ParamState, Parameter},
 };
 
+/// Static facts for every node in an expression graph.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GraphFacts {
     nodes: Vec<NodeFacts>,
 }
 
 impl GraphFacts {
+    /// Analyzes all nodes in topological order.
     pub fn analyze(graph: &ExprGraph) -> Self {
         let mut nodes = Vec::with_capacity(graph.nodes().len());
         for node in graph.nodes() {
@@ -17,19 +19,25 @@ impl GraphFacts {
         Self { nodes }
     }
 
+    /// Returns facts for `id`, if it exists.
     pub fn get(&self, id: ExprId) -> Option<&NodeFacts> {
         self.nodes.get(id.index())
     }
 
+    /// Returns facts in graph-node order.
     pub fn nodes(&self) -> &[NodeFacts] {
         &self.nodes
     }
 }
 
+/// Inferred value and dependency properties for one graph node.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct NodeFacts {
+    /// Runtime value kind.
     pub value_kind: ValueKind,
+    /// Known relationship between real and imaginary components.
     pub number_class: NumberClass,
+    /// Parameter and event dependencies.
     pub dependency: DependencyFacts,
 }
 
@@ -45,31 +53,43 @@ impl NodeFacts {
         }
     }
 
+    /// Returns when the node must be reevaluated.
     pub fn evaluation_class(self) -> EvaluationClass {
         self.dependency.evaluation_class()
     }
 }
 
+/// Statically known scalar number category.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum NumberClass {
+    /// No narrower category is known.
     Unknown,
+    /// The value is real.
     Real,
+    /// The value is purely imaginary.
     Imaginary,
+    /// The value may have real and imaginary components.
     Complex,
 }
 
+/// Whether a node transitively depends on parameters or event data.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub struct DependencyFacts {
+    /// Depends on at least one free parameter.
     pub depends_on_free_params: bool,
+    /// Depends on at least one fixed parameter.
     pub depends_on_fixed_params: bool,
+    /// Depends on event data.
     pub depends_on_event: bool,
 }
 
 impl DependencyFacts {
+    /// Returns dependency facts for compile-time constants.
     pub fn per_compile() -> Self {
         Self::default()
     }
 
+    /// Returns dependency facts for a parameter definition.
     pub fn from_parameter(parameter: &Parameter) -> Self {
         match parameter.state() {
             ParamState::Free => Self {
@@ -83,6 +103,7 @@ impl DependencyFacts {
         }
     }
 
+    /// Returns dependency facts for event data.
     pub fn from_event() -> Self {
         Self {
             depends_on_event: true,
@@ -90,6 +111,7 @@ impl DependencyFacts {
         }
     }
 
+    /// Combines dependencies from two inputs.
     pub fn union(self, other: Self) -> Self {
         Self {
             depends_on_free_params: self.depends_on_free_params || other.depends_on_free_params,
@@ -98,6 +120,7 @@ impl DependencyFacts {
         }
     }
 
+    /// Returns when a value with these dependencies must be evaluated.
     pub fn evaluation_class(self) -> EvaluationClass {
         if self.depends_on_free_params {
             EvaluationClass::PerEvaluation
@@ -109,10 +132,14 @@ impl DependencyFacts {
     }
 }
 
+/// Frequency at which a graph node must be evaluated.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum EvaluationClass {
+    /// Once while compiling the model.
     PerCompile,
+    /// Once per event when preparing a dataset cache.
     PerEvent,
+    /// Once per event for every free-parameter evaluation.
     PerEvaluation,
 }
 

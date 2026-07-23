@@ -25,85 +25,127 @@ pub use laddu_physics::generation::{
     TComponent, TDistribution, TwoBodyScattering, VertexProposal,
 };
 
+/// Result type returned by event-generation operations.
 pub type GenerationResult<T> = Result<T, GenerationError>;
 
+/// Error produced while configuring or running event generation.
 #[derive(Debug, Error)]
 pub enum GenerationError {
+    /// The channel topology or output definition is invalid.
     #[error("invalid generation channel: {0}")]
     InvalidChannel(String),
+    /// Physics-level validation of the channel failed.
     #[error("channel validation failed: {source}")]
     ChannelValidation {
+        /// Underlying channel validation error.
         #[source]
         source: LadduPhysicsError,
     },
+    /// A generation option is inconsistent or outside its valid range.
     #[error("invalid generation configuration: {0}")]
     InvalidConfiguration(String),
+    /// Initial-state momentum generation failed for a proposal.
     #[error("initial-state proposal {index} failed: {source}")]
     InitialState {
+        /// Global proposal index.
         index: u64,
+        /// Underlying physics error.
         #[source]
         source: LadduPhysicsError,
     },
+    /// An intermediate mass proposal failed.
     #[error("mass proposal for edge `{edge}` at proposal {index} failed: {source}")]
     MassProposal {
+        /// Global proposal index.
         index: u64,
+        /// Channel edge being sampled.
         edge: String,
+        /// Underlying physics error.
         #[source]
         source: LadduPhysicsError,
     },
+    /// A vertex kinematics proposal failed.
     #[error("vertex `{vertex}` at proposal {index} failed: {source}")]
     VertexProposal {
+        /// Global proposal index.
         index: u64,
+        /// Channel vertex being sampled.
         vertex: String,
+        /// Underlying physics error.
         #[source]
         source: LadduPhysicsError,
     },
+    /// A derived scalar proposal failed.
     #[error("scalar column `{column}` at proposal {index} failed: {source}")]
     ScalarProposal {
+        /// Global proposal index.
         index: u64,
+        /// Scalar column being sampled.
         column: String,
+        /// Underlying physics error.
         #[source]
         source: LadduPhysicsError,
     },
+    /// Final-state kinematic validation failed.
     #[error("kinematic validation at proposal {index} failed: {source}")]
     Kinematics {
+        /// Global proposal index.
         index: u64,
+        /// Underlying physics error.
         #[source]
         source: LadduPhysicsError,
     },
+    /// Target-model evaluation failed.
     #[error("model evaluation failed: {0}")]
     Model(String),
+    /// A proposal exceeded the strict rejection-sampling envelope.
     #[error("target weight {weight} exceeds envelope {envelope} at proposal {index}")]
     EnvelopeOverflow {
+        /// Global proposal index.
         index: u64,
+        /// Target weight of the overflowing proposal.
         weight: f64,
+        /// Active envelope bound.
         envelope: f64,
     },
+    /// The proposal limit was reached before enough events were accepted.
     #[error(
         "accepted {accepted} events after exhausting {proposals} proposals (requested {requested})"
     )]
     Exhausted {
+        /// Requested event count.
         requested: usize,
+        /// Number of accepted events.
         accepted: usize,
+        /// Number of production proposals attempted.
         proposals: usize,
     },
+    /// Dataset input or output failed.
     #[error(transparent)]
     Data(#[from] laddu_data::LadduDataError),
+    /// Model preparation or execution failed.
     #[error(transparent)]
     Runtime(#[from] laddu_runtime::RuntimeError),
+    /// A physics-level proposal or validation failed.
     #[error(transparent)]
     Physics(#[from] LadduPhysicsError),
 }
 
+/// Configuration for weighted event generation.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct WeightedConfig {
+    /// Number of events to generate.
     pub events: usize,
+    /// Number of events written to each output batch.
     pub batch_size: usize,
+    /// Deterministic random seed.
     pub seed: u64,
+    /// Whether to include diagnostic weight columns.
     pub diagnostics: bool,
 }
 
 impl WeightedConfig {
+    /// Creates a configuration for `events` with default batching and seed.
     pub fn new(events: usize) -> Self {
         Self {
             events,
@@ -114,19 +156,25 @@ impl WeightedConfig {
     }
 }
 
+/// Configuration for rejection-sampled unweighted event generation.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct UnweightedConfig {
+    /// Number of accepted events to generate.
     pub events: usize,
     /// Optional safeguard limiting production proposals.
     ///
     /// `None` allows generation to continue until the requested event count is
     /// reached. Pilot proposals are not included in this limit.
     pub max_proposals: Option<usize>,
+    /// Number of accepted events written to each output batch.
     pub batch_size: usize,
+    /// Deterministic random seed.
     pub seed: u64,
+    /// Whether to include diagnostic weight columns.
     pub diagnostics: bool,
     /// Strategy used to establish the rejection-sampling envelope.
     pub envelope: EnvelopeMode,
+    /// Policy applied when a proposal exceeds the active envelope.
     pub envelope_overflow: EnvelopeOverflow,
 }
 
@@ -162,12 +210,18 @@ pub enum EnvelopeOverflow {
     ///
     /// Adaptive generation buffers accepted events until the run completes,
     /// because events already written to a sink cannot be withdrawn safely.
-    Grow { safety_factor: f64 },
+    Grow {
+        /// Factor by which the observed overflow expands the envelope.
+        safety_factor: f64,
+    },
 }
 
+/// Strategy used to establish a rejection-sampling envelope.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub enum EnvelopeMode {
+    /// Use a caller-supplied fixed maximum weight.
     Strict {
+        /// Fixed upper bound for target weights.
         max_weight: f64,
     },
     /// Estimate an envelope from pilot proposals.
@@ -175,7 +229,9 @@ pub enum EnvelopeMode {
     /// Density-aware built-in proposals may use one deterministic pilot pass
     /// for importance adaptation and a second pass for the final envelope.
     Pilot {
+        /// Number of pilot proposals used to estimate the maximum.
         proposals: usize,
+        /// Multiplier applied to the maximum pilot weight.
         safety_factor: f64,
     },
 }
@@ -189,31 +245,50 @@ impl Default for EnvelopeMode {
     }
 }
 
+/// Source from which the final rejection envelope was obtained.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum EnvelopeKind {
+    /// A caller-supplied strict bound.
     Strict,
+    /// A bound estimated from pilot proposals.
     Pilot,
 }
 
+/// Diagnostics and aggregate statistics from an event-generation run.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct GenerationReport {
+    /// Requested event count.
     pub requested: usize,
+    /// Produced event count.
     pub produced: usize,
+    /// Number of production proposals.
     pub proposals: usize,
+    /// Number of pilot proposals.
     pub pilot_proposals: usize,
+    /// Number of rejected production proposals.
     pub rejected: usize,
+    /// Final rejection envelope, if unweighting was used.
     pub envelope: Option<f64>,
+    /// Method used to establish the envelope.
     pub envelope_kind: Option<EnvelopeKind>,
+    /// Number of adaptive envelope expansions.
     pub envelope_updates: usize,
+    /// Maximum target weight encountered.
     pub maximum_weight: f64,
+    /// Minimum target weight encountered.
     pub minimum_weight: f64,
+    /// Sum of generated target weights.
     pub sum_weights: f64,
+    /// Sum of squared generated target weights.
     pub sum_squared_weights: f64,
+    /// Random seed used for the run.
     pub seed: u64,
+    /// Configured output batch size.
     pub batch_size: usize,
 }
 
 impl GenerationReport {
+    /// Returns the fraction of production proposals that were accepted.
     pub fn acceptance_rate(&self) -> f64 {
         if self.proposals == 0 {
             0.0
@@ -223,6 +298,7 @@ impl GenerationReport {
     }
 }
 
+/// A prepared model and parameters used to weight generated proposals.
 #[derive(Clone, Debug)]
 pub struct ModelEvaluator {
     prepared: PreparedModel,
@@ -231,6 +307,7 @@ pub struct ModelEvaluator {
 }
 
 impl ModelEvaluator {
+    /// Prepares a compiled model for generation-time batch evaluation.
     pub fn prepare(
         model: &CompiledModel,
         params: ParamValues,
@@ -277,6 +354,7 @@ impl ModelEvaluator {
     }
 }
 
+/// Generates kinematically valid events for a physics channel.
 #[derive(Debug)]
 pub struct ChannelGenerator {
     edges: Vec<EdgePlan>,
@@ -457,6 +535,7 @@ struct GeneratedEvent {
 }
 
 impl ChannelGenerator {
+    /// Validates a channel and constructs its topological generation plan.
     pub fn new(channel: Channel) -> GenerationResult<Self> {
         channel
             .validate()
@@ -578,6 +657,7 @@ impl ChannelGenerator {
         })
     }
 
+    /// Adds a generated scalar column and returns the updated generator.
     pub fn with_scalar(
         mut self,
         name: impl Into<String>,
@@ -587,6 +667,7 @@ impl ChannelGenerator {
         Ok(self)
     }
 
+    /// Adds a generated scalar column.
     pub fn add_scalar(
         &mut self,
         name: impl Into<String>,
@@ -614,6 +695,7 @@ impl ChannelGenerator {
         Ok(self)
     }
 
+    /// Generates weighted events and writes them to `sink`.
     pub fn generate_weighted_to(
         &self,
         config: WeightedConfig,
@@ -642,6 +724,7 @@ impl ChannelGenerator {
         Ok(report)
     }
 
+    /// Generates rejection-sampled unweighted events and writes them to `sink`.
     pub fn generate_unweighted_to(
         &self,
         config: UnweightedConfig,
@@ -826,6 +909,7 @@ impl ChannelGenerator {
         Ok(report)
     }
 
+    /// Generates weighted events into an in-memory dataset.
     pub fn generate_weighted_dataset(
         &self,
         config: WeightedConfig,
@@ -836,6 +920,7 @@ impl ChannelGenerator {
         Ok((Dataset::from_batches(sink.into_batches())?, report))
     }
 
+    /// Generates unweighted events into an in-memory dataset.
     pub fn generate_unweighted_dataset(
         &self,
         config: UnweightedConfig,

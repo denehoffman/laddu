@@ -28,45 +28,57 @@ pub struct ReductionOutput {
 }
 
 impl ReductionOutput {
+    /// Returns the transformed value.
     pub const fn value(self) -> f64 {
         self.value
     }
 
+    /// Returns the derivative with respect to the real model output.
     pub const fn derivative(self) -> f64 {
         self.derivative
     }
 
+    /// Returns the transformed value and derivative.
     pub const fn into_parts(self) -> (f64, f64) {
         (self.value, self.derivative)
     }
 }
 
+/// Errors produced while applying a dataset reduction transform.
 #[derive(Copy, Clone, Debug, Error, PartialEq)]
 pub enum ReductionError {
+    /// A positivity-requiring transform received a non-positive value.
     #[error("{transform:?} reduction requires a positive real value, got {value}")]
     NonPositiveValue {
+        /// Transform that rejected the value.
         transform: ReductionTransform,
+        /// Rejected real value.
         value: f64,
     },
 }
 
 impl ReductionPlan {
+    /// Creates a weighted reduction using `transform`.
     pub const fn weighted(transform: ReductionTransform) -> Self {
         Self { transform }
     }
 
+    /// Creates a weighted reduction of the real component.
     pub const fn weighted_real() -> Self {
         Self::weighted(ReductionTransform::Real)
     }
 
+    /// Creates a weighted reduction requiring a positive real component.
     pub const fn weighted_positive_real() -> Self {
         Self::weighted(ReductionTransform::PositiveReal)
     }
 
+    /// Creates a weighted reduction of the log of a positive real component.
     pub const fn weighted_log_positive_real() -> Self {
         Self::weighted(ReductionTransform::LogPositiveReal)
     }
 
+    /// Returns the per-event transform.
     pub const fn transform(self) -> ReductionTransform {
         self.transform
     }

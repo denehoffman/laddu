@@ -2,36 +2,59 @@ use std::{collections::HashSet, fmt};
 
 use crate::{ExprGraph, ExprId, ExprMetadata, ExprNode, expression::node_children};
 
+/// Controls how graph displays handle nodes reached through multiple paths.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub enum RepeatedSubtrees {
+    /// Render the complete subtree at every occurrence.
     #[default]
     Expand,
+    /// Render a later occurrence as a reference to the first.
     Reference,
 }
 
+/// Node categories available to visualization style selectors.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum ExprNodeKind {
+    /// Real constant node.
     RealConst,
+    /// Complex constant node.
     ComplexConst,
+    /// Scalar parameter node.
     ScalarParam,
+    /// Scalar event-data node.
     EventScalar,
+    /// Four-momentum component event-data node.
     EventP4Component,
+    /// Unary-operation node.
     Unary,
+    /// Binary-operation node.
     Binary,
+    /// N-ary addition node.
     NaryAdd,
+    /// N-ary multiplication node.
     NaryMul,
+    /// Complex-construction node.
     Complex,
+    /// Vector-construction node.
     Vector,
+    /// Matrix-construction node.
     Matrix,
+    /// Vector-component node.
     Component,
+    /// Matrix-element node.
     MatrixElement,
+    /// Matrix-matrix multiplication node.
     MatMul,
+    /// Matrix-vector multiplication node.
     MatVec,
+    /// Dot-product node.
     Dot,
+    /// Linear-system solution node.
     Solve,
 }
 
 impl ExprNodeKind {
+    /// Returns the category corresponding to `node`.
     pub fn of(node: &ExprNode) -> Self {
         match node {
             ExprNode::RealConst(_) => Self::RealConst,
@@ -56,6 +79,7 @@ impl ExprNodeKind {
     }
 }
 
+/// An RGB color used by tree and Graphviz displays.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct DisplayColor {
     red: u8,
@@ -64,6 +88,7 @@ pub struct DisplayColor {
 }
 
 impl DisplayColor {
+    /// Creates a color from red, green, and blue channels.
     pub const fn rgb(red: u8, green: u8, blue: u8) -> Self {
         Self { red, green, blue }
     }
@@ -77,14 +102,19 @@ impl DisplayColor {
     }
 }
 
+/// Optional foreground, fill, and border colors for a displayed node.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub struct NodeStyle {
+    /// Text color.
     pub foreground: Option<DisplayColor>,
+    /// Background or fill color.
     pub fill: Option<DisplayColor>,
+    /// Outline color.
     pub border: Option<DisplayColor>,
 }
 
 impl NodeStyle {
+    /// Creates a style with no color overrides.
     pub const fn new() -> Self {
         Self {
             foreground: None,
@@ -93,16 +123,19 @@ impl NodeStyle {
         }
     }
 
+    /// Sets the text color.
     pub const fn with_foreground(mut self, color: DisplayColor) -> Self {
         self.foreground = Some(color);
         self
     }
 
+    /// Sets the background or fill color.
     pub const fn with_fill(mut self, color: DisplayColor) -> Self {
         self.fill = Some(color);
         self
     }
 
+    /// Sets the outline color.
     pub const fn with_border(mut self, color: DisplayColor) -> Self {
         self.border = Some(color);
         self
@@ -121,11 +154,16 @@ impl NodeStyle {
     }
 }
 
+/// Predicate selecting expression nodes for a [`NodeStyleRule`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum NodeSelector {
+    /// Select every node.
     Any,
+    /// Select nodes in a category.
     Kind(ExprNodeKind),
+    /// Select nodes with a matching metadata or source name.
     Name(String),
+    /// Select nodes carrying a metadata tag.
     Tag(String),
 }
 
@@ -150,21 +188,28 @@ impl NodeSelector {
     }
 }
 
+/// A selector and the style to overlay on matching nodes.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NodeStyleRule {
+    /// Predicate used to select nodes.
     pub selector: NodeSelector,
+    /// Style overlaid on selected nodes.
     pub style: NodeStyle,
 }
 
 impl NodeStyleRule {
+    /// Creates a style rule from a selector and style.
     pub fn new(selector: NodeSelector, style: NodeStyle) -> Self {
         Self { selector, style }
     }
 }
 
+/// Built-in color palette for expression graphs.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum ColorPreset {
+    /// Colors selected for light backgrounds.
     Light,
+    /// Colors selected for dark backgrounds.
     Dark,
 }
 
@@ -250,11 +295,13 @@ impl DisplayOptions {
 
 macro_rules! display_builder_methods {
     () => {
+        /// Sets how nodes reached through multiple paths are rendered.
         pub fn repeated_subtrees(mut self, repeated_subtrees: RepeatedSubtrees) -> Self {
             self.options.repeated_subtrees = repeated_subtrees;
             self
         }
 
+        /// Chooses between fully expanding and referencing repeated subtrees.
         pub fn expand_repeated(self, expand: bool) -> Self {
             self.repeated_subtrees(if expand {
                 RepeatedSubtrees::Expand
@@ -263,11 +310,15 @@ macro_rules! display_builder_methods {
             })
         }
 
+        /// Adds the style rules from a built-in color palette.
         pub fn with_preset(mut self, preset: ColorPreset) -> Self {
             self.options.with_preset(preset);
             self
         }
 
+        /// Appends a node style rule.
+        ///
+        /// Later matching rules override fields set by earlier rules.
         pub fn with_style_rule(mut self, rule: NodeStyleRule) -> Self {
             self.options.rules.push(rule);
             self
@@ -275,6 +326,7 @@ macro_rules! display_builder_methods {
     };
 }
 
+/// Configurable indented-tree display for an [`ExprGraph`].
 pub struct ExprGraphTreeDisplay<'a> {
     graph: &'a ExprGraph,
     options: DisplayOptions,
@@ -342,6 +394,7 @@ impl fmt::Display for ExprGraphTreeDisplay<'_> {
     }
 }
 
+/// Configurable Graphviz DOT display for an [`ExprGraph`].
 pub struct ExprGraphDotDisplay<'a> {
     graph: &'a ExprGraph,
     options: DisplayOptions,
@@ -358,6 +411,7 @@ impl<'a> ExprGraphDotDisplay<'a> {
     display_builder_methods!();
 
     #[cfg(feature = "svg")]
+    /// Renders the generated Graphviz graph as an SVG document.
     pub fn render_svg(&self) -> Result<String, GraphRenderError> {
         use layout::{backends::svg::SVGWriter, gv};
 
@@ -443,8 +497,10 @@ impl<'a> ExprGraphDotDisplay<'a> {
 }
 
 #[cfg(feature = "svg")]
+/// Errors produced while rendering an expression graph.
 #[derive(Clone, Debug, thiserror::Error, PartialEq, Eq)]
 pub enum GraphRenderError {
+    /// The generated Graphviz DOT source could not be parsed.
     #[error("failed to parse generated DOT: {0}")]
     Dot(String),
 }

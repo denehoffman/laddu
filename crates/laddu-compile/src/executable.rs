@@ -11,6 +11,7 @@ use laddu_kernel::ir::{
 
 use crate::{CachePlan, CompileResult, CompiledModel};
 
+/// Specialized plan for reading one component of an event-dependent linear solve.
 #[derive(Copy, Clone, Debug)]
 pub struct SolveComponentPlan {
     rhs: ExprId,
@@ -19,19 +20,23 @@ pub struct SolveComponentPlan {
 }
 
 impl SolveComponentPlan {
+    /// Returns the solve right-hand-side node.
     pub fn rhs(self) -> ExprId {
         self.rhs
     }
 
+    /// Returns the cached factorization row slot.
     pub fn row_slot(self) -> usize {
         self.row_slot
     }
 
+    /// Returns the square matrix dimension.
     pub fn dimension(self) -> usize {
         self.dimension
     }
 }
 
+/// Cached row layout for one event-dependent solve matrix.
 #[derive(Clone, Debug)]
 pub struct SolveRowMatrixPlan {
     matrix: ExprId,
@@ -40,19 +45,23 @@ pub struct SolveRowMatrixPlan {
 }
 
 impl SolveRowMatrixPlan {
+    /// Returns the matrix graph node.
     pub fn matrix(&self) -> ExprId {
         self.matrix
     }
 
+    /// Returns the square matrix dimension.
     pub fn dimension(&self) -> usize {
         self.dimension
     }
 
+    /// Returns `(row_index, cache_slot)` pairs.
     pub fn rows(&self) -> &[(usize, usize)] {
         &self.rows
     }
 }
 
+/// Backend-neutral schedule, cache layout, and lowered kernel IR for a model.
 #[derive(Clone, Debug)]
 pub struct ExecutablePlan {
     graph: ExprGraph,
@@ -77,6 +86,7 @@ pub struct ExecutablePlan {
 }
 
 impl ExecutablePlan {
+    /// Lowers a compiled model into an executable plan.
     pub fn from_model(model: &CompiledModel) -> CompileResult<Self> {
         Self::from_model_with_solve_rows(model, true)
     }
@@ -204,78 +214,97 @@ impl ExecutablePlan {
         })
     }
 
+    /// Returns the optimized expression graph.
     pub fn graph(&self) -> &ExprGraph {
         &self.graph
     }
 
+    /// Returns the model parameter layout.
     pub fn params(&self) -> &ParamLayout {
         &self.params
     }
 
+    /// Maps graph nodes to parameter identifiers.
     pub fn parameter_slots(&self) -> &[Option<ParamId>] {
         &self.parameter_slots
     }
 
+    /// Returns the ordinary event-cache plan.
     pub fn cache_plan(&self) -> &CachePlan {
         &self.cache_plan
     }
 
+    /// Maps graph nodes to ordinary cache slots.
     pub fn cache_slots(&self) -> &[Option<usize>] {
         &self.cache_slots
     }
 
+    /// Returns nodes evaluated by the scalar schedule.
     pub fn evaluation_nodes(&self) -> &[ExprId] {
         &self.evaluation_nodes
     }
 
+    /// Maps graph nodes to scalar schedule value slots.
     pub fn value_slots(&self) -> &[Option<usize>] {
         &self.value_slots
     }
 
+    /// Returns lowered scalar kernel IR, if the plan has scalar work.
     pub fn scalar_kernel(&self) -> Option<&ScalarKernelIr> {
         self.scalar_kernel.as_ref()
     }
 
+    /// Returns lowered cache-materialization kernel IR, if required.
     pub fn cache_kernel(&self) -> Option<&CacheKernelIr> {
         self.cache_kernel.as_ref()
     }
 
+    /// Returns graph nodes supplied as inputs to the cache kernel.
     pub fn cache_input_nodes(&self) -> &[ExprId] {
         &self.cache_input_nodes
     }
 
+    /// Returns nodes evaluated while materializing all caches.
     pub fn cache_materialization_nodes(&self) -> &[ExprId] {
         &self.cache_materialization_nodes
     }
 
+    /// Maps graph nodes to specialized solve-component plans.
     pub fn solve_components(&self) -> &[Option<SolveComponentPlan>] {
         &self.solve_components
     }
 
+    /// Maps solve nodes to flattened right-hand-side element nodes.
     pub fn solve_rhs_elements(&self) -> &[Option<Vec<ExprId>>] {
         &self.solve_rhs_elements
     }
 
+    /// Returns event-dependent matrices using cached solve rows.
     pub fn solve_row_matrices(&self) -> &[SolveRowMatrixPlan] {
         &self.solve_row_matrices
     }
 
+    /// Returns keys identifying specialized matrix rows.
     pub fn solve_row_keys(&self) -> &[(ExprId, usize, usize)] {
         &self.solve_row_keys
     }
 
+    /// Maps event-dependent matrix nodes to factorization slots.
     pub fn factor_matrix_slots(&self) -> &[Option<usize>] {
         &self.factor_matrix_slots
     }
 
+    /// Returns event-dependent matrices to factor per event.
     pub fn factor_matrices(&self) -> &[(ExprId, usize)] {
         &self.factor_matrices
     }
 
+    /// Maps invariant matrix nodes to constant factorization slots.
     pub fn constant_factor_slots(&self) -> &[Option<usize>] {
         &self.constant_factor_slots
     }
 
+    /// Returns invariant matrices to factor once.
     pub fn constant_factor_matrices(&self) -> &[(ExprId, usize)] {
         &self.constant_factor_matrices
     }

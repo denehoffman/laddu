@@ -23,6 +23,7 @@ use crate::{
     },
 };
 
+/// Event source backed by one or more ROOT TTrees.
 #[derive(Clone, Debug)]
 pub struct RootSource {
     files: Arc<[Arc<PathBuf>]>,
@@ -31,12 +32,18 @@ pub struct RootSource {
     options: RootReadOptions,
 }
 
+/// Schema, validation, glob, and tree-selection options for ROOT reads.
 #[derive(Clone, Debug)]
 pub struct RootReadOptions {
+    /// Infer a logical schema when none is supplied.
     pub infer_schema: bool,
+    /// Validate required columns in every matched file.
     pub validate_all_files: bool,
+    /// Sort glob results for deterministic global row order.
     pub sort_glob: bool,
+    /// TTree selection policy.
     pub tree: RootTreeSelection,
+    /// Logical schema inference options.
     pub schema_inference: SchemaInferenceOptions,
 }
 
@@ -52,32 +59,45 @@ impl Default for RootReadOptions {
     }
 }
 
+/// Policy for selecting a TTree from each ROOT file.
 #[derive(Clone, Debug, Default)]
 pub enum RootTreeSelection {
+    /// Select the first TTree.
     #[default]
     First,
+    /// Select a TTree by name.
     Named(Name),
 }
 
+/// Key identifying one TTree within a ROOT file.
 #[derive(Clone, Debug)]
 pub struct RootFragmentKey {
+    /// Input file path.
     pub file: Arc<PathBuf>,
+    /// TTree name.
     pub tree_name: Name,
 }
 
+/// Introspection metadata for one ROOT branch.
 #[derive(Clone, Debug)]
 pub struct RootColumnInfo {
+    /// Branch name.
     pub name: Name,
+    /// Rust item type reported by the reader.
     pub item_type_name: String,
+    /// ROOT interpretation string.
     pub interpretation: String,
+    /// Number of branch entries.
     pub entries: i64,
 }
 
 impl RootSource {
+    /// Opens files matching a glob with default options.
     pub fn open(pattern: impl AsRef<str>) -> LadduDataResult<Self> {
         Self::builder(pattern).build()
     }
 
+    /// Creates a configurable source builder for a file glob.
     pub fn builder(pattern: impl AsRef<str>) -> RootSourceBuilder {
         RootSourceBuilder {
             pattern: pattern.as_ref().to_owned(),
@@ -86,14 +106,17 @@ impl RootSource {
         }
     }
 
+    /// Returns matched files in global row order.
     pub fn files(&self) -> &[Arc<PathBuf>] {
         &self.files
     }
 
+    /// Returns the selected TTree name.
     pub fn tree_name(&self) -> &str {
         self.tree_name.as_ref()
     }
 
+    /// Lists TTrees in one ROOT file.
     pub fn tree_names(path: impl AsRef<Path>) -> LadduDataResult<Vec<Name>> {
         let mut file = RootFile::open(path.as_ref()).map_err(root_source_error)?;
         let key_names: Vec<String> = file.keys_name().map(str::to_owned).collect();
@@ -109,6 +132,7 @@ impl RootSource {
         Ok(out)
     }
 
+    /// Lists branch metadata for a selected or first TTree.
     pub fn columns(
         path: impl AsRef<Path>,
         tree: Option<&str>,
@@ -137,6 +161,7 @@ impl RootSource {
     }
 }
 
+/// Builder for a [`RootSource`].
 pub struct RootSourceBuilder {
     pattern: String,
     schema: Option<Arc<Schema>>,
@@ -144,47 +169,56 @@ pub struct RootSourceBuilder {
 }
 
 impl RootSourceBuilder {
+    /// Supplies an explicit logical schema and disables inference.
     pub fn schema(mut self, schema: Arc<Schema>) -> Self {
         self.schema = Some(schema);
         self.options.infer_schema = false;
         self
     }
 
+    /// Enables or disables logical schema inference.
     pub fn infer_schema(mut self, value: bool) -> Self {
         self.options.infer_schema = value;
         self
     }
 
+    /// Selects a TTree by name.
     pub fn tree(mut self, name: impl Into<Name>) -> Self {
         self.options.tree = RootTreeSelection::Named(name.into());
         self
     }
 
+    /// Selects the first TTree.
     pub fn first_tree(mut self) -> Self {
         self.options.tree = RootTreeSelection::First;
         self
     }
 
+    /// Requires a physical weight column during inference.
     pub fn require_weight(mut self, value: bool) -> Self {
         self.options.schema_inference.require_weight = value;
         self
     }
 
+    /// Chooses whether every matched file is schema-validated eagerly.
     pub fn validate_all_files(mut self, value: bool) -> Self {
         self.options.validate_all_files = value;
         self
     }
 
+    /// Chooses whether matched paths are sorted.
     pub fn sort_glob(mut self, value: bool) -> Self {
         self.options.sort_glob = value;
         self
     }
 
+    /// Replaces logical schema inference options.
     pub fn schema_inference(mut self, options: SchemaInferenceOptions) -> Self {
         self.options.schema_inference = options;
         self
     }
 
+    /// Resolves files and tree, validates schema, and builds the source.
     pub fn build(self) -> LadduDataResult<RootSource> {
         let RootSourceBuilder {
             pattern,
@@ -678,6 +712,7 @@ fn root_sink_error(e: impl std::fmt::Display) -> LadduDataError {
     LadduDataError::Sink(e.to_string())
 }
 
+/// Event sink that writes a ROOT TTree on a background thread.
 pub struct RootSink {
     output: OutputPath,
     options: RootWriteOptions,
@@ -687,9 +722,12 @@ pub struct RootSink {
     writer_thread: Option<JoinHandle<LadduDataResult<()>>>,
 }
 
+/// ROOT tree and physical schema write options.
 #[derive(Clone, Debug)]
 pub struct RootWriteOptions {
+    /// Output TTree name.
     pub tree_name: Name,
+    /// Physical schema write options.
     pub schema_write: SchemaWriteOptions,
 }
 
@@ -703,10 +741,12 @@ impl Default for RootWriteOptions {
 }
 
 impl RootSink {
+    /// Creates a sink with default options.
     pub fn create(path: impl Into<PathBuf>) -> Self {
         Self::builder(path).build()
     }
 
+    /// Creates a configurable sink builder.
     pub fn builder(path: impl Into<PathBuf>) -> RootSinkBuilder {
         RootSinkBuilder {
             output: OutputPath::new(path),
@@ -714,59 +754,71 @@ impl RootSink {
         }
     }
 
+    /// Returns the concrete path after writing has begun.
     pub fn resolved_path(&self) -> Option<&Path> {
         self.resolved_path.as_deref()
     }
 }
 
+/// Builder for a [`RootSink`].
 pub struct RootSinkBuilder {
     output: OutputPath,
     options: RootWriteOptions,
 }
 
 impl RootSinkBuilder {
+    /// Sets the output path mode.
     pub fn output_mode(mut self, mode: OutputMode) -> Self {
         self.output = self.output.with_mode(mode);
         self
     }
 
+    /// Selects single-file output.
     pub fn single_file(self) -> Self {
         self.output_mode(OutputMode::SingleFile)
     }
 
+    /// Selects one output file per rank.
     pub fn per_rank_files(self) -> Self {
         self.output_mode(OutputMode::PerRankFiles)
     }
 
+    /// Selects output mode from the write plan.
     pub fn auto_output(self) -> Self {
         self.output_mode(OutputMode::Auto)
     }
 
+    /// Sets the output TTree name.
     pub fn tree(mut self, name: impl Into<Name>) -> Self {
         self.options.tree_name = name.into();
         self
     }
 
+    /// Replaces physical schema write options.
     pub fn schema_write(mut self, options: SchemaWriteOptions) -> Self {
         self.options.schema_write = options;
         self
     }
 
+    /// Sets physical column naming conventions.
     pub fn column_names(mut self, column_names: SchemaColumnNames) -> Self {
         self.options.schema_write.column_names = column_names;
         self
     }
 
+    /// Sets floating-point output precision.
     pub fn precision(mut self, precision: Precision) -> Self {
         self.options.schema_write.precision = precision;
         self
     }
 
+    /// Sets the weight-column emission policy.
     pub fn write_weight_column(mut self, value: WriteWeightColumn) -> Self {
         self.options.schema_write.write_weight_column = value;
         self
     }
 
+    /// Builds the sink.
     pub fn build(self) -> RootSink {
         RootSink {
             output: self.output,

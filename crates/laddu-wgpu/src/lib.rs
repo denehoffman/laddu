@@ -1,3 +1,5 @@
+//! WebGPU model execution and resident event-cache support for Laddu.
+
 mod adapter;
 mod error;
 mod scalar;

@@ -16,6 +16,7 @@ enum DatasetOp {
     Bootstrap { seed: u64 },
 }
 
+/// Lazy event dataset combining a source, read plan, and row transformations.
 #[derive(Clone)]
 pub struct Dataset {
     source: Arc<dyn EventSource>,
@@ -24,6 +25,7 @@ pub struct Dataset {
     cache_storage: CacheStorage,
 }
 
+/// Memory policy for compiled event-dependent model caches.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub enum CacheStorage {
     /// Materialize all event-dependent cache values once and retain them for repeated evaluations.
@@ -34,6 +36,7 @@ pub enum CacheStorage {
 }
 
 impl Dataset {
+    /// Creates a dataset from an event source.
     pub fn new<S>(source: S) -> Self
     where
         S: EventSource + 'static,
@@ -46,6 +49,7 @@ impl Dataset {
         }
     }
 
+    /// Creates a dataset from a shared dynamically dispatched source.
     pub fn from_arc(source: Arc<dyn EventSource>) -> Self {
         Self {
             source,
@@ -69,14 +73,17 @@ impl Dataset {
         }
     }
 
+    /// Creates an in-memory dataset from one batch.
     pub fn from_batch(batch: EventBatch) -> Self {
         Self::new(MemorySource::new(batch))
     }
 
+    /// Creates an in-memory dataset from schema-compatible batches.
     pub fn from_batches(batches: Vec<EventBatch>) -> LadduDataResult<Self> {
         Ok(Self::new(MemorySource::from_batches(batches)?))
     }
 
+    /// Collects owned events into an in-memory dataset.
     pub fn from_events<I>(schema: Arc<Schema>, events: I) -> LadduDataResult<Self>
     where
         I: IntoIterator<Item = OwnedEvent>,
@@ -84,18 +91,22 @@ impl Dataset {
         Ok(Self::new(MemorySource::from_events(schema, events)?))
     }
 
+    /// Returns the source schema.
     pub fn schema(&self) -> LadduDataResult<Arc<Schema>> {
         self.source.schema()
     }
 
+    /// Returns source planning capabilities.
     pub fn capabilities(&self) -> SourceCapabilities {
         self.source.capabilities()
     }
 
+    /// Returns the current read plan.
     pub fn read_plan(&self) -> ReadPlan {
         self.plan
     }
 
+    /// Returns the compiled-cache memory policy.
     pub fn cache_storage(&self) -> CacheStorage {
         self.cache_storage
     }
@@ -118,6 +129,7 @@ impl Dataset {
         self
     }
 
+    /// Returns this dataset with a nonzero maximum batch size.
     pub fn chunked(mut self, chunk_size: usize) -> LadduDataResult<Self> {
         if chunk_size == 0 {
             return Err(LadduDataError::InvalidArgument(
@@ -128,11 +140,13 @@ impl Dataset {
         Ok(self)
     }
 
+    /// Returns this dataset with source-native batch sizes.
     pub fn unchunked(mut self) -> Self {
         self.plan.chunk_size = None;
         self
     }
 
+    /// Lazily retains events satisfying `f`.
     pub fn filter<F>(self, f: F) -> Self
     where
         F: Fn(Event<'_>) -> bool + Send + Sync + 'static,
@@ -140,6 +154,7 @@ impl Dataset {
         self.push_op(DatasetOp::Filter(Arc::new(f)))
     }
 
+    /// Lazily retains a deterministic fraction of events.
     pub fn subsample(self, fraction: f64, seed: u64) -> LadduDataResult<Self> {
         if !(0.0..=1.0).contains(&fraction) {
             return Err(LadduDataError::InvalidArgument(
@@ -150,10 +165,12 @@ impl Dataset {
         Ok(self.push_op(DatasetOp::Subsample { fraction, seed }))
     }
 
+    /// Applies deterministic Poisson bootstrap multiplicities to event weights.
     pub fn bootstrap(self, seed: u64) -> Self {
         self.push_op(DatasetOp::Bootstrap { seed })
     }
 
+    /// Visits each transformed event.
     pub fn for_each_event<F>(&self, mut f: F) -> LadduDataResult<()>
     where
         F: FnMut(Event<'_>),
@@ -164,6 +181,7 @@ impl Dataset {
         })
     }
 
+    /// Visits each transformed event and stops at the first error.
     pub fn try_for_each_event<F>(&self, mut f: F) -> LadduDataResult<()>
     where
         F: FnMut(Event<'_>) -> LadduDataResult<()>,
@@ -180,6 +198,7 @@ impl Dataset {
         Ok(())
     }
 
+    /// Fallibly maps transformed events into a vector.
     pub fn try_map_events<T, F>(&self, mut f: F) -> LadduDataResult<Vec<T>>
     where
         F: FnMut(Event<'_>) -> LadduDataResult<T>,
@@ -193,6 +212,7 @@ impl Dataset {
         Ok(out)
     }
 
+    /// Maps transformed events into a vector.
     pub fn map_events<T, F>(&self, mut f: F) -> LadduDataResult<Vec<T>>
     where
         F: FnMut(Event<'_>) -> T,
@@ -206,6 +226,7 @@ impl Dataset {
         Ok(out)
     }
 
+    /// Fallibly folds transformed events into an owned accumulator.
     pub fn try_fold_events<T, F>(&self, init: T, mut f: F) -> LadduDataResult<T>
     where
         F: FnMut(T, Event<'_>) -> LadduDataResult<T>,
@@ -223,6 +244,7 @@ impl Dataset {
         acc.ok_or_else(|| LadduDataError::Source("dataset fold produced no accumulator".into()))
     }
 
+    /// Folds transformed events into an owned accumulator.
     pub fn fold_events<T, F>(&self, init: T, mut f: F) -> LadduDataResult<T>
     where
         F: FnMut(T, Event<'_>) -> T,
@@ -230,6 +252,7 @@ impl Dataset {
         self.try_fold_events(init, |acc, ev| Ok(f(acc, ev)))
     }
 
+    /// Fallibly updates a mutable accumulator for every transformed event.
     pub fn try_accumulate_events<T, F>(&self, mut acc: T, mut f: F) -> LadduDataResult<T>
     where
         F: FnMut(&mut T, Event<'_>) -> LadduDataResult<()>,
@@ -238,6 +261,7 @@ impl Dataset {
         Ok(acc)
     }
 
+    /// Updates a mutable accumulator for every transformed event.
     pub fn accumulate_events<T, F>(&self, acc: T, mut f: F) -> LadduDataResult<T>
     where
         F: FnMut(&mut T, Event<'_>),
@@ -248,10 +272,12 @@ impl Dataset {
         })
     }
 
+    /// Sums effective event weights.
     pub fn sum_weights(&self) -> LadduDataResult<f64> {
         self.fold_events(0.0, |sum, ev| sum + ev.weight())
     }
 
+    /// Sums `weight * f(event)` over transformed events.
     pub fn weighted_sum<F>(&self, mut f: F) -> LadduDataResult<f64>
     where
         F: FnMut(Event<'_>) -> f64,
@@ -259,6 +285,7 @@ impl Dataset {
         self.fold_events(0.0, |sum, ev| sum + ev.weight() * f(ev))
     }
 
+    /// Sums complex `weight * f(event)` contributions.
     pub fn weighted_complex_sum<F>(&self, mut f: F) -> LadduDataResult<Complex64>
     where
         F: FnMut(Event<'_>) -> Complex64,
@@ -266,6 +293,7 @@ impl Dataset {
         self.fold_events(0.0.into(), |sum, ev| sum + ev.weight() * f(ev))
     }
 
+    /// Opens an iterator of fully transformed event batches.
     pub fn batches(
         &self,
     ) -> LadduDataResult<Box<dyn Iterator<Item = LadduDataResult<EventBatch>> + Send>> {
@@ -293,6 +321,7 @@ impl Dataset {
         })))
     }
 
+    /// Visits each transformed batch and stops at the first error.
     pub fn try_for_each_batch<F>(&self, mut f: F) -> LadduDataResult<()>
     where
         F: FnMut(EventBatch) -> LadduDataResult<()>,
@@ -304,6 +333,7 @@ impl Dataset {
         Ok(())
     }
 
+    /// Maps transformed batches into a vector.
     pub fn map_batches<T, F>(&self, mut f: F) -> LadduDataResult<Vec<T>>
     where
         F: FnMut(EventBatch) -> T,
@@ -318,6 +348,7 @@ impl Dataset {
         Ok(out)
     }
 
+    /// Streams the transformed dataset into an event sink.
     pub fn write_to<S: EventSink>(&self, sink: &mut S) -> LadduDataResult<()> {
         sink.begin(self.schema()?, WritePlan::from(self.plan))?;
 
@@ -452,34 +483,41 @@ fn poisson1_from_hash(seed: u64, index: u64) -> u32 {
 }
 
 #[cfg(feature = "parallel")]
+/// Numerically accurate accumulators used by parallel reductions.
 pub mod accurate {
     use accurate::{sum::Sum2, traits::*};
     use num::complex::Complex64;
 
+    /// Compensated accumulator for real values.
     #[derive(Clone)]
     pub struct AccurateF64 {
         sum: Sum2<f64>,
     }
 
     impl AccurateF64 {
+        /// Creates a zero accumulator.
         pub fn zero() -> Self {
             Self { sum: Sum2::zero() }
         }
 
+        /// Adds one value.
         pub fn push(&mut self, value: f64) {
             let sum = std::mem::replace(&mut self.sum, Sum2::zero());
             self.sum = sum + value;
         }
 
+        /// Merges another accumulator.
         pub fn merge(&mut self, other: Self) {
             self.push(other.finish());
         }
 
+        /// Returns the accumulated sum.
         pub fn finish(self) -> f64 {
             self.sum.sum()
         }
     }
 
+    /// Pair of compensated accumulators for complex values.
     #[derive(Clone)]
     pub struct AccurateComplex64 {
         re: AccurateF64,
@@ -487,6 +525,7 @@ pub mod accurate {
     }
 
     impl AccurateComplex64 {
+        /// Creates a zero accumulator.
         pub fn zero() -> Self {
             Self {
                 re: AccurateF64::zero(),
@@ -494,16 +533,19 @@ pub mod accurate {
             }
         }
 
+        /// Adds one complex value.
         pub fn push(&mut self, value: Complex64) {
             self.re.push(value.re);
             self.im.push(value.im);
         }
 
+        /// Merges another accumulator.
         pub fn merge(&mut self, other: Self) {
             self.re.merge(other.re);
             self.im.merge(other.im);
         }
 
+        /// Returns the accumulated complex sum.
         pub fn finish(self) -> Complex64 {
             Complex64::new(self.re.finish(), self.im.finish())
         }

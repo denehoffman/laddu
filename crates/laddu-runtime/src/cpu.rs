@@ -41,9 +41,12 @@ use crate::jit::{JitCacheView, JitGradientKernel, JitPrecision, JitScalarKernel}
 
 const SCALAR_BLOCK_SIZE: usize = 32;
 
+/// Supplies event-dependent scalar values for direct CPU evaluation.
 pub trait EventLookup {
+    /// Returns the scalar named `name`, or `None` when it is unavailable.
     fn scalar(&self, name: &str) -> Option<f64>;
 
+    /// Returns one component of a named four-momentum.
     fn p4_component(&self, name: &str, component: P4Component) -> Option<f64> {
         let key = format!("{}.{}", name, component.label());
         self.scalar(&key)
@@ -65,16 +68,21 @@ impl EventLookup for HashMap<String, f64> {
     }
 }
 
+/// Prepares compiled models for CPU execution.
 #[derive(Clone, Debug, Default)]
 pub struct CpuBackend;
 
+/// CPU scalar-kernel execution strategy.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub enum CpuExecutionMode {
+    /// Prefer JIT execution when available and fall back to interpretation.
     #[default]
     Auto,
+    /// Always interpret the scalar kernel.
     Interpreter,
 }
 
+/// A compiled model prepared for CPU evaluation.
 #[derive(Clone, Debug)]
 pub struct CpuPlan {
     precision: Precision,
@@ -1022,6 +1030,7 @@ struct ScalarInvariantInstruction {
 }
 
 impl CpuBackend {
+    /// Prepares a model using the policies resolved by an execution context.
     pub fn prepare_for_execution(
         &self,
         model: &CompiledModel,
@@ -1045,11 +1054,13 @@ impl CpuBackend {
         Ok(plan)
     }
 
+    /// Prepares a model with forward autodiff and automatic execution-mode selection.
     pub fn prepare(&self, model: &CompiledModel) -> CpuPlan {
         self.prepare_with_modes(model, AutodiffMode::Forward, CpuExecutionMode::Auto)
             .expect("forward autodiff supports every compiled expression node")
     }
 
+    /// Prepares a model with an explicit scalar-kernel execution mode.
     pub fn prepare_with_execution_mode(
         &self,
         model: &CompiledModel,
@@ -1059,6 +1070,7 @@ impl CpuBackend {
             .expect("forward autodiff supports every compiled expression node")
     }
 
+    /// Prepares a model with an explicit automatic-differentiation mode.
     pub fn prepare_with_autodiff_mode(
         &self,
         model: &CompiledModel,
@@ -1067,6 +1079,7 @@ impl CpuBackend {
         self.prepare_with_modes(model, mode, CpuExecutionMode::Auto)
     }
 
+    /// Prepares a model with explicit autodiff and scalar execution modes.
     pub fn prepare_with_modes(
         &self,
         model: &CompiledModel,
@@ -1154,6 +1167,7 @@ impl CpuBackend {
     }
 }
 
+/// A complex model value and its derivatives with respect to free parameters.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ValueGradient {
     value: Complex64,
@@ -1173,28 +1187,34 @@ impl ReductionEvaluation {
         Self { value, gradient }
     }
 
+    /// Returns the reduced scalar value.
     pub fn value(&self) -> f64 {
         self.value
     }
 
+    /// Returns derivatives in free-parameter order.
     pub fn gradient(&self) -> &[f64] {
         &self.gradient
     }
 
+    /// Consumes the evaluation and returns its value and gradient.
     pub fn into_parts(self) -> (f64, Vec<f64>) {
         (self.value, self.gradient)
     }
 }
 
 impl ValueGradient {
+    /// Returns the complex model value.
     pub fn value(&self) -> Complex64 {
         self.value
     }
 
+    /// Returns complex derivatives in free-parameter order.
     pub fn gradient(&self) -> &[Complex64] {
         &self.gradient
     }
 
+    /// Consumes the evaluation and returns its value and gradient.
     pub fn into_parts(self) -> (Complex64, Vec<Complex64>) {
         (self.value, self.gradient)
     }
@@ -1302,22 +1322,27 @@ impl CpuPlan {
             .map_err(|err| RuntimeError::Parameter(err.to_string()))
     }
 
+    /// Returns the number of parameters, including fixed parameters.
     pub fn parameter_count(&self) -> usize {
         self.params.len()
     }
 
+    /// Returns the number of free parameters.
     pub fn free_parameter_count(&self) -> usize {
         self.params.n_free()
     }
 
+    /// Returns the event-cache layout required by this plan.
     pub fn cache_plan(&self) -> &CachePlan {
         &self.cache_plan
     }
 
+    /// Evaluates a model that has no event-dependent inputs.
     pub fn evaluate(&self, params: &ParamValues) -> RuntimeResult<Complex64> {
         self.evaluate_inner(params, None)
     }
 
+    /// Evaluates an event-independent model and its free-parameter gradient.
     pub fn evaluate_with_gradient(&self, params: &ParamValues) -> RuntimeResult<ValueGradient> {
         #[cfg(feature = "jit")]
         if let (Some(value_kernel), Some(gradient_kernel)) =
@@ -1347,6 +1372,7 @@ impl CpuPlan {
         self.value_gradient(values, None)
     }
 
+    /// Evaluates the model using values supplied by an event lookup.
     pub fn evaluate_with_event(
         &self,
         params: &ParamValues,
@@ -1355,6 +1381,7 @@ impl CpuPlan {
         self.evaluate_inner(params, Some(event))
     }
 
+    /// Evaluates the model and gradient using values supplied by an event lookup.
     pub fn evaluate_with_event_and_gradient(
         &self,
         params: &ParamValues,
@@ -1368,6 +1395,7 @@ impl CpuPlan {
         self.value_gradient(values, None)
     }
 
+    /// Materializes the event-dependent cache for a batch.
     pub fn cache_event_batch(&self, batch: &EventBatch) -> RuntimeResult<CpuBatchCache> {
         let event_columns = self.event_columns(batch.schema())?;
         let mut cache = CpuBatchCache::new(
@@ -1416,6 +1444,7 @@ impl CpuPlan {
         Ok(cache)
     }
 
+    /// Evaluates every row in a materialized batch cache.
     pub fn evaluate_cache(
         &self,
         params: &ParamValues,
@@ -1443,6 +1472,7 @@ impl CpuPlan {
         Ok(out)
     }
 
+    /// Evaluates one row in a materialized batch cache.
     pub fn evaluate_cache_row(
         &self,
         params: &ParamValues,
@@ -1922,6 +1952,7 @@ fn evaluate_scalar_cache_block(
 }
 
 impl CpuPlan {
+    /// Evaluates one cached row and its free-parameter gradient.
     pub fn evaluate_cache_row_with_gradient(
         &self,
         params: &ParamValues,
@@ -1964,6 +1995,7 @@ impl CpuPlan {
         self.value_gradient(values, Some((cache, row)))
     }
 
+    /// Evaluates every cached row and its free-parameter gradient.
     pub fn evaluate_cache_with_gradient(
         &self,
         params: &ParamValues,
@@ -2026,6 +2058,7 @@ impl CpuPlan {
             .collect())
     }
 
+    /// Evaluates the model for every event in a batch.
     pub fn evaluate_batch(
         &self,
         params: &ParamValues,
@@ -2035,6 +2068,7 @@ impl CpuPlan {
         self.evaluate_cache(params, &cache)
     }
 
+    /// Evaluates the model and gradient for every event in a batch.
     pub fn evaluate_batch_with_gradient(
         &self,
         params: &ParamValues,
@@ -2044,6 +2078,7 @@ impl CpuPlan {
         self.evaluate_cache_with_gradient(params, &cache)
     }
 
+    /// Materializes all event-dependent caches for a dataset.
     pub fn cache_dataset(&self, dataset: &Dataset) -> RuntimeResult<CpuCachedDataset> {
         self.cache_dataset_with_plan(dataset, dataset.read_plan())
     }
@@ -2072,6 +2107,7 @@ impl CpuPlan {
         })
     }
 
+    /// Prepares a dataset according to its cache-storage policy.
     pub fn prepare_dataset(
         &self,
         execution: &Execution,
@@ -2248,6 +2284,7 @@ impl CpuPlan {
         ))
     }
 
+    /// Evaluates every event in a fully cached dataset.
     pub fn evaluate_cached_dataset(
         &self,
         params: &ParamValues,
@@ -2272,6 +2309,7 @@ impl CpuPlan {
         Ok(out)
     }
 
+    /// Evaluates every event and gradient in a fully cached dataset.
     pub fn evaluate_cached_dataset_with_gradient(
         &self,
         params: &ParamValues,
@@ -5398,6 +5436,7 @@ enum EventColumn {
     P4Component { col: usize, component: P4Component },
 }
 
+/// Materialized event-dependent values for one batch.
 #[derive(Clone, Debug)]
 pub struct CpuBatchCache {
     len: usize,
@@ -5445,22 +5484,27 @@ impl CpuBatchCache {
         }
     }
 
+    /// Returns the number of cached events.
     pub fn len(&self) -> usize {
         self.len
     }
 
+    /// Returns whether the cache contains no events.
     pub fn is_empty(&self) -> bool {
         self.len == 0
     }
 
+    /// Returns per-event weights.
     pub fn weights(&self) -> &[f64] {
         &self.weights
     }
 
+    /// Returns the sum of event weights.
     pub fn sum_weights(&self) -> f64 {
         self.sum_weights
     }
 
+    /// Estimates heap memory retained by this cache, in bytes.
     pub fn resident_bytes(&self) -> usize {
         self.weights.capacity() * size_of::<f64>()
             + self.nodes.capacity() * size_of::<ExprId>()
@@ -5616,37 +5660,45 @@ impl CpuBatchCache {
     }
 }
 
+/// A cached event batch and its associated weights.
 #[derive(Clone, Debug)]
 pub struct CpuCachedBatch {
     cache: CpuBatchCache,
 }
 
 impl CpuCachedBatch {
+    /// Returns the underlying materialized cache.
     pub fn cache(&self) -> &CpuBatchCache {
         &self.cache
     }
 
+    /// Returns the number of events.
     pub fn len(&self) -> usize {
         self.cache.len()
     }
 
+    /// Returns whether the batch contains no events.
     pub fn is_empty(&self) -> bool {
         self.cache.is_empty()
     }
 
+    /// Returns per-event weights.
     pub fn weights(&self) -> &[f64] {
         self.cache.weights()
     }
 
+    /// Returns the sum of event weights.
     pub fn sum_weights(&self) -> f64 {
         self.cache.sum_weights()
     }
 
+    /// Estimates retained heap memory, in bytes.
     pub fn resident_bytes(&self) -> usize {
         self.cache.resident_bytes()
     }
 }
 
+/// A dataset whose event-dependent model values are fully cached in memory.
 #[derive(Clone, Debug, Default)]
 pub struct CpuCachedDataset {
     batches: Vec<CpuCachedBatch>,
@@ -5684,26 +5736,32 @@ impl PreparedDatasetStats {
         }
     }
 
+    /// Returns the number of events assigned to this rank.
     pub fn local_events(&self) -> usize {
         self.local_events
     }
 
+    /// Returns the total number of events across all ranks.
     pub fn global_events(&self) -> usize {
         self.global_events
     }
 
+    /// Returns the number of batches assigned to this rank.
     pub fn local_batches(&self) -> usize {
         self.local_batches
     }
 
+    /// Returns the total event-weight sum across all ranks.
     pub fn sum_weights(&self) -> f64 {
         self.sum_weights
     }
 
+    /// Returns the number of bytes retained for prepared data on this rank.
     pub fn resident_bytes(&self) -> usize {
         self.resident_bytes
     }
 
+    /// Returns the dataset's cache-storage policy.
     pub fn storage(&self) -> CacheStorage {
         self.storage
     }
@@ -5715,13 +5773,20 @@ impl PreparedDatasetStats {
 /// Resident datasets own all event-dependent cache values. Streaming datasets retain the source
 /// and read plan and rebuild transient batch caches on every reduction.
 pub enum CpuPreparedDataset {
+    /// A dataset whose event caches are resident in memory.
     Resident {
+        /// Fully cached dataset.
         dataset: CpuCachedDataset,
+        /// Preparation statistics.
         stats: PreparedDatasetStats,
     },
+    /// A dataset whose event caches are rebuilt while streaming.
     Streaming {
+        /// Source dataset.
         dataset: Dataset,
+        /// Read plan used for each pass.
         read_plan: laddu_data::io::ReadPlan,
+        /// Preparation statistics.
         stats: PreparedDatasetStats,
     },
 }
@@ -5736,6 +5801,7 @@ impl std::fmt::Debug for CpuPreparedDataset {
 }
 
 impl CpuPreparedDataset {
+    /// Returns statistics collected while preparing the dataset.
     pub fn stats(&self) -> &PreparedDatasetStats {
         match self {
             Self::Resident { stats, .. } | Self::Streaming { stats, .. } => stats,
@@ -5744,22 +5810,27 @@ impl CpuPreparedDataset {
 }
 
 impl CpuCachedDataset {
+    /// Returns the cached batches.
     pub fn batches(&self) -> &[CpuCachedBatch] {
         &self.batches
     }
 
+    /// Returns the total number of cached events.
     pub fn len(&self) -> usize {
         self.batches.iter().map(CpuCachedBatch::len).sum()
     }
 
+    /// Returns whether the dataset contains no events.
     pub fn is_empty(&self) -> bool {
         self.batches.iter().all(CpuCachedBatch::is_empty)
     }
 
+    /// Returns the sum of all event weights.
     pub fn sum_weights(&self) -> f64 {
         self.sum_weights
     }
 
+    /// Estimates retained heap memory, in bytes.
     pub fn resident_bytes(&self) -> usize {
         self.batches
             .iter()

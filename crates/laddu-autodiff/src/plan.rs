@@ -3,13 +3,17 @@ use laddu_compile::CompiledModel;
 use laddu_expr::{ExprId, ExprNode};
 use serde::{Deserialize, Serialize};
 
+/// Algorithm selected for automatic differentiation.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum AutodiffMode {
+    /// Propagate one tangent per free parameter through the primal graph.
     #[default]
     Forward,
+    /// Propagate adjoints backward from the scalar output.
     Reverse,
 }
 
+/// Per-parameter graph dependency plan for automatic differentiation.
 #[derive(Clone, Debug)]
 pub struct AutodiffPlan {
     mode: AutodiffMode,
@@ -17,6 +21,7 @@ pub struct AutodiffPlan {
 }
 
 impl AutodiffPlan {
+    /// Analyzes a compiled model for the selected differentiation mode.
     pub fn from_model(model: &CompiledModel, mode: AutodiffMode) -> AutodiffResult<Self> {
         let parameter_count = model.params().n_free();
         let mut node_dependencies = Vec::<Vec<bool>>::with_capacity(model.graph().nodes().len());
@@ -54,14 +59,17 @@ impl AutodiffPlan {
         Ok(Self { mode, active_nodes })
     }
 
+    /// Returns the selected differentiation mode.
     pub fn mode(&self) -> AutodiffMode {
         self.mode
     }
 
+    /// Returns the number of free parameters.
     pub fn parameter_count(&self) -> usize {
         self.active_nodes.len()
     }
 
+    /// Returns graph nodes depending on one free parameter.
     pub fn active_nodes(&self, free_parameter: usize) -> Option<&[ExprId]> {
         self.active_nodes.get(free_parameter).map(Vec::as_slice)
     }

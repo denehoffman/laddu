@@ -11,21 +11,28 @@ use crate::{
     RuntimeError, RuntimeResult,
 };
 
+/// A compiled model prepared for a concrete execution backend.
 #[derive(Clone, Debug)]
 pub enum PreparedModel {
+    /// A model prepared for CPU execution.
     Cpu(Box<CpuPlan>),
     #[cfg(feature = "wgpu")]
+    /// A model prepared for WebGPU execution.
     Wgpu(WgpuPlan),
 }
 
+/// A dataset prepared for a concrete execution backend.
 #[derive(Clone, Debug)]
 pub enum PreparedDataset {
+    /// A dataset prepared for CPU execution.
     Cpu(CpuPreparedDataset),
     #[cfg(feature = "wgpu")]
+    /// A dataset prepared for WebGPU execution.
     Wgpu(WgpuPreparedDataset),
 }
 
 impl PreparedDataset {
+    /// Returns statistics collected while preparing the dataset.
     pub fn stats(&self) -> &PreparedDatasetStats {
         match self {
             Self::Cpu(dataset) => dataset.stats(),
@@ -36,6 +43,7 @@ impl PreparedDataset {
 }
 
 impl PreparedModel {
+    /// Evaluates the model for every event in a batch.
     pub fn evaluate_batch(
         &self,
         params: &ParamValues,
@@ -57,6 +65,7 @@ impl PreparedModel {
         }
     }
 
+    /// Evaluates the model and its free-parameter gradient for every event in a batch.
     pub fn evaluate_batch_with_gradient(
         &self,
         params: &ParamValues,
@@ -71,6 +80,7 @@ impl PreparedModel {
         }
     }
 
+    /// Prepares a compiled model for the supplied execution context.
     pub fn prepare(model: &CompiledModel, execution: &Execution) -> RuntimeResult<Self> {
         #[cfg(feature = "wgpu")]
         if let Some(context) = execution.wgpu_context() {
@@ -87,6 +97,7 @@ impl PreparedModel {
         )))
     }
 
+    /// Prepares a dataset for repeated evaluation with this model.
     pub fn prepare_dataset(
         &self,
         execution: &Execution,
@@ -103,6 +114,7 @@ impl PreparedModel {
         }
     }
 
+    /// Executes a weighted scalar reduction over a prepared dataset.
     pub fn reduce(
         &self,
         execution: &Execution,
@@ -126,6 +138,7 @@ impl PreparedModel {
         }
     }
 
+    /// Executes a weighted reduction and computes its free-parameter gradient.
     pub fn reduce_with_gradient(
         &self,
         execution: &Execution,
@@ -151,6 +164,7 @@ impl PreparedModel {
 }
 
 #[cfg(feature = "wgpu")]
+/// A compiled model prepared for WebGPU execution.
 #[derive(Clone)]
 pub struct WgpuPlan {
     context: std::sync::Arc<laddu_wgpu::WgpuContext>,
@@ -169,16 +183,25 @@ impl std::fmt::Debug for WgpuPlan {
 }
 
 #[cfg(feature = "wgpu")]
+/// Dataset storage prepared for WebGPU evaluation.
 #[derive(Clone)]
 pub enum WgpuPreparedDataset {
+    /// GPU-resident prepared batches.
     Resident {
+        /// Prepared GPU batches.
         batches: Vec<laddu_wgpu::WgpuPreparedBatch>,
+        /// Preparation statistics.
         stats: PreparedDatasetStats,
     },
+    /// Source data streamed and prepared one batch at a time.
     Streaming {
+        /// Source dataset.
         dataset: Dataset,
+        /// Read plan used on each pass.
         read_plan: laddu_data::io::ReadPlan,
+        /// Reusable prepared-batch workspace.
         workspace: std::sync::Arc<std::sync::Mutex<Vec<laddu_wgpu::WgpuPreparedBatch>>>,
+        /// Preparation statistics.
         stats: PreparedDatasetStats,
     },
 }
@@ -195,6 +218,7 @@ impl std::fmt::Debug for WgpuPreparedDataset {
 
 #[cfg(feature = "wgpu")]
 impl WgpuPreparedDataset {
+    /// Returns statistics collected while preparing the dataset.
     pub fn stats(&self) -> &PreparedDatasetStats {
         match self {
             Self::Resident { stats, .. } | Self::Streaming { stats, .. } => stats,

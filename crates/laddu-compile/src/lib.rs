@@ -1,8 +1,13 @@
+//! Analysis, optimization, cache planning, and kernel lowering for expression graphs.
+
+/// Static operation-cost analysis.
 pub mod cost;
 mod error;
 mod executable;
+/// Per-node value, number, and dependency analysis.
 pub mod facts;
 mod model;
+/// Extensible expression-graph optimization passes and rewrite rules.
 pub mod optimize;
 mod reduction;
 

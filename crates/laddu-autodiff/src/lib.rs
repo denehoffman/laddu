@@ -1,3 +1,5 @@
+//! Automatic differentiation plans and gradient kernel generation.
+
 mod error;
 mod gradient;
 mod plan;

@@ -10,18 +10,21 @@ use crate::{
     schema::Schema,
 };
 
+/// Replayable in-memory event source backed by one or more batches.
 #[derive(Clone, Debug)]
 pub struct MemorySource {
     schema: Arc<Schema>,
     batches: Arc<[EventBatch]>,
 }
 
+/// Key identifying one batch fragment in a [`MemorySource`].
 #[derive(Clone, Copy, Debug)]
 pub struct MemoryFragmentKey {
     batch_index: usize,
 }
 
 impl MemorySource {
+    /// Creates a source containing one batch.
     pub fn new(batch: EventBatch) -> Self {
         Self {
             schema: Arc::clone(batch.schema()),
@@ -29,6 +32,7 @@ impl MemorySource {
         }
     }
 
+    /// Validates and creates a source from nonempty schema-compatible batches.
     pub fn from_batches(batches: Vec<EventBatch>) -> LadduDataResult<Self> {
         if batches.is_empty() {
             return Err(LadduDataError::InvalidArgument(
@@ -52,6 +56,7 @@ impl MemorySource {
         })
     }
 
+    /// Collects owned events into an in-memory source.
     pub fn from_events<I>(schema: Arc<Schema>, events: I) -> LadduDataResult<Self>
     where
         I: IntoIterator<Item = OwnedEvent>,
@@ -60,18 +65,22 @@ impl MemorySource {
         Ok(Self::new(batch))
     }
 
+    /// Returns the shared schema.
     pub fn schema_arc(&self) -> &Arc<Schema> {
         &self.schema
     }
 
+    /// Returns the backing batches.
     pub fn batches_slice(&self) -> &[EventBatch] {
         &self.batches
     }
 
+    /// Consumes the source and returns its shared batches.
     pub fn into_batches(self) -> Arc<[EventBatch]> {
         self.batches
     }
 
+    /// Consumes and concatenates all batches.
     pub fn into_batch(self) -> LadduDataResult<EventBatch> {
         EventBatch::concat(&self.batches)
     }
@@ -201,6 +210,7 @@ impl Iterator for MemoryRangeIter {
     }
 }
 
+/// Event sink that collects written batches in memory.
 #[derive(Clone, Debug, Default)]
 pub struct MemorySink {
     schema: Option<Arc<Schema>>,
@@ -209,30 +219,37 @@ pub struct MemorySink {
 }
 
 impl MemorySink {
+    /// Creates an empty sink.
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// Returns the schema supplied to the most recent write.
     pub fn schema(&self) -> Option<&Arc<Schema>> {
         self.schema.as_ref()
     }
 
+    /// Returns collected batches.
     pub fn batches(&self) -> &[EventBatch] {
         &self.batches
     }
 
+    /// Consumes the sink and returns collected batches.
     pub fn into_batches(self) -> Vec<EventBatch> {
         self.batches
     }
 
+    /// Consumes the sink and builds an in-memory source.
     pub fn into_source(self) -> LadduDataResult<MemorySource> {
         MemorySource::from_batches(self.batches)
     }
 
+    /// Consumes the sink and concatenates collected batches.
     pub fn into_batch(self) -> LadduDataResult<EventBatch> {
         EventBatch::concat(&self.batches)
     }
 
+    /// Clears schema, batches, and completion state.
     pub fn clear(&mut self) {
         self.schema = None;
         self.batches.clear();

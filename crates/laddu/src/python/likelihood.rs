@@ -183,7 +183,7 @@ impl PyNll {
 /// >>> import laddu as ld
 /// >>> # Given model, data, and accepted_mc datasets:
 /// >>> # term = ld.NLL(model, data, accepted_mc, name="signal")
-/// >>> # likelihood = ld.Likelihood([term])
+/// >>> # likelihood = ld.Likelihood(\[term\])
 /// >>> # value = likelihood.nll(likelihood.default_parameters)
 pub struct PyLikelihood {
     pub(crate) inner: Arc<Likelihood>,

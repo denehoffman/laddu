@@ -5,6 +5,7 @@ use std::{
 
 use crate::{LadduDataError, LadduDataResult, Name};
 
+/// Logical names and lookup tables for four-momentum, scalar, and weight columns.
 #[derive(Clone, Debug)]
 pub struct Schema {
     p4s: Vec<Name>,
@@ -24,6 +25,7 @@ impl PartialEq for Schema {
 }
 
 impl Schema {
+    /// Validates and constructs a logical schema.
     pub fn new(
         p4s: impl IntoIterator<Item = impl Into<Name>>,
         scalars: impl IntoIterator<Item = impl Into<Name>>,
@@ -42,39 +44,48 @@ impl Schema {
         })
     }
 
+    /// Returns the four-momentum column index for `name`.
     pub fn p4_index(&self, name: &str) -> Option<usize> {
         self.p4_index.get(name).copied()
     }
 
+    /// Returns the scalar column index for `name`.
     pub fn scalar_index(&self, name: &str) -> Option<usize> {
         self.scalar_index.get(name).copied()
     }
 
+    /// Returns four-momentum names in column order.
     pub fn p4s(&self) -> &[Name] {
         &self.p4s
     }
 
+    /// Returns scalar names in column order.
     pub fn scalars(&self) -> &[Name] {
         &self.scalars
     }
 
+    /// Returns whether events carry explicit weights.
     pub fn has_weight(&self) -> bool {
         self.has_weight
     }
 
+    /// Returns the number of four-momentum columns.
     pub fn n_p4s(&self) -> usize {
         self.p4s.len()
     }
 
+    /// Returns the number of scalar columns.
     pub fn n_scalars(&self) -> usize {
         self.scalars.len()
     }
 
+    /// Requires and returns a four-momentum column index.
     pub fn require_p4(&self, name: &str) -> LadduDataResult<usize> {
         self.p4_index(name)
             .ok_or_else(|| LadduDataError::MissingColumn(Name::from(name)))
     }
 
+    /// Requires and returns a scalar column index.
     pub fn require_scalar(&self, name: &str) -> LadduDataResult<usize> {
         self.scalar_index(name)
             .ok_or_else(|| LadduDataError::MissingColumn(Name::from(name)))
@@ -93,9 +104,12 @@ fn make_index(names: &[Name], kind: &'static str) -> LadduDataResult<HashMap<Nam
     Ok(out)
 }
 
+/// Physical naming conventions used to map a logical schema to storage columns.
 #[derive(Clone, Debug)]
 pub struct SchemaColumnNames {
+    /// Physical weight-column name.
     pub weight_column: Name,
+    /// Suffixes for four-momentum components.
     pub p4_suffixes: P4Suffixes,
 }
 
@@ -108,10 +122,14 @@ impl Default for SchemaColumnNames {
     }
 }
 
+/// Options controlling logical schema inference from physical columns.
 #[derive(Clone, Debug)]
 pub struct SchemaInferenceOptions {
+    /// Physical naming conventions.
     pub column_names: SchemaColumnNames,
+    /// Whether inference fails if the weight column is absent.
     pub require_weight: bool,
+    /// Whether incomplete four-momenta become independent scalar columns.
     pub incomplete_p4_components_are_scalars: bool,
 }
 
@@ -125,11 +143,16 @@ impl Default for SchemaInferenceOptions {
     }
 }
 
+/// Physical suffixes for `(E, px, py, pz)` columns.
 #[derive(Clone, Debug)]
 pub struct P4Suffixes {
+    /// Energy suffix.
     pub e: &'static str,
+    /// X-momentum suffix.
     pub px: &'static str,
+    /// Y-momentum suffix.
     pub py: &'static str,
+    /// Z-momentum suffix.
     pub pz: &'static str,
 }
 
@@ -145,6 +168,7 @@ impl Default for P4Suffixes {
 }
 
 impl P4Suffixes {
+    /// Splits a matching physical name into logical prefix and component index.
     pub fn component<'a>(&'a self, name: &'a str) -> Option<(&'a str, usize)> {
         if let Some(prefix) = name.strip_suffix(self.e) {
             Some((prefix, 0))
@@ -159,6 +183,7 @@ impl P4Suffixes {
         }
     }
 
+    /// Produces the four physical names for a logical four-momentum prefix.
     pub fn physical_p4_names(&self, prefix: &str) -> [String; 4] {
         [
             format!("{prefix}{}", self.e),
@@ -169,26 +194,35 @@ impl P4Suffixes {
     }
 }
 
+/// Physical storage type relevant to schema inference.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ColumnType {
+    /// 64-bit floating point.
     F64,
+    /// 32-bit floating point.
     F32,
+    /// Any unsupported type.
     Other,
 }
 
 impl ColumnType {
+    /// Returns whether this type can populate an event-data column.
     pub fn is_supported_float(self) -> bool {
         matches!(self, Self::F64 | Self::F32)
     }
 }
 
+/// Name and physical type of one available storage column.
 #[derive(Clone, Copy, Debug)]
 pub struct ColumnInfo<'a> {
+    /// Physical column name.
     pub name: &'a str,
+    /// Physical column type.
     pub dtype: ColumnType,
 }
 
 impl Schema {
+    /// Infers a logical schema from available physical columns.
     pub fn infer_from_columns<'a>(
         columns: impl IntoIterator<Item = ColumnInfo<'a>>,
         options: &SchemaInferenceOptions,
@@ -240,6 +274,7 @@ impl Schema {
         Schema::new(p4s, scalar_names, has_weight)
     }
 
+    /// Returns all physical columns required to store this schema.
     pub fn physical_columns(&self, column_names: &SchemaColumnNames) -> Vec<Name> {
         let mut names = Vec::with_capacity(4 * self.n_p4s() + self.n_scalars() + 1);
 
@@ -258,6 +293,7 @@ impl Schema {
         names
     }
 
+    /// Validates that all physical columns required by this schema are available.
     pub fn validate_required_columns<'a>(
         &self,
         available: impl IntoIterator<Item = ColumnInfo<'a>>,
@@ -279,24 +315,34 @@ impl Schema {
     }
 }
 
+/// Floating-point precision used when writing physical columns.
 #[derive(Copy, Clone, Debug, Default)]
 pub enum Precision {
+    /// Write 64-bit floating-point values.
     #[default]
     F64,
+    /// Write 32-bit floating-point values.
     F32,
 }
 
+/// Policy controlling whether sinks emit a weight column.
 #[derive(Clone, Copy, Debug, Default)]
 pub enum WriteWeightColumn {
+    /// Always write weights, using unit weights when the schema has none.
     #[default]
     Always,
+    /// Write weights only when the logical schema contains them.
     OnlyIfPresent,
 }
 
+/// Physical naming, precision, and weight policy for event sinks.
 #[derive(Clone, Debug, Default)]
 pub struct SchemaWriteOptions {
+    /// Physical column naming conventions.
     pub column_names: SchemaColumnNames,
+    /// Floating-point output precision.
     pub precision: Precision,
+    /// Weight-column emission policy.
     pub write_weight_column: WriteWeightColumn,
 }
 

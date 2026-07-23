@@ -1,5 +1,6 @@
 use laddu_expr::{BinaryOp, ExprGraph, ExprNode, UnaryOp};
 
+/// Static counts and weighted score used to compare expression graphs.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct OptimizationCost {
     node_count: usize,
@@ -17,6 +18,7 @@ pub struct OptimizationCost {
 }
 
 impl OptimizationCost {
+    /// Computes the cost metrics for `graph`.
     pub fn analyze(graph: &ExprGraph) -> Self {
         let mut cost = Self::default();
         for node in graph.nodes() {
@@ -25,61 +27,75 @@ impl OptimizationCost {
         cost
     }
 
+    /// Returns the total number of graph nodes.
     pub fn node_count(&self) -> usize {
         self.node_count
     }
 
+    /// Returns the weighted operation score.
     pub fn weighted_ops(&self) -> u64 {
         self.weighted_ops
     }
 
+    /// Returns whether this cost is strictly lower than `baseline`.
     pub fn is_better_than(&self, baseline: &Self) -> bool {
         self.weighted_ops < baseline.weighted_ops
             || (self.weighted_ops == baseline.weighted_ops && self.node_count < baseline.node_count)
     }
 
+    /// Returns whether this cost is lower than or equal to `baseline`.
     pub fn is_no_worse_than(&self, baseline: &Self) -> bool {
         self.weighted_ops < baseline.weighted_ops
             || (self.weighted_ops == baseline.weighted_ops
                 && self.node_count <= baseline.node_count)
     }
 
+    /// Returns the number of constants, parameters, and event inputs.
     pub fn free_nodes(&self) -> usize {
         self.free_nodes
     }
 
+    /// Returns the number of scalar additions.
     pub fn scalar_adds(&self) -> usize {
         self.scalar_adds
     }
 
+    /// Returns the number of scalar multiplications.
     pub fn scalar_muls(&self) -> usize {
         self.scalar_muls
     }
 
+    /// Returns the number of scalar divisions.
     pub fn scalar_divs(&self) -> usize {
         self.scalar_divs
     }
 
+    /// Returns the number of inexpensive unary operations.
     pub fn cheap_unary_ops(&self) -> usize {
         self.cheap_unary_ops
     }
 
+    /// Returns the number of integer-power operations.
     pub fn power_ops(&self) -> usize {
         self.power_ops
     }
 
+    /// Returns the number of transcendental operations.
     pub fn transcendental_ops(&self) -> usize {
         self.transcendental_ops
     }
 
+    /// Returns the number of complex, vector, and matrix constructors.
     pub fn constructors(&self) -> usize {
         self.constructors
     }
 
+    /// Returns the number of component and element extractions.
     pub fn extractions(&self) -> usize {
         self.extractions
     }
 
+    /// Returns the number of linear-algebra operations.
     pub fn linear_algebra_ops(&self) -> usize {
         self.linear_algebra_ops
     }

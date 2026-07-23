@@ -6,6 +6,7 @@ use laddu_physics::{
     quantum::L,
 };
 
+/// Constructs channel-by-pole Blatt-Weisskopf barrier ratios.
 pub fn blatt_weisskopf_barriers(
     s: impl Into<Expr>,
     channel_mass_1: impl Into<Expr>,
@@ -68,6 +69,7 @@ pub fn blatt_weisskopf_barriers(
     Ok(matrix_from_flat(channels, poles, elements)?)
 }
 
+/// Constructs the pole contribution to a coupled-channel K matrix.
 pub fn k_matrix(
     s: impl Into<Expr>,
     pole_masses: impl Into<Expr>,
@@ -83,6 +85,7 @@ pub fn k_matrix(
     )
 }
 
+/// Constructs a coupled-channel K matrix with a non-pole background.
 pub fn k_matrix_with_background(
     s: impl Into<Expr>,
     pole_masses: impl Into<Expr>,
@@ -140,6 +143,7 @@ fn k_matrix_impl(
     Ok(matrix_from_flat(channels, channels, elements)?)
 }
 
+/// Constructs a coupled-channel production vector from pole terms.
 pub fn p_vector(
     s: impl Into<Expr>,
     pole_masses: impl Into<Expr>,
@@ -157,6 +161,7 @@ pub fn p_vector(
     )
 }
 
+/// Constructs a production vector with a non-pole background.
 pub fn p_vector_with_background(
     s: impl Into<Expr>,
     pole_masses: impl Into<Expr>,
@@ -218,6 +223,7 @@ fn p_vector_impl(
     Ok(vector(elements))
 }
 
+/// Solves the coupled-channel final-state-interaction equation for an F vector.
 pub fn f_vector(
     s: impl Into<Expr>,
     pole_masses: impl Into<Expr>,

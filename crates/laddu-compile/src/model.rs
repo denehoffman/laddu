@@ -19,6 +19,7 @@ use crate::{
     optimize::*,
 };
 
+/// Options controlling graph optimization and event-cache planning.
 #[derive(Debug, Default)]
 pub struct CompileOptions {
     pipeline: OptimizationPipeline,
@@ -26,10 +27,12 @@ pub struct CompileOptions {
 }
 
 impl CompileOptions {
+    /// Creates the default optimized compilation options.
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// Creates options with an empty optimization pipeline.
     pub fn without_optimizations() -> Self {
         Self {
             pipeline: OptimizationPipeline::new(),
@@ -37,6 +40,7 @@ impl CompileOptions {
         }
     }
 
+    /// Creates options using a custom optimization pipeline.
     pub fn with_pipeline(pipeline: OptimizationPipeline) -> Self {
         Self {
             pipeline,
@@ -44,31 +48,39 @@ impl CompileOptions {
         }
     }
 
+    /// Returns the optimization pipeline.
     pub fn pipeline(&self) -> &OptimizationPipeline {
         &self.pipeline
     }
 
+    /// Returns the optimization pipeline for mutation.
     pub fn pipeline_mut(&mut self) -> &mut OptimizationPipeline {
         &mut self.pipeline
     }
 
+    /// Returns the event-cache policy.
     pub fn cache_policy(&self) -> CachePolicy {
         self.cache_policy
     }
 
+    /// Sets the event-cache policy.
     pub fn set_cache_policy(&mut self, cache_policy: CachePolicy) {
         self.cache_policy = cache_policy;
     }
 
+    /// Returns these options with a new event-cache policy.
     pub fn with_cache_policy(mut self, cache_policy: CachePolicy) -> Self {
         self.set_cache_policy(cache_policy);
         self
     }
 }
 
+/// Policy for caching parameter-independent event expressions.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub enum CachePolicy {
+    /// Disable event caching.
     Off,
+    /// Cache the event-dependent frontier that is independent of parameters.
     #[default]
     EventDependent,
 }
@@ -86,6 +98,7 @@ impl CachePolicy {
     }
 }
 
+/// Ordered set of graph nodes materialized into the per-event cache.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct CachePlan {
     entries: Vec<CacheEntry>,
@@ -155,18 +168,22 @@ impl CachePlan {
         }
     }
 
+    /// Returns cache entries in slot order.
     pub fn entries(&self) -> &[CacheEntry] {
         &self.entries
     }
 
+    /// Returns the number of cache slots.
     pub fn len(&self) -> usize {
         self.entries.len()
     }
 
+    /// Returns whether the plan contains no cache slots.
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
 
+    /// Returns the cache slot assigned to `node`.
     pub fn node_slot(&self, node: ExprId) -> Option<usize> {
         self.entries.iter().position(|entry| entry.node == node)
     }
@@ -177,6 +194,7 @@ impl CachePlan {
     }
 
     /// Packed payload bytes required per event by ordinary cache slots.
+    /// Returns the packed number of bytes required per event.
     pub fn bytes_per_event(&self) -> usize {
         self.entries
             .iter()
@@ -197,13 +215,20 @@ fn mark_cache_requirement(graph: &ExprGraph, id: ExprId, required: &mut [bool]) 
     }
 }
 
+/// In-memory representation used for one cache entry.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum CacheStorageKind {
+    /// One real scalar.
     Real,
-    Complex { width: usize },
+    /// One or more complex scalar elements.
+    Complex {
+        /// Number of complex elements.
+        width: usize,
+    },
 }
 
 impl CacheStorageKind {
+    /// Returns the number of logical scalar elements.
     pub fn width(self) -> usize {
         match self {
             Self::Real => 1,
@@ -211,6 +236,7 @@ impl CacheStorageKind {
         }
     }
 
+    /// Returns the packed number of bytes required per event.
     pub fn bytes_per_event(self) -> usize {
         match self {
             Self::Real => size_of::<f64>(),
@@ -219,6 +245,7 @@ impl CacheStorageKind {
     }
 }
 
+/// Description of one planned event-cache slot.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct CacheEntry {
     node: ExprId,
@@ -228,22 +255,27 @@ pub struct CacheEntry {
 }
 
 impl CacheEntry {
+    /// Returns the graph node materialized into this slot.
     pub fn node(&self) -> ExprId {
         self.node
     }
 
+    /// Returns the node's value kind.
     pub fn value_kind(&self) -> ValueKind {
         self.value_kind
     }
 
+    /// Returns the node's evaluation frequency.
     pub fn evaluation_class(&self) -> EvaluationClass {
         self.evaluation_class
     }
 
+    /// Returns the node's dependency facts.
     pub fn dependency(&self) -> DependencyFacts {
         self.dependency
     }
 
+    /// Returns the packed cache storage representation.
     pub fn storage_kind(&self) -> CacheStorageKind {
         match self.value_kind {
             ValueKind::Real => CacheStorageKind::Real,
@@ -254,6 +286,7 @@ impl CacheEntry {
     }
 }
 
+/// Optimized expression graph and the analyses required for execution.
 #[derive(Clone, Debug)]
 pub struct CompiledModel {
     source_graph: ExprGraph,
@@ -282,22 +315,27 @@ impl<'de> Deserialize<'de> for CompiledModel {
 }
 
 impl CompiledModel {
+    /// Projects the source graph to selected tags and recompiles it.
     pub fn project_tags<'a>(&self, tags: impl IntoIterator<Item = &'a str>) -> CompileResult<Self> {
         Self::from_graph(self.source_graph.project_tags(tags))
     }
 
+    /// Compiles an expression with default options.
     pub fn from_expr(expr: &Expr) -> CompileResult<Self> {
         Self::from_expr_with_options(expr, &CompileOptions::default())
     }
 
+    /// Compiles an expression with explicit options.
     pub fn from_expr_with_options(expr: &Expr, options: &CompileOptions) -> CompileResult<Self> {
         Self::from_graph_with_options(expr.to_graph(), options)
     }
 
+    /// Compiles a serialized graph with default options.
     pub fn from_graph(graph: ExprGraph) -> CompileResult<Self> {
         Self::from_graph_with_options(graph, &CompileOptions::default())
     }
 
+    /// Compiles a serialized graph with explicit options.
     pub fn from_graph_with_options(
         graph: ExprGraph,
         options: &CompileOptions,
@@ -316,14 +354,17 @@ impl CompiledModel {
         })
     }
 
+    /// Returns the optimized graph.
     pub fn graph(&self) -> &ExprGraph {
         &self.graph
     }
 
+    /// Creates an indented-tree display of the optimized graph.
     pub fn display_tree(&self) -> laddu_expr::ExprGraphTreeDisplay<'_> {
         self.graph.display_tree()
     }
 
+    /// Creates a Graphviz DOT display of the optimized graph.
     pub fn display_dot(&self) -> laddu_expr::ExprGraphDotDisplay<'_> {
         self.graph.display_dot()
     }
@@ -357,22 +398,27 @@ impl CompiledModel {
         Self::from_graph_with_options(self.source_graph.free_parameter(name)?, options)
     }
 
+    /// Returns the validated parameter layout.
     pub fn params(&self) -> &ParamLayout {
         &self.params
     }
 
+    /// Returns static facts for the optimized graph.
     pub fn facts(&self) -> &GraphFacts {
         &self.facts
     }
 
+    /// Returns the event-cache plan.
     pub fn cache_plan(&self) -> &CachePlan {
         &self.cache_plan
     }
 
+    /// Computes the optimized graph's operation cost.
     pub fn cost(&self) -> OptimizationCost {
         OptimizationCost::analyze(&self.graph)
     }
 
+    /// Returns static facts for one optimized graph node.
     pub fn node_facts(&self, id: ExprId) -> Option<&NodeFacts> {
         self.facts.get(id)
     }
@@ -401,6 +447,7 @@ fn bake_fixed_parameters(graph: &ExprGraph) -> ExprGraph {
     ExprGraph::from_parts(graph.root(), nodes, metadata).expect("source graph is valid")
 }
 
+/// Collects and validates all scalar parameters referenced by `graph`.
 pub fn collect_params(graph: &ExprGraph) -> CompileResult<ParamLayout> {
     let mut registry = ParamRegistry::new();
     for node in graph.nodes() {

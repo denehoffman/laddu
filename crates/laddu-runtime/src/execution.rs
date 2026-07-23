@@ -16,76 +16,114 @@ use mpi::{
     traits::{Communicator, CommunicatorCollectives},
 };
 
+/// Numeric precision used to execute a model.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Precision {
+    /// Select a precision appropriate for the resolved device.
     #[default]
     Auto,
+    /// Use 32-bit floating-point arithmetic.
     F32,
+    /// Use 64-bit floating-point arithmetic.
     F64,
 }
 
+/// Policy controlling CPU worker-thread use.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ThreadPolicy {
+    /// Use the runtime's default parallelism.
     #[default]
     Auto,
+    /// Execute serially on the calling thread.
     Serial,
+    /// Use exactly the given number of worker threads.
     Fixed(usize),
 }
 
+/// Policy controlling CPU just-in-time compilation.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum JitPolicy {
+    /// Use JIT compilation when it is available and applicable.
     #[default]
     Auto,
+    /// Require the JIT-capable execution path.
     Enabled,
+    /// Always use the interpreter.
     Disabled,
 }
 
+/// CPU-specific execution options.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CpuOptions {
+    /// Worker-thread policy.
     pub threads: ThreadPolicy,
+    /// JIT compilation policy.
     pub jit: JitPolicy,
 }
 
+/// GPU implementation to use.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum GpuBackend {
+    /// Select an available GPU backend automatically.
     #[default]
     Auto,
+    /// Use the WebGPU backend.
     Wgpu,
+    /// Use the CUDA backend.
     Cuda,
 }
 
+/// Rule used to select a GPU device.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum GpuDeviceSelector {
+    /// Select a suitable device automatically.
     #[default]
     Auto,
+    /// Select the adapter at the given enumeration index.
     Index(usize),
+    /// Select the adapter with the given PCI bus identifier.
     PciBusId(String),
+    /// Select an adapter whose name matches the given string.
     Name(String),
 }
 
+/// GPU-specific execution options.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GpuOptions {
+    /// GPU backend to use.
     pub backend: GpuBackend,
+    /// GPU device selection rule.
     pub device: GpuDeviceSelector,
+    /// Optional upper bound, in bytes, for resident GPU allocations.
     pub memory_budget: Option<usize>,
 }
 
+/// Device on which a model should execute.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Device {
+    /// Select a suitable device automatically.
     #[default]
     Auto,
+    /// Execute on a CPU with the supplied options.
     Cpu(CpuOptions),
+    /// Execute on a GPU with the supplied options.
     Gpu(GpuOptions),
 }
 
+/// Options used to construct an [`Execution`] context.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExecutionOptions {
+    /// Requested execution device.
     pub device: Device,
+    /// Requested numeric precision.
     pub precision: Precision,
+    /// Automatic-differentiation strategy.
     pub autodiff: AutodiffMode,
+    /// Dataset partitioning strategy for distributed execution.
     pub partitioning: Partitioning,
 }
 
+/// Resolved resources and policies used to execute models.
 #[derive(Clone)]
 pub struct Execution {
     requested_device: Device,
@@ -140,6 +178,7 @@ impl Default for Execution {
 }
 
 impl Execution {
+    /// Creates a non-distributed execution context from `options`.
     pub fn local(options: ExecutionOptions) -> RuntimeResult<Self> {
         #[cfg(feature = "wgpu")]
         let mut wgpu = None;
@@ -220,6 +259,7 @@ impl Execution {
     }
 
     #[cfg(feature = "mpi")]
+    /// Creates a distributed execution context over the supplied MPI communicator.
     pub fn distributed<C>(options: ExecutionOptions, world: &C) -> RuntimeResult<Self>
     where
         C: Communicator,
@@ -229,6 +269,7 @@ impl Execution {
         Ok(execution)
     }
 
+    /// Returns the device requested when this context was created.
     pub fn requested_device(&self) -> &Device {
         &self.requested_device
     }
@@ -238,26 +279,32 @@ impl Execution {
         self.wgpu.as_ref()
     }
 
+    /// Returns the resolved numeric precision.
     pub fn precision(&self) -> Precision {
         self.precision
     }
 
+    /// Returns the automatic-differentiation strategy.
     pub fn autodiff_mode(&self) -> AutodiffMode {
         self.autodiff
     }
 
+    /// Returns the CPU worker-thread policy.
     pub fn thread_policy(&self) -> ThreadPolicy {
         self.threads
     }
 
+    /// Returns the CPU JIT policy.
     pub fn jit_policy(&self) -> JitPolicy {
         self.jit
     }
 
+    /// Returns the distributed dataset-partitioning strategy.
     pub fn partitioning(&self) -> Partitioning {
         self.partitioning
     }
 
+    /// Returns the zero-based rank of this process.
     pub fn rank(&self) -> usize {
         #[cfg(feature = "mpi")]
         if let Some(communicator) = &self.communicator {
@@ -266,6 +313,7 @@ impl Execution {
         0
     }
 
+    /// Returns the number of participating ranks.
     pub fn nranks(&self) -> usize {
         #[cfg(feature = "mpi")]
         if let Some(communicator) = &self.communicator {
@@ -274,6 +322,7 @@ impl Execution {
         1
     }
 
+    /// Returns whether this context spans more than one rank.
     pub fn is_distributed(&self) -> bool {
         self.nranks() > 1
     }

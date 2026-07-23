@@ -29,6 +29,7 @@ use crate::{
     },
 };
 
+/// Event source backed by one or more Parquet files.
 #[derive(Clone, Debug)]
 pub struct ParquetSource {
     files: Arc<[Arc<PathBuf>]>,
@@ -36,12 +37,18 @@ pub struct ParquetSource {
     options: ParquetReadOptions,
 }
 
+/// Schema inference, validation, null, and glob options for Parquet reads.
 #[derive(Clone, Debug)]
 pub struct ParquetReadOptions {
+    /// Infer a logical schema when none is supplied.
     pub infer_schema: bool,
+    /// Validate required columns in every matched file.
     pub validate_all_files: bool,
+    /// Policy for null floating-point cells.
     pub null_handling: NullHandling,
+    /// Sort glob results for deterministic global row order.
     pub sort_glob: bool,
+    /// Logical schema inference options.
     pub schema_inference: SchemaInferenceOptions,
 }
 
@@ -57,23 +64,31 @@ impl Default for ParquetReadOptions {
     }
 }
 
+/// Policy for null floating-point cells in Parquet input.
 #[derive(Clone, Copy, Debug)]
 pub enum NullHandling {
+    /// Return an error on the first null.
     Error,
+    /// Convert nulls to NaN.
     NaN,
 }
 
+/// Key identifying one Parquet row group.
 #[derive(Clone, Debug)]
 pub struct ParquetFragmentKey {
+    /// Input file path.
     pub file: Arc<PathBuf>,
+    /// Zero-based row-group index.
     pub row_group: usize,
 }
 
 impl ParquetSource {
+    /// Opens files matching a glob with default options.
     pub fn open(pattern: impl AsRef<str>) -> LadduDataResult<Self> {
         Self::builder(pattern).build()
     }
 
+    /// Creates a configurable source builder for a file glob.
     pub fn builder(pattern: impl AsRef<str>) -> ParquetSourceBuilder {
         ParquetSourceBuilder {
             pattern: pattern.as_ref().to_owned(),
@@ -82,11 +97,13 @@ impl ParquetSource {
         }
     }
 
+    /// Returns matched files in global row order.
     pub fn files(&self) -> &[Arc<PathBuf>] {
         &self.files
     }
 }
 
+/// Builder for a [`ParquetSource`].
 pub struct ParquetSourceBuilder {
     pattern: String,
     schema: Option<Arc<Schema>>,
@@ -94,47 +111,56 @@ pub struct ParquetSourceBuilder {
 }
 
 impl ParquetSourceBuilder {
+    /// Supplies an explicit logical schema and disables inference.
     pub fn schema(mut self, schema: Arc<Schema>) -> Self {
         self.schema = Some(schema);
         self.options.infer_schema = false;
         self
     }
 
+    /// Enables or disables logical schema inference.
     pub fn infer_schema(mut self, value: bool) -> Self {
         self.options.infer_schema = value;
         self
     }
 
+    /// Requires a physical weight column during inference.
     pub fn require_weight(mut self, value: bool) -> Self {
         self.options.schema_inference.require_weight = value;
         self
     }
 
+    /// Chooses whether every matched file is schema-validated eagerly.
     pub fn validate_all_files(mut self, value: bool) -> Self {
         self.options.validate_all_files = value;
         self
     }
 
+    /// Converts null floating-point cells to NaN.
     pub fn nulls_as_nan(mut self) -> Self {
         self.options.null_handling = NullHandling::NaN;
         self
     }
 
+    /// Returns an error on null floating-point cells.
     pub fn error_on_nulls(mut self) -> Self {
         self.options.null_handling = NullHandling::Error;
         self
     }
 
+    /// Chooses whether matched paths are sorted.
     pub fn sort_glob(mut self, value: bool) -> Self {
         self.options.sort_glob = value;
         self
     }
 
+    /// Replaces logical schema inference options.
     pub fn schema_inference(mut self, options: SchemaInferenceOptions) -> Self {
         self.options.schema_inference = options;
         self
     }
 
+    /// Resolves files, validates schema, and builds the source.
     pub fn build(self) -> LadduDataResult<ParquetSource> {
         let mut files: Vec<PathBuf> = glob::glob(&self.pattern)
             .map_err(|e| LadduDataError::Source(e.to_string()))?
@@ -496,6 +522,7 @@ fn collect_f32(array: &Float32Array, name: &str, nulls: NullHandling) -> LadduDa
     Ok(out)
 }
 
+/// Event sink that writes Arrow record batches to Parquet.
 pub struct ParquetSink {
     output: OutputPath,
     writer: Option<ArrowWriter<File>>,
@@ -505,17 +532,22 @@ pub struct ParquetSink {
     resolved_path: Option<PathBuf>,
 }
 
+/// Parquet writer and physical schema options.
 #[derive(Clone, Debug, Default)]
 pub struct ParquetWriteOptions {
+    /// Optional low-level Parquet writer properties.
     pub writer_properties: Option<WriterProperties>,
+    /// Physical schema write options.
     pub schema_write: SchemaWriteOptions,
 }
 
 impl ParquetSink {
+    /// Creates a sink with default options.
     pub fn create(path: impl Into<PathBuf>) -> Self {
         Self::builder(path).build()
     }
 
+    /// Creates a configurable sink builder.
     pub fn builder(path: impl Into<PathBuf>) -> ParquetSinkBuilder {
         ParquetSinkBuilder {
             output: OutputPath::new(path),
@@ -523,59 +555,71 @@ impl ParquetSink {
         }
     }
 
+    /// Returns the concrete path after writing has begun.
     pub fn resolved_path(&self) -> Option<&Path> {
         self.resolved_path.as_deref()
     }
 }
 
+/// Builder for a [`ParquetSink`].
 pub struct ParquetSinkBuilder {
     output: OutputPath,
     options: ParquetWriteOptions,
 }
 
 impl ParquetSinkBuilder {
+    /// Sets the output path mode.
     pub fn output_mode(mut self, mode: OutputMode) -> Self {
         self.output = self.output.with_mode(mode);
         self
     }
 
+    /// Selects single-file output.
     pub fn single_file(self) -> Self {
         self.output_mode(OutputMode::SingleFile)
     }
 
+    /// Selects one output file per rank.
     pub fn per_rank_files(self) -> Self {
         self.output_mode(OutputMode::PerRankFiles)
     }
 
+    /// Selects output mode from the write plan.
     pub fn auto_output(self) -> Self {
         self.output_mode(OutputMode::Auto)
     }
 
+    /// Replaces physical schema write options.
     pub fn schema_write(mut self, options: SchemaWriteOptions) -> Self {
         self.options.schema_write = options;
         self
     }
 
+    /// Sets physical column naming conventions.
     pub fn column_names(mut self, column_names: SchemaColumnNames) -> Self {
         self.options.schema_write.column_names = column_names;
         self
     }
 
+    /// Sets floating-point output precision.
     pub fn precision(mut self, precision: Precision) -> Self {
         self.options.schema_write.precision = precision;
         self
     }
 
+    /// Sets low-level Parquet writer properties.
     pub fn writer_properties(mut self, props: WriterProperties) -> Self {
         self.options.writer_properties = Some(props);
         self
     }
 
+    /// Sets the weight-column emission policy.
     pub fn write_weight_column(mut self, value: WriteWeightColumn) -> Self {
         self.options.schema_write.write_weight_column = value;
         self
     }
 
+    /// Builds the sink.
     pub fn build(self) -> ParquetSink {
         ParquetSink {
             output: self.output,

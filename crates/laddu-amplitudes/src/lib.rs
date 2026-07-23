@@ -1,3 +1,5 @@
+//! Symbolic resonance and coupled-channel amplitude building blocks.
+
 mod breit_wigner;
 mod error;
 mod kmatrix;

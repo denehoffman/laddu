@@ -1,3 +1,5 @@
+//! Execution backends, dataset queries, and reduction support for compiled Laddu models.
+
 mod backend;
 mod cpu;
 mod error;

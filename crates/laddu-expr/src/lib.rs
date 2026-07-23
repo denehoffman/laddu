@@ -1,5 +1,11 @@
+//! Symbolic expression graphs and parameter definitions used throughout Laddu.
+//!
+//! This crate provides shareable expression DAGs, parameter layouts and values,
+//! and optional graph visualization support.
+
 mod error;
 mod expression;
+/// Parameter definitions, layouts, registries, and concrete values.
 pub mod parameters;
 mod visualization;
 

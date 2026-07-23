@@ -11,6 +11,7 @@ use wgpu::util::DeviceExt;
 
 use crate::{WgpuContext, WgpuError, WgpuResult};
 
+/// A compiled scalar model kernel and its reduction pipelines.
 #[derive(Debug)]
 pub struct WgpuScalarKernel {
     cache_pipeline: Option<wgpu::ComputePipeline>,
@@ -25,6 +26,7 @@ pub struct WgpuScalarKernel {
     event_inputs: Vec<EventInput>,
 }
 
+/// Event-dependent buffers prepared for repeated WebGPU reductions.
 #[derive(Clone, Debug)]
 pub struct WgpuPreparedBatch {
     chunks: Vec<WgpuPreparedChunk>,
@@ -58,6 +60,7 @@ enum EventInput {
 }
 
 impl WgpuScalarKernel {
+    /// Compiles a model's scalar kernel and reduction pipelines for `context`.
     pub fn compile(context: &WgpuContext, model: &CompiledModel) -> WgpuResult<Self> {
         Self::validate_precision(context.precision())?;
         let executable = ExecutablePlan::from_model_without_solve_rows(model)
@@ -332,11 +335,13 @@ impl WgpuScalarKernel {
         Ok((value != u32::MAX).then_some(value as usize))
     }
 
+    /// Evaluates a model with no event-dependent inputs.
     pub fn evaluate(&self, context: &WgpuContext, params: &ParamValues) -> WgpuResult<(f64, f64)> {
         self.evaluate_packed(context, params, &[0.0, 0.0], 1)
             .map(|mut values| values.remove(0))
     }
 
+    /// Evaluates the model for every event in a batch.
     pub fn evaluate_batch(
         &self,
         context: &WgpuContext,
@@ -360,6 +365,7 @@ impl WgpuScalarKernel {
         Ok(values)
     }
 
+    /// Applies a weighted reduction directly to an event batch.
     pub fn reduce_batch(
         &self,
         context: &WgpuContext,
@@ -389,6 +395,7 @@ impl WgpuScalarKernel {
         Ok(total.finish())
     }
 
+    /// Materializes event-dependent GPU buffers for repeated reductions.
     pub fn prepare_batch(
         &self,
         context: &WgpuContext,
@@ -449,6 +456,9 @@ impl WgpuScalarKernel {
         })
     }
 
+    /// Reuses prepared allocations while replacing their event values and weights.
+    ///
+    /// Returns `false` when the existing chunk layout is incompatible with `batch`.
     pub fn refresh_batch(
         &self,
         context: &WgpuContext,
@@ -503,6 +513,7 @@ impl WgpuScalarKernel {
         Ok(true)
     }
 
+    /// Applies a weighted reduction to a prepared batch.
     pub fn reduce_prepared_batch(
         &self,
         context: &WgpuContext,
@@ -528,6 +539,7 @@ impl WgpuScalarKernel {
         Ok(total.finish())
     }
 
+    /// Applies a weighted reduction and computes its free-parameter gradient.
     pub fn reduce_prepared_batch_with_gradient(
         &self,
         context: &WgpuContext,
@@ -1714,14 +1726,17 @@ for (var ri{index}=0u; ri{index}<{dimension}u; ri{index}++) {{ let i={dimension}
 }
 
 impl WgpuPreparedBatch {
+    /// Returns the number of prepared events.
     pub fn len(&self) -> usize {
         self.len
     }
 
+    /// Returns whether the prepared batch contains no events.
     pub fn is_empty(&self) -> bool {
         self.len == 0
     }
 
+    /// Returns the estimated number of resident GPU bytes.
     pub fn resident_bytes(&self) -> usize {
         self.resident_bytes
     }

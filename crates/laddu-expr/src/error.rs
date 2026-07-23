@@ -1,70 +1,181 @@
 use thiserror::Error;
 
+/// Result type for parameter construction and lookup operations.
 pub type ParamResult<T> = Result<T, ParamError>;
+/// Result type for expression construction and validation operations.
 pub type ExprResult<T> = Result<T, ExprError>;
 
+/// Errors produced while defining, laying out, or assigning parameters.
 #[derive(Clone, Debug, Error, PartialEq)]
 pub enum ParamError {
+    /// A parameter name was empty.
     #[error("parameter name cannot be empty")]
     EmptyName,
     #[error("duplicate parameter name: {0}")]
+    /// A parameter name was registered more than once.
     DuplicateName(String),
     #[error("unknown parameter: {0}")]
+    /// A parameter name was not present in the layout.
     UnknownName(String),
     #[error("parameter conflict for {name}: {reason}")]
-    ParameterConflict { name: String, reason: String },
+    /// Two definitions of the same parameter were incompatible.
+    ParameterConflict {
+        /// Conflicting parameter name.
+        name: String,
+        /// Description of the incompatibility.
+        reason: String,
+    },
+    /// A parameter identifier was outside the layout.
     #[error("invalid parameter id #{id} for layout of size {len}")]
-    InvalidParamId { id: usize, len: usize },
+    InvalidParamId {
+        /// Invalid identifier index.
+        id: usize,
+        /// Number of parameters in the layout.
+        len: usize,
+    },
+    /// A free-parameter identifier was outside the layout.
     #[error("invalid free parameter id #{id} for layout with {len} free parameters")]
-    InvalidFreeParamId { id: usize, len: usize },
+    InvalidFreeParamId {
+        /// Invalid free-parameter index.
+        id: usize,
+        /// Number of free parameters in the layout.
+        len: usize,
+    },
+    /// A free-parameter value vector had the wrong length.
     #[error("expected {expected} free parameters, got {actual}")]
-    FreeLengthMismatch { expected: usize, actual: usize },
+    FreeLengthMismatch {
+        /// Required number of values.
+        expected: usize,
+        /// Supplied number of values.
+        actual: usize,
+    },
+    /// A parameter's lower bound exceeded its upper bound.
     #[error("invalid bounds for {name}: min {min} is greater than max {max}")]
-    InvalidBounds { name: String, min: f64, max: f64 },
+    InvalidBounds {
+        /// Parameter name.
+        name: String,
+        /// Invalid lower bound.
+        min: f64,
+        /// Invalid upper bound.
+        max: f64,
+    },
+    /// A uniform initial range had its endpoints reversed.
     #[error("invalid uniform initial range for {name}: min {min} is greater than max {max}")]
-    InvalidInitialRange { name: String, min: f64, max: f64 },
+    InvalidInitialRange {
+        /// Parameter name.
+        name: String,
+        /// Invalid range minimum.
+        min: f64,
+        /// Invalid range maximum.
+        max: f64,
+    },
+    /// A parameter's initial value fell outside its bounds.
     #[error("initial value {value} for {name} is outside bounds")]
-    InitialOutOfBounds { name: String, value: f64 },
+    InitialOutOfBounds {
+        /// Parameter name.
+        name: String,
+        /// Invalid initial value.
+        value: f64,
+    },
+    /// A parameter's initial range extended outside its bounds.
     #[error("initial range [{min}, {max}] for {name} is outside parameter bounds")]
-    InitialRangeOutOfBounds { name: String, min: f64, max: f64 },
+    InitialRangeOutOfBounds {
+        /// Parameter name.
+        name: String,
+        /// Initial range minimum.
+        min: f64,
+        /// Initial range maximum.
+        max: f64,
+    },
+    /// A fixed parameter value fell outside its bounds.
     #[error("fixed value {value} for {name} is outside bounds")]
-    FixedValueOutOfBounds { name: String, value: f64 },
+    FixedValueOutOfBounds {
+        /// Parameter name.
+        name: String,
+        /// Invalid fixed value.
+        value: f64,
+    },
+    /// An assigned parameter value fell outside its bounds.
     #[error("value {value} for {name} is outside bounds")]
-    ValueOutOfBounds { name: String, value: f64 },
+    ValueOutOfBounds {
+        /// Parameter name.
+        name: String,
+        /// Invalid assigned value.
+        value: f64,
+    },
+    /// A periodic parameter did not have finite, ordered bounds.
     #[error("periodic parameter {name} requires finite two-sided bounds with min < max")]
-    PeriodicRequiresFiniteBounds { name: String },
+    PeriodicRequiresFiniteBounds {
+        /// Parameter name.
+        name: String,
+    },
+    /// A parameter scale was not finite and positive.
     #[error("invalid scale for {name}: expected a finite positive value, got {scale}")]
-    InvalidScale { name: String, scale: f64 },
+    InvalidScale {
+        /// Parameter name.
+        name: String,
+        /// Invalid scale.
+        scale: f64,
+    },
+    /// A periodic value was outside its canonical half-open domain.
     #[error(
         "value {value} for periodic parameter {name} is outside canonical domain [{min}, {max})"
     )]
     ValueOutsidePeriodicDomain {
+        /// Parameter name.
         name: String,
+        /// Invalid value.
         value: f64,
+        /// Inclusive domain minimum.
         min: f64,
+        /// Exclusive domain maximum.
         max: f64,
     },
 }
 
+/// Structural validation errors for serialized expression graphs.
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 pub enum ExprGraphError {
+    /// The node and metadata arrays had different lengths.
     #[error("graph metadata length {metadata_len} does not match node length {node_len}")]
     MetadataLength {
+        /// Number of graph nodes.
         node_len: usize,
+        /// Number of metadata entries.
         metadata_len: usize,
     },
+    /// The root identifier was outside the node array.
     #[error("graph root node #{root} is out of bounds for graph with {node_len} nodes")]
-    InvalidRoot { root: usize, node_len: usize },
+    InvalidRoot {
+        /// Invalid root index.
+        root: usize,
+        /// Number of graph nodes.
+        node_len: usize,
+    },
+    /// A node referenced a child outside the node array.
     #[error("graph node #{node} references missing child #{child}")]
-    InvalidChild { node: usize, child: usize },
+    InvalidChild {
+        /// Parent node index.
+        node: usize,
+        /// Invalid child index.
+        child: usize,
+    },
+    /// A node referenced a child stored after its parent.
     #[error(
         "graph node #{node} references child #{child}, but children must appear before parents"
     )]
-    InvalidChildOrder { node: usize, child: usize },
+    InvalidChildOrder {
+        /// Parent node index.
+        node: usize,
+        /// Out-of-order child index.
+        child: usize,
+    },
+    /// The graph contained no nodes.
     #[error("graph is empty")]
     Empty,
 }
 
+/// Describes an operation applied to an expression with an incompatible shape.
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 #[error("invalid expression shape for {operation}: {message}")]
 pub struct ExprShapeError {
@@ -81,12 +192,16 @@ impl ExprShapeError {
     }
 }
 
+/// Errors produced while constructing or rebuilding expressions.
 #[derive(Clone, Debug, Error, PartialEq)]
 pub enum ExprError {
+    /// A parameter operation failed.
     #[error(transparent)]
     Params(#[from] ParamError),
+    /// A serialized graph was structurally invalid.
     #[error(transparent)]
     Graph(#[from] ExprGraphError),
+    /// An operation received incompatible expression shapes.
     #[error(transparent)]
     Shape(#[from] ExprShapeError),
 }

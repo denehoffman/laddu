@@ -5,48 +5,65 @@ use fastrand::Rng;
 use fastrand_contrib::RngExt;
 use serde::{Deserialize, Serialize};
 
+/// Stable identifier for a parameter in a [`ParamLayout`].
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ParamId(u32);
 
 impl ParamId {
+    /// Returns the zero-based position in the full parameter layout.
     pub fn index(self) -> usize {
         self.0 as usize
     }
 }
 
+/// Stable identifier for a free parameter in free-parameter order.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct FreeParamId(u32);
 
 impl FreeParamId {
+    /// Returns the zero-based position among free parameters.
     pub fn index(self) -> usize {
         self.0 as usize
     }
 }
 
+/// Rule used to choose a free parameter's initial value.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub enum InitialSpec {
+    /// Use the default value zero.
     #[default]
     Default,
+    /// Use a specific initial value.
     Value(f64),
+    /// Sample uniformly from an inclusive range.
     Uniform {
+        /// Range minimum.
         min: f64,
+        /// Range maximum.
         max: f64,
     },
 }
 
+/// Whether a parameter is varied or held at a fixed value.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum ParamState {
+    /// The parameter is supplied by the optimizer or caller.
     Free,
+    /// The parameter is fixed at the contained value.
     Fixed(f64),
 }
 
+/// Optional inclusive lower and upper bounds for a parameter.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Bounds {
+    /// Inclusive lower bound, or no lower bound.
     pub min: Option<f64>,
+    /// Inclusive upper bound, or no upper bound.
     pub max: Option<f64>,
 }
 
 impl Bounds {
+    /// Creates bounds from optional lower and upper endpoints.
     pub fn new(min: impl Into<Option<f64>>, max: impl Into<Option<f64>>) -> Self {
         Self {
             min: min.into(),
@@ -67,11 +84,13 @@ impl Bounds {
         Ok(())
     }
 
+    /// Returns whether `value` lies within both configured bounds.
     pub fn contains(&self, value: f64) -> bool {
         self.min.is_none_or(|min| value >= min) && self.max.is_none_or(|max| value <= max)
     }
 }
 
+/// Complete definition and user-facing metadata for one scalar parameter.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Parameter {
     name: Arc<str>,
@@ -88,6 +107,7 @@ pub struct Parameter {
 }
 
 impl Parameter {
+    /// Creates an unbounded free parameter with a default initial value.
     pub fn free(name: impl Into<Arc<str>>) -> Self {
         Self {
             name: name.into(),
@@ -102,6 +122,7 @@ impl Parameter {
         }
     }
 
+    /// Creates an unbounded parameter fixed at `value`.
     pub fn fixed(name: impl Into<Arc<str>>, value: f64) -> Self {
         Self {
             name: name.into(),
@@ -121,6 +142,7 @@ impl Parameter {
         self.initial = InitialSpec::Value(value);
     }
 
+    /// Returns this parameter fixed at `value`.
     pub fn with_fixed_value(mut self, value: f64) -> Self {
         self.set_fixed_value(value);
         self
@@ -130,6 +152,7 @@ impl Parameter {
         self.state = ParamState::Free;
     }
 
+    /// Returns this parameter marked as free.
     pub fn with_free(mut self) -> Self {
         self.set_free();
         self
@@ -139,6 +162,7 @@ impl Parameter {
         self.initial = initial.into();
     }
 
+    /// Returns this parameter with the specified initialization rule.
     pub fn with_initial(mut self, initial: impl Into<InitialSpec>) -> Self {
         self.set_initial(initial);
         self
@@ -148,6 +172,7 @@ impl Parameter {
         self.bounds = Bounds::new(min, max);
     }
 
+    /// Returns this parameter with inclusive optional bounds.
     pub fn with_bounds(mut self, min: impl Into<Option<f64>>, max: impl Into<Option<f64>>) -> Self {
         self.set_bounds(min, max);
         self
@@ -159,6 +184,7 @@ impl Parameter {
         self
     }
 
+    /// Sets whether the parameter is periodic.
     pub fn with_periodicity(mut self, periodic: bool) -> Self {
         self.periodic = periodic;
         self
@@ -177,6 +203,7 @@ impl Parameter {
         self.unit = Some(unit.into());
     }
 
+    /// Attaches a human-readable unit label.
     pub fn with_unit(mut self, unit: impl Into<Arc<str>>) -> Self {
         self.set_unit(unit);
         self
@@ -186,6 +213,7 @@ impl Parameter {
         self.latex = Some(latex.into());
     }
 
+    /// Attaches a LaTeX-formatted label.
     pub fn with_latex(mut self, latex: impl Into<Arc<str>>) -> Self {
         self.set_latex(latex);
         self
@@ -195,35 +223,43 @@ impl Parameter {
         self.description = Some(description.into());
     }
 
+    /// Attaches a longer human-readable description.
     pub fn with_description(mut self, description: impl Into<Arc<str>>) -> Self {
         self.set_description(description);
         self
     }
 
+    /// Returns the unique parameter name.
     pub fn name(&self) -> &str {
         &self.name
     }
 
+    /// Returns whether the parameter is free or fixed.
     pub fn state(&self) -> &ParamState {
         &self.state
     }
 
+    /// Returns whether the parameter is free.
     pub fn is_free(&self) -> bool {
         matches!(self.state, ParamState::Free)
     }
 
+    /// Returns whether the parameter is fixed.
     pub fn is_fixed(&self) -> bool {
         matches!(self.state, ParamState::Fixed(_))
     }
 
+    /// Returns the initialization rule.
     pub fn initial_spec(&self) -> &InitialSpec {
         &self.initial
     }
 
+    /// Returns the optional parameter bounds.
     pub fn bounds_spec(&self) -> &Bounds {
         &self.bounds
     }
 
+    /// Returns whether the parameter is periodic over its bounds.
     pub fn is_periodic(&self) -> bool {
         self.periodic
     }
@@ -238,18 +274,22 @@ impl Parameter {
         }
     }
 
+    /// Returns the optional characteristic optimizer scale.
     pub fn scale(&self) -> Option<f64> {
         self.scale
     }
 
+    /// Returns the optional human-readable unit label.
     pub fn unit_label(&self) -> Option<&str> {
         self.unit.as_deref()
     }
 
+    /// Returns the optional LaTeX-formatted label.
     pub fn latex_label(&self) -> Option<&str> {
         self.latex.as_deref()
     }
 
+    /// Returns the optional longer description.
     pub fn description_text(&self) -> Option<&str> {
         self.description.as_deref()
     }
@@ -267,6 +307,7 @@ impl From<(f64, f64)> for InitialSpec {
     }
 }
 
+/// Validated parameter ordering and mapping between full and free values.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ParamLayout {
     specs: Arc<[Parameter]>,
@@ -277,6 +318,7 @@ pub struct ParamLayout {
 }
 
 impl ParamLayout {
+    /// Validates parameter definitions and constructs a layout.
     pub fn new<S>(specs: impl IntoIterator<Item = S>) -> ParamResult<Self>
     where
         S: Into<Parameter>,
@@ -335,36 +377,46 @@ impl ParamLayout {
         })
     }
 
+    /// Returns all parameter definitions in full-layout order.
     pub fn specs(&self) -> &[Parameter] {
         &self.specs
     }
 
+    /// Returns the total number of free and fixed parameters.
     pub fn len(&self) -> usize {
         self.specs.len()
     }
 
+    /// Returns whether the layout contains no parameters.
     pub fn is_empty(&self) -> bool {
         self.specs.is_empty()
     }
 
+    /// Returns the number of free parameters.
     pub fn n_free(&self) -> usize {
         self.free_params.len()
     }
 
+    /// Looks up a full-layout identifier by parameter name.
     pub fn id(&self, name: &str) -> Option<ParamId> {
         self.names.get(name).copied()
     }
 
+    /// Returns the name associated with a full-layout identifier.
     pub fn name(&self, id: ParamId) -> ParamResult<&str> {
         self.check_id(id)?;
         Ok(self.specs[id.index()].name())
     }
 
+    /// Returns the definition associated with a full-layout identifier.
     pub fn spec(&self, id: ParamId) -> ParamResult<&Parameter> {
         self.check_id(id)?;
         Ok(&self.specs[id.index()])
     }
 
+    /// Maps a full-layout identifier to free-parameter order.
+    ///
+    /// Fixed parameters return `None`.
     pub fn free_id(&self, id: ParamId) -> ParamResult<Option<FreeParamId>> {
         self.check_id(id)?;
         Ok(self.full_to_free[id.index()])
@@ -375,10 +427,12 @@ impl ParamLayout {
         Ok(self.free_params[id.index()])
     }
 
+    /// Returns full-layout identifiers in free-parameter order.
     pub fn free_params(&self) -> &[ParamId] {
         &self.free_params
     }
 
+    /// Creates a full value set using fixed and deterministic initial values.
     pub fn default_values(&self) -> ParamValues {
         ParamValues {
             layout: Arc::new(self.clone()),
@@ -497,6 +551,7 @@ impl ParamLayout {
     }
 }
 
+/// Incremental collection of uniquely named parameter definitions.
 #[derive(Clone, Debug, Default)]
 pub struct ParamRegistry {
     specs: Vec<Parameter>,
@@ -504,10 +559,15 @@ pub struct ParamRegistry {
 }
 
 impl ParamRegistry {
+    /// Creates an empty registry.
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// Registers a parameter and returns its stable identifier.
+    ///
+    /// Re-registering an identical definition returns its existing identifier;
+    /// incompatible definitions with the same name return an error.
     pub fn register<S>(&mut self, spec: S) -> ParamResult<ParamId>
     where
         S: Into<Parameter>,
@@ -533,11 +593,13 @@ impl ParamRegistry {
         Ok(id)
     }
 
+    /// Validates the registered parameters and builds their layout.
     pub fn layout(&self) -> ParamResult<ParamLayout> {
         ParamLayout::new(self.specs.clone())
     }
 }
 
+/// Concrete full-layout parameter values paired with their defining layout.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ParamValues {
     layout: Arc<ParamLayout>,
@@ -545,19 +607,23 @@ pub struct ParamValues {
 }
 
 impl ParamValues {
+    /// Returns the shared layout that interprets these values.
     pub fn layout(&self) -> &Arc<ParamLayout> {
         &self.layout
     }
 
+    /// Returns all values in full-layout order.
     pub fn as_slice(&self) -> &[f64] {
         &self.values
     }
 
+    /// Returns the value associated with a full-layout identifier.
     pub fn get(&self, id: ParamId) -> ParamResult<f64> {
         self.layout.check_id(id)?;
         Ok(self.values[id.index()])
     }
 
+    /// Copies the values of free parameters in free-parameter order.
     pub fn free_values(&self) -> Vec<f64> {
         self.layout
             .free_params()
@@ -566,12 +632,14 @@ impl ParamValues {
             .collect()
     }
 
+    /// Assigns one value by its free-parameter identifier.
     pub fn set_free(&mut self, id: FreeParamId, value: f64) -> ParamResult<()> {
         let full_id = self.layout.free_param(id)?;
         self.values[full_id.index()] = value;
         Ok(())
     }
 
+    /// Replaces all free values and restores fixed values from the layout.
     pub fn set_free_values(&mut self, values: &[f64]) -> ParamResult<()> {
         let layout = Arc::clone(&self.layout);
         layout.fill_full_from_free(values, &mut self.values)

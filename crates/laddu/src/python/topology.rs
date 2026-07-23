@@ -207,7 +207,7 @@ fn validate_vertex_input(name: &str, incoming: &[String], outgoing: &[String]) -
 /// >>> production = ld.Vertex(
 /// ...     "production", incoming=["beam", "target"], outgoing=["recoil"]
 /// ... )
-/// >>> channel = ld.Channel("gamma p", edges=[beam, target, recoil], vertices=[production])
+/// >>> channel = ld.Channel("gamma p", edges=\[beam, target, recoil\], vertices=\[production\])
 pub struct PyChannel {
     pub(crate) inner: Channel,
 }

@@ -7,28 +7,39 @@ use std::{
 
 use crate::{LadduDataError, LadduDataResult, data::EventBatch, schema::Schema};
 
+/// In-memory event sources and sinks.
 pub mod memory;
+/// Parquet event sources and sinks.
 pub mod parquet;
+/// ROOT event sources.
 pub mod root;
 
 #[cfg(feature = "mpi")]
+/// Distribution of event I/O across MPI ranks.
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
 pub enum Distribution {
+    /// Single-process I/O.
     #[default]
     Serial,
+    /// MPI-distributed I/O with explicit rank metadata.
     Mpi {
+        /// Zero-based rank.
         rank: usize,
+        /// Number of ranks.
         nranks: usize,
+        /// Work-partitioning strategy.
         partitioning: Partitioning,
     },
 }
 
 #[cfg(feature = "mpi")]
 impl Distribution {
+    /// Creates serial distribution.
     pub fn serial() -> Self {
         Self::Serial
     }
 
+    /// Creates MPI distribution from a communicator.
     pub fn from_world<C>(world: &C) -> Self
     where
         C: mpi::topology::Communicator,
@@ -40,6 +51,7 @@ impl Distribution {
         }
     }
 
+    /// Returns the current rank.
     pub fn rank(self) -> usize {
         match self {
             Self::Serial => 0,
@@ -47,6 +59,7 @@ impl Distribution {
         }
     }
 
+    /// Returns the number of ranks.
     pub fn nranks(self) -> usize {
         match self {
             Self::Serial => 1,
@@ -54,6 +67,7 @@ impl Distribution {
         }
     }
 
+    /// Returns the partitioning strategy.
     pub fn partitioning(self) -> Partitioning {
         match self {
             Self::Serial => Partitioning::Contiguous,
@@ -61,6 +75,7 @@ impl Distribution {
         }
     }
 
+    /// Returns this distribution with a new partitioning strategy.
     pub fn with_partitioning(self, partitioning: Partitioning) -> Self {
         match self {
             Self::Serial => Self::Serial,
@@ -73,6 +88,7 @@ impl Distribution {
     }
 }
 
+/// Strategy for partitioning input rows across ranks.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Partitioning {
     /// Each rank reads a contiguous global row range.
@@ -87,19 +103,24 @@ pub enum Partitioning {
     Rows,
 }
 
+/// Options controlling event-source reads.
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
 pub struct ReadPlan {
+    /// Optional maximum output batch size.
     pub chunk_size: Option<usize>,
 
     #[cfg(feature = "mpi")]
+    /// MPI distribution.
     pub distribution: Distribution,
 }
 
 impl ReadPlan {
+    /// Creates a serial read plan.
     pub fn serial() -> Self {
         Self::default()
     }
 
+    /// Returns the current rank.
     pub fn rank(&self) -> usize {
         #[cfg(feature = "mpi")]
         {
@@ -112,6 +133,7 @@ impl ReadPlan {
         }
     }
 
+    /// Returns the number of ranks.
     pub fn nranks(&self) -> usize {
         #[cfg(feature = "mpi")]
         {
@@ -124,10 +146,12 @@ impl ReadPlan {
         }
     }
 
+    /// Returns whether reads are distributed.
     pub fn is_distributed(&self) -> bool {
         self.nranks() > 1
     }
 
+    /// Returns the low-level fragment-partitioning strategy.
     pub fn fragment_partitioning(&self) -> FragmentPartitioning {
         #[cfg(feature = "mpi")]
         {
@@ -145,9 +169,11 @@ impl ReadPlan {
     }
 }
 
+/// Options controlling event-sink writes.
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
 pub struct WritePlan {
     #[cfg(feature = "mpi")]
+    /// MPI distribution.
     pub distribution: Distribution,
 }
 
@@ -162,6 +188,7 @@ impl From<ReadPlan> for WritePlan {
 }
 
 impl WritePlan {
+    /// Returns the current rank.
     pub fn rank(&self) -> usize {
         #[cfg(feature = "mpi")]
         {
@@ -174,6 +201,7 @@ impl WritePlan {
         }
     }
 
+    /// Returns the number of ranks.
     pub fn nranks(&self) -> usize {
         #[cfg(feature = "mpi")]
         {
@@ -186,89 +214,133 @@ impl WritePlan {
         }
     }
 
+    /// Returns whether writes are distributed.
     pub fn is_distributed(&self) -> bool {
         self.nranks() > 1
     }
 }
 
+/// Low-level assignment of source fragments or rows.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub enum FragmentPartitioning {
+    /// Contiguous global row ranges.
     Contiguous,
+    /// Whole fragments assigned round-robin.
     RoundRobinFragments,
+    /// Individual rows assigned by global index modulo rank count.
     StridedRows,
 }
 
+/// Optional performance and planning capabilities of an [`EventSource`].
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
 pub struct SourceCapabilities {
+    /// Exact event count is available cheaply.
     pub exact_len: bool,
+    /// Exact weighted total is available cheaply.
     pub exact_weighted_total: bool,
+    /// Arbitrary row ranges can be read.
     pub random_access: bool,
+    /// Distributed row assignment is deterministic.
     pub deterministic_partitioning: bool,
+    /// Filters can be pushed into the source.
     pub predicate_pushdown: bool,
+    /// Column projection can be pushed into the source.
     pub projection_pushdown: bool,
+    /// Batches can be streamed without full materialization.
     pub streaming: bool,
 }
 
+/// Sendable iterator of fallible event batches.
 pub type EventBatchIter = Box<dyn Iterator<Item = LadduDataResult<EventBatch>> + Send>;
 
+/// Thread-safe producer of schema-compatible event batches.
 pub trait EventSource: Send + Sync {
+    /// Returns the source schema.
     fn schema(&self) -> LadduDataResult<Arc<Schema>>;
 
+    /// Returns optional source capabilities.
     fn capabilities(&self) -> SourceCapabilities {
         SourceCapabilities::default()
     }
 
+    /// Returns the exact event count when cheaply available.
     fn num_events(&self) -> LadduDataResult<Option<u64>> {
         Ok(None)
     }
 
+    /// Returns the exact sum of event weights when cheaply available.
     fn weighted_total(&self) -> LadduDataResult<Option<f64>> {
         Ok(None)
     }
 
+    /// Opens a batch iterator using `plan`.
     fn batches(&self, plan: ReadPlan) -> LadduDataResult<EventBatchIter>;
 }
 
+/// Consumer of schema-compatible event batches.
 pub trait EventSink: Send {
+    /// Begins a write operation.
     fn begin(&mut self, schema: Arc<Schema>, plan: WritePlan) -> LadduDataResult<()>;
 
+    /// Writes one batch.
     fn write_batch(&mut self, batch: &EventBatch) -> LadduDataResult<()>;
 
+    /// Finishes and flushes the write operation.
     fn finish(&mut self) -> LadduDataResult<()>;
 }
 
+/// Metadata describing one addressable source fragment.
 #[derive(Clone, Debug)]
 pub struct DataFragment<K> {
+    /// Source-specific fragment key.
     pub key: K,
+    /// Global row offset.
     pub global_start: u64,
+    /// Number of rows.
     pub rows: u64,
 }
 
+/// Planned read of one source fragment.
 #[derive(Clone, Debug)]
 pub struct FragmentRead<K> {
+    /// Source-specific fragment key.
     pub key: K,
+    /// Rows selected from the fragment.
     pub selection: FragmentSelection,
 }
 
+/// Row selection within one source fragment.
 #[derive(Clone, Copy, Debug)]
 pub enum FragmentSelection {
+    /// Contiguous local row range.
     Range {
+        /// First local row.
         local_start: usize,
+        /// Number of local rows.
         local_len: usize,
     },
+    /// Rows assigned by global index modulo rank count.
     StridedRows {
+        /// Global offset of the fragment.
         global_start: u64,
+        /// Number of rows in the fragment.
         rows: usize,
+        /// Current rank.
         rank: usize,
+        /// Number of ranks.
         nranks: usize,
     },
 }
 
+/// Event source composed of independently addressable fragments.
 pub trait FragmentedSource: Send + Sync {
+    /// Source-specific fragment key.
     type Key: Clone + Send + Sync + 'static;
 
+    /// Lists all fragments in global row order.
     fn fragments(&self) -> LadduDataResult<Vec<DataFragment<Self::Key>>>;
 
+    /// Reads a contiguous range within one fragment.
     fn read_fragment_range(
         &self,
         key: &Self::Key,
@@ -278,6 +350,7 @@ pub trait FragmentedSource: Send + Sync {
     ) -> LadduDataResult<EventBatchIter>;
 }
 
+/// Creates a planned batch iterator for a fragmented source.
 pub fn fragmented_batches<S>(source: Arc<S>, plan: ReadPlan) -> LadduDataResult<EventBatchIter>
 where
     S: FragmentedSource + 'static,
@@ -291,6 +364,7 @@ where
     }
 }
 
+/// Assigns source fragments or rows according to a read plan.
 pub fn plan_fragments<K: Clone>(
     fragments: &[DataFragment<K>],
     plan: ReadPlan,
@@ -651,21 +725,27 @@ where
     }
 }
 
+/// Resolves a base output path for serial or distributed writes.
 #[derive(Clone, Debug)]
 pub struct OutputPath {
     base: PathBuf,
     mode: OutputMode,
 }
 
+/// Policy for resolving a concrete output path.
 #[derive(Clone, Copy, Debug, Default)]
 pub enum OutputMode {
+    /// Select single-file or per-rank output from the write plan.
     #[default]
     Auto,
+    /// Write exactly one file; invalid for distributed writes.
     SingleFile,
+    /// Write a rank-specific file.
     PerRankFiles,
 }
 
 impl OutputPath {
+    /// Creates an automatically resolved output path.
     pub fn new(path: impl Into<PathBuf>) -> Self {
         Self {
             base: path.into(),
@@ -673,19 +753,23 @@ impl OutputPath {
         }
     }
 
+    /// Returns this path with an explicit output mode.
     pub fn with_mode(mut self, mode: OutputMode) -> Self {
         self.mode = mode;
         self
     }
 
+    /// Returns the unresolved base path.
     pub fn base(&self) -> &Path {
         &self.base
     }
 
+    /// Returns the output mode.
     pub fn mode(&self) -> OutputMode {
         self.mode
     }
 
+    /// Resolves the concrete path for a write plan.
     pub fn resolve(&self, plan: WritePlan, default_extension: &str) -> LadduDataResult<PathBuf> {
         let mode = match self.mode {
             OutputMode::Auto if plan.is_distributed() => OutputMode::PerRankFiles,
@@ -716,6 +800,7 @@ impl OutputPath {
         }
     }
 
+    /// Creates a file's parent directories when absent.
     pub fn create_parent_dirs(path: &Path) -> LadduDataResult<()> {
         if let Some(parent) = path.parent()
             && !parent.as_os_str().is_empty()

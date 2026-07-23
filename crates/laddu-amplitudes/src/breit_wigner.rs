@@ -6,12 +6,14 @@ use laddu_physics::{
 };
 use num::complex::Complex64;
 
+/// Constructs a constant-width Breit-Wigner propagator.
 pub fn breit_wigner(s: impl Into<Expr>, mass: impl Into<Expr>, width: impl Into<Expr>) -> Expr {
     let mass = mass.into();
     let width = width.into();
     1.0 / (mass.powi(2) - s.into() - Complex64::I * mass * width)
 }
 
+/// Constructs a relativistic Breit-Wigner with default barrier settings.
 pub fn relativistic_breit_wigner(
     s: impl Into<Expr>,
     mass: impl Into<Expr>,
@@ -24,6 +26,7 @@ pub fn relativistic_breit_wigner(
 }
 
 #[allow(clippy::too_many_arguments)]
+/// Constructs a relativistic Breit-Wigner with configurable barriers and radius.
 pub fn relativistic_breit_wigner_custom(
     s: impl Into<Expr>,
     mass: impl Into<Expr>,
