@@ -62,14 +62,18 @@ python = [
   "fit",
   "generation",
   "laddu-fit/python",
+  "dep:fastrand",
   "dep:num",
   "dep:numpy",
   "dep:pyo3",
 ]
 
+[dependencies.fastrand]
+workspace = true
+optional = true
+
 [dev-dependencies]
 criterion.workspace = true
-fastrand.workspace = true
 num_cpus.workspace = true
 rayon.workspace = true
 serde.workspace = true

@@ -2,7 +2,7 @@
 //!
 //! [`FitProblem`] implements ganesh's cost, gradient, and log-density traits
 //! for both `f32` and `f64`. The adapter leaves algorithm choice and callbacks
-//! fully exposed while centralizing Laddu parameter conversion, metadata, and
+//! fully exposed while centralizing laddu parameter conversion, metadata, and
 //! stochastic batching.
 
 pub use ganesh;
@@ -26,14 +26,18 @@ use thiserror::Error;
 /// Errors raised while adapting a laddu objective to ganesh.
 #[derive(Debug, Error)]
 pub enum FitError {
+    /// The likelihood could not be evaluated or prepared.
     #[error(transparent)]
     Likelihood(#[from] LikelihoodError),
+    /// The underlying ganesh optimizer or sampler failed.
     #[error(transparent)]
-    Ganesh(#[from] GaneshError),
+    Optimizer(#[from] GaneshError),
+    /// A backend scalar could not be represented as an `f64`.
     #[error("ganesh scalar value cannot be represented as f64")]
     ScalarConversion,
 }
 
+/// A result produced by a laddu fitting operation.
 pub type FitResult<T> = Result<T, FitError>;
 
 /// Scalar-generic ganesh view of a laddu objective.
@@ -57,6 +61,9 @@ pub struct StochasticFitProblem<'a, O: ?Sized, T = f64, B = ganesh::NalgebraProv
 }
 
 impl<'a, O: StochasticObjective + ?Sized, T, B> StochasticFitProblem<'a, O, T, B> {
+    /// Create a stochastic adapter that samples `fraction` of events per evaluation.
+    ///
+    /// `seed` initializes the deterministic sequence of batch seeds.
     pub fn new(objective: &'a O, fraction: f64, seed: u64) -> FitResult<Self> {
         if !(fraction > 0.0 && fraction <= 1.0) {
             return Err(LikelihoodError::InvalidBatchFraction(fraction).into());
@@ -70,14 +77,17 @@ impl<'a, O: StochasticObjective + ?Sized, T, B> StochasticFitProblem<'a, O, T, B
         })
     }
 
+    /// Return the adapted stochastic objective.
     pub const fn objective(&self) -> &'a O {
         self.objective
     }
 
+    /// Return free parameter names in optimizer-vector order.
     pub fn parameter_names(&self) -> Vec<String> {
         FitProblem::<O, T, B>::new(self.objective).parameter_names()
     }
 
+    /// Convert user-facing `f64` values to the backend vector type.
     pub fn vector(&self, values: &[f64]) -> Vector<T, B>
     where
         T: RealScalar,
@@ -86,6 +96,7 @@ impl<'a, O: StochasticObjective + ?Sized, T, B> StochasticFitProblem<'a, O, T, B
         FitProblem::<O, T, B>::new(self.objective).vector(values)
     }
 
+    /// Build the parameter transform for minimizers without native bounds.
     pub fn minimizer_transform(&self) -> FitResult<Box<dyn Transform<T, B>>>
     where
         T: RealScalar,
@@ -94,6 +105,7 @@ impl<'a, O: StochasticObjective + ?Sized, T, B> StochasticFitProblem<'a, O, T, B
         FitProblem::<O, T, B>::new(self.objective).minimizer_transform()
     }
 
+    /// Build the parameter transform for minimizers that enforce native bounds.
     pub fn native_transform(&self) -> FitResult<Box<dyn Transform<T, B>>>
     where
         T: RealScalar,
@@ -102,6 +114,7 @@ impl<'a, O: StochasticObjective + ?Sized, T, B> StochasticFitProblem<'a, O, T, B
         FitProblem::<O, T, B>::new(self.objective).native_transform()
     }
 
+    /// Return native optimizer bounds in transformed coordinates.
     pub fn native_bounds(&self) -> Vec<(T, T)>
     where
         T: RealScalar,
@@ -188,6 +201,7 @@ where
 }
 
 impl<'a, O: Objective + ?Sized, T, B> FitProblem<'a, O, T, B> {
+    /// Adapt an objective to ganesh's scalar-generic optimization traits.
     pub const fn new(objective: &'a O) -> Self {
         Self {
             objective,
@@ -195,11 +209,12 @@ impl<'a, O: Objective + ?Sized, T, B> FitProblem<'a, O, T, B> {
         }
     }
 
+    /// Return the adapted objective.
     pub const fn objective(&self) -> &'a O {
         self.objective
     }
 
-    /// Convert user-facing f64 parameter values to this problem's Ganesh scalar.
+    /// Convert user-facing f64 parameter values to this problem's ganesh scalar.
     pub fn vector(&self, values: &[f64]) -> Vector<T, B>
     where
         T: RealScalar,
@@ -208,6 +223,7 @@ impl<'a, O: Objective + ?Sized, T, B> FitProblem<'a, O, T, B> {
         Vector::from_vec(values.iter().copied().map(T::literal).collect())
     }
 
+    /// Return free parameter names in optimizer-vector order.
     pub fn parameter_names(&self) -> Vec<String> {
         free_parameters(self.objective.parameter_layout())
             .map(|parameter| parameter.name().to_owned())

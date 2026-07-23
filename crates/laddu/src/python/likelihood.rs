@@ -4,7 +4,7 @@ use laddu_likelihood::{
     ExtendedNllTerm, LassoPenalty, Likelihood, LikelihoodProjection, LikelihoodTerm, NllTerm,
     RidgePenalty,
 };
-use numpy::PyArray1;
+use numpy::{PyArray1, PyReadonlyArray1};
 use pyo3::{
     exceptions::PyTypeError,
     prelude::*,
@@ -246,11 +246,29 @@ impl PyLikelihoodProjection {
 /// A sequence is used directly. A mapping starts from the default values and
 /// replaces entries whose names are present.
 pub fn free_values(likelihood: &Likelihood, values: &Bound<'_, PyAny>) -> PyResult<Vec<f64>> {
+    if let Ok(array) = values.extract::<PyReadonlyArray1<'_, f64>>() {
+        return Ok(array.as_array().iter().copied().collect());
+    }
     if let Ok(values) = values.extract::<Vec<f64>>() {
         return Ok(values);
     }
     if let Ok(mapping) = values.cast::<PyDict>() {
         let mut out = likelihood.default_params();
+        for (key, _) in mapping.iter() {
+            let name = key
+                .extract::<String>()
+                .map_err(|_| PyTypeError::new_err("parameter mappings must use string keys"))?;
+            if !likelihood
+                .params()
+                .free_params()
+                .iter()
+                .any(|id| likelihood.params().name(*id) == Ok(name.as_str()))
+            {
+                return Err(PyTypeError::new_err(format!(
+                    "unknown free parameter `{name}`"
+                )));
+            }
+        }
         for (index, id) in likelihood.params().free_params().iter().enumerate() {
             let name = likelihood.params().name(*id).map_err(to_py_err)?;
             if let Some(value) = mapping.get_item(name)? {

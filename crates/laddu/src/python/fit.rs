@@ -22,6 +22,7 @@ use laddu_fit::{
     },
 };
 use laddu_likelihood::{Likelihood, LikelihoodEvaluation, Objective, StochasticObjective};
+use numpy::PyArray2;
 use pyo3::{exceptions::PyTypeError, prelude::*, types::PyAny};
 
 use super::{
@@ -170,7 +171,7 @@ where
             bundle = bundle.with_python_observer(observer);
         } else {
             return Err(PyTypeError::new_err(
-                "observers must be Ganesh observer objects or Python callables",
+                "observers must be ganesh observer objects or Python callables",
             ));
         }
     }
@@ -179,7 +180,115 @@ where
 
 #[pymethods]
 impl PyLikelihood {
+    #[pyo3(signature = (center, n_walkers, *, scale=1.0e-3, seed=0))]
+    /// Generate walker positions in a small cloud around a fitted point.
+    ///
+    /// The returned NumPy array has shape ``(n_walkers, n_parameters)``.
+    /// Per-parameter scales declared on model parameters are used when
+    /// available; otherwise the characteristic scale is
+    /// ``max(abs(center), 1)``. Periodic coordinates are wrapped and bounded
+    /// proposals are resampled.
+    ///
+    /// Parameters
+    /// ----------
+    /// center : sequence, numpy.ndarray, or dict[str, float]
+    ///     Center in free-parameter coordinates.
+    /// n_walkers : int
+    ///     Number of walkers. AIES requires at least two.
+    /// scale : float, default=1e-3
+    ///     Fractional half-width of the uniform cloud.
+    /// seed : int, default=0
+    ///     Random seed.
+    ///
+    /// Returns
+    /// -------
+    /// numpy.ndarray
+    ///     Initial walker matrix suitable for ``ganesh.AIESInit``.
+    fn walker_positions<'py>(
+        &self,
+        py: Python<'py>,
+        center: &Bound<'_, PyAny>,
+        n_walkers: usize,
+        scale: f64,
+        seed: u64,
+    ) -> PyResult<Bound<'py, PyArray2<f64>>> {
+        if n_walkers < 2 {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "n_walkers must be at least 2",
+            ));
+        }
+        if !scale.is_finite() || scale <= 0.0 {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "scale must be finite and positive",
+            ));
+        }
+        let center = free_values(&self.inner, center)?;
+        self.inner
+            .params()
+            .validate_free_values(&center)
+            .map_err(to_py_err)?;
+        let mut rng = fastrand::Rng::with_seed(seed);
+        let mut rows = Vec::with_capacity(n_walkers);
+        for _ in 0..n_walkers {
+            let mut row = center.clone();
+            for (index, id) in self.inner.params().free_params().iter().enumerate() {
+                let parameter = self.inner.params().spec(*id).map_err(to_py_err)?;
+                let width = scale
+                    * parameter
+                        .scale()
+                        .unwrap_or_else(|| center[index].abs().max(1.0));
+                let mut accepted = None;
+                for _ in 0..128 {
+                    let candidate = center[index] + width * (2.0 * rng.f64() - 1.0);
+                    if parameter.bounds_spec().contains(candidate) {
+                        accepted = Some(candidate);
+                        break;
+                    }
+                }
+                row[index] = accepted.ok_or_else(|| {
+                    pyo3::exceptions::PyValueError::new_err(format!(
+                        "could not generate a bounded walker coordinate for `{}`; reduce scale or move the center away from the boundary",
+                        parameter.name()
+                    ))
+                })?;
+            }
+            row = self
+                .inner
+                .params()
+                .wrap_periodic_free_values(&row)
+                .map_err(to_py_err)?;
+            rows.push(row);
+        }
+        Ok(PyArray2::from_vec2(py, &rows)?)
+    }
+
     #[pyo3(signature = (config, *, initial=None, terminators=Vec::new(), observers=Vec::new()))]
+    /// Minimize this likelihood with a deterministic optimizer.
+    ///
+    /// Parameters
+    /// ----------
+    /// config : ganesh.NelderMeadConfig or ganesh.LBFGSBConfig
+    ///     Optimizer configuration. L-BFGS-B uses analytic gradients and the
+    ///     bounds declared by model parameters.
+    /// initial : sequence, numpy.ndarray, or dict[str, float], optional
+    ///     Initial free-parameter values. A mapping may specify only the names
+    ///     to override; remaining parameters use their defaults.
+    /// terminators : sequence, optional
+    ///     ganesh termination callbacks, such as ``ganesh.MaxSteps``.
+    /// observers : sequence, optional
+    ///     ganesh observers or Python callables invoked during minimization.
+    ///
+    /// Returns
+    /// -------
+    /// ganesh.MinimizationSummary
+    ///     Final parameter vector, objective value, and convergence metadata.
+    ///
+    /// Raises
+    /// ------
+    /// TypeError
+    ///     If the configuration, initial values, or callbacks are unsupported.
+    /// LadduError
+    ///     If parameter transformation or likelihood evaluation fails.
     fn fit(
         &self,
         py: Python<'_>,
@@ -248,6 +357,33 @@ impl PyLikelihood {
 
     #[pyo3(signature = (config, *, initial=None, fraction=0.1, seed=0, terminators=Vec::new(), observers=Vec::new()))]
     #[allow(clippy::too_many_arguments)]
+    /// Minimize this likelihood with stochastic Adam updates.
+    ///
+    /// Parameters
+    /// ----------
+    /// config : ganesh.AdamConfig
+    ///     Adam optimizer configuration.
+    /// initial : sequence, numpy.ndarray, or dict[str, float], optional
+    ///     Initial free-parameter values.
+    /// fraction : float, default=0.1
+    ///     Fraction of events sampled for each stochastic evaluation. Must lie
+    ///     in ``(0, 1]``.
+    /// seed : int, default=0
+    ///     Seed for reproducible event subsampling.
+    /// terminators, observers : sequence, optional
+    ///     ganesh callbacks applied during optimization.
+    ///
+    /// Returns
+    /// -------
+    /// ganesh.MinimizationSummary
+    ///     Final optimizer state and convergence metadata.
+    ///
+    /// Raises
+    /// ------
+    /// ValueError
+    ///     If `fraction` is outside ``(0, 1]``.
+    /// LadduError
+    ///     If preparation or an objective evaluation fails.
     fn fit_stochastic(
         &self,
         py: Python<'_>,
@@ -294,6 +430,28 @@ impl PyLikelihood {
     }
 
     #[pyo3(signature = (config, init, *, seed=0, terminators=Vec::new(), observers=Vec::new()))]
+    /// Sample the likelihood with the affine-invariant ensemble sampler.
+    ///
+    /// Parameters
+    /// ----------
+    /// config : ganesh.AIESConfig
+    ///     Ensemble sampler configuration.
+    /// init : ganesh.AIESInit
+    ///     Initial walker ensemble.
+    /// seed : int, default=0
+    ///     Random seed for proposal generation.
+    /// terminators, observers : sequence, optional
+    ///     ganesh callbacks applied during sampling.
+    ///
+    /// Returns
+    /// -------
+    /// ganesh.MCMCSummary
+    ///     Samples, acceptance diagnostics, and final ensemble state.
+    ///
+    /// Raises
+    /// ------
+    /// LadduError
+    ///     If parameter transformation, initialization, or sampling fails.
     fn sample(
         &self,
         py: Python<'_>,
