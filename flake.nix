@@ -1,5 +1,5 @@
 {
-  description = "Laddu Rust and Python development environment";
+  description = "laddu Rust and Python development environment";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 
@@ -54,6 +54,7 @@
             ];
 
             LD_LIBRARY_PATH = nativeLibraries;
+            UV_PYTHON_DOWNLOADS = "never";
 
             shellHook = ''
               export LADDU_ROOT="$PWD"
@@ -70,9 +71,8 @@
               mkdir -p "$MPLCONFIGDIR"
 
               export UV_PROJECT_ENVIRONMENT="$PWD/.venv"
-              export UV_PYTHON="${python}/bin/python"
               export MATURIN_PEP517_ARGS="--generate-stubs"
-              uv sync --project "$PWD/python/laddu"
+              UV_PYTHON="${python}/bin/python" uv sync --frozen --inexact --no-install-project --project "$PWD/python/laddu"
 
               export VIRTUAL_ENV="$UV_PROJECT_ENVIRONMENT"
               export PATH="$VIRTUAL_ENV/bin:$PATH"

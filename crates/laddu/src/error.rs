@@ -1,10 +1,10 @@
 use thiserror::Error;
 
-/// A result returned by the top-level Laddu facade.
+/// A result returned by the top-level laddu facade.
 pub type LadduResult<T> = Result<T, LadduError>;
 
 #[derive(Debug, Error)]
-/// An error produced by one of Laddu's analysis subsystems.
+/// An error produced by one of laddu's analysis subsystems.
 ///
 /// Each variant preserves the concrete source error, allowing callers to
 /// inspect it through [`std::error::Error::source`] or match the variant when

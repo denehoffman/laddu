@@ -1,6 +1,6 @@
 //! Tools for constructing, compiling, and evaluating amplitude-analysis models.
 //!
-//! Laddu exposes symbolic expressions, event datasets, particle and decay
+//! laddu exposes symbolic expressions, event datasets, particle and decay
 //! topology utilities, execution backends, and optional likelihood, fitting,
 //! generation, amplitude, and GPU support through one facade crate. Most
 //! applications can import [`prelude`] and enable only the Cargo features they
@@ -22,7 +22,7 @@
 mod error;
 
 #[cfg(feature = "python")]
-/// Shared implementation of Laddu's Python extension modules.
+/// Shared implementation of laddu's Python extension modules.
 ///
 /// This module is public so the small Maturin distribution crates can expand
 /// [`laddu_python_module!`]. Rust applications should use the crate-level Rust
