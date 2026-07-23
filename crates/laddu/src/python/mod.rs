@@ -1,4 +1,4 @@
-//! Python bindings for the public Laddu analysis API.
+//! Python bindings for the public laddu analysis API.
 
 // Python-facing fallibility is documented with NumPy-style ``Raises`` sections.
 #![allow(clippy::missing_errors_doc)]
@@ -41,7 +41,7 @@ pub mod topology;
 
 pub use laddu_fit::ganesh::python::ganesh;
 
-/// Define a native module containing Laddu's complete Python API.
+/// Define a native module containing laddu's complete Python API.
 ///
 /// Distribution crates invoke this macro so Maturin can extract the same static
 /// type metadata for every backend without maintaining Python or stub files.
@@ -49,7 +49,7 @@ pub use laddu_fit::ganesh::python::ganesh;
 macro_rules! laddu_python_module {
     ($name:ident, $backend:expr $(, $initializer:item)?) => {
         #[pyo3::pymodule]
-        #[doc = "Laddu's native Python analysis API."]
+        #[doc = "laddu's native Python analysis API."]
         pub mod $name {
             use pyo3::prelude::*;
 
@@ -104,8 +104,11 @@ macro_rules! laddu_python_module {
             use $crate::python::particle::{PyParticle as Particle, particles};
             #[pymodule_export]
             use $crate::python::quantum::{
-                PyIsospin as Isospin, PyJ as J, PyL as L, PyM as M, PyParity as Parity,
-                PyMandelstamChannel as MandelstamChannel, PyS as S, PyStatistics as Statistics,
+                PyAllowedPartialWave as AllowedPartialWave, PyIsospin as Isospin, PyJ as J,
+                PyL as L, PyM as M, PyMandelstamChannel as MandelstamChannel,
+                PyPartialWave as PartialWave, PyParity as Parity, PyRuleCheck as RuleCheck,
+                PyRuleReport as RuleReport, PyRuleSet as RuleSet, PyS as S,
+                PySelectionRules as SelectionRules, PyStatistics as Statistics,
             };
             #[pymodule_export]
             use $crate::python::query::{PyBin as Bin, PyPredicate as Predicate};

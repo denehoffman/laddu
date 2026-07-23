@@ -181,6 +181,7 @@ macro_rules! impl_m_conversions {
     };
 }
 
+/// Signed discrete quantum numbers such as parity and reflectivity.
 pub mod signed {
     use super::*;
 
@@ -213,6 +214,7 @@ pub mod signed {
             }
 
             impl $name {
+                /// Return `+1` or `-1` for this signed quantum number.
                 pub const fn value(self) -> i32 {
                     match self {
                         Self::Positive => 1,
@@ -377,14 +379,23 @@ impl J {
         self.0 & 1 == 0
     }
 
+    /// Enumerate the total angular momenta obtainable by coupling this value to `other`.
+    ///
+    /// Results run from $\lvert J_1 - J_2\rvert$ through $J_1 + J_2$ in unit steps.
+    pub fn coupled_with(self, other: Self) -> Vec<Self> {
+        let min = self.doubled().abs_diff(other.doubled());
+        let max = self.doubled() + other.doubled();
+        (min..=max).step_by(2).map(Self::half).collect()
+    }
+
     /// Return whether this angular momentum has the same integer/half-integer parity as
     /// `projection`.
     pub(crate) const fn has_same_parity_as(self, projection: M) -> bool {
         (self.0 & 1) as i32 == projection.doubled() & 1
     }
 
-    /// Returns true if the given angular momenta can couple to produce this one.
-    pub(crate) fn can_couple_to(&self, j1: Self, j2: Self) -> bool {
+    /// Return whether `j1` and `j2` can couple to produce this angular momentum.
+    pub fn can_couple_to(self, j1: Self, j2: Self) -> bool {
         let min = j1.doubled().abs_diff(j2.doubled());
         let max = j1.doubled() + j2.doubled();
         self.doubled() >= min && self.doubled() <= max && (self.doubled() - min).is_multiple_of(2)
@@ -835,6 +846,16 @@ mod tests {
         assert_eq!(J::int(1) + J::half(1), J::half(3));
         assert_eq!(J::half(3).multiplicity(), 4);
         assert_eq!(L::int(2).multiplicity(), 5);
+    }
+
+    #[test]
+    fn angular_momenta_enumerate_and_validate_couplings() {
+        assert_eq!(
+            J::half(1).coupled_with(J::int(1)),
+            vec![J::half(1), J::half(3)]
+        );
+        assert!(J::half(3).can_couple_to(J::half(1), J::int(1)));
+        assert!(!J::int(0).can_couple_to(J::half(1), J::int(1)));
     }
 
     #[test]

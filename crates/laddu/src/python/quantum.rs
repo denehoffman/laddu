@@ -1,4 +1,7 @@
-use laddu_physics::quantum::{Isospin, J, L, M, MandelstamChannel, Parity, Statistics};
+use laddu_physics::quantum::{
+    AllowedPartialWave, Isospin, J, L, M, MandelstamChannel, Parity, PartialWave, RuleCheck,
+    RuleKind, RuleOutcome, RuleReport, RuleSet, SelectionRules, Statistics, UnknownPolicy,
+};
 use num::rational::Ratio;
 use pyo3::{
     class::basic::CompareOp,
@@ -8,6 +11,7 @@ use pyo3::{
 };
 
 use super::error::to_py_err;
+use super::particle::PyParticle;
 
 fn ratio(value: &Bound<'_, PyAny>) -> PyResult<Option<Ratio<i64>>> {
     let Ok(numerator) = value.getattr("numerator") else {
@@ -174,6 +178,32 @@ impl PyJ {
             .map(PyM::from)
             .collect()
     }
+    /// Return every total angular momentum obtainable by coupling with `other`.
+    ///
+    /// Examples
+    /// --------
+    /// >>> import laddu as ld
+    /// >>> ld.J(0.5).coupled_with(ld.S(1))
+    /// [J(1/2), J(3/2)]
+    #[pyo3(signature = (other: "J | S | L | int | float | fractions.Fraction"))]
+    fn coupled_with(&self, other: &Bound<'_, PyAny>) -> PyResult<Vec<Self>> {
+        Ok(self
+            .inner
+            .coupled_with(extract_j(other)?)
+            .into_iter()
+            .map(|inner| Self { inner })
+            .collect())
+    }
+    /// Return whether `first` and `second` can couple to this total angular momentum.
+    #[pyo3(signature = (
+        first: "J | S | L | int | float | fractions.Fraction",
+        second: "J | S | L | int | float | fractions.Fraction"
+    ))]
+    fn can_couple_to(&self, first: &Bound<'_, PyAny>, second: &Bound<'_, PyAny>) -> PyResult<bool> {
+        Ok(self
+            .inner
+            .can_couple_to(extract_j(first)?, extract_j(second)?))
+    }
     fn __float__(&self) -> f64 {
         f64::from(self.inner)
     }
@@ -249,6 +279,26 @@ impl PyS {
             .into_iter()
             .map(PyM::from)
             .collect()
+    }
+    /// Return every total angular momentum obtainable by coupling with `other`.
+    #[pyo3(signature = (other: "J | S | L | int | float | fractions.Fraction"))]
+    fn coupled_with(&self, other: &Bound<'_, PyAny>) -> PyResult<Vec<PyJ>> {
+        Ok(self
+            .inner
+            .coupled_with(extract_j(other)?)
+            .into_iter()
+            .map(|inner| PyJ { inner })
+            .collect())
+    }
+    /// Return whether `first` and `second` can couple to this spin.
+    #[pyo3(signature = (
+        first: "J | S | L | int | float | fractions.Fraction",
+        second: "J | S | L | int | float | fractions.Fraction"
+    ))]
+    fn can_couple_to(&self, first: &Bound<'_, PyAny>, second: &Bound<'_, PyAny>) -> PyResult<bool> {
+        Ok(self
+            .inner
+            .can_couple_to(extract_j(first)?, extract_j(second)?))
     }
     fn __float__(&self) -> f64 {
         f64::from(self.inner)
@@ -806,4 +856,396 @@ pub fn extract_spin(value: &Bound<'_, PyAny>) -> PyResult<J> {
 ///     If `value` is not an integer or half-integer.
 pub fn extract_projection(value: &Bound<'_, PyAny>) -> PyResult<M> {
     extract_m(value)
+}
+
+fn extract_rule_kind(name: &str) -> PyResult<RuleKind> {
+    let normalized = name
+        .chars()
+        .filter(|character| character.is_ascii_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect::<String>();
+    let rule = match normalized.as_str() {
+        "parity" => RuleKind::Parity,
+        "isospin" => RuleKind::Isospin,
+        "isospinprojection" | "i3" => RuleKind::IsospinProjection,
+        "cparity" => RuleKind::CParity,
+        "gparity" => RuleKind::GParity,
+        "charge" => RuleKind::Charge,
+        "strangeness" => RuleKind::Strangeness,
+        "charm" => RuleKind::Charm,
+        "bottomness" => RuleKind::Bottomness,
+        "topness" => RuleKind::Topness,
+        "baryonnumber" => RuleKind::BaryonNumber,
+        "electronleptonnumber" => RuleKind::ElectronLeptonNumber,
+        "muonleptonnumber" => RuleKind::MuonLeptonNumber,
+        "tauleptonnumber" => RuleKind::TauLeptonNumber,
+        "leptonnumber" => RuleKind::LeptonNumber,
+        "identicalparticlesymmetry" => RuleKind::IdenticalParticleSymmetry,
+        "conventionalmesonjpc" => RuleKind::ConventionalMesonJpc,
+        _ => {
+            return Err(PyValueError::new_err(format!(
+                "unknown quantum rule `{name}`"
+            )));
+        }
+    };
+    Ok(rule)
+}
+
+fn rule_name(rule: RuleKind) -> String {
+    format!("{rule:?}")
+}
+
+fn unknown_policy(name: &str) -> PyResult<UnknownPolicy> {
+    match name.to_ascii_lowercase().as_str() {
+        "allow" => Ok(UnknownPolicy::Allow),
+        "reject" => Ok(UnknownPolicy::Reject),
+        "warn" => Ok(UnknownPolicy::Warn),
+        _ => Err(PyValueError::new_err(
+            "unknown policy must be 'allow', 'reject', or 'warn'",
+        )),
+    }
+}
+
+/// Result of applying one quantum-number selection rule.
+#[pyclass(name = "RuleCheck", module = "laddu", frozen, skip_from_py_object)]
+#[derive(Clone)]
+pub struct PyRuleCheck {
+    inner: RuleCheck,
+}
+
+#[pymethods]
+impl PyRuleCheck {
+    #[getter]
+    /// str: Name of the rule.
+    fn rule(&self) -> String {
+        rule_name(self.inner.rule)
+    }
+
+    #[getter]
+    /// str: Outcome category.
+    fn outcome(&self) -> &'static str {
+        match self.inner.outcome {
+            RuleOutcome::Pass { .. } => "pass",
+            RuleOutcome::Fail { .. } => "fail",
+            RuleOutcome::UnknownAllowed { .. } => "unknown_allowed",
+            RuleOutcome::Warning { .. } => "warning",
+            RuleOutcome::Ignored { .. } => "ignored",
+            RuleOutcome::Diagnostic { .. } => "diagnostic",
+        }
+    }
+
+    #[getter]
+    /// str or None: Human-readable explanation.
+    fn message(&self) -> Option<String> {
+        match &self.inner.outcome {
+            RuleOutcome::Pass { message }
+            | RuleOutcome::Fail { message }
+            | RuleOutcome::UnknownAllowed { message, .. }
+            | RuleOutcome::Warning { message, .. }
+            | RuleOutcome::Diagnostic { message, .. } => Some(message.clone()),
+            RuleOutcome::Ignored { .. } => None,
+        }
+    }
+
+    #[getter]
+    /// list[str]: Inputs that were unavailable during the check.
+    fn missing(&self) -> Vec<String> {
+        match &self.inner.outcome {
+            RuleOutcome::UnknownAllowed { missing, .. } | RuleOutcome::Warning { missing, .. } => {
+                missing.clone()
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    #[getter]
+    /// bool: Whether this check rejects the channel.
+    fn is_failure(&self) -> bool {
+        self.inner.is_failure()
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "RuleCheck(rule='{}', outcome='{}')",
+            self.rule(),
+            self.outcome()
+        )
+    }
+}
+
+/// Complete report from a quantum-number rule set.
+#[pyclass(name = "RuleReport", module = "laddu", frozen, skip_from_py_object)]
+#[derive(Clone)]
+pub struct PyRuleReport {
+    inner: RuleReport,
+}
+
+#[pymethods]
+impl PyRuleReport {
+    #[getter]
+    /// bool: Whether no enforced rule failed.
+    fn is_allowed(&self) -> bool {
+        self.inner.is_allowed()
+    }
+
+    #[getter]
+    /// list[RuleCheck]: Checks in deterministic rule order.
+    fn checks(&self) -> Vec<PyRuleCheck> {
+        self.inner
+            .checks
+            .iter()
+            .cloned()
+            .map(|inner| PyRuleCheck { inner })
+            .collect()
+    }
+
+    fn __len__(&self) -> usize {
+        self.inner.len()
+    }
+
+    fn __bool__(&self) -> bool {
+        self.inner.is_allowed()
+    }
+}
+
+/// Configurable quantum-number rules for a two-body decay.
+#[pyclass(name = "RuleSet", module = "laddu", frozen, skip_from_py_object)]
+#[derive(Clone)]
+pub struct PyRuleSet {
+    inner: RuleSet,
+}
+
+#[pymethods]
+impl PyRuleSet {
+    #[staticmethod]
+    /// Return a rule set containing only angular-momentum coupling.
+    fn angular() -> Self {
+        Self {
+            inner: RuleSet::angular(),
+        }
+    }
+
+    #[staticmethod]
+    /// Return the standard strong-interaction rule set.
+    fn strong() -> Self {
+        Self {
+            inner: RuleSet::strong(),
+        }
+    }
+
+    #[staticmethod]
+    /// Return the standard electromagnetic-interaction rule set.
+    fn electromagnetic() -> Self {
+        Self {
+            inner: RuleSet::electromagnetic(),
+        }
+    }
+
+    #[staticmethod]
+    /// Return the standard weak-interaction rule set.
+    fn weak() -> Self {
+        Self {
+            inner: RuleSet::weak(),
+        }
+    }
+
+    /// Return a copy with `rule` enforced.
+    fn enforce(&self, rule: &str) -> PyResult<Self> {
+        Ok(Self {
+            inner: self.inner.clone().enforce(extract_rule_kind(rule)?),
+        })
+    }
+
+    /// Return a copy with `rule` enforced and missing inputs rejected.
+    fn enforce_strict(&self, rule: &str) -> PyResult<Self> {
+        Ok(Self {
+            inner: self.inner.clone().enforce_strict(extract_rule_kind(rule)?),
+        })
+    }
+
+    /// Return a copy with `rule` disabled.
+    fn disable(&self, rule: &str) -> PyResult<Self> {
+        Ok(Self {
+            inner: self.inner.clone().disable(extract_rule_kind(rule)?),
+        })
+    }
+
+    /// Return a copy with the missing-input policy for `rule` changed.
+    fn with_unknown_policy(&self, rule: &str, policy: &str) -> PyResult<Self> {
+        Ok(Self {
+            inner: self
+                .inner
+                .clone()
+                .with_unknown_policy(extract_rule_kind(rule)?, unknown_policy(policy)?),
+        })
+    }
+
+    #[getter]
+    /// list[str]: Enabled rule names.
+    fn enabled_rules(&self) -> Vec<String> {
+        self.inner.enabled_rules().map(rule_name).collect()
+    }
+
+    /// Evaluate this rule set for ``parent -> daughter_a daughter_b``.
+    fn evaluate(
+        &self,
+        parent: &PyParticle,
+        daughter_a: &PyParticle,
+        daughter_b: &PyParticle,
+        l: &Bound<'_, PyAny>,
+        s: &Bound<'_, PyAny>,
+    ) -> PyResult<PyRuleReport> {
+        Ok(PyRuleReport {
+            inner: self.inner.evaluate(
+                &parent.inner,
+                (&daughter_a.inner, &daughter_b.inner),
+                extract_l(l)?,
+                extract_spin(s)?,
+            ),
+        })
+    }
+}
+
+/// A coupled ``JLS`` partial wave.
+#[pyclass(name = "PartialWave", module = "laddu", frozen, skip_from_py_object)]
+#[derive(Clone, Copy)]
+pub struct PyPartialWave {
+    inner: PartialWave,
+}
+
+#[pymethods]
+impl PyPartialWave {
+    #[new]
+    /// Construct and validate a coupled ``JLS`` partial wave.
+    fn new(j: &Bound<'_, PyAny>, l: &Bound<'_, PyAny>, s: &Bound<'_, PyAny>) -> PyResult<Self> {
+        Ok(Self {
+            inner: PartialWave::new(extract_j(j)?, extract_l(l)?, extract_spin(s)?)
+                .map_err(to_py_err)?,
+        })
+    }
+
+    #[getter]
+    /// J: Total angular momentum.
+    fn j(&self) -> PyJ {
+        PyJ {
+            inner: self.inner.j,
+        }
+    }
+
+    #[getter]
+    /// L: Orbital angular momentum.
+    fn l(&self) -> PyL {
+        PyL {
+            inner: self.inner.l,
+        }
+    }
+
+    #[getter]
+    /// S: Coupled daughter spin.
+    fn s(&self) -> PyS {
+        PyS {
+            inner: self.inner.s,
+        }
+    }
+
+    #[getter]
+    /// str: Spectroscopic label such as ``1S0``.
+    fn label(&self) -> String {
+        self.inner.label()
+    }
+
+    fn __repr__(&self) -> String {
+        format!("PartialWave('{}')", self.inner.label())
+    }
+}
+
+/// A partial wave with channel-dependent inferred parity quantum numbers.
+#[pyclass(
+    name = "AllowedPartialWave",
+    module = "laddu",
+    frozen,
+    skip_from_py_object
+)]
+#[derive(Clone)]
+pub struct PyAllowedPartialWave {
+    inner: AllowedPartialWave,
+}
+
+#[pymethods]
+impl PyAllowedPartialWave {
+    #[getter]
+    /// PartialWave: Coupled angular quantum numbers.
+    fn wave(&self) -> PyPartialWave {
+        PyPartialWave {
+            inner: self.inner.wave,
+        }
+    }
+
+    #[getter]
+    /// Parity or None: Inferred final-state parity.
+    fn parity(&self) -> Option<PyParity> {
+        self.inner.parity.map(Into::into)
+    }
+
+    #[getter]
+    /// Parity or None: Inferred final-state C parity.
+    fn c_parity(&self) -> Option<PyParity> {
+        self.inner.c_parity.map(Into::into)
+    }
+}
+
+/// Generator and filter for allowed two-body partial waves.
+#[pyclass(name = "SelectionRules", module = "laddu", frozen, skip_from_py_object)]
+#[derive(Clone)]
+pub struct PySelectionRules {
+    inner: SelectionRules,
+}
+
+#[pymethods]
+impl PySelectionRules {
+    #[new]
+    /// Construct from a rule set and maximum orbital angular momentum.
+    fn new(rules: &PyRuleSet, max_l: &Bound<'_, PyAny>) -> PyResult<Self> {
+        Ok(Self {
+            inner: SelectionRules::new(rules.inner.clone(), extract_l(max_l)?),
+        })
+    }
+
+    #[staticmethod]
+    /// Construct strong-interaction selection rules.
+    fn strong(max_l: &Bound<'_, PyAny>) -> PyResult<Self> {
+        Ok(Self {
+            inner: SelectionRules::strong(extract_l(max_l)?),
+        })
+    }
+
+    #[staticmethod]
+    /// Construct electromagnetic selection rules.
+    fn electromagnetic(max_l: &Bound<'_, PyAny>) -> PyResult<Self> {
+        Ok(Self {
+            inner: SelectionRules::electromagnetic(extract_l(max_l)?),
+        })
+    }
+
+    #[staticmethod]
+    /// Construct weak-interaction selection rules.
+    fn weak(max_l: &Bound<'_, PyAny>) -> PyResult<Self> {
+        Ok(Self {
+            inner: SelectionRules::weak(extract_l(max_l)?),
+        })
+    }
+
+    /// Return all allowed waves for ``parent -> daughter_a daughter_b``.
+    fn allowed_partial_waves(
+        &self,
+        parent: &PyParticle,
+        daughter_a: &PyParticle,
+        daughter_b: &PyParticle,
+    ) -> Vec<PyAllowedPartialWave> {
+        self.inner
+            .allowed_partial_waves(&parent.inner, (&daughter_a.inner, &daughter_b.inner))
+            .into_iter()
+            .map(|inner| PyAllowedPartialWave { inner })
+            .collect()
+    }
 }

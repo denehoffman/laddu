@@ -25,10 +25,12 @@ pub mod fundamental {
 
     use super::*;
 
+    /// Standard Model gauge and Higgs bosons.
     pub mod bosons {
         use super::*;
         use crate::l;
 
+        /// Photon particle properties.
         pub static PHOTON: LazyLock<ParticleProperties> = LazyLock::new(|| {
             ParticleProperties::boson(l!(1))
                 .with_name("gamma")
@@ -42,6 +44,7 @@ pub mod fundamental {
             // NOTE: isospin not included since it can act as 0 or 1 depending on the circumstances
         });
 
+        /// Positively charged W-boson particle properties.
         pub static W_PLUS: LazyLock<ParticleProperties> = LazyLock::new(|| {
             ParticleProperties::boson(l!(1))
                 .with_name("W+")
@@ -53,6 +56,7 @@ pub mod fundamental {
                 .with_id("pdg", 24)
         });
 
+        /// Negatively charged W-boson particle properties.
         pub static W_MINUS: LazyLock<ParticleProperties> = LazyLock::new(|| {
             ParticleProperties::boson(l!(1))
                 .with_name("W-")
@@ -64,6 +68,7 @@ pub mod fundamental {
                 .with_id("pdg", -24)
         });
 
+        /// Z-boson particle properties.
         pub static Z_BOSON: LazyLock<ParticleProperties> = LazyLock::new(|| {
             ParticleProperties::boson(l!(1))
                 .with_name("Z0")
@@ -74,6 +79,7 @@ pub mod fundamental {
                 .with_id("pdg", 23)
         });
 
+        /// Higgs-boson particle properties.
         pub static HIGGS: LazyLock<ParticleProperties> = LazyLock::new(|| {
             ParticleProperties::boson(l!(0))
                 .with_name("H")
@@ -88,8 +94,10 @@ pub mod fundamental {
         });
     }
 
+    /// Charged leptons and neutrinos.
     pub mod leptons {
         use super::*;
+        /// Electron particle properties.
         pub static ELECTRON: LazyLock<ParticleProperties> = LazyLock::new(|| {
             ParticleProperties::lepton(1, 0, 0)
                 .with_name("e-")
@@ -102,6 +110,7 @@ pub mod fundamental {
                 .with_id("pdg", 11)
         });
 
+        /// Positron particle properties.
         pub static POSITRON: LazyLock<ParticleProperties> = LazyLock::new(|| {
             ParticleProperties::lepton(-1, 0, 0)
                 .with_name("e+")
@@ -114,6 +123,7 @@ pub mod fundamental {
                 .with_id("pdg", -11)
         });
 
+        /// Muon particle properties.
         pub static MUON: LazyLock<ParticleProperties> = LazyLock::new(|| {
             ParticleProperties::lepton(0, 1, 0)
                 .with_name("mu-")
@@ -126,6 +136,7 @@ pub mod fundamental {
                 .with_id("pdg", 13)
         });
 
+        /// Antimuon particle properties.
         pub static ANTIMUON: LazyLock<ParticleProperties> = LazyLock::new(|| {
             ParticleProperties::lepton(0, -1, 0)
                 .with_name("mu+")
@@ -138,6 +149,7 @@ pub mod fundamental {
                 .with_id("pdg", -13)
         });
 
+        /// Tau-lepton particle properties.
         pub static TAU: LazyLock<ParticleProperties> = LazyLock::new(|| {
             ParticleProperties::lepton(0, 0, 1)
                 .with_name("tau-")
@@ -150,6 +162,7 @@ pub mod fundamental {
                 .with_id("pdg", 15)
         });
 
+        /// Antitau particle properties.
         pub static ANTITAU: LazyLock<ParticleProperties> = LazyLock::new(|| {
             ParticleProperties::lepton(0, 0, -1)
                 .with_name("tau+")
@@ -162,6 +175,7 @@ pub mod fundamental {
                 .with_id("pdg", -15)
         });
 
+        /// Electron-neutrino particle properties.
         pub static ELECTRON_NEUTRINO: LazyLock<ParticleProperties> = LazyLock::new(|| {
             ParticleProperties::lepton(1, 0, 0)
                 .with_name("nu_e")
@@ -173,6 +187,7 @@ pub mod fundamental {
                 .with_id("pdg", 12)
         });
 
+        /// Electron-antineutrino particle properties.
         pub static ELECTRON_ANTINEUTRINO: LazyLock<ParticleProperties> = LazyLock::new(|| {
             ParticleProperties::lepton(-1, 0, 0)
                 .with_name("nubar_e")
@@ -184,6 +199,7 @@ pub mod fundamental {
                 .with_id("pdg", -12)
         });
 
+        /// Muon-neutrino particle properties.
         pub static MUON_NEUTRINO: LazyLock<ParticleProperties> = LazyLock::new(|| {
             ParticleProperties::lepton(0, 1, 0)
                 .with_name("nu_mu")
@@ -195,6 +211,7 @@ pub mod fundamental {
                 .with_id("pdg", 14)
         });
 
+        /// Muon-antineutrino particle properties.
         pub static MUON_ANTINEUTRINO: LazyLock<ParticleProperties> = LazyLock::new(|| {
             ParticleProperties::lepton(0, -1, 0)
                 .with_name("nubar_mu")
@@ -206,6 +223,7 @@ pub mod fundamental {
                 .with_id("pdg", -14)
         });
 
+        /// Tau-neutrino particle properties.
         pub static TAU_NEUTRINO: LazyLock<ParticleProperties> = LazyLock::new(|| {
             ParticleProperties::lepton(0, 0, 1)
                 .with_name("nu_tau")
@@ -217,6 +235,7 @@ pub mod fundamental {
                 .with_id("pdg", 16)
         });
 
+        /// Tau-antineutrino particle properties.
         pub static TAU_ANTINEUTRINO: LazyLock<ParticleProperties> = LazyLock::new(|| {
             ParticleProperties::lepton(0, 0, -1)
                 .with_name("nu_tau_bar")
@@ -230,6 +249,7 @@ pub mod fundamental {
     }
 }
 
+/// Built-in meson particle definitions.
 pub mod mesons {
     pub use open_bottom::*;
     pub use open_charm::*;
@@ -238,9 +258,11 @@ pub mod mesons {
 
     use super::*;
 
+    /// Light and strange pseudoscalar mesons.
     pub mod pseudoscalars {
         use super::*;
 
+        /// Positively charged pion particle properties.
         pub static PI_PLUS: LazyLock<ParticleProperties> = LazyLock::new(|| {
             ParticleProperties::meson()
                 .with_zero_flavor()
@@ -255,6 +277,7 @@ pub mod mesons {
                 .with_id("pdg", 211)
         });
 
+        /// Negatively charged pion particle properties.
         pub static PI_MINUS: LazyLock<ParticleProperties> = LazyLock::new(|| {
             ParticleProperties::meson()
                 .with_zero_flavor()
@@ -269,6 +292,7 @@ pub mod mesons {
                 .with_id("pdg", -211)
         });
 
+        /// Neutral pion particle properties.
         pub static PI_ZERO: LazyLock<ParticleProperties> = LazyLock::new(|| {
             ParticleProperties::meson()
                 .with_zero_flavor()
@@ -286,6 +310,7 @@ pub mod mesons {
                 .with_id("pdg", 111)
         });
 
+        /// Positively charged kaon particle properties.
         pub static K_PLUS: LazyLock<ParticleProperties> = LazyLock::new(|| {
             ParticleProperties::meson()
                 .with_name("K+")
@@ -301,6 +326,7 @@ pub mod mesons {
                 .with_id("pdg", 321)
         });
 
+        /// Negatively charged kaon particle properties.
         pub static K_MINUS: LazyLock<ParticleProperties> = LazyLock::new(|| {
             ParticleProperties::meson()
                 .with_name("K-")
@@ -316,6 +342,7 @@ pub mod mesons {
                 .with_id("pdg", -321)
         });
 
+        /// Neutral kaon particle properties.
         pub static K_ZERO: LazyLock<ParticleProperties> = LazyLock::new(|| {
             ParticleProperties::meson()
                 .with_name("K0")
@@ -331,6 +358,7 @@ pub mod mesons {
                 .with_id("pdg", 311)
         });
 
+        /// Neutral antikaon particle properties.
         pub static K_ZERO_BAR: LazyLock<ParticleProperties> = LazyLock::new(|| {
             ParticleProperties::meson()
                 .with_name("K0_bar")
@@ -346,6 +374,7 @@ pub mod mesons {
                 .with_id("pdg", -311)
         });
 
+        /// Short-lived neutral kaon particle properties.
         pub static K_SHORT: LazyLock<ParticleProperties> = LazyLock::new(|| {
             ParticleProperties::meson()
                 .with_name("K_S0")
@@ -357,6 +386,7 @@ pub mod mesons {
                 .with_id("pdg", 310)
         });
 
+        /// Long-lived neutral kaon particle properties.
         pub static K_LONG: LazyLock<ParticleProperties> = LazyLock::new(|| {
             ParticleProperties::meson()
                 .with_name("K_L0")
@@ -368,6 +398,7 @@ pub mod mesons {
                 .with_id("pdg", 130)
         });
 
+        /// Eta-meson particle properties.
         pub static ETA: LazyLock<ParticleProperties> = LazyLock::new(|| {
             ParticleProperties::meson()
                 .with_name("eta")
@@ -383,6 +414,7 @@ pub mod mesons {
                 .with_id("pdg", 221)
         });
 
+        /// Eta-prime-meson particle properties.
         pub static ETA_PRIME: LazyLock<ParticleProperties> = LazyLock::new(|| {
             ParticleProperties::meson()
                 .with_name("eta'")
@@ -399,9 +431,11 @@ pub mod mesons {
         });
     }
 
+    /// Light vector mesons and charmonium.
     pub mod vectors {
         use super::*;
 
+        /// Positively charged rho-meson particle properties.
         pub static RHO_PLUS: LazyLock<ParticleProperties> = LazyLock::new(|| {
             ParticleProperties::meson()
                 .with_name("rho+")
@@ -415,6 +449,7 @@ pub mod mesons {
                 .with_id("pdg", 213)
         });
 
+        /// Negatively charged rho-meson particle properties.
         pub static RHO_MINUS: LazyLock<ParticleProperties> = LazyLock::new(|| {
             ParticleProperties::meson()
                 .with_name("rho-")
@@ -428,6 +463,7 @@ pub mod mesons {
                 .with_id("pdg", -213)
         });
 
+        /// Neutral rho-meson particle properties.
         pub static RHO_ZERO: LazyLock<ParticleProperties> = LazyLock::new(|| {
             ParticleProperties::meson()
                 .with_name("rho0")
@@ -443,6 +479,7 @@ pub mod mesons {
                 .with_id("pdg", 113)
         });
 
+        /// Omega-meson particle properties.
         pub static OMEGA: LazyLock<ParticleProperties> = LazyLock::new(|| {
             ParticleProperties::meson()
                 .with_name("omega")
@@ -458,6 +495,7 @@ pub mod mesons {
                 .with_id("pdg", 223)
         });
 
+        /// Phi-meson particle properties.
         pub static PHI: LazyLock<ParticleProperties> = LazyLock::new(|| {
             ParticleProperties::meson()
                 .with_name("phi")
@@ -473,6 +511,7 @@ pub mod mesons {
                 .with_id("pdg", 333)
         });
 
+        /// J/psi-meson particle properties.
         pub static J_PSI: LazyLock<ParticleProperties> = LazyLock::new(|| {
             ParticleProperties::meson()
                 .with_name("J/psi")
@@ -488,9 +527,11 @@ pub mod mesons {
         });
     }
 
+    /// Open-charm pseudoscalar mesons.
     pub mod open_charm {
         use super::*;
 
+        /// Positively charged D-meson particle properties.
         pub static D_PLUS: LazyLock<ParticleProperties> = LazyLock::new(|| {
             ParticleProperties::meson()
                 .with_name("D+")
@@ -506,6 +547,7 @@ pub mod mesons {
                 .with_id("pdg", 411)
         });
 
+        /// Negatively charged D-meson particle properties.
         pub static D_MINUS: LazyLock<ParticleProperties> = LazyLock::new(|| {
             ParticleProperties::meson()
                 .with_name("D-")
@@ -521,6 +563,7 @@ pub mod mesons {
                 .with_id("pdg", -411)
         });
 
+        /// Neutral D-meson particle properties.
         pub static D_ZERO: LazyLock<ParticleProperties> = LazyLock::new(|| {
             ParticleProperties::meson()
                 .with_name("D0")
@@ -536,6 +579,7 @@ pub mod mesons {
                 .with_id("pdg", 421)
         });
 
+        /// Neutral anti-D-meson particle properties.
         pub static D_ZERO_BAR: LazyLock<ParticleProperties> = LazyLock::new(|| {
             ParticleProperties::meson()
                 .with_name("D0_bar")
@@ -551,6 +595,7 @@ pub mod mesons {
                 .with_id("pdg", -421)
         });
 
+        /// Positively charged D-s-meson particle properties.
         pub static D_S_PLUS: LazyLock<ParticleProperties> = LazyLock::new(|| {
             ParticleProperties::meson()
                 .with_name("D_s+")
@@ -566,6 +611,7 @@ pub mod mesons {
                 .with_id("pdg", 431)
         });
 
+        /// Negatively charged D-s-meson particle properties.
         pub static D_S_MINUS: LazyLock<ParticleProperties> = LazyLock::new(|| {
             ParticleProperties::meson()
                 .with_name("D_s-")
@@ -582,9 +628,11 @@ pub mod mesons {
         });
     }
 
+    /// Open-bottom pseudoscalar mesons.
     pub mod open_bottom {
         use super::*;
 
+        /// Positively charged B-meson particle properties.
         pub static B_PLUS: LazyLock<ParticleProperties> = LazyLock::new(|| {
             ParticleProperties::meson()
                 .with_name("B+")
@@ -600,6 +648,7 @@ pub mod mesons {
                 .with_id("pdg", 521)
         });
 
+        /// Negatively charged B-meson particle properties.
         pub static B_MINUS: LazyLock<ParticleProperties> = LazyLock::new(|| {
             ParticleProperties::meson()
                 .with_name("B-")
@@ -615,6 +664,7 @@ pub mod mesons {
                 .with_id("pdg", -521)
         });
 
+        /// Neutral B-meson particle properties.
         pub static B_ZERO: LazyLock<ParticleProperties> = LazyLock::new(|| {
             ParticleProperties::meson()
                 .with_name("B0")
@@ -630,6 +680,7 @@ pub mod mesons {
                 .with_id("pdg", 511)
         });
 
+        /// Neutral anti-B-meson particle properties.
         pub static B_ZERO_BAR: LazyLock<ParticleProperties> = LazyLock::new(|| {
             ParticleProperties::meson()
                 .with_name("B0_bar")
@@ -645,6 +696,7 @@ pub mod mesons {
                 .with_id("pdg", -511)
         });
 
+        /// Neutral B-s-meson particle properties.
         pub static B_S_ZERO: LazyLock<ParticleProperties> = LazyLock::new(|| {
             ParticleProperties::meson()
                 .with_name("B_s0")
@@ -660,6 +712,7 @@ pub mod mesons {
                 .with_id("pdg", 531)
         });
 
+        /// Neutral anti-B-s-meson particle properties.
         pub static B_S_ZERO_BAR: LazyLock<ParticleProperties> = LazyLock::new(|| {
             ParticleProperties::meson()
                 .with_name("B_s0_bar")
@@ -677,9 +730,11 @@ pub mod mesons {
     }
 }
 
+/// Built-in baryon and antibaryon particle definitions.
 pub mod baryons {
     use super::*;
 
+    /// Proton particle properties.
     pub static PROTON: LazyLock<ParticleProperties> = LazyLock::new(|| {
         ParticleProperties::baryon(1)
             .with_zero_flavor()
@@ -694,6 +749,7 @@ pub mod baryons {
             .with_id("pdg", 2212)
     });
 
+    /// Antiproton particle properties.
     pub static ANTIPROTON: LazyLock<ParticleProperties> = LazyLock::new(|| {
         ParticleProperties::baryon(-1)
             .with_zero_flavor()
@@ -708,6 +764,7 @@ pub mod baryons {
             .with_id("pdg", -2212)
     });
 
+    /// Neutron particle properties.
     pub static NEUTRON: LazyLock<ParticleProperties> = LazyLock::new(|| {
         ParticleProperties::baryon(1)
             .with_zero_flavor()
@@ -722,6 +779,7 @@ pub mod baryons {
             .with_id("pdg", 2112)
     });
 
+    /// Antineutron particle properties.
     pub static ANTINEUTRON: LazyLock<ParticleProperties> = LazyLock::new(|| {
         ParticleProperties::baryon(-1)
             .with_zero_flavor()
@@ -736,6 +794,7 @@ pub mod baryons {
             .with_id("pdg", -2112)
     });
 
+    /// Lambda-baryon particle properties.
     pub static LAMBDA: LazyLock<ParticleProperties> = LazyLock::new(|| {
         ParticleProperties::baryon(1)
             .with_name("Lambda0")
@@ -751,6 +810,7 @@ pub mod baryons {
             .with_id("pdg", 3122)
     });
 
+    /// Anti-Lambda-baryon particle properties.
     pub static ANTILAMBDA: LazyLock<ParticleProperties> = LazyLock::new(|| {
         ParticleProperties::baryon(-1)
             .with_name("Lambda0_bar")
@@ -766,6 +826,7 @@ pub mod baryons {
             .with_id("pdg", -3122)
     });
 
+    /// Positively charged Sigma-baryon particle properties.
     pub static SIGMA_PLUS: LazyLock<ParticleProperties> = LazyLock::new(|| {
         ParticleProperties::baryon(1)
             .with_name("Sigma+")
@@ -781,6 +842,7 @@ pub mod baryons {
             .with_id("pdg", 3222)
     });
 
+    /// Negatively charged anti-Sigma-baryon particle properties.
     pub static ANTISIGMA_MINUS: LazyLock<ParticleProperties> = LazyLock::new(|| {
         ParticleProperties::baryon(-1)
             .with_name("Sigma-_bar")
@@ -796,6 +858,7 @@ pub mod baryons {
             .with_id("pdg", -3222)
     });
 
+    /// Neutral Sigma-baryon particle properties.
     pub static SIGMA_ZERO: LazyLock<ParticleProperties> = LazyLock::new(|| {
         ParticleProperties::baryon(1)
             .with_name("Sigma0")
@@ -811,6 +874,7 @@ pub mod baryons {
             .with_id("pdg", 3212)
     });
 
+    /// Neutral anti-Sigma-baryon particle properties.
     pub static ANTISIGMA_ZERO: LazyLock<ParticleProperties> = LazyLock::new(|| {
         ParticleProperties::baryon(-1)
             .with_name("Sigma0_bar")
@@ -826,6 +890,7 @@ pub mod baryons {
             .with_id("pdg", -3212)
     });
 
+    /// Negatively charged Sigma-baryon particle properties.
     pub static SIGMA_MINUS: LazyLock<ParticleProperties> = LazyLock::new(|| {
         ParticleProperties::baryon(1)
             .with_name("Sigma-")
@@ -841,6 +906,7 @@ pub mod baryons {
             .with_id("pdg", 3112)
     });
 
+    /// Positively charged anti-Sigma-baryon particle properties.
     pub static ANTISIGMA_PLUS: LazyLock<ParticleProperties> = LazyLock::new(|| {
         ParticleProperties::baryon(-1)
             .with_name("Sigma+_bar")
@@ -856,6 +922,7 @@ pub mod baryons {
             .with_id("pdg", -3112)
     });
 
+    /// Neutral Xi-baryon particle properties.
     pub static XI_ZERO: LazyLock<ParticleProperties> = LazyLock::new(|| {
         ParticleProperties::baryon(1)
             .with_name("Xi0")
@@ -871,6 +938,7 @@ pub mod baryons {
             .with_id("pdg", 3322)
     });
 
+    /// Neutral anti-Xi-baryon particle properties.
     pub static ANTI_XI_ZERO: LazyLock<ParticleProperties> = LazyLock::new(|| {
         ParticleProperties::baryon(-1)
             .with_name("Xi0_bar")
@@ -886,6 +954,7 @@ pub mod baryons {
             .with_id("pdg", -3322)
     });
 
+    /// Negatively charged Xi-baryon particle properties.
     pub static XI_MINUS: LazyLock<ParticleProperties> = LazyLock::new(|| {
         ParticleProperties::baryon(1)
             .with_name("Xi-")
@@ -901,6 +970,7 @@ pub mod baryons {
             .with_id("pdg", 3312)
     });
 
+    /// Positively charged anti-Xi-baryon particle properties.
     pub static ANTI_XI_PLUS: LazyLock<ParticleProperties> = LazyLock::new(|| {
         ParticleProperties::baryon(-1)
             .with_name("Xi+_bar")
@@ -916,6 +986,7 @@ pub mod baryons {
             .with_id("pdg", -3312)
     });
 
+    /// Negatively charged Omega-baryon particle properties.
     pub static OMEGA_MINUS: LazyLock<ParticleProperties> = LazyLock::new(|| {
         ParticleProperties::baryon(1)
             .with_name("Omega-")
@@ -931,6 +1002,7 @@ pub mod baryons {
             .with_id("pdg", 3334)
     });
 
+    /// Positively charged anti-Omega-baryon particle properties.
     pub static ANTI_OMEGA_PLUS: LazyLock<ParticleProperties> = LazyLock::new(|| {
         ParticleProperties::baryon(-1)
             .with_name("Omega+_bar")

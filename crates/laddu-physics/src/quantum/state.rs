@@ -387,6 +387,7 @@ impl ParticleProperties {
     }
 
     /// Construct a particle with the given spin and parity.
+    /// Construct a particle with the given spin and intrinsic parity.
     pub fn jp(j: J, p: Parity) -> Self {
         Self {
             spin: Some(j),
@@ -416,6 +417,7 @@ impl ParticleProperties {
         particle
     }
 
+    /// Construct a lepton-like state with the supplied family lepton numbers.
     pub fn lepton(e: i32, m: i32, t: i32) -> Self {
         let mut particle = Self::unknown().with_zero_flavor();
         particle.baryon_number = Some(0);
@@ -496,6 +498,9 @@ impl ParticleProperties {
         Ok(self)
     }
 
+    /// Set both particle and antiparticle species names.
+    ///
+    /// Equal names mark the particle as self-conjugate.
     pub fn with_species_names(
         mut self,
         species: impl Into<String>,
@@ -543,6 +548,7 @@ impl ParticleProperties {
         Ok(self)
     }
 
+    /// Set one species name and mark the particle as self-conjugate.
     pub fn with_self_conjugate_species(
         mut self,
         species: impl Into<String>,
@@ -618,6 +624,7 @@ impl ParticleProperties {
     pub fn with_topness(self, t: i32) -> LadduPhysicsResult<Self> {
         self.with_additive_qn("topness", |p| &mut p.topness, t)
     }
+    /// Set strangeness, charm, bottomness, and topness together.
     pub fn with_flavor(self, s: i32, c: i32, b: i32, t: i32) -> LadduPhysicsResult<Self> {
         self.with_strangeness(s)?
             .with_charm(c)?
@@ -645,6 +652,7 @@ impl ParticleProperties {
         self.with_additive_qn("tau_lepton_number", |p| &mut p.tau_lepton_number, t)
     }
 
+    /// Set electron-, muon-, and tau-family lepton numbers together.
     pub fn with_lepton_numbers(self, e: i32, m: i32, t: i32) -> LadduPhysicsResult<Self> {
         self.with_electron_lepton_number(e)?
             .with_muon_lepton_number(m)?
@@ -671,6 +679,7 @@ impl ParticleProperties {
         self
     }
 
+    /// Set every flavor quantum number to zero.
     pub fn with_zero_flavor(mut self) -> Self {
         self.strangeness = Some(0);
         self.charm = Some(0);
@@ -679,6 +688,7 @@ impl ParticleProperties {
         self
     }
 
+    /// Set every family lepton number to zero.
     pub fn with_zero_lepton_numbers(mut self) -> Self {
         self.electron_lepton_number = Some(0);
         self.muon_lepton_number = Some(0);
@@ -686,6 +696,7 @@ impl ParticleProperties {
         self
     }
 
+    /// Set charge, flavor, baryon number, and all lepton numbers to zero.
     pub fn with_zero_additive_quantum_numbers(mut self) -> LadduPhysicsResult<Self> {
         self.charge = Some(0);
         self.strangeness = Some(0);

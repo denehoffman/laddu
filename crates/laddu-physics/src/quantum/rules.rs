@@ -8,6 +8,8 @@ use crate::{
 };
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+/// A conservation, symmetry, or classification rule that can be applied to a
+/// two-body decay.
 pub enum RuleKind {
     /// Enforce intrinsic parity conservation.
     ///
@@ -98,13 +100,24 @@ pub enum RuleKind {
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
+/// Controls whether and how a rule contributes to the acceptance decision.
 pub enum RuleMode {
+    /// Reject candidates for which the rule fails.
     Enforce,
-    Ignore { reason: Option<String> },
-    DiagnoseOnly { reason: Option<String> },
+    /// Skip the rule, optionally recording why it was disabled.
+    Ignore {
+        /// Optional explanation for ignoring the rule.
+        reason: Option<String>,
+    },
+    /// Evaluate and report the rule without rejecting the candidate.
+    DiagnoseOnly {
+        /// Optional explanation for retaining the rule as a diagnostic.
+        reason: Option<String>,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
+/// Determines how an enforced rule treats missing particle properties.
 pub enum UnknownPolicy {
     /// Current behavior: missing information does not reject the channel.
     Allow,
@@ -115,12 +128,16 @@ pub enum UnknownPolicy {
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
+/// The evaluation mode and missing-input policy associated with one rule.
 pub struct RulePolicy {
+    /// Whether the rule is enforced, ignored, or diagnostic.
     pub mode: RuleMode,
+    /// How missing inputs are handled when the rule is enforced.
     pub unknown: UnknownPolicy,
 }
 
 impl RulePolicy {
+    /// Create an enforced policy which allows unknown inputs.
     pub fn enforce() -> Self {
         Self {
             mode: RuleMode::Enforce,
@@ -128,6 +145,7 @@ impl RulePolicy {
         }
     }
 
+    /// Create an enforced policy which rejects unknown inputs.
     pub fn enforce_strict() -> Self {
         Self {
             mode: RuleMode::Enforce,
@@ -135,6 +153,7 @@ impl RulePolicy {
         }
     }
 
+    /// Create an enforced policy with an explicit missing-input policy.
     pub fn enforce_with_unknown_policy(unknown: UnknownPolicy) -> Self {
         Self {
             mode: RuleMode::Enforce,
@@ -142,6 +161,7 @@ impl RulePolicy {
         }
     }
 
+    /// Create an ignored policy and record a reason.
     pub fn ignore(reason: impl Into<String>) -> Self {
         Self {
             mode: RuleMode::Ignore {
@@ -151,6 +171,7 @@ impl RulePolicy {
         }
     }
 
+    /// Create an ignored policy without recording a reason.
     pub fn ignore_without_reason() -> Self {
         Self {
             mode: RuleMode::Ignore { reason: None },
@@ -158,6 +179,7 @@ impl RulePolicy {
         }
     }
 
+    /// Create a diagnostic-only policy and record a reason.
     pub fn diagnose_only(reason: impl Into<String>) -> Self {
         Self {
             mode: RuleMode::DiagnoseOnly {
@@ -167,6 +189,7 @@ impl RulePolicy {
         }
     }
 
+    /// Create a diagnostic-only policy without recording a reason.
     pub fn diagnose_only_without_reason() -> Self {
         Self {
             mode: RuleMode::DiagnoseOnly { reason: None },
@@ -176,83 +199,115 @@ impl RulePolicy {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+/// The result of applying one configured rule to a candidate partial wave.
 pub enum RuleOutcome {
+    /// The rule was evaluated and satisfied.
     Pass {
+        /// Human-readable explanation of the successful check.
         message: String,
     },
+    /// The rule was evaluated and rejected the candidate.
     Fail {
+        /// Human-readable explanation of the failure.
         message: String,
     },
+    /// Required inputs were absent, and the policy allowed the candidate.
     UnknownAllowed {
+        /// Names of the particle properties that were unavailable.
         missing: Vec<String>,
+        /// Human-readable explanation of the incomplete check.
         message: String,
     },
+    /// Required inputs were absent and the policy requested a warning.
     Warning {
+        /// Names of the particle properties that were unavailable.
         missing: Vec<String>,
+        /// Human-readable explanation of the incomplete check.
         message: String,
     },
+    /// The rule was intentionally not evaluated.
     Ignored {
+        /// Optional explanation supplied when the rule was ignored.
         reason: Option<String>,
     },
+    /// The rule was evaluated for information but did not affect acceptance.
     Diagnostic {
+        /// Whether the check passed, or `None` when inputs were unavailable.
         passed: Option<bool>,
+        /// Optional explanation supplied when diagnostic mode was selected.
         reason: Option<String>,
+        /// Human-readable result of the diagnostic check.
         message: String,
     },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+/// The outcome of one named rule in a [`RuleReport`].
 pub struct RuleCheck {
+    /// Rule that was evaluated.
     pub rule: RuleKind,
+    /// Result produced under the rule's configured policy.
     pub outcome: RuleOutcome,
 }
 
 impl RuleCheck {
+    /// Return whether this check rejects the candidate.
     pub fn is_failure(&self) -> bool {
         matches!(self.outcome, RuleOutcome::Fail { .. })
     }
 
+    /// Return whether this check produced a missing-input warning.
     pub fn is_warning(&self) -> bool {
         matches!(self.outcome, RuleOutcome::Warning { .. })
     }
 
+    /// Return whether missing inputs were accepted silently.
     pub fn is_unknown_allowed(&self) -> bool {
         matches!(self.outcome, RuleOutcome::UnknownAllowed { .. })
     }
 
+    /// Return whether this rule was ignored.
     pub fn is_ignored(&self) -> bool {
         matches!(self.outcome, RuleOutcome::Ignored { .. })
     }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Default, Serialize, Deserialize)]
+/// Detailed results from evaluating a [`RuleSet`] against one candidate.
 pub struct RuleReport {
+    /// Individual checks, ordered by [`RuleKind`].
     pub checks: Vec<RuleCheck>,
 }
 
 impl RuleReport {
+    /// Return whether no enforced rule rejected the candidate.
     pub fn is_allowed(&self) -> bool {
         self.checks.iter().all(|check| !check.is_failure())
     }
 
+    /// Iterate over checks that rejected the candidate.
     pub fn failures(&self) -> impl Iterator<Item = &RuleCheck> {
         self.checks.iter().filter(|check| check.is_failure())
     }
 
+    /// Iterate over missing-input warnings.
     pub fn warnings(&self) -> impl Iterator<Item = &RuleCheck> {
         self.checks.iter().filter(|check| check.is_warning())
     }
 
+    /// Iterate over checks whose missing inputs were allowed.
     pub fn unknowns(&self) -> impl Iterator<Item = &RuleCheck> {
         self.checks
             .iter()
             .filter(|check| check.is_unknown_allowed())
     }
 
+    /// Iterate over rules which were intentionally ignored.
     pub fn ignored(&self) -> impl Iterator<Item = &RuleCheck> {
         self.checks.iter().filter(|check| check.is_ignored())
     }
 
+    /// Retrieve the outcome for a particular rule, if it was configured.
     pub fn outcome(&self, rule: RuleKind) -> Option<&RuleOutcome> {
         self.checks
             .iter()
@@ -260,22 +315,27 @@ impl RuleReport {
             .map(|check| &check.outcome)
     }
 
+    /// Return whether at least one check rejected the candidate.
     pub fn has_failures(&self) -> bool {
         self.failures().next().is_some()
     }
 
+    /// Return whether at least one check allowed unknown inputs.
     pub fn has_unknowns(&self) -> bool {
         self.unknowns().next().is_some()
     }
 
+    /// Return whether at least one configured rule was ignored.
     pub fn has_ignored(&self) -> bool {
         self.ignored().next().is_some()
     }
 
+    /// Return the number of configured rules in the report.
     pub fn len(&self) -> usize {
         self.checks.len()
     }
 
+    /// Return whether the report contains no checks.
     pub fn is_empty(&self) -> bool {
         self.checks.is_empty()
     }
@@ -371,49 +431,61 @@ impl RuleSet {
             .enforce(RuleKind::IdenticalParticleSymmetry)
     }
 
+    /// Enable a rule in place using permissive missing-input handling.
     pub fn enforce_mut(&mut self, rule: RuleKind) -> &mut Self {
         self.policies.insert(rule, RulePolicy::enforce());
         self
     }
 
+    /// Enable a rule in place and reject candidates with missing inputs.
     pub fn enforce_strict_mut(&mut self, rule: RuleKind) -> &mut Self {
         self.policies.insert(rule, RulePolicy::enforce_strict());
         self
     }
 
+    /// Assign an explicit policy to a rule in place.
     pub fn set_policy_mut(&mut self, rule: RuleKind, policy: RulePolicy) -> &mut Self {
         self.policies.insert(rule, policy);
         self
     }
 
+    /// Ignore a rule in place and record the supplied reason.
     pub fn ignore_mut(&mut self, rule: RuleKind, reason: impl Into<String>) -> &mut Self {
         self.policies.insert(rule, RulePolicy::ignore(reason));
         self
     }
 
+    /// Ignore a rule in place without recording a reason.
     pub fn ignore_without_reason_mut(&mut self, rule: RuleKind) -> &mut Self {
         self.policies
             .insert(rule, RulePolicy::ignore_without_reason());
         self
     }
 
+    /// Make a rule diagnostic-only in place and record the supplied reason.
     pub fn diagnose_only_mut(&mut self, rule: RuleKind, reason: impl Into<String>) -> &mut Self {
         self.policies
             .insert(rule, RulePolicy::diagnose_only(reason));
         self
     }
 
+    /// Make a rule diagnostic-only in place without recording a reason.
     pub fn diagnose_only_without_reason_mut(&mut self, rule: RuleKind) -> &mut Self {
         self.policies
             .insert(rule, RulePolicy::diagnose_only_without_reason());
         self
     }
 
+    /// Remove a rule from this set in place.
     pub fn disable_mut(&mut self, rule: RuleKind) -> &mut Self {
         self.policies.remove(&rule);
         self
     }
 
+    /// Change a rule's missing-input policy in place.
+    ///
+    /// The rule is enabled with [`RulePolicy::enforce`] if it was not already
+    /// configured.
     pub fn with_unknown_policy_mut(&mut self, rule: RuleKind, unknown: UnknownPolicy) -> &mut Self {
         self.policies
             .entry(rule)
@@ -422,59 +494,71 @@ impl RuleSet {
         self
     }
 
+    /// Return a copy with a permissively enforced rule.
     pub fn enforce(mut self, rule: RuleKind) -> Self {
         self.enforce_mut(rule);
         self
     }
 
+    /// Return a copy with a strictly enforced rule.
     pub fn enforce_strict(mut self, rule: RuleKind) -> Self {
         self.enforce_strict_mut(rule);
         self
     }
 
+    /// Return a copy with an explicit policy assigned to a rule.
     pub fn set_policy(mut self, rule: RuleKind, policy: RulePolicy) -> Self {
         self.set_policy_mut(rule, policy);
         self
     }
 
+    /// Return a copy which ignores a rule for the supplied reason.
     pub fn ignore(mut self, rule: RuleKind, reason: impl Into<String>) -> Self {
         self.ignore_mut(rule, reason);
         self
     }
 
+    /// Return a copy which ignores a rule without recording a reason.
     pub fn ignore_without_reason(mut self, rule: RuleKind) -> Self {
         self.ignore_without_reason_mut(rule);
         self
     }
 
+    /// Return a copy which evaluates a rule only for diagnostics.
     pub fn diagnose_only(mut self, rule: RuleKind, reason: impl Into<String>) -> Self {
         self.diagnose_only_mut(rule, reason);
         self
     }
 
+    /// Return a copy which evaluates a rule only for diagnostics, without a reason.
     pub fn diagnose_only_without_reason(mut self, rule: RuleKind) -> Self {
         self.diagnose_only_without_reason_mut(rule);
         self
     }
 
+    /// Return a copy with a rule removed.
     pub fn disable(mut self, rule: RuleKind) -> Self {
         self.disable_mut(rule);
         self
     }
 
+    /// Return a copy with the selected missing-input policy.
     pub fn with_unknown_policy(mut self, rule: RuleKind, unknown: UnknownPolicy) -> Self {
         self.with_unknown_policy_mut(rule, unknown);
         self
     }
 
+    /// Retrieve the configured policy for a rule.
     pub fn policy(&self, rule: RuleKind) -> Option<&RulePolicy> {
         self.policies.get(&rule)
     }
 
+    /// Iterate over the configured rules in stable [`RuleKind`] order.
     pub fn enabled_rules(&self) -> impl Iterator<Item = RuleKind> + '_ {
         self.policies.keys().copied()
     }
 
+    /// Return whether a two-body partial-wave candidate satisfies this rule set.
     pub fn check(
         &self,
         parent: &ParticleProperties,
@@ -485,6 +569,7 @@ impl RuleSet {
         self.evaluate(parent, daughters, l, s).is_allowed()
     }
 
+    /// Evaluate every configured rule and return a detailed report.
     pub fn evaluate(
         &self,
         parent: &ParticleProperties,
@@ -1232,25 +1317,35 @@ fn infer_c_parity(
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+/// A generated partial-wave candidate together with its inferred properties and
+/// selection-rule report.
 pub struct PartialWaveCandidate {
+    /// Angular quantum numbers of the candidate.
     pub wave: PartialWave,
+    /// Candidate wave plus its channel-dependent inferred parity values.
     pub inferred: AllowedPartialWave,
+    /// Detailed outcomes from the configured rules.
     pub report: RuleReport,
 }
 
 impl PartialWaveCandidate {
+    /// Return whether the candidate passed every enforced rule.
     pub fn is_allowed(&self) -> bool {
         self.report.is_allowed()
     }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Default)]
+/// Complete result of scanning a two-body channel for partial waves.
 pub struct PartialWaveScan {
+    /// All generated candidates, including rejected waves.
     pub candidates: Vec<PartialWaveCandidate>,
+    /// Required properties which prevented candidate generation.
     pub missing_inputs: Vec<String>,
 }
 
 impl PartialWaveScan {
+    /// Iterate over the inferred properties of accepted waves.
     pub fn allowed(&self) -> impl Iterator<Item = &AllowedPartialWave> {
         self.candidates
             .iter()
@@ -1258,12 +1353,14 @@ impl PartialWaveScan {
             .map(|candidate| &candidate.inferred)
     }
 
+    /// Iterate over candidates rejected by at least one enforced rule.
     pub fn rejected(&self) -> impl Iterator<Item = &PartialWaveCandidate> {
         self.candidates
             .iter()
             .filter(|candidate| !candidate.is_allowed())
     }
 
+    /// Consume the scan and collect its accepted waves.
     pub fn into_allowed(self) -> Vec<AllowedPartialWave> {
         self.candidates
             .into_iter()
@@ -1313,22 +1410,28 @@ impl Default for SelectionRules {
 }
 
 impl SelectionRules {
+    /// Construct a partial-wave scanner from a rule set and maximum orbital
+    /// angular momentum.
     pub fn new(rules: RuleSet, max_l: L) -> Self {
         Self { rules, max_l }
     }
 
+    /// Construct a scanner which applies only angular-momentum coupling.
     pub fn angular(max_l: L) -> Self {
         Self::new(RuleSet::angular(), max_l)
     }
 
+    /// Construct a scanner configured for electromagnetic decays.
     pub fn electromagnetic(max_l: L) -> Self {
         Self::new(RuleSet::electromagnetic(), max_l)
     }
 
+    /// Construct a scanner configured for weak decays.
     pub fn weak(max_l: L) -> Self {
         Self::new(RuleSet::weak(), max_l)
     }
 
+    /// Construct a scanner configured for strong decays.
     pub fn strong(max_l: L) -> Self {
         Self::new(RuleSet::strong(), max_l)
     }
@@ -1340,12 +1443,11 @@ impl SelectionRules {
     /// Internally angular momenta are stored as doubled values, so the returned
     /// sequence advances by two in the doubled representation.
     pub fn coupled_spins(a: J, b: J) -> Vec<S> {
-        let min = a.doubled().abs_diff(b.doubled());
-        let max = a.doubled() + b.doubled();
-
-        (min..=max).step_by(2).map(J::half).collect()
+        a.coupled_with(b)
     }
 
+    /// Generate all candidates and retain detailed reports for accepted and
+    /// rejected waves.
     pub fn scan_partial_waves(
         &self,
         parent: &ParticleProperties,

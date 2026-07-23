@@ -9,6 +9,7 @@ pub use state::*;
 mod rules;
 pub use rules::*;
 
+/// Curated particle-property definitions for commonly used particles.
 pub mod builtin;
 
 /// Shorthand macro for constructing a total angular momentum [`J`].

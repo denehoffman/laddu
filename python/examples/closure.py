@@ -1,5 +1,5 @@
 """
-Generate and fit a small K_S K_S closure test with Laddu's Python API.
+Generate and fit a small K_S K_S closure test with laddu's Python API.
 
 After entering the direnv-managed development shell and running `just
 python-dev` once, run the practical default example with:
@@ -17,7 +17,6 @@ import argparse
 import json
 import math
 import time
-from fractions import Fraction
 from pathlib import Path
 
 import laddu as ld
@@ -81,20 +80,12 @@ def build_channel() -> ld.Channel:
     )
 
 
-def coupled_spins(first: ld.S, second: ld.S) -> list[ld.J]:
-    """Return the allowed total spins for coupling two spins."""
-    minimum = abs(first.doubled - second.doubled)
-    maximum = first.doubled + second.doubled
-    return [ld.J(Fraction(doubled, 2)) for doubled in range(minimum, maximum + 1, 2)]
-
-
 def production_total_j(channel: ld.Channel, resonance: ld.Particle) -> ld.J:
     """Choose the common initial/final spin coupling used by the Rust demo."""
-    initial = coupled_spins(
-        channel.particle('gamma').spin,
+    initial = channel.particle('gamma').spin.coupled_with(
         channel.particle('target').spin,
     )
-    final = coupled_spins(resonance.spin, channel.particle('recoil').spin)
+    final = resonance.spin.coupled_with(channel.particle('recoil').spin)
     try:
         return next(candidate for candidate in initial if candidate in final)
     except StopIteration as error:
