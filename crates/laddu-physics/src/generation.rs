@@ -365,7 +365,8 @@ pub enum TComponent {
         /// Exponential slope.
         slope: f64,
     },
-    /// Pole-like density proportional to `(exchange_mass² - t)^(-power)`.
+    /// Pole-like density proportional to
+    /// $`(\mathit{exchange\_mass}^2 - t)^{-\mathit{power}}`$.
     Pole {
         /// Mass of the exchanged pole.
         exchange_mass: f64,

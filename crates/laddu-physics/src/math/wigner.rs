@@ -123,8 +123,8 @@ const fn check_coupling(dj1: i64, dj2: i64, dj3: i64) -> bool {
 ///
 /// The function returns `0.0` when any standard selection rule is violated:
 /// - `(j, m)` is not a valid angular-momentum projection pair
-/// - `j₁`, `j₂`, and `j` do not satisfy the triangle relation
-/// - `m₁ + m₂ != m`
+/// - $`j_1`$, $`j_2`$, and $`j`$ do not satisfy the triangle relation
+/// - $`m_1 + m_2 \ne m`$
 ///
 /// # Examples
 ///
@@ -206,8 +206,8 @@ fn clebsch_gordan_doubled(dj1: u64, dj2: u64, dj3: u64, dm1: i64, dm2: i64, dm3:
 ///
 /// The function returns `0.0` when any selection rule fails:
 /// - `(j, m)` is invalid for any input pair
-/// - `j₁`, `j₂`, and `j₃` violate the triangle condition
-/// - `m₁ + m₂ + m₃ != 0`
+/// - $`j_1`$, $`j_2`$, and $`j_3`$ violate the triangle condition
+/// - $`m_1 + m_2 + m_3 \ne 0`$
 ///
 /// # Notes
 ///
