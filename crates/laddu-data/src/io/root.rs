@@ -504,10 +504,10 @@ impl<'a> RootColumnReaders<'a> {
 
             for _ in 0..len {
                 col.push(RealVec4 {
-                    t: e.next_f64()?,
-                    x: px.next_f64()?,
-                    y: py.next_f64()?,
-                    z: pz.next_f64()?,
+                    e: e.next_f64()?,
+                    px: px.next_f64()?,
+                    py: py.next_f64()?,
+                    pz: pz.next_f64()?,
                 });
             }
 
@@ -837,16 +837,16 @@ impl EventSink for RootSink {
             for col in 0..batch.schema().n_p4s() {
                 let p = batch.p4_at(col, row);
 
-                senders.send(index, p.t)?;
+                senders.send(index, p.e)?;
                 index += 1;
 
-                senders.send(index, p.x)?;
+                senders.send(index, p.px)?;
                 index += 1;
 
-                senders.send(index, p.y)?;
+                senders.send(index, p.py)?;
                 index += 1;
 
-                senders.send(index, p.z)?;
+                senders.send(index, p.pz)?;
                 index += 1;
             }
 
@@ -1021,10 +1021,10 @@ mod tests {
 
     fn v(x: f64) -> RealVec4 {
         RealVec4 {
-            x,
-            y: x + 0.1,
-            z: x + 0.2,
-            t: x + 0.3,
+            e: x + 0.3,
+            px: x,
+            py: x + 0.1,
+            pz: x + 0.2,
         }
     }
 
@@ -1102,7 +1102,7 @@ mod tests {
 
         assert_eq!(read.scalar_column(0), &[100.0, 101.0, 102.0, 103.0]);
         assert_eq!(read.weights_column().unwrap(), &[10.0, 11.0, 12.0, 13.0]);
-        assert!((read.p4_at(0, 2).t - 2.3).abs() < 1.0e-6);
+        assert!((read.p4_at(0, 2).e - 2.3).abs() < 1.0e-6);
 
         let _ = std::fs::remove_file(path);
     }

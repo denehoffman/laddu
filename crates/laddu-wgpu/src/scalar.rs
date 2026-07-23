@@ -1197,10 +1197,10 @@ impl WgpuScalarKernel {
                             .ok_or_else(|| WgpuError::MissingEventColumn(name.clone()))?;
                         let p4 = batch.p4_at(col, row);
                         match component {
-                            P4Component::Px => p4.x,
-                            P4Component::Py => p4.y,
-                            P4Component::Pz => p4.z,
-                            P4Component::E => p4.t,
+                            P4Component::Px => p4.px,
+                            P4Component::Py => p4.py,
+                            P4Component::Pz => p4.pz,
+                            P4Component::E => p4.e,
                         }
                     }
                 };

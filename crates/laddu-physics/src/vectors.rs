@@ -180,12 +180,12 @@ impl RealVec3 {
     /// Create a [`RealVec4`] with this vector as the 3-momentum and the given mass
     pub fn with_mass(&self, mass: f64) -> RealVec4 {
         let e = f64::sqrt(mass.powi(2) + self.mag2());
-        RealVec4::new(self.px(), self.py(), self.pz(), e)
+        RealVec4::new(e, self.px(), self.py(), self.pz())
     }
 
     /// Create a [`RealVec4`] with this vector as the 3-momentum and the given energy
     pub fn with_energy(&self, energy: f64) -> RealVec4 {
-        RealVec4::new(self.px(), self.py(), self.pz(), energy)
+        RealVec4::new(energy, self.px(), self.py(), self.pz())
     }
 
     /// Compute the dot product of this [`RealVec3`] and another
@@ -274,7 +274,7 @@ impl_op_ex_commutative!(*|a: &RealVec3, b: &f64| -> RealVec3 {
 });
 impl_op_ex!(/ |a: &RealVec3, b: &f64| -> RealVec3 { RealVec3::new(a.x / b, a.y / b, a.z / b) });
 
-/// A four-vector (Lorentz vector) whose last component stores the energy.
+/// A four-vector (Lorentz vector) stored in `(E, p_x, p_y, p_z)` order.
 ///
 /// # Examples
 /// ```rust
@@ -286,22 +286,22 @@ impl_op_ex!(/ |a: &RealVec3, b: &f64| -> RealVec3 { RealVec3::new(a.x / b, a.y /
 /// ```
 #[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct RealVec4 {
-    /// The x-component of the vector
-    pub x: f64,
-    /// The y-component of the vector
-    pub y: f64,
-    /// The z-component of the vector
-    pub z: f64,
-    /// The t-component of the vector
-    pub t: f64,
+    /// Energy component.
+    pub e: f64,
+    /// Momentum in the x direction.
+    pub px: f64,
+    /// Momentum in the y direction.
+    pub py: f64,
+    /// Momentum in the z direction.
+    pub pz: f64,
 }
 
 impl Display for RealVec4 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "[{:6.3}, {:6.3}, {:6.3}; {:6.3}]",
-            self.x, self.y, self.z, self.t
+            "[{:6.3}; {:6.3}, {:6.3}, {:6.3}]",
+            self.e, self.px, self.py, self.pz
         )
     }
 }
@@ -314,10 +314,10 @@ impl AbsDiffEq for RealVec4 {
     }
 
     fn abs_diff_eq(&self, other: &Self, epsilon: Self::Epsilon) -> bool {
-        f64::abs_diff_eq(&self.x, &other.x, epsilon)
-            && f64::abs_diff_eq(&self.y, &other.y, epsilon)
-            && f64::abs_diff_eq(&self.z, &other.z, epsilon)
-            && f64::abs_diff_eq(&self.t, &other.t, epsilon)
+        f64::abs_diff_eq(&self.e, &other.e, epsilon)
+            && f64::abs_diff_eq(&self.px, &other.px, epsilon)
+            && f64::abs_diff_eq(&self.py, &other.py, epsilon)
+            && f64::abs_diff_eq(&self.pz, &other.pz, epsilon)
     }
 }
 impl RelativeEq for RealVec4 {
@@ -331,16 +331,16 @@ impl RelativeEq for RealVec4 {
         epsilon: Self::Epsilon,
         max_relative: Self::Epsilon,
     ) -> bool {
-        f64::relative_eq(&self.x, &other.x, epsilon, max_relative)
-            && f64::relative_eq(&self.y, &other.y, epsilon, max_relative)
-            && f64::relative_eq(&self.z, &other.z, epsilon, max_relative)
-            && f64::relative_eq(&self.t, &other.t, epsilon, max_relative)
+        f64::relative_eq(&self.e, &other.e, epsilon, max_relative)
+            && f64::relative_eq(&self.px, &other.px, epsilon, max_relative)
+            && f64::relative_eq(&self.py, &other.py, epsilon, max_relative)
+            && f64::relative_eq(&self.pz, &other.pz, epsilon, max_relative)
     }
 }
 
 impl From<RealVec4> for Vector4<f64> {
     fn from(value: RealVec4) -> Self {
-        Vector4::new(value.x, value.y, value.z, value.t)
+        Vector4::new(value.e, value.px, value.py, value.pz)
     }
 }
 
@@ -360,61 +360,61 @@ impl TryFrom<Vec<f64>> for RealVec4 {
             ));
         }
         Ok(Self {
-            x: value[0],
-            y: value[1],
-            z: value[2],
-            t: value[3],
+            e: value[0],
+            px: value[1],
+            py: value[2],
+            pz: value[3],
         })
     }
 }
 
 impl From<RealVec4> for Vec<f64> {
     fn from(value: RealVec4) -> Self {
-        vec![value.x, value.y, value.z, value.t]
+        vec![value.e, value.px, value.py, value.pz]
     }
 }
 
 impl From<[f64; 4]> for RealVec4 {
     fn from(value: [f64; 4]) -> Self {
         Self {
-            x: value[0],
-            y: value[1],
-            z: value[2],
-            t: value[3],
+            e: value[0],
+            px: value[1],
+            py: value[2],
+            pz: value[3],
         }
     }
 }
 
 impl From<RealVec4> for [f64; 4] {
     fn from(value: RealVec4) -> Self {
-        [value.x, value.y, value.z, value.t]
+        [value.e, value.px, value.py, value.pz]
     }
 }
 
 impl RealVec4 {
-    /// Create a new 4-vector from its components
-    pub fn new(x: f64, y: f64, z: f64, t: f64) -> Self {
-        RealVec4 { x, y, z, t }
+    /// Create a four-vector in metric order `(E, p_x, p_y, p_z)`.
+    pub fn new(e: f64, px: f64, py: f64, pz: f64) -> Self {
+        RealVec4 { e, px, py, pz }
     }
 
     /// Momentum in the x-direction
     pub fn px(&self) -> f64 {
-        self.x
+        self.px
     }
 
     /// Momentum in the y-direction
     pub fn py(&self) -> f64 {
-        self.y
+        self.py
     }
 
     /// Momentum in the z-direction
     pub fn pz(&self) -> f64 {
-        self.z
+        self.pz
     }
 
     /// The energy of the 4-vector
     pub fn e(&self) -> f64 {
-        self.t
+        self.e
     }
 
     /// The 3-momentum
@@ -451,15 +451,18 @@ impl RealVec4 {
     }
 
     #[inline(always)]
+    /// Return the invariant mass without checking for a spacelike vector.
     pub fn m_unchecked(&self) -> f64 {
         self.m2().sqrt()
     }
 
+    /// Return the signed invariant mass.
     pub fn signed_m(&self) -> LadduPhysicsResult<f64> {
         self.signed_mag()
     }
 
     #[inline(always)]
+    /// Return the signed invariant mass without checking for finite components.
     pub fn signed_m_unchecked(&self) -> f64 {
         self.signed_mag_unchecked()
     }
@@ -467,6 +470,11 @@ impl RealVec4 {
     /// The squared invariant mass corresponding to this 4-momentum
     pub fn m2(&self) -> f64 {
         self.mag2()
+    }
+
+    /// Compute the Lorentz inner product with another four-vector.
+    pub fn dot(&self, other: &Self) -> f64 {
+        self.e * other.e - self.px * other.px - self.py * other.py - self.pz * other.pz
     }
 
     /// Pretty-prints the four-momentum.
@@ -485,7 +493,7 @@ impl RealVec4 {
         )
     }
 
-    /// The physical magnitude (with $`---+`$ signature).
+    /// Alias for [`Self::m`] using the $`+---`$ metric.
     ///
     /// Returns an error for spacelike four-vectors, where `m2 < 0`.
     pub fn mag(&self) -> LadduPhysicsResult<f64> {
@@ -510,7 +518,7 @@ impl RealVec4 {
         Ok(mag2.sqrt())
     }
 
-    /// Signed magnitude useful for diagnostics:
+    /// Signed invariant mass useful for diagnostics:
     ///
     /// - `sqrt(mag2)` for timelike/null vectors
     /// - `-sqrt(-mag2)` for spacelike vectors
@@ -533,6 +541,7 @@ impl RealVec4 {
     }
 
     #[inline(always)]
+    /// Return the signed magnitude without checking for finite components.
     pub fn signed_mag_unchecked(&self) -> f64 {
         let mag2 = self.mag2();
         if mag2 >= 0.0 {
@@ -542,9 +551,9 @@ impl RealVec4 {
         }
     }
 
-    /// The squared magnitude of the vector (with $`---+`$ signature).
+    /// Alias for [`Self::m2`], the squared invariant mass in the $`+---`$ metric.
     pub fn mag2(&self) -> f64 {
-        self.t * self.t - (self.x * self.x + self.y * self.y + self.z * self.z)
+        self.e * self.e - (self.px * self.px + self.py * self.py + self.pz * self.pz)
     }
 
     /// Gives the vector boosted along a $`\vec{\beta}`$ vector.
@@ -554,25 +563,25 @@ impl RealVec4 {
             return *self;
         }
         let gamma = 1.0 / f64::sqrt(1.0 - b2);
-        let p3 = self.vec3() + beta * ((gamma - 1.0) * self.vec3().dot(beta) / b2 + gamma * self.t);
-        RealVec4::new(p3.x, p3.y, p3.z, gamma * (self.t + beta.dot(&self.vec3())))
+        let p3 = self.vec3() + beta * ((gamma - 1.0) * self.vec3().dot(beta) / b2 + gamma * self.e);
+        RealVec4::new(gamma * (self.e + beta.dot(&self.vec3())), p3.x, p3.y, p3.z)
     }
 
     /// The 3-vector contained in this 4-vector
     pub fn vec3(&self) -> RealVec3 {
         RealVec3 {
-            x: self.x,
-            y: self.y,
-            z: self.z,
+            x: self.px,
+            y: self.py,
+            z: self.pz,
         }
     }
 }
 
-impl_op_ex!(+ |a: &RealVec4, b: &RealVec4| -> RealVec4 { RealVec4::new(a.x + b.x, a.y + b.y, a.z + b.z, a.t + b.t) });
+impl_op_ex!(+ |a: &RealVec4, b: &RealVec4| -> RealVec4 { RealVec4::new(a.e + b.e, a.px + b.px, a.py + b.py, a.pz + b.pz) });
 impl_op_ex!(-|a: &RealVec4, b: &RealVec4| -> RealVec4 {
-    RealVec4::new(a.x - b.x, a.y - b.y, a.z - b.z, a.t - b.t)
+    RealVec4::new(a.e - b.e, a.px - b.px, a.py - b.py, a.pz - b.pz)
 });
-impl_op_ex!(-|a: &RealVec4| -> RealVec4 { RealVec4::new(-a.x, -a.y, -a.z, a.t) });
+impl_op_ex!(-|a: &RealVec4| -> RealVec4 { RealVec4::new(a.e, -a.px, -a.py, -a.pz) });
 
 impl<'a> std::iter::Sum<&'a RealVec4> for RealVec4 {
     fn sum<I: Iterator<Item = &'a Self>>(iter: I) -> Self {
@@ -589,12 +598,16 @@ impl std::iter::Sum<RealVec4> for RealVec4 {
 /// Expression-valued vector with three spatial components.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Vec3 {
+    /// Symbolic x component.
     pub x: Expr,
+    /// Symbolic y component.
     pub y: Expr,
+    /// Symbolic z component.
     pub z: Expr,
 }
 
 impl Vec3 {
+    /// Construct a symbolic Cartesian three-vector.
     pub fn new(x: impl Into<Expr>, y: impl Into<Expr>, z: impl Into<Expr>) -> Self {
         Self {
             x: x.into(),
@@ -603,22 +616,27 @@ impl Vec3 {
         }
     }
 
+    /// Return the symbolic zero vector.
     pub fn zero() -> Self {
         Self::new(0.0, 0.0, 0.0)
     }
 
+    /// Return the positive x-axis unit vector.
     pub fn x() -> Self {
         Self::new(1.0, 0.0, 0.0)
     }
 
+    /// Return the positive y-axis unit vector.
     pub fn y() -> Self {
         Self::new(0.0, 1.0, 0.0)
     }
 
+    /// Return the positive z-axis unit vector.
     pub fn z() -> Self {
         Self::new(0.0, 0.0, 1.0)
     }
 
+    /// Read the spatial components of a named event four-vector.
     pub fn event(prefix: &str) -> Self {
         Self::new(
             event_p4_component(prefix, P4Component::Px),
@@ -627,22 +645,27 @@ impl Vec3 {
         )
     }
 
+    /// Return the x momentum component.
     pub fn px(&self) -> Expr {
         self.x.clone()
     }
 
+    /// Return the y momentum component.
     pub fn py(&self) -> Expr {
         self.y.clone()
     }
 
+    /// Return the z momentum component.
     pub fn pz(&self) -> Expr {
         self.z.clone()
     }
 
+    /// Compute the Euclidean inner product.
     pub fn dot(&self, other: &Self) -> Expr {
         &self.x * &other.x + &self.y * &other.y + &self.z * &other.z
     }
 
+    /// Compute the Cartesian cross product.
     pub fn cross(&self, other: &Self) -> Self {
         Self::new(
             &self.y * &other.z - &other.y * &self.z,
@@ -651,40 +674,48 @@ impl Vec3 {
         )
     }
 
+    /// Return the squared Euclidean magnitude.
     pub fn mag2(&self) -> Expr {
         self.dot(self)
     }
 
+    /// Return the Euclidean magnitude.
     pub fn mag(&self) -> Expr {
         self.mag2().sqrt()
     }
 
+    /// Return the cosine of the polar angle.
     pub fn costheta(&self) -> Expr {
         &self.z / self.mag()
     }
 
+    /// Return a vector normalized to unit magnitude.
     pub fn unit(&self) -> Self {
         self / &self.mag()
     }
 
+    /// Return the azimuthal angle.
     pub fn phi(&self) -> Expr {
         atan2(self.py(), self.px())
     }
 
+    /// Promote this momentum to a four-vector with the given invariant mass.
     pub fn with_mass(&self, mass: impl Into<Expr>) -> Vec4 {
         let mass = mass.into();
         Vec4::new(
+            (mass.powi(2) + self.mag2()).sqrt(),
             self.px(),
             self.py(),
             self.pz(),
-            (mass.powi(2) + self.mag2()).sqrt(),
         )
     }
 
+    /// Promote this momentum to a four-vector with the given energy.
     pub fn with_energy(&self, energy: impl Into<Expr>) -> Vec4 {
-        Vec4::new(self.px(), self.py(), self.pz(), energy)
+        Vec4::new(energy, self.px(), self.py(), self.pz())
     }
 
+    /// Convert this vector to a vector-valued expression.
     pub fn as_expr(&self) -> Expr {
         vector([self.x.clone(), self.y.clone(), self.z.clone()])
     }
@@ -721,119 +752,144 @@ impl_op_ex!(/ |a: &Vec3, b: &f64| -> Vec3 {
     Vec3::new(&a.x / b, &a.y / b, &a.z / b)
 });
 
-/// Expression-valued four-vector with `---+` metric convention.
+/// Expression-valued four-vector in `(E, p_x, p_y, p_z)` order with a `+---` metric.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Vec4 {
-    pub x: Expr,
-    pub y: Expr,
-    pub z: Expr,
-    pub t: Expr,
+    /// Energy component.
+    pub e: Expr,
+    /// Momentum in the x direction.
+    pub px: Expr,
+    /// Momentum in the y direction.
+    pub py: Expr,
+    /// Momentum in the z direction.
+    pub pz: Expr,
 }
 
 impl Vec4 {
+    /// Create a symbolic four-vector in metric order `(E, p_x, p_y, p_z)`.
     pub fn new(
+        e: impl Into<Expr>,
         px: impl Into<Expr>,
         py: impl Into<Expr>,
         pz: impl Into<Expr>,
-        e: impl Into<Expr>,
     ) -> Self {
         Self {
-            x: px.into(),
-            y: py.into(),
-            z: pz.into(),
-            t: e.into(),
+            e: e.into(),
+            px: px.into(),
+            py: py.into(),
+            pz: pz.into(),
         }
     }
 
+    /// Read a named event four-vector.
     pub fn event(prefix: &str) -> Self {
         Self::new(
+            event_p4_component(prefix, P4Component::E),
             event_p4_component(prefix, P4Component::Px),
             event_p4_component(prefix, P4Component::Py),
             event_p4_component(prefix, P4Component::Pz),
-            event_p4_component(prefix, P4Component::E),
         )
     }
 
+    /// Return the x momentum expression.
     pub fn px(&self) -> Expr {
-        self.x.clone()
+        self.px.clone()
     }
 
+    /// Return the y momentum expression.
     pub fn py(&self) -> Expr {
-        self.y.clone()
+        self.py.clone()
     }
 
+    /// Return the z momentum expression.
     pub fn pz(&self) -> Expr {
-        self.z.clone()
+        self.pz.clone()
     }
 
+    /// Return the energy expression.
     pub fn e(&self) -> Expr {
-        self.t.clone()
+        self.e.clone()
     }
 
+    /// Return the spatial momentum.
     pub fn momentum(&self) -> Vec3 {
         self.vec3()
     }
 
+    /// Return the spatial three-vector.
     pub fn vec3(&self) -> Vec3 {
         Vec3::new(self.px(), self.py(), self.pz())
     }
 
+    /// Return the three-velocity `p / E`.
     pub fn beta(&self) -> Vec3 {
         self.momentum() / self.e()
     }
 
+    /// Return the Lorentz factor.
     pub fn gamma(&self) -> Expr {
-        (1.0 - self.beta().mag2()).sqrt()
+        1.0 / (1.0 - self.beta().mag2()).sqrt()
     }
 
+    /// Return the squared invariant mass.
     pub fn m2(&self) -> Expr {
         self.mag2()
     }
 
+    /// Return the invariant mass.
     pub fn m(&self) -> Expr {
         self.mag()
     }
 
-    pub fn mag2(&self) -> Expr {
-        self.t.powi(2) - (self.x.powi(2) + self.y.powi(2) + self.z.powi(2))
+    /// Compute the Lorentz inner product with another symbolic four-vector.
+    pub fn dot(&self, other: &Self) -> Expr {
+        &self.e * &other.e - &self.px * &other.px - &self.py * &other.py - &self.pz * &other.pz
     }
 
+    /// Alias for [`Self::m2`], the squared invariant mass.
+    pub fn mag2(&self) -> Expr {
+        self.dot(self)
+    }
+
+    /// Alias for [`Self::m`], the invariant mass.
     pub fn mag(&self) -> Expr {
         self.mag2().sqrt()
     }
 
+    /// Apply a Lorentz boost by a three-velocity.
     pub fn boost(&self, beta: &Vec3) -> Self {
         let b2 = beta.dot(beta);
         let gamma = (1.0 - &b2).sqrt();
         let gamma = 1.0 / gamma;
         let boost_factor = gamma.powi(2) / (&gamma + 1.0);
-        let p3 = self.vec3() + beta * ((boost_factor * self.vec3().dot(beta)) + &gamma * &self.t);
-        Self::new(p3.x, p3.y, p3.z, gamma * (&self.t + beta.dot(&self.vec3())))
+        let p3 = self.vec3() + beta * ((boost_factor * self.vec3().dot(beta)) + &gamma * &self.e);
+        Self::new(gamma * (&self.e + beta.dot(&self.vec3())), p3.x, p3.y, p3.z)
     }
 
+    /// Convert this four-vector to a vector-valued expression.
     pub fn as_expr(&self) -> Expr {
         vector([
-            self.x.clone(),
-            self.y.clone(),
-            self.z.clone(),
-            self.t.clone(),
+            self.e.clone(),
+            self.px.clone(),
+            self.py.clone(),
+            self.pz.clone(),
         ])
     }
 }
 
 impl From<RealVec4> for Vec4 {
     fn from(value: RealVec4) -> Self {
-        Self::new(value.x, value.y, value.z, value.t)
+        Self::new(value.e, value.px, value.py, value.pz)
     }
 }
 
 impl_op_ex!(+ |a: &Vec4, b: &Vec4| -> Vec4 {
-    Vec4::new(&a.x + &b.x, &a.y + &b.y, &a.z + &b.z, &a.t + &b.t)
+    Vec4::new(&a.e + &b.e, &a.px + &b.px, &a.py + &b.py, &a.pz + &b.pz)
 });
 impl_op_ex!(-|a: &Vec4, b: &Vec4| -> Vec4 {
-    Vec4::new(&a.x - &b.x, &a.y - &b.y, &a.z - &b.z, &a.t - &b.t)
+    Vec4::new(&a.e - &b.e, &a.px - &b.px, &a.py - &b.py, &a.pz - &b.pz)
 });
-impl_op_ex!(-|a: &Vec4| -> Vec4 { Vec4::new(-&a.x, -&a.y, -&a.z, -&a.t) });
+impl_op_ex!(-|a: &Vec4| -> Vec4 { Vec4::new(-&a.e, -&a.px, -&a.py, -&a.pz) });
 
 #[cfg(test)]
 mod tests {
@@ -855,8 +911,8 @@ mod tests {
     fn test_display() {
         let v3 = RealVec3::new(1.2341, -2.3452, 3.4563);
         assert_eq!(format!("{}", v3), "[ 1.234, -2.345,  3.456]");
-        let v4 = RealVec4::new(1.2341, -2.3452, 3.4563, 4.5674);
-        assert_eq!(format!("{}", v4), "[ 1.234, -2.345,  3.456;  4.567]");
+        let v4 = RealVec4::new(4.5674, 1.2341, -2.3452, 3.4563);
+        assert_eq!(format!("{}", v4), "[ 4.567;  1.234, -2.345,  3.456]");
     }
 
     #[test]
@@ -941,7 +997,7 @@ mod tests {
     #[test]
     fn test_three_to_four_momentum_conversion() {
         let p3 = RealVec3::new(1.0, 2.0, 3.0);
-        let target_p4 = RealVec4::new(1.0, 2.0, 3.0, 10.0);
+        let target_p4 = RealVec4::new(10.0, 1.0, 2.0, 3.0);
         let p4_from_mass = p3.with_mass(target_p4.m().unwrap());
         assert_eq!(target_p4.e(), p4_from_mass.e());
         assert_eq!(target_p4.px(), p4_from_mass.px());
@@ -956,7 +1012,7 @@ mod tests {
 
     #[test]
     fn test_four_momentum_basics() {
-        let p = RealVec4::new(3.0, 4.0, 5.0, 10.0);
+        let p = RealVec4::new(10.0, 3.0, 4.0, 5.0);
         assert_eq!(p.e(), 10.0);
         assert_eq!(p.px(), 3.0);
         assert_eq!(p.py(), 4.0);
@@ -989,8 +1045,8 @@ mod tests {
 
     #[test]
     fn test_three_momentum_basics() {
-        let p = RealVec4::new(3.0, 4.0, 5.0, 10.0);
-        let q = RealVec4::new(1.2, -3.4, 7.6, 0.0);
+        let p = RealVec4::new(10.0, 3.0, 4.0, 5.0);
+        let q = RealVec4::new(0.0, 1.2, -3.4, 7.6);
         let p3_view = p.momentum();
         let q3_view = q.momentum();
         assert_eq!(p3_view.px(), 3.0);
@@ -1022,19 +1078,19 @@ mod tests {
 
     #[test]
     fn test_boost_com() {
-        let p = RealVec4::new(3.0, 4.0, 5.0, 10.0);
+        let p = RealVec4::new(10.0, 3.0, 4.0, 5.0);
         let zero = p.boost(&-p.beta().unwrap()).momentum();
         assert_relative_eq!(zero, RealVec3::zero());
     }
 
     #[test]
     fn test_boost() {
-        let p0 = RealVec4::new(0.0, 0.0, 0.0, 1.0);
+        let p0 = RealVec4::new(1.0, 0.0, 0.0, 0.0);
         assert_relative_eq!(p0.gamma().unwrap(), 1.0);
-        let p0 = RealVec4::new(f64::sqrt(3.0) / 2.0, 0.0, 0.0, 1.0);
+        let p0 = RealVec4::new(1.0, f64::sqrt(3.0) / 2.0, 0.0, 0.0);
         assert_relative_eq!(p0.gamma().unwrap(), 2.0);
-        let p1 = RealVec4::new(3.0, 4.0, 5.0, 10.0);
-        let p2 = RealVec4::new(3.4, 2.3, 1.2, 9.0);
+        let p1 = RealVec4::new(10.0, 3.0, 4.0, 5.0);
+        let p2 = RealVec4::new(9.0, 3.4, 2.3, 1.2);
         let p1_boosted = p1.boost(&-p2.beta().unwrap());
         assert_relative_eq!(p1_boosted.e(), 8.157632144622882);
         assert_relative_eq!(p1_boosted.px(), -0.6489200627053444);
@@ -1044,7 +1100,7 @@ mod tests {
 
     #[test]
     fn expression_vectors_build_and_evaluate_scalar_observables() {
-        let p = Vec4::new(3.0, 4.0, 5.0, 10.0);
+        let p = Vec4::new(10.0, 3.0, 4.0, 5.0);
         assert_eq!(evaluate(p.m2()), Complex64::from(50.0));
         assert_eq!(evaluate(p.momentum().mag2()), Complex64::from(50.0));
 

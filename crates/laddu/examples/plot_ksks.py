@@ -22,7 +22,7 @@ import matplotlib.pyplot as plt
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('input', type=Path, help='projection JSON from the Laddu example')
+    parser.add_argument('input', type=Path, help='projection JSON from the laddu example')
     parser.add_argument(
         '-o',
         '--output',

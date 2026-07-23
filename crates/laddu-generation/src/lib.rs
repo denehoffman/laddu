@@ -1457,7 +1457,7 @@ fn validate_bound(bound: f64) -> GenerationResult<()> {
     Ok(())
 }
 fn validate_p4(name: &str, p4: RealVec4, mass: f64, index: u64) -> GenerationResult<()> {
-    if ![p4.x, p4.y, p4.z, p4.t].into_iter().all(f64::is_finite) || p4.t <= 0.0 {
+    if ![p4.e, p4.px, p4.py, p4.pz].into_iter().all(f64::is_finite) || p4.e <= 0.0 {
         return Err(GenerationError::Kinematics {
             index,
             source: LadduPhysicsError::invalid_value(
@@ -1467,7 +1467,7 @@ fn validate_p4(name: &str, p4: RealVec4, mass: f64, index: u64) -> GenerationRes
             ),
         });
     }
-    let tolerance = 1e-9 * (1.0 + mass * mass + p4.t * p4.t);
+    let tolerance = 1e-9 * (1.0 + mass * mass + p4.e * p4.e);
     if (p4.m2() - mass * mass).abs() > tolerance {
         return Err(GenerationError::Kinematics {
             index,
@@ -1488,11 +1488,11 @@ fn validate_indexed_conservation(
     let incoming: RealVec4 = vertex.incoming.iter().map(|&edge| p4s[edge]).sum();
     let outgoing: RealVec4 = vertex.outgoing.iter().map(|&edge| p4s[edge]).sum();
     let residual = incoming - outgoing;
-    let scale = incoming.t.abs().max(1.0);
-    if residual.t.abs() > 1e-9 * scale
-        || residual.x.abs() > 1e-9 * scale
-        || residual.y.abs() > 1e-9 * scale
-        || residual.z.abs() > 1e-9 * scale
+    let scale = incoming.e.abs().max(1.0);
+    if residual.e.abs() > 1e-9 * scale
+        || residual.px.abs() > 1e-9 * scale
+        || residual.py.abs() > 1e-9 * scale
+        || residual.pz.abs() > 1e-9 * scale
     {
         return Err(GenerationError::Kinematics {
             index,
@@ -1543,7 +1543,7 @@ mod tests {
         channel
             .edge("parent")
             .properties(&ParticleProperties::unknown().with_mass(2.0))
-            .initial_p4(RealVec4::new(0.0, 0.0, 0.0, 2.0));
+            .initial_p4(RealVec4::new(2.0, 0.0, 0.0, 0.0));
         channel
             .edge("a")
             .properties(&ParticleProperties::unknown().with_mass(0.2))
@@ -1781,7 +1781,7 @@ mod tests {
         channel
             .edge("same")
             .properties(&ParticleProperties::unknown().with_mass(1.0))
-            .initial_p4(RealVec4::new(0.0, 0.0, 0.0, 1.0))
+            .initial_p4(RealVec4::new(1.0, 0.0, 0.0, 0.0))
             .output();
         channel
             .vertex("duplicate")

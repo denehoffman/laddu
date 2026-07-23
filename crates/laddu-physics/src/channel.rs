@@ -12,6 +12,8 @@ use crate::{
 };
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+/// A named reaction graph whose edges are particles and whose vertices are
+/// production or decay processes.
 pub struct Channel {
     name: String,
     edges: IndexMap<String, Edge>,
@@ -19,6 +21,7 @@ pub struct Channel {
 }
 
 impl Channel {
+    /// Construct an empty channel with the supplied name.
     pub fn new(name: impl Into<String>) -> Self {
         Self {
             name: name.into(),
@@ -27,10 +30,12 @@ impl Channel {
         }
     }
 
+    /// Return the channel name.
     pub fn name(&self) -> &str {
         &self.name
     }
 
+    /// Create or edit a named particle edge.
     pub fn edge(&mut self, name: impl Into<String>) -> EdgeHandle<'_> {
         let name = name.into();
         self.edges
@@ -41,6 +46,7 @@ impl Channel {
         }
     }
 
+    /// Create or edit a named interaction vertex.
     pub fn vertex(&mut self, name: impl Into<String>) -> VertexHandle<'_> {
         let name = name.into();
         self.vertices
@@ -52,6 +58,7 @@ impl Channel {
         }
     }
 
+    /// Retrieve a vertex view which evaluates quantities in that vertex's rest frame.
     pub fn get_vertex(&self, name: &str) -> LadduPhysicsResult<VertexView<'_>> {
         self.require_vertex(name)?;
         Ok(VertexView {
@@ -60,10 +67,12 @@ impl Channel {
         })
     }
 
+    /// Iterate over particle edges in insertion order.
     pub fn edges(&self) -> impl Iterator<Item = &Edge> {
         self.edges.values()
     }
 
+    /// Iterate over interaction vertices in insertion order.
     pub fn vertices(&self) -> impl Iterator<Item = &Vertex> {
         self.vertices.values()
     }
@@ -106,6 +115,7 @@ impl Channel {
         Ok(())
     }
 
+    /// Return the optional particle properties attached to an edge.
     pub fn properties(&self, edge: &str) -> LadduPhysicsResult<Option<&ParticleProperties>> {
         Ok(self.require_edge(edge)?.properties.as_ref())
     }
@@ -117,18 +127,25 @@ impl Channel {
         })
     }
 
+    /// Construct the symbolic four-momentum of an edge.
+    ///
+    /// When no explicit expression is attached, momentum conservation is used
+    /// to infer a uniquely missing momentum at a connected vertex.
     pub fn p4(&self, edge: &str) -> LadduPhysicsResult<Vec4> {
         self.resolve_p4(edge, &mut Vec::new())
     }
 
+    /// Construct the symbolic three-momentum of an edge.
     pub fn vec3(&self, edge: &str) -> LadduPhysicsResult<Vec3> {
         Ok(self.p4(edge)?.vec3())
     }
 
+    /// Construct the invariant-mass expression for an edge.
     pub fn mass(&self, edge: &str) -> LadduPhysicsResult<Expr> {
         Ok(self.p4(edge)?.m())
     }
 
+    /// Construct the invariant mass squared of an edge.
     pub fn s(&self, edge: &str) -> LadduPhysicsResult<Expr> {
         Ok(self.p4(edge)?.m2())
     }
@@ -342,6 +359,7 @@ struct FramePath {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+/// A particle line in a [`Channel`].
 pub struct Edge {
     name: String,
     p4: Option<Vec4>,
@@ -363,78 +381,95 @@ impl Edge {
         }
     }
 
+    /// Return the edge name.
     pub fn name(&self) -> &str {
         &self.name
     }
 
+    /// Return whether this edge has an explicitly assigned four-momentum.
     pub fn has_explicit_p4(&self) -> bool {
         self.p4.is_some()
     }
 
+    /// Return the particle properties attached to this edge, if present.
     pub fn properties(&self) -> Option<&ParticleProperties> {
         self.properties.as_ref()
     }
 
+    /// Return whether generated events retain this edge as an output particle.
     pub fn is_output(&self) -> bool {
         self.output
     }
 
+    /// Return the mass proposal used to generate this edge, if configured.
     pub fn mass_proposal(&self) -> Option<&MassProposal> {
         self.mass_proposal.as_ref()
     }
 
+    /// Return the initial-state momentum source, if configured.
     pub fn initial_momentum(&self) -> Option<&InitialMomentum> {
         self.initial_momentum.as_ref()
     }
 }
 
+/// Mutable builder handle for an [`Edge`] in a channel.
 pub struct EdgeHandle<'a> {
     edge: &'a mut Edge,
 }
 
 impl EdgeHandle<'_> {
+    /// Assign an explicit symbolic four-momentum.
     pub fn p4(&mut self, p4: impl Into<Vec4>) -> &mut Self {
         self.edge.p4 = Some(p4.into());
         self
     }
 
+    /// Attach particle properties.
     pub fn properties(&mut self, properties: &ParticleProperties) -> &mut Self {
         self.edge.properties = Some(properties.clone());
         self
     }
 
+    /// Retain this edge in generated event output.
     pub fn output(&mut self) -> &mut Self {
         self.edge.output = true;
         self
     }
 
+    /// Use this edge internally during generation without retaining it.
     pub fn generated_only(&mut self) -> &mut Self {
         self.edge.output = false;
         self
     }
 
+    /// Assign a generated invariant-mass proposal.
     pub fn mass_proposal(&mut self, proposal: impl Into<MassProposal>) -> &mut Self {
         self.edge.mass_proposal = Some(proposal.into());
         self
     }
 
+    /// Assign an initial-state momentum source.
     pub fn initial(&mut self, source: InitialMomentum) -> &mut Self {
         self.edge.initial_momentum = Some(source);
         self
     }
 
+    /// Assign a fixed initial-state four-momentum in `(E, px, py, pz)` order.
     pub fn initial_p4(&mut self, p4: RealVec4) -> &mut Self {
         self.initial(InitialMomentum::p4(p4))
     }
 
+    /// Assign a fixed initial-state three-momentum.
     pub fn initial_momentum(&mut self, momentum: RealVec3) -> &mut Self {
         self.initial(InitialMomentum::momentum(momentum))
     }
 
+    /// Assign a fixed energy and direction for an initial-state edge.
     pub fn initial_energy_direction(&mut self, energy: f64, direction: RealVec3) -> &mut Self {
         self.initial(InitialMomentum::energy_direction(energy, direction))
     }
 
+    /// Assign a sampled energy source and fixed direction for an initial-state edge.
     pub fn initial_energy_source_direction(
         &mut self,
         energy: ScalarSource,
@@ -445,6 +480,7 @@ impl EdgeHandle<'_> {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+/// A production, scattering, or decay vertex in a [`Channel`].
 pub struct Vertex {
     name: String,
     incoming: Vec<String>,
@@ -462,18 +498,22 @@ impl Vertex {
         }
     }
 
+    /// Return the vertex name.
     pub fn name(&self) -> &str {
         &self.name
     }
 
+    /// Return the names of incoming edges.
     pub fn incoming(&self) -> &[String] {
         &self.incoming
     }
 
+    /// Return the names of outgoing edges.
     pub fn outgoing(&self) -> &[String] {
         &self.outgoing
     }
 
+    /// Return the configured event-generation proposal, if any.
     pub fn generation(&self) -> Option<&VertexProposal> {
         self.generation.as_ref()
     }
@@ -500,12 +540,14 @@ impl Vertex {
     }
 }
 
+/// Mutable builder handle for a [`Vertex`] in a channel.
 pub struct VertexHandle<'a> {
     channel: &'a mut Channel,
     name: String,
 }
 
 impl VertexHandle<'_> {
+    /// Assign the proposal used to generate this vertex.
     pub fn generation(&mut self, proposal: impl Into<VertexProposal>) -> &mut Self {
         self.channel
             .vertices
@@ -515,6 +557,7 @@ impl VertexHandle<'_> {
         self
     }
 
+    /// Replace the vertex's incoming edge list.
     pub fn incoming(&mut self, edges: impl IntoIterator<Item = impl AsRef<str>>) -> &mut Self {
         let edges = edges
             .into_iter()
@@ -528,6 +571,7 @@ impl VertexHandle<'_> {
         self
     }
 
+    /// Replace the vertex's outgoing edge list.
     pub fn outgoing(&mut self, edges: impl IntoIterator<Item = impl AsRef<str>>) -> &mut Self {
         let edges = edges
             .into_iter()
@@ -541,6 +585,7 @@ impl VertexHandle<'_> {
         self
     }
 
+    /// Validate that every referenced edge exists and occurs only once.
     pub fn validate(&self) -> LadduPhysicsResult<()> {
         self.channel.validate_vertex(&self.name)
     }
@@ -554,12 +599,14 @@ enum InferencePriority {
 }
 
 #[derive(Clone, Debug)]
+/// Read-only access to channel expressions evaluated in a vertex rest frame.
 pub struct VertexView<'a> {
     channel: &'a Channel,
     name: String,
 }
 
 impl<'a> VertexView<'a> {
+    /// Return the underlying vertex definition.
     pub fn vertex(&self) -> &'a Vertex {
         self.channel
             .vertices
@@ -567,6 +614,7 @@ impl<'a> VertexView<'a> {
             .expect("vertex view references an existing vertex")
     }
 
+    /// Construct an edge four-momentum boosted into this vertex's rest frame.
     pub fn p4(&self, edge: &str) -> LadduPhysicsResult<Vec4> {
         let frame_path = self.channel.frame_path_to_vertex(&self.name)?;
         let overall = self.channel.vertex_incoming_p4(&frame_path.root)?;
@@ -589,20 +637,24 @@ impl<'a> VertexView<'a> {
         Ok(p4)
     }
 
+    /// Construct an edge three-momentum in this vertex's rest frame.
     pub fn vec3(&self, edge: &str) -> LadduPhysicsResult<Vec3> {
         Ok(self.p4(edge)?.vec3())
     }
 
+    /// Construct the cosine of an edge's polar angle about the supplied axis.
     pub fn costheta(&self, edge: &str, z_axis: Vec3, _y_hint: Vec3) -> LadduPhysicsResult<Expr> {
         let p = self.vec3(edge)?;
         let z = z_axis.unit();
         Ok(p.dot(&z) / p.mag())
     }
 
+    /// Construct an edge's polar angle about the supplied axis.
     pub fn theta(&self, edge: &str, z_axis: Vec3, y_hint: Vec3) -> LadduPhysicsResult<Expr> {
         Ok(self.costheta(edge, z_axis, y_hint)?.acos())
     }
 
+    /// Construct an edge's azimuthal angle in the supplied coordinate frame.
     pub fn phi(&self, edge: &str, z_axis: Vec3, y_hint: Vec3) -> LadduPhysicsResult<Expr> {
         let p = self.vec3(edge)?;
         let z = z_axis.unit();
@@ -612,6 +664,7 @@ impl<'a> VertexView<'a> {
         Ok(laddu_expr::atan2(p.dot(&y), p.dot(&x)))
     }
 
+    /// Construct one of the Mandelstam invariants for a two-to-two vertex.
     pub fn mandelstam(&self, channel: MandelstamChannel) -> LadduPhysicsResult<Expr> {
         let vertex = self.vertex();
         if vertex.incoming.len() != 2 || vertex.outgoing.len() != 2 {
@@ -656,14 +709,17 @@ impl<'a> VertexView<'a> {
         })
     }
 
+    /// Construct the Mandelstam `s` invariant.
     pub fn s(&self) -> LadduPhysicsResult<Expr> {
         self.mandelstam(MandelstamChannel::S)
     }
 
+    /// Construct the Mandelstam `t` invariant.
     pub fn t(&self) -> LadduPhysicsResult<Expr> {
         self.mandelstam(MandelstamChannel::T)
     }
 
+    /// Construct the Mandelstam `u` invariant.
     pub fn u(&self) -> LadduPhysicsResult<Expr> {
         self.mandelstam(MandelstamChannel::U)
     }
@@ -724,7 +780,7 @@ mod tests {
     }
 
     fn p4(px: f64, py: f64, pz: f64, e: f64) -> Vec4 {
-        RealVec4::new(px, py, pz, e).into()
+        RealVec4::new(e, px, py, pz).into()
     }
 
     fn expr_p4(value: RealVec4) -> Vec4 {
@@ -803,8 +859,8 @@ mod tests {
     #[test]
     fn vertex_p4_boosts_through_overall_com_and_graph_path() {
         let beta_to_lab = RealVec3::new(0.0, 0.0, 0.6);
-        let x_com = RealVec4::new(0.5, 0.0, 0.0, 2.0);
-        let recoil_com = RealVec4::new(-0.5, 0.2, 0.0, 1.7);
+        let x_com = RealVec4::new(2.0, 0.5, 0.0, 0.0);
+        let recoil_com = RealVec4::new(1.7, -0.5, 0.2, 0.0);
         let x_lab = x_com.boost(&beta_to_lab);
         let recoil_lab = recoil_com.boost(&beta_to_lab);
 
@@ -971,7 +1027,7 @@ mod tests {
         channel
             .edge("parent")
             .properties(&ParticleProperties::unknown().with_mass(2.0))
-            .initial_p4(RealVec4::new(0.0, 0.0, 0.0, 2.0));
+            .initial_p4(RealVec4::new(2.0, 0.0, 0.0, 0.0));
         channel
             .edge("a")
             .properties(&ParticleProperties::unknown().with_mass(0.2))

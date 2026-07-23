@@ -54,12 +54,12 @@ impl PyVec3 {
     }
 
     #[staticmethod]
-    /// Read a three-vector from event scalar columns.
+    /// Read the spatial components of a named event four-vector.
     ///
     /// Parameters
     /// ----------
     /// prefix : str
-    ///     Column prefix used to locate the Cartesian components.
+    ///     Name of the four-vector column.
     fn event(prefix: &str) -> Self {
         Self {
             inner: Vec3::event(prefix),
@@ -112,6 +112,11 @@ impl PyVec3 {
     /// Return the symbolic Euclidean dot product with another vector.
     fn dot(&self, other: &Self) -> PyExpr {
         self.inner.dot(&other.inner).into()
+    }
+
+    /// Return the symbolic Euclidean dot product with another vector.
+    fn __matmul__(&self, other: &Self) -> PyExpr {
+        self.dot(other)
     }
 
     /// Return the x component.
@@ -226,12 +231,12 @@ impl PyVec3 {
 
 #[pyclass(name = "Vec4", module = "laddu", frozen, skip_from_py_object)]
 #[derive(Clone)]
-/// A symbolic four-vector in ``(px, py, pz, E)`` order.
+/// A symbolic four-vector in metric order ``(E, px, py, pz)``.
 ///
 /// Parameters
 /// ----------
-/// px, py, pz, e : Expr or number
-///     Momentum and energy components.
+/// e, px, py, pz : Expr or number
+///     Energy and momentum components.
 ///
 /// Examples
 /// --------
@@ -244,7 +249,7 @@ pub struct PyVec4 {
 
 #[pymethods]
 impl PyVec4 {
-    /// Construct a symbolic four-vector from momentum and energy components.
+    /// Construct a symbolic four-vector in ``(E, px, py, pz)`` order.
     ///
     /// Raises
     /// ------
@@ -252,23 +257,23 @@ impl PyVec4 {
     ///     If a component cannot be converted to an expression.
     #[new]
     fn new(
+        e: &Bound<'_, PyAny>,
         px: &Bound<'_, PyAny>,
         py: &Bound<'_, PyAny>,
         pz: &Bound<'_, PyAny>,
-        e: &Bound<'_, PyAny>,
     ) -> PyResult<Self> {
         Ok(Self {
             inner: Vec4::new(
+                extract_expr(e)?,
                 extract_expr(px)?,
                 extract_expr(py)?,
                 extract_expr(pz)?,
-                extract_expr(e)?,
             ),
         })
     }
 
     #[staticmethod]
-    /// Read a four-vector from event columns with a common prefix.
+    /// Read a named four-vector from each event.
     fn event(prefix: &str) -> Self {
         Self {
             inner: Vec4::event(prefix),
@@ -336,14 +341,24 @@ impl PyVec4 {
         self.mass()
     }
 
-    /// Return the squared Euclidean norm of all four components.
+    /// Alias for :meth:`m2`.
     fn mag2(&self) -> PyExpr {
         self.inner.mag2().into()
     }
 
-    /// Return the Euclidean norm of all four components.
+    /// Alias for :meth:`mass`.
     fn mag(&self) -> PyExpr {
         self.inner.mag().into()
+    }
+
+    /// Return the Lorentz inner product with another four-vector.
+    fn dot(&self, other: &Self) -> PyExpr {
+        self.inner.dot(&other.inner).into()
+    }
+
+    /// Return the Lorentz inner product with another four-vector.
+    fn __matmul__(&self, other: &Self) -> PyExpr {
+        self.dot(other)
     }
 
     /// Apply a Lorentz boost by a three-velocity.

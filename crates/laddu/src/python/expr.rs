@@ -8,9 +8,10 @@ use pyo3::{
 
 use laddu_expr::parameters::Parameter;
 use laddu_expr::{
-    Expr, acos as expr_acos, atan2 as expr_atan2, cis as expr_cis, complex as expr_complex,
-    dot as expr_dot, event_scalar, matmul as expr_matmul, matrix_from_flat, matvec as expr_matvec,
-    polar_complex as expr_polar_complex, solve as expr_solve, vector as expr_vector,
+    Expr, ExprShape, acos as expr_acos, atan2 as expr_atan2, cis as expr_cis,
+    complex as expr_complex, dot as expr_dot, event_scalar, matmul as expr_matmul,
+    matrix_from_flat, matvec as expr_matvec, polar_complex as expr_polar_complex,
+    solve as expr_solve, vector as expr_vector,
 };
 
 use super::error::to_py_err;
@@ -84,6 +85,24 @@ fn reflected(
     Ok(operation(&lhs, rhs).into())
 }
 
+fn matrix_product(lhs: Expr, rhs: Expr) -> PyResult<PyExpr> {
+    let product = match (
+        lhs.shape().map_err(to_py_err)?,
+        rhs.shape().map_err(to_py_err)?,
+    ) {
+        (ExprShape::Matrix { .. }, ExprShape::Matrix { .. }) => expr_matmul(lhs, rhs),
+        (ExprShape::Matrix { .. }, ExprShape::Vector { .. }) => expr_matvec(lhs, rhs),
+        (ExprShape::Vector { .. }, ExprShape::Vector { .. }) => expr_dot(lhs, rhs),
+        (lhs, rhs) => {
+            return Err(PyTypeError::new_err(format!(
+                "the @ operator requires matrix @ matrix, matrix @ vector, or vector @ vector operands, got {lhs:?} @ {rhs:?}"
+            )));
+        }
+    };
+    product.shape().map_err(to_py_err)?;
+    Ok(product.into())
+}
+
 #[pymethods]
 impl PyExpr {
     /// Create a symbolic expression from an expression or numeric constant.
@@ -138,6 +157,19 @@ impl PyExpr {
 
     fn __rmul__(&self, other: &Bound<'_, PyAny>) -> PyResult<Self> {
         reflected(other, &self.inner, |lhs, rhs| lhs * rhs)
+    }
+
+    /// Multiply matrices or take a vector dot product.
+    ///
+    /// ``matrix @ matrix`` constructs a matrix product, ``matrix @ vector``
+    /// constructs a matrix-vector product, and ``vector @ vector`` constructs
+    /// a dot product. Incompatible shapes are rejected immediately.
+    fn __matmul__(&self, other: &Bound<'_, PyAny>) -> PyResult<Self> {
+        matrix_product(self.inner.clone(), extract_expr(other)?)
+    }
+
+    fn __rmatmul__(&self, other: &Bound<'_, PyAny>) -> PyResult<Self> {
+        matrix_product(extract_expr(other)?, self.inner.clone())
     }
 
     fn __truediv__(&self, other: &Bound<'_, PyAny>) -> PyResult<Self> {
@@ -289,7 +321,6 @@ impl PyExpr {
     #[getter]
     /// tuple of int: The expression dimensions; scalars have shape ``()``.
     fn shape<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
-        use laddu_expr::ExprShape;
         let dimensions = match self.inner.shape().map_err(to_py_err)? {
             ExprShape::Scalar => vec![],
             ExprShape::Vector { len } => vec![len],

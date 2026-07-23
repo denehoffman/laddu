@@ -526,10 +526,10 @@ mod tests {
 
     fn v(x: f64) -> RealVec4 {
         RealVec4 {
-            x,
-            y: x + 0.1,
-            z: x + 0.2,
-            t: x + 0.3,
+            e: x + 0.3,
+            px: x,
+            py: x + 0.1,
+            pz: x + 0.2,
         }
     }
 
@@ -586,8 +586,8 @@ mod tests {
 
         assert_eq!(scalar_values(&selected), vec![3.0, 1.0]);
         assert_eq!(selected.weights_column().unwrap(), &[13.0, 11.0]);
-        assert_eq!(selected.p4_at(0, 0).x, 3.0);
-        assert_eq!(selected.p4_at(0, 1).t, 1.3);
+        assert_eq!(selected.p4_at(0, 0).px, 3.0);
+        assert_eq!(selected.p4_at(0, 1).e, 1.3);
 
         let sliced = weighted.slice(1, 3);
         assert_eq!(scalar_values(&sliced), vec![1.0, 2.0]);

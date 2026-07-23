@@ -64,29 +64,36 @@ impl ComponentIndex for i32 {
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+/// A named component of a four-momentum in `(E, px, py, pz)` order.
 pub enum P4Component {
-    Px,
-    Py,
-    Pz,
+    /// Energy.
     E,
+    /// Momentum in the x direction.
+    Px,
+    /// Momentum in the y direction.
+    Py,
+    /// Momentum in the z direction.
+    Pz,
 }
 
 impl P4Component {
+    /// Return the lowercase event-column suffix for this component.
     pub fn label(self) -> &'static str {
         match self {
+            Self::E => "e",
             Self::Px => "px",
             Self::Py => "py",
             Self::Pz => "pz",
-            Self::E => "e",
         }
     }
 
+    /// Return the component's position in `(E, px, py, pz)` order.
     pub fn index(self) -> usize {
         match self {
-            Self::Px => 0,
-            Self::Py => 1,
-            Self::Pz => 2,
-            Self::E => 3,
+            Self::E => 0,
+            Self::Px => 1,
+            Self::Py => 2,
+            Self::Pz => 3,
         }
     }
 }

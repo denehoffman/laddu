@@ -517,10 +517,10 @@ mod tests {
 
     fn v(x: f64) -> RealVec4 {
         RealVec4 {
-            x,
-            y: x + 0.1,
-            z: x + 0.2,
-            t: x + 0.3,
+            e: x + 0.3,
+            px: x,
+            py: x + 0.1,
+            pz: x + 0.2,
         }
     }
 

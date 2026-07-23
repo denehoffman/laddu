@@ -17,10 +17,12 @@ pub struct ProposalRng {
 }
 
 impl ProposalRng {
+    /// Construct a proposal stream from a reproducible seed.
     pub fn new(seed: u64) -> Self {
         Self { state: seed }
     }
 
+    /// Draw the next uniformly distributed 64-bit integer.
     pub fn next_u64(&mut self) -> u64 {
         self.state = self.state.wrapping_add(0x9e37_79b9_7f4a_7c15);
         let mut z = self.state;
@@ -29,6 +31,7 @@ impl ProposalRng {
         z ^ (z >> 31)
     }
 
+    /// Draw a floating-point value strictly between zero and one.
     pub fn uniform(&mut self) -> f64 {
         const SCALE: f64 = 1.0 / ((1_u64 << 53) as f64);
         ((self.next_u64() >> 11) as f64 + 0.5) * SCALE
@@ -43,27 +46,38 @@ impl ProposalRng {
 }
 
 #[derive(Clone, Copy, Debug)]
+/// A named generated edge and its four-momentum.
 pub struct NamedMomentum<'a> {
+    /// Edge name.
     pub name: &'a str,
+    /// Four-momentum in `(E, px, py, pz)` order.
     pub p4: RealVec4,
 }
 
 #[derive(Clone, Copy, Debug)]
+/// A named generated edge and its proposed invariant mass.
 pub struct NamedMass<'a> {
+    /// Edge name.
     pub name: &'a str,
+    /// Invariant mass.
     pub mass: f64,
 }
 
 #[derive(Clone, Debug)]
+/// Kinematics and importance weight produced by a vertex proposal.
 pub struct ProposalResult {
+    /// Proposed outgoing four-momenta in edge order.
     pub outgoing: Vec<RealVec4>,
     /// The proposal correction, conventionally `dPhi / q`.
     pub weight: f64,
 }
 
 #[derive(Clone, Copy, Debug)]
+/// Mass and importance weight drawn from a [`MassProposal`].
 pub struct MassProposalResult {
+    /// Proposed invariant mass.
     pub mass: f64,
+    /// Inverse proposal-density correction.
     pub weight: f64,
 }
 
@@ -71,19 +85,32 @@ pub struct MassProposalResult {
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum MassProposal {
-    Fixed { mass: f64 },
-    Uniform { low: f64, high: f64 },
+    /// Always use one invariant mass.
+    Fixed {
+        /// Fixed invariant mass.
+        mass: f64,
+    },
+    /// Sample uniformly between the given bounds, clipped to kinematic support.
+    Uniform {
+        /// Lower proposal bound.
+        low: f64,
+        /// Upper proposal bound.
+        high: f64,
+    },
 }
 
 impl MassProposal {
+    /// Construct a fixed-mass proposal.
     pub fn fixed(mass: f64) -> Self {
         Self::Fixed { mass }
     }
 
+    /// Construct a uniform mass proposal.
     pub fn uniform(low: f64, high: f64) -> Self {
         Self::Uniform { low, high }
     }
 
+    /// Draw a mass within the supplied kinematic interval.
     pub fn propose(
         &self,
         minimum: f64,
@@ -174,18 +201,23 @@ fn uniform_mass_support(
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum VertexProposal {
+    /// Generate an isotropic one-to-two decay.
     #[default]
     TwoBodyDecay,
+    /// Generate two-to-two scattering from a transfer distribution.
     TwoBodyScattering {
+        /// Scattering proposal configuration.
         proposal: TwoBodyScattering,
     },
 }
 
 impl VertexProposal {
+    /// Construct an isotropic two-body decay proposal.
     pub fn isotropic_decay() -> Self {
         Self::TwoBodyDecay
     }
 
+    /// Construct a two-body scattering proposal distributed in momentum transfer.
     pub fn t_exchange(
         pairing: (impl Into<String>, impl Into<String>),
         distribution: TDistribution,
@@ -195,6 +227,7 @@ impl VertexProposal {
         }
     }
 
+    /// Propose outgoing kinematics for a vertex.
     pub fn propose(
         &self,
         incoming: &[NamedMomentum<'_>],
@@ -243,6 +276,7 @@ pub struct AdaptiveTwoBodyDecay {
 }
 
 impl AdaptiveTwoBodyDecay {
+    /// Construct an angular proposal from nonnegative pilot-bin counts.
     pub fn new(counts: Arc<[f64]>, defensive_fraction: f64) -> LadduPhysicsResult<Self> {
         let total: f64 = counts.iter().sum();
         if counts.is_empty()
@@ -290,6 +324,7 @@ impl AdaptiveTwoBodyDecay {
 }
 
 impl AdaptiveTwoBodyDecay {
+    /// Propose a two-body decay from the adapted angular density.
     pub fn propose(
         &self,
         incoming: &[NamedMomentum<'_>],
@@ -321,11 +356,27 @@ impl AdaptiveTwoBodyDecay {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+/// A normalized component of a momentum-transfer proposal.
 pub enum TComponent {
+    /// Uniform density in `t`.
     Uniform,
-    Exponential { slope: f64 },
-    Pole { exchange_mass: f64, power: f64 },
-    Histogram { histogram: Histogram },
+    /// Density proportional to `exp(slope * t)`.
+    Exponential {
+        /// Exponential slope.
+        slope: f64,
+    },
+    /// Pole-like density proportional to `(exchange_mass² - t)^(-power)`.
+    Pole {
+        /// Mass of the exchanged pole.
+        exchange_mass: f64,
+        /// Power of the pole denominator.
+        power: f64,
+    },
+    /// Piecewise-constant density supplied by a histogram.
+    Histogram {
+        /// Histogram defining the piecewise density.
+        histogram: Histogram,
+    },
 }
 
 impl TComponent {
@@ -478,28 +529,42 @@ impl TComponent {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+/// Source distribution for a generated scalar value.
 pub enum ScalarSource {
+    /// A deterministic value.
     Constant(f64),
-    Uniform { low: f64, high: f64 },
+    /// A uniform distribution on `[low, high)`.
+    Uniform {
+        /// Lower source bound.
+        low: f64,
+        /// Upper source bound.
+        high: f64,
+    },
+    /// A piecewise-constant histogram distribution.
     Histogram(Histogram),
 }
 
 #[derive(Clone, Copy, Debug)]
+/// Scalar draw and its inverse proposal-density correction.
 pub struct ScalarProposalResult {
+    /// Sampled scalar value.
     pub value: f64,
     /// The proposal correction `1 / q(value)`; constants use one.
     pub weight: f64,
 }
 
 impl ScalarSource {
+    /// Construct a constant scalar source.
     pub fn constant(value: f64) -> Self {
         Self::Constant(value)
     }
 
+    /// Construct a uniform scalar source.
     pub fn uniform(low: f64, high: f64) -> Self {
         Self::Uniform { low, high }
     }
 
+    /// Construct a histogram-backed scalar source.
     pub fn histogram(histogram: Histogram) -> Self {
         Self::Histogram(histogram)
     }
@@ -551,6 +616,7 @@ impl ScalarSource {
         }
     }
 
+    /// Draw a value and inverse-density weight from the source.
     pub fn sample(&self, rng: &mut ProposalRng) -> LadduPhysicsResult<ScalarProposalResult> {
         match self {
             Self::Constant(value) if value.is_finite() => Ok(ScalarProposalResult {
@@ -600,7 +666,9 @@ pub enum InitialMomentum {
     Momentum(RealVec3),
     /// Sample the energy and orient the momentum along a fixed direction.
     EnergyDirection {
+        /// Energy source.
         energy: ScalarSource,
+        /// Fixed direction of the initial momentum.
         direction: RealVec3,
     },
 }
@@ -608,19 +676,24 @@ pub enum InitialMomentum {
 /// A sampled initial four-momentum and its inverse proposal density.
 #[derive(Clone, Copy, Debug)]
 pub struct InitialMomentumResult {
+    /// Sampled on-shell four-momentum in `(E, px, py, pz)` order.
     pub p4: RealVec4,
+    /// Inverse proposal-density correction.
     pub weight: f64,
 }
 
 impl InitialMomentum {
+    /// Construct a fixed four-momentum source.
     pub fn p4(p4: RealVec4) -> Self {
         Self::P4(p4)
     }
 
+    /// Construct a source from a fixed three-momentum and particle mass.
     pub fn momentum(momentum: RealVec3) -> Self {
         Self::Momentum(momentum)
     }
 
+    /// Construct a fixed-energy source along a direction.
     pub fn energy_direction(energy: f64, direction: RealVec3) -> Self {
         Self::EnergyDirection {
             energy: ScalarSource::constant(energy),
@@ -628,10 +701,12 @@ impl InitialMomentum {
         }
     }
 
+    /// Construct a sampled-energy source along a direction.
     pub fn energy_source_direction(energy: ScalarSource, direction: RealVec3) -> Self {
         Self::EnergyDirection { energy, direction }
     }
 
+    /// Validate this source against an edge name and particle definition.
     pub fn validate(
         &self,
         edge: &str,
@@ -689,6 +764,7 @@ impl InitialMomentum {
         Ok(())
     }
 
+    /// Draw an initial four-momentum after validating its particle definition.
     pub fn sample(
         &self,
         edge: &str,
@@ -747,6 +823,7 @@ fn particle_mass(edge: &str, properties: Option<&ParticleProperties>) -> LadduPh
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+/// Mixture distribution for Mandelstam `t`.
 pub struct TDistribution {
     components: Vec<(f64, TComponent)>,
     #[serde(default)]
@@ -756,14 +833,17 @@ pub struct TDistribution {
 }
 
 impl TDistribution {
+    /// Construct a uniform distribution in `t`.
     pub fn uniform() -> Self {
         Self::mixture([(1.0, TComponent::Uniform)])
     }
 
+    /// Construct an exponential distribution in `t`.
     pub fn exponential(slope: f64) -> Self {
         Self::mixture([(1.0, TComponent::Exponential { slope })])
     }
 
+    /// Construct a pole-like distribution in `t`.
     pub fn pole(exchange_mass: f64, power: f64) -> Self {
         Self::mixture([(
             1.0,
@@ -774,10 +854,12 @@ impl TDistribution {
         )])
     }
 
+    /// Construct a histogram-backed distribution in `t`.
     pub fn histogram(histogram: Histogram) -> Self {
         Self::mixture([(1.0, TComponent::Histogram { histogram })])
     }
 
+    /// Construct a weighted mixture of transfer-density components.
     pub fn mixture(components: impl IntoIterator<Item = (f64, TComponent)>) -> Self {
         Self {
             components: components.into_iter().collect(),
@@ -893,6 +975,8 @@ impl TDistribution {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+/// Two-to-two scattering proposal based on a selected incoming/outgoing
+/// momentum-transfer pairing.
 pub struct TwoBodyScattering {
     incoming_edge: String,
     outgoing_edge: String,
@@ -900,6 +984,7 @@ pub struct TwoBodyScattering {
 }
 
 impl TwoBodyScattering {
+    /// Construct a `t`-exchange proposal for the named edge pairing.
     pub fn t_exchange(
         pairing: (impl Into<String>, impl Into<String>),
         distribution: TDistribution,
@@ -919,6 +1004,7 @@ impl From<TwoBodyScattering> for VertexProposal {
 }
 
 impl TwoBodyScattering {
+    /// Propose outgoing two-body scattering kinematics.
     pub fn propose(
         &self,
         incoming: &[NamedMomentum<'_>],
@@ -1035,7 +1121,7 @@ mod tests {
         let proposal = VertexProposal::isotropic_decay();
         let incoming = [NamedMomentum {
             name: "x",
-            p4: RealVec4::new(0.3, -0.2, 1.0, 2.0),
+            p4: RealVec4::new(2.0, 0.3, -0.2, 1.0),
         }];
         let outgoing = [
             NamedMass {
@@ -1051,9 +1137,9 @@ mod tests {
             .propose(&incoming, &outgoing, &mut ProposalRng::new(7))
             .unwrap();
         let sum = result.outgoing[0] + result.outgoing[1];
-        for (a, b) in [sum.x, sum.y, sum.z, sum.t]
+        for (a, b) in [sum.e, sum.px, sum.py, sum.pz]
             .into_iter()
-            .zip([0.3, -0.2, 1.0, 2.0])
+            .zip([2.0, 0.3, -0.2, 1.0])
         {
             assert!((a - b).abs() < 1e-12);
         }
@@ -1113,11 +1199,11 @@ mod tests {
         let incoming = [
             NamedMomentum {
                 name: "beam",
-                p4: RealVec4::new(0.0, 0.0, 1.0, 1.5),
+                p4: RealVec4::new(1.5, 0.0, 0.0, 1.0),
             },
             NamedMomentum {
                 name: "target",
-                p4: RealVec4::new(0.0, 0.0, -1.0, 1.5),
+                p4: RealVec4::new(1.5, 0.0, 0.0, -1.0),
             },
         ];
         let outgoing = [
@@ -1135,10 +1221,10 @@ mod tests {
             .unwrap();
         let before = incoming[0].p4 + incoming[1].p4;
         let after = result.outgoing[0] + result.outgoing[1];
-        assert!((before.x - after.x).abs() < 1e-12);
-        assert!((before.y - after.y).abs() < 1e-12);
-        assert!((before.z - after.z).abs() < 1e-12);
-        assert!((before.t - after.t).abs() < 1e-12);
+        assert!((before.e - after.e).abs() < 1e-12);
+        assert!((before.px - after.px).abs() < 1e-12);
+        assert!((before.py - after.py).abs() < 1e-12);
+        assert!((before.pz - after.pz).abs() < 1e-12);
         assert!((result.outgoing[0].m().unwrap() - 0.5).abs() < 1e-12);
         assert!((result.outgoing[1].m().unwrap() - 0.7).abs() < 1e-12);
     }
@@ -1147,7 +1233,7 @@ mod tests {
     fn adaptive_decay_preserves_the_phase_space_integral() {
         let incoming = [NamedMomentum {
             name: "parent",
-            p4: RealVec4::new(0.0, 0.0, 0.0, 2.0),
+            p4: RealVec4::new(2.0, 0.0, 0.0, 0.0),
         }];
         let outgoing = [
             NamedMass {

@@ -12,7 +12,7 @@ fn generator() -> ChannelGenerator {
     channel
         .edge("parent")
         .properties(&ParticleProperties::unknown().with_mass(2.0))
-        .initial_p4(RealVec4::new(0.0, 0.0, 0.0, 2.0));
+        .initial_p4(RealVec4::new(2.0, 0.0, 0.0, 0.0));
     channel
         .edge("a")
         .properties(&ParticleProperties::unknown().with_mass(0.2))

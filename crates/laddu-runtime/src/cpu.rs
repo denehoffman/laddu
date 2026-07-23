@@ -3407,10 +3407,10 @@ impl CpuPlan {
                     debug_assert_eq!(actual, *component);
                     let p4 = batch.p4_at(col, row);
                     let value = match component {
-                        P4Component::Px => p4.x,
-                        P4Component::Py => p4.y,
-                        P4Component::Pz => p4.z,
-                        P4Component::E => p4.t,
+                        P4Component::Px => p4.px,
+                        P4Component::Py => p4.py,
+                        P4Component::Pz => p4.pz,
+                        P4Component::E => p4.e,
                     };
                     Value::Scalar(Complex64::from(value))
                 }
@@ -7481,7 +7481,7 @@ mod tests {
         let batch = EventBatch::from_events(
             Arc::new(Schema::new(["ks1"], std::iter::empty::<&str>(), false).unwrap()),
             [OwnedEvent::new(
-                vec![RealVec4::new(3.0, 4.0, 5.0, 10.0)],
+                vec![RealVec4::new(10.0, 3.0, 4.0, 5.0)],
                 vec![],
             )],
         )

@@ -390,10 +390,10 @@ fn record_batch_to_event_batch(
 
         let col: Arc<[RealVec4]> = (0..rb.num_rows())
             .map(|i| RealVec4 {
-                x: px[i],
-                y: py[i],
-                z: pz[i],
-                t: e[i],
+                e: e[i],
+                px: px[i],
+                py: py[i],
+                pz: pz[i],
             })
             .collect();
 
@@ -717,10 +717,10 @@ fn event_batch_to_record_batch(
     for col in 0..batch.schema().n_p4s() {
         let p = batch.vec4_column(col);
 
-        columns.push(array_from_iter(p.iter().map(|x| x.t), precision));
-        columns.push(array_from_iter(p.iter().map(|x| x.x), precision));
-        columns.push(array_from_iter(p.iter().map(|x| x.y), precision));
-        columns.push(array_from_iter(p.iter().map(|x| x.z), precision));
+        columns.push(array_from_iter(p.iter().map(|x| x.e), precision));
+        columns.push(array_from_iter(p.iter().map(|x| x.px), precision));
+        columns.push(array_from_iter(p.iter().map(|x| x.py), precision));
+        columns.push(array_from_iter(p.iter().map(|x| x.pz), precision));
     }
 
     for col in 0..batch.schema().n_scalars() {
@@ -764,10 +764,10 @@ mod tests {
 
     fn v(x: f64) -> RealVec4 {
         RealVec4 {
-            x,
-            y: x + 0.1,
-            z: x + 0.2,
-            t: x + 0.3,
+            e: x + 0.3,
+            px: x,
+            py: x + 0.1,
+            pz: x + 0.2,
         }
     }
 
@@ -845,7 +845,7 @@ mod tests {
 
         assert_eq!(read.scalar_column(0), &[100.0, 101.0, 102.0, 103.0]);
         assert_eq!(read.weights_column().unwrap(), &[10.0, 11.0, 12.0, 13.0]);
-        assert!((read.p4_at(0, 2).t - 2.3).abs() < 1.0e-6);
+        assert!((read.p4_at(0, 2).e - 2.3).abs() < 1.0e-6);
 
         let _ = std::fs::remove_file(path);
     }
@@ -920,8 +920,8 @@ mod tests {
 
         let batch = record_batch_to_event_batch(rb, schema, &nan_options).unwrap();
 
-        assert!(batch.p4_at(0, 1).t.is_nan());
-        assert!((batch.p4_at(0, 1).x - 0.2).abs() < 1.0e-6);
+        assert!(batch.p4_at(0, 1).e.is_nan());
+        assert!((batch.p4_at(0, 1).px - 0.2).abs() < 1.0e-6);
         assert_eq!(batch.scalar_column(0), &[2.0, 3.0]);
         assert_eq!(batch.weights_column().unwrap(), &[4.0, 5.0]);
     }
