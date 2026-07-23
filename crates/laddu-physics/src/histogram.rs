@@ -23,6 +23,7 @@ impl Histogram {
         Self::new_with_flow(counts, bin_edges, 0.0, 0.0)
     }
 
+    /// Construct a histogram including explicit underflow and overflow weights.
     pub fn new_with_flow(
         counts: Vec<f64>,
         bin_edges: Vec<f64>,
@@ -39,6 +40,7 @@ impl Histogram {
         Ok(histogram)
     }
 
+    /// Construct an empty, uniformly binned histogram.
     pub fn empty(bins: usize, limits: (f64, f64)) -> LadduPhysicsResult<Self> {
         Self::validate_bins(bins)?;
         Self::validate_limits(limits)?;
@@ -46,11 +48,13 @@ impl Histogram {
         Self::empty_with_edges(bin_edges)
     }
 
+    /// Construct an empty histogram from explicit bin edges.
     pub fn empty_with_edges(bin_edges: Vec<f64>) -> LadduPhysicsResult<Self> {
         let counts = vec![0.0; bin_edges.len().saturating_sub(1)];
         Self::new(counts, bin_edges)
     }
 
+    /// Fill a uniformly binned histogram from values and optional weights.
     pub fn from_values(
         values: &[f64],
         bins: usize,
@@ -77,6 +81,7 @@ impl Histogram {
         Ok(histogram)
     }
 
+    /// Fill an explicitly binned histogram from values and optional weights.
     pub fn from_values_with_edges(
         values: &[f64],
         bin_edges: Vec<f64>,
@@ -102,10 +107,12 @@ impl Histogram {
         Ok(histogram)
     }
 
+    /// Add one unit-weight entry.
     pub fn fill(&mut self, value: f64) -> LadduPhysicsResult<()> {
         self.fill_weighted(value, 1.0)
     }
 
+    /// Add an entry with an explicit weight.
     pub fn fill_weighted(&mut self, value: f64, weight: f64) -> LadduPhysicsResult<()> {
         if !value.is_finite() {
             return Err(LadduPhysicsError::invalid_value(
@@ -154,10 +161,12 @@ impl Histogram {
         &self.bin_edges
     }
 
+    /// Return the accumulated underflow weight.
     pub fn underflow(&self) -> f64 {
         self.underflow
     }
 
+    /// Return the accumulated overflow weight.
     pub fn overflow(&self) -> f64 {
         self.overflow
     }
@@ -167,14 +176,17 @@ impl Histogram {
         self.counts.iter().sum()
     }
 
+    /// Return total weight including underflow and overflow.
     pub fn total_weight_with_flow(&self) -> f64 {
         self.underflow + self.total_weight() + self.overflow
     }
 
+    /// Return the lowest and highest bin edges.
     pub fn limits(&self) -> (f64, f64) {
         (self.bin_edges[0], self.bin_edges[self.bin_edges.len() - 1])
     }
 
+    /// Return the number of bins.
     pub fn bins(&self) -> usize {
         self.counts.len()
     }

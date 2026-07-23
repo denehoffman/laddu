@@ -111,6 +111,7 @@ fn factorial_ratio_l_minus_over_l_plus(l: usize, abs_m: usize) -> f64 {
     ratio
 }
 
+/// Construct the complex spherical harmonic $`Y_\ell^m(\theta,\phi)`$.
 pub fn spherical_harmonic(
     l: impl TryInto<L>,
     m: impl TryInto<M>,
@@ -158,6 +159,7 @@ pub enum Sheet {
     Unphysical,
 }
 
+/// Construct the analytic two-body breakup momentum on a selected Riemann sheet.
 pub fn q(s: impl Into<Expr>, mass1: impl Into<Expr>, mass2: impl Into<Expr>, sheet: Sheet) -> Expr {
     let s = s.into();
     let m1 = mass1.into();
@@ -172,6 +174,7 @@ pub fn q(s: impl Into<Expr>, mass1: impl Into<Expr>, mass2: impl Into<Expr>, she
     }
 }
 
+/// Construct the two-body phase-space factor $`\rho(s) = 2q/\sqrt{s}`$.
 pub fn rho(
     s: impl Into<Expr>,
     mass1: impl Into<Expr>,
@@ -182,6 +185,7 @@ pub fn rho(
     2.0 * q(s.clone(), mass1, mass2, sheet) / s.sqrt()
 }
 
+/// Construct the Chew-Mandelstam function for a two-body channel.
 pub fn chew_mandelstam(s: impl Into<Expr>, mass1: impl Into<Expr>, mass2: impl Into<Expr>) -> Expr {
     let s = s.into();
     let mass1 = mass1.into();
@@ -202,11 +206,13 @@ pub enum BarrierKind {
     Tensor,
 }
 
+/// Highest orbital angular momentum implemented by the Blatt-Weisskopf factors.
 pub const BLATT_WEISSKOPF_MAX_L: usize = 8;
 
 /// Default Blatt-Weisskopf radius parameter $`q_R`$ in GeV.
 pub const QR_DEFAULT: f64 = 0.1973;
 
+/// Construct a Blatt-Weisskopf factor with an explicit radius parameter.
 pub fn blatt_weisskopf_custom(
     q: impl Into<Expr>,
     l: impl TryInto<L>,
@@ -227,6 +233,7 @@ pub fn blatt_weisskopf_custom(
     })
 }
 
+/// Construct a Blatt-Weisskopf factor using [`QR_DEFAULT`].
 pub fn blatt_weisskopf(
     q: impl Into<Expr>,
     l: impl TryInto<L>,
@@ -338,7 +345,7 @@ mod test {
     }
 
     fn p4(px: f64, py: f64, pz: f64, e: f64) -> crate::vectors::Vec4 {
-        RealVec4::new(px, py, pz, e).into()
+        RealVec4::new(e, px, py, pz).into()
     }
 
     fn expected_spherical_harmonic(l: usize, m: isize, costheta: f64, phi: f64) -> Complex64 {
