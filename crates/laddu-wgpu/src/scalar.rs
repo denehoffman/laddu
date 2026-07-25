@@ -14,6 +14,7 @@ use crate::{WgpuContext, WgpuError, WgpuResult};
 /// A compiled scalar model kernel and its reduction pipelines.
 #[derive(Debug)]
 pub struct WgpuScalarKernel {
+    precision: crate::WgpuPrecision,
     cache_pipeline: Option<wgpu::ComputePipeline>,
     cache_bind_group_layout: Option<wgpu::BindGroupLayout>,
     pipeline: wgpu::ComputePipeline,
@@ -99,7 +100,7 @@ impl WgpuScalarKernel {
             .map_or((None, None), |(pipeline, layout)| {
                 (Some(pipeline), Some(layout))
             });
-        let source = Self::wgsl(ir, &cache_offsets, cache_width)?;
+        let source = Self::wgsl(ir, &cache_offsets, cache_width, context.precision())?;
         let module = context
             .device()
             .create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -202,7 +203,8 @@ impl WgpuScalarKernel {
         } else {
             let gradient = laddu_autodiff::gradient_ir(ir, free_parameters, OutputComponent::Real)
                 .map_err(|error| WgpuError::UnsupportedInstruction(error.to_string()))?;
-            let gradient_source = Self::gradient_wgsl(&gradient, &cache_offsets, cache_width)?;
+            let gradient_source =
+                Self::gradient_wgsl(&gradient, &cache_offsets, cache_width, context.precision())?;
             let gradient_module =
                 context
                     .device()
@@ -224,6 +226,7 @@ impl WgpuScalarKernel {
             )
         };
         Ok(Self {
+            precision: context.precision(),
             cache_pipeline,
             cache_bind_group_layout,
             pipeline,
@@ -239,7 +242,7 @@ impl WgpuScalarKernel {
 
     fn validate_precision(precision: crate::WgpuPrecision) -> WgpuResult<()> {
         match precision {
-            crate::WgpuPrecision::F32 => Ok(()),
+            crate::WgpuPrecision::F32 | crate::WgpuPrecision::F64 => Ok(()),
             unsupported => Err(WgpuError::UnsupportedKernelPrecision(unsupported)),
         }
     }
@@ -249,7 +252,7 @@ impl WgpuScalarKernel {
         ir: &CacheKernelIr,
         input_slots: usize,
     ) -> WgpuResult<(wgpu::ComputePipeline, wgpu::BindGroupLayout)> {
-        let source = Self::cache_wgsl(ir, input_slots)?;
+        let source = Self::cache_wgsl(ir, input_slots, context.precision())?;
         let module = context
             .device()
             .create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -337,7 +340,8 @@ impl WgpuScalarKernel {
 
     /// Evaluates a model with no event-dependent inputs.
     pub fn evaluate(&self, context: &WgpuContext, params: &ParamValues) -> WgpuResult<(f64, f64)> {
-        self.evaluate_packed(context, params, &[0.0, 0.0], 1)
+        let inputs = self.encode_scalars(&[0.0, 0.0]);
+        self.evaluate_packed(context, params, &inputs, 1)
             .map(|mut values| values.remove(0))
     }
 
@@ -410,15 +414,16 @@ impl WgpuScalarKernel {
             let chunk = batch.slice(start, end);
             let inputs = self.pack_batch(&chunk)?;
             let weights = (0..chunk.len())
-                .map(|row| chunk.weights_at(row) as f32)
+                .map(|row| chunk.weights_at(row))
                 .collect::<Vec<_>>();
+            let weight_bytes = self.encode_scalars(&weights);
             let (input, cache) = self.cache_buffers(context, &inputs, chunk.len());
             let weights_buffer =
                 context
                     .device()
                     .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                         label: Some("laddu resident event weights"),
-                        contents: bytemuck::cast_slice(&weights),
+                        contents: &weight_bytes,
                         usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
                     });
             let scratch = self.reduction_scratch(context, params, chunk.len());
@@ -435,11 +440,11 @@ impl WgpuScalarKernel {
             if let Some(index) = Self::read_error(context, &scratch.solve_error)? {
                 return Err(WgpuError::SingularMatrixEvent(start + index));
             }
-            resident_bytes += inputs.len() * size_of::<f32>()
-                + weights.len() * size_of::<f32>()
-                + (chunk.len() * self.cache_width * size_of::<[f32; 2]>()).max(8)
-                + params.as_slice().len().max(1) * size_of::<f32>()
-                + chunk.len().div_ceil(64) * self.partial_width * size_of::<f32>() * 2
+            resident_bytes += inputs.len()
+                + weight_bytes.len()
+                + (chunk.len() * self.cache_width * 2 * self.scalar_size()).max(8)
+                + params.as_slice().len().max(1) * self.scalar_size()
+                + chunk.len().div_ceil(64) * self.partial_width * self.scalar_size() * 2
                 + 8;
             chunks.push(WgpuPreparedChunk {
                 input,
@@ -480,16 +485,15 @@ impl WgpuScalarKernel {
             }
             let inputs = self.pack_batch(&batch_chunk)?;
             let weights = (0..batch_chunk.len())
-                .map(|row| batch_chunk.weights_at(row) as f32)
+                .map(|row| batch_chunk.weights_at(row))
                 .collect::<Vec<_>>();
+            let weight_bytes = self.encode_scalars(&weights);
             context
                 .queue()
-                .write_buffer(&prepared_chunk.input, 0, bytemuck::cast_slice(&inputs));
-            context.queue().write_buffer(
-                &prepared_chunk.weights,
-                0,
-                bytemuck::cast_slice(&weights),
-            );
+                .write_buffer(&prepared_chunk.input, 0, &inputs);
+            context
+                .queue()
+                .write_buffer(&prepared_chunk.weights, 0, &weight_bytes);
             let mut encoder = context.device().create_command_encoder(&Default::default());
             context.queue().write_buffer(
                 &prepared_chunk.scratch.solve_error,
@@ -589,11 +593,11 @@ impl WgpuScalarKernel {
         chunk: &WgpuPreparedChunk,
         reduction: ReductionPlan,
     ) -> WgpuResult<(f64, Vec<f64>)> {
-        let parameters = Self::parameter_values(params);
+        let parameters = self.parameter_values(params);
         let mode = Self::reduction_mode(reduction);
         context
             .queue()
-            .write_buffer(&chunk.scratch.params, 0, bytemuck::cast_slice(&parameters));
+            .write_buffer(&chunk.scratch.params, 0, &parameters);
         context
             .queue()
             .write_buffer(&chunk.scratch.config, 0, bytemuck::bytes_of(&mode));
@@ -619,11 +623,11 @@ impl WgpuScalarKernel {
         chunk: &WgpuPreparedChunk,
         reduction: ReductionPlan,
     ) -> WgpuResult<f64> {
-        let parameters = Self::parameter_values(params);
+        let parameters = self.parameter_values(params);
         let mode = Self::reduction_mode(reduction);
         context
             .queue()
-            .write_buffer(&chunk.scratch.params, 0, bytemuck::cast_slice(&parameters));
+            .write_buffer(&chunk.scratch.params, 0, &parameters);
         context
             .queue()
             .write_buffer(&chunk.scratch.config, 0, bytemuck::bytes_of(&mode));
@@ -642,13 +646,42 @@ impl WgpuScalarKernel {
         )
     }
 
-    fn parameter_values(params: &ParamValues) -> Vec<f32> {
-        let values = params
-            .as_slice()
-            .iter()
-            .map(|value| *value as f32)
-            .collect::<Vec<_>>();
-        if values.is_empty() { vec![0.0] } else { values }
+    fn scalar_size(&self) -> usize {
+        match self.precision {
+            crate::WgpuPrecision::F32 => size_of::<f32>(),
+            crate::WgpuPrecision::F64 => size_of::<f64>(),
+            crate::WgpuPrecision::Auto => unreachable!("kernel precision is resolved"),
+        }
+    }
+
+    fn encode_scalars(&self, values: &[f64]) -> Vec<u8> {
+        match self.precision {
+            crate::WgpuPrecision::F32 => {
+                bytemuck::cast_slice(&values.iter().map(|value| *value as f32).collect::<Vec<_>>())
+                    .to_vec()
+            }
+            crate::WgpuPrecision::F64 => bytemuck::cast_slice(values).to_vec(),
+            crate::WgpuPrecision::Auto => unreachable!("kernel precision is resolved"),
+        }
+    }
+
+    fn decode_scalars(&self, bytes: &[u8]) -> Vec<f64> {
+        match self.precision {
+            crate::WgpuPrecision::F32 => bytemuck::cast_slice::<u8, f32>(bytes)
+                .iter()
+                .map(|value| *value as f64)
+                .collect(),
+            crate::WgpuPrecision::F64 => bytemuck::cast_slice::<u8, f64>(bytes).to_vec(),
+            crate::WgpuPrecision::Auto => unreachable!("kernel precision is resolved"),
+        }
+    }
+
+    fn parameter_values(&self, params: &ParamValues) -> Vec<u8> {
+        if params.as_slice().is_empty() {
+            self.encode_scalars(&[0.0])
+        } else {
+            self.encode_scalars(params.as_slice())
+        }
     }
 
     fn reduction_mode(reduction: ReductionPlan) -> u32 {
@@ -665,13 +698,13 @@ impl WgpuScalarKernel {
         params: &ParamValues,
         events: usize,
     ) -> ReductionScratch {
-        let parameters = Self::parameter_values(params);
+        let parameters = self.parameter_values(params);
         let groups = events.div_ceil(64);
         let params = context
             .device()
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("laddu prepared parameters"),
-                contents: bytemuck::cast_slice(&parameters),
+                contents: &parameters,
                 usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             });
         let config = context
@@ -683,7 +716,7 @@ impl WgpuScalarKernel {
             });
         let partials = context.device().create_buffer(&wgpu::BufferDescriptor {
             label: Some("laddu prepared reduction partials"),
-            size: (groups * self.partial_width * 4).max(4) as u64,
+            size: (groups * self.partial_width * self.scalar_size()).max(4) as u64,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
             mapped_at_creation: false,
         });
@@ -707,7 +740,7 @@ impl WgpuScalarKernel {
             });
         let staging = context.device().create_buffer(&wgpu::BufferDescriptor {
             label: Some("laddu prepared reduction readback"),
-            size: (groups * self.partial_width * 4 + 8).max(8) as u64,
+            size: (groups * self.partial_width * self.scalar_size() + 8).max(8) as u64,
             usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
             mapped_at_creation: false,
         });
@@ -730,6 +763,7 @@ impl WgpuScalarKernel {
         scratch: &ReductionScratch,
     ) -> WgpuResult<f64> {
         let groups = events.div_ceil(64);
+        let partial_bytes = groups * self.scalar_size();
         let bind_group = context
             .device()
             .create_bind_group(&wgpu::BindGroupDescriptor {
@@ -778,18 +812,18 @@ impl WgpuScalarKernel {
             0,
             &scratch.staging,
             0,
-            (groups * 4) as u64,
+            partial_bytes as u64,
         );
-        encoder.copy_buffer_to_buffer(&scratch.error, 0, &scratch.staging, (groups * 4) as u64, 4);
+        encoder.copy_buffer_to_buffer(&scratch.error, 0, &scratch.staging, partial_bytes as u64, 4);
         encoder.copy_buffer_to_buffer(
             &scratch.solve_error,
             0,
             &scratch.staging,
-            (groups * 4 + 4) as u64,
+            (partial_bytes + 4) as u64,
             4,
         );
         context.queue().submit([encoder.finish()]);
-        let slice = scratch.staging.slice(..(groups * 4 + 8) as u64);
+        let slice = scratch.staging.slice(..(partial_bytes + 8) as u64);
         let (sender, receiver) = mpsc::channel();
         slice.map_async(wgpu::MapMode::Read, move |result| {
             let _ = sender.send(result);
@@ -808,12 +842,16 @@ impl WgpuScalarKernel {
         let mapped = slice
             .get_mapped_range()
             .map_err(|error| WgpuError::BufferMap(error.to_string()))?;
-        let words: &[u32] = bytemuck::cast_slice(&mapped);
-        let invalid = words[groups];
-        let singular = words[groups + 1];
+        let invalid =
+            u32::from_ne_bytes(mapped[partial_bytes..partial_bytes + 4].try_into().unwrap());
+        let singular = u32::from_ne_bytes(
+            mapped[partial_bytes + 4..partial_bytes + 8]
+                .try_into()
+                .unwrap(),
+        );
         let mut total = AccurateF64::zero();
-        for bits in &words[..groups] {
-            total.push(f32::from_bits(*bits) as f64);
+        for value in self.decode_scalars(&mapped[..partial_bytes]) {
+            total.push(value);
         }
         drop(mapped);
         scratch.staging.unmap();
@@ -839,6 +877,7 @@ impl WgpuScalarKernel {
         })?;
         let groups = events.div_ceil(64);
         let partial_words = groups * self.partial_width;
+        let partial_bytes = partial_words * self.scalar_size();
         let bind_group = context
             .device()
             .create_bind_group(&wgpu::BindGroupDescriptor {
@@ -887,24 +926,18 @@ impl WgpuScalarKernel {
             0,
             &scratch.staging,
             0,
-            (partial_words * 4) as u64,
+            partial_bytes as u64,
         );
-        encoder.copy_buffer_to_buffer(
-            &scratch.error,
-            0,
-            &scratch.staging,
-            (partial_words * 4) as u64,
-            4,
-        );
+        encoder.copy_buffer_to_buffer(&scratch.error, 0, &scratch.staging, partial_bytes as u64, 4);
         encoder.copy_buffer_to_buffer(
             &scratch.solve_error,
             0,
             &scratch.staging,
-            (partial_words * 4 + 4) as u64,
+            (partial_bytes + 4) as u64,
             4,
         );
         context.queue().submit([encoder.finish()]);
-        let slice = scratch.staging.slice(..(partial_words * 4 + 8) as u64);
+        let slice = scratch.staging.slice(..(partial_bytes + 8) as u64);
         let (sender, receiver) = mpsc::channel();
         slice.map_async(wgpu::MapMode::Read, move |result| {
             let _ = sender.send(result);
@@ -923,16 +956,20 @@ impl WgpuScalarKernel {
         let mapped = slice
             .get_mapped_range()
             .map_err(|error| WgpuError::BufferMap(error.to_string()))?;
-        let words: &[u32] = bytemuck::cast_slice(&mapped);
-        let invalid = words[partial_words];
-        let singular = words[partial_words + 1];
+        let invalid =
+            u32::from_ne_bytes(mapped[partial_bytes..partial_bytes + 4].try_into().unwrap());
+        let singular = u32::from_ne_bytes(
+            mapped[partial_bytes + 4..partial_bytes + 8]
+                .try_into()
+                .unwrap(),
+        );
+        let partials = self.decode_scalars(&mapped[..partial_bytes]);
         let mut sums = (0..self.partial_width)
             .map(|_| AccurateF64::zero())
             .collect::<Vec<_>>();
         for group in 0..groups {
             for component in 0..self.partial_width {
-                sums[component]
-                    .push(f32::from_bits(words[group * self.partial_width + component]) as f64);
+                sums[component].push(partials[group * self.partial_width + component]);
             }
         }
         drop(mapped);
@@ -956,8 +993,9 @@ impl WgpuScalarKernel {
     ) -> WgpuResult<f64> {
         let inputs = self.pack_batch(batch)?;
         let weights = (0..batch.len())
-            .map(|row| batch.weights_at(row) as f32)
+            .map(|row| batch.weights_at(row))
             .collect::<Vec<_>>();
+        let weight_bytes = self.encode_scalars(&weights);
         let (input_buffer, cache_buffer) = self.cache_buffers(context, &inputs, batch.len());
         let solve_error = context
             .device()
@@ -971,7 +1009,7 @@ impl WgpuScalarKernel {
                 .device()
                 .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                     label: Some("laddu event weights"),
-                    contents: bytemuck::cast_slice(&weights),
+                    contents: &weight_bytes,
                     usage: wgpu::BufferUsages::STORAGE,
                 });
         let mut encoder = context.device().create_command_encoder(&Default::default());
@@ -1006,28 +1044,20 @@ impl WgpuScalarKernel {
         events: usize,
         reduction: ReductionPlan,
     ) -> WgpuResult<f64> {
-        let parameters = params
-            .as_slice()
-            .iter()
-            .map(|value| *value as f32)
-            .collect::<Vec<_>>();
-        let parameters = if parameters.is_empty() {
-            vec![0.0]
-        } else {
-            parameters
-        };
+        let parameters = self.parameter_values(params);
         let mode = match reduction.transform() {
             ReductionTransform::Real => 0_u32,
             ReductionTransform::PositiveReal => 1,
             ReductionTransform::LogPositiveReal => 2,
         };
         let groups = events.div_ceil(64);
+        let partial_bytes = groups * self.scalar_size();
         let params_buffer =
             context
                 .device()
                 .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                     label: Some("laddu parameters"),
-                    contents: bytemuck::cast_slice(&parameters),
+                    contents: &parameters,
                     usage: wgpu::BufferUsages::STORAGE,
                 });
         let config_buffer =
@@ -1040,7 +1070,7 @@ impl WgpuScalarKernel {
                 });
         let partials = context.device().create_buffer(&wgpu::BufferDescriptor {
             label: Some("laddu reduction partials"),
-            size: (groups * 4) as u64,
+            size: partial_bytes as u64,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
             mapped_at_creation: false,
         });
@@ -1051,7 +1081,7 @@ impl WgpuScalarKernel {
                 contents: bytemuck::bytes_of(&u32::MAX),
                 usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
             });
-        let staging_size = (groups * 4 + 8) as u64;
+        let staging_size = (partial_bytes + 8) as u64;
         let staging = context.device().create_buffer(&wgpu::BufferDescriptor {
             label: Some("laddu reduction readback"),
             size: staging_size,
@@ -1101,9 +1131,9 @@ impl WgpuScalarKernel {
             pass.set_bind_group(0, &bind_group, &[]);
             pass.dispatch_workgroups(groups as u32, 1, 1);
         }
-        encoder.copy_buffer_to_buffer(&partials, 0, &staging, 0, (groups * 4) as u64);
-        encoder.copy_buffer_to_buffer(&error, 0, &staging, (groups * 4) as u64, 4);
-        encoder.copy_buffer_to_buffer(solve_error, 0, &staging, (groups * 4 + 4) as u64, 4);
+        encoder.copy_buffer_to_buffer(&partials, 0, &staging, 0, partial_bytes as u64);
+        encoder.copy_buffer_to_buffer(&error, 0, &staging, partial_bytes as u64, 4);
+        encoder.copy_buffer_to_buffer(solve_error, 0, &staging, (partial_bytes + 4) as u64, 4);
         context.queue().submit([encoder.finish()]);
         let slice = staging.slice(..);
         let (sender, receiver) = mpsc::channel();
@@ -1124,9 +1154,13 @@ impl WgpuScalarKernel {
         let mapped = slice
             .get_mapped_range()
             .map_err(|error| WgpuError::BufferMap(error.to_string()))?;
-        let words: &[u32] = bytemuck::cast_slice(&mapped);
-        let invalid = words[groups];
-        let singular = words[groups + 1];
+        let invalid =
+            u32::from_ne_bytes(mapped[partial_bytes..partial_bytes + 4].try_into().unwrap());
+        let singular = u32::from_ne_bytes(
+            mapped[partial_bytes + 4..partial_bytes + 8]
+                .try_into()
+                .unwrap(),
+        );
         if invalid != u32::MAX {
             return Err(WgpuError::NonPositiveEvent(invalid as usize));
         }
@@ -1134,8 +1168,8 @@ impl WgpuScalarKernel {
             return Err(WgpuError::SingularMatrixEvent(singular as usize));
         }
         let mut total = AccurateF64::zero();
-        for bits in &words[..groups] {
-            total.push(f32::from_bits(*bits) as f64);
+        for value in self.decode_scalars(&mapped[..partial_bytes]) {
+            total.push(value);
         }
         Ok(total.finish())
     }
@@ -1146,15 +1180,16 @@ impl WgpuScalarKernel {
         params: &ParamValues,
         reduction: bool,
     ) -> WgpuResult<usize> {
-        let input_bytes = self.event_inputs.len() * size_of::<[f32; 2]>();
-        let cache_bytes = self.cache_width * size_of::<[f32; 2]>();
+        let scalar_size = self.scalar_size();
+        let input_bytes = self.event_inputs.len() * 2 * scalar_size;
+        let cache_bytes = self.cache_width * 2 * scalar_size;
         let result_bytes = if reduction {
-            self.partial_width * size_of::<f32>() + 1
+            self.partial_width * scalar_size + 1
         } else {
-            2 * size_of::<[f32; 2]>()
+            4 * scalar_size
         };
         let per_event = input_bytes + cache_bytes + result_bytes;
-        let parameter_bytes = params.as_slice().len().max(1) * size_of::<f32>();
+        let parameter_bytes = params.as_slice().len().max(1) * scalar_size;
         let fixed_bytes = parameter_bytes + if reduction { 16 } else { 0 };
         let max_binding = context
             .info()
@@ -1165,7 +1200,11 @@ impl WgpuScalarKernel {
         for width in [
             input_bytes,
             cache_bytes,
-            if reduction { self.partial_width * 4 } else { 8 },
+            if reduction {
+                self.partial_width * scalar_size
+            } else {
+                2 * scalar_size
+            },
         ] {
             if let Some(events) = max_binding.checked_div(width) {
                 max_events = max_events.min(events);
@@ -1190,7 +1229,7 @@ impl WgpuScalarKernel {
         Ok(max_events)
     }
 
-    fn pack_batch(&self, batch: &EventBatch) -> WgpuResult<Vec<f32>> {
+    fn pack_batch(&self, batch: &EventBatch) -> WgpuResult<Vec<u8>> {
         let mut inputs = Vec::with_capacity(batch.len() * self.event_inputs.len() * 2);
         for row in 0..batch.len() {
             for input in &self.event_inputs {
@@ -1216,41 +1255,36 @@ impl WgpuScalarKernel {
                         }
                     }
                 };
-                inputs.extend([value as f32, 0.0]);
+                inputs.extend([value, 0.0]);
             }
         }
         if inputs.is_empty() {
             inputs.extend([0.0, 0.0]);
         }
-        Ok(inputs)
+        Ok(self.encode_scalars(&inputs))
     }
 
     fn evaluate_packed(
         &self,
         context: &WgpuContext,
         params: &ParamValues,
-        inputs: &[f32],
+        inputs: &[u8],
         events: usize,
     ) -> WgpuResult<Vec<(f64, f64)>> {
         if events == 0 {
             return Ok(Vec::new());
         }
-        let values = params
-            .as_slice()
-            .iter()
-            .map(|value| *value as f32)
-            .collect::<Vec<_>>();
-        let values = if values.is_empty() { vec![0.0] } else { values };
+        let values = self.parameter_values(params);
         let params_buffer =
             context
                 .device()
                 .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                     label: Some("laddu parameters"),
-                    contents: bytemuck::cast_slice(&values),
+                    contents: &values,
                     usage: wgpu::BufferUsages::STORAGE,
                 });
         let (input_buffer, cache_buffer) = self.cache_buffers(context, inputs, events);
-        let output_size = (events * 8) as u64;
+        let output_size = (events * 2 * self.scalar_size()) as u64;
         let output = context.device().create_buffer(&wgpu::BufferDescriptor {
             label: Some("laddu scalar output"),
             size: output_size,
@@ -1331,10 +1365,10 @@ impl WgpuScalarKernel {
         let mapped = slice
             .get_mapped_range()
             .map_err(|error| WgpuError::BufferMap(error.to_string()))?;
-        let result: &[f32] = bytemuck::cast_slice(&mapped[..output_size as usize]);
+        let result = self.decode_scalars(&mapped[..output_size as usize]);
         let values = result
             .chunks_exact(2)
-            .map(|value| (value[0] as f64, value[1] as f64))
+            .map(|value| (value[0], value[1]))
             .collect();
         let singular = u32::from_ne_bytes(
             mapped[output_size as usize..output_size as usize + 4]
@@ -1352,17 +1386,17 @@ impl WgpuScalarKernel {
     fn cache_buffers(
         &self,
         context: &WgpuContext,
-        inputs: &[f32],
+        inputs: &[u8],
         events: usize,
     ) -> (wgpu::Buffer, wgpu::Buffer) {
         let input = context
             .device()
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("laddu event inputs"),
-                contents: bytemuck::cast_slice(inputs),
+                contents: inputs,
                 usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             });
-        let cache_size = (events * self.cache_width * 8).max(8) as u64;
+        let cache_size = (events * self.cache_width * 2 * self.scalar_size()).max(8) as u64;
         let cache = context.device().create_buffer(&wgpu::BufferDescriptor {
             label: Some("laddu event cache"),
             size: cache_size,
@@ -1411,15 +1445,209 @@ impl WgpuScalarKernel {
         pass.dispatch_workgroups((events as u32).div_ceil(64), 1, 1);
     }
 
-    fn scalar_prelude() -> &'static str {
-        "fn cmul(a: vec2<f32>, b: vec2<f32>) -> vec2<f32> { return vec2(a.x*b.x-a.y*b.y, a.x*b.y+a.y*b.x); }\n\
+    fn scalar_prelude(precision: crate::WgpuPrecision) -> &'static str {
+        match precision {
+            crate::WgpuPrecision::F32 => {
+                "fn scalar_sin(x: f32) -> f32 { return sin(x); }\n\
+fn scalar_cos(x: f32) -> f32 { return cos(x); }\n\
+fn scalar_exp(x: f32) -> f32 { return exp(x); }\n\
+fn scalar_sinh(x: f32) -> f32 { return sinh(x); }\n\
+fn scalar_cosh(x: f32) -> f32 { return cosh(x); }\n\
+fn scalar_atan2(y: f32, x: f32) -> f32 { return atan2(y, x); }\n\
+fn scalar_log(x: f32) -> f32 { return log(x); }\n\
+fn cmul(a: vec2<f32>, b: vec2<f32>) -> vec2<f32> { return vec2(a.x*b.x-a.y*b.y, a.x*b.y+a.y*b.x); }\n\
 fn cdiv(a: vec2<f32>, b: vec2<f32>) -> vec2<f32> { let d=b.x*b.x+b.y*b.y; return vec2((a.x*b.x+a.y*b.y)/d, (a.y*b.x-a.x*b.y)/d); }\n\
-fn csqrt(z: vec2<f32>) -> vec2<f32> { let m=length(z); let re=sqrt(max(0.0, 0.5*(m+z.x))); let im=sqrt(max(0.0, 0.5*(m-z.x))); return vec2(re, select(-im, im, z.y >= 0.0)); }\n\
-fn cexp(z: vec2<f32>) -> vec2<f32> { let e=exp(z.x); return vec2(e*cos(z.y), e*sin(z.y)); }\n\
-fn csin(z: vec2<f32>) -> vec2<f32> { return vec2(sin(z.x)*cosh(z.y), cos(z.x)*sinh(z.y)); }\n\
-fn ccos(z: vec2<f32>) -> vec2<f32> { return vec2(cos(z.x)*cosh(z.y), -sin(z.x)*sinh(z.y)); }\n\
-fn clog(z: vec2<f32>) -> vec2<f32> { return vec2(log(length(z)), atan2(z.y, z.x)); }\n\
-fn cpowi(z: vec2<f32>, exponent: i32) -> vec2<f32> { var result=vec2(1.0, 0.0); var base=z; var n=abs(exponent); loop { if (n == 0) { break; } if ((n & 1) == 1) { result=cmul(result, base); } base=cmul(base, base); n=n/2; } if (exponent < 0) { return cdiv(vec2(1.0, 0.0), result); } return result; }\n"
+fn cnorm(z: vec2<f32>) -> f32 { return z.x*z.x+z.y*z.y; }\n\
+fn cabs(z: vec2<f32>) -> f32 { let x=abs(z.x); let y=abs(z.y); let hi=max(x,y); let lo=min(x,y); let ratio=lo/hi; return select(hi*sqrt(1.0+ratio*ratio), 0.0, hi == 0.0); }\n\
+fn csqrt(z: vec2<f32>) -> vec2<f32> { let m=cabs(z); let re=sqrt(max(0.0, 0.5*(m+z.x))); let im=sqrt(max(0.0, 0.5*(m-z.x))); return vec2(re, select(-im, im, z.y >= 0.0)); }\n\
+fn cexp(z: vec2<f32>) -> vec2<f32> { let e=scalar_exp(z.x); return vec2(e*scalar_cos(z.y), e*scalar_sin(z.y)); }\n\
+fn csin(z: vec2<f32>) -> vec2<f32> { return vec2(scalar_sin(z.x)*scalar_cosh(z.y), scalar_cos(z.x)*scalar_sinh(z.y)); }\n\
+fn ccos(z: vec2<f32>) -> vec2<f32> { return vec2(scalar_cos(z.x)*scalar_cosh(z.y), -scalar_sin(z.x)*scalar_sinh(z.y)); }\n\
+fn clog(z: vec2<f32>) -> vec2<f32> { return vec2(scalar_log(cabs(z)), scalar_atan2(z.y, z.x)); }\n\
+fn cpowi(z: vec2<f32>, exponent: i32) -> vec2<f32> { var result=vec2<f32>(1.0, 0.0); var base=z; var n=abs(exponent); loop { if (n == 0) { break; } if ((n & 1) == 1) { result=cmul(result, base); } base=cmul(base, base); n=n/2; } if (exponent < 0) { return cdiv(vec2<f32>(1.0, 0.0), result); } return result; }\n"
+            }
+            crate::WgpuPrecision::F64 => {
+                r#"fn scalar_sincos(x: f64) -> vec2<f64> {
+    let ax = abs(x);
+    let k = floor(ax * 0.63661977236758134308 + 0.5);
+    let r = (ax - k * 1.57079632673412561417) - k * 6.07710050650619224932e-11;
+    let z = r * r;
+    let s = r + r * z * (-1.66666666666666324348e-1 + z * (8.33333333332248946124e-3 + z * (-1.98412698298579493134e-4 + z * (2.75573137070700676789e-6 + z * (-2.50507602534068634195e-8 + z * 1.58969099521155010221e-10)))));
+    let c = 1.0 - 0.5 * z + z * z * (4.16666666666666019037e-2 + z * (-1.38888888888741095749e-3 + z * (2.48015872894767294178e-5 + z * (-2.75573143513906633035e-7 + z * (2.08757232129817482790e-9 + z * -1.13596475577881948265e-11)))));
+    let quadrant = i32(k - 4.0 * floor(k * 0.25));
+    var result = vec2<f64>(s, c);
+    if (quadrant == 1) { result = vec2<f64>(c, -s); }
+    if (quadrant == 2) { result = vec2<f64>(-s, -c); }
+    if (quadrant == 3) { result = vec2<f64>(-c, s); }
+    if (x < 0.0) { result.x = -result.x; }
+    return result;
+}
+fn scalar_sin(x: f64) -> f64 { return scalar_sincos(x).x; }
+fn scalar_cos(x: f64) -> f64 { return scalar_sincos(x).y; }
+fn scalar_exp(x: f64) -> f64 {
+    if (x != x) { return x; }
+    let maximum: f64 = 1.79769313486231570815e308;
+    if (x > 7.09782712893383973096e2) { return maximum * maximum; }
+    if (x < -7.45133219101941108420e2) { return 0.0; }
+    let k = floor(x * 1.44269504088896340736 + 0.5);
+    let r = (x - k * 6.93147180369123816490e-1) - k * 1.90821492927058770002e-10;
+    let z = r * r;
+    let p = 1.66666666666666019037e-1 + z * (-2.77777777770155933842e-3 + z * (6.61375632143793436117e-5 + z * (-1.65339022054652515390e-6 + z * 4.13813679705723846039e-8)));
+    let c = r - z * p;
+    let reduced = 1.0 + r + r * c / (2.0 - c);
+    var n = i32(k);
+    var factor: f64 = 1.0;
+    loop {
+        if (n == 0) { break; }
+        if (n > 0) {
+            factor *= 2.0;
+            n -= 1;
+        } else {
+            factor *= 0.5;
+            n += 1;
+        }
+    }
+    return reduced * factor;
+}
+fn scalar_sinh(x: f64) -> f64 {
+    let ax = abs(x);
+    if (ax <= 1.0) {
+        let z = x * x;
+        return x * (1.0 + z * (1.0 / 6.0 + z * (1.0 / 120.0 + z * (1.0 / 5040.0 + z * (1.0 / 362880.0 + z * (1.0 / 39916800.0 + z * (1.0 / 6227020800.0 + z * (1.0 / 1307674368000.0 + z / 355687428096000.0))))))));
+    }
+    let e = scalar_exp(ax);
+    let value = 0.5 * (e - 1.0 / e);
+    return select(-value, value, x >= 0.0);
+}
+fn scalar_cosh(x: f64) -> f64 {
+    let ax = abs(x);
+    if (ax <= 1.0) {
+        let z = x * x;
+        return 1.0 + z * (0.5 + z * (1.0 / 24.0 + z * (1.0 / 720.0 + z * (1.0 / 40320.0 + z * (1.0 / 3628800.0 + z * (1.0 / 479001600.0 + z * (1.0 / 87178291200.0 + z / 20922789888000.0)))))));
+    }
+    let e = scalar_exp(ax);
+    return 0.5 * (e + 1.0 / e);
+}
+fn scalar_atan(x: f64) -> f64 {
+    let ax = abs(x);
+    var r = ax;
+    var offset: f64 = 0.0;
+    var subtract = false;
+    if (ax > 2.41421356237309504880) {
+        r = 1.0 / ax;
+        offset = 1.57079632679489661923;
+        subtract = true;
+    } else if (ax > 0.41421356237309504880) {
+        r = (ax - 1.0) / (ax + 1.0);
+        offset = 0.78539816339744830962;
+    }
+    let z = r * r;
+    var p: f64 = -1.0 / 39.0;
+    p = 1.0 / 37.0 + z * p;
+    p = -1.0 / 35.0 + z * p;
+    p = 1.0 / 33.0 + z * p;
+    p = -1.0 / 31.0 + z * p;
+    p = 1.0 / 29.0 + z * p;
+    p = -1.0 / 27.0 + z * p;
+    p = 1.0 / 25.0 + z * p;
+    p = -1.0 / 23.0 + z * p;
+    p = 1.0 / 21.0 + z * p;
+    p = -1.0 / 19.0 + z * p;
+    p = 1.0 / 17.0 + z * p;
+    p = -1.0 / 15.0 + z * p;
+    p = 1.0 / 13.0 + z * p;
+    p = -1.0 / 11.0 + z * p;
+    p = 1.0 / 9.0 + z * p;
+    p = -1.0 / 7.0 + z * p;
+    p = 1.0 / 5.0 + z * p;
+    p = -1.0 / 3.0 + z * p;
+    let a = r + r * z * p;
+    let value = select(offset + a, offset - a, subtract);
+    return select(-value, value, x >= 0.0);
+}
+fn scalar_atan2(y: f64, x: f64) -> f64 {
+    if (x > 0.0) { return scalar_atan(y / x); }
+    if (x < 0.0) {
+        let a = scalar_atan(y / x);
+        return select(a - 3.14159265358979323846, a + 3.14159265358979323846, y >= 0.0);
+    }
+    if (y > 0.0) { return 1.57079632679489661923; }
+    if (y < 0.0) { return -1.57079632679489661923; }
+    return 0.0;
+}
+fn scalar_log(x: f64) -> f64 {
+    if (x != x) { return x; }
+    let maximum: f64 = 1.79769313486231570815e308;
+    if (x > maximum) { return x; }
+    let zero = x - x;
+    if (x == 0.0) { return -1.0 / zero; }
+    if (x < 0.0) { return zero / zero; }
+    var m = x;
+    var e: f64 = 0.0;
+    if (m >= 1.34078079299425970996e154) { m *= 7.45834073120020674329e-155; e += 512.0; }
+    if (m >= 1.15792089237316195424e77) { m *= 8.63616855509444462539e-78; e += 256.0; }
+    if (m >= 3.40282366920938463463e38) { m *= 2.93873587705571876992e-39; e += 128.0; }
+    if (m >= 1.84467440737095516160e19) { m *= 5.42101086242752217004e-20; e += 64.0; }
+    if (m >= 4294967296.0) { m *= 2.32830643653869628906e-10; e += 32.0; }
+    if (m >= 65536.0) { m *= 1.52587890625e-5; e += 16.0; }
+    if (m >= 256.0) { m *= 0.00390625; e += 8.0; }
+    if (m >= 16.0) { m *= 0.0625; e += 4.0; }
+    if (m >= 4.0) { m *= 0.25; e += 2.0; }
+    if (m >= 2.0) { m *= 0.5; e += 1.0; }
+    if (m < 7.45834073120020674329e-155) { m *= 1.34078079299425970996e154; e -= 512.0; }
+    if (m < 8.63616855509444462539e-78) { m *= 1.15792089237316195424e77; e -= 256.0; }
+    if (m < 2.93873587705571876992e-39) { m *= 3.40282366920938463463e38; e -= 128.0; }
+    if (m < 5.42101086242752217004e-20) { m *= 1.84467440737095516160e19; e -= 64.0; }
+    if (m < 2.32830643653869628906e-10) { m *= 4294967296.0; e -= 32.0; }
+    if (m < 1.52587890625e-5) { m *= 65536.0; e -= 16.0; }
+    if (m < 0.00390625) { m *= 256.0; e -= 8.0; }
+    if (m < 0.0625) { m *= 16.0; e -= 4.0; }
+    if (m < 0.25) { m *= 4.0; e -= 2.0; }
+    if (m < 0.5) { m *= 2.0; e -= 1.0; }
+    let z = (m - 1.0) / (m + 1.0);
+    let z2 = z * z;
+    var p: f64 = 1.0 / 31.0;
+    p = 1.0 / 29.0 + z2 * p;
+    p = 1.0 / 27.0 + z2 * p;
+    p = 1.0 / 25.0 + z2 * p;
+    p = 1.0 / 23.0 + z2 * p;
+    p = 1.0 / 21.0 + z2 * p;
+    p = 1.0 / 19.0 + z2 * p;
+    p = 1.0 / 17.0 + z2 * p;
+    p = 1.0 / 15.0 + z2 * p;
+    p = 1.0 / 13.0 + z2 * p;
+    p = 1.0 / 11.0 + z2 * p;
+    p = 1.0 / 9.0 + z2 * p;
+    p = 1.0 / 7.0 + z2 * p;
+    p = 1.0 / 5.0 + z2 * p;
+    p = 1.0 / 3.0 + z2 * p;
+    let log_m = 2.0 * z * (1.0 + z2 * p);
+    return log_m + e * 0.69314718055994530942;
+}
+fn cmul(a: vec2<f64>, b: vec2<f64>) -> vec2<f64> { return vec2(a.x*b.x-a.y*b.y, a.x*b.y+a.y*b.x); }
+fn cdiv(a: vec2<f64>, b: vec2<f64>) -> vec2<f64> { let d=b.x*b.x+b.y*b.y; return vec2((a.x*b.x+a.y*b.y)/d, (a.y*b.x-a.x*b.y)/d); }
+fn cnorm(z: vec2<f64>) -> f64 { return z.x*z.x+z.y*z.y; }
+fn cabs(z: vec2<f64>) -> f64 { let x=abs(z.x); let y=abs(z.y); let hi=max(x,y); let lo=min(x,y); let ratio=lo/hi; return select(hi*sqrt(1.0+ratio*ratio), 0.0, hi == 0.0); }
+fn csqrt(z: vec2<f64>) -> vec2<f64> { let m=cabs(z); let re=sqrt(max(0.0, 0.5*(m+z.x))); let im=sqrt(max(0.0, 0.5*(m-z.x))); return vec2(re, select(-im, im, z.y >= 0.0)); }
+fn cexp(z: vec2<f64>) -> vec2<f64> { let e=scalar_exp(z.x); return vec2(e*scalar_cos(z.y), e*scalar_sin(z.y)); }
+fn csin(z: vec2<f64>) -> vec2<f64> { return vec2(scalar_sin(z.x)*scalar_cosh(z.y), scalar_cos(z.x)*scalar_sinh(z.y)); }
+fn ccos(z: vec2<f64>) -> vec2<f64> { return vec2(scalar_cos(z.x)*scalar_cosh(z.y), -scalar_sin(z.x)*scalar_sinh(z.y)); }
+fn clog(z: vec2<f64>) -> vec2<f64> { return vec2(scalar_log(cabs(z)), scalar_atan2(z.y, z.x)); }
+fn cpowi(z: vec2<f64>, exponent: i32) -> vec2<f64> { var result=vec2<f64>(1.0, 0.0); var base=z; var n=abs(exponent); loop { if (n == 0) { break; } if ((n & 1) == 1) { result=cmul(result, base); } base=cmul(base, base); n=n/2; } if (exponent < 0) { return cdiv(vec2<f64>(1.0, 0.0), result); } return result; }
+"#
+            }
+            crate::WgpuPrecision::Auto => unreachable!("kernel precision is resolved"),
+        }
+    }
+
+    fn shader_precision(source: String, precision: crate::WgpuPrecision) -> String {
+        match precision {
+            crate::WgpuPrecision::F32 => source,
+            crate::WgpuPrecision::F64 => source
+                .replace("f32", "f64")
+                .replace("log(value)", "scalar_log(value)"),
+            crate::WgpuPrecision::Auto => unreachable!("kernel precision is resolved"),
+        }
     }
 
     fn aggregate(elements: impl IntoIterator<Item = String>, width: usize) -> String {
@@ -1449,9 +1677,9 @@ fn cpowi(z: vec2<f32>, exponent: i32) -> vec2<f32> { var result=vec2(1.0, 0.0); 
             }
             let expr = match &value.instruction {
                 KernelInstruction::Cached(slot) => cached(*slot, value.kind),
-                KernelInstruction::RealConstant(x) => format!("vec2<f32>({:?}, 0.0)", *x as f32),
+                KernelInstruction::RealConstant(x) => format!("vec2<f32>({x:?}, 0.0)"),
                 KernelInstruction::ComplexConstant(x) => {
-                    format!("vec2<f32>({:?}, {:?})", x.re as f32, x.im as f32)
+                    format!("vec2<f32>({:?}, {:?})", x.re, x.im)
                 }
                 KernelInstruction::Parameter(id) => format!("vec2<f32>(p[{}], 0.0)", id.index()),
                 KernelInstruction::Unary {
@@ -1473,7 +1701,7 @@ fn cpowi(z: vec2<f32>, exponent: i32) -> vec2<f32> { var result=vec2(1.0, 0.0); 
                 KernelInstruction::Unary {
                     op: UnaryOp::NormSqr,
                     input,
-                } => format!("vec2<f32>(dot({0}, {0}), 0.0)", v(*input)),
+                } => format!("vec2<f32>(cnorm({}), 0.0)", v(*input)),
                 KernelInstruction::Unary {
                     op: UnaryOp::Sqrt,
                     input,
@@ -1504,7 +1732,7 @@ fn cpowi(z: vec2<f32>, exponent: i32) -> vec2<f32> { var result=vec2(1.0, 0.0); 
                     BinaryOp::Mul => format!("cmul({}, {})", v(*lhs), v(*rhs)),
                     BinaryOp::Div => format!("cdiv({}, {})", v(*lhs), v(*rhs)),
                     BinaryOp::Atan2 => {
-                        format!("vec2<f32>(atan2({}.x, {}.x), 0.0)", v(*lhs), v(*rhs))
+                        format!("vec2<f32>(scalar_atan2({}.x, {}.x), 0.0)", v(*lhs), v(*rhs))
                     }
                 },
                 KernelInstruction::Add(ids) => {
@@ -1613,8 +1841,8 @@ fn cpowi(z: vec2<f32>, exponent: i32) -> vec2<f32> { var result=vec2(1.0, 0.0); 
         }
         source.push_str(&format!(
             "for (var k{index}=0u; k{index}<{dimension}u; k{index}++) {{\n\
-var best{index}=k{index};\nvar best_norm{index}=dot(lu{index}[k{index}*{dimension}u+k{index}], lu{index}[k{index}*{dimension}u+k{index}]);\n\
-for (var r{index}=k{index}+1u; r{index}<{dimension}u; r{index}++) {{ let candidate=dot(lu{index}[r{index}*{dimension}u+k{index}], lu{index}[r{index}*{dimension}u+k{index}]); if (candidate > best_norm{index}) {{ best_norm{index}=candidate; best{index}=r{index}; }} }}\n\
+var best{index}=k{index};\nvar best_norm{index}=cnorm(lu{index}[k{index}*{dimension}u+k{index}]);\n\
+for (var r{index}=k{index}+1u; r{index}<{dimension}u; r{index}++) {{ let candidate=cnorm(lu{index}[r{index}*{dimension}u+k{index}]); if (candidate > best_norm{index}) {{ best_norm{index}=candidate; best{index}=r{index}; }} }}\n\
 if (best{index} != k{index}) {{ for (var c{index}=0u; c{index}<{dimension}u; c{index}++) {{ let swap=lu{index}[k{index}*{dimension}u+c{index}]; lu{index}[k{index}*{dimension}u+c{index}]=lu{index}[best{index}*{dimension}u+c{index}]; lu{index}[best{index}*{dimension}u+c{index}]=swap; }} let ps=piv{index}[k{index}]; piv{index}[k{index}]=piv{index}[best{index}]; piv{index}[best{index}]=ps; }}\nif (!(best_norm{index} > 0.0)) {{ atomicMin(&solve_error[0], row); lu{index}[k{index}*{dimension}u+k{index}]=vec2(1.0, 0.0); }}\n\
 for (var r{index}=k{index}+1u; r{index}<{dimension}u; r{index}++) {{ let factor=cdiv(lu{index}[r{index}*{dimension}u+k{index}], lu{index}[k{index}*{dimension}u+k{index}]); lu{index}[r{index}*{dimension}u+k{index}]=factor; for (var c{index}=k{index}+1u; c{index}<{dimension}u; c{index}++) {{ lu{index}[r{index}*{dimension}u+c{index}] -= cmul(factor, lu{index}[k{index}*{dimension}u+c{index}]); }} }}\n}}\n"
         ));
@@ -1625,7 +1853,11 @@ for (var ri{index}=0u; ri{index}<{dimension}u; ri{index}++) {{ let i={dimension}
         source
     }
 
-    fn cache_wgsl(ir: &CacheKernelIr, input_slots: usize) -> WgpuResult<String> {
+    fn cache_wgsl(
+        ir: &CacheKernelIr,
+        input_slots: usize,
+        precision: crate::WgpuPrecision,
+    ) -> WgpuResult<String> {
         let mut output_offsets = Vec::with_capacity(ir.outputs().len());
         let mut output_width = 0;
         for output in ir.outputs() {
@@ -1634,7 +1866,7 @@ for (var ri{index}=0u; ri{index}<{dimension}u; ri{index}++) {{ let i={dimension}
         }
         let mut source = format!(
             "@group(0) @binding(0) var<storage, read> inputs: array<vec2<f32>>;\n@group(0) @binding(1) var<storage, read_write> cache: array<vec2<f32>>;\n@group(0) @binding(2) var<storage, read_write> solve_error: array<atomic<u32>>;\n{}@compute @workgroup_size(64) fn main(@builtin(global_invocation_id) gid: vec3<u32>) {{\nlet row=gid.x;\nif (row >= arrayLength(&cache)/{output_width}u) {{ return; }}\n",
-            Self::scalar_prelude()
+            Self::scalar_prelude(precision)
         );
         source.push_str(&Self::emit_values(ir.values(), |slot, _| {
             format!("inputs[row * {input_slots}u + {slot}u]")
@@ -1654,18 +1886,19 @@ for (var ri{index}=0u; ri{index}<{dimension}u; ri{index}++) {{ let i={dimension}
             }
         }
         source.push_str("}\n");
-        Ok(source)
+        Ok(Self::shader_precision(source, precision))
     }
 
     fn gradient_wgsl(
         ir: &GradientKernelIr,
         cache_offsets: &[usize],
         cache_width: usize,
+        precision: crate::WgpuPrecision,
     ) -> WgpuResult<String> {
         let width = ir.outputs().len() + 1;
         let mut source = format!(
             "@group(0) @binding(0) var<storage, read> p: array<f32>;\n@group(0) @binding(1) var<storage, read> cache: array<vec2<f32>>;\n@group(0) @binding(3) var<storage, read> weights: array<f32>;\n@group(0) @binding(4) var<storage, read> config: array<u32>;\n@group(0) @binding(5) var<storage, read_write> partials: array<f32>;\n@group(0) @binding(6) var<storage, read_write> reduction_error: array<atomic<u32>>;\n@group(0) @binding(7) var<storage, read_write> solve_error: array<atomic<u32>>;\nvar<workgroup> sums: array<f32, 64>;\n{}fn model_gradient(row: u32) -> array<f32, {width}> {{\n",
-            Self::scalar_prelude()
+            Self::scalar_prelude(precision)
         );
         source.push_str(&Self::emit_values(ir.values(), |slot, kind| {
             let offset = cache_offsets[slot];
@@ -1689,19 +1922,20 @@ for (var ri{index}=0u; ri{index}<{dimension}u; ri{index}++) {{ let i={dimension}
             .collect::<Vec<_>>()
             .join(", ");
         source.push_str(&format!(
-            "return array<f32, {width}>({outputs});\n}}\n@compute @workgroup_size(64) fn reduce_gradient(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgroup_id) wid: vec3<u32>) {{\nvar result: array<f32, {width}>;\nvar scale=0.0;\nif (gid.x < arrayLength(&weights)) {{ result=model_gradient(gid.x); let value=result[0]; if (config[0] == 0u) {{ scale=1.0; }} else if (value <= 0.0) {{ atomicMin(&reduction_error[0], gid.x); }} else if (config[0] == 1u) {{ scale=1.0; }} else {{ scale=1.0/value; }} result[0]=select(value, log(value), config[0] == 2u); scale *= weights[gid.x]; result[0] *= weights[gid.x]; }}\nfor (var component=0u; component<{width}u; component++) {{ if (component == 0u) {{ sums[lid.x]=result[0]; }} else {{ sums[lid.x]=result[component]*scale; }} workgroupBarrier(); var stride=32u; loop {{ if (lid.x < stride) {{ sums[lid.x] += sums[lid.x+stride]; }} workgroupBarrier(); if (stride == 1u) {{ break; }} stride/=2u; }} if (lid.x == 0u) {{ partials[wid.x*{width}u+component]=sums[0]; }} workgroupBarrier(); }}\n}}\n"
+            "return array<f32, {width}>({outputs});\n}}\n@compute @workgroup_size(64) fn reduce_gradient(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgroup_id) wid: vec3<u32>) {{\nvar result: array<f32, {width}>;\nvar scale: f32=0.0;\nif (gid.x < arrayLength(&weights)) {{ result=model_gradient(gid.x); let value=result[0]; if (config[0] == 0u) {{ scale=1.0; }} else if (value <= 0.0) {{ atomicMin(&reduction_error[0], gid.x); }} else if (config[0] == 1u) {{ scale=1.0; }} else {{ scale=1.0/value; }} result[0]=select(value, log(value), config[0] == 2u); scale *= weights[gid.x]; result[0] *= weights[gid.x]; }}\nfor (var component=0u; component<{width}u; component++) {{ if (component == 0u) {{ sums[lid.x]=result[0]; }} else {{ sums[lid.x]=result[component]*scale; }} workgroupBarrier(); var stride=32u; loop {{ if (lid.x < stride) {{ sums[lid.x] += sums[lid.x+stride]; }} workgroupBarrier(); if (stride == 1u) {{ break; }} stride/=2u; }} if (lid.x == 0u) {{ partials[wid.x*{width}u+component]=sums[0]; }} workgroupBarrier(); }}\n}}\n"
         ));
-        Ok(source)
+        Ok(Self::shader_precision(source, precision))
     }
 
     fn wgsl(
         ir: &ScalarKernelIr,
         cache_offsets: &[usize],
         cache_width: usize,
+        precision: crate::WgpuPrecision,
     ) -> WgpuResult<String> {
         let mut source = format!(
             "@group(0) @binding(0) var<storage, read> p: array<f32>;\n@group(0) @binding(1) var<storage, read> cache: array<vec2<f32>>;\n@group(0) @binding(2) var<storage, read_write> out: array<vec2<f32>>;\n@group(0) @binding(3) var<storage, read> weights: array<f32>;\n@group(0) @binding(4) var<storage, read> config: array<u32>;\n@group(0) @binding(5) var<storage, read_write> partials: array<f32>;\n@group(0) @binding(6) var<storage, read_write> reduction_error: array<atomic<u32>>;\n@group(0) @binding(7) var<storage, read_write> solve_error: array<atomic<u32>>;\nvar<workgroup> sums: array<f32, 64>;\n{}fn model(row: u32) -> vec2<f32> {{\n",
-            Self::scalar_prelude()
+            Self::scalar_prelude(precision)
         );
         source.push_str(&Self::emit_values(ir.values(), |slot, kind| {
             let offset = cache_offsets[slot];
@@ -1718,10 +1952,10 @@ for (var ri{index}=0u; ri{index}<{dimension}u; ri{index}++) {{ let i={dimension}
         })?);
         let v = |id: KernelValueId| format!("v{}", id.index());
         source.push_str(&format!(
-            "return {};\n}}\n@compute @workgroup_size(64) fn main(@builtin(global_invocation_id) gid: vec3<u32>) {{\nif (gid.x >= arrayLength(&out)) {{ return; }}\nout[gid.x] = model(gid.x);\n}}\n@compute @workgroup_size(64) fn reduce(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgroup_id) wid: vec3<u32>) {{\nvar contribution = 0.0;\nif (gid.x < arrayLength(&weights)) {{\nlet value = model(gid.x).x;\nif (config[0] == 0u) {{ contribution = value; }} else if (value <= 0.0) {{ atomicMin(&reduction_error[0], gid.x); }} else if (config[0] == 1u) {{ contribution = value; }} else {{ contribution = log(value); }}\ncontribution *= weights[gid.x];\n}}\nsums[lid.x] = contribution;\nworkgroupBarrier();\nvar stride = 32u;\nloop {{\nif (lid.x < stride) {{ sums[lid.x] += sums[lid.x + stride]; }}\nworkgroupBarrier();\nif (stride == 1u) {{ break; }}\nstride /= 2u;\n}}\nif (lid.x == 0u) {{ partials[wid.x] = sums[0]; }}\n}}\n",
+            "return {};\n}}\n@compute @workgroup_size(64) fn main(@builtin(global_invocation_id) gid: vec3<u32>) {{\nif (gid.x >= arrayLength(&out)) {{ return; }}\nout[gid.x] = model(gid.x);\n}}\n@compute @workgroup_size(64) fn reduce(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgroup_id) wid: vec3<u32>) {{\nvar contribution: f32 = 0.0;\nif (gid.x < arrayLength(&weights)) {{\nlet value = model(gid.x).x;\nif (config[0] == 0u) {{ contribution = value; }} else if (value <= 0.0) {{ atomicMin(&reduction_error[0], gid.x); }} else if (config[0] == 1u) {{ contribution = value; }} else {{ contribution = log(value); }}\ncontribution *= weights[gid.x];\n}}\nsums[lid.x] = contribution;\nworkgroupBarrier();\nvar stride = 32u;\nloop {{\nif (lid.x < stride) {{ sums[lid.x] += sums[lid.x + stride]; }}\nworkgroupBarrier();\nif (stride == 1u) {{ break; }}\nstride /= 2u;\n}}\nif (lid.x == 0u) {{ partials[wid.x] = sums[0]; }}\n}}\n",
             v(ir.root())
         ));
-        Ok(source)
+        Ok(Self::shader_precision(source, precision))
     }
 }
 
@@ -1752,20 +1986,21 @@ mod tests {
         schema::Schema,
     };
     use laddu_expr::{
-        Expr, complex, dot, event_scalar, matmul, matrix, matrix_from_flat, matvec, parameter,
-        solve, vector,
+        Expr, atan2, complex, dot, event_scalar, matmul, matrix, matrix_from_flat, matvec,
+        parameter, solve, vector,
     };
     use laddu_runtime::{CpuBackend, CpuOptions, Device, Execution, ExecutionOptions, Precision};
 
     use crate::{WgpuBackend, WgpuOptions, WgpuPrecision, WgpuScalarKernel};
 
     #[test]
-    fn scalar_kernel_rejects_unimplemented_precisions() {
+    fn scalar_kernel_accepts_resolved_precisions() {
         assert!(WgpuScalarKernel::validate_precision(WgpuPrecision::F32).is_ok());
+        assert!(WgpuScalarKernel::validate_precision(WgpuPrecision::F64).is_ok());
         assert!(matches!(
-            WgpuScalarKernel::validate_precision(WgpuPrecision::F64),
+            WgpuScalarKernel::validate_precision(WgpuPrecision::Auto),
             Err(crate::WgpuError::UnsupportedKernelPrecision(
-                WgpuPrecision::F64
+                WgpuPrecision::Auto
             ))
         ));
     }
@@ -1797,11 +2032,17 @@ mod tests {
             offsets.push(width);
             width += entry.storage_kind().width();
         }
-        let source =
-            WgpuScalarKernel::wgsl(executable.scalar_kernel().unwrap(), &offsets, width).unwrap();
+        let source = WgpuScalarKernel::wgsl(
+            executable.scalar_kernel().unwrap(),
+            &offsets,
+            width,
+            WgpuPrecision::F32,
+        )
+        .unwrap();
         let cache_source = WgpuScalarKernel::cache_wgsl(
             executable.cache_kernel().unwrap(),
             executable.cache_input_nodes().len(),
+            WgpuPrecision::F32,
         )
         .unwrap();
 
@@ -1823,7 +2064,7 @@ mod tests {
             .scalar_kernel()
             .unwrap()
             .clone();
-        let solve_source = WgpuScalarKernel::wgsl(&solve_ir, &[], 0).unwrap();
+        let solve_source = WgpuScalarKernel::wgsl(&solve_ir, &[], 0, WgpuPrecision::F32).unwrap();
         assert!(solve_source.contains("var lu"));
         assert!(solve_source.contains("var piv"));
         assert!(solve_source.contains("cdiv("));
@@ -1852,7 +2093,15 @@ mod tests {
         .unwrap();
         let maximum_plan =
             laddu_compile::ExecutablePlan::from_model_without_solve_rows(&maximum_model).unwrap();
-        assert!(WgpuScalarKernel::wgsl(maximum_plan.scalar_kernel().unwrap(), &[], 0).is_ok());
+        assert!(
+            WgpuScalarKernel::wgsl(
+                maximum_plan.scalar_kernel().unwrap(),
+                &[],
+                0,
+                WgpuPrecision::F32
+            )
+            .is_ok()
+        );
 
         let dimension = 17;
         let oversized_matrix = matrix_from_flat(
@@ -1876,9 +2125,60 @@ mod tests {
         let oversized =
             laddu_compile::ExecutablePlan::from_model_without_solve_rows(&oversized_model).unwrap();
         assert!(matches!(
-            WgpuScalarKernel::wgsl(oversized.scalar_kernel().unwrap(), &[], 0),
+            WgpuScalarKernel::wgsl(
+                oversized.scalar_kernel().unwrap(),
+                &[],
+                0,
+                WgpuPrecision::F32
+            ),
             Err(crate::WgpuError::SolveDimensionTooLarge { dimension: 17 })
         ));
+
+        let f64_source = WgpuScalarKernel::wgsl(
+            executable.scalar_kernel().unwrap(),
+            &offsets,
+            width,
+            WgpuPrecision::F64,
+        )
+        .unwrap();
+        assert!(f64_source.contains("array<vec2<f64>, 4>"));
+        assert!(!f64_source.contains("f32"));
+        for unsupported in [
+            " sin(", " cos(", " exp(", " sinh(", " cosh(", " atan2(", " log(",
+        ] {
+            assert!(
+                !f64_source.contains(unsupported),
+                "f64 shader still contains unsupported intrinsic {unsupported:?}"
+            );
+        }
+        let validate_f64_wgsl = |source: &str| {
+            let module = naga::front::wgsl::parse_str(source)
+                .unwrap_or_else(|error| panic!("{}", error.emit_to_string(source)));
+            naga::valid::Validator::new(
+                naga::valid::ValidationFlags::all(),
+                naga::valid::Capabilities::FLOAT64,
+            )
+            .validate(&module)
+            .unwrap();
+        };
+        validate_f64_wgsl(&f64_source);
+        let f64_cache_source = WgpuScalarKernel::cache_wgsl(
+            executable.cache_kernel().unwrap(),
+            executable.cache_input_nodes().len(),
+            WgpuPrecision::F64,
+        )
+        .unwrap();
+        validate_f64_wgsl(&f64_cache_source);
+        let gradient = laddu_autodiff::gradient_ir(
+            executable.scalar_kernel().unwrap(),
+            model.params().free_params(),
+            laddu_kernel::ir::OutputComponent::Real,
+        )
+        .unwrap();
+        let f64_gradient_source =
+            WgpuScalarKernel::gradient_wgsl(&gradient, &offsets, width, WgpuPrecision::F64)
+                .unwrap();
+        validate_f64_wgsl(&f64_gradient_source);
     }
 
     #[test]
@@ -1907,6 +2207,126 @@ mod tests {
             .unwrap();
 
         assert_eq!(gpu, (cpu.re, cpu.im));
+    }
+
+    #[test]
+    #[ignore = "requires a WGPU adapter with shader f64 support"]
+    fn gpu_event_batch_and_reduction_match_f64_cpu() {
+        let expression =
+            (event_scalar("x") * parameter!("scale", initial: 1.25) + event_scalar("y") - 0.5)
+                .exp();
+        let model = CompiledModel::from_expr(&expression).unwrap();
+        let params = model.params().default_values();
+        let schema = Arc::new(Schema::new(std::iter::empty::<&str>(), ["x", "y"], false).unwrap());
+        let batch = EventBatch::from_events(
+            schema,
+            (0..70).map(|index| {
+                OwnedEvent::weighted(
+                    vec![],
+                    vec![index as f64 * 0.0125, 0.5 - index as f64 * 0.005],
+                    1.0 + index as f64 * 0.01,
+                )
+            }),
+        )
+        .unwrap();
+        let context = WgpuBackend::default()
+            .open(&WgpuOptions::default(), WgpuPrecision::F64)
+            .unwrap();
+        let kernel = WgpuScalarKernel::compile(&context, &model).unwrap();
+        let gpu = kernel.evaluate_batch(&context, &params, &batch).unwrap();
+        let execution = Execution::local(ExecutionOptions {
+            device: Device::Cpu(CpuOptions::default()),
+            precision: Precision::F64,
+            ..ExecutionOptions::default()
+        })
+        .unwrap();
+        let plan = CpuBackend
+            .prepare_for_execution(&model, &execution)
+            .unwrap();
+        let cpu = plan.evaluate_batch(&params, &batch).unwrap();
+
+        for (gpu, cpu) in gpu.iter().zip(cpu) {
+            assert!((gpu.0 - cpu.re).abs() <= 1.0e-12 * cpu.re.abs().max(1.0));
+            assert!((gpu.1 - cpu.im).abs() <= 1.0e-12 * cpu.im.abs().max(1.0));
+        }
+
+        let reduction = ReductionPlan::weighted_log_positive_real();
+        let gpu = kernel
+            .reduce_batch(&context, &params, &batch, reduction)
+            .unwrap();
+        let dataset = Dataset::from_batch(batch);
+        let prepared = plan.prepare_dataset(&execution, &dataset).unwrap();
+        let cpu = plan
+            .reduce(&execution, &params, &prepared, reduction)
+            .unwrap();
+        assert!((gpu - cpu).abs() <= 1.0e-12 * cpu.abs().max(1.0));
+    }
+
+    #[test]
+    #[ignore = "requires a WGPU adapter with shader f64 support"]
+    fn gpu_f64_approximations_match_cpu() {
+        let x = event_scalar("x");
+        let y = event_scalar("y");
+        let z = complex(x.clone(), y.clone());
+        let expressions = [
+            ("sin", x.clone().sin()),
+            ("cos", x.clone().cos()),
+            ("exp", x.clone().exp()),
+            ("log", (x.clone() * x.clone() + 0.125).log()),
+            ("atan2", atan2(y.clone(), x.clone())),
+            ("complex sin", z.clone().sin()),
+            ("complex cos", z.clone().cos()),
+            ("complex exp", z.clone().exp()),
+            ("complex log", z.log()),
+        ];
+        let schema = Arc::new(Schema::new(std::iter::empty::<&str>(), ["x", "y"], false).unwrap());
+        let batch = EventBatch::from_events(
+            schema,
+            (0..49).map(|index| {
+                let x = [0.0, -20.0, -5.125, -0.3, 1.875, 10.0, 20.0][index % 7];
+                let y = [-10.0, -3.0, -0.5, 0.25, 1.5, 5.0, 10.0][index / 7];
+                OwnedEvent::new(vec![], vec![x, y])
+            }),
+        )
+        .unwrap();
+        let context = WgpuBackend::default()
+            .open(&WgpuOptions::default(), WgpuPrecision::F64)
+            .unwrap();
+        let execution = Execution::local(ExecutionOptions {
+            device: Device::Cpu(CpuOptions::default()),
+            precision: Precision::F64,
+            ..ExecutionOptions::default()
+        })
+        .unwrap();
+
+        for (name, expression) in expressions {
+            let model = CompiledModel::from_expr(&expression).unwrap();
+            let params = model.params().default_values();
+            let kernel = WgpuScalarKernel::compile(&context, &model).unwrap();
+            let gpu = kernel.evaluate_batch(&context, &params, &batch).unwrap();
+            let plan = CpuBackend
+                .prepare_for_execution(&model, &execution)
+                .unwrap();
+            let cpu = plan.evaluate_batch(&params, &batch).unwrap();
+            for (index, (gpu, cpu)) in gpu.iter().zip(cpu).enumerate() {
+                let re_tolerance = 2.0e-12 * cpu.re.abs().max(1.0);
+                let im_tolerance = 2.0e-12 * cpu.im.abs().max(1.0);
+                assert!(
+                    gpu.0 == cpu.re || (gpu.0 - cpu.re).abs() <= re_tolerance,
+                    "{name} real mismatch at event {index}: GPU ({}, {}), CPU ({}, {})",
+                    gpu.0,
+                    gpu.1,
+                    cpu.re,
+                    cpu.im
+                );
+                assert!(
+                    gpu.1 == cpu.im || (gpu.1 - cpu.im).abs() <= im_tolerance,
+                    "{name} imaginary mismatch at event {index}: GPU {}, CPU {}",
+                    gpu.1,
+                    cpu.im
+                );
+            }
+        }
     }
 
     #[test]

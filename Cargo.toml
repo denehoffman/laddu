@@ -55,6 +55,7 @@ sysinfo = "0.39.6"
 thiserror = "2.0.18"
 typetag = "0.2.22"
 wgpu = "30.0.0"
+naga = { version = "30.0.0", features = ["wgsl-in"] }
 
 [workspace.lints.rust]
 missing_docs = "warn"

@@ -1732,6 +1732,7 @@ dependencies = [
  "laddu-expr",
  "laddu-kernel",
  "laddu-runtime",
+ "naga",
  "pollster",
  "serde",
  "serde_json",
