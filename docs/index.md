@@ -52,9 +52,11 @@ Choose precision, automatic differentiation, CPU/JIT/GPU execution, and MPI part
 ## Why laddu?
 
 - **One symbolic model.** The same expression drives generation, likelihood evaluation, gradients, and projections.
-- **Acceptance-aware inference.** Normalization is evaluated over accepted Monte Carlo, so detector effects enter directly.
 - **Physics-native building blocks.** Four-vectors, reaction graphs, Wigner functions, relativistic line shapes, and coupled-channel amplitudes are first-class objects.
+- **Expression-based architecture.** All mathematical models are built from expressions, so new users can write complex amplitudes in Python and let laddu handle mathematical optimizations, cached evaluations, and batched execution.
 - **Reproducible performance choices.** Backends, precision, differentiation strategy, seeds, and partitioning are explicit.
+- **Platform-independent execution.** Pipelines are automatically parallel and can be JIT compiled or even run directly on GPUs without writing a single kernel.
+- **Distributed programming.** Code written in laddu is fully compatible with the MPI protocol for use on high-performance compute systems.
 
 ```{toctree}
 :hidden:
