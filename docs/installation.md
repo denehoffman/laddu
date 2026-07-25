@@ -5,8 +5,9 @@ laddu supports Python 3.11 and newer.
 ## Standard installation
 
 ```bash
-python -m pip install laddu
+uv pip install laddu
 ```
+or use your preferred Python package manager (e.g. `pip install laddu`).
 
 The standard distribution includes local CPU, JIT, and WGPU support. Inspect what is available on the current machine rather than assuming a device exists:
 
@@ -23,7 +24,7 @@ print(ld.gpu.devices())
 Install an MPI implementation and its development headers, then install the MPI extra:
 
 ```bash
-python -m pip install "laddu[mpi]"
+uv pip install "laddu[mpi]"
 mpiexec -n 4 python analysis.py
 ```
 
