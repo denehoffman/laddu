@@ -170,16 +170,24 @@ def sequential_wave(
         if coefficient == 0.0:
             continue
 
-        production_d = ld.WignerD(
-            production_spin,
-            initial_projection,
-            final_projection,
-        ).D(production_phi, production_theta).conj()
-        decay_d = ld.WignerD(
-            resonance_spin,
-            resonance_helicity,
-            decay_helicity,
-        ).D(decay_phi, decay_theta).conj()
+        production_d = (
+            ld.WignerD(
+                production_spin,
+                initial_projection,
+                final_projection,
+            )
+            .D(production_phi, production_theta)
+            .conj()
+        )
+        decay_d = (
+            ld.WignerD(
+                resonance_spin,
+                resonance_helicity,
+                decay_helicity,
+            )
+            .D(decay_phi, decay_theta)
+            .conj()
+        )
         angular += coefficient * production_d * decay_d
 
     normalization = math.sqrt(production_spin.multiplicity * resonance_spin.multiplicity) / (4.0 * math.pi)

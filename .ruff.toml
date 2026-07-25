@@ -1,0 +1,102 @@
+line-length = 120
+indent-width = 4
+target-version = "py310"
+
+exclude = [
+  ".bzr",
+  ".direnv",
+  ".eggs",
+  ".git",
+  ".git-rewrite",
+  ".hg",
+  ".mypy_cache",
+  ".nox",
+  ".pants.d",
+  ".pytype",
+  ".ruff_cache",
+  ".svn",
+  ".tox",
+  ".venv",
+  "__pypackages__",
+  "_build",
+  "buck-out",
+  "build",
+  "dist",
+  "node_modules",
+  "venv",
+]
+
+[lint]
+unfixable = ["F401"]
+select = ["ALL"]
+
+ignore = [
+  "INP001", # implicit namespace packages
+  #### modules
+  "ANN", # flake8-annotations
+  "COM", # flake8-commas
+  "C90", # mccabe complexity
+  "DJ",  # django
+  "EXE", # flake8-executable
+  "T10", # debugger
+  "TID", # flake8-tidy-imports
+
+  #### specific rules
+  "D100",   # ignore missing docs
+  "D101",
+  "D102",
+  "D103",
+  "D104",
+  "D105",
+  "D106",
+  "D107",
+  "D200",
+  "D203",
+  "D205",
+  "D211",
+  "D212",
+  "D400",
+  "D401",
+  "D415",
+  "E402",   # false positives for local imports
+  "E501",   # line too long
+  "ERA001", # ignore commented-out code
+  "FIX002", # too verbose descriptions of todos
+  "Q000",   # disable preferring double quotes (blue)
+  "SLF001", # private member access
+  "TRY003", # external messages in exceptions are too verbose
+  "TD002",
+  "TD003",
+  "T201",   # print statements
+
+  "PLR0913", # too many args in function definition
+  "N806",    # allow uppercase variable names
+  "PGH003",  # allow "# pyright: ignore" pragma
+
+  # formatting
+  "W191",
+  "E111",
+  "E114",
+  "E117",
+  "D206",
+  "D300",
+  "Q000",
+  "Q001",
+  "Q002",
+  "Q003",
+  "COM812",
+  "COM819",
+  "ISC001",
+  "ISC002",
+
+]
+
+[lint.per-file-ignores]
+"__init__.py" = ["E402"]
+"**/{tests,docs,tools}/*" = ["E402"]
+
+[format]
+# Use single quotes for non-triple-quoted strings.
+quote-style = "single"
+indent-style = "space"
+skip-magic-trailing-comma = false
