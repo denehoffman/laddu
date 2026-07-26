@@ -418,6 +418,10 @@ pub struct EdgeHandle<'a> {
 }
 
 impl EdgeHandle<'_> {
+    /// Mutable access to the underlying [`Edge`].
+    pub fn edge_mut(&mut self) -> &mut Edge {
+        self.edge
+    }
     /// Assign an explicit symbolic four-momentum.
     pub fn p4(&mut self, p4: impl Into<Vec4>) -> &mut Self {
         self.edge.p4 = Some(p4.into());

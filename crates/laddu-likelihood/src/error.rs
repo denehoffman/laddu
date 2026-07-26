@@ -7,7 +7,7 @@ use thiserror::Error;
 pub type LikelihoodResult<T> = Result<T, LikelihoodError>;
 
 /// Error produced while constructing or evaluating a likelihood.
-#[derive(Debug, Error)]
+#[derive(Clone, Debug, Error)]
 pub enum LikelihoodError {
     /// Dataset access failed.
     #[error(transparent)]

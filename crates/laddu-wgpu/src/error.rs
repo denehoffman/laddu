@@ -4,7 +4,7 @@ use thiserror::Error;
 pub type WgpuResult<T> = Result<T, WgpuError>;
 
 /// Error produced while preparing or executing a WebGPU kernel.
-#[derive(Debug, Error)]
+#[derive(Clone, Debug, Error)]
 pub enum WgpuError {
     /// No WebGPU adapters were discovered.
     #[error("no WGPU adapters are available")]

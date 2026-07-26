@@ -19,7 +19,8 @@
 //! # Ok::<(), CompileError>(())
 //! ```
 
-mod error;
+/// A global error type for laddu along with re-exported error types for each crate in the laddu suite.
+pub mod error;
 
 #[cfg(feature = "python")]
 /// Shared implementation of laddu's Python extension modules.
@@ -29,7 +30,7 @@ mod error;
 /// API instead.
 pub mod python;
 
-pub use error::{LadduError, LadduResult};
+pub use error::*;
 pub use laddu_autodiff as autodiff;
 pub use laddu_compile as compile;
 pub use laddu_data as data;

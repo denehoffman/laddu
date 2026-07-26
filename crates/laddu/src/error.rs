@@ -3,7 +3,7 @@ use thiserror::Error;
 /// A result returned by the top-level laddu facade.
 pub type LadduResult<T> = Result<T, LadduError>;
 
-#[derive(Debug, Error)]
+#[derive(Clone, Debug, Error)]
 /// An error produced by one of laddu's analysis subsystems.
 ///
 /// Each variant preserves the concrete source error, allowing callers to
@@ -44,3 +44,17 @@ pub enum LadduError {
     /// GPU discovery, compilation, or execution failed.
     Wgpu(#[from] laddu_wgpu::WgpuError),
 }
+
+#[cfg(feature = "amplitudes")]
+pub use laddu_amplitudes::AmplitudeError;
+pub use laddu_autodiff::AutodiffError;
+pub use laddu_compile::CompileError;
+pub use laddu_data::LadduDataError;
+pub use laddu_expr::ExprError;
+pub use laddu_kernel::KernelError;
+#[cfg(feature = "likelihood")]
+pub use laddu_likelihood::LikelihoodError;
+pub use laddu_physics::LadduPhysicsError;
+pub use laddu_runtime::RuntimeError;
+#[cfg(feature = "wgpu")]
+pub use laddu_wgpu::WgpuError;

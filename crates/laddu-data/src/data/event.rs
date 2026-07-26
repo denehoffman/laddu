@@ -117,6 +117,11 @@ impl EventBatch {
         BatchEvent { batch: self, row }
     }
 
+    /// Iterates over borrowed event views.
+    pub fn iter(&self) -> impl Iterator<Item = BatchEvent<'_>> {
+        (0..self.len()).map(|i| self.event(i))
+    }
+
     /// Copies selected rows into a new batch in the requested order.
     pub fn select(&self, rows: &[usize]) -> Self {
         let p4s = self

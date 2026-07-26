@@ -5,7 +5,7 @@ use thiserror::Error;
 pub type LadduDataResult<T> = Result<T, LadduDataError>;
 
 /// Errors produced by schemas, event sources, sinks, and datasets.
-#[derive(Error, Debug)]
+#[derive(Clone, Error, Debug)]
 pub enum LadduDataError {
     /// The requested operation is not supported.
     #[error("Unsupported: {0}")]
