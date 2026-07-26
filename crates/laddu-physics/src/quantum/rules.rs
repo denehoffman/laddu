@@ -1244,6 +1244,11 @@ pub struct PartialWave {
 }
 impl PartialWave {
     /// Construct a new partial wave from the given angular momentum quantum numbers.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduPhysicsError`] when `j`, `l`, and `s` violate angular
+    /// momentum coupling rules.
     pub fn new(j: J, l: L, s: S) -> LadduPhysicsResult<Self> {
         PartialWave::validate_coupling(j, l, s)?;
         Ok(Self { j, l, s })
@@ -1255,6 +1260,11 @@ impl PartialWave {
         format!("{}{}{}", multiplicity, self.l, self.j)
     }
     /// Validate the set of angular momentum quantum numbers which define a partial wave.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduPhysicsError`] when `j` lies outside the range permitted
+    /// by `l` and `s` or has incompatible integer/half-integer parity.
     pub fn validate_coupling(j: J, l: L, s: S) -> LadduPhysicsResult<()> {
         let l_twice = 2 * l.value();
         let s_twice = s.doubled();

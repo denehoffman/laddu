@@ -501,6 +501,13 @@ pub struct KernelIrBuilder {
 
 impl ScalarKernelIr {
     /// Validates values and constructs a scalar kernel rooted at `root`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`KernelIrError`] when the value list is empty, `root` or an
+    /// operand is out of bounds, values are not topologically ordered, a
+    /// value's kind or class is inconsistent with its instruction, or the
+    /// root is not scalar.
     pub fn new(values: Vec<KernelValue>, root: KernelValueId) -> Result<Self, KernelIrError> {
         let ir = Self { values, root };
         ir.validate()?;
@@ -515,6 +522,12 @@ impl ScalarKernelIr {
     }
 
     /// Revalidates ordering, types, classes, and the scalar root.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`KernelIrError`] when the IR is empty, its root or an operand
+    /// is out of bounds, its values are not topologically ordered, or a
+    /// value's kind, class, or shape is inconsistent with its instruction.
     pub fn validate(&self) -> Result<(), KernelIrError> {
         Self::validate_values(&self.values, self.root)
     }
@@ -571,6 +584,12 @@ impl ScalarKernelIr {
 
 impl CacheKernelIr {
     /// Validates values and constructs a cache kernel with the given outputs.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`KernelIrError`] when `outputs` is empty, an output or operand
+    /// is out of bounds, values are not topologically ordered, or a value's
+    /// kind, class, or shape is inconsistent with its instruction.
     pub fn new(
         values: Vec<KernelValue>,
         outputs: Vec<KernelValueId>,
@@ -603,6 +622,12 @@ impl CacheKernelIr {
 
 impl GradientKernelIr {
     /// Validates and constructs a gradient kernel.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`KernelIrError`] when the primal IR is invalid, the primal
+    /// root is not scalar, a gradient output is out of bounds, or a gradient
+    /// output is not real-valued.
     pub fn new(
         values: Vec<KernelValue>,
         primal_root: KernelValueId,
@@ -620,6 +645,12 @@ impl GradientKernelIr {
     }
 
     /// Revalidates the primal root and real gradient outputs.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`KernelIrError`] when the primal IR is invalid, the primal
+    /// root is not scalar, a gradient output is out of bounds, or a gradient
+    /// output is not real-valued.
     pub fn validate(&self) -> Result<(), KernelIrError> {
         ScalarKernelIr::validate_values(&self.values, self.primal_root)?;
         if !self.values[self.primal_root.index()].kind.is_scalar() {
@@ -676,6 +707,12 @@ impl KernelIrBuilder {
     }
 
     /// Appends an instruction after validating its operands and inferred type.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`KernelIrError`] when an operand does not precede the new
+    /// instruction, the operand shapes are incompatible, or the instruction's
+    /// value kind cannot be inferred.
     pub fn push(&mut self, instruction: KernelInstruction) -> Result<KernelValueId, KernelIrError> {
         let index = self.values.len();
         for operand in instruction.operands() {
@@ -704,6 +741,12 @@ impl KernelIrBuilder {
     }
 
     /// Finishes the builder as a validated gradient kernel.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`KernelIrError`] when the accumulated primal IR is invalid,
+    /// `primal_root` is not scalar, a gradient output is out of bounds, or a
+    /// gradient output is not real-valued.
     pub fn finish_gradient(
         self,
         primal_root: KernelValueId,

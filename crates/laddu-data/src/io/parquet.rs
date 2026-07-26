@@ -84,6 +84,11 @@ pub struct ParquetFragmentKey {
 
 impl ParquetSource {
     /// Opens files matching a glob with default options.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduDataError`] when the glob is invalid or empty, a file
+    /// cannot be read, or schemas are incompatible.
     pub fn open(pattern: impl AsRef<str>) -> LadduDataResult<Self> {
         Self::builder(pattern).build()
     }
@@ -161,6 +166,11 @@ impl ParquetSourceBuilder {
     }
 
     /// Resolves files, validates schema, and builds the source.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduDataError`] when the glob is invalid or empty, Parquet
+    /// metadata cannot be read, schema inference fails, or files disagree.
     pub fn build(self) -> LadduDataResult<ParquetSource> {
         let mut files: Vec<PathBuf> = glob::glob(&self.pattern)
             .map_err(|e| LadduDataError::Source(e.to_string()))?

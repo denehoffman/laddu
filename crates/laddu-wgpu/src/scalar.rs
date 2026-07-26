@@ -62,6 +62,11 @@ enum EventInput {
 
 impl WgpuScalarKernel {
     /// Compiles a model's scalar kernel and reduction pipelines for `context`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WgpuError`] when precision is unsupported, model lowering
+    /// fails, required kernels are missing, or WGSL pipeline creation fails.
     pub fn compile(context: &WgpuContext, model: &CompiledModel) -> WgpuResult<Self> {
         Self::validate_precision(context.precision())?;
         let executable = ExecutablePlan::from_model_without_solve_rows(model)
@@ -339,6 +344,11 @@ impl WgpuScalarKernel {
     }
 
     /// Evaluates a model with no event-dependent inputs.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WgpuError`] when parameters are incompatible, GPU execution
+    /// or buffer mapping fails, or a singular solve is encountered.
     pub fn evaluate(&self, context: &WgpuContext, params: &ParamValues) -> WgpuResult<(f64, f64)> {
         let inputs = self.encode_scalars(&[0.0, 0.0]);
         self.evaluate_packed(context, params, &inputs, 1)
@@ -346,6 +356,11 @@ impl WgpuScalarKernel {
     }
 
     /// Evaluates the model for every event in a batch.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WgpuError`] when parameters or event columns are incompatible,
+    /// GPU execution fails, or an event contains a singular solve.
     pub fn evaluate_batch(
         &self,
         context: &WgpuContext,
@@ -370,6 +385,11 @@ impl WgpuScalarKernel {
     }
 
     /// Applies a weighted reduction directly to an event batch.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WgpuError`] when inputs are incompatible, GPU execution fails,
+    /// a required positive value is non-positive, or a solve is singular.
     pub fn reduce_batch(
         &self,
         context: &WgpuContext,
@@ -400,6 +420,12 @@ impl WgpuScalarKernel {
     }
 
     /// Materializes event-dependent GPU buffers for repeated reductions.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WgpuError`] when parameters or event columns are incompatible,
+    /// memory limits are exceeded, GPU synchronization fails, or a solve is
+    /// singular.
     pub fn prepare_batch(
         &self,
         context: &WgpuContext,
@@ -464,6 +490,11 @@ impl WgpuScalarKernel {
     /// Reuses prepared allocations while replacing their event values and weights.
     ///
     /// Returns `false` when the existing chunk layout is incompatible with `batch`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WgpuError`] when parameters or event columns are incompatible,
+    /// GPU synchronization fails, or a solve is singular.
     pub fn refresh_batch(
         &self,
         context: &WgpuContext,
@@ -518,6 +549,11 @@ impl WgpuScalarKernel {
     }
 
     /// Applies a weighted reduction to a prepared batch.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WgpuError`] when parameters are incompatible, GPU execution
+    /// fails, a required positive value is non-positive, or a solve is singular.
     pub fn reduce_prepared_batch(
         &self,
         context: &WgpuContext,
@@ -544,6 +580,12 @@ impl WgpuScalarKernel {
     }
 
     /// Applies a weighted reduction and computes its free-parameter gradient.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WgpuError`] when parameters are incompatible, GPU execution
+    /// fails, a required positive value is non-positive, or a primal or
+    /// derivative solve is singular.
     pub fn reduce_prepared_batch_with_gradient(
         &self,
         context: &WgpuContext,

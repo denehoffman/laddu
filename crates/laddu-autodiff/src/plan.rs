@@ -22,6 +22,12 @@ pub struct AutodiffPlan {
 
 impl AutodiffPlan {
     /// Analyzes a compiled model for the selected differentiation mode.
+    ///
+    /// # Errors
+    ///
+    /// This currently succeeds for every validated [`CompiledModel`]. The
+    /// result type is retained so future dependency analyses can report an
+    /// error without changing this API.
     pub fn from_model(model: &CompiledModel, mode: AutodiffMode) -> AutodiffResult<Self> {
         let parameter_count = model.params().n_free();
         let mut node_dependencies = Vec::<Vec<bool>>::with_capacity(model.graph().nodes().len());

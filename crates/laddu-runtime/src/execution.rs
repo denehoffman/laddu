@@ -179,6 +179,12 @@ impl Default for Execution {
 
 impl Execution {
     /// Creates a non-distributed execution context from `options`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RuntimeError`] when the requested backend or precision is
+    /// unavailable, GPU initialization fails, or the CPU thread pool cannot be
+    /// created.
     pub fn local(options: ExecutionOptions) -> RuntimeResult<Self> {
         #[cfg(feature = "wgpu")]
         let mut wgpu = None;
@@ -260,6 +266,10 @@ impl Execution {
 
     #[cfg(feature = "mpi")]
     /// Creates a distributed execution context over the supplied MPI communicator.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RuntimeError`] when local execution initialization fails.
     pub fn distributed<C>(options: ExecutionOptions, world: &C) -> RuntimeResult<Self>
     where
         C: Communicator,

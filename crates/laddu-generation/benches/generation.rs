@@ -1,3 +1,9 @@
+//! Benchmarks for weighted and unweighted channel event generation.
+#![allow(
+    missing_docs,
+    reason = "criterion generates an undocumented public function"
+)]
+
 use criterion::{Criterion, criterion_group, criterion_main};
 use laddu_compile::CompiledModel;
 use laddu_expr::Expr;

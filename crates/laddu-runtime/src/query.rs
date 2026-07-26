@@ -163,6 +163,11 @@ impl<'de> Deserialize<'de> for BinSpec {
 
 impl BinSpec {
     /// Creates `count` uniformly spaced bins spanning `[min, max]`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RuntimeError`] when `count` is zero or the bounds are
+    /// non-finite or not increasing.
     pub fn uniform(count: usize, min: f64, max: f64) -> RuntimeResult<Self> {
         if count == 0 || !min.is_finite() || !max.is_finite() || min >= max {
             return Err(query_error(
@@ -174,6 +179,11 @@ impl BinSpec {
     }
 
     /// Creates bins from explicit, strictly increasing finite edges.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RuntimeError`] when fewer than two edges are supplied or an
+    /// edge is non-finite or not strictly increasing.
     pub fn edges(edges: impl IntoIterator<Item = f64>) -> RuntimeResult<Self> {
         let edges: Vec<_> = edges.into_iter().collect();
         if edges.len() < 2
@@ -247,12 +257,32 @@ impl DatasetBin {
 /// Expression-based query operations for datasets.
 pub trait DatasetExprExt {
     /// Evaluates a scalar expression for every event.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RuntimeError`] when compilation, dataset reading, or
+    /// evaluation fails, or the expression is not scalar.
     fn evaluate_expr(&self, expr: &Expr, execution: &Execution) -> RuntimeResult<Vec<Complex64>>;
     /// Evaluates a real scalar expression for every event.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RuntimeError`] when compilation, dataset reading, or
+    /// evaluation fails, or the expression is not real scalar-valued.
     fn evaluate_real(&self, expr: &Expr, execution: &Execution) -> RuntimeResult<Vec<f64>>;
     /// Creates a lazily filtered dataset containing events that satisfy `predicate`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RuntimeError`] when predicate compilation or evaluation
+    /// fails, or its expression is not real scalar-valued.
     fn select(&self, predicate: &Predicate, execution: &Execution) -> RuntimeResult<Dataset>;
     /// Splits the dataset into lazy datasets according to an expression and bin specification.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RuntimeError`] when expression compilation or evaluation
+    /// fails, or the expression is not real scalar-valued.
     fn bin_by(
         &self,
         expr: &Expr,

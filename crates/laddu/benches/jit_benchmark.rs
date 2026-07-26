@@ -1,3 +1,9 @@
+//! Benchmarks interpreted and JIT-compiled scalar evaluation.
+#![allow(
+    missing_docs,
+    reason = "criterion generates an undocumented public function"
+)]
+
 use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use laddu::{
     Expr, Parameter,

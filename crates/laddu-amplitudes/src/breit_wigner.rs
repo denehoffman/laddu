@@ -14,6 +14,11 @@ pub fn breit_wigner(s: impl Into<Expr>, mass: impl Into<Expr>, width: impl Into<
 }
 
 /// Constructs a relativistic Breit-Wigner with default barrier settings.
+///
+/// # Errors
+///
+/// Returns [`LadduPhysicsError`] when `l` cannot be converted or is outside the
+/// supported barrier-factor range.
 pub fn relativistic_breit_wigner(
     s: impl Into<Expr>,
     mass: impl Into<Expr>,
@@ -27,6 +32,11 @@ pub fn relativistic_breit_wigner(
 
 #[allow(clippy::too_many_arguments)]
 /// Constructs a relativistic Breit-Wigner with configurable barriers and radius.
+///
+/// # Errors
+///
+/// Returns [`LadduPhysicsError`] when `l` cannot be converted or is outside the
+/// supported range, or `q_r` is not positive and finite.
 pub fn relativistic_breit_wigner_custom(
     s: impl Into<Expr>,
     mass: impl Into<Expr>,

@@ -93,6 +93,11 @@ pub struct RootColumnInfo {
 
 impl RootSource {
     /// Opens files matching a glob with default options.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduDataError`] when the glob is invalid or empty, a ROOT
+    /// file or tree cannot be read, or schemas are incompatible.
     pub fn open(pattern: impl AsRef<str>) -> LadduDataResult<Self> {
         Self::builder(pattern).build()
     }
@@ -117,6 +122,10 @@ impl RootSource {
     }
 
     /// Lists TTrees in one ROOT file.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduDataError`] when the ROOT file cannot be opened or read.
     pub fn tree_names(path: impl AsRef<Path>) -> LadduDataResult<Vec<Name>> {
         let mut file = RootFile::open(path.as_ref()).map_err(root_source_error)?;
         let key_names: Vec<String> = file.keys_name().map(str::to_owned).collect();
@@ -133,6 +142,11 @@ impl RootSource {
     }
 
     /// Lists branch metadata for a selected or first TTree.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduDataError`] when the file or tree cannot be read, no tree
+    /// exists, or branch metadata is invalid.
     pub fn columns(
         path: impl AsRef<Path>,
         tree: Option<&str>,
@@ -219,6 +233,11 @@ impl RootSourceBuilder {
     }
 
     /// Resolves files and tree, validates schema, and builds the source.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduDataError`] when the glob is invalid or empty, files or
+    /// trees cannot be read, schema inference fails, or files disagree.
     pub fn build(self) -> LadduDataResult<RootSource> {
         let RootSourceBuilder {
             pattern,

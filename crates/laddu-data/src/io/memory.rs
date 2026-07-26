@@ -33,6 +33,11 @@ impl MemorySource {
     }
 
     /// Validates and creates a source from nonempty schema-compatible batches.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduDataError`] when `batches` is empty or contains
+    /// incompatible schemas.
     pub fn from_batches(batches: Vec<EventBatch>) -> LadduDataResult<Self> {
         if batches.is_empty() {
             return Err(LadduDataError::InvalidArgument(
@@ -57,6 +62,11 @@ impl MemorySource {
     }
 
     /// Collects owned events into an in-memory source.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduDataError`] when an event does not match `schema` or
+    /// weighted and unweighted events are mixed.
     pub fn from_events<I>(schema: Arc<Schema>, events: I) -> LadduDataResult<Self>
     where
         I: IntoIterator<Item = OwnedEvent>,
@@ -81,6 +91,11 @@ impl MemorySource {
     }
 
     /// Consumes and concatenates all batches.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduDataError`] when no batches are present or their schemas
+    /// are incompatible.
     pub fn into_batch(self) -> LadduDataResult<EventBatch> {
         EventBatch::concat(&self.batches)
     }
@@ -240,11 +255,21 @@ impl MemorySink {
     }
 
     /// Consumes the sink and builds an in-memory source.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduDataError`] when the sink contains no batches or
+    /// incompatible schemas.
     pub fn into_source(self) -> LadduDataResult<MemorySource> {
         MemorySource::from_batches(self.batches)
     }
 
     /// Consumes the sink and concatenates collected batches.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduDataError`] when no batches were collected or their
+    /// schemas are incompatible.
     pub fn into_batch(self) -> LadduDataResult<EventBatch> {
         EventBatch::concat(&self.batches)
     }

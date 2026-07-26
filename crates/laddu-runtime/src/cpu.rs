@@ -1031,6 +1031,11 @@ struct ScalarInvariantInstruction {
 
 impl CpuBackend {
     /// Prepares a model using the policies resolved by an execution context.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RuntimeError`] when model lowering or differentiation fails,
+    /// or the requested precision is unsupported for the model.
     pub fn prepare_for_execution(
         &self,
         model: &CompiledModel,
@@ -1055,12 +1060,22 @@ impl CpuBackend {
     }
 
     /// Prepares a model with forward autodiff and automatic execution-mode selection.
+    ///
+    /// # Panics
+    ///
+    /// Panics if forward differentiation or executable-plan construction fails
+    /// for the compiled model.
     pub fn prepare(&self, model: &CompiledModel) -> CpuPlan {
         self.prepare_with_modes(model, AutodiffMode::Forward, CpuExecutionMode::Auto)
             .expect("forward autodiff supports every compiled expression node")
     }
 
     /// Prepares a model with an explicit scalar-kernel execution mode.
+    ///
+    /// # Panics
+    ///
+    /// Panics if forward differentiation or executable-plan construction fails
+    /// for the compiled model.
     pub fn prepare_with_execution_mode(
         &self,
         model: &CompiledModel,
@@ -1071,6 +1086,11 @@ impl CpuBackend {
     }
 
     /// Prepares a model with an explicit automatic-differentiation mode.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`laddu_autodiff::AutodiffError`] when model lowering or
+    /// differentiation fails.
     pub fn prepare_with_autodiff_mode(
         &self,
         model: &CompiledModel,
@@ -1080,6 +1100,11 @@ impl CpuBackend {
     }
 
     /// Prepares a model with explicit autodiff and scalar execution modes.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`laddu_autodiff::AutodiffError`] when model lowering or
+    /// differentiation fails.
     pub fn prepare_with_modes(
         &self,
         model: &CompiledModel,
@@ -1338,11 +1363,22 @@ impl CpuPlan {
     }
 
     /// Evaluates a model that has no event-dependent inputs.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RuntimeError`] when parameters are incompatible, the model
+    /// requires event data, evaluation fails, or a matrix is singular.
     pub fn evaluate(&self, params: &ParamValues) -> RuntimeResult<Complex64> {
         self.evaluate_inner(params, None)
     }
 
     /// Evaluates an event-independent model and its free-parameter gradient.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RuntimeError`] when parameters are incompatible, the model
+    /// requires event data, differentiation or evaluation fails, or a solve is
+    /// singular.
     pub fn evaluate_with_gradient(&self, params: &ParamValues) -> RuntimeResult<ValueGradient> {
         #[cfg(feature = "jit")]
         if let (Some(value_kernel), Some(gradient_kernel)) =
@@ -1373,6 +1409,11 @@ impl CpuPlan {
     }
 
     /// Evaluates the model using values supplied by an event lookup.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RuntimeError`] when a required event value is missing,
+    /// parameters are incompatible, evaluation fails, or a solve is singular.
     pub fn evaluate_with_event(
         &self,
         params: &ParamValues,
@@ -1382,6 +1423,11 @@ impl CpuPlan {
     }
 
     /// Evaluates the model and gradient using values supplied by an event lookup.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RuntimeError`] when a required event value is missing,
+    /// parameters are incompatible, or differentiation or evaluation fails.
     pub fn evaluate_with_event_and_gradient(
         &self,
         params: &ParamValues,
@@ -1396,6 +1442,15 @@ impl CpuPlan {
     }
 
     /// Materializes the event-dependent cache for a batch.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RuntimeError`] when required columns are missing, expression
+    /// shapes are invalid, cache construction fails, or a matrix is singular.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a node selected by the validated cache plan was not evaluated.
     pub fn cache_event_batch(&self, batch: &EventBatch) -> RuntimeResult<CpuBatchCache> {
         let event_columns = self.event_columns(batch.schema())?;
         let mut cache = CpuBatchCache::new(
@@ -1445,6 +1500,11 @@ impl CpuPlan {
     }
 
     /// Evaluates every row in a materialized batch cache.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RuntimeError`] when parameters or cache layout are
+    /// incompatible, evaluation fails, or a matrix is singular.
     pub fn evaluate_cache(
         &self,
         params: &ParamValues,
@@ -1473,6 +1533,11 @@ impl CpuPlan {
     }
 
     /// Evaluates one row in a materialized batch cache.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RuntimeError`] when `row` is out of range, parameters or cache
+    /// layout are incompatible, evaluation fails, or a matrix is singular.
     pub fn evaluate_cache_row(
         &self,
         params: &ParamValues,
@@ -1953,6 +2018,11 @@ fn evaluate_scalar_cache_block(
 
 impl CpuPlan {
     /// Evaluates one cached row and its free-parameter gradient.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RuntimeError`] when `row` is out of range, parameters or cache
+    /// layout are incompatible, or differentiation or evaluation fails.
     pub fn evaluate_cache_row_with_gradient(
         &self,
         params: &ParamValues,
@@ -1996,6 +2066,11 @@ impl CpuPlan {
     }
 
     /// Evaluates every cached row and its free-parameter gradient.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RuntimeError`] when parameters or cache layout are
+    /// incompatible, or differentiation or evaluation fails.
     pub fn evaluate_cache_with_gradient(
         &self,
         params: &ParamValues,
@@ -2059,6 +2134,10 @@ impl CpuPlan {
     }
 
     /// Evaluates the model for every event in a batch.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RuntimeError`] when cache materialization or evaluation fails.
     pub fn evaluate_batch(
         &self,
         params: &ParamValues,
@@ -2069,6 +2148,11 @@ impl CpuPlan {
     }
 
     /// Evaluates the model and gradient for every event in a batch.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RuntimeError`] when cache materialization, differentiation, or
+    /// evaluation fails.
     pub fn evaluate_batch_with_gradient(
         &self,
         params: &ParamValues,
@@ -2079,6 +2163,11 @@ impl CpuPlan {
     }
 
     /// Materializes all event-dependent caches for a dataset.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RuntimeError`] when the dataset cannot be read, a batch schema
+    /// is incompatible, cache construction fails, or a matrix is singular.
     pub fn cache_dataset(&self, dataset: &Dataset) -> RuntimeResult<CpuCachedDataset> {
         self.cache_dataset_with_plan(dataset, dataset.read_plan())
     }
@@ -2108,6 +2197,11 @@ impl CpuPlan {
     }
 
     /// Prepares a dataset according to its cache-storage policy.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RuntimeError`] when dataset reading or cache construction
+    /// fails, or another distributed worker reports failure.
     pub fn prepare_dataset(
         &self,
         execution: &Execution,
@@ -2170,6 +2264,11 @@ impl CpuPlan {
     }
 
     /// Execute a weighted reduction over a prepared dataset.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RuntimeError`] when streaming, cache validation, evaluation,
+    /// or reduction fails, or another distributed worker reports failure.
     pub fn reduce(
         &self,
         execution: &Execution,
@@ -2208,6 +2307,12 @@ impl CpuPlan {
     }
 
     /// Execute a weighted reduction and its free-parameter gradient.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RuntimeError`] when streaming, cache validation,
+    /// differentiation, evaluation, or reduction fails, or another distributed
+    /// worker reports failure.
     pub fn reduce_with_gradient(
         &self,
         execution: &Execution,
@@ -2285,6 +2390,11 @@ impl CpuPlan {
     }
 
     /// Evaluates every event in a fully cached dataset.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RuntimeError`] when parameters or a cache layout are
+    /// incompatible, evaluation fails, or a matrix is singular.
     pub fn evaluate_cached_dataset(
         &self,
         params: &ParamValues,
@@ -2310,6 +2420,11 @@ impl CpuPlan {
     }
 
     /// Evaluates every event and gradient in a fully cached dataset.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RuntimeError`] when parameters or a cache layout are
+    /// incompatible, or differentiation or evaluation fails.
     pub fn evaluate_cached_dataset_with_gradient(
         &self,
         params: &ParamValues,

@@ -64,6 +64,10 @@ impl<'a, O: StochasticObjective + ?Sized, T, B> StochasticFitProblem<'a, O, T, B
     /// Create a stochastic adapter that samples `fraction` of events per evaluation.
     ///
     /// `seed` initializes the deterministic sequence of batch seeds.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FitError`] when `fraction` is outside `(0, 1]`.
     pub fn new(objective: &'a O, fraction: f64, seed: u64) -> FitResult<Self> {
         if !(fraction > 0.0 && fraction <= 1.0) {
             return Err(LikelihoodError::InvalidBatchFraction(fraction).into());
@@ -97,6 +101,11 @@ impl<'a, O: StochasticObjective + ?Sized, T, B> StochasticFitProblem<'a, O, T, B
     }
 
     /// Build the parameter transform for minimizers without native bounds.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FitError`] when parameter scaling or bound metadata cannot be
+    /// represented by the optimizer transform.
     pub fn minimizer_transform(&self) -> FitResult<Box<dyn Transform<T, B>>>
     where
         T: RealScalar,
@@ -106,6 +115,11 @@ impl<'a, O: StochasticObjective + ?Sized, T, B> StochasticFitProblem<'a, O, T, B
     }
 
     /// Build the parameter transform for minimizers that enforce native bounds.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FitError`] when parameter scaling or periodic metadata cannot
+    /// be represented by the optimizer transform.
     pub fn native_transform(&self) -> FitResult<Box<dyn Transform<T, B>>>
     where
         T: RealScalar,
@@ -232,6 +246,11 @@ impl<'a, O: Objective + ?Sized, T, B> FitProblem<'a, O, T, B> {
 
     /// Build the metadata transform for minimizers without native bounds.
     /// Scaling, periodic wrapping, and smooth bounds are applied automatically.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FitError`] when parameter scaling, bounds, or periodic
+    /// metadata cannot form a valid transform.
     pub fn minimizer_transform(&self) -> FitResult<Box<dyn Transform<T, B>>>
     where
         T: RealScalar,
@@ -245,6 +264,11 @@ impl<'a, O: Objective + ?Sized, T, B> FitProblem<'a, O, T, B> {
 
     /// Build the metadata transform for algorithms with native bounds, such as
     /// L-BFGS-B. Bounds themselves are returned by [`Self::native_bounds`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FitError`] when parameter scaling or periodic metadata cannot
+    /// form a valid transform.
     pub fn native_transform(&self) -> FitResult<Box<dyn Transform<T, B>>>
     where
         T: RealScalar,
@@ -285,6 +309,11 @@ impl<'a, O: Objective + ?Sized, T, B> FitProblem<'a, O, T, B> {
     /// Jacobian correction: linear scaling (whose Jacobian is constant).
     /// Bounds are enforced by [`LogDensity::log_density`] as support, and
     /// periodic values remain in their single canonical domain.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FitError`] when parameter scale metadata cannot form a valid
+    /// linear transform.
     pub fn sampler_transform(&self) -> FitResult<Box<dyn Transform<T, B>>>
     where
         T: RealScalar,

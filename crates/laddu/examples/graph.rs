@@ -1,3 +1,5 @@
+//! Builds, compiles, and displays a small tagged expression graph.
+
 use std::error::Error;
 
 use laddu::compile::CompiledModel;

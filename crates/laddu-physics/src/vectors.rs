@@ -213,6 +213,11 @@ impl RealVec3 {
     }
 
     /// The cosine of the polar angle $`\theta`$
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduPhysicsError`] when the vector has zero or invalid
+    /// magnitude.
     pub fn costheta(&self) -> LadduPhysicsResult<f64> {
         let mag = self.mag();
         if mag <= 0.0 {
@@ -226,6 +231,11 @@ impl RealVec3 {
     }
 
     /// The polar angle $`\theta`$
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduPhysicsError`] when the vector has zero or invalid
+    /// magnitude.
     pub fn theta(&self) -> LadduPhysicsResult<f64> {
         Ok(f64::acos(self.costheta()?))
     }
@@ -236,6 +246,11 @@ impl RealVec3 {
     }
 
     /// Create a unit vector in the same direction as this [`RealVec3`]
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduPhysicsError`] when the vector has zero or invalid
+    /// magnitude.
     pub fn unit(&self) -> LadduPhysicsResult<RealVec3> {
         let mag = self.mag();
         if mag <= 0.0 {
@@ -423,6 +438,11 @@ impl RealVec4 {
     }
 
     /// The $`\gamma`$ factor $`\frac{1}{\sqrt{1 - \beta^2}}`$.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduPhysicsError`] when the energy is not positive or the
+    /// resulting velocity is not subluminal.
     pub fn gamma(&self) -> LadduPhysicsResult<f64> {
         let beta = self.beta()?;
         let b2 = beta.dot(&beta);
@@ -433,6 +453,11 @@ impl RealVec4 {
     }
 
     /// The $`\vec{\beta}`$ vector $`\frac{\vec{p}}{E}`$.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduPhysicsError`] when the four-momentum energy is not
+    /// positive.
     pub fn beta(&self) -> LadduPhysicsResult<RealVec3> {
         let e = self.e();
         if e <= 0.0 {
@@ -446,6 +471,11 @@ impl RealVec4 {
     }
 
     /// The invariant mass corresponding to this 4-momentum
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduPhysicsError`] when the invariant mass squared is
+    /// non-finite or negative.
     pub fn m(&self) -> LadduPhysicsResult<f64> {
         self.mag()
     }
@@ -457,6 +487,11 @@ impl RealVec4 {
     }
 
     /// Return the signed invariant mass.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduPhysicsError`] when the invariant mass squared is
+    /// non-finite.
     pub fn signed_m(&self) -> LadduPhysicsResult<f64> {
         self.signed_mag()
     }
@@ -495,7 +530,10 @@ impl RealVec4 {
 
     /// Alias for [`Self::m`] using the $`+---`$ metric.
     ///
-    /// Returns an error for spacelike four-vectors, where `m2 < 0`.
+    /// # Errors
+    ///
+    /// Returns [`LadduPhysicsError`] for non-finite or spacelike four-vectors,
+    /// where `m2 < 0`.
     pub fn mag(&self) -> LadduPhysicsResult<f64> {
         let mag2 = self.mag2();
 
@@ -522,6 +560,11 @@ impl RealVec4 {
     ///
     /// - `sqrt(mag2)` for timelike/null vectors
     /// - `-sqrt(-mag2)` for spacelike vectors
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduPhysicsError`] when the invariant magnitude squared is
+    /// non-finite.
     pub fn signed_mag(&self) -> LadduPhysicsResult<f64> {
         let mag2 = self.mag2();
 

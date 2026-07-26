@@ -256,6 +256,11 @@ pub type EventBatchIter = Box<dyn Iterator<Item = LadduDataResult<EventBatch>> +
 /// Thread-safe producer of schema-compatible event batches.
 pub trait EventSource: Send + Sync {
     /// Returns the source schema.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduDataError`] when source metadata cannot be read or
+    /// interpreted as a logical schema.
     fn schema(&self) -> LadduDataResult<Arc<Schema>>;
 
     /// Returns optional source capabilities.
@@ -264,28 +269,57 @@ pub trait EventSource: Send + Sync {
     }
 
     /// Returns the exact event count when cheaply available.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduDataError`] when the source cannot read the metadata
+    /// needed to determine its event count.
     fn num_events(&self) -> LadduDataResult<Option<u64>> {
         Ok(None)
     }
 
     /// Returns the exact sum of event weights when cheaply available.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduDataError`] when source weights or their metadata cannot
+    /// be read.
     fn weighted_total(&self) -> LadduDataResult<Option<f64>> {
         Ok(None)
     }
 
     /// Opens a batch iterator using `plan`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduDataError`] when `plan` is invalid or the source cannot
+    /// initialize the requested read.
     fn batches(&self, plan: ReadPlan) -> LadduDataResult<EventBatchIter>;
 }
 
 /// Consumer of schema-compatible event batches.
 pub trait EventSink: Send {
     /// Begins a write operation.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduDataError`] when the plan or schema is unsupported or
+    /// output initialization fails.
     fn begin(&mut self, schema: Arc<Schema>, plan: WritePlan) -> LadduDataResult<()>;
 
     /// Writes one batch.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduDataError`] when the batch schema is incompatible or the
+    /// output cannot be written.
     fn write_batch(&mut self, batch: &EventBatch) -> LadduDataResult<()>;
 
     /// Finishes and flushes the write operation.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduDataError`] when buffered output cannot be finalized.
     fn finish(&mut self) -> LadduDataResult<()>;
 }
 
@@ -338,9 +372,18 @@ pub trait FragmentedSource: Send + Sync {
     type Key: Clone + Send + Sync + 'static;
 
     /// Lists all fragments in global row order.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduDataError`] when fragment metadata cannot be read.
     fn fragments(&self) -> LadduDataResult<Vec<DataFragment<Self::Key>>>;
 
     /// Reads a contiguous range within one fragment.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduDataError`] when the key, range, or chunk size is invalid
+    /// or fragment data cannot be read.
     fn read_fragment_range(
         &self,
         key: &Self::Key,
@@ -351,6 +394,11 @@ pub trait FragmentedSource: Send + Sync {
 }
 
 /// Creates a planned batch iterator for a fragmented source.
+///
+/// # Errors
+///
+/// Returns [`LadduDataError`] when the read plan is invalid, fragment metadata
+/// cannot be loaded, or the iterator cannot be initialized.
 pub fn fragmented_batches<S>(source: Arc<S>, plan: ReadPlan) -> LadduDataResult<EventBatchIter>
 where
     S: FragmentedSource + 'static,
@@ -365,6 +413,11 @@ where
 }
 
 /// Assigns source fragments or rows according to a read plan.
+///
+/// # Errors
+///
+/// Returns [`LadduDataError`] when rank settings are invalid or fragment sizes
+/// cannot be represented on this platform.
 pub fn plan_fragments<K: Clone>(
     fragments: &[DataFragment<K>],
     plan: ReadPlan,
@@ -770,6 +823,11 @@ impl OutputPath {
     }
 
     /// Resolves the concrete path for a write plan.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduDataError`] when single-file output is requested for a
+    /// distributed plan.
     pub fn resolve(&self, plan: WritePlan, default_extension: &str) -> LadduDataResult<PathBuf> {
         let mode = match self.mode {
             OutputMode::Auto if plan.is_distributed() => OutputMode::PerRankFiles,
@@ -801,6 +859,10 @@ impl OutputPath {
     }
 
     /// Creates a file's parent directories when absent.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduDataError`] when a required directory cannot be created.
     pub fn create_parent_dirs(path: &Path) -> LadduDataResult<()> {
         if let Some(parent) = path.parent()
             && !parent.as_os_str().is_empty()

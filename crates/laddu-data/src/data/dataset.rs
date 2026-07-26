@@ -79,11 +79,19 @@ impl Dataset {
     }
 
     /// Creates an in-memory dataset from schema-compatible batches.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduDataError`] when batch schemas are incompatible.
     pub fn from_batches(batches: Vec<EventBatch>) -> LadduDataResult<Self> {
         Ok(Self::new(MemorySource::from_batches(batches)?))
     }
 
     /// Collects owned events into an in-memory dataset.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduDataError`] when an event does not match `schema`.
     pub fn from_events<I>(schema: Arc<Schema>, events: I) -> LadduDataResult<Self>
     where
         I: IntoIterator<Item = OwnedEvent>,
@@ -92,6 +100,11 @@ impl Dataset {
     }
 
     /// Returns the source schema.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduDataError`] when the underlying source cannot determine
+    /// or load its schema.
     pub fn schema(&self) -> LadduDataResult<Arc<Schema>> {
         self.source.schema()
     }
@@ -130,6 +143,10 @@ impl Dataset {
     }
 
     /// Returns this dataset with a nonzero maximum batch size.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduDataError::InvalidArgument`] when `chunk_size` is zero.
     pub fn chunked(mut self, chunk_size: usize) -> LadduDataResult<Self> {
         if chunk_size == 0 {
             return Err(LadduDataError::InvalidArgument(
@@ -155,6 +172,11 @@ impl Dataset {
     }
 
     /// Lazily retains a deterministic fraction of events.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduDataError::InvalidArgument`] when `fraction` is outside
+    /// `[0, 1]` or is NaN.
     pub fn subsample(self, fraction: f64, seed: u64) -> LadduDataResult<Self> {
         if !(0.0..=1.0).contains(&fraction) {
             return Err(LadduDataError::InvalidArgument(
@@ -171,6 +193,11 @@ impl Dataset {
     }
 
     /// Visits each transformed event.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduDataError`] when reading or transforming the source
+    /// fails.
     pub fn for_each_event<F>(&self, mut f: F) -> LadduDataResult<()>
     where
         F: FnMut(Event<'_>),
@@ -182,6 +209,11 @@ impl Dataset {
     }
 
     /// Visits each transformed event and stops at the first error.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first [`LadduDataError`] produced by the source,
+    /// transformations, or callback.
     pub fn try_for_each_event<F>(&self, mut f: F) -> LadduDataResult<()>
     where
         F: FnMut(Event<'_>) -> LadduDataResult<()>,
@@ -199,6 +231,11 @@ impl Dataset {
     }
 
     /// Fallibly maps transformed events into a vector.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first [`LadduDataError`] produced while reading,
+    /// transforming, or mapping an event.
     pub fn try_map_events<T, F>(&self, mut f: F) -> LadduDataResult<Vec<T>>
     where
         F: FnMut(Event<'_>) -> LadduDataResult<T>,
@@ -213,6 +250,11 @@ impl Dataset {
     }
 
     /// Maps transformed events into a vector.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduDataError`] when reading or transforming the source
+    /// fails.
     pub fn map_events<T, F>(&self, mut f: F) -> LadduDataResult<Vec<T>>
     where
         F: FnMut(Event<'_>) -> T,
@@ -227,6 +269,11 @@ impl Dataset {
     }
 
     /// Fallibly folds transformed events into an owned accumulator.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first [`LadduDataError`] produced while reading,
+    /// transforming, or folding an event.
     pub fn try_fold_events<T, F>(&self, init: T, mut f: F) -> LadduDataResult<T>
     where
         F: FnMut(T, Event<'_>) -> LadduDataResult<T>,
@@ -245,6 +292,11 @@ impl Dataset {
     }
 
     /// Folds transformed events into an owned accumulator.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduDataError`] when reading or transforming the source
+    /// fails.
     pub fn fold_events<T, F>(&self, init: T, mut f: F) -> LadduDataResult<T>
     where
         F: FnMut(T, Event<'_>) -> T,
@@ -253,6 +305,11 @@ impl Dataset {
     }
 
     /// Fallibly updates a mutable accumulator for every transformed event.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first [`LadduDataError`] produced while reading,
+    /// transforming, or accumulating an event.
     pub fn try_accumulate_events<T, F>(&self, mut acc: T, mut f: F) -> LadduDataResult<T>
     where
         F: FnMut(&mut T, Event<'_>) -> LadduDataResult<()>,
@@ -262,6 +319,11 @@ impl Dataset {
     }
 
     /// Updates a mutable accumulator for every transformed event.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduDataError`] when reading or transforming the source
+    /// fails.
     pub fn accumulate_events<T, F>(&self, acc: T, mut f: F) -> LadduDataResult<T>
     where
         F: FnMut(&mut T, Event<'_>),
@@ -273,11 +335,21 @@ impl Dataset {
     }
 
     /// Sums effective event weights.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduDataError`] when reading or transforming the source
+    /// fails.
     pub fn sum_weights(&self) -> LadduDataResult<f64> {
         self.fold_events(0.0, |sum, ev| sum + ev.weight())
     }
 
     /// Sums `weight * f(event)` over transformed events.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduDataError`] when reading or transforming the source
+    /// fails.
     pub fn weighted_sum<F>(&self, mut f: F) -> LadduDataResult<f64>
     where
         F: FnMut(Event<'_>) -> f64,
@@ -286,6 +358,11 @@ impl Dataset {
     }
 
     /// Sums complex `weight * f(event)` contributions.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduDataError`] when reading or transforming the source
+    /// fails.
     pub fn weighted_complex_sum<F>(&self, mut f: F) -> LadduDataResult<Complex64>
     where
         F: FnMut(Event<'_>) -> Complex64,
@@ -294,6 +371,11 @@ impl Dataset {
     }
 
     /// Opens an iterator of fully transformed event batches.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduDataError`] when the underlying source cannot initialize
+    /// a batch stream for the current plan.
     pub fn batches(
         &self,
     ) -> LadduDataResult<Box<dyn Iterator<Item = LadduDataResult<EventBatch>> + Send>> {
@@ -301,6 +383,12 @@ impl Dataset {
     }
 
     #[doc(hidden)]
+    /// Opens transformed batches using an explicit read plan.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduDataError`] when the underlying source cannot initialize
+    /// the requested batch stream.
     pub fn batches_with_plan(
         &self,
         plan: ReadPlan,
@@ -322,6 +410,11 @@ impl Dataset {
     }
 
     /// Visits each transformed batch and stops at the first error.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first [`LadduDataError`] produced by the source,
+    /// transformations, or callback.
     pub fn try_for_each_batch<F>(&self, mut f: F) -> LadduDataResult<()>
     where
         F: FnMut(EventBatch) -> LadduDataResult<()>,
@@ -334,6 +427,10 @@ impl Dataset {
     }
 
     /// Maps transformed batches into a vector.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduDataError`] when reading or transforming a batch fails.
     pub fn map_batches<T, F>(&self, mut f: F) -> LadduDataResult<Vec<T>>
     where
         F: FnMut(EventBatch) -> T,
@@ -349,6 +446,11 @@ impl Dataset {
     }
 
     /// Streams the transformed dataset into an event sink.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduDataError`] when reading, transforming, or writing a
+    /// batch fails, or the sink cannot begin or finish the stream.
     pub fn write_to<S: EventSink>(&self, sink: &mut S) -> LadduDataResult<()> {
         sink.begin(self.schema()?, WritePlan::from(self.plan))?;
 

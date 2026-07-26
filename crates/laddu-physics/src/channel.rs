@@ -36,6 +36,11 @@ impl Channel {
     }
 
     /// Create or edit a named particle edge.
+    ///
+    /// # Panics
+    ///
+    /// Panics only if the internal edge map fails to return an entry that was
+    /// just inserted.
     pub fn edge(&mut self, name: impl Into<String>) -> EdgeHandle<'_> {
         let name = name.into();
         self.edges
@@ -59,6 +64,11 @@ impl Channel {
     }
 
     /// Retrieve a vertex view which evaluates quantities in that vertex's rest frame.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduPhysicsError`] when `name` does not identify a vertex in
+    /// this channel.
     pub fn get_vertex(&self, name: &str) -> LadduPhysicsResult<VertexView<'_>> {
         self.require_vertex(name)?;
         Ok(VertexView {
@@ -97,6 +107,12 @@ impl Channel {
     /// Validate all channel vertices.
     ///
     /// Consumers such as event generators call this automatically.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduPhysicsError`] when a vertex references missing or
+    /// duplicate edges, the reaction graph is inconsistent, or an initial edge
+    /// lacks a valid momentum source.
     pub fn validate(&self) -> LadduPhysicsResult<()> {
         for name in self.vertices.keys() {
             self.validate_vertex(name)?;
@@ -116,11 +132,20 @@ impl Channel {
     }
 
     /// Return the optional particle properties attached to an edge.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduPhysicsError`] when `edge` is not in this channel.
     pub fn properties(&self, edge: &str) -> LadduPhysicsResult<Option<&ParticleProperties>> {
         Ok(self.require_edge(edge)?.properties.as_ref())
     }
 
     /// Return the particle definition attached to an edge.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduPhysicsError`] when `edge` is unknown or has no particle
+    /// properties.
     pub fn particle(&self, edge: &str) -> LadduPhysicsResult<&ParticleProperties> {
         self.properties(edge)?.ok_or_else(|| {
             LadduPhysicsError::invalid_relation(format!("edge `{edge}` has no particle properties"))
@@ -131,21 +156,41 @@ impl Channel {
     ///
     /// When no explicit expression is attached, momentum conservation is used
     /// to infer a uniquely missing momentum at a connected vertex.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduPhysicsError`] when the edge is unknown or its momentum
+    /// cannot be uniquely resolved from the channel.
     pub fn p4(&self, edge: &str) -> LadduPhysicsResult<Vec4> {
         self.resolve_p4(edge, &mut Vec::new())
     }
 
     /// Construct the symbolic three-momentum of an edge.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduPhysicsError`] when the edge's four-momentum cannot be
+    /// resolved.
     pub fn vec3(&self, edge: &str) -> LadduPhysicsResult<Vec3> {
         Ok(self.p4(edge)?.vec3())
     }
 
     /// Construct the invariant-mass expression for an edge.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduPhysicsError`] when the edge's four-momentum cannot be
+    /// resolved.
     pub fn mass(&self, edge: &str) -> LadduPhysicsResult<Expr> {
         Ok(self.p4(edge)?.m())
     }
 
     /// Construct the invariant mass squared of an edge.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduPhysicsError`] when the edge's four-momentum cannot be
+    /// resolved.
     pub fn s(&self, edge: &str) -> LadduPhysicsResult<Expr> {
         Ok(self.p4(edge)?.m2())
     }
@@ -552,6 +597,11 @@ pub struct VertexHandle<'a> {
 
 impl VertexHandle<'_> {
     /// Assign the proposal used to generate this vertex.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the vertex associated with this live handle is missing from
+    /// the channel.
     pub fn generation(&mut self, proposal: impl Into<VertexProposal>) -> &mut Self {
         self.channel
             .vertices
@@ -562,6 +612,11 @@ impl VertexHandle<'_> {
     }
 
     /// Replace the vertex's incoming edge list.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the vertex associated with this live handle is missing from
+    /// the channel.
     pub fn incoming(&mut self, edges: impl IntoIterator<Item = impl AsRef<str>>) -> &mut Self {
         let edges = edges
             .into_iter()
@@ -576,6 +631,11 @@ impl VertexHandle<'_> {
     }
 
     /// Replace the vertex's outgoing edge list.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the vertex associated with this live handle is missing from
+    /// the channel.
     pub fn outgoing(&mut self, edges: impl IntoIterator<Item = impl AsRef<str>>) -> &mut Self {
         let edges = edges
             .into_iter()
@@ -590,6 +650,11 @@ impl VertexHandle<'_> {
     }
 
     /// Validate that every referenced edge exists and occurs only once.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduPhysicsError`] when the vertex references an unknown or
+    /// duplicate edge or otherwise violates channel topology.
     pub fn validate(&self) -> LadduPhysicsResult<()> {
         self.channel.validate_vertex(&self.name)
     }
@@ -611,6 +676,11 @@ pub struct VertexView<'a> {
 
 impl<'a> VertexView<'a> {
     /// Return the underlying vertex definition.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the vertex associated with this view is missing from the
+    /// channel.
     pub fn vertex(&self) -> &'a Vertex {
         self.channel
             .vertices
@@ -619,6 +689,11 @@ impl<'a> VertexView<'a> {
     }
 
     /// Construct an edge four-momentum boosted into this vertex's rest frame.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduPhysicsError`] when the edge, frame path, or required
+    /// momenta cannot be resolved.
     pub fn p4(&self, edge: &str) -> LadduPhysicsResult<Vec4> {
         let frame_path = self.channel.frame_path_to_vertex(&self.name)?;
         let overall = self.channel.vertex_incoming_p4(&frame_path.root)?;
@@ -642,11 +717,21 @@ impl<'a> VertexView<'a> {
     }
 
     /// Construct an edge three-momentum in this vertex's rest frame.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduPhysicsError`] when the edge's rest-frame momentum cannot
+    /// be resolved.
     pub fn vec3(&self, edge: &str) -> LadduPhysicsResult<Vec3> {
         Ok(self.p4(edge)?.vec3())
     }
 
     /// Construct the cosine of an edge's polar angle about the supplied axis.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduPhysicsError`] when the edge's rest-frame momentum cannot
+    /// be resolved.
     pub fn costheta(&self, edge: &str, z_axis: Vec3, _y_hint: Vec3) -> LadduPhysicsResult<Expr> {
         let p = self.vec3(edge)?;
         let z = z_axis.unit();
@@ -654,11 +739,21 @@ impl<'a> VertexView<'a> {
     }
 
     /// Construct an edge's polar angle about the supplied axis.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduPhysicsError`] when the edge's rest-frame momentum cannot
+    /// be resolved.
     pub fn theta(&self, edge: &str, z_axis: Vec3, y_hint: Vec3) -> LadduPhysicsResult<Expr> {
         Ok(self.costheta(edge, z_axis, y_hint)?.acos())
     }
 
     /// Construct an edge's azimuthal angle in the supplied coordinate frame.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduPhysicsError`] when the edge's rest-frame momentum cannot
+    /// be resolved.
     pub fn phi(&self, edge: &str, z_axis: Vec3, y_hint: Vec3) -> LadduPhysicsResult<Expr> {
         let p = self.vec3(edge)?;
         let z = z_axis.unit();
@@ -669,6 +764,11 @@ impl<'a> VertexView<'a> {
     }
 
     /// Construct one of the Mandelstam invariants for a two-to-two vertex.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduPhysicsError`] when this is not a two-to-two vertex or
+    /// the required edge momenta cannot be resolved.
     pub fn mandelstam(&self, channel: MandelstamChannel) -> LadduPhysicsResult<Expr> {
         let vertex = self.vertex();
         if vertex.incoming.len() != 2 || vertex.outgoing.len() != 2 {
@@ -714,16 +814,31 @@ impl<'a> VertexView<'a> {
     }
 
     /// Construct the Mandelstam `s` invariant.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduPhysicsError`] when this is not a two-to-two vertex or
+    /// the required edge momenta cannot be resolved.
     pub fn s(&self) -> LadduPhysicsResult<Expr> {
         self.mandelstam(MandelstamChannel::S)
     }
 
     /// Construct the Mandelstam `t` invariant.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduPhysicsError`] when this is not a two-to-two vertex or
+    /// the required edge momenta cannot be resolved.
     pub fn t(&self) -> LadduPhysicsResult<Expr> {
         self.mandelstam(MandelstamChannel::T)
     }
 
     /// Construct the Mandelstam `u` invariant.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduPhysicsError`] when this is not a two-to-two vertex or
+    /// the required edge momenta cannot be resolved.
     pub fn u(&self) -> LadduPhysicsResult<Expr> {
         self.mandelstam(MandelstamChannel::U)
     }

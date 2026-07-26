@@ -112,6 +112,12 @@ fn factorial_ratio_l_minus_over_l_plus(l: usize, abs_m: usize) -> f64 {
 }
 
 /// Construct the complex spherical harmonic $`Y_\ell^m(\theta,\phi)`$.
+///
+/// # Errors
+///
+/// Returns [`LadduPhysicsError`] when `l` or `m` cannot be converted to the
+/// required quantum-number type, or when `m` is not an integer projection with
+/// `|m| <= l`.
 pub fn spherical_harmonic(
     l: impl TryInto<L>,
     m: impl TryInto<M>,
@@ -213,6 +219,11 @@ pub const BLATT_WEISSKOPF_MAX_L: usize = 8;
 pub const QR_DEFAULT: f64 = 0.1973;
 
 /// Construct a Blatt-Weisskopf factor with an explicit radius parameter.
+///
+/// # Errors
+///
+/// Returns [`LadduPhysicsError`] when `l` cannot be converted, exceeds
+/// [`BLATT_WEISSKOPF_MAX_L`], or `q_r` is not positive and finite.
 pub fn blatt_weisskopf_custom(
     q: impl Into<Expr>,
     l: impl TryInto<L>,
@@ -234,6 +245,11 @@ pub fn blatt_weisskopf_custom(
 }
 
 /// Construct a Blatt-Weisskopf factor using [`QR_DEFAULT`].
+///
+/// # Errors
+///
+/// Returns [`LadduPhysicsError`] when `l` cannot be converted or exceeds
+/// [`BLATT_WEISSKOPF_MAX_L`].
 pub fn blatt_weisskopf(
     q: impl Into<Expr>,
     l: impl TryInto<L>,

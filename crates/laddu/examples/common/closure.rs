@@ -227,6 +227,10 @@ pub fn run_closure(
     })
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "projection inputs are distinct analysis products and configuration values"
+)]
 fn build_projection(
     likelihood: &Likelihood,
     data: &Dataset,

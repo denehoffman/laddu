@@ -7,6 +7,11 @@ use laddu_physics::{
 };
 
 /// Constructs channel-by-pole Blatt-Weisskopf barrier ratios.
+///
+/// # Errors
+///
+/// Returns [`KMatrixError`] when inputs have incompatible shapes, contain no
+/// channels or poles, `l` is invalid, or `q_r` is not positive and finite.
 pub fn blatt_weisskopf_barriers(
     s: impl Into<Expr>,
     channel_mass_1: impl Into<Expr>,
@@ -70,6 +75,11 @@ pub fn blatt_weisskopf_barriers(
 }
 
 /// Constructs the pole contribution to a coupled-channel K matrix.
+///
+/// # Errors
+///
+/// Returns [`KMatrixError`] when scalar, vector, or matrix input shapes are
+/// inconsistent or contain no channels or poles.
 pub fn k_matrix(
     s: impl Into<Expr>,
     pole_masses: impl Into<Expr>,
@@ -86,6 +96,11 @@ pub fn k_matrix(
 }
 
 /// Constructs a coupled-channel K matrix with a non-pole background.
+///
+/// # Errors
+///
+/// Returns [`KMatrixError`] when input shapes are inconsistent, contain no
+/// channels or poles, or `background` is not channel-by-channel.
 pub fn k_matrix_with_background(
     s: impl Into<Expr>,
     pole_masses: impl Into<Expr>,
@@ -144,6 +159,11 @@ fn k_matrix_impl(
 }
 
 /// Constructs a coupled-channel production vector from pole terms.
+///
+/// # Errors
+///
+/// Returns [`KMatrixError`] when input shapes are inconsistent or contain no
+/// channels or poles.
 pub fn p_vector(
     s: impl Into<Expr>,
     pole_masses: impl Into<Expr>,
@@ -162,6 +182,11 @@ pub fn p_vector(
 }
 
 /// Constructs a production vector with a non-pole background.
+///
+/// # Errors
+///
+/// Returns [`KMatrixError`] when input shapes are inconsistent, contain no
+/// channels or poles, or `background` has the wrong channel length.
 pub fn p_vector_with_background(
     s: impl Into<Expr>,
     pole_masses: impl Into<Expr>,
@@ -224,6 +249,11 @@ fn p_vector_impl(
 }
 
 /// Solves the coupled-channel final-state-interaction equation for an F vector.
+///
+/// # Errors
+///
+/// Returns [`KMatrixError`] when the supplied scalar, vectors, and matrices
+/// have incompatible channel or pole dimensions.
 pub fn f_vector(
     s: impl Into<Expr>,
     pole_masses: impl Into<Expr>,

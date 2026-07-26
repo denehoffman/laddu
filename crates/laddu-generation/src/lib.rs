@@ -308,6 +308,11 @@ pub struct ModelEvaluator {
 
 impl ModelEvaluator {
     /// Prepares a compiled model for generation-time batch evaluation.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GenerationError`] when model preparation for the selected
+    /// execution backend fails.
     pub fn prepare(
         model: &CompiledModel,
         params: ParamValues,
@@ -333,6 +338,11 @@ impl ModelEvaluator {
     ///
     /// This is useful for projecting a fitted model over weighted Monte Carlo
     /// without regenerating events.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GenerationError`] when batch evaluation fails or a model value
+    /// is non-finite or not strictly positive.
     pub fn evaluate_batch(&self, batch: &EventBatch) -> GenerationResult<Vec<f64>> {
         let reduction = ReductionPlan::weighted_positive_real();
         self.prepared
@@ -536,6 +546,11 @@ struct GeneratedEvent {
 
 impl ChannelGenerator {
     /// Validates a channel and constructs its topological generation plan.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GenerationError`] when channel topology, edge metadata,
+    /// particle masses, output names, or vertex proposals are invalid.
     pub fn new(channel: Channel) -> GenerationResult<Self> {
         channel
             .validate()
@@ -658,6 +673,11 @@ impl ChannelGenerator {
     }
 
     /// Adds a generated scalar column and returns the updated generator.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GenerationError`] when `name` is empty, reserved, duplicated,
+    /// or conflicts with an edge name.
     pub fn with_scalar(
         mut self,
         name: impl Into<String>,
@@ -668,6 +688,11 @@ impl ChannelGenerator {
     }
 
     /// Adds a generated scalar column.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GenerationError`] when `name` is empty, reserved, duplicated,
+    /// or conflicts with an edge name.
     pub fn add_scalar(
         &mut self,
         name: impl Into<String>,
@@ -696,6 +721,11 @@ impl ChannelGenerator {
     }
 
     /// Generates weighted events and writes them to `sink`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GenerationError`] when configuration, proposal generation,
+    /// model evaluation, batch construction, or sink I/O fails.
     pub fn generate_weighted_to(
         &self,
         config: WeightedConfig,
@@ -725,6 +755,12 @@ impl ChannelGenerator {
     }
 
     /// Generates rejection-sampled unweighted events and writes them to `sink`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GenerationError`] when configuration, envelope estimation,
+    /// proposal generation, model evaluation, rejection sampling, or sink I/O
+    /// fails.
     pub fn generate_unweighted_to(
         &self,
         config: UnweightedConfig,
@@ -910,6 +946,11 @@ impl ChannelGenerator {
     }
 
     /// Generates weighted events into an in-memory dataset.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GenerationError`] when weighted generation fails or generated
+    /// batches cannot form a valid dataset.
     pub fn generate_weighted_dataset(
         &self,
         config: WeightedConfig,
@@ -921,6 +962,11 @@ impl ChannelGenerator {
     }
 
     /// Generates unweighted events into an in-memory dataset.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GenerationError`] when unweighted generation fails or
+    /// generated batches cannot form a valid dataset.
     pub fn generate_unweighted_dataset(
         &self,
         config: UnweightedConfig,

@@ -20,11 +20,21 @@ impl Histogram {
     /// Construct and validate a histogram from weighted bin counts and bin edges.
     ///
     /// The argument order matches `numpy.histogram`, so its result can be forwarded directly.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduPhysicsError`] when counts or edges are non-finite, the
+    /// edge count is inconsistent with the bins, or edges are not increasing.
     pub fn new(counts: Vec<f64>, bin_edges: Vec<f64>) -> LadduPhysicsResult<Self> {
         Self::new_with_flow(counts, bin_edges, 0.0, 0.0)
     }
 
     /// Construct a histogram including explicit underflow and overflow weights.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduPhysicsError`] when counts, flow weights, or edges are
+    /// non-finite, lengths are inconsistent, or edges are not increasing.
     pub fn new_with_flow(
         counts: Vec<f64>,
         bin_edges: Vec<f64>,
@@ -43,6 +53,11 @@ impl Histogram {
     }
 
     /// Construct an empty, uniformly binned histogram.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduPhysicsError`] when `bins` is zero or the limits are
+    /// non-finite or not increasing.
     pub fn empty(bins: usize, limits: (f64, f64)) -> LadduPhysicsResult<Self> {
         Self::validate_bins(bins)?;
         Self::validate_limits(limits)?;
@@ -51,12 +66,22 @@ impl Histogram {
     }
 
     /// Construct an empty histogram from explicit bin edges.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduPhysicsError`] when fewer than two finite, strictly
+    /// increasing edges are supplied.
     pub fn empty_with_edges(bin_edges: Vec<f64>) -> LadduPhysicsResult<Self> {
         let counts = vec![0.0; bin_edges.len().saturating_sub(1)];
         Self::new(counts, bin_edges)
     }
 
     /// Fill a uniformly binned histogram from values and optional weights.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduPhysicsError`] when histogram geometry is invalid,
+    /// weights have the wrong length, or a value or weight is non-finite.
     pub fn from_values(
         values: &[f64],
         bins: usize,
@@ -84,6 +109,11 @@ impl Histogram {
     }
 
     /// Fill an explicitly binned histogram from values and optional weights.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduPhysicsError`] when edges are invalid, weights have the
+    /// wrong length, or a value or weight is non-finite.
     pub fn from_values_with_edges(
         values: &[f64],
         bin_edges: Vec<f64>,
@@ -110,6 +140,11 @@ impl Histogram {
     }
 
     /// Replace the uncertainties on all bins.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduPhysicsError`] when `errors` has the wrong length or
+    /// contains a negative or non-finite uncertainty.
     pub fn set_errors(&mut self, errors: &[f64]) -> LadduPhysicsResult<()> {
         if self.counts.len() != errors.len() {
             return Err(LadduPhysicsError::invalid_length(
@@ -125,11 +160,23 @@ impl Histogram {
     }
 
     /// Add one unit-weight entry.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduPhysicsError`] when `value` is non-finite.
     pub fn fill(&mut self, value: f64) -> LadduPhysicsResult<()> {
         self.fill_weighted(value, 1.0)
     }
 
     /// Add an entry with an explicit weight.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduPhysicsError`] when `value` or `weight` is non-finite.
+    ///
+    /// # Panics
+    ///
+    /// Panics if this histogram's validated edge list is unexpectedly empty.
     pub fn fill_weighted(&mut self, value: f64, weight: f64) -> LadduPhysicsResult<()> {
         if !value.is_finite() {
             return Err(LadduPhysicsError::invalid_value(
@@ -163,11 +210,25 @@ impl Histogram {
     }
 
     /// Add one unit-weight entry with the given entry uncertainty.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduPhysicsError`] when `value` is non-finite or `error` is
+    /// negative or non-finite.
     pub fn fill_with_error(&mut self, value: f64, error: f64) -> LadduPhysicsResult<()> {
         self.fill_weighted_with_error(value, 1.0, error)
     }
 
     /// Add an entry with an explicit weight and uncertainty.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduPhysicsError`] when `value` or `weight` is non-finite, or
+    /// `error` is negative or non-finite.
+    ///
+    /// # Panics
+    ///
+    /// Panics if this histogram's validated edge list is unexpectedly empty.
     pub fn fill_weighted_with_error(
         &mut self,
         value: f64,
@@ -220,6 +281,11 @@ impl Histogram {
     }
 
     /// Replace the contents of all bins without changing their uncertainties.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduPhysicsError`] when `counts` has the wrong length or
+    /// contains a non-finite value.
     pub fn set_counts(&mut self, counts: &[f64]) -> LadduPhysicsResult<()> {
         if self.counts.len() != counts.len() {
             return Err(LadduPhysicsError::invalid_length(
@@ -235,6 +301,11 @@ impl Histogram {
     }
 
     /// Manually set the counts in a bin.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduPhysicsError`] when `bin_index` is out of range or
+    /// `value` is non-finite.
     pub fn set_count(&mut self, bin_index: usize, value: f64) -> LadduPhysicsResult<()> {
         if !value.is_finite() {
             return Err(LadduPhysicsError::invalid_value(
@@ -257,6 +328,11 @@ impl Histogram {
     }
 
     /// Manually set the uncertainty in a bin.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduPhysicsError`] when `bin_index` is out of range or
+    /// `error` is negative or non-finite.
     pub fn set_error(&mut self, bin_index: usize, error: f64) -> LadduPhysicsResult<()> {
         Self::validate_error("histogram bin error", error)?;
 
@@ -322,12 +398,11 @@ impl Histogram {
     ///
     /// The lower edge is inclusive and the upper edge is exclusive.
     pub fn bin_index(&self, value: f64) -> Option<usize> {
-        if self.bin_edges.len() < 2 {
+        let (&first, remaining) = self.bin_edges.split_first()?;
+        let &last = remaining.last()?;
+        if !value.is_finite() {
             return None;
         }
-
-        let first = self.bin_edges[0];
-        let last = *self.bin_edges.last().unwrap();
 
         if value < first || value >= last {
             return None;
@@ -335,7 +410,7 @@ impl Histogram {
 
         match self
             .bin_edges
-            .binary_search_by(|edge| edge.partial_cmp(&value).unwrap())
+            .binary_search_by(|edge| edge.total_cmp(&value))
         {
             Ok(index) => {
                 if index == self.counts.len() {
@@ -355,6 +430,11 @@ impl Histogram {
     ///
     /// Negative bin counts are allowed, so this is an algebraic normalization,
     /// not necessarily a probability distribution.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduPhysicsError`] when the histogram is invalid or has zero
+    /// or non-finite in-range total weight.
     pub fn normalized(&self) -> LadduPhysicsResult<Self> {
         self.validate_normalizable()?;
 
@@ -381,6 +461,11 @@ impl Histogram {
     ///
     /// Negative counts are allowed, so this is algebraic normalization, not
     /// necessarily a probability distribution.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduPhysicsError`] when the histogram is invalid or has zero
+    /// or non-finite total weight including flow bins.
     pub fn normalized_with_flow(&self) -> LadduPhysicsResult<Self> {
         self.validate_normalizable_with_flow()?;
 
@@ -412,6 +497,11 @@ impl Histogram {
     ///
     /// Requires nonnegative in-range counts. Underflow and overflow are discarded
     /// because they do not have finite bin widths.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduPhysicsError`] when bin counts are negative or non-finite,
+    /// or their in-range total is not positive and finite.
     pub fn density(&self) -> LadduPhysicsResult<Self> {
         self.validate_probability_like()?;
 
@@ -446,6 +536,11 @@ impl Histogram {
     ///
     /// This allows negative weights and is useful for weighted MC, interference
     /// terms, or background-subtracted histograms. It should not be sampled from.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduPhysicsError`] when the histogram is invalid or has zero
+    /// or non-finite in-range total weight.
     pub fn signed_density(&self) -> LadduPhysicsResult<Self> {
         self.validate_normalizable()?;
 
@@ -479,6 +574,11 @@ impl Histogram {
     /// Sample a value from the histogram, assuming counts define bin probabilities.
     ///
     /// Samples uniformly within the selected bin.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduPhysicsError`] when counts are negative or non-finite, or
+    /// their total is not positive and finite.
     pub fn sample(&self, rng: &mut Rng) -> LadduPhysicsResult<f64> {
         self.validate_probability_like()?;
 

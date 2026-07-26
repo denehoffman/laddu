@@ -1,3 +1,9 @@
+//! Benchmarks K-matrix likelihood values and gradients.
+#![allow(
+    missing_docs,
+    reason = "criterion generates an undocumented public function"
+)]
+
 use criterion::{BatchSize, BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use laddu::{
     amplitudes::{

@@ -1,3 +1,5 @@
+//! Demonstrates a complete in-memory dataset and model-analysis workflow.
+
 use std::sync::Arc;
 
 use laddu::{

@@ -81,6 +81,11 @@ pub struct SpinState {
 
 impl SpinState {
     /// Construct a spin state after validating projection bounds and parity.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduPhysicsError`] when `projection` is outside the spin
+    /// range or has incompatible integer/half-integer parity.
     pub fn new(spin: J, projection: M) -> LadduPhysicsResult<Self> {
         validate_projection(spin, projection)?;
         Ok(Self { spin, projection })
@@ -108,6 +113,11 @@ pub struct Isospin {
 
 impl Isospin {
     /// Construct a new isospin state from the given total isospin and optional projection.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduPhysicsError`] when the projection is outside the
+    /// isospin range or has incompatible integer/half-integer parity.
     pub fn new(isospin: J, projection: Option<M>) -> LadduPhysicsResult<Self> {
         if let Some(projection) = projection {
             validate_projection(isospin, projection)?;
@@ -124,7 +134,10 @@ impl Isospin {
     }
     /// The isospin projection of the state.
     ///
-    /// Returns an error if this property is not known.
+    /// # Errors
+    ///
+    /// Returns [`LadduPhysicsError::MissingParticleProperty`] when the
+    /// projection is unknown.
     pub fn projection(self) -> LadduPhysicsResult<M> {
         self.projection
             .ok_or(LadduPhysicsError::MissingParticleProperty {
@@ -192,7 +205,10 @@ pub struct ParticleProperties {
 impl ParticleProperties {
     /// Get the particle's name
     ///
-    /// Returns an error if this property is not known.
+    /// # Errors
+    ///
+    /// Returns [`LadduPhysicsError::MissingParticleProperty`] when the name is
+    /// unknown.
     pub fn name(&self) -> LadduPhysicsResult<String> {
         self.name
             .clone()
@@ -201,7 +217,10 @@ impl ParticleProperties {
     }
     /// Get the particle's species
     ///
-    /// Returns an error if this property is not known.
+    /// # Errors
+    ///
+    /// Returns [`LadduPhysicsError::MissingParticleProperty`] when the species
+    /// is unknown.
     pub fn species(&self) -> LadduPhysicsResult<String> {
         self.species
             .clone()
@@ -212,7 +231,10 @@ impl ParticleProperties {
     }
     /// Get the particle's antiparticle species
     ///
-    /// Returns an error if this property is not known.
+    /// # Errors
+    ///
+    /// Returns [`LadduPhysicsError::MissingParticleProperty`] when the
+    /// antiparticle species is unknown.
     pub fn antiparticle_species(&self) -> LadduPhysicsResult<String> {
         self.antiparticle_species
             .clone()
@@ -223,7 +245,10 @@ impl ParticleProperties {
     }
     /// Get the particle's self-conjugate status
     ///
-    /// Returns an error if this property is not known.
+    /// # Errors
+    ///
+    /// Returns [`LadduPhysicsError::MissingParticleProperty`] when the
+    /// self-conjugate status is unknown.
     pub fn self_conjugate(&self) -> LadduPhysicsResult<bool> {
         self.self_conjugate
             .ok_or(LadduPhysicsError::MissingParticleProperty {
@@ -233,7 +258,10 @@ impl ParticleProperties {
     }
     /// Get the particle's spin
     ///
-    /// Returns an error if this property is not known.
+    /// # Errors
+    ///
+    /// Returns [`LadduPhysicsError::MissingParticleProperty`] when the spin is
+    /// unknown.
     pub fn spin(&self) -> LadduPhysicsResult<J> {
         self.spin
             .ok_or(LadduPhysicsError::MissingParticleProperty { property: "spin" })
@@ -241,7 +269,10 @@ impl ParticleProperties {
     }
     /// Get the particle's intrinsic parity
     ///
-    /// Returns an error if this property is not known.
+    /// # Errors
+    ///
+    /// Returns [`LadduPhysicsError::MissingParticleProperty`] when parity is
+    /// unknown.
     pub fn parity(&self) -> LadduPhysicsResult<Parity> {
         self.parity
             .ok_or(LadduPhysicsError::MissingParticleProperty { property: "parity" })
@@ -249,7 +280,10 @@ impl ParticleProperties {
     }
     /// Get the particle's intrinsic C-parity
     ///
-    /// Returns an error if this property is not known.
+    /// # Errors
+    ///
+    /// Returns [`LadduPhysicsError::MissingParticleProperty`] when C-parity is
+    /// unknown.
     pub fn c_parity(&self) -> LadduPhysicsResult<Parity> {
         self.c_parity
             .ok_or(LadduPhysicsError::MissingParticleProperty {
@@ -259,7 +293,10 @@ impl ParticleProperties {
     }
     /// Get the particle's intrinsic G-parity
     ///
-    /// Returns an error if this property is not known.
+    /// # Errors
+    ///
+    /// Returns [`LadduPhysicsError::MissingParticleProperty`] when G-parity is
+    /// unknown.
     pub fn g_parity(&self) -> LadduPhysicsResult<Parity> {
         self.g_parity
             .ok_or(LadduPhysicsError::MissingParticleProperty {
@@ -269,7 +306,10 @@ impl ParticleProperties {
     }
     /// Get the particle's electric charge
     ///
-    /// Returns an error if this property is not known.
+    /// # Errors
+    ///
+    /// Returns [`LadduPhysicsError::MissingParticleProperty`] when charge is
+    /// unknown.
     pub fn charge(&self) -> LadduPhysicsResult<i32> {
         self.charge
             .ok_or(LadduPhysicsError::MissingParticleProperty { property: "charge" })
@@ -277,7 +317,10 @@ impl ParticleProperties {
     }
     /// Get the particle's isospin
     ///
-    /// Returns an error if this property is not known.
+    /// # Errors
+    ///
+    /// Returns [`LadduPhysicsError::MissingParticleProperty`] when isospin is
+    /// unknown.
     pub fn isospin(&self) -> LadduPhysicsResult<Isospin> {
         self.isospin
             .ok_or(LadduPhysicsError::MissingParticleProperty {
@@ -287,7 +330,10 @@ impl ParticleProperties {
     }
     /// Get the particle's strangeness
     ///
-    /// Returns an error if this property is not known.
+    /// # Errors
+    ///
+    /// Returns [`LadduPhysicsError::MissingParticleProperty`] when strangeness
+    /// is unknown.
     pub fn strangeness(&self) -> LadduPhysicsResult<i32> {
         self.strangeness
             .ok_or(LadduPhysicsError::MissingParticleProperty {
@@ -297,7 +343,10 @@ impl ParticleProperties {
     }
     /// Get the particle's charm
     ///
-    /// Returns an error if this property is not known.
+    /// # Errors
+    ///
+    /// Returns [`LadduPhysicsError::MissingParticleProperty`] when charm is
+    /// unknown.
     pub fn charm(&self) -> LadduPhysicsResult<i32> {
         self.charm
             .ok_or(LadduPhysicsError::MissingParticleProperty { property: "charm" })
@@ -305,7 +354,10 @@ impl ParticleProperties {
     }
     /// Get the particle's bottomness
     ///
-    /// Returns an error if this property is not known.
+    /// # Errors
+    ///
+    /// Returns [`LadduPhysicsError::MissingParticleProperty`] when bottomness
+    /// is unknown.
     pub fn bottomness(&self) -> LadduPhysicsResult<i32> {
         self.bottomness
             .ok_or(LadduPhysicsError::MissingParticleProperty {
@@ -315,7 +367,10 @@ impl ParticleProperties {
     }
     /// Get the particle's topness
     ///
-    /// Returns an error if this property is not known.
+    /// # Errors
+    ///
+    /// Returns [`LadduPhysicsError::MissingParticleProperty`] when topness is
+    /// unknown.
     pub fn topness(&self) -> LadduPhysicsResult<i32> {
         self.topness
             .ok_or(LadduPhysicsError::MissingParticleProperty {
@@ -325,7 +380,10 @@ impl ParticleProperties {
     }
     /// Get the particle's baryon number
     ///
-    /// Returns an error if this property is not known.
+    /// # Errors
+    ///
+    /// Returns [`LadduPhysicsError::MissingParticleProperty`] when the baryon
+    /// number is unknown.
     pub fn baryon_number(&self) -> LadduPhysicsResult<i32> {
         self.baryon_number
             .ok_or(LadduPhysicsError::MissingParticleProperty {
@@ -335,7 +393,10 @@ impl ParticleProperties {
     }
     /// Get the particle's electron lepton number
     ///
-    /// Returns an error if this property is not known.
+    /// # Errors
+    ///
+    /// Returns [`LadduPhysicsError::MissingParticleProperty`] when the electron
+    /// lepton number is unknown.
     pub fn electron_lepton_number(&self) -> LadduPhysicsResult<i32> {
         self.electron_lepton_number
             .ok_or(LadduPhysicsError::MissingParticleProperty {
@@ -345,7 +406,10 @@ impl ParticleProperties {
     }
     /// Get the particle's muon lepton number
     ///
-    /// Returns an error if this property is not known.
+    /// # Errors
+    ///
+    /// Returns [`LadduPhysicsError::MissingParticleProperty`] when the muon
+    /// lepton number is unknown.
     pub fn muon_lepton_number(&self) -> LadduPhysicsResult<i32> {
         self.muon_lepton_number
             .ok_or(LadduPhysicsError::MissingParticleProperty {
@@ -355,7 +419,10 @@ impl ParticleProperties {
     }
     /// Get the particle's tau lepton number
     ///
-    /// Returns an error if this property is not known.
+    /// # Errors
+    ///
+    /// Returns [`LadduPhysicsError::MissingParticleProperty`] when the tau
+    /// lepton number is unknown.
     pub fn tau_lepton_number(&self) -> LadduPhysicsResult<i32> {
         self.tau_lepton_number
             .ok_or(LadduPhysicsError::MissingParticleProperty {
@@ -365,7 +432,10 @@ impl ParticleProperties {
     }
     /// Get the particle's statistics
     ///
-    /// Returns an error if this property is not known.
+    /// # Errors
+    ///
+    /// Returns [`LadduPhysicsError::MissingParticleProperty`] when the
+    /// statistics are unknown.
     pub fn statistics(&self) -> LadduPhysicsResult<Statistics> {
         self.statistics
             .ok_or(LadduPhysicsError::MissingParticleProperty {
@@ -375,7 +445,10 @@ impl ParticleProperties {
     }
     /// Get the particle's mass.
     ///
-    /// Returns an error if this property is not known.
+    /// # Errors
+    ///
+    /// Returns [`LadduPhysicsError::MissingParticleProperty`] when the mass is
+    /// unknown.
     pub fn mass(&self) -> LadduPhysicsResult<f64> {
         self.mass
             .ok_or(LadduPhysicsError::MissingParticleProperty { property: "mass" })
@@ -455,6 +528,11 @@ impl ParticleProperties {
         self
     }
     /// Set the particle's species.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduPhysicsError`] when the species conflicts with existing
+    /// self-conjugacy or antiparticle metadata.
     pub fn with_species(mut self, species: impl Into<String>) -> LadduPhysicsResult<Self> {
         let species = species.into();
 
@@ -475,6 +553,11 @@ impl ParticleProperties {
         Ok(self)
     }
     /// Set the particle's antiparticle species.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduPhysicsError`] when the antiparticle species conflicts
+    /// with existing self-conjugacy or species metadata.
     pub fn with_antiparticle_species(
         mut self,
         antiparticle_species: impl Into<String>,
@@ -501,6 +584,11 @@ impl ParticleProperties {
     /// Set both particle and antiparticle species names.
     ///
     /// Equal names mark the particle as self-conjugate.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduPhysicsError`] when the resulting species and quantum
+    /// number metadata violate particle invariants.
     pub fn with_species_names(
         mut self,
         species: impl Into<String>,
@@ -520,6 +608,11 @@ impl ParticleProperties {
     }
 
     /// Set whether the particle is its own antiparticle.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduPhysicsError`] when `value` conflicts with species names,
+    /// C-parity, or nonzero additive quantum numbers.
     pub fn with_self_conjugate(mut self, value: bool) -> LadduPhysicsResult<Self> {
         if value {
             if let (Some(species), Some(anti)) = (&self.species, &self.antiparticle_species)
@@ -549,6 +642,11 @@ impl ParticleProperties {
     }
 
     /// Set one species name and mark the particle as self-conjugate.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduPhysicsError`] when existing particle metadata is
+    /// inconsistent with self-conjugacy.
     pub fn with_self_conjugate_species(
         mut self,
         species: impl Into<String>,
@@ -577,6 +675,11 @@ impl ParticleProperties {
         self
     }
     /// Set the particle's intrinsic C-parity.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduPhysicsError`] when C-parity conflicts with the
+    /// particle's self-conjugacy or additive quantum numbers.
     pub fn with_c_parity(mut self, c: Parity) -> LadduPhysicsResult<Self> {
         if self.self_conjugate == Some(false) {
             return Err(LadduPhysicsError::invalid_relation(
@@ -609,22 +712,47 @@ impl ParticleProperties {
         self
     }
     /// Set the particle's total strangeness.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduPhysicsError`] when nonzero strangeness conflicts with
+    /// self-conjugacy.
     pub fn with_strangeness(self, s: i32) -> LadduPhysicsResult<Self> {
         self.with_additive_qn("strangeness", |p| &mut p.strangeness, s)
     }
     /// Set the particle's total charm.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduPhysicsError`] when nonzero charm conflicts with
+    /// self-conjugacy.
     pub fn with_charm(self, c: i32) -> LadduPhysicsResult<Self> {
         self.with_additive_qn("charm", |p| &mut p.charm, c)
     }
     /// Set the particle's total bottomness.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduPhysicsError`] when nonzero bottomness conflicts with
+    /// self-conjugacy.
     pub fn with_bottomness(self, b: i32) -> LadduPhysicsResult<Self> {
         self.with_additive_qn("bottomness", |p| &mut p.bottomness, b)
     }
     /// Set the particle's total topness.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduPhysicsError`] when nonzero topness conflicts with
+    /// self-conjugacy.
     pub fn with_topness(self, t: i32) -> LadduPhysicsResult<Self> {
         self.with_additive_qn("topness", |p| &mut p.topness, t)
     }
     /// Set strangeness, charm, bottomness, and topness together.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduPhysicsError`] when a nonzero flavor quantum number
+    /// conflicts with self-conjugacy.
     pub fn with_flavor(self, s: i32, c: i32, b: i32, t: i32) -> LadduPhysicsResult<Self> {
         self.with_strangeness(s)?
             .with_charm(c)?
@@ -632,10 +760,20 @@ impl ParticleProperties {
             .with_topness(t)
     }
     /// Set the particle's total baryon number.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduPhysicsError`] when a nonzero baryon number conflicts
+    /// with self-conjugacy.
     pub fn with_baryon_number(self, b: i32) -> LadduPhysicsResult<Self> {
         self.with_additive_qn("baryon_number", |p| &mut p.baryon_number, b)
     }
     /// Set the particle's electron lepton number.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduPhysicsError`] when a nonzero electron lepton number
+    /// conflicts with self-conjugacy.
     pub fn with_electron_lepton_number(self, e: i32) -> LadduPhysicsResult<Self> {
         self.with_additive_qn(
             "electron_lepton_number",
@@ -644,15 +782,30 @@ impl ParticleProperties {
         )
     }
     /// Set the particle's muon lepton number.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduPhysicsError`] when a nonzero muon lepton number
+    /// conflicts with self-conjugacy.
     pub fn with_muon_lepton_number(self, m: i32) -> LadduPhysicsResult<Self> {
         self.with_additive_qn("muon_lepton_number", |p| &mut p.muon_lepton_number, m)
     }
     /// Set the particle's tau lepton number.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduPhysicsError`] when a nonzero tau lepton number
+    /// conflicts with self-conjugacy.
     pub fn with_tau_lepton_number(self, t: i32) -> LadduPhysicsResult<Self> {
         self.with_additive_qn("tau_lepton_number", |p| &mut p.tau_lepton_number, t)
     }
 
     /// Set electron-, muon-, and tau-family lepton numbers together.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduPhysicsError`] when a nonzero lepton number conflicts
+    /// with self-conjugacy.
     pub fn with_lepton_numbers(self, e: i32, m: i32, t: i32) -> LadduPhysicsResult<Self> {
         self.with_electron_lepton_number(e)?
             .with_muon_lepton_number(m)?
@@ -661,7 +814,9 @@ impl ParticleProperties {
 
     /// Set the particle's statistical nature.
     ///
-    /// Returns an error if the spin and statistics do not match.
+    /// # Errors
+    ///
+    /// Returns [`LadduPhysicsError`] if the spin and statistics do not match.
     pub fn with_statistics(mut self, s: Statistics) -> LadduPhysicsResult<Self> {
         if let Some(spin) = self.spin
             && Statistics::from_spin(spin) != s
@@ -697,6 +852,11 @@ impl ParticleProperties {
     }
 
     /// Set charge, flavor, baryon number, and all lepton numbers to zero.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduPhysicsError`] when the resulting metadata violates
+    /// another particle invariant.
     pub fn with_zero_additive_quantum_numbers(mut self) -> LadduPhysicsResult<Self> {
         self.charge = Some(0);
         self.strangeness = Some(0);

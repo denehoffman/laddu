@@ -327,6 +327,11 @@ macro_rules! kopf_functions {
         $parameters:expr
     ) => {
         #[doc = concat!("Constructs the nominal `", stringify!($function), "` amplitude.")]
+        ///
+        /// # Errors
+        ///
+        /// Returns an error when the fixed model data or production vector
+        /// cannot form a dimensionally consistent coupled-channel amplitude.
         pub fn $function<E: Into<Expr>>(
             s: impl Into<Expr>,
             production: [E; $poles],
@@ -335,6 +340,11 @@ macro_rules! kopf_functions {
         }
 
         #[doc = concat!("Constructs `", stringify!($function), "` after covariance resampling with `seed`.")]
+        ///
+        /// # Errors
+        ///
+        /// Returns an error when covariance resampling fails or the resulting
+        /// data and production vector are dimensionally inconsistent.
         pub fn $resampled<E: Into<Expr>>(
             s: impl Into<Expr>,
             production: [E; $poles],
@@ -353,11 +363,21 @@ kopf_functions!(kopf_a0, kopf_a0_resampled, 2, a0_data, COV_A0, 10);
 kopf_functions!(kopf_a2, kopf_a2_resampled, 2, a2_data, COV_A2, 17);
 
 /// Constructs the nominal Kopf rho coupled-channel amplitude.
+///
+/// # Errors
+///
+/// Returns an error when the fixed rho model data and production vector cannot
+/// form a dimensionally consistent coupled-channel amplitude.
 pub fn kopf_rho<E: Into<Expr>>(s: impl Into<Expr>, production: [E; 2]) -> KMatrixResult<Expr> {
     rho_data().expression(s.into(), production.map(Into::into))
 }
 
 /// Constructs the nominal Kopf pi1 coupled-channel amplitude.
+///
+/// # Errors
+///
+/// Returns an error when the fixed pi1 model data and production vector cannot
+/// form a dimensionally consistent coupled-channel amplitude.
 pub fn kopf_pi1<E: Into<Expr>>(s: impl Into<Expr>, production: [E; 1]) -> KMatrixResult<Expr> {
     pi1_data().expression(s.into(), production.map(Into::into))
 }

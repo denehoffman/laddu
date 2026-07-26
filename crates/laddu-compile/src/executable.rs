@@ -87,6 +87,11 @@ pub struct ExecutablePlan {
 
 impl ExecutablePlan {
     /// Lowers a compiled model into an executable plan.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CompileError`](crate::CompileError) when the model cannot be
+    /// lowered to valid scalar or cache kernel IR.
     pub fn from_model(model: &CompiledModel) -> CompileResult<Self> {
         Self::from_model_with_solve_rows(model, true)
     }
@@ -95,6 +100,11 @@ impl ExecutablePlan {
     ///
     /// Backends with inexpensive fused solves can use this form to keep the original `Solve`
     /// instruction and consume an ordinarily cached event-dependent matrix directly.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CompileError`](crate::CompileError) when the model cannot be
+    /// lowered to valid scalar or cache kernel IR.
     pub fn from_model_without_solve_rows(model: &CompiledModel) -> CompileResult<Self> {
         Self::from_model_with_solve_rows(model, false)
     }

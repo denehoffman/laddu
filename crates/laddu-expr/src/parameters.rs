@@ -319,6 +319,12 @@ pub struct ParamLayout {
 
 impl ParamLayout {
     /// Validates parameter definitions and constructs a layout.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ParamError`] when a definition has an empty or duplicate
+    /// name, invalid bounds, invalid periodic metadata, an invalid scale, or
+    /// an initial or fixed value outside its permitted domain.
     pub fn new<S>(specs: impl IntoIterator<Item = S>) -> ParamResult<Self>
     where
         S: Into<Parameter>,
@@ -403,12 +409,22 @@ impl ParamLayout {
     }
 
     /// Returns the name associated with a full-layout identifier.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ParamError::InvalidParamId`] when `id` is outside this
+    /// layout.
     pub fn name(&self, id: ParamId) -> ParamResult<&str> {
         self.check_id(id)?;
         Ok(self.specs[id.index()].name())
     }
 
     /// Returns the definition associated with a full-layout identifier.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ParamError::InvalidParamId`] when `id` is outside this
+    /// layout.
     pub fn spec(&self, id: ParamId) -> ParamResult<&Parameter> {
         self.check_id(id)?;
         Ok(&self.specs[id.index()])
@@ -417,6 +433,11 @@ impl ParamLayout {
     /// Maps a full-layout identifier to free-parameter order.
     ///
     /// Fixed parameters return `None`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ParamError::InvalidParamId`] when `id` is outside this
+    /// layout.
     pub fn free_id(&self, id: ParamId) -> ParamResult<Option<FreeParamId>> {
         self.check_id(id)?;
         Ok(self.full_to_free[id.index()])
@@ -451,6 +472,11 @@ impl ParamLayout {
     }
 
     /// Expand a free-parameter slice while restoring fixed values from the layout.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ParamError::FreeLengthMismatch`] when `free` does not contain
+    /// exactly one value per free parameter.
     pub fn values(&self, free: &[f64]) -> ParamResult<ParamValues> {
         let mut values = self.defaults.to_vec();
         self.fill_full_from_free(free, &mut values)?;
@@ -479,6 +505,12 @@ impl ParamLayout {
     }
 
     /// Validate free values against ordinary bounds and canonical periodic domains.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ParamError::FreeLengthMismatch`] when `free` has the wrong
+    /// length, or a value-related [`ParamError`] when a value lies outside its
+    /// parameter's bounds or canonical periodic domain.
     pub fn validate_free_values(&self, free: &[f64]) -> ParamResult<()> {
         if free.len() != self.n_free() {
             return Err(ParamError::FreeLengthMismatch {
@@ -494,6 +526,11 @@ impl ParamLayout {
 
     /// Return free values with periodic parameters mapped into their canonical domains.
     /// Non-periodic values are unchanged; ordinary bounds are not clamped.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ParamError::FreeLengthMismatch`] when `free` does not contain
+    /// exactly one value per free parameter.
     pub fn wrap_periodic_free_values(&self, free: &[f64]) -> ParamResult<Vec<f64>> {
         if free.len() != self.n_free() {
             return Err(ParamError::FreeLengthMismatch {
@@ -568,6 +605,12 @@ impl ParamRegistry {
     ///
     /// Re-registering an identical definition returns its existing identifier;
     /// incompatible definitions with the same name return an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ParamError::EmptyName`] when the parameter name is empty, or
+    /// [`ParamError::ParameterConflict`] when the name is already associated
+    /// with a different definition.
     pub fn register<S>(&mut self, spec: S) -> ParamResult<ParamId>
     where
         S: Into<Parameter>,
@@ -594,6 +637,11 @@ impl ParamRegistry {
     }
 
     /// Validates the registered parameters and builds their layout.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ParamError`] when any registered definition has invalid
+    /// bounds, periodic metadata, scale, or initial or fixed values.
     pub fn layout(&self) -> ParamResult<ParamLayout> {
         ParamLayout::new(self.specs.clone())
     }
@@ -618,6 +666,11 @@ impl ParamValues {
     }
 
     /// Returns the value associated with a full-layout identifier.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ParamError::InvalidParamId`] when `id` is outside the shared
+    /// layout.
     pub fn get(&self, id: ParamId) -> ParamResult<f64> {
         self.layout.check_id(id)?;
         Ok(self.values[id.index()])
@@ -633,6 +686,11 @@ impl ParamValues {
     }
 
     /// Assigns one value by its free-parameter identifier.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ParamError::InvalidFreeParamId`] when `id` is outside the
+    /// shared layout's free-parameter ordering.
     pub fn set_free(&mut self, id: FreeParamId, value: f64) -> ParamResult<()> {
         let full_id = self.layout.free_param(id)?;
         self.values[full_id.index()] = value;
@@ -640,6 +698,11 @@ impl ParamValues {
     }
 
     /// Replaces all free values and restores fixed values from the layout.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ParamError::FreeLengthMismatch`] when `values` does not
+    /// contain exactly one value per free parameter.
     pub fn set_free_values(&mut self, values: &[f64]) -> ParamResult<()> {
         let layout = Arc::clone(&self.layout);
         layout.fill_full_from_free(values, &mut self.values)

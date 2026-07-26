@@ -16,6 +16,11 @@ pub struct EventBatch {
 
 impl EventBatch {
     /// Validates column counts and lengths and constructs a batch.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduDataError`] when column counts do not match `schema` or
+    /// column and weight lengths are inconsistent.
     pub fn new(
         schema: Arc<Schema>,
         p4s: Vec<Arc<[RealVec4]>>,
@@ -46,6 +51,11 @@ impl EventBatch {
     }
 
     /// Collects owned row events into a columnar batch.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduDataError`] when an event has the wrong number of values
+    /// or weighted and unweighted events are mixed.
     pub fn from_events<I>(schema: Arc<Schema>, events: I) -> LadduDataResult<Self>
     where
         I: IntoIterator<Item = OwnedEvent>,
@@ -177,6 +187,10 @@ impl EventBatch {
     }
 
     /// Copies the half-open row range `start..end` into a new batch.
+    ///
+    /// # Panics
+    ///
+    /// Panics when `start > end` or `end` exceeds the batch length.
     pub fn slice(&self, start: usize, end: usize) -> Self {
         assert!(start <= end);
         assert!(end <= self.len);
@@ -212,6 +226,11 @@ impl EventBatch {
     }
 
     /// Concatenates schema-compatible batches.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduDataError`] when `batches` is empty or contains
+    /// incompatible schemas.
     pub fn concat(batches: &[Self]) -> LadduDataResult<Self> {
         if batches.is_empty() {
             return Err(LadduDataError::InvalidArgument(
@@ -474,6 +493,11 @@ impl EventBatchBuilder {
     }
 
     /// Appends an unweighted event from ordered values.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduDataError`] when value counts do not match the schema or
+    /// the builder already contains weighted events.
     pub fn push<P, S>(&mut self, p4s: P, scalars: S) -> LadduDataResult<&mut Self>
     where
         P: IntoIterator<Item = RealVec4>,
@@ -486,6 +510,11 @@ impl EventBatchBuilder {
     }
 
     /// Appends a weighted event from ordered values.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduDataError`] when value counts do not match the schema or
+    /// the builder already contains unweighted events.
     pub fn push_weighted<P, S>(
         &mut self,
         p4s: P,
@@ -504,6 +533,11 @@ impl EventBatchBuilder {
     }
 
     /// Validates and appends one owned event.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduDataError`] when the event shape does not match the
+    /// schema or its weight presence differs from prior events.
     pub fn push_event(&mut self, event: OwnedEvent) -> LadduDataResult<&mut Self> {
         if event.p4s.len() != self.schema.n_p4s() {
             return Err(LadduDataError::Schema(
@@ -553,6 +587,11 @@ impl EventBatchBuilder {
     }
 
     /// Appends all owned events from an iterator.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first [`LadduDataError`] produced by an event whose shape or
+    /// weight presence is incompatible with the builder.
     pub fn extend<I>(&mut self, events: I) -> LadduDataResult<&mut Self>
     where
         I: IntoIterator<Item = OwnedEvent>,
@@ -565,6 +604,11 @@ impl EventBatchBuilder {
     }
 
     /// Finalizes the builder into an immutable batch.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduDataError`] if the accumulated columns or weights have
+    /// inconsistent lengths.
     pub fn finish(self) -> LadduDataResult<EventBatch> {
         let p4s = self.p4s.into_iter().map(Arc::from).collect();
         let scalars = self.scalars.into_iter().map(Arc::from).collect();

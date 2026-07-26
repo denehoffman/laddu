@@ -1,3 +1,4 @@
+//! Integration tests comparing K-matrix gradients across CPU and WebGPU.
 #![cfg(feature = "wgpu")]
 
 use laddu::{

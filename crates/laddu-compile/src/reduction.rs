@@ -84,6 +84,11 @@ impl ReductionPlan {
     }
 
     /// Transform one model value and return its chain-rule derivative.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ReductionError::NonPositiveValue`] when a positive-real
+    /// transform receives a non-positive real component.
     pub fn apply(self, value: Complex64) -> Result<ReductionOutput, ReductionError> {
         let real = value.re;
         let (value, derivative) = match self.transform {

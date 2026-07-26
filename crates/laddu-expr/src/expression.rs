@@ -723,7 +723,13 @@ impl Expr {
         GraphBuilder::new().build(self)
     }
 
-    /// Rebuild a shareable expression DAG from its serialized graph form.
+    /// Rebuilds a shareable expression DAG from its serialized graph form.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ExprGraphError`] when the graph is empty, its root or a child
+    /// identifier is invalid, its metadata length does not match its node
+    /// count, or its nodes are not topologically ordered.
     pub fn from_graph(graph: ExprGraph) -> Result<Self, ExprGraphError> {
         let ExprGraph {
             root,
@@ -822,6 +828,11 @@ impl Expr {
     }
 
     /// Determines and validates the expression's structural shape.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ExprShapeError`] when this expression contains an operation
+    /// whose operand shapes are incompatible.
     pub fn shape(&self) -> Result<ExprShape, ExprShapeError> {
         self.node
             .shape
@@ -1318,9 +1329,11 @@ where
 
 /// Constructs a row-major matrix from a flat sequence.
 ///
-/// Returns an error when either dimension is zero, the dimension product
-/// overflows, the element count differs from `rows * cols`, or an element is
-/// not scalar-valued.
+/// # Errors
+///
+/// Returns [`ExprShapeError`] when either dimension is zero, the dimension
+/// product overflows, the element count differs from `rows * cols`, or an
+/// element is not scalar-valued.
 pub fn matrix_from_flat<E>(
     rows: usize,
     cols: usize,
@@ -1416,6 +1429,12 @@ pub struct ExprGraph {
 
 impl ExprGraph {
     /// Return a copy of this graph with the named scalar parameter fixed.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ParamError::UnknownName`] when the graph has no scalar
+    /// parameter named `name`, or [`ParamError::FixedValueOutOfBounds`] when
+    /// `value` is outside that parameter's bounds.
     pub fn fix_parameter(&self, name: &str, value: f64) -> ParamResult<Self> {
         self.map_parameter(name, |parameter| {
             if !parameter.bounds_spec().contains(value) {
@@ -1429,6 +1448,11 @@ impl ExprGraph {
     }
 
     /// Return a copy of this graph with the named scalar parameter free.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ParamError::UnknownName`] when the graph has no scalar
+    /// parameter named `name`.
     pub fn free_parameter(&self, name: &str) -> ParamResult<Self> {
         self.map_parameter(name, |parameter| Ok(parameter.clone().with_free()))
     }
@@ -1597,6 +1621,12 @@ impl ExprGraph {
     ///
     /// Child nodes must precede their parents, metadata must have one entry per
     /// node, and `root` must identify an existing node.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ExprGraphError`] when the graph is empty, the metadata and
+    /// node lengths differ, `root` is invalid, or a child identifier is
+    /// invalid or does not precede its parent.
     pub fn from_parts(
         root: ExprId,
         nodes: Vec<ExprNode>,

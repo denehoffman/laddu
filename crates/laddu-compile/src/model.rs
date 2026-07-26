@@ -316,26 +316,51 @@ impl<'de> Deserialize<'de> for CompiledModel {
 
 impl CompiledModel {
     /// Projects the source graph to selected tags and recompiles it.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CompileError`](crate::CompileError) when the projected graph
+    /// has conflicting parameter definitions or an optimization pass fails.
     pub fn project_tags<'a>(&self, tags: impl IntoIterator<Item = &'a str>) -> CompileResult<Self> {
         Self::from_graph(self.source_graph.project_tags(tags))
     }
 
     /// Compiles an expression with default options.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CompileError`](crate::CompileError) when parameter collection
+    /// or an optimization pass fails.
     pub fn from_expr(expr: &Expr) -> CompileResult<Self> {
         Self::from_expr_with_options(expr, &CompileOptions::default())
     }
 
     /// Compiles an expression with explicit options.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CompileError`](crate::CompileError) when parameter collection
+    /// or an optimization pass fails.
     pub fn from_expr_with_options(expr: &Expr, options: &CompileOptions) -> CompileResult<Self> {
         Self::from_graph_with_options(expr.to_graph(), options)
     }
 
     /// Compiles a serialized graph with default options.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CompileError`](crate::CompileError) when parameter collection
+    /// or an optimization pass fails.
     pub fn from_graph(graph: ExprGraph) -> CompileResult<Self> {
         Self::from_graph_with_options(graph, &CompileOptions::default())
     }
 
     /// Compiles a serialized graph with explicit options.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CompileError`](crate::CompileError) when parameter collection
+    /// or an optimization pass fails.
     pub fn from_graph_with_options(
         graph: ExprGraph,
         options: &CompileOptions,
@@ -370,11 +395,21 @@ impl CompiledModel {
     }
 
     /// Fix a parameter by name and recompile the model.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CompileError`](crate::CompileError) when the parameter is
+    /// unknown, the fixed value is out of bounds, or recompilation fails.
     pub fn fix_parameter(&self, name: &str, value: f64) -> CompileResult<Self> {
         self.fix_parameter_with_options(name, value, &CompileOptions::default())
     }
 
     /// Fix a parameter by name and recompile with explicit options.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CompileError`](crate::CompileError) when the parameter is
+    /// unknown, the fixed value is out of bounds, or recompilation fails.
     pub fn fix_parameter_with_options(
         &self,
         name: &str,
@@ -385,11 +420,21 @@ impl CompiledModel {
     }
 
     /// Free a parameter by name and recompile the model.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CompileError`](crate::CompileError) when the parameter is
+    /// unknown or recompilation fails.
     pub fn free_parameter(&self, name: &str) -> CompileResult<Self> {
         self.free_parameter_with_options(name, &CompileOptions::default())
     }
 
     /// Free a parameter by name and recompile with explicit options.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CompileError`](crate::CompileError) when the parameter is
+    /// unknown or recompilation fails.
     pub fn free_parameter_with_options(
         &self,
         name: &str,
@@ -448,6 +493,11 @@ fn bake_fixed_parameters(graph: &ExprGraph) -> ExprGraph {
 }
 
 /// Collects and validates all scalar parameters referenced by `graph`.
+///
+/// # Errors
+///
+/// Returns [`CompileError`](crate::CompileError) when parameter definitions
+/// conflict or contain invalid metadata or values.
 pub fn collect_params(graph: &ExprGraph) -> CompileResult<ParamLayout> {
     let mut registry = ParamRegistry::new();
     for node in graph.nodes() {

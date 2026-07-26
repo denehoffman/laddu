@@ -171,7 +171,7 @@ impl PyParticle {
             particle = particle.with_charge(value);
         }
         if let Some(value) = isospin {
-            particle = particle.with_isospin(value.inner.clone());
+            particle = particle.with_isospin(value.inner);
         }
         if let Some(value) = strangeness {
             particle = particle.with_strangeness(value).map_err(to_py_err)?;
@@ -394,7 +394,7 @@ impl PyParticle {
     #[getter]
     /// Isospin or None: Isospin state.
     fn isospin_checked(&self) -> Option<PyIsospin> {
-        self.inner.isospin.clone().map(|inner| PyIsospin { inner })
+        self.inner.isospin.map(|inner| PyIsospin { inner })
     }
     #[getter]
     /// int: Strangeness; raises if unknown.

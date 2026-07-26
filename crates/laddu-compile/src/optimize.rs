@@ -95,6 +95,11 @@ impl OptimizationPipeline {
     }
 
     /// Runs all passes until convergence or the iteration limit.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CompileError`](crate::CompileError) when any configured pass
+    /// cannot transform the graph.
     pub fn run(&self, mut graph: ExprGraph) -> CompileResult<ExprGraph> {
         for _ in 0..self.max_iterations {
             let previous = graph.clone();
@@ -138,6 +143,11 @@ pub trait OptimizationPass: Send + Sync {
     /// Returns a stable diagnostic name.
     fn name(&self) -> &'static str;
     /// Transforms `graph`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CompileError`](crate::CompileError) when the graph cannot be
+    /// transformed into a valid result.
     fn run(&self, graph: ExprGraph) -> CompileResult<ExprGraph>;
 }
 
@@ -314,6 +324,11 @@ pub trait RewriteRule: Send + Sync {
     fn name(&self) -> &'static str;
 
     /// Chooses how to emit the current node.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CompileError`](crate::CompileError) when the node cannot be
+    /// rewritten into a valid expression.
     fn rewrite(
         &self,
         node: &ExprNode,

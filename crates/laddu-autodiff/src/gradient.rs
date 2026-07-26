@@ -8,6 +8,11 @@ use num::complex::Complex64;
 use crate::{AutodiffError, AutodiffResult};
 
 /// Differentiates a scalar kernel with respect to free parameters.
+///
+/// # Errors
+///
+/// Returns [`AutodiffError`] when an instruction has no supported derivative
+/// rule or the generated gradient kernel IR is invalid.
 pub fn gradient_ir(
     primal: &ScalarKernelIr,
     free_params: &[ParamId],

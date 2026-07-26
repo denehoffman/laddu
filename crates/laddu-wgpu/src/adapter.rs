@@ -164,6 +164,12 @@ impl WgpuBackend {
     }
 
     /// Selects an adapter and opens a device using the requested precision.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WgpuError`] when the memory budget is invalid, no requested
+    /// adapter is available, required precision features are unsupported, or
+    /// device creation fails.
     pub fn open(&self, options: &WgpuOptions, precision: WgpuPrecision) -> WgpuResult<WgpuContext> {
         if options.memory_budget == Some(0) {
             return Err(WgpuError::InvalidMemoryBudget);

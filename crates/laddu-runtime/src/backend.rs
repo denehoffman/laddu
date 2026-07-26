@@ -44,6 +44,11 @@ impl PreparedDataset {
 
 impl PreparedModel {
     /// Evaluates the model for every event in a batch.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RuntimeError`] when parameters or event columns are
+    /// incompatible, evaluation fails, or a matrix solve is singular.
     pub fn evaluate_batch(
         &self,
         params: &ParamValues,
@@ -66,6 +71,11 @@ impl PreparedModel {
     }
 
     /// Evaluates the model and its free-parameter gradient for every event in a batch.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RuntimeError`] when inputs are incompatible, differentiation
+    /// or evaluation fails, or the selected backend lacks event-wise gradients.
     pub fn evaluate_batch_with_gradient(
         &self,
         params: &ParamValues,
@@ -81,6 +91,11 @@ impl PreparedModel {
     }
 
     /// Prepares a compiled model for the supplied execution context.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RuntimeError`] when model lowering, differentiation, backend
+    /// initialization, or precision selection fails.
     pub fn prepare(model: &CompiledModel, execution: &Execution) -> RuntimeResult<Self> {
         #[cfg(feature = "wgpu")]
         if let Some(context) = execution.wgpu_context() {
@@ -98,6 +113,11 @@ impl PreparedModel {
     }
 
     /// Prepares a dataset for repeated evaluation with this model.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RuntimeError`] when the dataset cannot be read or cached, its
+    /// schema is incompatible, or backend preparation fails.
     pub fn prepare_dataset(
         &self,
         execution: &Execution,
@@ -115,6 +135,11 @@ impl PreparedModel {
     }
 
     /// Executes a weighted scalar reduction over a prepared dataset.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RuntimeError`] when model and dataset backends differ, inputs
+    /// are incompatible, evaluation fails, or the reduction domain is invalid.
     pub fn reduce(
         &self,
         execution: &Execution,
@@ -139,6 +164,11 @@ impl PreparedModel {
     }
 
     /// Executes a weighted reduction and computes its free-parameter gradient.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RuntimeError`] when model and dataset backends differ,
+    /// differentiation or evaluation fails, or the reduction domain is invalid.
     pub fn reduce_with_gradient(
         &self,
         execution: &Execution,

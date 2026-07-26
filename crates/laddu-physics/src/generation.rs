@@ -111,6 +111,11 @@ impl MassProposal {
     }
 
     /// Draw a mass within the supplied kinematic interval.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduPhysicsError`] when the kinematic interval or proposal
+    /// bounds are non-finite, empty, or exclude a fixed mass.
     pub fn propose(
         &self,
         minimum: f64,
@@ -143,6 +148,11 @@ impl MassProposal {
     ///
     /// Custom proposals may retain the default `None`; density-aware generators
     /// use this hook only for optional importance adaptation.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduPhysicsError`] when the kinematic interval and uniform
+    /// proposal have no valid finite overlap.
     pub fn density(
         &self,
         minimum: f64,
@@ -228,6 +238,11 @@ impl VertexProposal {
     }
 
     /// Propose outgoing kinematics for a vertex.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduPhysicsError`] when the incoming or outgoing topology,
+    /// masses, or kinematics are invalid for the selected proposal.
     pub fn propose(
         &self,
         incoming: &[NamedMomentum<'_>],
@@ -277,6 +292,12 @@ pub struct AdaptiveTwoBodyDecay {
 
 impl AdaptiveTwoBodyDecay {
     /// Construct an angular proposal from nonnegative pilot-bin counts.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduPhysicsError`] when the counts are empty, negative, or
+    /// non-finite, their total is not positive and finite, or
+    /// `defensive_fraction` is outside `[0, 1]`.
     pub fn new(counts: Arc<[f64]>, defensive_fraction: f64) -> LadduPhysicsResult<Self> {
         let total: f64 = counts.iter().sum();
         if counts.is_empty()
@@ -325,6 +346,11 @@ impl AdaptiveTwoBodyDecay {
 
 impl AdaptiveTwoBodyDecay {
     /// Propose a two-body decay from the adapted angular density.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduPhysicsError`] when the vertex is not a one-to-two decay
+    /// or its masses and momenta are not physically valid.
     pub fn propose(
         &self,
         incoming: &[NamedMomentum<'_>],
@@ -571,6 +597,16 @@ impl ScalarSource {
     }
 
     /// Validate the source and return the smallest and largest values in its support.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduPhysicsError`] when a constant or bound is non-finite, a
+    /// uniform interval is empty, or histogram weights are invalid.
+    ///
+    /// # Panics
+    ///
+    /// Panics only if a histogram reports positive total weight without
+    /// containing any positive-weight bin.
     pub fn support(&self) -> LadduPhysicsResult<(f64, f64)> {
         match self {
             Self::Constant(value) if value.is_finite() => Ok((*value, *value)),
@@ -618,6 +654,11 @@ impl ScalarSource {
     }
 
     /// Draw a value and inverse-density weight from the source.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduPhysicsError`] when the source parameters or histogram
+    /// weights are invalid, or a histogram sample cannot be assigned to a bin.
     pub fn sample(&self, rng: &mut ProposalRng) -> LadduPhysicsResult<ScalarProposalResult> {
         match self {
             Self::Constant(value) if value.is_finite() => Ok(ScalarProposalResult {
@@ -708,6 +749,12 @@ impl InitialMomentum {
     }
 
     /// Validate this source against an edge name and particle definition.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduPhysicsError`] when particle mass metadata is missing,
+    /// momentum components are invalid or off shell, energy support is below
+    /// threshold, or the direction cannot be normalized.
     pub fn validate(
         &self,
         edge: &str,
@@ -766,6 +813,11 @@ impl InitialMomentum {
     }
 
     /// Draw an initial four-momentum after validating its particle definition.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduPhysicsError`] when source validation fails or a sampled
+    /// value cannot produce a physical on-shell momentum.
     pub fn sample(
         &self,
         edge: &str,
@@ -778,6 +830,11 @@ impl InitialMomentum {
 
     /// Sample after channel validation has already established the source and
     /// particle-mass invariants.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduPhysicsError`] when a scalar source cannot be sampled or
+    /// the supplied mass and sampled energy do not define a physical momentum.
     #[doc(hidden)]
     pub fn sample_prevalidated(
         &self,
@@ -871,6 +928,16 @@ impl TDistribution {
 
     /// Restrict this proposal to the intersection of these limits and the
     /// event-by-event physical t interval.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduPhysicsError`] when a specified limit is non-finite or
+    /// `t_min` is not less than `t_max`.
+    ///
+    /// # Panics
+    ///
+    /// Panics only if an option tested as present unexpectedly contains no
+    /// value.
     pub fn with_limits(
         mut self,
         t_min: Option<f64>,
@@ -1006,6 +1073,12 @@ impl From<TwoBodyScattering> for VertexProposal {
 
 impl TwoBodyScattering {
     /// Propose outgoing two-body scattering kinematics.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduPhysicsError`] when the topology or configured edge
+    /// pairing is invalid, the event is outside physical phase space, or the
+    /// transfer distribution cannot be sampled.
     pub fn propose(
         &self,
         incoming: &[NamedMomentum<'_>],

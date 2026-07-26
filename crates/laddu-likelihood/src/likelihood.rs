@@ -62,8 +62,18 @@ pub trait Objective: Debug + Send + Sync {
     /// Returns the stable parameter layout used by objective vectors.
     fn parameter_layout(&self) -> &ParamLayout;
     /// Evaluates the objective at the supplied free-parameter vector.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LikelihoodError`] when the parameter vector is invalid or
+    /// objective evaluation fails.
     fn value(&self, free_parameters: &[f64]) -> LikelihoodResult<f64>;
     /// Evaluates the objective and its gradient.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LikelihoodError`] when the parameter vector is invalid or
+    /// objective or gradient evaluation fails.
     fn value_gradient(&self, free_parameters: &[f64]) -> LikelihoodResult<LikelihoodEvaluation>;
 }
 
@@ -73,6 +83,11 @@ pub trait Objective: Debug + Send + Sync {
 /// same batch for the returned value and gradient.
 pub trait StochasticObjective: Objective {
     /// Evaluates an unbiased stochastic objective and gradient on a deterministic batch.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LikelihoodError`] when the parameter vector or batch fraction
+    /// is invalid, or stochastic evaluation fails.
     fn stochastic_value_gradient(
         &self,
         free_parameters: &[f64],
@@ -87,11 +102,21 @@ pub trait LikelihoodTerm: Debug + Send + Sync {
     fn name(&self) -> &str;
 
     /// Registers parameters required by this term.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LikelihoodError`] when parameter definitions are invalid or
+    /// conflict with previously registered definitions.
     fn register_params(&self, _registry: &mut ParamRegistry) -> LikelihoodResult<()> {
         Ok(())
     }
 
     /// Resolves the term against a global parameter layout and execution context.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LikelihoodError`] when required parameters are missing or
+    /// incompatible, or runtime preparation fails.
     fn resolve(
         &mut self,
         global_params: Arc<ParamLayout>,
@@ -99,9 +124,19 @@ pub trait LikelihoodTerm: Debug + Send + Sync {
     ) -> LikelihoodResult<()>;
 
     /// Evaluates this term's negative-log-likelihood contribution.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LikelihoodError`] when parameters are incompatible or term
+    /// evaluation fails.
     fn nll(&self, params: &ParamValues, execution: &Execution) -> LikelihoodResult<f64>;
 
     /// Adds this term's gradient to `gradient` and returns its objective contribution.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LikelihoodError`] when parameters or gradient length are
+    /// incompatible, or value or derivative evaluation fails.
     fn nll_with_gradient(
         &self,
         params: &ParamValues,
@@ -160,6 +195,11 @@ pub trait LikelihoodTerm: Debug + Send + Sync {
 
     /// Evaluate a stochastic term contribution. Non-data terms remain exact by
     /// default; intensity terms override this to batch only observed events.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LikelihoodError`] when parameters, gradient length, or batch
+    /// fraction are invalid, or evaluation fails.
     fn stochastic_nll_with_gradient(
         &self,
         params: &ParamValues,
@@ -230,6 +270,11 @@ impl Likelihood {
     ///
     /// The terms are boxed internally, so the common case does not require a
     /// manual [`LikelihoodTerm::boxed`] call.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LikelihoodError`] when term names or parameter definitions
+    /// conflict, or a term cannot be resolved.
     pub fn new<T>(terms: impl IntoIterator<Item = T>) -> LikelihoodResult<Self>
     where
         T: LikelihoodTerm + 'static,
@@ -238,6 +283,11 @@ impl Likelihood {
     }
 
     /// Construct a likelihood containing heterogeneous, already boxed terms.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LikelihoodError`] when term names or parameter definitions
+    /// conflict, or a term cannot be resolved.
     pub fn new_boxed(
         terms: impl IntoIterator<Item = Box<dyn LikelihoodTerm>>,
     ) -> LikelihoodResult<Self> {
@@ -245,6 +295,11 @@ impl Likelihood {
     }
 
     /// Constructs a likelihood with an explicit execution context.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LikelihoodError`] when term names or parameter definitions
+    /// conflict, or a term cannot be resolved for `execution`.
     pub fn with_execution<T>(
         terms: impl IntoIterator<Item = T>,
         execution: &Execution,
@@ -261,6 +316,11 @@ impl Likelihood {
     }
 
     /// Construct a heterogeneous likelihood using a borrowed execution setup.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LikelihoodError`] when term names or parameter definitions
+    /// conflict, or a term cannot be resolved for `execution`.
     pub fn with_execution_boxed(
         terms: impl IntoIterator<Item = Box<dyn LikelihoodTerm>>,
         execution: &Execution,
@@ -278,7 +338,7 @@ impl Likelihood {
 
         let params = Arc::new(registry.layout()?);
         for term in &mut terms {
-            term.resolve(Arc::clone(&params), &execution)?;
+            term.resolve(Arc::clone(&params), execution)?;
         }
 
         Ok(Self {
@@ -322,6 +382,11 @@ impl Likelihood {
     }
 
     /// Evaluate the objective from free values in [`Self::params`] order.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LikelihoodError`] when parameters have the wrong layout or
+    /// length, violate bounds, or a term cannot be evaluated.
     pub fn nll<'a>(&self, parameters: impl Into<Parameters<'a>>) -> LikelihoodResult<f64> {
         let params = match parameters.into() {
             Parameters::Slice(free) => &self.params.values(free)?,
@@ -339,6 +404,11 @@ impl Likelihood {
     }
 
     /// Evaluates the objective and gradient from free or resolved parameter values.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LikelihoodError`] when parameters are invalid or a term's
+    /// value or gradient cannot be evaluated.
     pub fn nll_with_gradient<'a>(
         &self,
         parameters: impl Into<Parameters<'a>>,
@@ -365,6 +435,11 @@ impl Likelihood {
     }
 
     /// Evaluates an unbiased stochastic objective and gradient.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LikelihoodError`] when `fraction` is outside `(0, 1]`,
+    /// parameters are invalid, or stochastic term evaluation fails.
     pub fn stochastic_nll_with_gradient(
         &self,
         free_parameters: &[f64],
@@ -397,6 +472,11 @@ impl Likelihood {
     }
 
     /// Prepares accepted and generated Monte Carlo integrals for an intensity term.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LikelihoodError`] when `term_name` is missing or not an
+    /// intensity term, or dataset preparation fails.
     pub fn cross_section_integrals(
         &self,
         term_name: &str,
@@ -412,6 +492,11 @@ impl Likelihood {
     }
 
     /// Projects an intensity term onto selected model tags over generated Monte Carlo.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LikelihoodError`] when `term_name` is missing or not an
+    /// intensity term, graph projection fails, or dataset preparation fails.
     pub fn projection<'a>(
         &self,
         term_name: &str,
@@ -516,6 +601,11 @@ impl NllTerm {
     }
 
     /// Creates an unresolved intensity term from data and accepted Monte Carlo datasets.
+    ///
+    /// # Errors
+    ///
+    /// This constructor currently succeeds for all inputs. The result type is
+    /// retained for compatibility with other fallible likelihood constructors.
     pub fn new(
         name: impl Into<String>,
         model: &CompiledModel,
@@ -538,6 +628,11 @@ impl NllTerm {
     }
 
     /// Returns the prepared observed dataset.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LikelihoodError::UnresolvedTerm`] when this term has not been
+    /// resolved as part of a [`Likelihood`].
     pub fn data(&self) -> LikelihoodResult<&PreparedDataset> {
         self.data
             .as_ref()
@@ -551,6 +646,11 @@ impl NllTerm {
     }
 
     /// Returns the prepared accepted Monte Carlo dataset.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LikelihoodError::UnresolvedTerm`] when this term has not been
+    /// resolved as part of a [`Likelihood`].
     pub fn accepted_mc(&self) -> LikelihoodResult<&PreparedDataset> {
         self.accepted_mc
             .as_ref()
@@ -558,12 +658,22 @@ impl NllTerm {
     }
 
     /// Returns the observed dataset's total event weight.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LikelihoodError::UnresolvedTerm`] when this term has not been
+    /// resolved as part of a [`Likelihood`].
     pub fn data_weight_sum(&self) -> LikelihoodResult<f64> {
         self.data_weight_sum
             .ok_or_else(|| LikelihoodError::UnresolvedTerm(self.name().to_owned()))
     }
 
     /// Returns the weighted log-intensity sum over observed data.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LikelihoodError`] when the term is unresolved, parameters are
+    /// invalid, runtime evaluation fails, or an intensity is not positive.
     pub fn data_log_intensity_sum(&self, free: &[f64]) -> LikelihoodResult<f64> {
         let params = self.global_values(free)?;
         let local_params = self.local_values(&params)?;
@@ -576,6 +686,11 @@ impl NllTerm {
     }
 
     /// Returns the weighted intensity integral over accepted Monte Carlo.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LikelihoodError`] when the term is unresolved, parameters are
+    /// invalid, runtime evaluation fails, or an intensity is not positive.
     pub fn accepted_normalization(&self, free: &[f64]) -> LikelihoodResult<f64> {
         let params = self.global_values(free)?;
         let local_params = self.local_values(&params)?;
@@ -826,6 +941,11 @@ impl std::fmt::Debug for ExtendedNllTerm {
 
 impl ExtendedNllTerm {
     /// Creates an unresolved extended intensity term.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LikelihoodError`] if construction of the underlying intensity
+    /// term fails.
     pub fn new(
         name: impl Into<String>,
         model: &CompiledModel,
@@ -838,26 +958,51 @@ impl ExtendedNllTerm {
     }
 
     /// Returns the prepared observed dataset.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LikelihoodError::UnresolvedTerm`] when this term has not been
+    /// resolved.
     pub fn data(&self) -> LikelihoodResult<&PreparedDataset> {
         self.inner.data()
     }
 
     /// Returns the prepared accepted Monte Carlo dataset.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LikelihoodError::UnresolvedTerm`] when this term has not been
+    /// resolved.
     pub fn accepted_mc(&self) -> LikelihoodResult<&PreparedDataset> {
         self.inner.accepted_mc()
     }
 
     /// Returns the observed dataset's total event weight.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LikelihoodError::UnresolvedTerm`] when this term has not been
+    /// resolved.
     pub fn data_weight_sum(&self) -> LikelihoodResult<f64> {
         self.inner.data_weight_sum()
     }
 
     /// Returns the weighted log-intensity sum over observed data.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LikelihoodError`] when the term is unresolved, parameters are
+    /// invalid, runtime evaluation fails, or an intensity is not positive.
     pub fn data_log_intensity_sum(&self, free: &[f64]) -> LikelihoodResult<f64> {
         self.inner.data_log_intensity_sum(free)
     }
 
     /// Returns the weighted intensity integral over accepted Monte Carlo.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LikelihoodError`] when the term is unresolved, parameters are
+    /// invalid, runtime evaluation fails, or an intensity is not positive.
     pub fn accepted_normalization(&self, free: &[f64]) -> LikelihoodResult<f64> {
         self.inner.accepted_normalization(free)
     }
@@ -992,6 +1137,11 @@ pub struct RidgePenalty {
 
 impl RidgePenalty {
     /// Creates a ridge penalty with weight `lambda`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LikelihoodError`] when the name or parameter list is empty or
+    /// duplicated, or `lambda` is negative or non-finite.
     pub fn new(
         name: impl Into<String>,
         parameter_names: impl IntoIterator<Item = impl Into<String>>,
@@ -1038,6 +1188,11 @@ pub struct LassoPenalty {
 
 impl LassoPenalty {
     /// Creates a lasso penalty with weight `lambda`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LikelihoodError`] when the name or parameter list is empty or
+    /// duplicated, or `lambda` is negative or non-finite.
     pub fn new(
         name: impl Into<String>,
         parameter_names: impl IntoIterator<Item = impl Into<String>>,
@@ -1223,16 +1378,31 @@ impl LikelihoodProjection {
     }
 
     /// Returns the projected intensity integral over accepted Monte Carlo.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LikelihoodError`] when parameters are invalid, runtime
+    /// evaluation fails, or an intensity is not positive.
     pub fn accepted_integral(&self, free: &[f64]) -> LikelihoodResult<f64> {
         self.projected_integral(free, &self.projected_accepted_mc, "accepted MC")
     }
 
     /// Returns the projected intensity integral over generated Monte Carlo.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LikelihoodError`] when parameters are invalid, runtime
+    /// evaluation fails, or an intensity is not positive.
     pub fn generated_integral(&self, free: &[f64]) -> LikelihoodResult<f64> {
         self.projected_integral(free, &self.projected_generated_mc, "generated MC")
     }
 
     /// Returns the projected acceptance ratio.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LikelihoodError`] when either accepted or generated integral
+    /// cannot be evaluated or is not positive.
     pub fn acceptance(&self, free: &[f64]) -> LikelihoodResult<f64> {
         let generated = positive_integral("generated MC", self.generated_integral(free)?)?;
         let accepted = positive_integral("accepted MC", self.accepted_integral(free)?)?;
@@ -1240,6 +1410,11 @@ impl LikelihoodProjection {
     }
 
     /// Returns the unprojected accepted Monte Carlo integral.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LikelihoodError`] when parameters are invalid, runtime
+    /// evaluation fails, or an intensity is not positive.
     pub fn full_accepted_integral(&self, free: &[f64]) -> LikelihoodResult<f64> {
         let global = self.full_projection.global_layout.values(free)?;
         let local = self.full_projection.project(&global)?;
@@ -1254,12 +1429,22 @@ impl LikelihoodProjection {
     }
 
     /// Returns the projected, acceptance-corrected event yield.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LikelihoodError`] when accepted or generated integrals cannot
+    /// be evaluated or the accepted integral is not positive.
     pub fn acceptance_corrected_yield(&self, free: &[f64]) -> LikelihoodResult<f64> {
         let accepted = positive_integral("accepted MC", self.full_accepted_integral(free)?)?;
         Ok(self.data_weight_sum * self.generated_integral(free)? / accepted)
     }
 
     /// Returns the projected cross section for a positive luminosity.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LikelihoodError`] when `luminosity` is not positive or the
+    /// acceptance-corrected yield cannot be evaluated.
     pub fn cross_section(&self, free: &[f64], luminosity: f64) -> LikelihoodResult<f64> {
         if luminosity <= 0.0 {
             return Err(LikelihoodError::NonPositiveLuminosity(luminosity));
@@ -1268,6 +1453,11 @@ impl LikelihoodProjection {
     }
 
     /// Returns per-event projected weights over generated Monte Carlo.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LikelihoodError`] when parameters or integrals are invalid,
+    /// generated data cannot be read, or runtime evaluation fails.
     pub fn weights(&self, free: &[f64], acceptance_corrected: bool) -> LikelihoodResult<Vec<f64>> {
         let scale = if acceptance_corrected {
             self.data_weight_sum
@@ -1295,6 +1485,11 @@ impl LikelihoodProjection {
     }
 
     /// Returns projected intensities over generated Monte Carlo.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LikelihoodError`] when parameters are invalid, generated data
+    /// cannot be read, or runtime evaluation fails.
     pub fn intensities(&self, free: &[f64]) -> LikelihoodResult<Vec<f64>> {
         let global = self.projected_params.global_layout.values(free)?;
         let local = self.projected_params.project(&global)?;
@@ -1357,6 +1552,11 @@ impl CrossSectionIntegrals {
     }
 
     /// Returns the intensity integral over accepted Monte Carlo.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LikelihoodError`] when parameters are invalid, runtime
+    /// evaluation fails, or an intensity is not positive.
     pub fn accepted_integral(&self, free: &[f64]) -> LikelihoodResult<f64> {
         let params = self.projection.global_layout.values(free)?;
         let local_params = self.projection.project(&params)?;
@@ -1364,6 +1564,11 @@ impl CrossSectionIntegrals {
     }
 
     /// Returns the intensity integral over generated Monte Carlo.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LikelihoodError`] when parameters are invalid, runtime
+    /// evaluation fails, or an intensity is not positive.
     pub fn generated_integral(&self, free: &[f64]) -> LikelihoodResult<f64> {
         let params = self.projection.global_layout.values(free)?;
         let local_params = self.projection.project(&params)?;
@@ -1371,6 +1576,11 @@ impl CrossSectionIntegrals {
     }
 
     /// Returns the accepted-to-generated integral ratio.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LikelihoodError`] when either integral cannot be evaluated or
+    /// is not positive.
     pub fn acceptance(&self, free: &[f64]) -> LikelihoodResult<f64> {
         let generated = positive_integral("generated MC", self.generated_integral(free)?)?;
         let accepted = positive_integral("accepted MC", self.accepted_integral(free)?)?;
@@ -1378,6 +1588,11 @@ impl CrossSectionIntegrals {
     }
 
     /// Corrects an accepted yield for finite acceptance.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LikelihoodError`] when an integral cannot be evaluated or the
+    /// accepted integral is not positive.
     pub fn acceptance_corrected_yield(
         &self,
         free: &[f64],
@@ -1391,6 +1606,11 @@ impl CrossSectionIntegrals {
     }
 
     /// Returns the acceptance-corrected cross section for a positive luminosity.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LikelihoodError`] when `luminosity` is not positive or the
+    /// acceptance-corrected yield cannot be evaluated.
     pub fn cross_section(&self, free: &[f64], luminosity: f64) -> LikelihoodResult<f64> {
         if luminosity <= 0.0 {
             return Err(LikelihoodError::NonPositiveLuminosity(luminosity));

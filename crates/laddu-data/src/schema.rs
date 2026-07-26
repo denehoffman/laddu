@@ -26,6 +26,11 @@ impl PartialEq for Schema {
 
 impl Schema {
     /// Validates and constructs a logical schema.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduDataError`] when four-momentum or scalar column names are
+    /// duplicated.
     pub fn new(
         p4s: impl IntoIterator<Item = impl Into<Name>>,
         scalars: impl IntoIterator<Item = impl Into<Name>>,
@@ -80,12 +85,22 @@ impl Schema {
     }
 
     /// Requires and returns a four-momentum column index.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduDataError::MissingColumn`] when `name` is not a
+    /// four-momentum column.
     pub fn require_p4(&self, name: &str) -> LadduDataResult<usize> {
         self.p4_index(name)
             .ok_or_else(|| LadduDataError::MissingColumn(Name::from(name)))
     }
 
     /// Requires and returns a scalar column index.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduDataError::MissingColumn`] when `name` is not a scalar
+    /// column.
     pub fn require_scalar(&self, name: &str) -> LadduDataResult<usize> {
         self.scalar_index(name)
             .ok_or_else(|| LadduDataError::MissingColumn(Name::from(name)))
@@ -223,6 +238,11 @@ pub struct ColumnInfo<'a> {
 
 impl Schema {
     /// Infers a logical schema from available physical columns.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduDataError`] when required momentum components or weights
+    /// are missing, names are ambiguous, or inferred logical names conflict.
     pub fn infer_from_columns<'a>(
         columns: impl IntoIterator<Item = ColumnInfo<'a>>,
         options: &SchemaInferenceOptions,
@@ -294,6 +314,11 @@ impl Schema {
     }
 
     /// Validates that all physical columns required by this schema are available.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduDataError::MissingColumn`] when a required physical
+    /// column is absent or has an unsupported type.
     pub fn validate_required_columns<'a>(
         &self,
         available: impl IntoIterator<Item = ColumnInfo<'a>>,

@@ -412,6 +412,11 @@ impl<'a> ExprGraphDotDisplay<'a> {
 
     #[cfg(feature = "svg")]
     /// Renders the generated Graphviz graph as an SVG document.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GraphRenderError::Dot`] when the generated Graphviz DOT
+    /// source cannot be parsed.
     pub fn render_svg(&self) -> Result<String, GraphRenderError> {
         use layout::{backends::svg::SVGWriter, gv};
 
