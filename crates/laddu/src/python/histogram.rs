@@ -3,7 +3,7 @@ use pyo3::prelude::*;
 
 use super::error::to_py_err;
 
-#[pyclass(name = "Histogram", module = "laddu", frozen, skip_from_py_object)]
+#[pyclass(name = "Histogram", module = "laddu", skip_from_py_object)]
 #[derive(Clone)]
 /// A weighted one-dimensional histogram with explicit flow bins.
 ///
@@ -15,6 +15,8 @@ use super::error::to_py_err;
 ///     Strictly increasing edges; there must be one more edge than count.
 /// underflow, overflow : float, default=0.0
 ///     Weight outside the regular bin range.
+/// errors : sequence of float, optional
+///     Per-bin uncertainties. Defaults to the square root of the absolute count.
 pub struct PyHistogram {
     pub(crate) inner: Histogram,
 }
@@ -28,12 +30,21 @@ impl PyHistogram {
     /// LadduError
     ///     If counts and edges have inconsistent lengths or invalid values.
     #[new]
-    #[pyo3(signature = (counts, bin_edges, *, underflow=0.0, overflow=0.0))]
-    fn new(counts: Vec<f64>, bin_edges: Vec<f64>, underflow: f64, overflow: f64) -> PyResult<Self> {
-        Ok(Self {
-            inner: Histogram::new_with_flow(counts, bin_edges, underflow, overflow)
-                .map_err(to_py_err)?,
-        })
+    #[pyo3(signature = (counts, bin_edges, *, underflow=0.0, overflow=0.0, errors=None))]
+    fn new(
+        counts: Vec<f64>,
+        bin_edges: Vec<f64>,
+        underflow: f64,
+        overflow: f64,
+        errors: Option<Vec<f64>>,
+    ) -> PyResult<Self> {
+        let mut hist =
+            Histogram::new_with_flow(counts, bin_edges, underflow, overflow).map_err(to_py_err)?;
+        if let Some(errors) = errors {
+            hist.set_errors(&errors).map_err(to_py_err)?;
+        }
+
+        Ok(Self { inner: hist })
     }
 
     #[staticmethod]
@@ -99,6 +110,53 @@ impl PyHistogram {
     /// list of float: Regular-bin contents.
     fn counts(&self) -> Vec<f64> {
         self.inner.counts().to_vec()
+    }
+
+    #[setter(counts)]
+    /// Replace all regular-bin contents without changing their uncertainties.
+    fn set_counts(&mut self, counts: Vec<f64>) -> PyResult<()> {
+        self.inner.set_counts(&counts).map_err(to_py_err)
+    }
+
+    #[getter]
+    /// list of float: Uncertainties in each bin.
+    fn errors(&self) -> Vec<f64> {
+        self.inner.errors().to_vec()
+    }
+
+    #[setter(errors)]
+    /// Replace all regular-bin uncertainties.
+    fn set_errors(&mut self, errors: Vec<f64>) -> PyResult<()> {
+        self.inner.set_errors(&errors).map_err(to_py_err)
+    }
+
+    #[pyo3(signature = (index, *, count=None, error=None))]
+    /// Set the count and/or uncertainty for one regular bin.
+    fn set_bin(&mut self, index: usize, count: Option<f64>, error: Option<f64>) -> PyResult<()> {
+        let mut updated = self.inner.clone();
+        if let Some(count) = count {
+            updated.set_count(index, count).map_err(to_py_err)?;
+        }
+        if let Some(error) = error {
+            updated.set_error(index, error).map_err(to_py_err)?;
+        }
+        self.inner = updated;
+        Ok(())
+    }
+
+    #[pyo3(signature = (value, *, weight=1.0, error=None))]
+    /// Add a value with an optional weight and explicit uncertainty.
+    ///
+    /// If ``error`` is omitted, the weight contributes to the bin uncertainty
+    /// in quadrature.
+    fn fill(&mut self, value: f64, weight: f64, error: Option<f64>) -> PyResult<()> {
+        if let Some(error) = error {
+            self.inner
+                .fill_weighted_with_error(value, weight, error)
+                .map_err(to_py_err)
+        } else {
+            self.inner.fill_weighted(value, weight).map_err(to_py_err)
+        }
     }
 
     #[getter]

@@ -13,6 +13,7 @@ pub struct Histogram {
     bin_edges: Vec<f64>,
     underflow: f64,
     overflow: f64,
+    errors: Vec<f64>,
 }
 
 impl Histogram {
@@ -31,10 +32,11 @@ impl Histogram {
         overflow: f64,
     ) -> LadduPhysicsResult<Self> {
         let histogram = Self {
-            counts,
+            counts: counts.clone(),
             bin_edges,
             underflow,
             overflow,
+            errors: counts.into_iter().map(|count| count.abs().sqrt()).collect(),
         };
         histogram.validate()?;
         Ok(histogram)
@@ -107,6 +109,21 @@ impl Histogram {
         Ok(histogram)
     }
 
+    /// Replace the uncertainties on all bins.
+    pub fn set_errors(&mut self, errors: &[f64]) -> LadduPhysicsResult<()> {
+        if self.counts.len() != errors.len() {
+            return Err(LadduPhysicsError::invalid_length(
+                "`errors`",
+                format!("same length as `counts` ({})", self.counts.len(),),
+                errors.len(),
+            ));
+        }
+
+        Self::validate_errors(errors)?;
+        self.errors = errors.to_vec();
+        Ok(())
+    }
+
     /// Add one unit-weight entry.
     pub fn fill(&mut self, value: f64) -> LadduPhysicsResult<()> {
         self.fill_weighted(value, 1.0)
@@ -139,6 +156,52 @@ impl Histogram {
             self.overflow += weight;
         } else if let Some(index) = self.bin_index(value) {
             self.counts[index] += weight;
+            self.errors[index] = self.errors[index].hypot(weight);
+        }
+
+        Ok(())
+    }
+
+    /// Add one unit-weight entry with the given entry uncertainty.
+    pub fn fill_with_error(&mut self, value: f64, error: f64) -> LadduPhysicsResult<()> {
+        self.fill_weighted_with_error(value, 1.0, error)
+    }
+
+    /// Add an entry with an explicit weight and uncertainty.
+    pub fn fill_weighted_with_error(
+        &mut self,
+        value: f64,
+        weight: f64,
+        error: f64,
+    ) -> LadduPhysicsResult<()> {
+        if !value.is_finite() {
+            return Err(LadduPhysicsError::invalid_value(
+                "histogram fill value",
+                "finite",
+                value,
+            ));
+        }
+
+        if !weight.is_finite() {
+            return Err(LadduPhysicsError::invalid_value(
+                "histogram fill weight",
+                "finite",
+                weight,
+            ));
+        }
+
+        Self::validate_error("histogram fill error", error)?;
+
+        let first = self.bin_edges[0];
+        let last = *self.bin_edges.last().unwrap();
+
+        if value < first {
+            self.underflow += weight;
+        } else if value >= last {
+            self.overflow += weight;
+        } else if let Some(index) = self.bin_index(value) {
+            self.counts[index] += weight;
+            self.errors[index] = self.errors[index].hypot(error);
         }
 
         Ok(())
@@ -154,6 +217,70 @@ impl Histogram {
     /// Return the number of weighted counts in each bin.
     pub fn counts(&self) -> &[f64] {
         &self.counts
+    }
+
+    /// Replace the contents of all bins without changing their uncertainties.
+    pub fn set_counts(&mut self, counts: &[f64]) -> LadduPhysicsResult<()> {
+        if self.counts.len() != counts.len() {
+            return Err(LadduPhysicsError::invalid_length(
+                "`counts`",
+                format!("same length as existing `counts` ({})", self.counts.len()),
+                counts.len(),
+            ));
+        }
+
+        Self::validate_counts(counts)?;
+        self.counts.copy_from_slice(counts);
+        Ok(())
+    }
+
+    /// Manually set the counts in a bin.
+    pub fn set_count(&mut self, bin_index: usize, value: f64) -> LadduPhysicsResult<()> {
+        if !value.is_finite() {
+            return Err(LadduPhysicsError::invalid_value(
+                "histogram bin count",
+                "finite",
+                value,
+            ));
+        }
+
+        if bin_index >= self.counts.len() {
+            return Err(LadduPhysicsError::invalid_value(
+                "histogram bin index",
+                format!("less than {}", self.counts.len()),
+                bin_index,
+            ));
+        }
+
+        self.counts[bin_index] = value;
+        Ok(())
+    }
+
+    /// Manually set the uncertainty in a bin.
+    pub fn set_error(&mut self, bin_index: usize, error: f64) -> LadduPhysicsResult<()> {
+        Self::validate_error("histogram bin error", error)?;
+
+        if bin_index >= self.errors.len() {
+            return Err(LadduPhysicsError::invalid_value(
+                "histogram bin index",
+                format!("less than {}", self.errors.len()),
+                bin_index,
+            ));
+        }
+
+        self.errors[bin_index] = error;
+        Ok(())
+    }
+
+    /// Return the uncertainties on each bin.
+    ///
+    /// # Note
+    ///
+    /// Histograms filled from values use the square root of the sum of squared
+    /// weights. Histograms constructed from counts default to
+    /// `sqrt(abs(count))`.
+    pub fn errors(&self) -> &[f64] {
+        &self.errors
     }
 
     /// Return the bin edges.
@@ -239,7 +366,15 @@ impl Histogram {
             .map(|count| count / total_weight)
             .collect();
 
-        Self::new_with_flow(counts, self.bin_edges.clone(), 0.0, 0.0)
+        let mut histogram = Self::new_with_flow(counts, self.bin_edges.clone(), 0.0, 0.0)?;
+        histogram.set_errors(
+            &self
+                .errors
+                .iter()
+                .map(|error| error / total_weight.abs())
+                .collect::<Vec<_>>(),
+        )?;
+        Ok(histogram)
     }
 
     /// Return a normalized histogram whose bins plus underflow/overflow sum to 1.
@@ -257,12 +392,20 @@ impl Histogram {
             .map(|count| count / total_weight)
             .collect();
 
-        Self::new_with_flow(
+        let mut histogram = Self::new_with_flow(
             counts,
             self.bin_edges.clone(),
             self.underflow / total_weight,
             self.overflow / total_weight,
-        )
+        )?;
+        histogram.set_errors(
+            &self
+                .errors
+                .iter()
+                .map(|error| error / total_weight.abs())
+                .collect::<Vec<_>>(),
+        )?;
+        Ok(histogram)
     }
 
     /// Return a probability density histogram.
@@ -284,7 +427,19 @@ impl Histogram {
             })
             .collect();
 
-        Self::new_with_flow(counts, self.bin_edges.clone(), 0.0, 0.0)
+        let mut histogram = Self::new_with_flow(counts, self.bin_edges.clone(), 0.0, 0.0)?;
+        histogram.set_errors(
+            &self
+                .errors
+                .iter()
+                .enumerate()
+                .map(|(i, error)| {
+                    let width = self.bin_edges[i + 1] - self.bin_edges[i];
+                    error / (total_weight * width)
+                })
+                .collect::<Vec<_>>(),
+        )?;
+        Ok(histogram)
     }
 
     /// Return a signed density histogram.
@@ -306,7 +461,19 @@ impl Histogram {
             })
             .collect();
 
-        Self::new_with_flow(counts, self.bin_edges.clone(), 0.0, 0.0)
+        let mut histogram = Self::new_with_flow(counts, self.bin_edges.clone(), 0.0, 0.0)?;
+        histogram.set_errors(
+            &self
+                .errors
+                .iter()
+                .enumerate()
+                .map(|(i, error)| {
+                    let width = self.bin_edges[i + 1] - self.bin_edges[i];
+                    error / (total_weight.abs() * width)
+                })
+                .collect::<Vec<_>>(),
+        )?;
+        Ok(histogram)
     }
 
     /// Sample a value from the histogram, assuming counts define bin probabilities.
@@ -396,6 +563,14 @@ impl Histogram {
             ));
         }
 
+        if self.errors.len() != self.counts.len() {
+            return Err(LadduPhysicsError::invalid_length(
+                "histogram errors",
+                format!("same length as counts ({})", self.counts.len()),
+                self.errors.len(),
+            ));
+        }
+
         for (index, edges) in self.bin_edges.windows(2).enumerate() {
             if edges[1] <= edges[0] {
                 return Err(LadduPhysicsError::invalid_relation(format!(
@@ -428,6 +603,8 @@ impl Histogram {
             }
         }
 
+        Self::validate_errors(&self.errors)?;
+
         if !self.underflow.is_finite() {
             return Err(LadduPhysicsError::invalid_value(
                 "histogram underflow",
@@ -444,6 +621,37 @@ impl Histogram {
             ));
         }
 
+        Ok(())
+    }
+
+    fn validate_counts(counts: &[f64]) -> LadduPhysicsResult<()> {
+        for (index, count) in counts.iter().enumerate() {
+            if !count.is_finite() {
+                return Err(LadduPhysicsError::invalid_value(
+                    format!("histogram count {index}"),
+                    "finite",
+                    *count,
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_error(name: impl Into<String>, error: f64) -> LadduPhysicsResult<()> {
+        if !error.is_finite() || error < 0.0 {
+            return Err(LadduPhysicsError::invalid_value(
+                name,
+                "finite and nonnegative",
+                error,
+            ));
+        }
+        Ok(())
+    }
+
+    fn validate_errors(errors: &[f64]) -> LadduPhysicsResult<()> {
+        for (index, error) in errors.iter().enumerate() {
+            Self::validate_error(format!("histogram error {index}"), *error)?;
+        }
         Ok(())
     }
 
@@ -728,6 +936,55 @@ mod tests {
     }
 
     #[test]
+    fn errors_default_to_sqrt_absolute_counts() {
+        let hist = Histogram::new(vec![4.0, -9.0], vec![0.0, 1.0, 2.0]).unwrap();
+
+        assert_relative_eq!(hist.errors(), &[2.0, 3.0][..]);
+    }
+
+    #[test]
+    fn weighted_fills_accumulate_uncertainties_in_quadrature() {
+        let mut hist = Histogram::empty(1, (0.0, 1.0)).unwrap();
+
+        hist.fill_weighted(0.5, 3.0).unwrap();
+        hist.fill_weighted(0.5, -4.0).unwrap();
+
+        assert_relative_eq!(hist.counts(), &[-1.0][..]);
+        assert_relative_eq!(hist.errors(), &[5.0][..]);
+    }
+
+    #[test]
+    fn explicit_fill_errors_accumulate_in_quadrature() {
+        let mut hist = Histogram::empty(1, (0.0, 1.0)).unwrap();
+
+        hist.fill_weighted_with_error(0.5, 10.0, 3.0).unwrap();
+        hist.fill_weighted_with_error(0.5, 20.0, 4.0).unwrap();
+
+        assert_relative_eq!(hist.counts(), &[30.0][..]);
+        assert_relative_eq!(hist.errors(), &[5.0][..]);
+        assert!(hist.fill_with_error(0.5, -1.0).is_err());
+    }
+
+    #[test]
+    fn manual_counts_and_errors_are_validated() {
+        let mut hist = Histogram::empty(2, (0.0, 1.0)).unwrap();
+
+        hist.set_counts(&[2.0, -3.0]).unwrap();
+        hist.set_errors(&[0.5, 1.5]).unwrap();
+        hist.set_count(1, 4.0).unwrap();
+        hist.set_error(0, 0.25).unwrap();
+
+        assert_relative_eq!(hist.counts(), &[2.0, 4.0][..]);
+        assert_relative_eq!(hist.errors(), &[0.25, 1.5][..]);
+        assert!(hist.set_counts(&[1.0]).is_err());
+        assert!(hist.set_counts(&[1.0, f64::NAN]).is_err());
+        assert!(hist.set_errors(&[1.0]).is_err());
+        assert!(hist.set_errors(&[1.0, -1.0]).is_err());
+        assert!(hist.set_count(2, 1.0).is_err());
+        assert!(hist.set_error(2, 1.0).is_err());
+    }
+
+    #[test]
     fn bin_index_uses_lower_inclusive_upper_exclusive_edges() {
         let hist = Histogram::empty(4, (0.0, 1.0)).unwrap();
 
@@ -765,6 +1022,18 @@ mod tests {
         assert_relative_eq!(normalized.overflow(), 0.0);
         assert_relative_eq!(normalized.total_weight(), 1.0);
         assert_relative_eq!(normalized.total_weight_with_flow(), 1.0);
+    }
+
+    #[test]
+    fn normalization_and_density_scale_errors() {
+        let mut hist = Histogram::new(vec![2.0, 6.0], vec![0.0, 1.0, 3.0]).unwrap();
+        hist.set_errors(&[1.0, 3.0]).unwrap();
+
+        let normalized = hist.normalized().unwrap();
+        assert_relative_eq!(normalized.errors(), &[0.125, 0.375][..]);
+
+        let density = hist.density().unwrap();
+        assert_relative_eq!(density.errors(), &[0.125, 0.1875][..]);
     }
 
     #[test]
