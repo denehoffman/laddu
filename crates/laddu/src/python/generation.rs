@@ -15,7 +15,7 @@ use super::{
     error::to_py_err,
     histogram::PyHistogram,
     model::{PyModel, model_free_values},
-    runtime::PyExecution,
+    runtime::{PyExecution, parse_memory_budget},
     topology::PyChannel,
 };
 
@@ -389,6 +389,21 @@ impl PyGenerationReport {
     fn seed(&self) -> u64 {
         self.inner.seed
     }
+    #[getter]
+    /// int: Event count selected for each generation chunk.
+    fn chunk_events(&self) -> usize {
+        self.inner.chunk_events
+    }
+    #[getter]
+    /// int: Planned peak memory use in bytes.
+    fn estimated_peak_bytes(&self) -> u64 {
+        self.inner.estimated_peak_bytes
+    }
+    #[getter]
+    /// int or None: Observed allocator high-water mark when available.
+    fn actual_high_water_bytes(&self) -> Option<u64> {
+        self.inner.actual_high_water_bytes
+    }
     fn __repr__(&self) -> String {
         format!(
             "GenerationReport(produced={}, proposals={}, acceptance_rate={:.3})",
@@ -436,7 +451,7 @@ impl PyGenerator {
         })
     }
 
-    #[pyo3(signature = (events, *, model=None, parameters=None, execution=None, batch_size=1024, seed=0, diagnostics=false))]
+    #[pyo3(signature = (events, *, model=None, parameters=None, execution=None, memory=None, seed=0, diagnostics=false))]
     #[allow(clippy::too_many_arguments)]
     /// Generate weighted phase-space events.
     ///
@@ -450,8 +465,8 @@ impl PyGenerator {
     ///     Model parameter values.
     /// execution : Execution, optional
     ///     Runtime used to evaluate ``model``.
-    /// batch_size : int, default=1024
-    ///     Proposal batch size.
+    /// memory : MemoryBudget, int, or str, optional
+    ///     Host-memory budget used to choose the proposal chunk size.
     /// seed : int, default=0
     ///     Random seed.
     /// diagnostics : bool, default=False
@@ -470,7 +485,7 @@ impl PyGenerator {
         model: Option<&PyModel>,
         parameters: Option<&Bound<'_, PyAny>>,
         execution: Option<&PyExecution>,
-        batch_size: usize,
+        memory: Option<&Bound<'_, PyAny>>,
         seed: u64,
         diagnostics: bool,
     ) -> PyResult<(PyDataset, PyGenerationReport)> {
@@ -490,7 +505,10 @@ impl PyGenerator {
             .transpose()?;
         let config = WeightedConfig {
             events,
-            batch_size,
+            memory: memory
+                .map(parse_memory_budget)
+                .transpose()?
+                .unwrap_or(laddu_runtime::MemoryBudget::Auto),
             seed,
             diagnostics,
         };
@@ -506,7 +524,7 @@ impl PyGenerator {
         ))
     }
 
-    #[pyo3(signature = (events, model, *, parameters=None, execution=None, batch_size=1024, seed=0, max_proposals=None, max_weight=None, pilot_proposals=10_000, safety_factor=2.0, grow_envelope=false, diagnostics=false))]
+    #[pyo3(signature = (events, model, *, parameters=None, execution=None, memory=None, seed=0, max_proposals=None, max_weight=None, pilot_proposals=10_000, safety_factor=2.0, grow_envelope=false, diagnostics=false))]
     #[allow(clippy::too_many_arguments)]
     /// Generate accept-reject unweighted events.
     ///
@@ -520,8 +538,8 @@ impl PyGenerator {
     ///     Model parameter values.
     /// execution : Execution, optional
     ///     Runtime used to evaluate ``model``.
-    /// batch_size : int, default=1024
-    ///     Proposal batch size.
+    /// memory : MemoryBudget, int, or str, optional
+    ///     Host-memory budget used to choose the proposal chunk size.
     /// seed : int, default=0
     ///     Random seed.
     /// max_proposals : int, optional
@@ -556,7 +574,7 @@ impl PyGenerator {
         model: &PyModel,
         parameters: Option<&Bound<'_, PyAny>>,
         execution: Option<&PyExecution>,
-        batch_size: usize,
+        memory: Option<&Bound<'_, PyAny>>,
         seed: u64,
         max_proposals: Option<usize>,
         max_weight: Option<f64>,
@@ -590,7 +608,10 @@ impl PyGenerator {
         let config = UnweightedConfig {
             events,
             max_proposals,
-            batch_size,
+            memory: memory
+                .map(parse_memory_budget)
+                .transpose()?
+                .unwrap_or(laddu_runtime::MemoryBudget::Auto),
             seed,
             diagnostics,
             envelope,

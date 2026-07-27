@@ -2,7 +2,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         Arc,
-        mpsc::{self, Receiver, Sender},
+        mpsc::{self, Receiver, Sender, SyncSender},
     },
     thread::{self, JoinHandle},
 };
@@ -393,7 +393,9 @@ impl RootBatchIter {
         local_len: usize,
         chunk_size: Option<usize>,
     ) -> Self {
-        let (tx, rx) = mpsc::channel();
+        // Keep at most one decoded batch ahead of the consumer so ROOT I/O
+        // cannot silently exceed the dataset's memory-derived chunk budget.
+        let (tx, rx) = mpsc::sync_channel(1);
 
         let handle = thread::spawn(move || {
             if let Err(err) = read_root_range_and_send_batches(
@@ -453,7 +455,7 @@ fn read_root_range_and_send_batches(
     local_start: usize,
     local_len: usize,
     chunk_size: Option<usize>,
-    tx: Sender<LadduDataResult<EventBatch>>,
+    tx: SyncSender<LadduDataResult<EventBatch>>,
 ) -> LadduDataResult<()> {
     let mut file = RootFile::open(key.file.as_ref()).map_err(root_source_error)?;
     let tree = file

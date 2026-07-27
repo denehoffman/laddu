@@ -499,7 +499,7 @@ def main() -> None:  # noqa: PLR0915
         model,
         parameters=truth,
         execution=execution,
-        batch_size=2_048,
+        memory='256 MiB',
         seed=args.seed,
         max_proposals=args.max_proposals,
         pilot_proposals=args.pilot_proposals,
@@ -516,7 +516,7 @@ def main() -> None:  # noqa: PLR0915
     normalization, normalization_report = generator.weighted(
         args.normalization_events,
         execution=execution,
-        batch_size=4_096,
+        memory='256 MiB',
         seed=args.seed + 1,
     )
     normalization_time = time.perf_counter() - started

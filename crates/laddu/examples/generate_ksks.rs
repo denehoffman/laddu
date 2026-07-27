@@ -33,14 +33,14 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let weighted = WeightedConfig {
         events: EVENTS,
-        batch_size: 256,
+        memory: MemoryBudget::Bytes(256 * 1024 * 1024),
         seed: SEED,
         diagnostics: true,
     };
     let unweighted = UnweightedConfig {
         events: EVENTS,
         max_proposals: None,
-        batch_size: 2_048,
+        memory: MemoryBudget::Bytes(256 * 1024 * 1024),
         seed: SEED.wrapping_add(1),
         diagnostics: true,
         envelope: EnvelopeMode::Pilot {

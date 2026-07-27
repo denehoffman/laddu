@@ -48,15 +48,16 @@ Omitting `model` yields the proposal/phase-space weights required for Monte Carl
 execution = ld.Execution("cpu", threads=8, precision="f64")
 generator = ld.Generator(channel)
 mc, report = generator.weighted(
-    200_000, execution=execution, batch_size=4096, seed=17,
+    200_000, execution=execution, memory="512 MiB", seed=17,
 )
-print(report.produced, report.sum_weights, report.maximum_weight)
+print(report.produced, report.chunk_events, report.estimated_peak_bytes)
 mc.write_to(ld.ParquetSink("generated.parquet"))
 ```
 
-Generation is deterministic for fixed inputs, seed, batch configuration, and implementation version. Treat the report as part of the dataset provenance.
+Generation is deterministic for fixed inputs and seed regardless of the
+memory-derived chunk size. Treat the report, including its estimated and
+observed memory use, as part of the dataset provenance.
 
 ## Validate the proposal
 
 Plot every generated invariant and angle used later. Verify four-momentum conservation, thresholds, finite weights, and coverage at bin edges. Proposal defects cannot be repaired by a larger fit sample.
-

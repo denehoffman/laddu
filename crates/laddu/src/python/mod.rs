@@ -123,7 +123,11 @@ macro_rules! laddu_python_module {
             #[pymodule_export]
             use $crate::python::query::{PyBin as Bin, PyPredicate as Predicate};
             #[pymodule_export]
-            use $crate::python::runtime::{PyExecution as Execution, capabilities, gpu};
+            use $crate::python::runtime::{
+                PyExecution as Execution, PyMemoryBudget as MemoryBudget,
+                PyMemoryPlan as MemoryPlan, PyMemoryResource as MemoryResource,
+                PyMemoryState as MemoryState, capabilities, gpu
+            };
             #[pymodule_export]
             use $crate::python::topology::{
                 PyChannel as Channel, PyEdge as Edge, PyVertex as Vertex,

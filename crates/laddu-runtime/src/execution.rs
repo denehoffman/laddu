@@ -1,7 +1,13 @@
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use laddu_autodiff::AutodiffMode;
 use laddu_data::io::{Partitioning, ReadPlan};
+#[cfg(feature = "wgpu")]
+use laddu_memory::{DeviceIdentity, MemoryResource};
+use laddu_memory::{
+    MemoryBudget, MemoryDecision, MemoryPlan, MemoryPool, MemoryPoolReport, MemoryReport,
+    MemoryState,
+};
 use rayon::{ThreadPool, ThreadPoolBuilder};
 use serde::{Deserialize, Serialize};
 
@@ -94,8 +100,6 @@ pub struct GpuOptions {
     pub backend: GpuBackend,
     /// GPU device selection rule.
     pub device: GpuDeviceSelector,
-    /// Optional upper bound, in bytes, for resident GPU allocations.
-    pub memory_budget: Option<usize>,
 }
 
 /// Device on which a model should execute.
@@ -111,7 +115,7 @@ pub enum Device {
 }
 
 /// Options used to construct an [`Execution`] context.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct ExecutionOptions {
     /// Requested execution device.
     pub device: Device,
@@ -121,6 +125,8 @@ pub struct ExecutionOptions {
     pub autodiff: AutodiffMode,
     /// Dataset partitioning strategy for distributed execution.
     pub partitioning: Partitioning,
+    /// Host and accelerator memory budgets.
+    pub memory: MemoryPlan,
 }
 
 /// Resolved resources and policies used to execute models.
@@ -133,6 +139,10 @@ pub struct Execution {
     jit: JitPolicy,
     pool: Option<Arc<ThreadPool>>,
     partitioning: Partitioning,
+    memory_state: MemoryState,
+    host_memory: MemoryPool,
+    device_memory: Option<MemoryPool>,
+    memory_decisions: Arc<Mutex<Vec<MemoryDecision>>>,
     #[cfg(feature = "wgpu")]
     wgpu: Option<Arc<laddu_wgpu::WgpuContext>>,
     #[cfg(feature = "mpi")]
@@ -154,6 +164,11 @@ impl std::fmt::Debug for Execution {
             .field("threads", &self.threads)
             .field("jit", &self.jit)
             .field("partitioning", &self.partitioning)
+            .field("host_memory", &self.host_memory.report())
+            .field(
+                "device_memory",
+                &self.device_memory.as_ref().map(MemoryPool::report),
+            )
             .field("ranks", &self.nranks())
             .finish_non_exhaustive()
     }
@@ -161,6 +176,11 @@ impl std::fmt::Debug for Execution {
 
 impl Default for Execution {
     fn default() -> Self {
+        let memory_state = MemoryState::current();
+        memory_state.refresh();
+        let host_memory = memory_state
+            .pool("host", MemoryBudget::Auto)
+            .expect("host memory discovery must resolve an automatic budget");
         Self {
             requested_device: Device::Auto,
             precision: Precision::F64,
@@ -169,6 +189,10 @@ impl Default for Execution {
             jit: JitPolicy::Auto,
             pool: None,
             partitioning: Partitioning::default(),
+            memory_state,
+            host_memory,
+            device_memory: None,
+            memory_decisions: Default::default(),
             #[cfg(feature = "wgpu")]
             wgpu: None,
             #[cfg(feature = "mpi")]
@@ -186,8 +210,15 @@ impl Execution {
     /// unavailable, GPU initialization fails, or the CPU thread pool cannot be
     /// created.
     pub fn local(options: ExecutionOptions) -> RuntimeResult<Self> {
+        let memory_state = MemoryState::current();
+        memory_state.refresh();
+        let host_memory = memory_state.pool("host", options.memory.host)?;
         #[cfg(feature = "wgpu")]
         let mut wgpu = None;
+        #[cfg(feature = "wgpu")]
+        let mut device_memory = None;
+        #[cfg(not(feature = "wgpu"))]
+        let device_memory = None;
         let cpu = match &options.device {
             Device::Auto => CpuOptions::default(),
             Device::Cpu(options) => options.clone(),
@@ -214,15 +245,42 @@ impl Execution {
                         Precision::F32 => laddu_wgpu::WgpuPrecision::F32,
                         Precision::F64 => laddu_wgpu::WgpuPrecision::F64,
                     };
-                    let context = laddu_wgpu::WgpuBackend::default()
+                    let mut context = laddu_wgpu::WgpuBackend::default()
                         .open(
                             &laddu_wgpu::WgpuOptions {
                                 device: selector,
-                                memory_budget: gpu_options.memory_budget,
+                                memory_budget: None,
                             },
                             precision,
                         )
                         .map_err(|error| RuntimeError::Wgpu(error.to_string()))?;
+                    let resource_id = if context.info().pci_bus_id.is_empty() {
+                        format!("wgpu:{}", context.info().index)
+                    } else {
+                        format!("pci:{}", context.info().pci_bus_id)
+                    };
+                    let fallback = context
+                        .info()
+                        .max_buffer_size
+                        .min(512 * 1024 * 1024)
+                        .max(context.info().max_storage_buffer_binding_size);
+                    let resource = MemoryResource::discover_device(
+                        resource_id.clone(),
+                        context.info().name.clone(),
+                        DeviceIdentity {
+                            adapter_index: context.info().index,
+                            vendor_id: context.info().vendor,
+                            device_id: context.info().device,
+                            pci_bus_id: context.info().pci_bus_id.clone(),
+                        },
+                        fallback,
+                    );
+                    memory_state.register_device(resource);
+                    let requested = options.memory.device.unwrap_or(MemoryBudget::Auto);
+                    let pool = memory_state.pool(&resource_id, requested)?;
+                    context
+                        .set_memory_budget(usize::try_from(pool.capacity()).unwrap_or(usize::MAX));
+                    device_memory = Some(pool);
                     wgpu = Some(Arc::new(context));
                     CpuOptions::default()
                 }
@@ -257,6 +315,10 @@ impl Execution {
             jit: cpu.jit,
             pool,
             partitioning: options.partitioning,
+            memory_state,
+            host_memory,
+            device_memory,
+            memory_decisions: Default::default(),
             #[cfg(feature = "wgpu")]
             wgpu,
             #[cfg(feature = "mpi")]
@@ -274,7 +336,23 @@ impl Execution {
     where
         C: Communicator,
     {
+        let local_processes = mpi_local_process_count(world.size());
+        let mut options = options;
+        options.memory.host = shared_mpi_budget(options.memory.host, local_processes);
+        options.memory.device = options
+            .memory
+            .device
+            .map(|budget| shared_mpi_budget(budget, local_processes));
         let mut execution = Self::local(options)?;
+        execution.record_memory_decision(MemoryDecision {
+            label: "mpi-memory-share".into(),
+            fixed_bytes: 0,
+            bytes_per_event: 0,
+            chunk_events: 0,
+            estimated_peak_bytes: 0,
+            actual_high_water_bytes: None,
+            strategy: format!("equal-share-across-{local_processes}-local-ranks"),
+        });
         execution.communicator = Some(Arc::new(world.duplicate()));
         Ok(execution)
     }
@@ -312,6 +390,49 @@ impl Execution {
     /// Returns the distributed dataset-partitioning strategy.
     pub fn partitioning(&self) -> Partitioning {
         self.partitioning
+    }
+
+    /// Returns the live memory state shared by this execution.
+    pub fn memory_state(&self) -> &MemoryState {
+        &self.memory_state
+    }
+
+    /// Returns the resolved host-memory pool.
+    pub fn host_memory(&self) -> &MemoryPool {
+        &self.host_memory
+    }
+
+    /// Returns the resolved accelerator-memory pool, if any.
+    pub fn device_memory(&self) -> Option<&MemoryPool> {
+        self.device_memory.as_ref()
+    }
+
+    /// Returns current physical-resource memory information.
+    pub fn memory_report(&self) -> MemoryReport {
+        self.memory_state.report()
+    }
+
+    /// Returns the resolved execution-pool reports.
+    pub fn memory_pool_reports(&self) -> Vec<MemoryPoolReport> {
+        std::iter::once(self.host_memory.report())
+            .chain(self.device_memory.as_ref().map(MemoryPool::report))
+            .collect()
+    }
+
+    /// Returns memory-derived decisions recorded by this execution.
+    pub fn memory_decisions(&self) -> Vec<MemoryDecision> {
+        self.memory_decisions
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .clone()
+    }
+
+    /// Records a memory-planning decision for later diagnostics.
+    pub fn record_memory_decision(&self, decision: MemoryDecision) {
+        self.memory_decisions
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .push(decision);
     }
 
     /// Returns the zero-based rank of this process.
@@ -394,6 +515,45 @@ impl Execution {
     }
 }
 
+#[cfg(feature = "mpi")]
+fn shared_mpi_budget(budget: MemoryBudget, local_processes: u64) -> MemoryBudget {
+    let divisor = local_processes.max(1);
+    match budget {
+        MemoryBudget::Auto => MemoryBudget::PercentAvailable(0.80 / divisor as f64),
+        MemoryBudget::Bytes(bytes) => MemoryBudget::Bytes((bytes / divisor).max(1)),
+        MemoryBudget::PercentTotal(fraction) => {
+            MemoryBudget::PercentTotal(fraction / divisor as f64)
+        }
+        MemoryBudget::PercentAvailable(fraction) => {
+            MemoryBudget::PercentAvailable(fraction / divisor as f64)
+        }
+    }
+}
+
+#[cfg(feature = "mpi")]
+fn mpi_local_process_count(world_size: i32) -> u64 {
+    // Common launchers expose node-local process counts. Falling back to the
+    // world size is conservative on multi-node jobs and prevents accidental
+    // host/device overcommit when launcher metadata is unavailable.
+    const VARIABLES: [&str; 4] = [
+        "OMPI_COMM_WORLD_LOCAL_SIZE",
+        "MPI_LOCALNRANKS",
+        "MV2_COMM_WORLD_LOCAL_SIZE",
+        "SLURM_NTASKS_PER_NODE",
+    ];
+    VARIABLES
+        .iter()
+        .filter_map(|name| std::env::var(name).ok())
+        .find_map(|value| {
+            value
+                .split(|character: char| !character.is_ascii_digit())
+                .find(|part| !part.is_empty())
+                .and_then(|part| part.parse::<u64>().ok())
+                .filter(|count| *count > 0)
+        })
+        .unwrap_or_else(|| u64::try_from(world_size).unwrap_or(1).max(1))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -407,11 +567,14 @@ mod tests {
             device: Device::Gpu(GpuOptions {
                 backend: GpuBackend::Wgpu,
                 device: GpuDeviceSelector::PciBusId("0000:01:00.0".into()),
-                memory_budget: Some(1 << 30),
             }),
             precision: Precision::F64,
             autodiff: AutodiffMode::Reverse,
             partitioning: Partitioning::FileGroups,
+            memory: MemoryPlan::host_device(
+                MemoryBudget::PercentAvailable(0.5),
+                MemoryBudget::Bytes(1 << 30),
+            ),
         };
 
         let json = serde_json::to_string(&options).unwrap();

@@ -53,7 +53,9 @@ pub use laddu_expr::{
     matrix_from_flat, matvec, polar_complex, solve, vector,
 };
 pub use laddu_runtime::{
-    BinSpec, Comparison, DatasetBin, DatasetExprExt, IntervalClosure, Predicate,
+    BinSpec, Comparison, DatasetBin, DatasetExprExt, DeviceIdentity, IntervalClosure, MemoryBudget,
+    MemoryDecision, MemoryPlan, MemoryPoolReport, MemoryReport, MemoryResource, MemoryResourceKind,
+    MemoryState, Predicate, ProcessMemoryReport,
 };
 
 #[cfg(feature = "svg")]
@@ -88,7 +90,7 @@ pub mod prelude {
     pub use laddu_compile::{CompileError, CompileOptions, CompileResult, CompiledModel};
     pub use laddu_data::{
         LadduDataError, LadduDataResult,
-        data::{CacheStorage, Dataset, EventBatch, EventBatchBuilder, OwnedEvent},
+        data::{CacheStorage, Dataset, EventBatch, EventBatchBuilder, MemoryPolicy, OwnedEvent},
         io::{
             EventSink, EventSource, Partitioning, ReadPlan, SourceCapabilities, WritePlan,
             memory::{MemorySink, MemorySource},
@@ -142,9 +144,10 @@ pub mod prelude {
         vectors::{RealVec3, RealVec4, Vec3, Vec4},
     };
     pub use laddu_runtime::{
-        BinSpec, Comparison, CpuOptions, DatasetBin, DatasetExprExt, Device, Execution,
-        ExecutionError, ExecutionOptions, GpuBackend, GpuDeviceSelector, GpuOptions,
-        IntervalClosure, JitPolicy, Precision, Predicate, RuntimeError, RuntimeResult,
-        ThreadPolicy,
+        BinSpec, Comparison, CpuOptions, DatasetBin, DatasetExprExt, Device, DeviceIdentity,
+        Execution, ExecutionError, ExecutionOptions, GpuBackend, GpuDeviceSelector, GpuOptions,
+        IntervalClosure, JitPolicy, MemoryBudget, MemoryDecision, MemoryPlan, MemoryPoolReport,
+        MemoryReport, MemoryResource, MemoryResourceKind, MemoryState, Precision, Predicate,
+        ProcessMemoryReport, RuntimeError, RuntimeResult, ThreadPolicy,
     };
 }

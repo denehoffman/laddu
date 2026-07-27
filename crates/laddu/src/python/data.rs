@@ -1,7 +1,7 @@
 use std::{path::PathBuf, sync::Arc};
 
 use laddu_data::{
-    data::{CacheStorage, Dataset, EventBatch},
+    data::{Dataset, EventBatch, MemoryPolicy},
     io::{
         parquet::{ParquetSink, ParquetSource},
         root::{RootSink, RootSource},
@@ -9,7 +9,7 @@ use laddu_data::{
     schema::Schema,
 };
 use laddu_physics::vectors::RealVec4;
-use laddu_runtime::DatasetExprExt;
+use laddu_runtime::{DatasetExprExt, MemoryBudget};
 use numpy::{PyArray1, PyReadonlyArray1, PyReadonlyArray2, PyUntypedArrayMethods};
 use pyo3::{
     exceptions::PyValueError,
@@ -21,7 +21,7 @@ use super::{
     error::to_py_err,
     expr::PyExpr,
     query::{PyBin, PyPredicate},
-    runtime::PyExecution,
+    runtime::{PyExecution, memory_decision_dict, parse_memory_budget},
 };
 
 fn path_string(path: &Bound<'_, PyAny>) -> PyResult<String> {
@@ -29,16 +29,22 @@ fn path_string(path: &Bound<'_, PyAny>) -> PyResult<String> {
     Ok(path.to_string_lossy().into_owned())
 }
 
-fn configure(dataset: Dataset, chunk_size: Option<usize>, cache: &str) -> PyResult<Dataset> {
-    let dataset = match chunk_size {
-        Some(size) => dataset.chunked(size).map_err(to_py_err)?,
-        None => dataset,
-    };
+fn configure(
+    dataset: Dataset,
+    memory: Option<&Bound<'_, PyAny>>,
+    cache: &str,
+) -> PyResult<Dataset> {
+    let budget = memory
+        .map(parse_memory_budget)
+        .transpose()?
+        .unwrap_or(MemoryBudget::Auto);
+    let dataset = dataset.with_memory_budget(budget);
     match cache.trim().to_ascii_lowercase().as_str() {
+        "fastest" | "auto" => Ok(dataset.fastest()),
         "resident" => Ok(dataset.resident()),
         "streaming" => Ok(dataset.streaming()),
         _ => Err(PyValueError::new_err(
-            "cache must be 'resident' or 'streaming'",
+            "cache must be 'fastest', 'resident', or 'streaming'",
         )),
     }
 }
@@ -51,10 +57,10 @@ fn configure(dataset: Dataset, chunk_size: Option<usize>, cache: &str) -> PyResu
 /// ----------
 /// path : path-like
 ///     Parquet file, directory, or glob understood by the Arrow reader.
-/// chunk_size : int, optional
-///     Maximum number of events in each streamed batch.
-/// cache : {'resident', 'streaming'}, default='resident'
-///     Keep decoded batches in memory or reread them on each traversal.
+/// memory : MemoryBudget, int, or str, optional
+///     Host-memory budget. Defaults to automatic memory planning.
+/// cache : {'fastest', 'resident', 'streaming'}, default='fastest'
+///     Prefer the fastest fitting strategy or require a particular cache mode.
 /// nulls : {'error', 'nan'}, default='error'
 ///     Reject null scalar values or replace them with NaN.
 /// validate : bool, default=True
@@ -79,10 +85,10 @@ impl PyParquetSource {
     /// LadduError
     ///     If the source cannot be discovered or validated.
     #[new]
-    #[pyo3(signature = (path, *, chunk_size=None, cache="resident", nulls="error", validate=true))]
+    #[pyo3(signature = (path, *, memory=None, cache="fastest", nulls="error", validate=true))]
     fn new(
         path: &Bound<'_, PyAny>,
-        chunk_size: Option<usize>,
+        memory: Option<&Bound<'_, PyAny>>,
         cache: &str,
         nulls: &str,
         validate: bool,
@@ -96,7 +102,7 @@ impl PyParquetSource {
         Ok(Self {
             inner: configure(
                 Dataset::new(builder.build().map_err(to_py_err)?),
-                chunk_size,
+                memory,
                 cache,
             )?,
         })
@@ -113,10 +119,10 @@ impl PyParquetSource {
 ///     ROOT file, directory, or glob.
 /// tree : str, optional
 ///     TTree name. If omitted, the reader discovers a compatible tree.
-/// chunk_size : int, optional
-///     Maximum number of events in each streamed batch.
-/// cache : {'resident', 'streaming'}, default='resident'
-///     Keep decoded batches in memory or reread them on each traversal.
+/// memory : MemoryBudget, int, or str, optional
+///     Host-memory budget. Defaults to automatic memory planning.
+/// cache : {'fastest', 'resident', 'streaming'}, default='fastest'
+///     Prefer the fastest fitting strategy or require a particular cache mode.
 /// validate : bool, default=True
 ///     Validate every matched file when constructing the source.
 pub struct PyRootSource {
@@ -134,11 +140,11 @@ impl PyRootSource {
     /// LadduError
     ///     If the source, tree, or schema is invalid.
     #[new]
-    #[pyo3(signature = (path, *, tree=None, chunk_size=None, cache="resident", validate=true))]
+    #[pyo3(signature = (path, *, tree=None, memory=None, cache="fastest", validate=true))]
     fn new(
         path: &Bound<'_, PyAny>,
         tree: Option<&str>,
-        chunk_size: Option<usize>,
+        memory: Option<&Bound<'_, PyAny>>,
         cache: &str,
         validate: bool,
     ) -> PyResult<Self> {
@@ -149,7 +155,7 @@ impl PyRootSource {
         Ok(Self {
             inner: configure(
                 Dataset::new(builder.build().map_err(to_py_err)?),
-                chunk_size,
+                memory,
                 cache,
             )?,
         })
@@ -433,14 +439,24 @@ impl PyDataset {
     }
 
     fn __repr__(&self) -> String {
-        let cache = match self.inner.cache_storage() {
-            CacheStorage::Resident => "resident",
-            CacheStorage::Streaming => "streaming",
+        let policy = match self.inner.memory_policy() {
+            MemoryPolicy::Fastest => "fastest",
+            MemoryPolicy::Resident => "resident",
+            MemoryPolicy::Streaming => "streaming",
         };
         format!(
-            "Dataset(cache={cache:?}, chunk_size={:?})",
-            self.inner.read_plan().chunk_size
+            "Dataset(memory_policy={policy:?}, memory={:?})",
+            self.inner.memory_budget()
         )
+    }
+
+    /// Return the most recent memory-derived read decision, if data were read.
+    fn memory_decision<'py>(&self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyDict>>> {
+        self.inner
+            .last_memory_decision()
+            .as_ref()
+            .map(|decision| memory_decision_dict(py, decision))
+            .transpose()
     }
 
     /// Return the names of all four-vector columns.
@@ -743,7 +759,7 @@ pub struct PyBinDataset {
 }
 
 #[pyfunction]
-#[pyo3(signature = (path, *, chunk_size=None, cache="resident", nulls="error", validate=true))]
+#[pyo3(signature = (path, *, memory=None, cache="fastest", nulls="error", validate=true))]
 /// Read a Parquet dataset.
 ///
 /// This is shorthand for ``Dataset(ParquetSource(...))``.
@@ -752,9 +768,9 @@ pub struct PyBinDataset {
 /// ----------
 /// path : path-like
 ///     Parquet file, directory, or glob.
-/// chunk_size : int, optional
-///     Maximum streamed batch size.
-/// cache : {'resident', 'streaming'}, default='resident'
+/// memory : MemoryBudget, int, or str, optional
+///     Host-memory budget. Defaults to automatic memory planning.
+/// cache : {'fastest', 'resident', 'streaming'}, default='fastest'
 ///     Dataset cache policy.
 /// nulls : {'error', 'nan'}, default='error'
 ///     Null-value policy.
@@ -767,7 +783,7 @@ pub struct PyBinDataset {
 ///     Configured dataset.
 pub fn read_parquet(
     path: &Bound<'_, PyAny>,
-    chunk_size: Option<usize>,
+    memory: Option<&Bound<'_, PyAny>>,
     cache: &str,
     nulls: &str,
     validate: bool,
@@ -780,12 +796,12 @@ pub fn read_parquet(
     };
     let dataset = Dataset::new(builder.build().map_err(to_py_err)?);
     Ok(PyDataset {
-        inner: configure(dataset, chunk_size, cache)?,
+        inner: configure(dataset, memory, cache)?,
     })
 }
 
 #[pyfunction]
-#[pyo3(signature = (path, *, tree=None, chunk_size=None, cache="resident", validate=true))]
+#[pyo3(signature = (path, *, tree=None, memory=None, cache="fastest", validate=true))]
 /// Read a ROOT TTree dataset.
 ///
 /// This is shorthand for ``Dataset(RootSource(...))``.
@@ -796,9 +812,9 @@ pub fn read_parquet(
 ///     ROOT file, directory, or glob.
 /// tree : str, optional
 ///     TTree name, or automatic discovery when omitted.
-/// chunk_size : int, optional
-///     Maximum streamed batch size.
-/// cache : {'resident', 'streaming'}, default='resident'
+/// memory : MemoryBudget, int, or str, optional
+///     Host-memory budget. Defaults to automatic memory planning.
+/// cache : {'fastest', 'resident', 'streaming'}, default='fastest'
 ///     Dataset cache policy.
 /// validate : bool, default=True
 ///     Validate every matched file.
@@ -810,7 +826,7 @@ pub fn read_parquet(
 pub fn read_root(
     path: &Bound<'_, PyAny>,
     tree: Option<&str>,
-    chunk_size: Option<usize>,
+    memory: Option<&Bound<'_, PyAny>>,
     cache: &str,
     validate: bool,
 ) -> PyResult<PyDataset> {
@@ -820,7 +836,7 @@ pub fn read_root(
     }
     let dataset = Dataset::new(builder.build().map_err(to_py_err)?);
     Ok(PyDataset {
-        inner: configure(dataset, chunk_size, cache)?,
+        inner: configure(dataset, memory, cache)?,
     })
 }
 

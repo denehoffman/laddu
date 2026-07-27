@@ -11,6 +11,9 @@ pub enum RuntimeError {
     /// Execution-context configuration failed.
     #[error(transparent)]
     Execution(#[from] ExecutionError),
+    /// Memory discovery, planning, or reservation failed.
+    #[error(transparent)]
+    Memory(#[from] laddu_memory::MemoryError),
     /// An expression requested an event scalar without an event lookup.
     #[error("event scalar `{0}` was requested, but no event lookup was provided")]
     MissingEventScalar(String),

@@ -2,6 +2,7 @@
 
 use std::{
     collections::{HashMap, HashSet},
+    mem::size_of,
     sync::Arc,
 };
 
@@ -13,7 +14,9 @@ use laddu_data::{
 };
 use laddu_expr::{ExprNode, parameters::ParamValues};
 use laddu_physics::{LadduPhysicsError, channel::Channel, vectors::RealVec4};
-use laddu_runtime::{Execution, PreparedModel};
+use laddu_runtime::{
+    Execution, MemoryBudget, MemoryDecision, MemoryLease, MemoryState, PreparedModel,
+};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
@@ -136,8 +139,8 @@ pub enum GenerationError {
 pub struct WeightedConfig {
     /// Number of events to generate.
     pub events: usize,
-    /// Number of events written to each output batch.
-    pub batch_size: usize,
+    /// Memory available to proposal and output staging.
+    pub memory: MemoryBudget,
     /// Deterministic random seed.
     pub seed: u64,
     /// Whether to include diagnostic weight columns.
@@ -149,7 +152,7 @@ impl WeightedConfig {
     pub fn new(events: usize) -> Self {
         Self {
             events,
-            batch_size: 1024,
+            memory: MemoryBudget::Auto,
             seed: 0,
             diagnostics: false,
         }
@@ -166,8 +169,8 @@ pub struct UnweightedConfig {
     /// `None` allows generation to continue until the requested event count is
     /// reached. Pilot proposals are not included in this limit.
     pub max_proposals: Option<usize>,
-    /// Number of accepted events written to each output batch.
-    pub batch_size: usize,
+    /// Memory available to proposal and output staging.
+    pub memory: MemoryBudget,
     /// Deterministic random seed.
     pub seed: u64,
     /// Whether to include diagnostic weight columns.
@@ -184,7 +187,7 @@ impl UnweightedConfig {
         Self {
             events,
             max_proposals: None,
-            batch_size: 1024,
+            memory: MemoryBudget::Auto,
             seed: 0,
             diagnostics: false,
             envelope: EnvelopeMode::default(),
@@ -283,8 +286,12 @@ pub struct GenerationReport {
     pub sum_squared_weights: f64,
     /// Random seed used for the run.
     pub seed: u64,
-    /// Configured output batch size.
-    pub batch_size: usize,
+    /// Memory-derived internal event chunk size.
+    pub chunk_events: usize,
+    /// Estimated peak tracked bytes for one generation chunk.
+    pub estimated_peak_bytes: u64,
+    /// Actual tracked high-water bytes when generation used an execution pool.
+    pub actual_high_water_bytes: Option<u64>,
 }
 
 impl GenerationReport {
@@ -304,6 +311,7 @@ pub struct ModelEvaluator {
     prepared: PreparedModel,
     params: ParamValues,
     required_scalars: HashSet<String>,
+    execution: Execution,
 }
 
 impl ModelEvaluator {
@@ -331,6 +339,7 @@ impl ModelEvaluator {
             prepared: PreparedModel::prepare(model, execution)?,
             params,
             required_scalars,
+            execution: execution.clone(),
         })
     }
 
@@ -544,7 +553,68 @@ struct GeneratedEvent {
     index: u64,
 }
 
+#[derive(Clone, Copy, Debug)]
+struct GenerationMemoryUse {
+    event_limit: usize,
+    resident_events: usize,
+    retained_output_events: usize,
+}
+
 impl ChannelGenerator {
+    fn generation_memory(
+        &self,
+        schema: &Schema,
+        budget: MemoryBudget,
+        model: Option<&ModelEvaluator>,
+        usage: GenerationMemoryUse,
+        label: &str,
+    ) -> GenerationResult<(MemoryDecision, MemoryLease)> {
+        let generated_bytes = size_of::<GeneratedEvent>()
+            + schema.n_p4s() * size_of::<RealVec4>()
+            + schema.n_scalars() * size_of::<f64>()
+            + 4 * size_of::<f64>();
+        let output_bytes =
+            (4 * schema.n_p4s() + schema.n_scalars() + usize::from(schema.has_weight()))
+                * size_of::<f64>();
+        let bytes_per_event = generated_bytes.saturating_add(output_bytes);
+        let fixed_bytes = generated_bytes
+            .saturating_mul(usage.resident_events)
+            .saturating_add(output_bytes.saturating_mul(usage.retained_output_events));
+        let state = model
+            .map(|model| model.execution.memory_state().clone())
+            .unwrap_or_else(MemoryState::current);
+        state.refresh();
+        let operation_cap = budget
+            .resolve(&state.host())
+            .map_err(laddu_runtime::RuntimeError::from)?;
+        let owned_pool;
+        let pool = if let Some(model) = model {
+            model.execution.host_memory()
+        } else {
+            owned_pool = state
+                .pool("host", budget)
+                .map_err(laddu_runtime::RuntimeError::from)?;
+            &owned_pool
+        };
+        let available = pool.remaining().min(operation_cap);
+        let decision = MemoryDecision::fit(
+            label,
+            u64::try_from(fixed_bytes).unwrap_or(u64::MAX),
+            u64::try_from(bytes_per_event).unwrap_or(u64::MAX),
+            available,
+            usage.event_limit,
+            "memory-derived generation",
+        )
+        .map_err(laddu_runtime::RuntimeError::from)?;
+        let lease = pool
+            .reserve(decision.estimated_peak_bytes)
+            .map_err(laddu_runtime::RuntimeError::from)?;
+        if let Some(model) = model {
+            model.execution.record_memory_decision(decision.clone());
+        }
+        Ok((decision, lease))
+    }
+
     /// Validates a channel and constructs its topological generation plan.
     ///
     /// # Errors
@@ -732,11 +802,26 @@ impl ChannelGenerator {
         model: Option<&ModelEvaluator>,
         sink: &mut dyn EventSink,
     ) -> GenerationResult<GenerationReport> {
-        validate_common(config.events, config.batch_size)?;
+        validate_common(config.events)?;
         let schema = self.output_schema(true, config.diagnostics)?;
+        let (decision, _memory) = self.generation_memory(
+            &schema,
+            config.memory,
+            model,
+            GenerationMemoryUse {
+                event_limit: config.events,
+                resident_events: 0,
+                retained_output_events: if sink.retains_batches() {
+                    config.events
+                } else {
+                    0
+                },
+            },
+            "weighted generation",
+        )?;
         sink.begin(Arc::clone(&schema), WritePlan::default())?;
-        let mut report = report(config.events, config.seed, config.batch_size);
-        let work_batch = config.batch_size.max(16_384);
+        let mut report = report(config.events, config.seed, &decision);
+        let work_batch = decision.chunk_events.max(1);
         for start in (0..config.events).step_by(work_batch) {
             let count = work_batch.min(config.events - start);
             let mut events = self.propose_range(start as u64, count, config.seed, 0)?;
@@ -744,7 +829,7 @@ impl ChannelGenerator {
             update_report(&mut report, &events);
             report.proposals += events.len();
             report.produced += events.len();
-            for chunk in events.chunks(config.batch_size) {
+            for chunk in events.chunks(decision.chunk_events.max(1)) {
                 let batch =
                     self.output_batch(chunk, Arc::clone(&schema), true, config.diagnostics)?;
                 sink.write_batch(&batch)?;
@@ -767,7 +852,7 @@ impl ChannelGenerator {
         model: &ModelEvaluator,
         sink: &mut dyn EventSink,
     ) -> GenerationResult<GenerationReport> {
-        validate_common(config.events, config.batch_size)?;
+        validate_common(config.events)?;
         if config
             .max_proposals
             .is_some_and(|max_proposals| max_proposals < config.events)
@@ -777,6 +862,40 @@ impl ChannelGenerator {
             ));
         }
         let mut adaptations = None;
+        let schema = self.output_schema(false, config.diagnostics)?;
+        let pilot_limit = match config.envelope {
+            EnvelopeMode::Pilot { proposals, .. } => proposals,
+            EnvelopeMode::Strict { .. } => 0,
+        };
+        let (decision, _memory) = self.generation_memory(
+            &schema,
+            config.memory,
+            Some(model),
+            GenerationMemoryUse {
+                event_limit: config.events.max(pilot_limit),
+                resident_events: if matches!(
+                    config.envelope_overflow,
+                    EnvelopeOverflow::Grow { .. }
+                ) {
+                    config.events
+                } else {
+                    0
+                },
+                retained_output_events: if sink.retains_batches() {
+                    config.events
+                } else {
+                    0
+                },
+            },
+            "unweighted generation",
+        )?;
+        if pilot_limit > decision.chunk_events {
+            return Err(GenerationError::InvalidConfiguration(format!(
+                "pilot sample requires {pilot_limit} simultaneously resident proposals, but the \
+                 memory budget fits {}; increase the budget or reduce pilot_proposals",
+                decision.chunk_events
+            )));
+        }
         let (mut bound, kind, pilot_count) = match config.envelope {
             EnvelopeMode::Strict { max_weight } => {
                 validate_bound(max_weight)?;
@@ -795,6 +914,7 @@ impl ChannelGenerator {
                 let has_adaptation = learned.masses.iter().any(Option::is_some)
                     || learned.vertices.iter().any(Option::is_some);
                 let mut envelope_pilot = if has_adaptation {
+                    drop(adaptation_pilot);
                     self.propose_range_with_adaptation(
                         0,
                         proposals,
@@ -827,15 +947,14 @@ impl ChannelGenerator {
                 "envelope growth safety_factor must be finite and greater than one".into(),
             ));
         }
-        let schema = self.output_schema(false, config.diagnostics)?;
         sink.begin(Arc::clone(&schema), WritePlan::default())?;
-        let mut report = report(config.events, config.seed, config.batch_size);
+        let mut report = report(config.events, config.seed, &decision);
         report.envelope = Some(bound);
         report.envelope_kind = Some(kind);
         report.pilot_proposals = pilot_count;
         let mut proposal_index = 0_usize;
         let mut buffered = Vec::new();
-        let work_batch = config.batch_size.max(32_768);
+        let work_batch = decision.chunk_events.max(1);
         while report.produced < config.events
             && config
                 .max_proposals
@@ -909,7 +1028,7 @@ impl ChannelGenerator {
             proposal_index += proposal_count;
             match config.envelope_overflow {
                 EnvelopeOverflow::Error if !accepted.is_empty() => {
-                    for chunk in accepted.chunks(config.batch_size) {
+                    for chunk in accepted.chunks(decision.chunk_events.max(1)) {
                         let batch = self.output_batch(
                             chunk,
                             Arc::clone(&schema),
@@ -935,7 +1054,7 @@ impl ChannelGenerator {
             });
         }
         if matches!(config.envelope_overflow, EnvelopeOverflow::Grow { .. }) {
-            for events in buffered.chunks(config.batch_size) {
+            for events in buffered.chunks(decision.chunk_events.max(1)) {
                 let batch =
                     self.output_batch(events, Arc::clone(&schema), false, config.diagnostics)?;
                 sink.write_batch(&batch)?;
@@ -1571,10 +1690,10 @@ fn topological_plan(channel: &Channel, roots: &HashSet<String>) -> GenerationRes
     Ok(plan)
 }
 
-fn validate_common(events: usize, batch_size: usize) -> GenerationResult<()> {
-    if events == 0 || batch_size == 0 {
+fn validate_common(events: usize) -> GenerationResult<()> {
+    if events == 0 {
         return Err(GenerationError::InvalidConfiguration(
-            "events and batch_size must be nonzero".into(),
+            "events must be nonzero".into(),
         ));
     }
     Ok(())
@@ -1646,11 +1765,13 @@ fn derive_seed(seed: u64, stream: u64, index: u64, object: u64) -> u64 {
 fn acceptance_uniform(seed: u64, index: u64) -> f64 {
     ProposalRng::new(derive_seed(seed, 2, index, 0)).uniform()
 }
-fn report(requested: usize, seed: u64, batch_size: usize) -> GenerationReport {
+fn report(requested: usize, seed: u64, decision: &MemoryDecision) -> GenerationReport {
     GenerationReport {
         requested,
         seed,
-        batch_size,
+        chunk_events: decision.chunk_events,
+        estimated_peak_bytes: decision.estimated_peak_bytes,
+        actual_high_water_bytes: Some(decision.estimated_peak_bytes),
         minimum_weight: f64::INFINITY,
         ..GenerationReport::default()
     }
@@ -1691,13 +1812,13 @@ mod tests {
     }
 
     #[test]
-    fn weighted_generation_is_batch_size_independent() {
+    fn weighted_generation_is_memory_budget_independent() {
         let generator = decay_generator();
         let mut first = WeightedConfig::new(32);
         first.seed = 9;
-        first.batch_size = 3;
+        first.memory = MemoryBudget::Bytes(4_096);
         let mut second = first;
-        second.batch_size = 11;
+        second.memory = MemoryBudget::Bytes(16_384);
         let one_thread = rayon::ThreadPoolBuilder::new()
             .num_threads(1)
             .build()
@@ -1720,7 +1841,7 @@ mod tests {
     }
 
     #[test]
-    fn unweighted_generation_is_thread_and_batch_size_independent() {
+    fn unweighted_generation_is_thread_and_memory_budget_independent() {
         let generator = decay_generator();
         let model = CompiledModel::from_expr(&laddu_expr::Expr::from(1.0)).unwrap();
         let evaluator = ModelEvaluator::prepare(
@@ -1731,10 +1852,10 @@ mod tests {
         .unwrap();
         let mut first = UnweightedConfig::new(32).with_max_proposals(20_000);
         first.seed = 91;
-        first.batch_size = 7;
+        first.memory = MemoryBudget::Bytes(4_096);
         first.envelope = EnvelopeMode::Strict { max_weight: 1.0 };
         let mut second = first;
-        second.batch_size = 29;
+        second.memory = MemoryBudget::Bytes(16_384);
         let one_thread = rayon::ThreadPoolBuilder::new()
             .num_threads(1)
             .build()

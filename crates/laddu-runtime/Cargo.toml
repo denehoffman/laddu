@@ -18,6 +18,7 @@ laddu-compile = { path = "../laddu-compile" }
 laddu-data = { path = "../laddu-data" }
 laddu-expr = { path = "../laddu-expr" }
 laddu-kernel = { path = "../laddu-kernel" }
+laddu-memory = { path = "../laddu-memory" }
 laddu-wgpu = { path = "../laddu-wgpu", optional = true }
 mpi = { workspace = true, optional = true }
 nalgebra.workspace = true
@@ -32,4 +33,4 @@ serde_json.workspace = true
 [features]
 jit = ["dep:cranelift"]
 mpi = ["dep:mpi", "laddu-data/mpi"]
-wgpu = ["dep:laddu-wgpu"]
+wgpu = ["dep:laddu-wgpu", "laddu-memory/nvml"]

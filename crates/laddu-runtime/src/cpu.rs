@@ -13,7 +13,7 @@ use laddu_compile::{
 use laddu_data::data::accurate::AccurateComplex64;
 use laddu_data::{
     data::accurate::AccurateF64,
-    data::{CacheStorage, Dataset, EventBatch},
+    data::{CacheStorage, Dataset, EventBatch, MemoryPolicy},
     schema::Schema,
 };
 use laddu_expr::{
@@ -31,7 +31,10 @@ use num::{
 };
 use rayon::prelude::*;
 
-use crate::{JitPolicy, Precision, RuntimeError, RuntimeResult, execution::Execution};
+use crate::{
+    JitPolicy, MemoryDecision, MemoryLease, Precision, RuntimeError, RuntimeResult,
+    execution::Execution,
+};
 
 mod gradient_interpreter;
 use gradient_interpreter::GradientInterpreter;
@@ -2172,6 +2175,49 @@ impl CpuPlan {
         self.cache_dataset_with_plan(dataset, dataset.read_plan())
     }
 
+    /// Estimates retained compiled-cache bytes for `events`.
+    pub fn cache_memory_estimate(&self, events: usize) -> usize {
+        let fixed = self.cache_plan.entries().len() * size_of::<CachedSlot>()
+            + self.factor_matrices.len() * size_of::<CachedFactorSlot>()
+            + self.solve_row_keys.len() * size_of::<CachedSolveRowSlot>()
+            + self.cache_plan.entries().len() * size_of::<ExprId>()
+            + self.factor_matrices.len() * size_of::<ExprId>()
+            + self.solve_row_keys.len() * size_of::<(ExprId, usize, usize)>();
+        let slot_bytes = self
+            .cache_plan
+            .entries()
+            .iter()
+            .map(|entry| match entry.value_kind() {
+                ValueKind::Real => size_of::<f64>(),
+                ValueKind::Complex => size_of::<Complex64>(),
+                ValueKind::Vector { len } => len * size_of::<Complex64>(),
+                ValueKind::Matrix { rows, cols } => rows * cols * size_of::<Complex64>(),
+            })
+            .sum::<usize>();
+        let factor_bytes = self
+            .factor_matrices
+            .iter()
+            .map(|(_, dimension)| {
+                size_of::<DynamicLu>()
+                    + dimension * dimension * size_of::<Complex64>()
+                    + dimension * size_of::<usize>()
+            })
+            .sum::<usize>();
+        let solve_bytes = self
+            .solve_row_keys
+            .iter()
+            .map(|(_, _, dimension)| dimension * size_of::<Complex64>())
+            .sum::<usize>();
+        fixed.saturating_add(
+            events.saturating_mul(
+                size_of::<f64>()
+                    .saturating_add(slot_bytes)
+                    .saturating_add(factor_bytes)
+                    .saturating_add(solve_bytes),
+            ),
+        )
+    }
+
     fn cache_dataset_with_plan(
         &self,
         dataset: &Dataset,
@@ -2207,8 +2253,98 @@ impl CpuPlan {
         execution: &Execution,
         dataset: &Dataset,
     ) -> RuntimeResult<CpuPreparedDataset> {
-        let read_plan = execution.read_plan(dataset.read_plan());
-        match dataset.cache_storage() {
+        let mut read_plan = execution.read_plan(dataset.read_plan());
+        let schema = dataset
+            .schema()
+            .map_err(|error| RuntimeError::Data(error.to_string()))?;
+        let source_bytes_per_event =
+            (4 * schema.n_p4s() + schema.n_scalars() + usize::from(schema.has_weight()))
+                * size_of::<f64>();
+        let cache_one = self.cache_memory_estimate(1);
+        let cache_zero = self.cache_memory_estimate(0);
+        let cache_bytes_per_event = cache_one.saturating_sub(cache_zero);
+        let local_event_limit = dataset
+            .num_events()
+            .map_err(|error| RuntimeError::Data(error.to_string()))?
+            .and_then(|events| usize::try_from(events).ok())
+            .unwrap_or(usize::MAX);
+        let host_remaining = execution.host_memory().remaining();
+        let resident_plan = resident_cache_plan(
+            cache_zero,
+            cache_bytes_per_event,
+            source_bytes_per_event.saturating_mul(2),
+            local_event_limit,
+            usize::try_from(host_remaining).unwrap_or(usize::MAX),
+        );
+        let requested_storage = match dataset.memory_policy() {
+            MemoryPolicy::Streaming => CacheStorage::Streaming,
+            MemoryPolicy::Resident => {
+                if resident_plan.is_none() {
+                    return Err(laddu_memory::MemoryError::BudgetExceeded {
+                        resource: "host".into(),
+                        requested: u64::try_from(
+                            cache_bytes_per_event
+                                .saturating_mul(local_event_limit)
+                                .saturating_add(cache_zero)
+                                .saturating_add(source_bytes_per_event.saturating_mul(2)),
+                        )
+                        .unwrap_or(u64::MAX),
+                        remaining: host_remaining,
+                    }
+                    .into());
+                }
+                CacheStorage::Resident
+            }
+            MemoryPolicy::Fastest if resident_plan.is_some() => CacheStorage::Resident,
+            MemoryPolicy::Fastest => CacheStorage::Streaming,
+        };
+        let persistent_lease = if requested_storage == CacheStorage::Resident {
+            let (resident_bytes, _) = resident_plan
+                .ok_or_else(|| RuntimeError::Data("resident cache plan was not resolved".into()))?;
+            Some(
+                execution
+                    .host_memory()
+                    .reserve(u64::try_from(resident_bytes).unwrap_or(u64::MAX))?,
+            )
+        } else {
+            None
+        };
+        let available_for_batch = execution.host_memory().remaining();
+        // Sources may hold the current decoded batch plus one bounded
+        // prefetched batch. A resident cache is already covered by its
+        // persistent lease; streaming additionally needs one transient cache.
+        let (fixed_peak, per_event_peak) = if requested_storage == CacheStorage::Streaming {
+            (
+                cache_zero,
+                source_bytes_per_event
+                    .saturating_mul(2)
+                    .saturating_add(cache_bytes_per_event),
+            )
+        } else {
+            (0, source_bytes_per_event.saturating_mul(2))
+        };
+        let decision = MemoryDecision::fit(
+            "CPU prepared dataset",
+            u64::try_from(fixed_peak).unwrap_or(u64::MAX),
+            u64::try_from(per_event_peak).unwrap_or(u64::MAX),
+            available_for_batch,
+            local_event_limit,
+            if requested_storage == CacheStorage::Resident {
+                "resident"
+            } else {
+                "streaming"
+            },
+        )?;
+        read_plan.chunk_size = Some(
+            read_plan
+                .chunk_size
+                .map_or(decision.chunk_events, |manual| {
+                    manual.min(decision.chunk_events)
+                })
+                .max(1),
+        );
+        execution.record_memory_decision(decision.clone());
+        match requested_storage {
             CacheStorage::Resident => {
                 let local = self.cache_dataset_with_plan(dataset, read_plan);
                 if !execution.all_succeeded(local.is_ok()) {
@@ -2223,7 +2359,16 @@ impl CpuPlan {
                     resident_bytes: dataset.resident_bytes(),
                     storage: CacheStorage::Resident,
                 };
-                Ok(CpuPreparedDataset::Resident { dataset, stats })
+                let memory_lease = persistent_lease.ok_or_else(|| {
+                    RuntimeError::Data(
+                        "resident dataset preparation did not reserve host memory".into(),
+                    )
+                })?;
+                Ok(CpuPreparedDataset::Resident {
+                    dataset,
+                    stats,
+                    memory_lease,
+                })
             }
             CacheStorage::Streaming => {
                 let local = (|| {
@@ -2258,6 +2403,7 @@ impl CpuPlan {
                         storage: CacheStorage::Streaming,
                     },
                     read_plan,
+                    transient_bytes: decision.estimated_peak_bytes,
                 })
             }
         }
@@ -2281,8 +2427,15 @@ impl CpuPlan {
                 self.reduce_cached(execution, params, dataset, reduction)
             }
             CpuPreparedDataset::Streaming {
-                dataset, read_plan, ..
+                dataset,
+                read_plan,
+                transient_bytes,
+                ..
             } => (|| {
+                let _memory = execution
+                    .host_memory()
+                    .reserve(*transient_bytes)
+                    .map_err(RuntimeError::from)?;
                 let mut total = AccurateF64::zero();
                 for batch in dataset
                     .batches_with_plan(*read_plan)
@@ -2346,8 +2499,16 @@ impl CpuPlan {
                 self.try_reduce_weighted_with_gradient_cached(execution, params, dataset, transform)
             }
             CpuPreparedDataset::Streaming {
-                dataset, read_plan, ..
+                dataset,
+                read_plan,
+                transient_bytes,
+                ..
             } => (|| {
+                let _memory = execution
+                    .host_memory()
+                    .reserve(*transient_bytes)
+                    .map_err(RuntimeError::from)
+                    .map_err(E::from)?;
                 let mut value = AccurateF64::zero();
                 let mut gradient = (0..self.free_parameter_count())
                     .map(|_| AccurateF64::zero())
@@ -4218,6 +4379,45 @@ impl CpuPlan {
     }
 }
 
+fn resident_cache_plan(
+    fixed_per_batch: usize,
+    cache_bytes_per_event: usize,
+    source_bytes_per_event: usize,
+    events: usize,
+    available: usize,
+) -> Option<(usize, usize)> {
+    if events == 0 {
+        return Some((fixed_per_batch, 1));
+    }
+    let event_cache = cache_bytes_per_event.checked_mul(events)?;
+    let minimum = event_cache
+        .checked_add(fixed_per_batch)?
+        .checked_add(source_bytes_per_event)?;
+    if minimum > available {
+        return None;
+    }
+    let mut chunk = events;
+    for _ in 0..16 {
+        let batches = events.saturating_add(chunk - 1) / chunk;
+        let resident = event_cache.checked_add(fixed_per_batch.checked_mul(batches)?)?;
+        let next = available
+            .saturating_sub(resident)
+            .checked_div(source_bytes_per_event.max(1))?
+            .min(events);
+        if next == 0 {
+            return None;
+        }
+        if next == chunk {
+            return Some((resident, chunk));
+        }
+        chunk = next;
+    }
+    let batches = events.saturating_add(chunk - 1) / chunk;
+    let resident = event_cache.checked_add(fixed_per_batch.checked_mul(batches)?)?;
+    (resident.checked_add(source_bytes_per_event.checked_mul(chunk)?)? <= available)
+        .then_some((resident, chunk))
+}
+
 #[derive(Clone, Debug, PartialEq)]
 enum Value {
     Scalar(Complex64),
@@ -5894,6 +6094,8 @@ pub enum CpuPreparedDataset {
         dataset: CpuCachedDataset,
         /// Preparation statistics.
         stats: PreparedDatasetStats,
+        /// Persistent host-memory reservation shared by clones.
+        memory_lease: MemoryLease,
     },
     /// A dataset whose event caches are rebuilt while streaming.
     Streaming {
@@ -5903,6 +6105,8 @@ pub enum CpuPreparedDataset {
         read_plan: laddu_data::io::ReadPlan,
         /// Preparation statistics.
         stats: PreparedDatasetStats,
+        /// Peak transient bytes reserved during each reduction.
+        transient_bytes: u64,
     },
 }
 
@@ -6466,6 +6670,19 @@ mod tests {
     };
 
     use super::*;
+
+    #[test]
+    fn resident_cache_plan_accounts_for_batch_overhead_and_source_prefetch() {
+        // 100 events require 1,000 cache bytes. With 100 bytes of fixed
+        // overhead per cached batch and 20 source bytes per event, a
+        // 2,000-byte budget first suggests 45 events, then accounts for three
+        // fixed-overhead batches and converges to a 35-event chunk.
+        let (resident, chunk) = resident_cache_plan(100, 10, 20, 100, 2_000).unwrap();
+        let batches = 100_usize.div_ceil(chunk);
+        assert_eq!(resident, 1_000 + 100 * batches);
+        assert!(resident + 20 * chunk <= 2_000);
+        assert!(resident_cache_plan(100, 10, 20, 100, 1_119).is_none());
+    }
 
     fn evaluate(expr: &laddu_expr::Expr) -> Complex64 {
         let model = CompiledModel::from_expr(expr).unwrap();

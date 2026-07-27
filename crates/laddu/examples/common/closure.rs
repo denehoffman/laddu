@@ -146,7 +146,7 @@ pub fn run_closure(
         UnweightedConfig {
             events: config.data_events,
             max_proposals: None,
-            batch_size: 2_048,
+            memory: MemoryBudget::Bytes(256 * 1024 * 1024),
             seed: config.seed,
             diagnostics: false,
             envelope: EnvelopeMode::Pilot {
@@ -163,7 +163,7 @@ pub fn run_closure(
     let (normalization, normalization_report) = generator.generate_weighted_dataset(
         WeightedConfig {
             events: config.normalization_events,
-            batch_size: 4_096,
+            memory: MemoryBudget::Bytes(256 * 1024 * 1024),
             seed: config.seed.wrapping_add(1),
             diagnostics: false,
         },

@@ -54,7 +54,7 @@ fn benchmarks(c: &mut Criterion) {
                 .generate_weighted_dataset(
                     WeightedConfig {
                         events: 16_384,
-                        batch_size: 1_024,
+                        memory: laddu_runtime::MemoryBudget::Bytes(1 << 20),
                         seed: 17,
                         diagnostics: false,
                     },

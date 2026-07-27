@@ -299,6 +299,11 @@ pub trait EventSource: Send + Sync {
 
 /// Consumer of schema-compatible event batches.
 pub trait EventSink: Send {
+    /// Returns whether written batches remain resident in memory.
+    fn retains_batches(&self) -> bool {
+        false
+    }
+
     /// Begins a write operation.
     ///
     /// # Errors

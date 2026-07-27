@@ -2,7 +2,7 @@ use laddu_compile::{CompiledModel, ReductionPlan};
 use laddu_data::data::Dataset;
 use laddu_data::data::EventBatch;
 #[cfg(feature = "wgpu")]
-use laddu_data::data::{CacheStorage, accurate::AccurateF64};
+use laddu_data::data::{CacheStorage, MemoryPolicy, accurate::AccurateF64};
 use laddu_expr::parameters::ParamValues;
 use num::complex::Complex64;
 
@@ -222,6 +222,8 @@ pub enum WgpuPreparedDataset {
         batches: Vec<laddu_wgpu::WgpuPreparedBatch>,
         /// Preparation statistics.
         stats: PreparedDatasetStats,
+        /// Persistent device-memory reservation.
+        memory_lease: crate::MemoryLease,
     },
     /// Source data streamed and prepared one batch at a time.
     Streaming {
@@ -230,9 +232,11 @@ pub enum WgpuPreparedDataset {
         /// Read plan used on each pass.
         read_plan: laddu_data::io::ReadPlan,
         /// Reusable prepared-batch workspace.
-        workspace: std::sync::Arc<std::sync::Mutex<Vec<laddu_wgpu::WgpuPreparedBatch>>>,
+        workspace: std::sync::Arc<std::sync::Mutex<Option<laddu_wgpu::WgpuPreparedBatch>>>,
         /// Preparation statistics.
         stats: PreparedDatasetStats,
+        /// Peak transient device bytes reserved during reductions.
+        transient_bytes: u64,
     },
 }
 
@@ -264,6 +268,100 @@ impl WgpuPlan {
         dataset: &Dataset,
     ) -> RuntimeResult<WgpuPreparedDataset> {
         let read_plan = execution.read_plan(dataset.read_plan());
+        let mut read_plan = read_plan;
+        let local_event_limit = dataset
+            .num_events()
+            .map_err(|error| RuntimeError::Data(error.to_string()))?
+            .and_then(|events| usize::try_from(events).ok())
+            .unwrap_or(usize::MAX);
+        let fixed = self
+            .kernel
+            .prepared_memory_estimate(&self.preparation_params, 0);
+        let one = self
+            .kernel
+            .prepared_memory_estimate(&self.preparation_params, 1);
+        let per_event = one.saturating_sub(fixed);
+        let schema = dataset
+            .schema()
+            .map_err(|error| RuntimeError::Data(error.to_string()))?;
+        let host_bytes_per_event =
+            (4 * schema.n_p4s() + schema.n_scalars() + usize::from(schema.has_weight()))
+                .saturating_mul(size_of::<f64>())
+                .saturating_mul(2);
+        let host_decision = crate::MemoryDecision::fit(
+            "WGPU host staging",
+            0,
+            u64::try_from(host_bytes_per_event).unwrap_or(u64::MAX),
+            execution.host_memory().remaining(),
+            local_event_limit,
+            "bounded host staging",
+        )?;
+        let host_chunks = local_event_limit
+            .saturating_add(host_decision.chunk_events.saturating_sub(1))
+            / host_decision.chunk_events.max(1);
+        let full = per_event
+            .saturating_mul(local_event_limit)
+            .saturating_add(fixed.saturating_mul(host_chunks));
+        let device_pool = execution
+            .device_memory()
+            .ok_or_else(|| RuntimeError::Wgpu("GPU execution has no device memory pool".into()))?;
+        let storage = match dataset.memory_policy() {
+            MemoryPolicy::Streaming => CacheStorage::Streaming,
+            MemoryPolicy::Resident => {
+                if u64::try_from(full).unwrap_or(u64::MAX) > device_pool.remaining() {
+                    return Err(laddu_memory::MemoryError::BudgetExceeded {
+                        resource: "device".into(),
+                        requested: u64::try_from(full).unwrap_or(u64::MAX),
+                        remaining: device_pool.remaining(),
+                    }
+                    .into());
+                }
+                CacheStorage::Resident
+            }
+            MemoryPolicy::Fastest
+                if u64::try_from(full).unwrap_or(u64::MAX) <= device_pool.remaining() =>
+            {
+                CacheStorage::Resident
+            }
+            MemoryPolicy::Fastest => CacheStorage::Streaming,
+        };
+        let memory_lease = if storage == CacheStorage::Resident {
+            Some(device_pool.reserve(u64::try_from(full).unwrap_or(u64::MAX))?)
+        } else {
+            None
+        };
+        let device_decision = if storage == CacheStorage::Resident {
+            crate::MemoryDecision {
+                label: "WGPU prepared dataset".into(),
+                fixed_bytes: u64::try_from(fixed.saturating_mul(host_chunks)).unwrap_or(u64::MAX),
+                bytes_per_event: u64::try_from(per_event).unwrap_or(u64::MAX),
+                chunk_events: host_decision.chunk_events,
+                estimated_peak_bytes: u64::try_from(full).unwrap_or(u64::MAX),
+                actual_high_water_bytes: None,
+                strategy: "resident".into(),
+            }
+        } else {
+            crate::MemoryDecision::fit(
+                "WGPU prepared dataset",
+                u64::try_from(fixed).unwrap_or(u64::MAX),
+                u64::try_from(per_event).unwrap_or(u64::MAX),
+                device_pool.remaining(),
+                local_event_limit,
+                "streaming",
+            )?
+        };
+        let chunk_events = device_decision
+            .chunk_events
+            .min(host_decision.chunk_events)
+            .max(1);
+        read_plan.chunk_size = Some(
+            read_plan
+                .chunk_size
+                .map_or(chunk_events, |manual| manual.min(chunk_events))
+                .max(1),
+        );
+        execution.record_memory_decision(device_decision.clone());
+        execution.record_memory_decision(host_decision);
         let mut batches = Vec::new();
         let mut events = 0;
         let mut batch_count = 0;
@@ -278,7 +376,7 @@ impl WgpuPlan {
             for row in 0..batch.len() {
                 sum_weights.push(batch.weights_at(row));
             }
-            if dataset.cache_storage() == CacheStorage::Resident {
+            if storage == CacheStorage::Resident {
                 batches.push(
                     self.kernel
                         .prepare_batch(&self.context, &self.preparation_params, &batch)
@@ -296,15 +394,22 @@ impl WgpuPlan {
             batch_count,
             execution.sum_f64(sum_weights.finish()),
             resident_bytes,
-            dataset.cache_storage(),
+            storage,
         );
-        Ok(match dataset.cache_storage() {
-            CacheStorage::Resident => WgpuPreparedDataset::Resident { batches, stats },
+        Ok(match storage {
+            CacheStorage::Resident => WgpuPreparedDataset::Resident {
+                batches,
+                stats,
+                memory_lease: memory_lease.ok_or_else(|| {
+                    RuntimeError::Wgpu("resident GPU dataset did not reserve device memory".into())
+                })?,
+            },
             CacheStorage::Streaming => WgpuPreparedDataset::Streaming {
                 dataset: dataset.clone(),
                 read_plan,
                 workspace: Default::default(),
                 stats,
+                transient_bytes: device_decision.estimated_peak_bytes,
             },
         })
     }
@@ -331,18 +436,24 @@ impl WgpuPlan {
                 dataset,
                 read_plan,
                 workspace,
+                transient_bytes,
                 ..
             } => {
+                let _memory = execution
+                    .device_memory()
+                    .ok_or_else(|| {
+                        RuntimeError::Wgpu("GPU execution has no device memory pool".into())
+                    })?
+                    .reserve(*transient_bytes)?;
                 let mut workspace = workspace.lock().map_err(|_| {
                     RuntimeError::Wgpu("streaming workspace lock is poisoned".into())
                 })?;
-                let mut batch_index = 0;
                 for batch in dataset
                     .batches_with_plan(*read_plan)
                     .map_err(|error| RuntimeError::Data(error.to_string()))?
                 {
                     let batch = batch.map_err(|error| RuntimeError::Data(error.to_string()))?;
-                    if let Some(prepared) = workspace.get_mut(batch_index) {
+                    if let Some(prepared) = workspace.as_mut() {
                         if !self
                             .kernel
                             .refresh_batch(
@@ -359,7 +470,7 @@ impl WgpuPlan {
                                 .map_err(wgpu_error)?;
                         }
                     } else {
-                        workspace.push(
+                        *workspace = Some(
                             self.kernel
                                 .prepare_batch(&self.context, &self.preparation_params, &batch)
                                 .map_err(wgpu_error)?,
@@ -370,14 +481,14 @@ impl WgpuPlan {
                             .reduce_prepared_batch(
                                 &self.context,
                                 params,
-                                &workspace[batch_index],
+                                workspace
+                                    .as_ref()
+                                    .expect("streaming workspace was initialized"),
                                 reduction,
                             )
                             .map_err(wgpu_error)?,
                     );
-                    batch_index += 1;
                 }
-                workspace.truncate(batch_index);
             }
         }
         Ok(execution.sum_f64(total.finish()))
@@ -415,18 +526,24 @@ impl WgpuPlan {
                 dataset,
                 read_plan,
                 workspace,
+                transient_bytes,
                 ..
             } => {
+                let _memory = execution
+                    .device_memory()
+                    .ok_or_else(|| {
+                        RuntimeError::Wgpu("GPU execution has no device memory pool".into())
+                    })?
+                    .reserve(*transient_bytes)?;
                 let mut workspace = workspace.lock().map_err(|_| {
                     RuntimeError::Wgpu("streaming workspace lock is poisoned".into())
                 })?;
-                let mut batch_index = 0;
                 for batch in dataset
                     .batches_with_plan(*read_plan)
                     .map_err(|error| RuntimeError::Data(error.to_string()))?
                 {
                     let batch = batch.map_err(|error| RuntimeError::Data(error.to_string()))?;
-                    if let Some(prepared) = workspace.get_mut(batch_index) {
+                    if let Some(prepared) = workspace.as_mut() {
                         if !self
                             .kernel
                             .refresh_batch(
@@ -443,16 +560,18 @@ impl WgpuPlan {
                                 .map_err(wgpu_error)?;
                         }
                     } else {
-                        workspace.push(
+                        *workspace = Some(
                             self.kernel
                                 .prepare_batch(&self.context, &self.preparation_params, &batch)
                                 .map_err(wgpu_error)?,
                         );
                     }
-                    consume(&workspace[batch_index])?;
-                    batch_index += 1;
+                    consume(
+                        workspace
+                            .as_ref()
+                            .expect("streaming workspace was initialized"),
+                    )?;
                 }
-                workspace.truncate(batch_index);
             }
         }
         let gradient = gradient
@@ -513,9 +632,12 @@ mod tests {
         let wgpu_execution = Execution::local(ExecutionOptions {
             device: Device::Gpu(GpuOptions {
                 backend: GpuBackend::Wgpu,
-                memory_budget: Some(256),
                 ..GpuOptions::default()
             }),
+            memory: crate::MemoryPlan::host_device(
+                crate::MemoryBudget::Auto,
+                crate::MemoryBudget::Bytes(256),
+            ),
             precision: Precision::F32,
             ..ExecutionOptions::default()
         })

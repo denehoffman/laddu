@@ -126,6 +126,11 @@ impl WgpuContext {
         self.memory_budget
     }
 
+    /// Replaces the tracked resident-memory budget after device discovery.
+    pub fn set_memory_budget(&mut self, bytes: usize) {
+        self.memory_budget = Some(bytes);
+    }
+
     /// Returns the underlying WebGPU device.
     pub fn device(&self) -> &wgpu::Device {
         &self.device

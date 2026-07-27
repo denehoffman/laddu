@@ -1,3 +1,4 @@
+use std::mem::size_of;
 use std::sync::Arc;
 
 use laddu_physics::vectors::RealVec4;
@@ -73,6 +74,33 @@ impl EventBatch {
     /// Returns the number of rows.
     pub fn len(&self) -> usize {
         self.len
+    }
+
+    /// Returns the logical payload bytes per event represented by this batch.
+    pub fn bytes_per_event(&self) -> usize {
+        self.p4s.len() * size_of::<RealVec4>()
+            + self.scalars.len() * size_of::<f64>()
+            + usize::from(self.weights.is_some()) * size_of::<f64>()
+    }
+
+    /// Returns the retained column payload size in bytes.
+    ///
+    /// Shared schema metadata, allocation headers, and other owners of shared
+    /// columns are not included.
+    pub fn resident_bytes(&self) -> usize {
+        self.p4s
+            .iter()
+            .map(|column| column.len() * size_of::<RealVec4>())
+            .sum::<usize>()
+            + self
+                .scalars
+                .iter()
+                .map(|column| column.len() * size_of::<f64>())
+                .sum::<usize>()
+            + self
+                .weights
+                .as_ref()
+                .map_or(0, |weights| weights.len() * size_of::<f64>())
     }
 
     /// Returns whether the batch contains no rows.

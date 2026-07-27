@@ -63,11 +63,16 @@ m_x = events.evaluate(mass, real=True)
 Convenience readers create file-backed datasets:
 
 ```python
-data = ld.read_parquet("accepted/*.parquet", chunk_size=100_000, cache="resident")
-control = ld.read_root("control.root", tree="events", cache="streaming")
+data = ld.read_parquet("accepted/*.parquet", memory="2 GiB", cache="fastest")
+control = ld.read_root(
+    "control.root", tree="events", memory="25% available", cache="streaming"
+)
 ```
 
-`resident` decodes each source fragment once and retains batches. It is a good default for iterative fits. `streaming` rereads batches and limits memory use, which is useful for a single pass or oversized samples.
+`fastest` retains decoded data when the full working set fits and otherwise
+streams memory-derived chunks. Use `resident` to require a fully cached dataset
+or `streaming` to require rereads. An explicit policy fails when its minimum
+working set cannot fit instead of exceeding the budget.
 
 ROOT and Parquet readers infer the laddu schema from column names. Use the
 source configuration when an external file uses a nonstandard tree, component

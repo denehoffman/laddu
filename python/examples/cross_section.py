@@ -392,7 +392,7 @@ def main() -> None:  # noqa: PLR0915
         generated, generated_report = generator.weighted(
             args.generated_mc_events,
             execution=execution,
-            batch_size=4_096,
+            memory='256 MiB',
             seed=period_seed,
         )
         accepted = accept_mc(
@@ -418,7 +418,7 @@ def main() -> None:  # noqa: PLR0915
             accepted_model,
             parameters=truth,
             execution=execution,
-            batch_size=2_048,
+            memory='256 MiB',
             seed=period_seed + 2,
             max_proposals=args.max_proposals,
             pilot_proposals=args.pilot_proposals,

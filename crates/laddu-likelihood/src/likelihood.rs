@@ -1984,7 +1984,7 @@ mod tests {
     use laddu_expr::{dot, matvec};
     use laddu_runtime::{CpuOptions, Device, ExecutionOptions, JitPolicy, Precision, ThreadPolicy};
     #[cfg(feature = "wgpu")]
-    use laddu_runtime::{GpuBackend, GpuOptions};
+    use laddu_runtime::{GpuBackend, GpuOptions, MemoryBudget, MemoryPlan};
 
     use super::*;
 
@@ -2061,9 +2061,12 @@ mod tests {
         Execution::local(ExecutionOptions {
             device: Device::Gpu(GpuOptions {
                 backend: GpuBackend::Wgpu,
-                memory_budget,
                 ..GpuOptions::default()
             }),
+            memory: MemoryPlan {
+                host: MemoryBudget::Auto,
+                device: memory_budget.map(|bytes| MemoryBudget::Bytes(bytes as u64)),
+            },
             precision: Precision::F32,
             ..ExecutionOptions::default()
         })
@@ -2562,9 +2565,12 @@ mod tests {
                     ExecutionOptions {
                         device: Device::Gpu(GpuOptions {
                             backend: GpuBackend::Wgpu,
-                            memory_budget: Some(256),
                             ..GpuOptions::default()
                         }),
+                        memory: MemoryPlan::host_device(
+                            MemoryBudget::Auto,
+                            MemoryBudget::Bytes(256),
+                        ),
                         precision: Precision::F32,
                         partitioning: laddu_data::io::Partitioning::Contiguous,
                         ..ExecutionOptions::default()
@@ -3087,9 +3093,9 @@ mod tests {
             Execution::local(ExecutionOptions {
                 device: Device::Gpu(GpuOptions {
                     backend: GpuBackend::Wgpu,
-                    memory_budget: Some(256),
                     ..GpuOptions::default()
                 }),
+                memory: MemoryPlan::host_device(MemoryBudget::Auto, MemoryBudget::Bytes(256)),
                 precision: Precision::F32,
                 ..ExecutionOptions::default()
             })
@@ -3183,7 +3189,6 @@ mod tests {
         let gpu = make(
             Device::Gpu(GpuOptions {
                 backend: GpuBackend::Wgpu,
-                memory_budget: Some(512),
                 ..GpuOptions::default()
             }),
             Precision::F32,

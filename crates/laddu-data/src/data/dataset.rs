@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use crate::{
     LadduDataError, LadduDataResult,
@@ -6,6 +6,7 @@ use crate::{
     io::{EventSink, EventSource, ReadPlan, SourceCapabilities, WritePlan, memory::MemorySource},
     schema::Schema,
 };
+use laddu_memory::{MemoryBudget, MemoryDecision, MemoryState};
 use laddu_physics::vectors::RealVec4;
 use num::complex::Complex64;
 
@@ -23,6 +24,9 @@ pub struct Dataset {
     plan: ReadPlan,
     ops: Arc<[DatasetOp]>,
     cache_storage: CacheStorage,
+    memory_policy: MemoryPolicy,
+    memory_budget: MemoryBudget,
+    last_memory_decision: Arc<Mutex<Option<MemoryDecision>>>,
 }
 
 /// Memory policy for compiled event-dependent model caches.
@@ -32,6 +36,18 @@ pub enum CacheStorage {
     #[default]
     Resident,
     /// Retain only dataset statistics and rebuild each batch cache during every evaluation.
+    Streaming,
+}
+
+/// Strategy used to trade retained memory for execution speed.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub enum MemoryPolicy {
+    /// Select the fastest supported resident or streaming strategy that fits.
+    #[default]
+    Fastest,
+    /// Require the complete compiled event cache to remain resident.
+    Resident,
+    /// Retain no compiled event cache between traversals.
     Streaming,
 }
 
@@ -46,6 +62,9 @@ impl Dataset {
             plan: ReadPlan::default(),
             ops: Arc::from([]),
             cache_storage: CacheStorage::Resident,
+            memory_policy: MemoryPolicy::Fastest,
+            memory_budget: MemoryBudget::Auto,
+            last_memory_decision: Default::default(),
         }
     }
 
@@ -56,6 +75,9 @@ impl Dataset {
             plan: ReadPlan::default(),
             ops: Arc::from([]),
             cache_storage: CacheStorage::Resident,
+            memory_policy: MemoryPolicy::Fastest,
+            memory_budget: MemoryBudget::Auto,
+            last_memory_decision: Default::default(),
         }
     }
 
@@ -70,6 +92,9 @@ impl Dataset {
             plan: self.plan,
             ops: Arc::from([]),
             cache_storage: self.cache_storage,
+            memory_policy: self.memory_policy,
+            memory_budget: self.memory_budget,
+            last_memory_decision: Default::default(),
         }
     }
 
@@ -114,6 +139,15 @@ impl Dataset {
         self.source.capabilities()
     }
 
+    /// Returns the source event count when cheaply available.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when source metadata cannot be read.
+    pub fn num_events(&self) -> LadduDataResult<Option<u64>> {
+        self.source.num_events()
+    }
+
     /// Returns the current read plan.
     pub fn read_plan(&self) -> ReadPlan {
         self.plan
@@ -124,11 +158,44 @@ impl Dataset {
         self.cache_storage
     }
 
+    /// Returns the memory-first cache selection policy.
+    pub fn memory_policy(&self) -> MemoryPolicy {
+        self.memory_policy
+    }
+
+    /// Returns the dataset's host-memory budget.
+    pub fn memory_budget(&self) -> MemoryBudget {
+        self.memory_budget
+    }
+
+    /// Returns the most recent memory-derived read decision.
+    pub fn last_memory_decision(&self) -> Option<MemoryDecision> {
+        self.last_memory_decision
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .clone()
+    }
+
+    /// Returns this dataset with a host-memory budget.
+    pub fn with_memory_budget(mut self, budget: MemoryBudget) -> Self {
+        self.memory_budget = budget;
+        self
+    }
+
+    /// Select the fastest strategy allowed by the active memory budget.
+    pub fn fastest(mut self) -> Self {
+        self.memory_policy = MemoryPolicy::Fastest;
+        self.cache_storage = CacheStorage::Resident;
+        self
+    }
+
     /// Retain compiled event-dependent values for every local event.
     ///
-    /// This is the default and is intended for repeatedly evaluating a likelihood. The source is
-    /// read once while the likelihood is prepared; later parameter evaluations do not read it.
+    /// This strict policy is intended for repeatedly evaluating a likelihood
+    /// and returns an error if the resident cache cannot fit. [`Dataset::fastest`]
+    /// is the default.
     pub fn resident(mut self) -> Self {
+        self.memory_policy = MemoryPolicy::Resident;
         self.cache_storage = CacheStorage::Resident;
         self
     }
@@ -138,11 +205,16 @@ impl Dataset {
     /// Only fixed dataset statistics are retained. This minimizes memory use but requires a
     /// repeatable source and is expected to be slower than [`Dataset::resident`].
     pub fn streaming(mut self) -> Self {
+        self.memory_policy = MemoryPolicy::Streaming;
         self.cache_storage = CacheStorage::Streaming;
         self
     }
 
-    /// Returns this dataset with a nonzero maximum batch size.
+    /// Returns this dataset with a low-level nonzero maximum event count.
+    ///
+    /// Prefer [`Dataset::with_memory_budget`] for portable application code.
+    /// This explicit read-plan override remains available for source debugging
+    /// and reproducibility and is always capped by execution memory planning.
     ///
     /// # Errors
     ///
@@ -391,8 +463,43 @@ impl Dataset {
     /// the requested batch stream.
     pub fn batches_with_plan(
         &self,
-        plan: ReadPlan,
+        mut plan: ReadPlan,
     ) -> LadduDataResult<Box<dyn Iterator<Item = LadduDataResult<EventBatch>> + Send>> {
+        if plan.chunk_size.is_none() {
+            let schema = self.schema()?;
+            let bytes_per_event = 4_u64
+                .saturating_mul(schema.n_p4s() as u64)
+                .saturating_add(schema.n_scalars() as u64)
+                .saturating_add(u64::from(schema.has_weight()))
+                .saturating_mul(size_of::<f64>() as u64);
+            let copies = if self.ops.is_empty() { 1 } else { 2 };
+            let peak_per_event = bytes_per_event.saturating_mul(copies);
+            let state = MemoryState::current();
+            state.refresh();
+            let available = self
+                .memory_budget
+                .resolve(&state.host())
+                .map_err(|error| LadduDataError::Source(error.to_string()))?;
+            let event_limit = self
+                .source
+                .num_events()?
+                .and_then(|events| usize::try_from(events).ok())
+                .unwrap_or(usize::MAX);
+            let decision = MemoryDecision::fit(
+                "dataset read",
+                0,
+                peak_per_event,
+                available,
+                event_limit,
+                "memory-derived streaming",
+            )
+            .map_err(|error| LadduDataError::Source(error.to_string()))?;
+            plan.chunk_size = Some(decision.chunk_events.max(1));
+            *self
+                .last_memory_decision
+                .lock()
+                .unwrap_or_else(|error| error.into_inner()) = Some(decision);
+        }
         let iter = self.source.batches(plan)?;
         let ops = Arc::clone(&self.ops);
 
@@ -470,6 +577,9 @@ impl Dataset {
             plan: self.plan,
             ops: ops.into(),
             cache_storage: self.cache_storage,
+            memory_policy: self.memory_policy,
+            memory_budget: self.memory_budget,
+            last_memory_decision: Default::default(),
         }
     }
 }
@@ -512,6 +622,10 @@ fn materialize_batch(
     ops: &[DatasetOp],
     base: u64,
 ) -> LadduDataResult<EventBatch> {
+    if ops.is_empty() {
+        return Ok(batch.clone());
+    }
+
     let schema = Arc::clone(batch.schema());
 
     let store_weights = batch.weights_column().is_some()

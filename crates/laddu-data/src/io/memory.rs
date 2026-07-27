@@ -283,6 +283,10 @@ impl MemorySink {
 }
 
 impl EventSink for MemorySink {
+    fn retains_batches(&self) -> bool {
+        true
+    }
+
     fn begin(&mut self, schema: Arc<Schema>, _plan: WritePlan) -> LadduDataResult<()> {
         self.schema = Some(schema);
         self.batches.clear();

@@ -61,6 +61,17 @@ enum EventInput {
 }
 
 impl WgpuScalarKernel {
+    /// Estimates tracked GPU bytes for a prepared reduction batch.
+    pub fn prepared_memory_estimate(&self, params: &ParamValues, events: usize) -> usize {
+        let scalar_size = self.scalar_size();
+        let input_bytes = self.event_inputs.len() * 2 * scalar_size;
+        let cache_bytes = self.cache_width * 2 * scalar_size;
+        let result_bytes = self.partial_width * scalar_size + 1;
+        let per_event = input_bytes + cache_bytes + result_bytes;
+        let fixed_bytes = params.as_slice().len().max(1) * scalar_size + 16;
+        fixed_bytes.saturating_add(per_event.saturating_mul(events))
+    }
+
     /// Compiles a model's scalar kernel and reduction pipelines for `context`.
     ///
     /// # Errors
