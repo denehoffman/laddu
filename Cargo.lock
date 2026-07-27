@@ -1645,6 +1645,7 @@ name = "laddu-likelihood"
 version = "0.1.0"
 dependencies = [
  "approx",
+ "auto_ops",
  "laddu-amplitudes",
  "laddu-compile",
  "laddu-data",

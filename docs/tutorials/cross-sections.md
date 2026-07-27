@@ -12,7 +12,271 @@ $$
 
 Here $N_k^\mathrm{signal}$ may come from an extended likelihood or from acceptance-corrected fitted projection weights. Keep the convention explicit: coherent totals include interference and generally do not equal the sum of single-component yields.
 
-## Efficiency from matching MC samples
+## Preferred workflow
+
+Create one `CrossSection` after fitting. It owns the luminosity, central
+parameters, generated Monte Carlo, and (optionally) an uncertainty ensemble.
+The accepted Monte Carlo and observed data come from the named likelihood term,
+so these inputs cannot accidentally drift apart.
+
+```python
+cross_sections = likelihood.cross_section(
+    "signal",
+    generated_mc,
+    luminosity=integrated_luminosity,
+    parameters=fit.x,
+)
+
+sigma = cross_sections.total()
+efficiency = cross_sections.acceptance()
+corrected_yield = cross_sections.corrected_yield()
+
+print(sigma.central)
+```
+
+These methods return `Estimate` objects. Without an ensemble, only `central` is
+defined. With an ensemble, `draws`, `mean()`, `median()`, `std()`,
+`quantile(q)`, and `interval(level)` are also available.
+
+`total` uses the observed weight sum from the likelihood term as its accepted
+yield. `corrected_yield` reports that yield after the model-weighted acceptance
+correction.
+
+### The same workflow in Rust
+
+The implementation lives in `laddu-likelihood`; Python only converts native
+objects and supplies Python-style optional arguments. Rust exposes the same
+analysis types and calculations:
+
+```rust
+use std::{collections::HashMap, sync::Arc};
+
+use laddu_likelihood::{Axis, LikelihoodResult};
+
+fn analyze(
+    likelihood: Arc<laddu_likelihood::Likelihood>,
+    generated_mc: laddu_data::data::Dataset,
+    mass: laddu_expr::Expr,
+    fitted: Vec<f64>,
+    luminosity: f64,
+) -> LikelihoodResult<()> {
+    let cross_sections =
+        likelihood.cross_section("signal", generated_mc, luminosity, fitted)?;
+
+    let sigma = cross_sections.total()?;
+    let reference = cross_sections.total_with_tags(&["reference".into()])?;
+    let components = HashMap::from([
+        ("resonance_1".into(), vec!["resonance_1".into()]),
+        ("resonance_2".into(), vec!["resonance_2".into()]),
+    ]);
+    let distribution = cross_sections.differential(
+        &[Axis::new(mass, vec![1.0, 1.1, 1.2, 1.3, 1.4, 1.5])?],
+        &components,
+    )?;
+
+    println!("sigma = {}", sigma.value());
+    println!("reference = {}", reference.value());
+    println!("model bins = {:?}", distribution.model().values());
+    Ok(())
+}
+```
+
+Rust also exposes `Ensemble`, `Estimate`, `BinnedEstimate`,
+`DifferentialCrossSection`, `CrossSection::combine`,
+`CrossSection::combine_with_factors`, covariance and interval calculations,
+multidimensional axes, and provenance-aware `Estimate` arithmetic.
+
+## Narrowing to tagged contributions
+
+Pass `tags` to any scalar method:
+
+```python
+reference_sigma = cross_sections.total(tags=["reference"])
+reference_efficiency = cross_sections.acceptance(tags=["reference"])
+```
+
+The selected tags define the numerator. The cross section retains the full
+model's accepted normalization, which gives the tagged contribution its fitted
+fraction of the observed yield. Interference belongs to whichever tagged
+expression contains it; coherent totals generally do not equal the sum of
+separately selected contributions.
+
+## Differential cross sections
+
+An `Axis` accepts any real laddu expression, not only invariant mass:
+
+```python
+import numpy as np
+
+mass_axis = ld.Axis(channel.mass("X"), np.linspace(1.0, 2.0, 51))
+distribution = cross_sections.differential(
+    mass_axis,
+    components={
+        "resonance_1": ["resonance_1"],
+        "resonance_2": ["resonance_2"],
+    },
+)
+
+data_values = np.asarray(distribution.data.central)
+model_values = np.asarray(distribution.model.central)
+r1_values = np.asarray(distribution.components["resonance_1"].central)
+r2_values = np.asarray(distribution.components["resonance_2"].central)
+```
+
+The component curves are separately tagged, noninterfering projections. The
+coherent model still contains interference and need not equal their sum.
+Values are divided by bin width, so the one-dimensional result is
+$d\sigma/dx$.
+
+Pass several axes for a multidimensional differential:
+
+```python
+result = cross_sections.differential([
+    ld.Axis(channel.mass("X"), mass_edges),
+    ld.Axis(cos_theta, angular_edges),
+])
+
+values = np.asarray(result.model.central).reshape(result.shape)
+```
+
+`result.axes` contains all edge arrays and `result.shape` gives the bin shape.
+Values are flattened in row-major order and divided by the product of the bin
+widths.
+
+Each `BinnedEstimate` has `central`, optional `draws`, `interval(level)`, and
+`covariance()`, which are sufficient for either error bars or uncertainty
+bands.
+
+## Bootstrap and MCMC uncertainty
+
+For a Poisson bootstrap, let the likelihood build, fit, and retain the paired
+replicas:
+
+```python
+bootstrap = likelihood.bootstrap_fit(
+    200,
+    ld.ganesh.LBFGSBConfig(history_size=10),
+    initial=fit.x,
+    seed=12345,
+    terminators=[ld.ganesh.MaxSteps(1_000)],
+)
+
+cross_sections = likelihood.cross_section(
+    "signal",
+    generated_mc,
+    luminosity=integrated_luminosity,
+    parameters=fit.x,
+    ensemble=bootstrap,
+)
+
+low, high = cross_sections.total().interval(0.68)
+model_low, model_high = cross_sections.differential(mass_axis).model.interval(0.68)
+```
+
+Every bootstrap parameter draw is evaluated with its corresponding resampled
+likelihood data. This pairing matters: evaluating bootstrap fit parameters
+against the original observed dataset gives the wrong resampling distribution
+for yields and projections.
+
+The Rust equivalent centralizes the same resample/refit/pair operation while
+letting the caller choose any optimizer:
+
+```rust
+use laddu_likelihood::Ensemble;
+
+let bootstrap = Ensemble::bootstrap_fit(
+    &likelihood,
+    200,
+    12_345,
+    |replica, _index| fit_likelihood(replica),
+)?;
+
+let cross_sections = likelihood.cross_section_with_ensemble(
+    "signal",
+    generated_mc,
+    integrated_luminosity,
+    fitted,
+    bootstrap,
+)?;
+```
+
+MCMC uses the original likelihood data for every posterior draw:
+
+```python
+summary = likelihood.sample(config, init, seed=12345)
+posterior = ld.Ensemble.from_mcmc(summary, discard=1_000, thin=10)
+
+posterior_cross_sections = likelihood.cross_section(
+    "signal",
+    generated_mc,
+    luminosity=integrated_luminosity,
+    parameters=fit.x,
+    ensemble=posterior,
+)
+```
+
+The explicit `discard` and `thin` arguments make the chain-selection convention
+visible. `Ensemble.from_arrays(values, parameter_names)` adapts custom samplers
+without requiring another cross-section implementation.
+
+## Combining datasets and decay modes
+
+Construct one `CrossSection` per statistically independent dataset, using that
+dataset's likelihood term, accepted/generated Monte Carlo, luminosity, and
+ensemble. Then exposure-pool them:
+
+```python
+combined = ld.CrossSection.combine([period_a, period_b, period_c])
+
+combined_sigma = combined.total()
+combined_mass = combined.differential(
+    mass_axis,
+    components={"resonance_1": ["resonance_1"]},
+)
+```
+
+The combination sums accepted yields and effective exposures, including each
+dataset's model-weighted acceptance. It does not average already-corrected
+cross sections.
+
+For several decay modes of the same produced particle, supply the branching
+fractions as exposure factors:
+
+```python
+branching = ld.Estimate(0.492, branching_draws)
+all_modes = ld.CrossSection.combine(
+    [mode_a, mode_b],
+    factors=[branching, 0.307],
+)
+particle_sigma = all_modes.total(tags=["resonance_1"])
+```
+
+Factors may be positive floats or `Estimate` objects. Draws with the same
+`source_id` are paired; draws from different sources are deterministically
+re-paired. The same rule is used when combining ensemble-backed measurements,
+which preserves known correlations while treating unrelated ensembles as
+independent.
+
+`Estimate` arithmetic applies the same provenance rule, so derived pure
+quantities can be written directly:
+
+```python
+ratio = mode_a.total(tags=["resonance_1"]) / mode_b.total()
+```
+
+## Low-level diagnostics
+
+The specialized object is the preferred analysis workflow. The lower-level
+interfaces remain available for custom calculations:
+
+- `Likelihood.cross_section_integrals` exposes aggregate accepted/generated
+  integrals and normalization terms.
+- `Likelihood.projection` exposes event-level intensities and weights.
+
+Use them when the standard scalar, differential, and combination behavior is
+not appropriate.
+
+## Inspecting efficiency manually in bins
 
 If generated and accepted samples represent the same thrown distribution,
 
@@ -31,16 +295,13 @@ efficiency = np.array([
 
 If generation was importance sampled, use the proper generator weights in both numerator and denominator. Evaluate uncertainty from finite MC, luminosity, background subtraction, branching fractions, model dependence, and fit statistics.
 
-## Projection-based yields
+The manual calculation is useful for diagnostics and binned efficiency plots.
+For fitted results, prefer `CrossSection` so that the model-weighted integrals,
+normalization convention, luminosity, and uncertainty context remain coupled.
 
-```python
-projection = likelihood.projection("signal", generated_mc, ["reference", "second"])
-projection_weights = np.asarray(
-    projection.weights(fitted, acceptance_corrected=True), dtype=float
-)
-```
-
-Histogram these weights in the reporting variable and establish their normalization against a known generated yield or an extended-likelihood yield. A normalized `NLL` alone cannot determine an absolute scale because $I\mapsto cI$ cancels from its objective.
+A normalized `NLL` alone cannot determine an absolute scale because
+$I\mapsto cI$ cancels from its objective. Supply an independently meaningful
+yield convention and luminosity before interpreting the result as an absolute
+cross section.
 
 For publication, archive the luminosity inputs, efficiency maps, response variations, selection definition, fit configuration, and code version alongside the numerical cross-section table.
-

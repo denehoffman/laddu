@@ -12,6 +12,7 @@ rust-version.workspace = true
 workspace = true
 
 [dependencies]
+auto_ops.workspace = true
 laddu-compile = { path = "../laddu-compile" }
 laddu-data = { path = "../laddu-data" }
 laddu-expr = { path = "../laddu-expr" }

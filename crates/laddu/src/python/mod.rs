@@ -7,6 +7,8 @@
 pub mod amplitude;
 /// Python vector, rotation, and angular-momentum helpers.
 pub mod angular;
+/// Python cross-section analyses, uncertainty ensembles, and estimates.
+pub mod cross_section;
 /// Python dataset sources, sinks, transformations, and binning.
 pub mod data;
 /// Conversion between Rust errors and Python exceptions.
@@ -67,6 +69,13 @@ macro_rules! laddu_python_module {
                 PyVec3 as Vec3, PyVec4 as Vec4, PyWignerD as WignerD, clebsch_gordan
             };
             #[pymodule_export]
+            use $crate::python::cross_section::{
+                PyAxis as Axis, PyBinnedEstimate as BinnedEstimate,
+                PyCrossSection as CrossSection,
+                PyDifferentialCrossSection as DifferentialCrossSection, PyEnsemble as Ensemble,
+                PyEstimate as Estimate,
+            };
+            #[pymodule_export]
             use $crate::python::data::{
                 PyBinDataset as BinnedDataset, PyDataset as Dataset,
                 PyParquetSink as ParquetSink, PyParquetSource as ParquetSource,
@@ -89,6 +98,7 @@ macro_rules! laddu_python_module {
             use $crate::python::histogram::PyHistogram as Histogram;
             #[pymodule_export]
             use $crate::python::likelihood::{
+                PyCrossSectionIntegrals as CrossSectionIntegrals,
                 PyExtendedNll as ExtendedNLL, PyLassoPenalty as LassoPenalty,
                 PyLikelihood as Likelihood, PyLikelihoodProjection as LikelihoodProjection,
                 PyNll as NLL, PyRidgePenalty as RidgePenalty,
@@ -162,9 +172,17 @@ mod tests {
                 "M",
                 "Parity",
                 "Dataset",
+                "Axis",
+                "Ensemble",
+                "Estimate",
+                "CrossSection",
+                "BinnedEstimate",
+                "DifferentialCrossSection",
                 "Execution",
                 "Model",
                 "Likelihood",
+                "CrossSectionIntegrals",
+                "LikelihoodProjection",
                 "Generator",
                 "ganesh",
                 "clebsch_gordan",
@@ -178,6 +196,56 @@ mod tests {
             assert!(module.getattr(py, "particles").is_ok());
             assert!(module.getattr(py, "gpu").is_ok());
             assert!(module.getattr(py, "ganesh").is_ok());
+            let cross_sections = module.getattr(py, "CrossSectionIntegrals").unwrap();
+            for method in [
+                "accepted_integral",
+                "generated_integral",
+                "acceptance",
+                "full_accepted_integral",
+                "acceptance_corrected_yield",
+                "cross_section",
+            ] {
+                assert!(
+                    cross_sections.getattr(py, method).is_ok(),
+                    "missing CrossSectionIntegrals.{method}"
+                );
+            }
+            let projection = module.getattr(py, "LikelihoodProjection").unwrap();
+            for method in [
+                "accepted_integral",
+                "generated_integral",
+                "acceptance",
+                "full_accepted_integral",
+                "acceptance_corrected_yield",
+                "cross_section",
+                "intensities",
+                "weights",
+            ] {
+                assert!(
+                    projection.getattr(py, method).is_ok(),
+                    "missing LikelihoodProjection.{method}"
+                );
+            }
+            let cross_section = module.getattr(py, "CrossSection").unwrap();
+            for method in [
+                "total",
+                "acceptance",
+                "corrected_yield",
+                "differential",
+                "combine",
+            ] {
+                assert!(
+                    cross_section.getattr(py, method).is_ok(),
+                    "missing CrossSection.{method}"
+                );
+            }
+            let ensemble = module.getattr(py, "Ensemble").unwrap();
+            for method in ["from_arrays", "from_mcmc"] {
+                assert!(
+                    ensemble.getattr(py, method).is_ok(),
+                    "missing Ensemble.{method}"
+                );
+            }
         });
     }
 }

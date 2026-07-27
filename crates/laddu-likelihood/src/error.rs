@@ -74,4 +74,7 @@ pub enum LikelihoodError {
     /// A stochastic batch fraction was outside `(0, 1]`.
     #[error("stochastic batch fraction must be in (0, 1], got {0}")]
     InvalidBatchFraction(f64),
+    /// A cross-section analysis input or operation was invalid.
+    #[error("invalid cross-section analysis: {0}")]
+    InvalidCrossSection(String),
 }

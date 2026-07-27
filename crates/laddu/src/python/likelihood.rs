@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use laddu_likelihood::{
-    ExtendedNllTerm, LassoPenalty, Likelihood, LikelihoodProjection, LikelihoodTerm, NllTerm,
-    RidgePenalty,
+    CrossSectionIntegrals, ExtendedNllTerm, LassoPenalty, Likelihood, LikelihoodProjection,
+    LikelihoodTerm, NllTerm, RidgePenalty,
 };
 use numpy::{PyArray1, PyReadonlyArray1};
 use pyo3::{
@@ -11,7 +11,13 @@ use pyo3::{
     types::{PyAny, PyDict},
 };
 
-use super::{data::PyDataset, error::to_py_err, model::PyModel, runtime::PyExecution};
+use super::{
+    cross_section::{PyCrossSection, PyEnsemble},
+    data::PyDataset,
+    error::to_py_err,
+    model::PyModel,
+    runtime::PyExecution,
+};
 
 #[pyclass(name = "NLL", module = "laddu", frozen, skip_from_py_object)]
 #[derive(Clone)]
@@ -205,6 +211,65 @@ pub struct PyLikelihoodProjection {
 
 #[pymethods]
 impl PyLikelihoodProjection {
+    #[getter]
+    /// str: Source likelihood term name.
+    fn name(&self) -> &str {
+        self.inner.name()
+    }
+
+    /// Evaluate the projected accepted-Monte-Carlo integral.
+    fn accepted_integral(&self, parameters: &Bound<'_, PyAny>) -> PyResult<f64> {
+        let values = free_values(&self.likelihood, parameters)?;
+        self.inner.accepted_integral(&values).map_err(to_py_err)
+    }
+
+    /// Evaluate the projected generated-Monte-Carlo integral.
+    fn generated_integral(&self, parameters: &Bound<'_, PyAny>) -> PyResult<f64> {
+        let values = free_values(&self.likelihood, parameters)?;
+        self.inner.generated_integral(&values).map_err(to_py_err)
+    }
+
+    /// Evaluate the projected accepted-to-generated integral ratio.
+    fn acceptance(&self, parameters: &Bound<'_, PyAny>) -> PyResult<f64> {
+        let values = free_values(&self.likelihood, parameters)?;
+        self.inner.acceptance(&values).map_err(to_py_err)
+    }
+
+    /// Evaluate the full-model accepted-Monte-Carlo integral.
+    fn full_accepted_integral(&self, parameters: &Bound<'_, PyAny>) -> PyResult<f64> {
+        let values = free_values(&self.likelihood, parameters)?;
+        self.inner
+            .full_accepted_integral(&values)
+            .map_err(to_py_err)
+    }
+
+    /// Evaluate the projected, acceptance-corrected event yield.
+    fn acceptance_corrected_yield(&self, parameters: &Bound<'_, PyAny>) -> PyResult<f64> {
+        let values = free_values(&self.likelihood, parameters)?;
+        self.inner
+            .acceptance_corrected_yield(&values)
+            .map_err(to_py_err)
+    }
+
+    /// Evaluate the projected cross section for a positive luminosity.
+    fn cross_section(&self, parameters: &Bound<'_, PyAny>, luminosity: f64) -> PyResult<f64> {
+        let values = free_values(&self.likelihood, parameters)?;
+        self.inner
+            .cross_section(&values, luminosity)
+            .map_err(to_py_err)
+    }
+
+    /// Evaluate projected intensities over generated Monte Carlo.
+    fn intensities<'py>(
+        &self,
+        py: Python<'py>,
+        parameters: &Bound<'_, PyAny>,
+    ) -> PyResult<Bound<'py, PyArray1<f64>>> {
+        let values = free_values(&self.likelihood, parameters)?;
+        let intensities = self.inner.intensities(&values).map_err(to_py_err)?;
+        Ok(PyArray1::from_vec(py, intensities))
+    }
+
     #[pyo3(signature = (parameters, *, acceptance_corrected=true))]
     /// Evaluate generated-event projection weights.
     ///
@@ -238,6 +303,82 @@ impl PyLikelihoodProjection {
             .weights(&values, acceptance_corrected)
             .map_err(to_py_err)?;
         Ok(PyArray1::from_vec(py, weights))
+    }
+}
+
+#[pyclass(
+    name = "CrossSectionIntegrals",
+    module = "laddu",
+    frozen,
+    skip_from_py_object
+)]
+/// Accepted and generated Monte Carlo integrals for cross-section extraction.
+///
+/// Objects are created by :meth:`Likelihood.cross_section_integrals`. Passing
+/// tags narrows the numerator while preserving the full-model normalization.
+pub struct PyCrossSectionIntegrals {
+    inner: CrossSectionIntegrals,
+    likelihood: Arc<Likelihood>,
+}
+
+#[pymethods]
+impl PyCrossSectionIntegrals {
+    #[getter]
+    /// str: Source likelihood term name.
+    fn name(&self) -> &str {
+        self.inner.name()
+    }
+
+    #[getter]
+    /// float: Total observed event weight used by :meth:`cross_section`.
+    fn data_weight_sum(&self) -> f64 {
+        self.inner.data_weight_sum()
+    }
+
+    /// Evaluate the selected accepted-Monte-Carlo intensity integral.
+    fn accepted_integral(&self, parameters: &Bound<'_, PyAny>) -> PyResult<f64> {
+        let values = free_values(&self.likelihood, parameters)?;
+        self.inner.accepted_integral(&values).map_err(to_py_err)
+    }
+
+    /// Evaluate the selected generated-Monte-Carlo intensity integral.
+    fn generated_integral(&self, parameters: &Bound<'_, PyAny>) -> PyResult<f64> {
+        let values = free_values(&self.likelihood, parameters)?;
+        self.inner.generated_integral(&values).map_err(to_py_err)
+    }
+
+    /// Evaluate the selected accepted-to-generated integral ratio.
+    fn acceptance(&self, parameters: &Bound<'_, PyAny>) -> PyResult<f64> {
+        let values = free_values(&self.likelihood, parameters)?;
+        self.inner.acceptance(&values).map_err(to_py_err)
+    }
+
+    /// Evaluate the full-model accepted-Monte-Carlo integral.
+    fn full_accepted_integral(&self, parameters: &Bound<'_, PyAny>) -> PyResult<f64> {
+        let values = free_values(&self.likelihood, parameters)?;
+        self.inner
+            .full_accepted_integral(&values)
+            .map_err(to_py_err)
+    }
+
+    /// Correct an accepted selected-component yield for finite acceptance.
+    fn acceptance_corrected_yield(
+        &self,
+        parameters: &Bound<'_, PyAny>,
+        accepted_yield: f64,
+    ) -> PyResult<f64> {
+        let values = free_values(&self.likelihood, parameters)?;
+        self.inner
+            .acceptance_corrected_yield(&values, accepted_yield)
+            .map_err(to_py_err)
+    }
+
+    /// Evaluate the selected cross section for a positive luminosity.
+    fn cross_section(&self, parameters: &Bound<'_, PyAny>, luminosity: f64) -> PyResult<f64> {
+        let values = free_values(&self.likelihood, parameters)?;
+        self.inner
+            .cross_section(&values, luminosity)
+            .map_err(to_py_err)
     }
 }
 
@@ -421,6 +562,80 @@ impl PyLikelihood {
         Ok((value, PyArray1::from_vec(py, gradient)))
     }
 
+    #[pyo3(signature = (term_name, generated_mc, *, luminosity, parameters, ensemble=None))]
+    /// Prepare the preferred total, tagged, and differential cross-section analysis.
+    fn cross_section(
+        &self,
+        term_name: &str,
+        generated_mc: &PyDataset,
+        luminosity: f64,
+        parameters: &Bound<'_, PyAny>,
+        ensemble: Option<&PyEnsemble>,
+    ) -> PyResult<PyCrossSection> {
+        let parameters = free_values(&self.inner, parameters)?;
+        let inner = match ensemble {
+            Some(ensemble) => self.inner.cross_section_with_ensemble(
+                term_name,
+                generated_mc.inner.clone(),
+                luminosity,
+                parameters,
+                ensemble.inner.clone(),
+            ),
+            None => self.inner.cross_section(
+                term_name,
+                generated_mc.inner.clone(),
+                luminosity,
+                parameters,
+            ),
+        }
+        .map_err(to_py_err)?;
+        Ok(PyCrossSection { inner })
+    }
+
+    #[pyo3(signature = (term_name, generated_mc, *, tags=None))]
+    /// Prepare cross-section integrals for a model-backed term.
+    ///
+    /// Parameters
+    /// ----------
+    /// term_name : str
+    ///     Name assigned when constructing the likelihood term.
+    /// generated_mc : Dataset
+    ///     Generated Monte Carlo sample before detector acceptance.
+    /// tags : sequence of str, optional
+    ///     Model contribution tags to retain. By default the full model is used.
+    ///
+    /// Returns
+    /// -------
+    /// CrossSectionIntegrals
+    ///     Specialized integral and cross-section evaluator.
+    ///
+    /// Raises
+    /// ------
+    /// LadduError
+    ///     If the term is unknown, cannot be narrowed, or schemas mismatch.
+    fn cross_section_integrals(
+        &self,
+        term_name: &str,
+        generated_mc: &PyDataset,
+        tags: Option<Vec<String>>,
+    ) -> PyResult<PyCrossSectionIntegrals> {
+        let inner = match tags {
+            Some(tags) => self.inner.cross_section_integrals_with_tags(
+                term_name,
+                &generated_mc.inner,
+                tags.iter().map(String::as_str),
+            ),
+            None => self
+                .inner
+                .cross_section_integrals(term_name, &generated_mc.inner),
+        }
+        .map_err(to_py_err)?;
+        Ok(PyCrossSectionIntegrals {
+            inner,
+            likelihood: Arc::clone(&self.inner),
+        })
+    }
+
     /// Create a tagged projection for a model-backed term.
     ///
     /// Parameters
@@ -467,7 +682,8 @@ impl PyLikelihood {
 pub mod likelihood {
     #[pymodule_export]
     use super::{
-        PyExtendedNll as ExtendedNLL, PyLassoPenalty as LassoPenalty, PyLikelihood as Likelihood,
+        PyCrossSectionIntegrals as CrossSectionIntegrals, PyExtendedNll as ExtendedNLL,
+        PyLassoPenalty as LassoPenalty, PyLikelihood as Likelihood,
         PyLikelihoodProjection as LikelihoodProjection, PyNll as NLL,
         PyRidgePenalty as RidgePenalty,
     };

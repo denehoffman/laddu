@@ -101,6 +101,22 @@ pub trait LikelihoodTerm: Debug + Send + Sync {
     /// Returns the unique term name.
     fn name(&self) -> &str;
 
+    /// Clones this term while applying a deterministic Poisson bootstrap to
+    /// its observed dataset.
+    ///
+    /// Terms without observed event data should return an ordinary clone.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LikelihoodError`] when the term cannot be cloned for a
+    /// bootstrap replica.
+    fn bootstrap_clone(&self, _seed: u64) -> LikelihoodResult<Box<dyn LikelihoodTerm>> {
+        Err(LikelihoodError::Runtime(RuntimeError::InvalidShape {
+            index: 0,
+            message: format!("term `{}` does not support bootstrap cloning", self.name()),
+        }))
+    }
+
     /// Registers parameters required by this term.
     ///
     /// # Errors
@@ -371,6 +387,26 @@ impl Likelihood {
         self.params.sample_initial(seed)
     }
 
+    /// Rebuilds this likelihood with Poisson-bootstrapped observed datasets.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LikelihoodError`] when a term cannot be bootstrap-cloned or
+    /// the rebuilt likelihood cannot be prepared.
+    pub fn bootstrap(&self, seed: u64) -> LikelihoodResult<Self> {
+        let terms = self
+            .terms
+            .iter()
+            .enumerate()
+            .map(|(index, term)| {
+                term.bootstrap_clone(
+                    seed.wrapping_add((index as u64).wrapping_mul(0x9E3779B97F4A7C15)),
+                )
+            })
+            .collect::<LikelihoodResult<Vec<_>>>()?;
+        Self::with_execution_boxed(terms, &self.execution)
+    }
+
     /// Returns the resolved likelihood terms.
     pub fn terms(&self) -> &[Box<dyn LikelihoodTerm>] {
         &self.terms
@@ -491,6 +527,47 @@ impl Likelihood {
         term.cross_section_integrals(generated_mc, &self.execution)
     }
 
+    /// Prepares tag-narrowed accepted and generated Monte Carlo integrals.
+    ///
+    /// The selected tags define the numerator contribution. Cross sections
+    /// retain the full accepted-model normalization, matching
+    /// [`Self::projection`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LikelihoodError`] when `term_name` is missing or not an
+    /// intensity term, graph projection fails, or dataset preparation fails.
+    pub fn cross_section_integrals_with_tags<'a>(
+        &self,
+        term_name: &str,
+        generated_mc: &Dataset,
+        tags: impl IntoIterator<Item = &'a str>,
+    ) -> LikelihoodResult<CrossSectionIntegrals> {
+        let Some(term) = self.terms.iter().find(|term| term.name() == term_name) else {
+            return Err(LikelihoodError::MissingTerm(term_name.to_owned()));
+        };
+        let Some(term) = term.as_intensity() else {
+            return Err(LikelihoodError::NotIntensityTerm(term_name.to_owned()));
+        };
+        term.cross_section_integrals_with_tags(generated_mc, tags, &self.execution)
+    }
+
+    /// Returns the observed and accepted Monte Carlo sources for an intensity term.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LikelihoodError`] when `term_name` is missing or is not an
+    /// intensity term.
+    pub fn intensity_datasets(&self, term_name: &str) -> LikelihoodResult<(&Dataset, &Dataset)> {
+        let Some(term) = self.terms.iter().find(|term| term.name() == term_name) else {
+            return Err(LikelihoodError::MissingTerm(term_name.to_owned()));
+        };
+        let Some(term) = term.as_intensity() else {
+            return Err(LikelihoodError::NotIntensityTerm(term_name.to_owned()));
+        };
+        Ok((&term.data_source, &term.accepted_mc_source))
+    }
+
     /// Projects an intensity term onto selected model tags over generated Monte Carlo.
     ///
     /// # Errors
@@ -565,6 +642,14 @@ impl std::fmt::Debug for NllTerm {
 }
 
 impl NllTerm {
+    fn bootstrap_term(&self, seed: u64) -> LikelihoodResult<Self> {
+        Self::new(
+            self.name(),
+            &self.model,
+            &self.data_source.clone().bootstrap(seed),
+            &self.accepted_mc_source,
+        )
+    }
     fn projection<'a>(
         &self,
         generated_mc: &Dataset,
@@ -592,6 +677,7 @@ impl NllTerm {
             projected_accepted_mc: projected_plan
                 .prepare_dataset(execution, &self.accepted_mc_source)?,
             projected_generated_mc: projected_plan.prepare_dataset(execution, generated_mc)?,
+            accepted_mc_source: self.accepted_mc_source.clone(),
             generated_mc_source: generated_mc.clone(),
             projected_plan,
             projected_params,
@@ -705,12 +791,40 @@ impl NllTerm {
         let plan = self.plan()?.clone();
         Ok(CrossSectionIntegrals {
             name: self.name.clone(),
+            full_plan: plan.clone(),
+            full_projection: self.resolved_projection()?.clone(),
+            full_accepted_mc: self.accepted_mc()?.clone(),
+            accepted_mc_source: self.accepted_mc_source.clone(),
+            generated_mc_source: generated_mc.clone(),
             plan: plan.clone(),
             projection: self.resolved_projection()?.clone(),
             accepted_mc: self.accepted_mc()?.clone(),
             generated_mc: plan.prepare_dataset(execution, generated_mc)?,
             data_weight_sum: self.data_weight_sum()?,
             execution: execution.clone(),
+        })
+    }
+
+    fn cross_section_integrals_with_tags<'a>(
+        &self,
+        generated_mc: &Dataset,
+        tags: impl IntoIterator<Item = &'a str>,
+        execution: &Execution,
+    ) -> LikelihoodResult<CrossSectionIntegrals> {
+        let projection = self.projection(generated_mc, tags, execution)?;
+        Ok(CrossSectionIntegrals {
+            name: projection.name,
+            full_plan: projection.full_plan,
+            full_projection: projection.full_projection,
+            full_accepted_mc: projection.full_accepted_mc,
+            accepted_mc_source: projection.accepted_mc_source,
+            generated_mc_source: projection.generated_mc_source,
+            plan: projection.projected_plan,
+            projection: projection.projected_params,
+            accepted_mc: projection.projected_accepted_mc,
+            generated_mc: projection.projected_generated_mc,
+            data_weight_sum: projection.data_weight_sum,
+            execution: projection.execution,
         })
     }
 
@@ -789,6 +903,10 @@ impl NllTerm {
 impl LikelihoodTerm for NllTerm {
     fn name(&self) -> &str {
         self.name.as_str()
+    }
+
+    fn bootstrap_clone(&self, seed: u64) -> LikelihoodResult<Box<dyn LikelihoodTerm>> {
+        Ok(Box::new(self.bootstrap_term(seed)?))
     }
 
     fn register_params(&self, registry: &mut ParamRegistry) -> LikelihoodResult<()> {
@@ -1013,6 +1131,12 @@ impl LikelihoodTerm for ExtendedNllTerm {
         self.inner.name()
     }
 
+    fn bootstrap_clone(&self, seed: u64) -> LikelihoodResult<Box<dyn LikelihoodTerm>> {
+        Ok(Box::new(Self {
+            inner: self.inner.bootstrap_term(seed)?,
+        }))
+    }
+
     fn register_params(&self, registry: &mut ParamRegistry) -> LikelihoodResult<()> {
         self.inner.register_params(registry)
     }
@@ -1158,6 +1282,10 @@ impl LikelihoodTerm for RidgePenalty {
         self.inner.name()
     }
 
+    fn bootstrap_clone(&self, _seed: u64) -> LikelihoodResult<Box<dyn LikelihoodTerm>> {
+        Ok(Box::new(self.clone()))
+    }
+
     fn resolve(
         &mut self,
         global_params: Arc<ParamLayout>,
@@ -1207,6 +1335,10 @@ impl LassoPenalty {
 impl LikelihoodTerm for LassoPenalty {
     fn name(&self) -> &str {
         self.inner.name()
+    }
+
+    fn bootstrap_clone(&self, _seed: u64) -> LikelihoodResult<Box<dyn LikelihoodTerm>> {
+        Ok(Box::new(self.clone()))
     }
 
     fn resolve(
@@ -1344,15 +1476,30 @@ enum PenaltyKind {
 }
 
 /// Prepared accepted and generated Monte Carlo integrals for an intensity model.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct CrossSectionIntegrals {
     name: LikelihoodName,
+    full_plan: PreparedModel,
+    full_projection: ParamProjection,
+    full_accepted_mc: PreparedDataset,
+    accepted_mc_source: Dataset,
+    generated_mc_source: Dataset,
     plan: PreparedModel,
     projection: ParamProjection,
     accepted_mc: PreparedDataset,
     generated_mc: PreparedDataset,
     data_weight_sum: f64,
     execution: Execution,
+}
+
+impl std::fmt::Debug for CrossSectionIntegrals {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("CrossSectionIntegrals")
+            .field("name", &self.name)
+            .field("data_weight_sum", &self.data_weight_sum)
+            .finish_non_exhaustive()
+    }
 }
 
 /// A tag-projected intensity model evaluated over generated Monte Carlo.
@@ -1366,6 +1513,7 @@ pub struct LikelihoodProjection {
     projected_params: ParamProjection,
     projected_accepted_mc: PreparedDataset,
     projected_generated_mc: PreparedDataset,
+    accepted_mc_source: Dataset,
     generated_mc_source: Dataset,
     data_weight_sum: f64,
     execution: Execution,
@@ -1546,6 +1694,16 @@ impl CrossSectionIntegrals {
         &self.generated_mc
     }
 
+    /// Returns the accepted Monte Carlo source dataset.
+    pub fn accepted_mc_source(&self) -> &Dataset {
+        &self.accepted_mc_source
+    }
+
+    /// Returns the generated Monte Carlo source dataset.
+    pub fn generated_mc_source(&self) -> &Dataset {
+        &self.generated_mc_source
+    }
+
     /// Returns the observed dataset's total event weight.
     pub fn data_weight_sum(&self) -> f64 {
         self.data_weight_sum
@@ -1573,6 +1731,24 @@ impl CrossSectionIntegrals {
         let params = self.projection.global_layout.values(free)?;
         let local_params = self.projection.project(&params)?;
         self.weighted_intensity_sum(&local_params, &self.generated_mc, "generated MC")
+    }
+
+    /// Returns selected intensities over accepted Monte Carlo.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LikelihoodError`] when parameters or dataset evaluation fail.
+    pub fn accepted_intensities(&self, free: &[f64]) -> LikelihoodResult<Vec<f64>> {
+        self.intensities(free, &self.accepted_mc_source)
+    }
+
+    /// Returns selected intensities over generated Monte Carlo.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LikelihoodError`] when parameters or dataset evaluation fail.
+    pub fn generated_intensities(&self, free: &[f64]) -> LikelihoodResult<Vec<f64>> {
+        self.intensities(free, &self.generated_mc_source)
     }
 
     /// Returns the accepted-to-generated integral ratio.
@@ -1615,7 +1791,30 @@ impl CrossSectionIntegrals {
         if luminosity <= 0.0 {
             return Err(LikelihoodError::NonPositiveLuminosity(luminosity));
         }
-        Ok(self.acceptance_corrected_yield(free, self.data_weight_sum)? / luminosity)
+        let full_accepted = positive_integral("accepted MC", self.full_accepted_integral(free)?)?;
+        Ok(self.data_weight_sum * self.generated_integral(free)? / full_accepted / luminosity)
+    }
+
+    /// Returns the full-model accepted Monte Carlo integral.
+    ///
+    /// This differs from [`Self::accepted_integral`] only when the evaluator
+    /// was narrowed by tags.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LikelihoodError`] when parameters are invalid, runtime
+    /// evaluation fails, or an intensity is not positive.
+    pub fn full_accepted_integral(&self, free: &[f64]) -> LikelihoodResult<f64> {
+        let params = self.full_projection.global_layout.values(free)?;
+        let local_params = self.full_projection.project(&params)?;
+        self.full_plan
+            .reduce(
+                &self.execution,
+                &local_params,
+                &self.full_accepted_mc,
+                ReductionPlan::weighted_positive_real(),
+            )
+            .map_err(|error| map_reduction_error("accepted MC", error))
     }
 
     fn weighted_intensity_sum(
@@ -1632,6 +1831,26 @@ impl CrossSectionIntegrals {
                 ReductionPlan::weighted_positive_real(),
             )
             .map_err(|error| map_reduction_error(name, error))
+    }
+
+    fn intensities(&self, free: &[f64], dataset: &Dataset) -> LikelihoodResult<Vec<f64>> {
+        let global = self.projection.global_layout.values(free)?;
+        let local = self.projection.project(&global)?;
+        let mut output = Vec::new();
+        for batch in dataset
+            .batches()
+            .map_err(|error| LikelihoodError::Runtime(RuntimeError::Data(error.to_string())))?
+        {
+            let batch = batch
+                .map_err(|error| LikelihoodError::Runtime(RuntimeError::Data(error.to_string())))?;
+            output.extend(
+                self.plan
+                    .evaluate_batch(&local, &batch)?
+                    .into_iter()
+                    .map(|value| value.re),
+            );
+        }
+        Ok(output)
     }
 }
 
@@ -2693,6 +2912,35 @@ mod tests {
             integrals.cross_section(&params, 5.0).unwrap(),
             data.sum_weights().unwrap() * generated / accepted / 5.0
         );
+        assert_eq!(integrals.accepted_intensities(&params).unwrap().len(), 2);
+        assert_eq!(integrals.generated_intensities(&params).unwrap().len(), 2);
+    }
+
+    #[test]
+    fn bootstrap_rebuilds_likelihood_with_deterministic_poisson_data_weights() {
+        let model =
+            CompiledModel::from_expr(&(event_scalar("x") * parameter!("scale", initial: 2.0)))
+                .unwrap();
+        let data = weighted_dataset(&[(1.0, 1.0), (2.0, 1.0), (3.0, 1.0)]);
+        let accepted = weighted_dataset(&[(1.0, 1.0)]);
+        let likelihood = single_term_likelihood("signal", &model, &data, &accepted);
+        let first = likelihood.bootstrap(42).unwrap();
+        let second = likelihood.bootstrap(42).unwrap();
+        let first_sum = first
+            .intensity_datasets("signal")
+            .unwrap()
+            .0
+            .sum_weights()
+            .unwrap();
+        let second_sum = second
+            .intensity_datasets("signal")
+            .unwrap()
+            .0
+            .sum_weights()
+            .unwrap();
+
+        assert_eq!(first_sum, second_sum);
+        assert_eq!(first.params().n_free(), likelihood.params().n_free());
     }
 
     #[test]
@@ -2871,6 +3119,9 @@ mod tests {
         let projection = likelihood
             .projection("waves", &generated, ["selected"])
             .unwrap();
+        let integrals = likelihood
+            .cross_section_integrals_with_tags("waves", &generated, ["selected"])
+            .unwrap();
 
         assert_relative_eq!(projection.full_accepted_integral(&params).unwrap(), 9.0);
         assert_relative_eq!(projection.generated_integral(&params).unwrap(), 16.0);
@@ -2882,6 +3133,15 @@ mod tests {
         );
         assert_relative_eq!(projection.weights(&params, false).unwrap()[0], 16.0);
         assert_relative_eq!(projection.weights(&params, true).unwrap()[0], 16.0 / 3.0);
+        assert_relative_eq!(integrals.accepted_integral(&params).unwrap(), 4.0);
+        assert_relative_eq!(integrals.generated_integral(&params).unwrap(), 16.0);
+        assert_relative_eq!(integrals.acceptance(&params).unwrap(), 0.25);
+        assert_relative_eq!(integrals.full_accepted_integral(&params).unwrap(), 9.0);
+        assert_relative_eq!(
+            integrals.acceptance_corrected_yield(&params, 12.0).unwrap(),
+            48.0
+        );
+        assert_relative_eq!(integrals.cross_section(&params, 2.0).unwrap(), 8.0 / 3.0);
     }
 
     #[cfg(feature = "wgpu")]

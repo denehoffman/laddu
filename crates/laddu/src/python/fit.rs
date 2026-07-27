@@ -21,11 +21,14 @@ use laddu_fit::{
         traits::{Algorithm, CostFunction, Gradient, LogDensity, SupportsParameterNames},
     },
 };
-use laddu_likelihood::{Likelihood, LikelihoodEvaluation, Objective, StochasticObjective};
-use numpy::PyArray2;
+use laddu_likelihood::{
+    BootstrapFitError, Ensemble, Likelihood, LikelihoodEvaluation, Objective, StochasticObjective,
+};
+use numpy::{PyArray2, PyReadonlyArray1};
 use pyo3::{exceptions::PyTypeError, prelude::*, types::PyAny};
 
 use super::{
+    cross_section::PyEnsemble,
     error::to_py_err,
     likelihood::{PyLikelihood, free_values},
 };
@@ -427,6 +430,42 @@ impl PyLikelihood {
             to_py_err,
         )?;
         Ok(summary.into())
+    }
+
+    #[pyo3(signature = (samples, config, *, initial=None, seed=0, terminators=Vec::new()))]
+    /// Poisson-bootstrap observed datasets, refit each replica, and retain the
+    /// paired likelihood and parameter draws for cross-section propagation.
+    fn bootstrap_fit(
+        &self,
+        py: Python<'_>,
+        samples: usize,
+        config: &Bound<'_, PyAny>,
+        initial: Option<&Bound<'_, PyAny>>,
+        seed: u64,
+        terminators: Vec<Py<PyAny>>,
+    ) -> PyResult<PyEnsemble> {
+        let inner = Ensemble::bootstrap_fit(&self.inner, samples, seed, |replica, _| {
+            let replica_python = PyLikelihood {
+                inner: Arc::clone(replica),
+            };
+            let callbacks = terminators
+                .iter()
+                .map(|callback| callback.clone_ref(py))
+                .collect();
+            let summary = replica_python.fit(py, config, initial, callbacks, Vec::new())?;
+            let summary = Py::new(py, summary)?;
+            Ok(summary
+                .bind(py)
+                .getattr("x")?
+                .extract::<PyReadonlyArray1<'_, f64>>()?
+                .as_array()
+                .to_vec())
+        })
+        .map_err(|error| match error {
+            BootstrapFitError::Likelihood(error) => to_py_err(error),
+            BootstrapFitError::Fit { source, .. } => source,
+        })?;
+        Ok(PyEnsemble { inner })
     }
 
     #[pyo3(signature = (config, init, *, seed=0, terminators=Vec::new(), observers=Vec::new()))]
