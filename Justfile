@@ -91,6 +91,18 @@ example-jit *args: require-python
 example-gpu *args: require-python
     uv run --no-sync --project "{{python_project}}" python python/examples/closure.py --backend gpu {{args}}
 
+# Run the four-period acceptance and differential-cross-section example.
+cross-section-example backend="cpu" *args: require-python
+    uv run --no-sync --project "{{python_project}}" python python/examples/cross_section.py --backend {{backend}} {{args}}
+
+# Run the short cross-section smoke test.
+cross-section-example-quick backend="cpu" *args: require-python
+    uv run --no-sync --project "{{python_project}}" python python/examples/cross_section.py --backend {{backend}} --quick {{args}}
+
+# Run the higher-statistics cross-section study.
+cross-section-example-full backend="cpu" *args: require-python
+    uv run --no-sync --project "{{python_project}}" python python/examples/cross_section.py --backend {{backend}} --full {{args}}
+
 # Print Vulkan information and GPUs visible through laddu.
 gpu-info: require-python
     @vulkaninfo --summary || echo "vulkaninfo could not initialize a device; checking laddu discovery anyway"

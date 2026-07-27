@@ -13,6 +13,7 @@ The tutorials form a progressive course. The first five cover the normal analysi
   <div class="tutorial-card"><strong>8. Simultaneous fits</strong><p>Combine efficiencies, extended yields, and samples with different exposures.</p></div>
   <div class="tutorial-card"><strong>9. Coupled channels</strong><p>Share resonance parameters across production channels.</p></div>
   <div class="tutorial-card"><strong>10. Selection rules</strong><p>Evaluate conservation laws and enumerate allowed partial waves.</p></div>
+  <div class="tutorial-card"><strong>11. Cross sections</strong><p>Propagate fit ensembles, combine exposures, and produce differential results.</p></div>
 </div>
 
 ```{toctree}

@@ -195,7 +195,7 @@ def sequential_wave(
     return normalization * ls_normalization * line_shape * angular
 
 
-def build_model(channel: ld.Channel) -> ld.Model:
+def build_model(channel: ld.Channel, efficiency: ld.Expr | None = None) -> ld.Model:
     """Build the Rust demo's unpolarized sequential-helicity intensity."""
     s = channel.s('X')
     kaon_mass = channel.particle('ks1').mass
@@ -250,7 +250,10 @@ def build_model(channel: ld.Channel) -> ld.Model:
                         ).tagged('f2')
                         coherent += (f0_wave + f2_coupling * f2_wave).norm_sqr()
 
-    return ld.Model(coherent * 0.25)
+    intensity = coherent * 0.25
+    if efficiency is not None:
+        intensity *= efficiency
+    return ld.Model(intensity)
 
 
 def wrapped_phase_residual(value: float, truth: float) -> float:
@@ -261,7 +264,8 @@ def print_generation(label: str, report: ld.GenerationReport) -> None:
     print(
         f'{label}: {report.produced:,} events from {report.proposals:,} proposals '
         f'(acceptance {100.0 * report.acceptance_rate:.2f}%, '
-        f'max weight {report.maximum_weight:.3e})'
+        f'max weight {report.maximum_weight:.3e})',
+        flush=True,
     )
 
 
@@ -284,12 +288,9 @@ def fit_likelihood(
 
 def plot_closure(
     channel: ld.Channel,
-    model: ld.Model,
-    data: ld.Dataset,
     normalization: ld.Dataset,
     likelihood: ld.Likelihood,
     fitted: dict[str, float],
-    execution: ld.Execution,
     bins: int,
     bootstrap_samples: int,
     bootstrap_fit_steps: int,
@@ -298,85 +299,53 @@ def plot_closure(
 ) -> dict[str, float]:
     """Plot bootstrap data errors and a refitted 68% projection band."""
     mass = channel.mass('X')
-    data_masses = np.asarray(data.evaluate(mass, execution=execution, real=True), dtype=float)
-    mc_masses = np.asarray(normalization.evaluate(mass, execution=execution, real=True), dtype=float)
     limits = (2.0 * channel.particle('ks1').mass, 2.0)
-    data_weights = np.asarray(data.weights(), dtype=float)
-    data_counts, edges = np.histogram(data_masses, bins=bins, range=limits, weights=data_weights)
+    edges = np.linspace(*limits, bins + 1)
     centers = 0.5 * (edges[:-1] + edges[1:])
     widths = np.diff(edges)
 
-    bootstrap_data_counts: list[np.ndarray] = []
-    bootstrap_fit_counts: list[np.ndarray] = []
-    bootstrap_parameters = {name: [] for name in likelihood.parameter_names}
-    for index in range(bootstrap_samples):
-        bootstrap_data = data.bootstrap(seed=seed + index)
-        bootstrap_weights = np.asarray(bootstrap_data.weights(), dtype=float)
-        counts, _ = np.histogram(data_masses, bins=edges, weights=bootstrap_weights)
-        bootstrap_data_counts.append(counts)
+    print(f'running {bootstrap_samples} paired Poisson-bootstrap refits...', flush=True)
+    ensemble = likelihood.bootstrap_fit(
+        bootstrap_samples,
+        ld.ganesh.LBFGSBConfig(history_size=10),
+        initial=[fitted[name] for name in likelihood.parameter_names],
+        seed=seed,
+        terminators=[ld.ganesh.MaxSteps(bootstrap_fit_steps)],
+    )
+    print('bootstrap refits complete; propagating projection uncertainties...', flush=True)
+    cross_section = likelihood.cross_section(
+        'ksks',
+        normalization,
+        luminosity=1.0,
+        parameters=fitted,
+        ensemble=ensemble,
+    )
+    differential = cross_section.differential(
+        ld.Axis(mass, edges),
+        components={'f0': ['f0'], 'f2': ['f2']},
+    )
 
-        bootstrap_likelihood = ld.Likelihood(
-            [ld.NLL(model, bootstrap_data, normalization, name='ksks')],
-            execution=execution,
-        )
-        bootstrap_initial = [fitted[name] for name in bootstrap_likelihood.parameter_names]
-        bootstrap_fit = fit_likelihood(
-            bootstrap_likelihood,
-            bootstrap_initial,
-            bootstrap_fit_steps,
-        )
-        bootstrap_names = bootstrap_fit.parameter_names or bootstrap_likelihood.parameter_names
-        bootstrap_fitted = dict(zip(bootstrap_names, np.asarray(bootstrap_fit.x, dtype=float), strict=True))
-        for name, values in bootstrap_parameters.items():
-            values.append(bootstrap_fitted[name])
-        bootstrap_projection = bootstrap_likelihood.projection('ksks', normalization, ['f0', 'f2'])
-        projection_weights = np.asarray(
-            bootstrap_projection.weights(bootstrap_fitted, acceptance_corrected=True),
-            dtype=float,
-        )
-        counts, _ = np.histogram(mc_masses, bins=edges, weights=projection_weights)
-        bootstrap_fit_counts.append(counts)
-        if (index + 1) % max(1, bootstrap_samples // 10) == 0:
-            print(
-                f'bootstrap refits: {index + 1}/{bootstrap_samples}',
-                flush=True,
-            )
+    data_counts = np.asarray(differential.data.central, dtype=float) * widths
+    data_draws = np.asarray(differential.data.draws, dtype=float) * widths
+    fit_counts = np.asarray(differential.model.central, dtype=float) * widths
+    fit_draws = np.asarray(differential.model.draws, dtype=float) * widths
+    component_counts = {
+        name: np.asarray(estimate.central, dtype=float) * widths for name, estimate in differential.components.items()
+    }
+    data_errors = np.std(data_draws, axis=0, ddof=1)
+    fit_lower, fit_upper = np.quantile(fit_draws, [0.16, 0.84], axis=0)
 
-    data_errors = np.std(np.asarray(bootstrap_data_counts), axis=0, ddof=1)
-    fit_lower, fit_upper = np.quantile(np.asarray(bootstrap_fit_counts), [0.16, 0.84], axis=0)
+    parameter_draws = np.asarray(ensemble.draws, dtype=float)
+    parameter_columns = {name: parameter_draws[:, index] for index, name in enumerate(ensemble.parameter_names)}
     bootstrap_errors = {
-        'f2_magnitude': float(np.std(bootstrap_parameters['f2_magnitude'], ddof=1)),
+        'f2_magnitude': float(np.std(parameter_columns['f2_magnitude'], ddof=1)),
         'f2_phase': float(
             np.std(
-                [wrapped_phase_residual(value, fitted['f2_phase']) for value in bootstrap_parameters['f2_phase']],
+                [wrapped_phase_residual(value, fitted['f2_phase']) for value in parameter_columns['f2_phase']],
                 ddof=1,
             )
         ),
     }
-
-    projections: list[tuple[str, ld.LikelihoodProjection, str, float, str]] = [
-        (
-            r'$\mathrm{Coherent\ fit}$',
-            likelihood.projection('ksks', normalization, ['f0', 'f2']),
-            '#d62728',
-            2.2,
-            '-',
-        ),
-        (
-            r'$f_0(1500)$',
-            likelihood.projection('ksks', normalization, ['f0']),
-            '#1f77b4',
-            1.8,
-            '--',
-        ),
-        (
-            r'$f_2(1270)$',
-            likelihood.projection('ksks', normalization, ['f2']),
-            '#2ca02c',
-            1.8,
-            ':',
-        ),
-    ]
 
     figure, axis = plt.subplots(figsize=(8.0, 5.5), constrained_layout=True)
     axis.errorbar(
@@ -402,9 +371,12 @@ def plot_closure(
         linewidth=0,
         label=r'$68\%\ \mathrm{bootstrap\ band}$',
     )
-    for label, projection, color, linewidth, linestyle in projections:
-        weights = np.asarray(projection.weights(fitted, acceptance_corrected=True), dtype=float)
-        counts, _ = np.histogram(mc_masses, bins=edges, weights=weights)
+    projections = [
+        (r'$\mathrm{Coherent\ fit}$', fit_counts, '#d62728', 2.2, '-'),
+        (r'$f_0(1500)$', component_counts['f0'], '#1f77b4', 1.8, '--'),
+        (r'$f_2(1270)$', component_counts['f2'], '#2ca02c', 1.8, ':'),
+    ]
+    for label, counts, color, linewidth, linestyle in projections:
         axis.stairs(
             counts,
             edges,
@@ -496,7 +468,7 @@ def parse_args() -> argparse.Namespace:
     return args
 
 
-def main() -> None:
+def main() -> None:  # noqa: PLR0915
     args = parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
 
@@ -571,12 +543,9 @@ def main() -> None:
     plot_path = args.output / 'closure.png'
     bootstrap_errors = plot_closure(
         channel,
-        model,
-        data,
         normalization,
         likelihood,
         fitted,
-        execution,
         args.projection_bins,
         args.bootstrap_samples,
         args.max_fit_steps,

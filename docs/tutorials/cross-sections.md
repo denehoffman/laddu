@@ -12,6 +12,40 @@ $$
 
 Here $N_k^\mathrm{signal}$ may come from an extended likelihood or from acceptance-corrected fitted projection weights. Keep the convention explicit: coherent totals include interference and generally do not equal the sum of single-component yields.
 
+## Complete four-period example
+
+The repository includes an end-to-end $K_S^0K_S^0$ example with four fabricated
+run periods. Each period has a different linear mass acceptance, event count,
+and integrated luminosity. The script:
+
+1. Generates phase-space MC and applies the period's fake detector acceptance.
+2. Generates modeled, acceptance-folded pseudo-data.
+3. Fits all four datasets in one likelihood with shared resonance parameters.
+4. Runs paired joint Poisson-bootstrap refits.
+5. Builds one `CrossSection` per period and combines their effective exposures.
+6. Plots acceptance diagnostics and the combined $d\sigma/dm$ for data, the
+   coherent total, and both tagged resonances.
+
+The data error bars and all fit bands are sample standard deviations of the
+propagated bootstrap ensemble. The diagnostic figure overlays the injected and
+MC-measured acceptance on a second vertical axis.
+
+```bash
+just python-dev
+just cross-section-example-quick cpu
+just cross-section-example cpu
+just cross-section-example-full jit
+```
+
+Outputs are written below `target/python-cross-section` by default, including
+generated MC, accepted MC, modeled data, both figures, and a JSON fit summary.
+
+```{literalinclude} ../../python/examples/cross_section.py
+:language: python
+:caption: python/examples/cross_section.py
+:linenos:
+```
+
 ## Preferred workflow
 
 Create one `CrossSection` after fitting. It owns the luminosity, central

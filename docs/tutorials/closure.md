@@ -28,7 +28,9 @@ The quick mode is an API smoke test, the default is practical for iteration, and
 3. `build_model` forms the coherent $S$/$D$ intensity and tags both contributions.
 4. `main` generates model pseudo-data and phase-space normalization MC.
 5. `fit_likelihood` prepares bounded L-BFGS-B optimization.
-6. `plot_closure` refits bootstrap replicas and produces a projection band.
+6. `plot_closure` uses `Likelihood.bootstrap_fit` and `CrossSection.differential`
+   to propagate paired bootstrap replicas into data errors and a projection
+   band.
 
 ```{literalinclude} ../../python/examples/closure.py
 :language: python
@@ -41,4 +43,3 @@ The quick mode is an API smoke test, the default is practical for iteration, and
 Do not judge closure from a single best-fit point. Across independent pseudo-experiments, check bias, pull mean and width, confidence-interval coverage, fit failure rate, boundary frequency, and projection residuals. Repeat with accepted MC processed through the intended detector and selection chain.
 
 The example is also a useful backend regression: compare CPU, JIT, and GPU objective values and fitted parameters with tolerances appropriate to their precision.
-
