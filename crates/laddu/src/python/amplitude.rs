@@ -16,6 +16,11 @@ use super::{
 };
 
 #[pyfunction]
+#[pyo3(signature = (
+    s: "Expr | int | float",
+    mass: "Expr | int | float",
+    width: "Expr | int | float"
+))]
 /// Construct a constant-width Breit-Wigner amplitude.
 ///
 /// Parameters
@@ -45,7 +50,15 @@ pub fn breit_wigner(
 }
 
 #[pyfunction]
-#[pyo3(signature = (s, mass, width, mass1, mass2, *, l=None))]
+#[pyo3(signature = (
+    s: "Expr | int | float",
+    mass: "Expr | int | float",
+    width: "Expr | int | float",
+    mass1: "Expr | int | float",
+    mass2: "Expr | int | float",
+    *,
+    l: "int | float | None" = None
+))]
 /// Construct a relativistic two-body Breit-Wigner amplitude.
 ///
 /// Parameters
@@ -93,7 +106,17 @@ pub fn relativistic_breit_wigner(
 }
 
 #[pyfunction]
-#[pyo3(signature = (s, mass, width, mass1, mass2, l, *, barrier_factors=true, q_r=1.0))]
+#[pyo3(signature = (
+    s: "Expr | int | float",
+    mass: "Expr | int | float",
+    width: "Expr | int | float",
+    mass1: "Expr | int | float",
+    mass2: "Expr | int | float",
+    l: "int | float",
+    *,
+    barrier_factors=true,
+    q_r=1.0
+))]
 #[allow(clippy::too_many_arguments)]
 /// Construct a configurable relativistic Breit-Wigner amplitude.
 ///
@@ -146,7 +169,15 @@ pub fn relativistic_breit_wigner_custom(
 }
 
 #[pyfunction]
-#[pyo3(signature = (s, channel_mass_1, channel_mass_2, pole_masses, l, *, q_r=1.0))]
+#[pyo3(signature = (
+    s: "Expr | int | float",
+    channel_mass_1: "Expr | int | float",
+    channel_mass_2: "Expr | int | float",
+    pole_masses: "Expr | int | float",
+    l: "int | float",
+    *,
+    q_r=1.0
+))]
 /// Build channel-by-pole Blatt-Weisskopf barrier factors.
 ///
 /// Parameters
@@ -194,7 +225,14 @@ pub fn blatt_weisskopf_barriers(
 }
 
 #[pyfunction]
-#[pyo3(signature = (s, pole_masses, couplings, barriers, *, background=None))]
+#[pyo3(signature = (
+    s: "Expr | int | float",
+    pole_masses: "Expr | int | float",
+    couplings: "Expr | int | float",
+    barriers: "Expr | int | float",
+    *,
+    background: "Expr | int | float | None" = None
+))]
 /// Construct a coupled-channel K-matrix expression.
 ///
 /// Parameters
@@ -247,7 +285,15 @@ pub fn k_matrix(
 }
 
 #[pyfunction]
-#[pyo3(signature = (s, pole_masses, production, couplings, barriers, *, background=None))]
+#[pyo3(signature = (
+    s: "Expr | int | float",
+    pole_masses: "Expr | int | float",
+    production: "Expr | int | float",
+    couplings: "Expr | int | float",
+    barriers: "Expr | int | float",
+    *,
+    background: "Expr | int | float | None" = None
+))]
 /// Construct the production vector for a coupled-channel model.
 ///
 /// Parameters
@@ -303,6 +349,13 @@ pub fn p_vector(
 }
 
 #[pyfunction]
+#[pyo3(signature = (
+    s: "Expr | int | float",
+    pole_masses: "Expr | int | float",
+    k: "Expr | int | float",
+    p: "Expr | int | float",
+    phase_space: "Expr | int | float"
+))]
 /// Unitarize a production vector with a K-matrix and phase space.
 ///
 /// Parameters
@@ -348,6 +401,10 @@ pub fn f_vector(
 }
 
 #[pyfunction]
+#[pyo3(signature = (
+    s: "Expr | int | float",
+    production: "list[Expr | int | float] | tuple[Expr | int | float, ...]"
+))]
 /// Construct the published two-pole Kopf rho amplitude.
 ///
 /// Parameters
@@ -383,6 +440,10 @@ pub fn kopf_rho(s: &Bound<'_, PyAny>, production: Vec<Bound<'_, PyAny>>) -> PyRe
 }
 
 #[pyfunction]
+#[pyo3(signature = (
+    s: "Expr | int | float",
+    production: "list[Expr | int | float] | tuple[Expr | int | float, ...]"
+))]
 /// Construct the published one-pole Kopf pi1 amplitude.
 ///
 /// Parameters

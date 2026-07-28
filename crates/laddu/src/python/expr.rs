@@ -122,7 +122,7 @@ impl PyExpr {
     /// TypeError
     ///     If `value` cannot be converted to an expression.
     #[new]
-    #[pyo3(signature = (value: "Expr | int | float | complex"))]
+    #[pyo3(signature = (value: "Expr | int | float"))]
     fn new(value: &Bound<'_, PyAny>) -> PyResult<Self> {
         Ok(extract_expr(value)?.into())
     }
@@ -331,7 +331,18 @@ impl PyExpr {
 }
 
 #[pyfunction]
-#[pyo3(signature = (name, *, initial=None, bounds=None, fixed=None, periodic=false, scale=None, unit=None, latex=None, description=None))]
+#[pyo3(signature = (
+    name,
+    *,
+    initial: "float | tuple[float, float] | None" = None,
+    bounds=None,
+    fixed=None,
+    periodic=false,
+    scale=None,
+    unit=None,
+    latex=None,
+    description=None
+))]
 #[allow(clippy::too_many_arguments)]
 /// Create a named fit parameter expression.
 ///
@@ -439,6 +450,10 @@ pub fn scalar(name: String) -> PyExpr {
 }
 
 #[pyfunction]
+#[pyo3(signature = (
+    re: "Expr | int | float",
+    im: "Expr | int | float"
+))]
 /// Construct a complex expression from Cartesian components.
 ///
 /// Parameters
@@ -460,6 +475,10 @@ pub fn complex(re: &Bound<'_, PyAny>, im: &Bound<'_, PyAny>) -> PyResult<PyExpr>
 }
 
 #[pyfunction]
+#[pyo3(signature = (
+    magnitude: "Expr | int | float",
+    phase: "Expr | int | float"
+))]
 /// Construct a complex expression from polar components.
 ///
 /// Parameters
@@ -481,6 +500,7 @@ pub fn polar_complex(magnitude: &Bound<'_, PyAny>, phase: &Bound<'_, PyAny>) -> 
 }
 
 #[pyfunction]
+#[pyo3(signature = (phase: "Expr | int | float"))]
 /// Construct the unit complex expression ``exp(1j * phase)``.
 ///
 /// Parameters
@@ -502,6 +522,10 @@ pub fn cis(phase: &Bound<'_, PyAny>) -> PyResult<PyExpr> {
 }
 
 #[pyfunction]
+#[pyo3(signature = (
+    y: "Expr | int | float",
+    x: "Expr | int | float"
+))]
 /// Construct the quadrant-aware angle ``atan2(y, x)``.
 ///
 /// Parameters
@@ -523,6 +547,7 @@ pub fn atan2(y: &Bound<'_, PyAny>, x: &Bound<'_, PyAny>) -> PyResult<PyExpr> {
 }
 
 #[pyfunction]
+#[pyo3(signature = (value: "Expr | int | float"))]
 /// Apply inverse cosine to an expression-like value.
 ///
 /// Parameters
@@ -544,6 +569,7 @@ pub fn acos(value: &Bound<'_, PyAny>) -> PyResult<PyExpr> {
 }
 
 #[pyfunction]
+#[pyo3(signature = (elements: "Sequence[Expr | int | float]"))]
 /// Construct a vector-valued expression.
 ///
 /// Parameters
@@ -569,6 +595,9 @@ pub fn vector(elements: Vec<Bound<'_, PyAny>>) -> PyResult<PyExpr> {
 }
 
 #[pyfunction]
+#[pyo3(signature = (
+    elements: "Sequence[Sequence[Expr | int | float]]"
+))]
 /// Construct a matrix-valued expression from rows.
 ///
 /// Parameters
@@ -604,6 +633,7 @@ pub fn matrix(elements: Vec<Vec<Bound<'_, PyAny>>>) -> PyResult<PyExpr> {
 macro_rules! binary_function {
     ($name:ident, $function:ident, $doc:literal) => {
         #[pyfunction]
+        #[pyo3(signature = (lhs: "Expr | int | float", rhs: "Expr | int | float"))]
         #[doc = $doc]
         pub fn $name(lhs: &Bound<'_, PyAny>, rhs: &Bound<'_, PyAny>) -> PyResult<PyExpr> {
             Ok($function(extract_expr(lhs)?, extract_expr(rhs)?).into())

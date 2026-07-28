@@ -12,12 +12,19 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+from typing import NotRequired, TypedDict
 
 import matplotlib as mpl
 import numpy as np
 
 mpl.use('Agg')
 import matplotlib.pyplot as plt
+
+
+class StairStyle(TypedDict):
+    color: NotRequired[str]
+    linewidth: NotRequired[float]
+    linestyle: NotRequired[str]
 
 
 def parse_args() -> argparse.Namespace:
@@ -64,7 +71,7 @@ def main() -> None:
         zorder=4,
     )
 
-    styles = {
+    styles: dict[str, StairStyle] = {
         'fit': {'color': '#d62728', 'linewidth': 2.2},
         'f0': {'color': '#1f77b4', 'linewidth': 1.8, 'linestyle': '--'},
         'f2': {'color': '#2ca02c', 'linewidth': 1.8, 'linestyle': ':'},

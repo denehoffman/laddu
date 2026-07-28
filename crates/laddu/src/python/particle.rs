@@ -88,7 +88,7 @@ impl PyParticle {
         species=None,
         antiparticle_species=None,
         self_conjugate=None,
-        spin: "S | J | L | int | float | fractions.Fraction | None"=None,
+        spin: "S | J | L | int | float | None"=None,
         parity: "Parity | int | str | None"=None,
         c_parity: "Parity | int | str | None"=None,
         g_parity: "Parity | int | str | None"=None,
@@ -234,11 +234,20 @@ impl PyParticle {
     ///     Spin quantum number.
     /// parity : Parity, int, or str
     ///     Intrinsic parity.
+    #[pyo3(signature = (
+        j: "J | S | L | int | float",
+        parity: "Parity | int | str"
+    ))]
     fn jp(j: &Bound<'_, PyAny>, parity: &Bound<'_, PyAny>) -> PyResult<Self> {
         Ok(ParticleProperties::jp(extract_spin(j)?, extract_parity(parity)?).into())
     }
 
     #[staticmethod]
+    #[pyo3(signature = (
+        j: "J | S | L | int | float",
+        parity: "Parity | int | str",
+        c_parity: "Parity | int | str"
+    ))]
     /// Create a particle from spin, parity, and C-parity.
     fn jpc(
         j: &Bound<'_, PyAny>,
@@ -254,6 +263,7 @@ impl PyParticle {
     }
 
     #[staticmethod]
+    #[pyo3(signature = (j: "L | J | S | int | float"))]
     /// Create a boson with integer spin.
     fn boson(j: &Bound<'_, PyAny>) -> PyResult<Self> {
         Ok(ParticleProperties::boson(extract_l(j)?).into())

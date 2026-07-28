@@ -106,6 +106,7 @@ pub struct PyMemoryBudget {
 #[pymethods]
 impl PyMemoryBudget {
     #[new]
+    #[pyo3(signature = (value: "MemoryBudget | int | str"))]
     fn new(value: &Bound<'_, PyAny>) -> PyResult<Self> {
         Ok(Self {
             inner: parse_memory_budget(value)?,
@@ -158,7 +159,11 @@ fn parse_memory_plan(value: &Bound<'_, PyAny>) -> PyResult<MemoryPlan> {
 #[pymethods]
 impl PyMemoryPlan {
     #[new]
-    #[pyo3(signature = (*, host, device=None))]
+    #[pyo3(signature = (
+        *,
+        host: "MemoryBudget | int | str",
+        device: "MemoryBudget | int | str | None" = None
+    ))]
     fn new(host: &Bound<'_, PyAny>, device: Option<&Bound<'_, PyAny>>) -> PyResult<Self> {
         Ok(Self {
             inner: MemoryPlan {
@@ -243,6 +248,7 @@ impl PyMemoryResource {
             .map(|identity| identity.pci_bus_id.as_str())
     }
 
+    #[pyo3(signature = (value: "MemoryBudget | int | str"))]
     fn budget(&self, value: &Bound<'_, PyAny>) -> PyResult<PyMemoryBudget> {
         Ok(PyMemoryBudget {
             inner: parse_memory_budget(value)?,
@@ -440,7 +446,17 @@ impl PyExecution {
 #[pymethods]
 impl PyExecution {
     #[new]
-    #[pyo3(signature = (backend="auto", *, precision="auto", autodiff="forward", threads=None, device=None, memory=None, mpi=None, partitioning="auto"))]
+    #[pyo3(signature = (
+        backend="auto",
+        *,
+        precision="auto",
+        autodiff="forward",
+        threads=None,
+        device: "int | str | None" = None,
+        memory: "MemoryPlan | MemoryBudget | int | str | None" = None,
+        mpi=None,
+        partitioning="auto"
+    ))]
     #[allow(clippy::too_many_arguments)]
     fn new(
         backend: &str,

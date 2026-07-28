@@ -451,7 +451,16 @@ impl PyGenerator {
         })
     }
 
-    #[pyo3(signature = (events, *, model=None, parameters=None, execution=None, memory=None, seed=0, diagnostics=false))]
+    #[pyo3(signature = (
+        events,
+        *,
+        model=None,
+        parameters: "Sequence[float] | dict[str, float] | None" = None,
+        execution=None,
+        memory: "MemoryBudget | int | str | None" = None,
+        seed=0,
+        diagnostics=false
+    ))]
     #[allow(clippy::too_many_arguments)]
     /// Generate weighted phase-space events.
     ///
@@ -524,7 +533,21 @@ impl PyGenerator {
         ))
     }
 
-    #[pyo3(signature = (events, model, *, parameters=None, execution=None, memory=None, seed=0, max_proposals=None, max_weight=None, pilot_proposals=10_000, safety_factor=2.0, grow_envelope=false, diagnostics=false))]
+    #[pyo3(signature = (
+        events,
+        model,
+        *,
+        parameters: "Sequence[float] | dict[str, float] | None" = None,
+        execution=None,
+        memory: "MemoryBudget | int | str | None" = None,
+        seed=0,
+        max_proposals=None,
+        max_weight=None,
+        pilot_proposals=10_000,
+        safety_factor=2.0,
+        grow_envelope=false,
+        diagnostics=false
+    ))]
     #[allow(clippy::too_many_arguments)]
     /// Generate accept-reject unweighted events.
     ///

@@ -158,7 +158,13 @@ impl PyModel {
         })
     }
 
-    #[pyo3(signature = (dataset, *, parameters=None, execution=None, real=false))]
+    #[pyo3(signature = (
+        dataset,
+        *,
+        parameters: "Sequence[float] | dict[str, float] | None" = None,
+        execution=None,
+        real=false
+    ) -> "Sequence[float]")]
     /// Evaluate the model for every event in a dataset.
     ///
     /// Parameters
@@ -231,7 +237,13 @@ impl PyModel {
         }
     }
 
-    #[pyo3(signature = (dataset, *, parameters=None, execution=None, real=false))]
+    #[pyo3(signature = (
+        dataset,
+        *,
+        parameters: "Sequence[float] | dict[str, float] | None" = None,
+        execution=None,
+        real=false
+    ) -> "tuple[Sequence[float], Sequence[Sequence[float]]]")]
     /// Evaluate model values and derivatives for every event.
     ///
     /// Parameters

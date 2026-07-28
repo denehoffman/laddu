@@ -122,6 +122,12 @@ impl PyBarrierKind {
 /// >>> import laddu as ld
 /// >>> costheta = ld.scalar("costheta")
 /// >>> amplitude = ld.spherical_harmonic(1, 0, costheta, 0.0)
+#[pyo3(signature = (
+    l: "L | J | S | int | float",
+    m: "M | int | float",
+    costheta: "Expr | int | float",
+    phi: "Expr | int | float"
+))]
 pub fn spherical_harmonic(
     l: &Bound<'_, PyAny>,
     m: &Bound<'_, PyAny>,
@@ -139,7 +145,13 @@ pub fn spherical_harmonic(
 }
 
 #[pyfunction]
-#[pyo3(signature = (s, mass1, mass2, *, sheet=None))]
+#[pyo3(signature = (
+    s: "Expr | int | float",
+    mass1: "Expr | int | float",
+    mass2: "Expr | int | float",
+    *,
+    sheet=None
+))]
 /// Construct the two-body breakup momentum.
 ///
 /// Parameters
@@ -177,7 +189,13 @@ pub fn q(
 }
 
 #[pyfunction]
-#[pyo3(signature = (s, mass1, mass2, *, sheet=None))]
+#[pyo3(signature = (
+    s: "Expr | int | float",
+    mass1: "Expr | int | float",
+    mass2: "Expr | int | float",
+    *,
+    sheet=None
+))]
 /// Construct the dimensionless two-body phase-space factor.
 ///
 /// Parameters
@@ -214,6 +232,11 @@ pub fn rho(
 }
 
 #[pyfunction]
+#[pyo3(signature = (
+    s: "Expr | int | float",
+    mass1: "Expr | int | float",
+    mass2: "Expr | int | float"
+))]
 /// Construct the Chew-Mandelstam two-body function.
 ///
 /// Parameters
@@ -241,6 +264,11 @@ pub fn chew_mandelstam(
 }
 
 #[pyfunction]
+#[pyo3(signature = (
+    q: "Expr | int | float",
+    l: "L | J | S | int | float",
+    kind
+))]
 /// Construct a normalized Blatt-Weisskopf barrier factor.
 ///
 /// Parameters
@@ -274,6 +302,12 @@ pub fn blatt_weisskopf(
 }
 
 #[pyfunction]
+#[pyo3(signature = (
+    q: "Expr | int | float",
+    l: "L | J | S | int | float",
+    kind,
+    q_r
+))]
 /// Construct a Blatt-Weisskopf factor with a custom reference momentum.
 ///
 /// Parameters

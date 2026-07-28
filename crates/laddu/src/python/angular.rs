@@ -39,6 +39,11 @@ impl PyVec3 {
     /// TypeError
     ///     If a component cannot be converted to an expression.
     #[new]
+    #[pyo3(signature = (
+        x: "Expr | int | float",
+        y: "Expr | int | float",
+        z: "Expr | int | float"
+    ))]
     fn new(x: &Bound<'_, PyAny>, y: &Bound<'_, PyAny>, z: &Bound<'_, PyAny>) -> PyResult<Self> {
         Ok(Self {
             inner: Vec3::new(extract_expr(x)?, extract_expr(y)?, extract_expr(z)?),
@@ -169,6 +174,7 @@ impl PyVec3 {
     /// ------
     /// TypeError
     ///     If `mass` cannot be converted to an expression.
+    #[pyo3(signature = (mass: "Expr | int | float"))]
     fn with_mass(&self, mass: &Bound<'_, PyAny>) -> PyResult<PyVec4> {
         Ok(PyVec4 {
             inner: self.inner.with_mass(extract_expr(mass)?),
@@ -181,6 +187,7 @@ impl PyVec3 {
     /// ------
     /// TypeError
     ///     If `energy` cannot be converted to an expression.
+    #[pyo3(signature = (energy: "Expr | int | float"))]
     fn with_energy(&self, energy: &Bound<'_, PyAny>) -> PyResult<PyVec4> {
         Ok(PyVec4 {
             inner: self.inner.with_energy(extract_expr(energy)?),
@@ -256,6 +263,12 @@ impl PyVec4 {
     /// TypeError
     ///     If a component cannot be converted to an expression.
     #[new]
+    #[pyo3(signature = (
+        e: "Expr | int | float",
+        px: "Expr | int | float",
+        py: "Expr | int | float",
+        pz: "Expr | int | float"
+    ))]
     fn new(
         e: &Bound<'_, PyAny>,
         px: &Bound<'_, PyAny>,
@@ -399,12 +412,12 @@ impl PyVec4 {
 
 #[pyfunction]
 #[pyo3(signature = (
-    j1: "J | S | L | int | float | fractions.Fraction",
-    m1: "M | int | float | fractions.Fraction",
-    j2: "J | S | L | int | float | fractions.Fraction",
-    m2: "M | int | float | fractions.Fraction",
-    j: "J | S | L | int | float | fractions.Fraction",
-    m: "M | int | float | fractions.Fraction"
+    j1: "J | S | L | int | float",
+    m1: "M | int | float",
+    j2: "J | S | L | int | float",
+    m2: "M | int | float",
+    j: "J | S | L | int | float",
+    m: "M | int | float"
 ))]
 /// Evaluate a Clebsch-Gordan coefficient.
 ///
@@ -474,9 +487,9 @@ impl PyWignerD {
     ///     If a projection lies outside ``[-j, j]`` or has incompatible parity.
     #[new]
     #[pyo3(signature = (
-        j: "J | S | L | int | float | fractions.Fraction",
-        m_prime: "M | int | float | fractions.Fraction",
-        m: "M | int | float | fractions.Fraction"
+        j: "J | S | L | int | float",
+        m_prime: "M | int | float",
+        m: "M | int | float"
     ))]
     fn new(
         j: &Bound<'_, PyAny>,
@@ -499,12 +512,17 @@ impl PyWignerD {
     /// ----------
     /// beta : Expr or number
     ///     Polar Euler angle in radians.
+    #[pyo3(signature = (beta: "Expr | int | float"))]
     fn d(&self, beta: &Bound<'_, PyAny>) -> PyResult<PyExpr> {
         Ok(self.inner.d(extract_expr(beta)?).into())
     }
 
     #[allow(non_snake_case)]
-    #[pyo3(signature = (alpha, beta, gamma=None))]
+    #[pyo3(signature = (
+        alpha: "Expr | int | float",
+        beta: "Expr | int | float",
+        gamma: "Expr | int | float | None" = None
+    ))]
     /// Return the full complex Wigner D-matrix element.
     ///
     /// Parameters

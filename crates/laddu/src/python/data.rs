@@ -85,7 +85,14 @@ impl PyParquetSource {
     /// LadduError
     ///     If the source cannot be discovered or validated.
     #[new]
-    #[pyo3(signature = (path, *, memory=None, cache="fastest", nulls="error", validate=true))]
+    #[pyo3(signature = (
+        path: "PathLike[str] | str",
+        *,
+        memory: "MemoryBudget | int | str | None" = None,
+        cache="fastest",
+        nulls="error",
+        validate=true
+    ))]
     fn new(
         path: &Bound<'_, PyAny>,
         memory: Option<&Bound<'_, PyAny>>,
@@ -140,7 +147,14 @@ impl PyRootSource {
     /// LadduError
     ///     If the source, tree, or schema is invalid.
     #[new]
-    #[pyo3(signature = (path, *, tree=None, memory=None, cache="fastest", validate=true))]
+    #[pyo3(signature = (
+        path: "PathLike[str] | str",
+        *,
+        tree=None,
+        memory: "MemoryBudget | int | str | None" = None,
+        cache="fastest",
+        validate=true
+    ))]
     fn new(
         path: &Bound<'_, PyAny>,
         tree: Option<&str>,
@@ -339,6 +353,7 @@ impl PyDataset {
     ///     If ``source`` is not a :class:`ParquetSource` or
     ///     :class:`RootSource`.
     #[new]
+    #[pyo3(signature = (source: "ParquetSource | RootSource"))]
     fn new(source: &Bound<'_, PyAny>) -> PyResult<Self> {
         if let Ok(source) = source.extract::<PyRef<'_, PyParquetSource>>() {
             return Ok(Self {
@@ -356,7 +371,12 @@ impl PyDataset {
     }
 
     #[staticmethod]
-    #[pyo3(signature = (*, p4s, scalars, weights=None))]
+    #[pyo3(signature = (
+        *,
+        p4s: "dict",
+        scalars: "dict",
+        weights: "Sequence[float] | None" = None
+    ))]
     /// Create an in-memory dataset from NumPy columns.
     ///
     /// Parameters
@@ -493,7 +513,12 @@ impl PyDataset {
             .collect())
     }
 
-    #[pyo3(signature = (expr, *, execution=None, real=false))]
+    #[pyo3(signature = (
+        expr,
+        *,
+        execution=None,
+        real=false
+    ) -> "Sequence[float]")]
     /// Evaluate an expression for every event.
     ///
     /// Parameters
@@ -557,6 +582,7 @@ impl PyDataset {
     /// -------
     /// numpy.ndarray
     ///     Array with shape ``(n_events,)``.
+    #[pyo3(signature = () -> "Sequence[float]")]
     fn weights<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray1<f64>>> {
         let dataset = self.inner.clone();
         let weights = py
@@ -708,6 +734,7 @@ impl PyDataset {
     ///     If ``sink`` has an unsupported type.
     /// LadduError
     ///     If reading or writing fails.
+    #[pyo3(signature = (sink: "ParquetSink | RootSink"))]
     fn write_to(&self, py: Python<'_>, sink: &Bound<'_, PyAny>) -> PyResult<()> {
         let dataset = self.inner.clone();
         if let Ok(sink) = sink.extract::<PyRef<'_, PyParquetSink>>() {
@@ -759,7 +786,14 @@ pub struct PyBinDataset {
 }
 
 #[pyfunction]
-#[pyo3(signature = (path, *, memory=None, cache="fastest", nulls="error", validate=true))]
+#[pyo3(signature = (
+    path: "PathLike[str] | str",
+    *,
+    memory: "MemoryBudget | int | str | None" = None,
+    cache="fastest",
+    nulls="error",
+    validate=true
+))]
 /// Read a Parquet dataset.
 ///
 /// This is shorthand for ``Dataset(ParquetSource(...))``.
@@ -801,7 +835,14 @@ pub fn read_parquet(
 }
 
 #[pyfunction]
-#[pyo3(signature = (path, *, tree=None, memory=None, cache="fastest", validate=true))]
+#[pyo3(signature = (
+    path: "PathLike[str] | str",
+    *,
+    tree=None,
+    memory: "MemoryBudget | int | str | None" = None,
+    cache="fastest",
+    validate=true
+))]
 /// Read a ROOT TTree dataset.
 ///
 /// This is shorthand for ``Dataset(RootSource(...))``.

@@ -18,10 +18,14 @@ import json
 import math
 import time
 from pathlib import Path
+from typing import TYPE_CHECKING, cast
 
 import laddu as ld
 import matplotlib as mpl
 import numpy as np
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 mpl.use('Agg')
 import matplotlib.pyplot as plt
@@ -321,7 +325,7 @@ def plot_closure(
         ensemble=ensemble,
     )
     differential = cross_section.differential(
-        ld.Axis(mass, edges),
+        ld.Axis(mass, cast('Sequence[float]', edges)),
         components={'f0': ['f0'], 'f2': ['f2']},
     )
 

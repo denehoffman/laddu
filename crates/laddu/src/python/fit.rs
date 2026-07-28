@@ -183,7 +183,13 @@ where
 
 #[pymethods]
 impl PyLikelihood {
-    #[pyo3(signature = (center, n_walkers, *, scale=1.0e-3, seed=0))]
+    #[pyo3(signature = (
+        center: "Sequence[float] | dict[str, float]",
+        n_walkers,
+        *,
+        scale=1.0e-3,
+        seed=0
+    ) -> "Sequence[Sequence[float]]")]
     /// Generate walker positions in a small cloud around a fitted point.
     ///
     /// The returned NumPy array has shape ``(n_walkers, n_parameters)``.
@@ -265,7 +271,13 @@ impl PyLikelihood {
         Ok(PyArray2::from_vec2(py, &rows)?)
     }
 
-    #[pyo3(signature = (config, *, initial=None, terminators=Vec::new(), observers=Vec::new()))]
+    #[pyo3(signature = (
+        config: "object",
+        *,
+        initial: "object | None" = None,
+        terminators: "Sequence[object]" = Vec::new(),
+        observers: "Sequence[object]" = Vec::new()
+    ))]
     /// Minimize this likelihood with a deterministic optimizer.
     ///
     /// Parameters
@@ -358,7 +370,15 @@ impl PyLikelihood {
         ))
     }
 
-    #[pyo3(signature = (config, *, initial=None, fraction=0.1, seed=0, terminators=Vec::new(), observers=Vec::new()))]
+    #[pyo3(signature = (
+        config,
+        *,
+        initial: "object | None" = None,
+        fraction=0.1,
+        seed=0,
+        terminators: "Sequence[object]" = Vec::new(),
+        observers: "Sequence[object]" = Vec::new()
+    ))]
     #[allow(clippy::too_many_arguments)]
     /// Minimize this likelihood with stochastic Adam updates.
     ///
@@ -432,7 +452,14 @@ impl PyLikelihood {
         Ok(summary.into())
     }
 
-    #[pyo3(signature = (samples, config, *, initial=None, seed=0, terminators=Vec::new()))]
+    #[pyo3(signature = (
+        samples,
+        config: "object",
+        *,
+        initial: "object | None" = None,
+        seed=0,
+        terminators: "Sequence[object]" = Vec::new()
+    ))]
     /// Poisson-bootstrap observed datasets, refit each replica, and retain the
     /// paired likelihood and parameter draws for cross-section propagation.
     fn bootstrap_fit(
@@ -468,7 +495,14 @@ impl PyLikelihood {
         Ok(PyEnsemble { inner })
     }
 
-    #[pyo3(signature = (config, init, *, seed=0, terminators=Vec::new(), observers=Vec::new()))]
+    #[pyo3(signature = (
+        config,
+        init,
+        *,
+        seed=0,
+        terminators: "Sequence[object]" = Vec::new(),
+        observers: "Sequence[object]" = Vec::new()
+    ))]
     /// Sample the likelihood with the affine-invariant ensemble sampler.
     ///
     /// Parameters

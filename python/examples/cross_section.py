@@ -17,6 +17,7 @@ import json
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING, cast
 
 import laddu as ld
 import matplotlib as mpl
@@ -29,6 +30,9 @@ from closure import (
     fit_likelihood,
     print_generation,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 mpl.use('Agg')
 import matplotlib.pyplot as plt
@@ -52,7 +56,7 @@ PERIODS = (
     Period('period_c', 'Period C', 34.0, 760, 0.036, 0.074),
     Period('period_d', 'Period D', 29.0, 660, 0.042, 0.071),
 )
-COMPONENTS = {'f0': ['f0'], 'f2': ['f2']}
+COMPONENTS: dict[str, Sequence[str]] = {'f0': ['f0'], 'f2': ['f2']}
 COLORS = {'total': '#d62728', 'f0': '#1f77b4', 'f2': '#2ca02c'}
 
 
@@ -477,9 +481,9 @@ def main() -> None:  # noqa: PLR0915
     print(f'cross-section preparation completed in {cross_section_time:.3f}s', flush=True)
     limits = (2.0 * channel.particle('ks1').mass, 2.0)
     edges = np.linspace(*limits, args.projection_bins + 1)
-    axis = ld.Axis(mass, edges)
+    axis = ld.Axis(mass, cast('Sequence[float]', edges))
     diagnostic_edges = np.linspace(*limits, min(16, args.projection_bins) + 1)
-    diagnostic_axis = ld.Axis(mass, diagnostic_edges)
+    diagnostic_axis = ld.Axis(mass, cast('Sequence[float]', diagnostic_edges))
     period_differential_started = time.perf_counter()
     distributions = []
     for period, cross_section in zip(periods, cross_sections, strict=True):

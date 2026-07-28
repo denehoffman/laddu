@@ -45,7 +45,7 @@ impl PyEnsemble {
     }
 
     #[staticmethod]
-    #[pyo3(signature = (summary, *, discard, thin=1))]
+    #[pyo3(signature = (summary: "MCMCSummary", *, discard, thin=1))]
     /// Adapt a Ganesh MCMC summary after explicit burn-in removal and thinning.
     fn from_mcmc(summary: &Bound<'_, PyAny>, discard: usize, thin: usize) -> PyResult<Self> {
         let parameter_names = summary
@@ -191,6 +191,7 @@ pub struct PyAxis {
 #[pymethods]
 impl PyAxis {
     #[new]
+    #[pyo3(signature = (expr, edges: "Sequence[float]"))]
     fn new(expr: &PyExpr, edges: Vec<f64>) -> PyResult<Self> {
         Ok(Self {
             inner: Axis::new(expr.inner.clone(), edges).map_err(to_py_err)?,
@@ -302,7 +303,11 @@ pub struct PyCrossSection {
 #[pymethods]
 impl PyCrossSection {
     #[staticmethod]
-    #[pyo3(signature = (members, *, factors=None))]
+    #[pyo3(signature = (
+        members,
+        *,
+        factors: "Sequence[Estimate | float] | None" = None
+    ))]
     fn combine(
         py: Python<'_>,
         members: Vec<Py<PyCrossSection>>,
@@ -367,7 +372,11 @@ impl PyCrossSection {
         .map_err(to_py_err)
     }
 
-    #[pyo3(signature = (axes, *, components=None))]
+    #[pyo3(signature = (
+        axes: "Axis | Sequence[Axis]",
+        *,
+        components: "dict[str, Sequence[str]] | None" = None
+    ))]
     fn differential(
         &self,
         py: Python<'_>,
