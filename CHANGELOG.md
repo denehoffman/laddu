@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.20.1](https://github.com/denehoffman/laddu/compare/v0.20.0...v0.20.1) (2026-07-29)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * laddu-amplitudes bumped from 0.20.0 to 0.21.0
+    * laddu-autodiff bumped from 0.20.0 to 0.21.0
+    * laddu-compile bumped from 0.20.0 to 0.21.0
+    * laddu-data bumped from 0.20.0 to 0.21.0
+    * laddu-expr bumped from 0.20.0 to 0.21.0
+    * laddu-fit bumped from 0.20.0 to 0.21.0
+    * laddu-generation bumped from 0.20.0 to 0.21.0
+    * laddu-kernel bumped from 0.20.0 to 0.21.0
+    * laddu-likelihood bumped from 0.20.0 to 0.21.0
+    * laddu-physics bumped from 0.20.0 to 0.21.0
+    * laddu-runtime bumped from 0.20.0 to 0.21.0
+    * laddu-wgpu bumped from 0.20.0 to 0.21.0
+
 ## [0.20.0](https://github.com/denehoffman/laddu/compare/v0.19.6...v0.20.0) (2026-07-29)
 
 

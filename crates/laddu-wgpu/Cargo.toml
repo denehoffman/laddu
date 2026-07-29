@@ -1,6 +1,6 @@
 [package]
 name = "laddu-wgpu"
-version = "0.20.0"
+version = "0.21.0"
 authors.workspace = true
 edition.workspace = true
 homepage.workspace = true
@@ -16,11 +16,11 @@ workspace = true
 
 [dependencies]
 bytemuck.workspace = true
-laddu-autodiff = { version = "0.20.0", path = "../laddu-autodiff" }
-laddu-compile = { version = "0.20.0", path = "../laddu-compile" }
-laddu-data = { version = "0.20.0", path = "../laddu-data" }
-laddu-expr = { version = "0.20.0", path = "../laddu-expr" }
-laddu-kernel = { version = "0.20.0", path = "../laddu-kernel" }
+laddu-autodiff = { version = "0.21.0", path = "../laddu-autodiff" }
+laddu-compile = { version = "0.21.0", path = "../laddu-compile" }
+laddu-data = { version = "0.21.0", path = "../laddu-data" }
+laddu-expr = { version = "0.21.0", path = "../laddu-expr" }
+laddu-kernel = { version = "0.21.0", path = "../laddu-kernel" }
 pollster.workspace = true
 serde.workspace = true
 thiserror.workspace = true

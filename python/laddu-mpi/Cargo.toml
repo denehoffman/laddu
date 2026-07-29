@@ -1,6 +1,6 @@
 [package]
 name = "laddu-python-mpi"
-version = "0.20.0"
+version = "0.21.0"
 authors.workspace = true
 edition.workspace = true
 homepage.workspace = true
@@ -17,7 +17,7 @@ name = "_laddu_mpi"
 crate-type = ["cdylib"]
 
 [dependencies]
-laddu = { version = "0.20.0", path = "../../crates/laddu", features = [
+laddu = { version = "0.20.1", path = "../../crates/laddu", features = [
   "python",
   "jit",
   "wgpu",
