@@ -1,0 +1,35 @@
+[package]
+name = "laddu-physics"
+version = "0.19.6"
+authors.workspace = true
+edition.workspace = true
+homepage.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[package.metadata.docs.rs]
+rustdoc-args = ["--html-in-header", "docs-header.html"]
+
+[lints]
+workspace = true
+
+[dependencies]
+laddu-expr = { version = "0.19.6", path = "../laddu-expr" }
+serde.workspace = true
+nalgebra.workspace = true
+thiserror.workspace = true
+num.workspace = true
+auto_ops.workspace = true
+approx.workspace = true
+factorial.workspace = true
+indexmap.workspace = true
+fastrand.workspace = true
+fastrand-contrib.workspace = true
+
+
+[dev-dependencies]
+laddu-compile = { version = "0.19.6", path = "../laddu-compile" }
+laddu-runtime = { version = "0.19.6", path = "../laddu-runtime" }
+criterion.workspace = true
+serde_json.workspace = true

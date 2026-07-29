@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 674 674" role="img" aria-labelledby="title">
+  <title id="title">laddu logo</title>
+  <rect x="5" y="5" width="664" height="664" rx="8" fill="#78a5a5" stroke="#122626" stroke-width="10"/>
+  <circle cx="337" cy="339" r="267" fill="#cb9252" stroke="#122626" stroke-width="12"/>
+  <circle cx="253" cy="293" r="39" fill="#122626"/>
+  <circle cx="422" cy="293" r="39" fill="#122626"/>
+  <circle cx="234" cy="277" r="14" fill="#fff"/>
+  <circle cx="403" cy="277" r="14" fill="#fff"/>
+  <path d="M253 402c0 0 14 4 84 4s84-4 84-4c-14 47-42 72-84 72s-70-25-84-72z" fill="#e14545" stroke="#122626" stroke-width="10" stroke-linejoin="round"/>
+  <path d="M297 461c8-26 73-26 81 0-12 8-25 13-41 13s-29-5-40-13z" fill="#e97373" stroke="#122626" stroke-width="5"/>
+</svg>

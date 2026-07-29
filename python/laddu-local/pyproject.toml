@@ -1,0 +1,18 @@
+[build-system]
+requires = ["maturin>=1.13,<2"]
+build-backend = "maturin"
+
+[project]
+name = "laddu-local"
+requires-python = ">=3.11"
+dynamic = ["version"]
+dependencies = ["numpy>=2"]
+
+[dependency-groups]
+dev = ["maturin>=1.13,<2", "ruff", "ty"]
+
+[tool.maturin]
+module-name = "_laddu_local"
+
+[tool.uv]
+config-settings = { "maturin.build-args" = "--generate-stubs" }

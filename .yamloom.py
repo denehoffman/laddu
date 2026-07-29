@@ -1,473 +1,222 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from yamloom import (
     Environment,
     Events,
     Job,
-    Matrix,
-    Permissions,
     PullRequestEvent,
     PushEvent,
-    Strategy,
     Workflow,
-    WorkflowCallEvent,
     WorkflowDispatchEvent,
-    WorkflowSecret,
     action,
     script,
+    sync,
 )
 from yamloom.actions.ci.coverage import Codecov
-from yamloom.actions.github.artifacts import DownloadArtifact, UploadArtifact
+from yamloom.actions.github.artifacts import DownloadArtifact
 from yamloom.actions.github.release import ReleasePlease
 from yamloom.actions.github.scm import Checkout
-from yamloom.actions.packaging.python import Maturin
-from yamloom.actions.toolchains.python import SetupPython, SetupUV
+from yamloom.actions.packaging.python import PypiPublish
+from yamloom.actions.toolchains.python import SetupUV
 from yamloom.actions.toolchains.rust import InstallRustTool, SetupRust
 from yamloom.actions.toolchains.system import SetupMPI
-from yamloom.expressions import context
-
-
-@dataclass
-class Target:
-    runner: str
-    target: str
-    skip_python_versions: list[str] | None = None
-
-
-DEFAULT_PYTHON_VERSIONS = [
-    '3.10',
-    '3.11',
-    '3.12',
-    '3.13',
-    '3.13t',
-    '3.14',
-    '3.14t',
-    'pypy3.11',
-]
-
-
-@dataclass
-class TargetJob:
-    job_name: str
-    short_name: str
-    targets: list[Target]
-
-
-TARGET_JOBS_CPU = [
-    TargetJob(
-        'Build Linux Wheels',
-        'linux',
-        [
-            Target(
-                'ubuntu-22.04',
-                target,
-            )
-            for target in [
-                'x86_64',
-                'x86',
-                'aarch64',
-                'armv7',
-                's390x',
-                'ppc64le',
-            ]
-        ],
-    ),
-    TargetJob(
-        'Build (musl) Linux Wheels',
-        'musllinux',
-        [
-            Target(
-                'ubuntu-22.04',
-                target,
-            )
-            for target in [
-                'x86_64',
-                'x86',
-                'aarch64',
-                'armv7',
-            ]
-        ],
-    ),
-    TargetJob(
-        'Build Windows Wheels',
-        'windows',
-        [
-            Target('windows-latest', 'x64'),
-            Target('windows-latest', 'x86', ['pypy3.11']),
-            Target(
-                'windows-11-arm',
-                'aarch64',
-                ['3.10', '3.11', '3.13t', '3.14t', 'pypy3.11'],
-            ),
-        ],
-    ),
-    TargetJob(
-        'Build macOS Wheels',
-        'macos',
-        [
-            Target(
-                'macos-15-intel',
-                'x86_64',
-            ),
-            Target('macos-latest', 'aarch64'),
-        ],
-    ),
-]
-
-# In case we ever decide to build MPI wheels again
-TARGET_JOBS_MPI = [
-    TargetJob(
-        'Build Linux Wheels',
-        'linux',
-        [
-            Target(
-                'ubuntu-22.04',
-                target,
-            )
-            for target in [
-                'x86_64',
-                'x86',
-                # 'aarch64',
-                # 'armv7',
-                # 's390x',
-                # 'ppc64le',
-            ]
-        ],
-    ),
-    # TargetJob(
-    #     'Build (musl) Linux Wheels',
-    #     'musllinux',
-    #     [
-    #         Target(
-    #             'ubuntu-22.04',
-    #             target,
-    #         )
-    #         for target in [
-    #             # 'x86_64',
-    #             # 'x86',
-    #             # 'aarch64',
-    #             # 'armv7',
-    #         ]
-    #     ],
-    # ),
-    TargetJob(
-        'Build Windows Wheels',
-        'windows',
-        [
-            Target('windows-latest', 'x64'),
-            # Target('windows-latest', 'x86', ['pypy3.11']),
-            # Target(
-            #     'windows-11-arm',
-            #     'aarch64',
-            #     ['3.10', '3.11', '3.13t', '3.14t', 'pypy3.11'],
-            # ),
-        ],
-    ),
-    TargetJob(
-        'Build macOS Wheels',
-        'macos',
-        [
-            Target(
-                'macos-15-intel',
-                'x86_64',
-            ),
-            Target('macos-latest', 'aarch64'),
-        ],
-    ),
-]
-
-
-def resolve_python_versions(skip: list[str] | None) -> list[str]:
-    if not skip:
-        return DEFAULT_PYTHON_VERSIONS
-    skipped = set(skip)
-    return [version for version in DEFAULT_PYTHON_VERSIONS if version not in skipped]
-
-
-def create_build_job(
-    job_name: str,
-    name: str,
-    targets: list[Target],
-    *,
-    mpi: bool,
-    needs: list[str] | None = None,
-    upload: bool = True,
-) -> Job:
-    def platform_entry(target: Target) -> dict[str, str | list[str]]:
-        entry = {
-            'runner': target.runner,
-            'target': target.target,
-            'python_versions': resolve_python_versions(target.skip_python_versions),
-        }
-        python_arch = (
-            ('arm64' if target.target == 'aarch64' else target.target)
-            if name == 'windows'
-            else None
-        )
-        if python_arch is not None:
-            entry['python_arch'] = python_arch
-        return entry
-
-    return Job(
-        steps=[
-            Checkout(),
-            script(
-                f'printf "%s\n" {context.matrix.platform.python_versions.as_array().join(" ")} >> version.txt',
-            ),
-            SetupPython(
-                python_version_file='version.txt',
-                architecture=context.matrix.platform.python_arch.as_str()
-                if name == 'windows'
-                else None,
-            ),
-        ]
-        + (
-            [SetupMPI(mpi='intelmpi' if name == 'windows' else 'openmpi')]
-            if mpi and name not in ['linux', 'musllinux']
-            else []
-        )
-        + [
-            Maturin(
-                name='Build wheels',
-                target=context.matrix.platform.target.as_str(),
-                args=f'--release --out dist --manifest-path py-laddu-{"mpi" if mpi else "cpu"}/Cargo.toml --interpreter {context.matrix.platform.python_versions.as_array().join(" ")}',
-                sccache=~context.github.ref.startswith('refs/tags/'),
-                manylinux='musllinux_1_2'
-                if name == 'musllinux'
-                else ('2_28' if name == 'linux' else None),
-                before_script_linux="""yum -y install openmpi openmpi-devel pkgconfig clang llvm-devel
-export MPICC="$(find /usr -name 'mpicc' 2>/dev/null | head -n 1)"
-MPI_LIB_DIR="$(dirname "$(find /usr -name 'libmpi.so' 2>/dev/null | head -n 1)")"
-export LD_LIBRARY_PATH="${MPI_LIB_DIR}:${LD_LIBRARY_PATH:-}" """[:-1]
-                if mpi and name == 'linux'
-                else None,
-            ),
-        ]
-        + (
-            [
-                UploadArtifact(
-                    path='dist',
-                    artifact_name=f'{"mpi" if mpi else "cpu"}-{name}-{context.matrix.platform.target}',
-                )
-            ]
-            if upload
-            else []
-        ),
-        name=f'{job_name} ({"mpi" if mpi else "cpu"})',
-        runs_on=context.matrix.platform.runner.as_str(),
-        strategy=Strategy(
-            fast_fail=False,
-            matrix=Matrix(
-                platform=[platform_entry(target) for target in targets],
-            ),
-        ),
-        needs=needs,
-        condition=context.github.ref.startswith('refs/tags/')
-        | (context.github.event_name == 'workflow_dispatch'),
-    )
-
-
-test_build_workflow = Workflow(
-    name='Build laddu (Python)',
-    on=Events(
-        workflow_dispatch=WorkflowDispatchEvent(),
-    ),
-    jobs={
-        **{
-            f'{tj.short_name}-cpu': create_build_job(
-                tj.job_name, tj.short_name, tj.targets, mpi=False, upload=False
-            )
-            for tj in TARGET_JOBS_CPU
-        },
-        'sdist-cpu': Job(
-            steps=[
-                Checkout(),
-                Maturin(
-                    name='Build sdist',
-                    command='sdist',
-                    args='--out dist --manifest-path py-laddu-cpu/Cargo.toml',
-                ),
-                UploadArtifact(path='dist', artifact_name='cpu-sdist'),
-            ],
-            name='Build Source Distribution',
-            runs_on='ubuntu-22.04',
-            condition=context.github.ref.startswith('refs/tags/')
-            | (context.github.event_name == 'workflow_dispatch'),
-        ),
-        'sdist-mpi': Job(
-            steps=[
-                Checkout(),
-                Maturin(
-                    name='Build sdist',
-                    command='sdist',
-                    args='--out dist --manifest-path py-laddu-mpi/Cargo.toml',
-                ),
-                UploadArtifact(path='dist', artifact_name='mpi-sdist'),
-            ],
-            name='Build MPI Source Distribution',
-            runs_on='ubuntu-22.04',
-            condition=context.github.ref.startswith('refs/tags/')
-            | (context.github.event_name == 'workflow_dispatch'),
-        ),
-    },
+from yamloom.expressions import BooleanExpression, context
+from yamloom.workflows.maturin import (
+    MaturinBuildSuite,
+    MaturinPlatform,
+    MaturinTarget,
 )
 
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+MSRV = '1.95.0'
+MINIMUM_PYTHON = '3.11'
+PYTHON_MANIFESTS = {
+    'laddu': 'python/laddu/Cargo.toml',
+    'laddu-local': 'python/laddu-local/Cargo.toml',
+}
+PYTHON_VERSIONS = ('3.11', '3.12', '3.13', '3.14', '3.14t')
+WHEEL_PLATFORMS = (
+    MaturinPlatform(
+        'linux',
+        'Build Linux wheels',
+        (
+            MaturinTarget('ubuntu-22.04', 'x86_64'),
+            MaturinTarget('ubuntu-22.04', 'aarch64'),
+        ),
+        '2014',
+    ),
+    MaturinPlatform(
+        'windows',
+        'Build Windows wheels',
+        (MaturinTarget('windows-latest', 'x64', 'x64'),),
+    ),
+    MaturinPlatform(
+        'macos',
+        'Build macOS wheels',
+        (
+            MaturinTarget('macos-15-intel', 'x86_64'),
+            MaturinTarget('macos-latest', 'aarch64'),
+        ),
+    ),
+)
+
+
+def maturin_jobs(
+    *,
+    needs: Sequence[str] | None = None,
+    condition: BooleanExpression | None = None,
+    upload: bool = True,
+) -> dict[str, Job]:
+    jobs: dict[str, Job] = {}
+    for package, manifest in PYTHON_MANIFESTS.items():
+        suite = MaturinBuildSuite(
+            package_name=package,
+            artifact_prefix=package,
+            manifest_path=manifest,
+            python_versions=PYTHON_VERSIONS,
+            platforms=WHEEL_PLATFORMS,
+            args=('--release', '--out', 'dist', '--generate-stubs'),
+            needs=needs,
+            condition=condition,
+            upload=upload,
+            sccache=~context.github.ref.startswith('refs/tags/'),
+        )
+        jobs.update({f'{package}-{name}': job for name, job in suite.jobs().items()})
+
+    mpi_suite = MaturinBuildSuite(
+        package_name='laddu-mpi',
+        artifact_prefix='laddu-mpi',
+        manifest_path='python/laddu-mpi/Cargo.toml',
+        python_profile='cpython',
+        minimum_python=MINIMUM_PYTHON,
+        platforms=(),
+        needs=needs,
+        condition=condition,
+        upload=upload,
+    )
+    jobs.update({f'laddu-mpi-{name}': job for name, job in mpi_suite.jobs().items()})
+    return jobs
+
+
+build_condition = context.github.ref.startswith('refs/tags/')
+trusted_context = context.github.event_name != 'pull_request'
+release_build_jobs = maturin_jobs(
+    needs=['build-check-test', 'free-threaded-test'],
+    condition=build_condition,
+)
 
 python_release_workflow = Workflow(
     name='Build and Release laddu (Python)',
     on=Events(
-        push=PushEvent(branches=['main'], tags=['*']),
-        pull_request=PullRequestEvent(opened=True, synchronize=True, reopened=True),
-        workflow_dispatch=WorkflowDispatchEvent(),
+        push=PushEvent(branches=['development', 'main'], tags=['v*']),
+        pull_request=PullRequestEvent(),
     ),
     jobs={
         'build-check-test': Job(
-            steps=[
-                Checkout(),
-                SetupRust(components=['clippy']),
-                SetupUV(python_version='3.10'),
-                SetupMPI(),
-                script('cargo clippy'),
-                InstallRustTool(tool=['cargo-hack']),
-                script(
-                    'cargo hack check --rust-version --feature-powerset --no-dev-deps'
-                ),
-                script('cargo hack test --each-feature'),
-                script(
-                    'uv venv',
-                    '. .venv/bin/activate',
-                    'echo PATH=$PATH >> $GITHUB_ENV',
-                    'uvx --with "maturin[patchelf]>=1.7,<2" maturin build --manifest-path py-laddu-cpu/Cargo.toml --release -o py-laddu-cpu/dist',
-                    'uv pip install --no-cache-dir --find-links py-laddu-cpu/dist laddu-cpu',
-                    'uv pip install --no-cache-dir -e "py-laddu[tests]"',
-                    'uvx --with "maturin[patchelf]>=1.7,<2" maturin develop --manifest-path py-laddu-mpi/Cargo.toml --release',
-                ),
-                script('uvx ruff check . --extend-exclude=.yamloom.py'),
-                script('uvx ty check . --exclude=.yamloom.py'),
-                script('uv run pytest'),
-                script(
-                    'LADDU_BACKEND=MPI mpirun -n 2 .venv/bin/python crates/laddu-extensions/scripts/check_python_mpi_dataset_iteration.py'
-                ),
-            ],
+            name='Build, lint, and test',
             runs_on='ubuntu-latest',
-        ),
-        **{
-            f'{tj.short_name}-cpu': create_build_job(
-                tj.job_name,
-                tj.short_name,
-                tj.targets,
-                needs=['build-check-test'],
-                mpi=False,
-            )
-            for tj in TARGET_JOBS_CPU
-        },
-        'sdist-cpu': Job(
             steps=[
                 Checkout(),
-                Maturin(
-                    name='Build sdist',
-                    command='sdist',
-                    args='--out dist --manifest-path py-laddu-cpu/Cargo.toml',
+                SetupRust(toolchain=MSRV, components=['clippy', 'rustfmt']),
+                SetupUV(python_version=MINIMUM_PYTHON),
+                SetupMPI(),
+                script('cargo fmt --all -- --check'),
+                script(
+                    'cargo clippy --workspace --all-targets --all-features '
+                    '--exclude laddu-python '
+                    '--exclude laddu-python-local '
+                    '--exclude laddu-python-mpi '
+                    '-- -D warnings'
                 ),
-                UploadArtifact(path='dist', artifact_name='cpu-sdist'),
+                script(
+                    'cargo test --workspace '
+                    '--exclude laddu-python '
+                    '--exclude laddu-python-local '
+                    '--exclude laddu-python-mpi'
+                ),
+                script('cargo check -p laddu-python -p laddu-python-local -p laddu-python-mpi'),
+                script('uv sync --frozen --inexact --no-install-project --project python/laddu'),
+                script(
+                    'uv run --no-sync --directory python/laddu '
+                    'maturin develop --manifest-path Cargo.toml '
+                    '--release --generate-stubs'
+                ),
+                script('uv run --no-sync --project python/laddu ruff check . --exclude=.yamloom.py'),
+                script('uv run --no-sync --project python/laddu ty check python docs crates/laddu/examples'),
+                script(
+                    'uv run --no-sync --project python/laddu python -m unittest discover -s python/tests -p "test_*.py"'
+                ),
+                script('uv pip install --python python/laddu/.venv/bin/python -r docs/requirements.txt'),
+                script(
+                    'uv run --no-sync --project python/laddu '
+                    'sphinx-build -E -W --keep-going -b html '
+                    'docs docs/_build/html'
+                ),
             ],
-            name='Build Source Distribution',
-            runs_on='ubuntu-22.04',
-            needs=['build-check-test'],
-            condition=context.github.ref.startswith('refs/tags/')
-            | (context.github.event_name == 'workflow_dispatch'),
         ),
-        'sdist-mpi': Job(
+        'free-threaded-test': Job(
+            name='Free-threaded Python',
+            runs_on='ubuntu-latest',
             steps=[
                 Checkout(),
-                Maturin(
-                    name='Build sdist',
-                    command='sdist',
-                    args='--out dist --manifest-path py-laddu-mpi/Cargo.toml',
+                SetupRust(toolchain=MSRV),
+                SetupUV(python_version='3.14t'),
+                script('uv sync --frozen --inexact --no-install-project --project python/laddu'),
+                script(
+                    'uv run --no-sync --directory python/laddu '
+                    'maturin develop --manifest-path Cargo.toml '
+                    '--release --generate-stubs'
                 ),
-                UploadArtifact(path='dist', artifact_name='mpi-sdist'),
+                script(
+                    'uv run --no-sync --project python/laddu python -m unittest discover -s python/tests -p "test_*.py"'
+                ),
             ],
-            name='Build MPI Source Distribution',
-            runs_on='ubuntu-22.04',
-            needs=['build-check-test'],
-            condition=context.github.ref.startswith('refs/tags/')
-            | (context.github.event_name == 'workflow_dispatch'),
         ),
+        **release_build_jobs,
         'release': Job(
-            steps=[
-                Checkout(),
-                DownloadArtifact(),
-                SetupUV(),
-                script(
-                    'uv publish --trusted-publishing always cpu-*/* cpu-sdist/* mpi-sdist/*',
-                    permissions=Permissions(id_token='write', contents='write'),
-                ),
-                script(
-                    'uv build py-laddu --out-dir dist',
-                    'uv publish --trusted-publishing always dist/*',
-                    permissions=Permissions(id_token='write', contents='write'),
-                ),
-            ],
-            name='Release',
+            name='Publish Python distributions',
             runs_on='ubuntu-22.04',
-            condition=context.github.ref.startswith('refs/tags/')
-            | (context.github.event_name == 'workflow_dispatch'),
-            needs=[
-                *[f'{tj.short_name}-cpu' for tj in TARGET_JOBS_CPU],
-                'sdist-cpu',
-                'sdist-mpi',
-            ],
+            needs=list(release_build_jobs),
             environment=Environment('pypi'),
+            steps=[
+                DownloadArtifact(path='dist', merge_multiple=True),
+                PypiPublish(packages_dir='dist'),
+            ],
+        ),
+        'publish-rust': Job(
+            name='Publish Rust crates',
+            runs_on='ubuntu-latest',
+            needs=['release'],
+            steps=[
+                Checkout(fetch_depth=0),
+                SetupMPI(),
+                SetupRust(),
+                InstallRustTool(tool=['cargo-workspaces']),
+                script(f'cargo workspaces publish --from-git --token {context.secrets.CARGO_REGISTRY_TOKEN} --yes'),
+            ],
         ),
     },
 )
 
+test_build_workflow = Workflow(
+    name='Build laddu (Python)',
+    on=Events(workflow_dispatch=WorkflowDispatchEvent()),
+    jobs=maturin_jobs(upload=False),
+)
+
 release_please_workflow = Workflow(
     name='Release Please',
-    on=Events(
-        push=PushEvent(
-            branches=['main'],
-        ),
-    ),
+    on=Events(push=PushEvent(branches=['main'])),
     jobs={
         'release-please': Job(
-            steps=[
-                ReleasePlease(
-                    id='release',
-                    token=context.secrets.RELEASE_PLEASE,
-                ),
-                Checkout(
-                    condition=ReleasePlease.releases_created(
-                        'release'
-                    ).from_json_to_bool()
-                ),
-                SetupMPI(
-                    mpi='openmpi',
-                    condition=ReleasePlease.releases_created(
-                        'release'
-                    ).from_json_to_bool(),
-                ),
-                SetupRust(
-                    condition=ReleasePlease.releases_created(
-                        'release'
-                    ).from_json_to_bool()
-                ),
-                InstallRustTool(
-                    tool=['cargo-workspaces'],
-                    condition=ReleasePlease.releases_created(
-                        'release'
-                    ).from_json_to_bool(),
-                ),
-                script(
-                    f'cargo workspaces publish --from-git --token {context.secrets.CARGO_REGISTRY_TOKEN} --yes',
-                    condition=ReleasePlease.releases_created(
-                        'release'
-                    ).from_json_to_bool(),
-                ),
-            ],
             runs_on='ubuntu-latest',
+            steps=[
+                ReleasePlease(id='release', token=context.secrets.RELEASE_PLEASE),
+            ],
         )
     },
 )
@@ -475,18 +224,20 @@ release_please_workflow = Workflow(
 benchmark_workflow = Workflow(
     name='CodSpeed Benchmarks',
     on=Events(
-        push=PushEvent(branches=['main']),
-        pull_request=PullRequestEvent(opened=True, synchronize=True, reopened=True),
+        push=PushEvent(branches=['development', 'main']),
+        pull_request=PullRequestEvent(),
         workflow_dispatch=WorkflowDispatchEvent(),
     ),
     jobs={
         'benchmarks': Job(
+            name='Run benchmarks',
+            runs_on='ubuntu-latest',
             steps=[
                 Checkout(),
-                SetupRust(),
+                SetupRust(toolchain=MSRV),
                 InstallRustTool(tool=['cargo-codspeed']),
                 script(
-                    'cargo codspeed build --bench open_benchmark  --bench kmatrix_benchmark',
+                    'cargo codspeed build',
                     env={'CARGO_BUILD_JOBS': '1'},
                 ),
                 action(
@@ -498,10 +249,14 @@ benchmark_workflow = Workflow(
                         'run': 'cargo codspeed run',
                         'token': context.secrets.CODSPEED_TOKEN,
                     },
+                    condition=trusted_context,
+                ),
+                script(
+                    'cargo codspeed run',
+                    name='Run benchmarks without upload',
+                    condition=~trusted_context,
                 ),
             ],
-            name='Run Benchmarks',
-            runs_on='ubuntu-latest',
         )
     },
 )
@@ -510,76 +265,49 @@ coverage_workflow = Workflow(
     name='Coverage',
     on=Events(
         push=PushEvent(
-            branches=['main'], paths=['**.rs', '**.py', '.github/workflows/coverage.yml']
+            branches=['development', 'main'],
+            paths=['**.rs', 'Cargo.toml', 'crates/**/Cargo.toml'],
         ),
-        pull_request=PullRequestEvent(
-            opened=True,
-            synchronize=True,
-            reopened=True,
-            paths=['**.rs', '**.py', '.github/workflows/coverage.yml'],
-        ),
-        workflow_call=WorkflowCallEvent(
-            secrets={'codecov_token': WorkflowSecret(required=True)}
-        ),
+        pull_request=PullRequestEvent(paths=['**.rs', 'Cargo.toml', 'crates/**/Cargo.toml']),
         workflow_dispatch=WorkflowDispatchEvent(),
     ),
     jobs={
         'coverage-rust': Job(
+            name='Rust coverage',
+            runs_on='ubuntu-latest',
+            env={'CARGO_TERM_COLOR': 'always'},
             steps=[
                 Checkout(),
-                SetupRust(toolchain='nightly'),
+                SetupRust(toolchain=MSRV),
                 SetupMPI(),
                 InstallRustTool(tool=['cargo-llvm-cov']),
                 script(
-                    'cargo llvm-cov --workspace --codecov --output-path coverage-rust.json'
+                    'cargo llvm-cov --workspace '
+                    '--exclude laddu-python '
+                    '--exclude laddu-python-local '
+                    '--exclude laddu-python-mpi '
+                    '--codecov --output-path coverage.json'
                 ),
-                UploadArtifact(path='coverage-rust.json', artifact_name='coverage-rust'),
-            ],
-            runs_on='ubuntu-latest',
-            env={'CARGO_TERM_COLOR': 'always'},
-        ),
-        'coverage-python': Job(
-            steps=[
-                Checkout(),
-                SetupRust(),
-                SetupUV(),
-                script(
-                    'uv venv',
-                    '. .venv/bin/activate',
-                    'echo PATH=$PATH >> $GITHUB_ENV',
-                    'uvx --with "maturin[patchelf]>=1.7,<2" maturin build --manifest-path py-laddu-cpu/Cargo.toml --release -o py-laddu-cpu/dist',
-                    'uv pip install --no-cache-dir --find-links py-laddu-cpu/dist laddu-cpu',
-                    'uv pip install --no-cache-dir -e "py-laddu[tests]"',
-                    'pytest --cov --cov-report xml:coverage-python.xml',
-                ),
-                UploadArtifact(
-                    path='coverage-python.xml', artifact_name='coverage-python'
-                ),
-            ],
-            runs_on='ubuntu-latest',
-            env={'CARGO_TERM_COLOR': 'always'},
-        ),
-        'upload-coverage': Job(
-            steps=[
-                Checkout(),
-                DownloadArtifact(merge_multiple=True),
                 Codecov(
                     token=context.secrets.CODECOV_TOKEN,
-                    files='coverage-rust.json,coverage-python.xml',
+                    files='coverage.json',
                     fail_ci_if_error=True,
                     verbose=True,
                     root_dir=context.github.workspace,
+                    condition=trusted_context,
                 ),
             ],
-            runs_on='ubuntu-latest',
-            needs=['coverage-rust', 'coverage-python'],
-        ),
+        )
     },
 )
 
 if __name__ == '__main__':
-    test_build_workflow.dump('.github/workflows/test-build.yml')
-    python_release_workflow.dump('.github/workflows/python-release.yml')
-    release_please_workflow.dump('.github/workflows/release-please.yml')
-    benchmark_workflow.dump('.github/workflows/benchmark.yml')
-    coverage_workflow.dump('.github/workflows/coverage.yml')
+    sync(
+        {
+            'benchmark.yml': benchmark_workflow,
+            'coverage.yml': coverage_workflow,
+            'python-release.yml': python_release_workflow,
+            'release-please.yml': release_please_workflow,
+            'test-build.yml': test_build_workflow,
+        }
+    )

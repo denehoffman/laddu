@@ -1,0 +1,21 @@
+[package]
+name = "laddu-python-local"
+version = "0.19.6"
+authors.workspace = true
+edition.workspace = true
+homepage.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[lib]
+name = "_laddu_local"
+crate-type = ["cdylib"]
+
+[dependencies]
+laddu = { version = "0.19.6", path = "../../crates/laddu", features = ["python", "jit", "wgpu"] }
+pyo3 = { workspace = true, features = ["extension-module"] }

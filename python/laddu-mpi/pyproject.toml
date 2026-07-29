@@ -1,0 +1,18 @@
+[build-system]
+requires = ["maturin>=1.13,<2"]
+build-backend = "maturin"
+
+[project]
+name = "laddu-mpi"
+requires-python = ">=3.11"
+dynamic = ["version"]
+dependencies = ["numpy>=2", "mpi4py>=4"]
+
+[dependency-groups]
+dev = ["maturin>=1.13,<2", "ruff", "ty"]
+
+[tool.maturin]
+module-name = "_laddu_mpi"
+
+[tool.uv]
+config-settings = { "maturin.build-args" = "--generate-stubs" }

@@ -1,0 +1,29 @@
+:root {
+  --laddu-ink: #122626;
+  --laddu-teal: #78a5a5;
+  --laddu-caramel: #cb9252;
+}
+
+.hero {
+  align-items: center;
+  background: linear-gradient(135deg, #eef6f5 0%, #fff8ef 100%);
+  border: 1px solid #d8e6e4;
+  border-radius: 1rem;
+  display: grid;
+  gap: 2rem;
+  grid-template-columns: minmax(8rem, 13rem) 1fr;
+  margin: 1rem 0 2rem;
+  padding: 2rem;
+}
+
+.hero img { width: 100%; }
+.hero p { color: #315050; font-size: 1.15rem; margin: 0; }
+.tutorial-grid { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr)); }
+.tutorial-card { border: 1px solid #d8e6e4; border-radius: .65rem; padding: 1rem; }
+.tutorial-card p { margin-bottom: 0; }
+.bd-main .bd-content .bd-article-container { max-width: 54rem; }
+
+@media (max-width: 42rem) {
+  .hero { grid-template-columns: 1fr; text-align: center; }
+  .hero img { margin: auto; max-width: 10rem; }
+}

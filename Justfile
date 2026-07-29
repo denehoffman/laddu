@@ -1,252 +1,132 @@
-venv := ".venv"
-bin := ".venv/bin"
-python := ".venv/bin/python"
-export CARGO_INCREMENTAL := "1"
-export UV_PYTHON := ".venv/bin/python"
-set quiet
+set shell := ["zsh", "-euo", "pipefail", "-c"]
 
-# Choose the command to run
+project_root := justfile_directory()
+python_project := project_root + "/python/laddu"
+python_local_project := project_root + "/python/laddu-local"
+python_mpi_project := project_root + "/python/laddu-mpi"
+python_venv := project_root + "/.venv"
+python_free_threaded_venv := project_root + "/.venv-3.14t"
+
+export UV_PROJECT_ENVIRONMENT := python_venv
+
+# Show the available development commands.
 default:
-    just --choose
+    @just --list
 
-# Create a venv if it doesn't exist
-create-venv:
-    if [ ! -d "{{venv}}" ]; then uv venv {{venv}} --python=3.14; fi
+[private]
+sync-python:
+    @command -v uv >/dev/null 2>&1 || { echo "uv is required; install it from https://docs.astral.sh/uv/" >&2; exit 1; }
+    uv sync --frozen --inexact --no-install-project --project "{{python_project}}"
 
-# Build the laddu-cpu wheel
-build-python-cpu: create-venv
-    rm -rf target/maturin
-    rm -f target/release/deps/libladdu_cpu.so
-    rm -f target/release/libladdu_cpu.so
-    uvx --with "maturin[patchelf]" maturin build --manifest-path py-laddu-cpu/Cargo.toml --release -o py-laddu-cpu/dist
+[private]
+require-python: sync-python
+    @uv run --no-sync --project "{{python_project}}" python -c 'import laddu' 2>/dev/null || { echo "laddu is not installed in {{python_venv}}; run: just python-dev" >&2; exit 1; }
 
-# Build the laddu-mpi source distribution
-build-python-mpi: create-venv
-    rm -rf target/maturin
-    rm -f target/release/deps/libladdu_mpi.so
-    rm -f target/release/libladdu_mpi.so
-    uvx --with "maturin[patchelf]" maturin sdist --manifest-path py-laddu-mpi/Cargo.toml -o py-laddu-mpi/dist
+[private]
+require-docs: require-python
+    @uv run --no-sync --project "{{python_project}}" python -c 'import autoapi, myst_parser, sphinx' 2>/dev/null || { echo "the documentation dependencies are missing; run: just docs-install" >&2; exit 1; }
 
-# Build the laddu-cpu wheel and laddu-mpi source distribution
-build-python: build-python-cpu build-python-mpi
+# Install/update the main laddu extension in the uv project environment.
+python-dev: sync-python
+    cd "{{python_project}}" && VIRTUAL_ENV="{{python_venv}}" UV_PYTHON="{{python_venv}}/bin/python" "{{python_venv}}/bin/maturin" develop --manifest-path Cargo.toml --release --generate-stubs
 
-# Install laddu (Python, CPU)
-develop: build-python-cpu
-    uv pip uninstall laddu laddu-cpu laddu-mpi || true
-    uv pip install --no-cache-dir --find-links py-laddu-cpu/dist laddu-cpu
-    uv pip install --no-cache-dir -e py-laddu
+# Install a fast-to-build debug extension in the uv project environment.
+python-dev-debug: sync-python
+    cd "{{python_project}}" && VIRTUAL_ENV="{{python_venv}}" UV_PYTHON="{{python_venv}}/bin/python" "{{python_venv}}/bin/maturin" develop --manifest-path Cargo.toml --generate-stubs
 
-# Install laddu (Python, CPU, tests)
-develop-tests: build-python-cpu
-    uv pip uninstall laddu laddu-cpu laddu-mpi || true
-    uv pip install --no-cache-dir --find-links py-laddu-cpu/dist laddu-cpu
-    uv pip install --no-cache-dir -e "py-laddu[tests]"
+# Build the extension and verify its generated type information.
+check-python-types: python-dev-debug
+    uv run --no-sync --project "{{python_project}}" ty check python docs crates/laddu/examples
 
-# Install laddu (Python, CPU, MPI)
-develop-mpi: build-python-cpu
-    uv pip uninstall laddu laddu-cpu laddu-mpi || true
-    uv pip install --no-cache-dir --find-links py-laddu-cpu/dist laddu-cpu
-    . "{{venv}}/bin/activate"
-    uvx --with "maturin[patchelf]" maturin develop --manifest-path py-laddu-mpi/Cargo.toml --release
-    uv pip install --no-cache-dir -e py-laddu
+# Run the Python binding smoke and concurrency tests.
+test-python: python-dev-debug
+    uv run --no-sync --project "{{python_project}}" python -m unittest discover -s python/tests -p "test_*.py"
 
-# Install laddu (Python, CPU, MPI, tests)
-develop-tests-mpi: build-python-cpu
-    uv pip uninstall laddu laddu-cpu laddu-mpi || true
-    uv pip install --no-cache-dir --find-links py-laddu-cpu/dist laddu-cpu
-    . "{{venv}}/bin/activate"
-    uvx --with "maturin[patchelf]" maturin develop --manifest-path py-laddu-mpi/Cargo.toml --release
-    uv pip install --no-cache-dir -e "py-laddu[tests]"
+# Build and test under free-threaded CPython 3.14 without re-enabling the GIL.
+test-python-free-threaded:
+    env -u VIRTUAL_ENV -u PYO3_PYTHON -u PYTHONPATH -u _PYTHON_HOST_PLATFORM -u _PYTHON_SYSCONFIGDATA_NAME UV_PROJECT_ENVIRONMENT="{{python_free_threaded_venv}}" UV_PYTHON=3.14t uv sync --frozen --inexact --no-install-project --project "{{python_project}}"
+    cd "{{python_project}}" && env -u PYO3_PYTHON -u PYTHONPATH -u _PYTHON_HOST_PLATFORM -u _PYTHON_SYSCONFIGDATA_NAME VIRTUAL_ENV="{{python_free_threaded_venv}}" UV_PYTHON="{{python_free_threaded_venv}}/bin/python" "{{python_free_threaded_venv}}/bin/maturin" develop --manifest-path Cargo.toml --release --generate-stubs
+    env -u VIRTUAL_ENV -u PYO3_PYTHON -u PYTHONPATH -u _PYTHON_HOST_PLATFORM -u _PYTHON_SYSCONFIGDATA_NAME UV_PROJECT_ENVIRONMENT="{{python_free_threaded_venv}}" UV_PYTHON="{{python_free_threaded_venv}}/bin/python" uv run --no-sync --project "{{python_project}}" python -m unittest discover -s python/tests -p "test_*.py"
 
-# Test Python library (CPU)
-test-python: develop-tests
-    {{bin}}/pytest
+# Install/update the standalone local extension.
+python-local: sync-python
+    cd "{{python_local_project}}" && VIRTUAL_ENV="{{python_venv}}" UV_PYTHON="{{python_venv}}/bin/python" "{{python_venv}}/bin/maturin" develop --manifest-path Cargo.toml --release --generate-stubs
 
-# Test Python library (MPI)
-test-python-mpi: develop-tests-mpi
-    LADDU_BACKEND="MPI" {{bin}}/pytest
-    LADDU_BACKEND="MPI" mpirun -n 2 {{bin}}/python crates/laddu-extensions/scripts/check_python_mpi_dataset_iteration.py
+# Install/update the standalone MPI extension.
+python-mpi: sync-python
+    cd "{{python_mpi_project}}" && VIRTUAL_ENV="{{python_venv}}" UV_PYTHON="{{python_venv}}/bin/python" "{{python_venv}}/bin/maturin" develop --manifest-path Cargo.toml --release --generate-stubs
 
-# Benchmark Python ingestion readers
-bench-python-ingest *args: develop-tests
-    {{python}} py-laddu/benchmarks/ingestion_benchmark.py {{args}}
+# Install all three Python distributions.
+python-all: python-dev python-local python-mpi
 
-# Test Rust crate (CPU)
-test-rust: create-venv
-    cargo nextest run
-    cargo test --doc
+# Build release wheels for all three Python distributions.
+wheels: sync-python
+    uv build --wheel --config-setting maturin.build-args=--generate-stubs python/laddu
+    uv build --wheel --config-setting maturin.build-args=--generate-stubs python/laddu-local
+    uv build --wheel --config-setting maturin.build-args=--generate-stubs python/laddu-mpi
 
-# Test Rust crate (MPI)
-test-rust-mpi: create-venv
-    cargo nextest run --features mpi
-    cargo test --doc --features mpi
+# Install the Sphinx documentation dependencies in the development environment.
+docs-install: sync-python
+    uv pip install --python "{{python_venv}}/bin/python" -r docs/requirements.txt
 
-# Test Rust and Python (CPU)
-test: test-rust test-python
+# Build the Markdown/Sphinx documentation with warnings treated as errors.
+docs-build: require-docs
+    uv run --no-sync --project "{{python_project}}" sphinx-build -E -W --keep-going -b html docs docs/_build/html
 
-# Test Rust and Python (MPI)
-test-mpi: test-rust-mpi test-python-mpi
+# Build and serve the Markdown/Sphinx documentation locally.
+docs-serve port="8000": docs-build
+    @echo "serving laddu documentation at http://127.0.0.1:{{port}}"
+    uv run --no-sync --project "{{python_project}}" python -m http.server {{port}} --bind 127.0.0.1 --directory docs/_build/html
 
-# Run Python lints and type checking
-lint-python:
-    ruff check py-laddu
-    ruff format --check py-laddu
-    ty check
+# Build API documentation for every Rust crate without dependency documentation.
+rust-docs-build:
+    cargo doc --workspace --no-deps --exclude laddu-python --exclude laddu-python-local --exclude laddu-python-mpi
 
-# Run Rust lints and checks (CPU)
-lint-rust:
-    cargo clippy --all-targets
+# Build the Rust API documentation and open it in the default browser.
+rust-docs-open:
+    cargo doc --workspace --no-deps --open --exclude laddu-python --exclude laddu-python-local --exclude laddu-python-mpi
 
-# Run Rust lints and checks (MPI)
-lint-rust-mpi:
-    cargo clippy --all-targets --features mpi
+# Run the practical default closure example (backend: cpu, jit, or gpu).
+example backend="cpu" *args: require-python
+    uv run --no-sync --project "{{python_project}}" python python/examples/closure.py --backend {{backend}} {{args}}
 
-# Profile laddu example with Samply
-profile *args:
-    RUSTFLAGS="-C force-frame-pointers=yes" cargo build --profile profiling -p laddu --example profile_kmatrix
-    samply record ./target/profiling/examples/profile_kmatrix {{args}}
+# Run the short closure smoke test.
+example-quick backend="cpu" *args: require-python
+    uv run --no-sync --project "{{python_project}}" python python/examples/closure.py --backend {{backend}} --quick {{args}}
 
-# Run Rust (CPU) and Python lints and checks
-lint: lint-rust lint-python
+# Run the full Rust-sized closure study.
+example-full backend="cpu" *args: require-python
+    uv run --no-sync --project "{{python_project}}" python python/examples/closure.py --backend {{backend}} --full {{args}}
 
-# Run Rust (MPI) and Python lints and checks
-lint-mpi: lint-rust-mpi lint-python
+# Run the practical closure example on the JIT backend.
+example-jit *args: require-python
+    uv run --no-sync --project "{{python_project}}" python python/examples/closure.py --backend jit {{args}}
 
-# Build Rust crates (CPU)
-build-rust:
-    cargo build --all-targets
+# Run the practical closure example on the GPU backend.
+example-gpu *args: require-python
+    uv run --no-sync --project "{{python_project}}" python python/examples/closure.py --backend gpu {{args}}
 
-# Build Rust crates (MPI)
-build-rust-mpi:
-    cargo build --all-targets --features mpi
+# Run the four-period acceptance and differential-cross-section example.
+cross-section-example backend="cpu" *args: require-python
+    uv run --no-sync --project "{{python_project}}" python python/examples/cross_section.py --backend {{backend}} {{args}}
 
-# Build Rust crates and Python wheels (CPU)
-build: build-rust build-python-cpu
+# Run the short cross-section smoke test.
+cross-section-example-quick backend="cpu" *args: require-python
+    uv run --no-sync --project "{{python_project}}" python python/examples/cross_section.py --backend {{backend}} --quick {{args}}
 
-# Build Rust crates and Python wheels (MPI)
-build-mpi: build-rust-mpi build-python-mpi
+# Run the higher-statistics cross-section study.
+cross-section-example-full backend="cpu" *args: require-python
+    uv run --no-sync --project "{{python_project}}" python python/examples/cross_section.py --backend {{backend}} --full {{args}}
 
-# Clean Rust targets
-clean-rust:
-    cargo clean
+# Print Vulkan information and GPUs visible through laddu.
+gpu-info: require-python
+    @vulkaninfo --summary || echo "vulkaninfo could not initialize a device; checking laddu discovery anyway"
+    uv run --no-sync --project "{{python_project}}" python -c 'import laddu as ld; devices = ld.gpu.devices(); print("laddu GPU devices:"); print(*(f"  {device!r}" for device in devices), sep="\n"); raise SystemExit(0 if devices else "no WGPU devices found")'
 
-# Clean Python targets
-clean-python:
-    if [ -d "{{venv}}" ] && [ -f "{{venv}}/bin/activate" ] && [ "$VIRTUAL_ENV" = "$(pwd)/{{venv}}" ]; then \
-        . "{{venv}}/bin/activate"; \
-        deactivate; \
-    fi
-    rm -rf .venv .uv-cache dist py-laddu/build py-laddu-cpu/dist py-laddu-mpi/dist
+# Check Rust compilation for every Python distribution.
+check-python-rust:
+    cargo check -p laddu-python -p laddu-python-local -p laddu-python-mpi
 
-# Clean Rust and Python targets
-clean: clean-rust clean-python
-
-# Build Python documentation
-docs-python: build-python-cpu
-    uv pip install --find-links py-laddu-cpu/dist -e "py-laddu[docs]"
-    make -C py-laddu/docs html
-
-# Build Rust documentation
-docs-rust:
-    cargo doc --all-features
-
-# Build Rust and Python documentation
-docs: docs-rust docs-python
-
-# Run cargo-hack check over each supported Rust version and feature combination
-hack-check:
-    cargo hack check --rust-version --each-feature --no-dev-deps
-
-# Run cargo-hack test over each feature combination
-hack-test:
-    cargo hack test --each-feature
-
-# Run cargo-hack check and test
-hack: hack-check hack-test
-
-# Build the docker development image
-docker-build:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    ROOT_DIR=$(pwd)
-    IMAGE=${LADDU_DOCKER_IMAGE:-laddu:latest}
-    docker build -t "$IMAGE" "$ROOT_DIR"
-
-# Enter the development image shell
-docker-shell:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    ROOT_DIR=$(pwd)
-    IMAGE=${LADDU_DOCKER_IMAGE:-laddu:latest}
-    SRC=/src
-    WORKDIR=/work
-    FLAG=LADDU_INSIDE_DOCKER
-    cmd=(
-      docker run --rm
-      -v "$ROOT_DIR:$SRC:ro"
-      --tmpfs "$WORKDIR:rw,exec,nosuid,size=8g"
-      --tmpfs "$WORKDIR/.venv:rw,exec,nosuid,size=2g"
-      -w "$WORKDIR"
-      -e "$FLAG=1"
-      -e "LD_LIBRARY_PATH=$WORKDIR/.venv/lib:$LD_LIBRARY_PATH"
-    )
-    if [[ -t 0 ]]; then cmd+=(-i); fi
-    if [[ -t 1 ]]; then cmd+=(-t); fi
-
-    INNER=$(cat <<'SH'
-    set -euo pipefail
-    mkdir -p /work
-    rsync -a --delete --exclude 'target/' --exclude '.venv/' --exclude '__pycache__/' /src/ /work/
-    SYSTEM_CONFIGURATION_DISABLE=1 UV_CACHE_DIR=/work/.uv-cache uv venv /work/.venv
-    PYTHON_LIB=$(find /root/.local/share/uv/python -maxdepth 2 -type d -name "cpython-*-linux-*-gnu" | head -n 1)/lib || true
-    export LD_LIBRARY_PATH=$PYTHON_LIB:$LD_LIBRARY_PATH
-    cd /work
-    exec bash
-    SH
-    )
-    cmd+=("$IMAGE" "bash" "-lc" "$INNER")
-    exec "${cmd[@]}"
-
-# Sync laddu's pyproject.toml's version with workspace since it isn't a Rust crate
-sync-versions: create-venv
-    #!/usr/bin/env -S uv run --script
-    # /// script
-    # requires-python = ">=3.11"
-    # ///
-    from __future__ import annotations
-
-    import re
-    from pathlib import Path
-    import tomllib
-
-    root = Path.cwd()
-    workspace = tomllib.loads((root / 'Cargo.toml').read_text())
-    version = workspace['workspace']['dependencies']['laddu']['version']
-
-    wrapper_path = root / 'py-laddu' / 'pyproject.toml'
-    text = wrapper_path.read_text()
-
-    def replace_once(source: str, pattern: str, replacement: str) -> str:
-        compiled = re.compile(pattern, re.MULTILINE)
-        new_text, count = compiled.subn(replacement, source, count=1)
-        if count == 0:
-            msg = f'Pattern {pattern!r} not found in {wrapper_path}'
-            raise RuntimeError(msg)
-        return new_text
-
-    text = replace_once(text, r'^version\s*=\s*".*"$', f'version = "{version}"')
-    text = replace_once(text, r'^\s*"laddu-cpu ==[^\"]+",$', f'  "laddu-cpu == {version}",')
-    text = replace_once(text, r'^mpi = \["laddu-mpi ==[^\"]+"\]$', f'mpi = ["laddu-mpi == {version}"]')
-    wrapper_path.write_text(text)
-    print(f"Successfully synced versions to {version}")
-
-# Run Rust coverage analysis
-coverage-rust:
-    cargo llvm-cov --workspace --lcov --output-path coverage-rust.lcov --summary-only --exclude-from-report py-laddu
-
-# Run Python coverage analysis
-coverage-python: develop-tests
-    {{bin}}/pytest --cov --cov-report xml:coverage-python.xml
-
-# Run Rust and Python coverage analysis
-coverage: coverage-rust coverage-python
+# Run Rust tests without linking PyO3 extension-module test harnesses.
+test-rust:
+    cargo test --workspace --exclude laddu-python --exclude laddu-python-local --exclude laddu-python-mpi

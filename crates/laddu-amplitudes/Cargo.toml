@@ -7,26 +7,24 @@ homepage.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
-description = "Amplitudes for the laddu library"
-readme = "README.md"
-
-[dependencies]
-laddu-core = { workspace = true }
-
-dyn-clone = { workspace = true }
-errorfunctions = { workspace = true }
-fastrand = { workspace = true }
-fastrand-contrib = { workspace = true }
-nalgebra = { workspace = true }
-num = { workspace = true }
-serde = { workspace = true }
-typetag = { workspace = true }
-
-[dev-dependencies]
-approx = { workspace = true }
-
-[features]
-default = []
 
 [package.metadata.docs.rs]
-rustdoc-args = ["--html-in-header", "./docs-header.html"]
+rustdoc-args = ["--html-in-header", "docs-header.html"]
+
+[lints]
+workspace = true
+
+[dependencies]
+laddu-expr = { version = "0.19.6", path = "../laddu-expr" }
+laddu-kernel = { version = "0.19.6", path = "../laddu-kernel" }
+laddu-physics = { version = "0.19.6", path = "../laddu-physics" }
+num.workspace = true
+thiserror.workspace = true
+fastrand.workspace = true
+fastrand-contrib.workspace = true
+nalgebra.workspace = true
+
+[dev-dependencies]
+laddu-compile = { version = "0.19.6", path = "../laddu-compile" }
+laddu-runtime = { version = "0.19.6", path = "../laddu-runtime" }
+approx.workspace = true

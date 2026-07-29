@@ -1,0 +1,46 @@
+[package]
+name = "laddu-data"
+version = "0.19.6"
+authors.workspace = true
+edition.workspace = true
+homepage.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[package.metadata.docs.rs]
+rustdoc-args = ["--html-in-header", "docs-header.html"]
+
+[lints]
+workspace = true
+
+[dependencies]
+accurate = { workspace = true, optional = true }
+indexmap.workspace = true
+mpi = { workspace = true, optional = true }
+rayon = { workspace = true, optional = true }
+serde.workspace = true
+nalgebra.workspace = true
+thiserror.workspace = true
+arrow.workspace = true
+parquet.workspace = true
+oxyroot.workspace = true
+log = "0.4.32"
+glob = "0.3.3"
+num.workspace = true
+
+laddu-physics = { path="../laddu-physics" }
+laddu-memory = { path="../laddu-memory" }
+
+[dev-dependencies]
+criterion.workspace = true
+mpi_test.workspace = true
+approx.workspace = true
+
+
+[features]
+default = ["parallel"]
+parallel = ["rayon", "accurate"]
+rayon = ["dep:rayon"]
+accurate = ["dep:accurate"]
+mpi = ["dep:mpi"]
