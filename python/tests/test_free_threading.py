@@ -5,9 +5,8 @@ import sysconfig
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 
-import numpy as np
-
 import laddu as ld
+import numpy as np
 
 
 class FreeThreadingTests(unittest.TestCase):
@@ -24,7 +23,8 @@ class FreeThreadingTests(unittest.TestCase):
     )
     def test_import_does_not_enable_gil(self) -> None:
         is_gil_enabled = getattr(sys, '_is_gil_enabled', lambda: True)
-        self.assertFalse(is_gil_enabled())
+        if is_gil_enabled():
+            self.fail('importing laddu enabled the GIL')
 
     def test_shared_model_evaluates_concurrently(self) -> None:
         model, dataset, expected_gradient = self.model_fixture()

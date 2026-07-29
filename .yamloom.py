@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
+from typing import TYPE_CHECKING
 
 from yamloom import (
     Environment,
@@ -28,6 +28,9 @@ from yamloom.workflows.maturin import (
     MaturinPlatform,
     MaturinTarget,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 MSRV = '1.94.0'
 MINIMUM_PYTHON = '3.11'
@@ -95,9 +98,7 @@ def maturin_jobs(
         condition=condition,
         upload=upload,
     )
-    jobs.update(
-        {f'laddu-mpi-{name}': job for name, job in mpi_suite.jobs().items()}
-    )
+    jobs.update({f'laddu-mpi-{name}': job for name, job in mpi_suite.jobs().items()})
     return jobs
 
 
@@ -137,37 +138,19 @@ python_release_workflow = Workflow(
                     '--exclude laddu-python-local '
                     '--exclude laddu-python-mpi'
                 ),
-                script(
-                    'cargo check -p laddu-python '
-                    '-p laddu-python-local '
-                    '-p laddu-python-mpi'
-                ),
-                script(
-                    'uv sync --frozen --inexact --no-install-project '
-                    '--project python/laddu'
-                ),
+                script('cargo check -p laddu-python -p laddu-python-local -p laddu-python-mpi'),
+                script('uv sync --frozen --inexact --no-install-project --project python/laddu'),
                 script(
                     'uv run --no-sync --project python/laddu '
                     'maturin develop --manifest-path python/laddu/Cargo.toml '
                     '--release --generate-stubs'
                 ),
+                script('uv run --no-sync --project python/laddu ruff check . --exclude=.yamloom.py'),
+                script('uv run --no-sync --project python/laddu ty check python docs crates/laddu/examples'),
                 script(
-                    'uv run --no-sync --project python/laddu '
-                    'ruff check . --exclude=.yamloom.py'
+                    'uv run --no-sync --project python/laddu python -m unittest discover -s python/tests -p "test_*.py"'
                 ),
-                script(
-                    'uv run --no-sync --project python/laddu '
-                    'ty check python docs crates/laddu/examples'
-                ),
-                script(
-                    'uv run --no-sync --project python/laddu '
-                    'python -m unittest discover -s python/tests -p "test_*.py"'
-                ),
-                script(
-                    'uv pip install '
-                    '--python python/laddu/.venv/bin/python '
-                    '-r docs/requirements.txt'
-                ),
+                script('uv pip install --python python/laddu/.venv/bin/python -r docs/requirements.txt'),
                 script(
                     'uv run --no-sync --project python/laddu '
                     'sphinx-build -E -W --keep-going -b html '
@@ -182,18 +165,14 @@ python_release_workflow = Workflow(
                 Checkout(),
                 SetupRust(toolchain=MSRV),
                 SetupUV(python_version='3.14t'),
-                script(
-                    'uv sync --frozen --inexact --no-install-project '
-                    '--project python/laddu'
-                ),
+                script('uv sync --frozen --inexact --no-install-project --project python/laddu'),
                 script(
                     'uv run --no-sync --project python/laddu '
                     'maturin develop --manifest-path python/laddu/Cargo.toml '
                     '--release --generate-stubs'
                 ),
                 script(
-                    'uv run --no-sync --project python/laddu '
-                    'python -m unittest discover -s python/tests -p "test_*.py"'
+                    'uv run --no-sync --project python/laddu python -m unittest discover -s python/tests -p "test_*.py"'
                 ),
             ],
         ),
@@ -217,10 +196,7 @@ python_release_workflow = Workflow(
                 SetupMPI(),
                 SetupRust(),
                 InstallRustTool(tool=['cargo-workspaces']),
-                script(
-                    f'cargo workspaces publish --from-git '
-                    f'--token {context.secrets.CARGO_REGISTRY_TOKEN} --yes'
-                ),
+                script(f'cargo workspaces publish --from-git --token {context.secrets.CARGO_REGISTRY_TOKEN} --yes'),
             ],
         ),
     },
@@ -292,9 +268,7 @@ coverage_workflow = Workflow(
             branches=['development', 'main'],
             paths=['**.rs', 'Cargo.toml', 'crates/**/Cargo.toml'],
         ),
-        pull_request=PullRequestEvent(
-            paths=['**.rs', 'Cargo.toml', 'crates/**/Cargo.toml']
-        ),
+        pull_request=PullRequestEvent(paths=['**.rs', 'Cargo.toml', 'crates/**/Cargo.toml']),
         workflow_dispatch=WorkflowDispatchEvent(),
     ),
     jobs={
