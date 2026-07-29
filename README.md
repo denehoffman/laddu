@@ -1,50 +1,47 @@
 <p align="center">
-  <img src="docs/_static/logo.svg" alt="laddu" width="150">
+  <img width="800" src="media/wordmark.svg" alt="laddu">
 </p>
 
-# laddu
+<h1 align="center">Amplitude analysis made short and sweet</h1>
 
-**Amplitude analysis made short and sweet.**
+<p align="center">
+  <a href="https://github.com/denehoffman/laddu/releases"><img alt="GitHub Release" src="https://img.shields.io/github/v/release/denehoffman/laddu?style=for-the-badge&logo=github"></a>
+  <a href="https://github.com/denehoffman/laddu/commits/main/"><img alt="GitHub last commit" src="https://img.shields.io/github/last-commit/denehoffman/laddu?style=for-the-badge&logo=github"></a>
+  <a href="https://github.com/denehoffman/laddu/actions"><img alt="GitHub Actions Workflow Status" src="https://img.shields.io/github/actions/workflow/status/denehoffman/laddu/python-release.yml?style=for-the-badge&logo=github"></a>
+  <a href="LICENSE-APACHE"><img alt="GitHub License" src="https://img.shields.io/github/license/denehoffman/laddu?style=for-the-badge"></a>
+  <a href="https://crates.io/crates/laddu"><img alt="Crates.io Version" src="https://img.shields.io/crates/v/laddu?style=for-the-badge&logo=rust&logoColor=red&color=red"></a>
+  <a href="https://docs.rs/laddu"><img alt="docs.rs" src="https://img.shields.io/docsrs/laddu?style=for-the-badge&logo=rust&logoColor=red"></a>
+  <a href="https://laddu.readthedocs.io/en/latest/"><img alt="Read the Docs" src="https://img.shields.io/readthedocs/laddu?style=for-the-badge&logo=readthedocs&logoColor=%238CA1AF&label=Python%20Documentation"></a>
+  <a href="https://app.codecov.io/github/denehoffman/laddu/tree/main/"><img alt="Codecov" src="https://img.shields.io/codecov/c/github/denehoffman/laddu?style=for-the-badge&logo=codecov"></a>
+  <a href="https://pypi.org/project/laddu/"><img alt="PyPI Version" src="https://img.shields.io/pypi/v/laddu?style=for-the-badge&logo=python&logoColor=yellow&labelColor=blue"></a>
+  <a href="https://codspeed.io/denehoffman/laddu"><img alt="CodSpeed" src="https://img.shields.io/endpoint?url=https%3A%2F%2Fcodspeed.io%2Fbadge.json&style=for-the-badge"></a>
+</p>
 
-laddu is a Python library for constructing, evaluating, generating, and fitting multibody amplitude models. Its symbolic Python interface is backed by a high-performance Rust runtime with automatic differentiation, multithreaded CPU execution, JIT compilation, WGPU acceleration, and an optional MPI distribution.
+`laddu` (/ˈlʌduː/) is a Python library for building, evaluating, generating, and fitting particle-physics amplitude models. Its symbolic interface is backed by a Rust runtime with automatic differentiation, multithreaded CPU execution, JIT compilation, WGPU acceleration, and optional MPI distribution.
 
-> laddu is under active development. Pin a version for production analyses and record `laddu.capabilities()` with analysis outputs.
+> [!CAUTION]
+> `laddu` is under active development and its API may change before 1.0. Pin the package version used for production analyses.
 
 ## Installation
 
-laddu requires Python 3.11 or later. Install the standard build from PyPI:
+`laddu` requires Python 3.11 or later:
 
 ```bash
-python -m pip install laddu
+uv add laddu
 ```
 
-For an MPI-enabled installation, use the optional extra in an environment with a working MPI implementation:
+Install the MPI backend in an environment with a working MPI implementation:
 
 ```bash
-python -m pip install "laddu[mpi]"
+uv add "laddu[mpi]"
 ```
+(or use your favorite package manager)
 
-To build the current checkout, install Rust, `uv`, and `just`, then build the extension:
+Published wheels include generated type information. When building a public module directly from an sdist, pass `--config-settings="maturin.build-args=--generate-stubs"` to `pip` or `uv` to generate the same stubs locally.
 
-```bash
-just python-dev
-```
+## A small model
 
-The recipes create and use a project-local `.venv`. `nix develop` is optional; it
-provides the same tools plus the native MPI, Vulkan, and GPU environment.
-
-Confirm the installed backend and optional features before starting a large job:
-
-```python
-import laddu as ld
-
-print(ld.backend())
-print(ld.capabilities())
-```
-
-## A first model
-
-laddu models are expression graphs. Parameters carry optimizer metadata, while event-dependent expressions are compiled once for the chosen runtime:
+Models are expression graphs assembled from event data, constants, and parameters:
 
 ```python
 import laddu as ld
@@ -58,90 +55,14 @@ model = ld.Model(amplitude.norm_sqr())
 print(model.parameter_names)
 ```
 
-Real analyses usually obtain invariants and angles from a `Channel`, then combine line shapes, angular functions, and complex production couplings. The following is the central fit pattern once `model`, observed `data`, and accepted normalization `mc` have been prepared:
+The [Python documentation](https://laddu.readthedocs.io/en/latest/) covers reactions, data I/O, common amplitudes, Monte Carlo generation, fitting, cross sections, MPI, and runtime selection. Rust users can find the public crate documentation on [docs.rs](https://docs.rs/laddu).
 
-```python
-execution = ld.Execution("auto", precision="f64", autodiff="forward")
-likelihood = ld.Likelihood(
-    [ld.NLL(model, data, mc, name="signal")],
-    execution=execution,
-)
-fit = likelihood.fit(
-    ld.ganesh.LBFGSBConfig(history_size=10),
-    initial=likelihood.sample_parameters(seed=7),
-    terminators=[ld.ganesh.MaxSteps(500)],
-)
-result = dict(zip(fit.parameter_names, fit.x, strict=True))
-```
+## Citation and acknowledgments
 
-The normalized unbinned objective is
+If `laddu` contributes to published work, cite the software metadata in [`CITATION.cff`](CITATION.cff) and record the exact package version and execution capabilities used by the analysis.
 
-$$
--\log \mathcal L(\boldsymbol\theta)
-=-\sum_{i\in\mathrm{data}} w_i\log I(\Omega_i;\boldsymbol\theta)
-+\left(\sum_i w_i\right)
-\log\!\left[
-\frac{\sum_{j\in\mathrm{accepted\ MC}} w_j I(\Omega_j;\boldsymbol\theta)}
-{\sum_j w_j}
-\right].
-$$
+`laddu` builds on [NumPy](https://numpy.org/), [PyO3](https://pyo3.rs/) and [Maturin](https://www.maturin.rs/), [Ganesh](https://crates.io/crates/ganesh), [Apache Arrow and Parquet](https://arrow.apache.org/), [oxyroot](https://crates.io/crates/oxyroot), [wgpu](https://wgpu.rs/), and the [Message Passing Interface](https://www.mpi-forum.org/). The Wigner-symbol implementation includes code derived from [WignerSymbol](https://github.com/0382/WignerSymbol); its complete license is preserved in [`THIRD_PARTY_NOTICES`](THIRD_PARTY_NOTICES).
 
-## Data and Monte Carlo
+## License
 
-Datasets can be constructed from NumPy arrays or read lazily from Parquet and ROOT. Four-vectors use `(E, px, py, pz)` order.
-
-```python
-import numpy as np
-
-events = ld.Dataset.from_arrays(
-    p4s={"beam": np.array([[9.0, 0.0, 0.0, 9.0]])},
-    scalars={"run": np.array([12001.0])},
-)
-events.write_to(ld.ParquetSink("events.parquet"))
-events = ld.read_parquet("events.parquet", chunk_size=100_000)
-```
-
-Given a channel with generation proposals, phase-space and modeled samples use the same generator:
-
-```python
-generator = ld.Generator(channel)
-normalization_mc, report = generator.weighted(100_000, seed=10)
-pseudo_data, report = generator.unweighted(
-    10_000,
-    model,
-    parameters={"magnitude": 0.7, "phase": 1.2},
-    seed=11,
-    grow_envelope=True,
-)
-```
-
-## Execution choices
-
-Use `Execution("cpu")` for predictable local work, `Execution("jit")` for compiled CPU kernels, or `Execution("gpu")` for WGPU. `Execution("auto")` selects a sensible local CPU strategy. The MPI distribution supplies the same `laddu` module and enables distributed execution under `mpiexec`; dataset partitioning may be contiguous, file-group based, or row based.
-
-## Documentation and development
-
-The documentation includes task-oriented tutorials for I/O, Monte Carlo generation, fitting, mass-independent binned fitting, polarized photoproduction, cross sections, MPI, and runtime tuning. Build it locally with:
-
-```bash
-just docs-install
-just docs-build
-just docs-serve       # http://127.0.0.1:8000
-```
-
-Build the Rust API documentation with the KaTeX header, or build and open it in the default browser:
-
-```bash
-just rust-docs-build
-just rust-docs-open
-```
-
-Useful development checks are:
-
-```bash
-just check-python-rust
-just test-rust
-just example-quick cpu
-```
-
-laddu is dual-licensed under MIT or Apache-2.0. Bug reports and focused pull requests are welcome through the GitHub repository.
+`laddu` is available under either the [MIT License](LICENSE-MIT) or the [Apache License 2.0](LICENSE-APACHE), at your option.

@@ -25,3 +25,6 @@ rustc-ice-*.txt
 
 .cache
 .venv
+.venv-3.14t
+__pycache__/
+*.py[cod]

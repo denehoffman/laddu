@@ -1,26 +1,32 @@
-FROM ubuntu:rolling
+FROM ubuntu:24.04
 
-RUN apt update && apt install -y --no-install-recommends \
-    ca-certificates \
-    curl \
-    git \
-    build-essential \
-    pkg-config \
-    python3-dev \
-    openmpi-bin \
-    libopenmpi-dev \
-    libclang-dev \
-    libssl-dev \
-    rsync \
-    just
+ARG RUST_VERSION=1.94.0
 
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PATH="/root/.cargo/bin:/root/.local/bin:${PATH}"
 
-RUN curl https://sh.rustup.rs -sSf | sh -s -- --default-toolchain nightly -y
-ENV PATH="/root/.cargo/bin:${PATH}"
-RUN rustup component add clippy rustfmt
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        build-essential \
+        ca-certificates \
+        curl \
+        git \
+        just \
+        libclang-dev \
+        libopenmpi-dev \
+        libssl-dev \
+        openmpi-bin \
+        pkg-config \
+    && rm -rf /var/lib/apt/lists/*
 
-RUN cargo install --locked cargo-nextest
-RUN cargo install --locked cargo-hack
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+    | sh -s -- --default-toolchain "${RUST_VERSION}" --profile minimal -y \
+    && rustup component add clippy rustfmt
 
-ADD https://astral.sh/uv/install.sh /uv-installer.sh
-RUN sh /uv-installer.sh && rm /uv-installer.sh
+ADD https://astral.sh/uv/install.sh /tmp/uv-installer.sh
+RUN sh /tmp/uv-installer.sh \
+    && rm /tmp/uv-installer.sh \
+    && uv python install 3.11 \
+    && uv tool install prek
+
+RUN cargo install --locked cargo-hack cargo-nextest

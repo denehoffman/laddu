@@ -1,18 +1,16 @@
+# yamloom: generated from .yamloom.py
 ---
 name: CodSpeed Benchmarks
 "on":
-  pull_request:
-    types:
-      - opened
-      - reopened
-      - synchronize
   push:
     branches:
+      - development
       - main
+  pull_request: ~
   workflow_dispatch: ~
 jobs:
   benchmarks:
-    name: Run Benchmarks
+    name: Run benchmarks
     permissions:
       contents: read
     runs-on: ubuntu-latest
@@ -21,16 +19,22 @@ jobs:
         uses: actions/checkout@v6
       - name: Setup Rust
         uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: 1.94.0
       - name: Install Rust Tool
         uses: taiki-e/install-action@v2
         with:
           tool: cargo-codspeed
-      - run: cargo codspeed build --bench open_benchmark  --bench kmatrix_benchmark
+      - run: cargo codspeed build --workspace --benches
         env:
           CARGO_BUILD_JOBS: "1"
       - name: CodSpeed Action
+        if: ${{ (github.event_name != 'pull_request') }}
         uses: CodSpeedHQ/action@v4
         with:
           mode: simulation
           run: cargo codspeed run
           token: ${{ secrets.CODSPEED_TOKEN }}
+      - name: Run benchmarks without upload
+        if: ${{ !((github.event_name != 'pull_request')) }}
+        run: cargo codspeed run

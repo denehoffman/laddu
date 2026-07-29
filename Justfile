@@ -5,6 +5,7 @@ python_project := project_root + "/python/laddu"
 python_local_project := project_root + "/python/laddu-local"
 python_mpi_project := project_root + "/python/laddu-mpi"
 python_venv := project_root + "/.venv"
+python_free_threaded_venv := project_root + "/.venv-3.14t"
 
 export UV_PROJECT_ENVIRONMENT := python_venv
 
@@ -32,6 +33,20 @@ python-dev: sync-python
 # Install a fast-to-build debug extension in the uv project environment.
 python-dev-debug: sync-python
     cd "{{python_project}}" && VIRTUAL_ENV="{{python_venv}}" UV_PYTHON="{{python_venv}}/bin/python" "{{python_venv}}/bin/maturin" develop --manifest-path Cargo.toml --generate-stubs
+
+# Build the extension and verify its generated type information.
+check-python-types: python-dev-debug
+    uv run --no-sync --project "{{python_project}}" ty check python docs crates/laddu/examples
+
+# Run the Python binding smoke and concurrency tests.
+test-python: python-dev-debug
+    uv run --no-sync --project "{{python_project}}" python -m unittest discover -s python/tests -p "test_*.py"
+
+# Build and test under free-threaded CPython 3.14 without re-enabling the GIL.
+test-python-free-threaded:
+    env -u VIRTUAL_ENV -u PYO3_PYTHON -u PYTHONPATH -u _PYTHON_HOST_PLATFORM -u _PYTHON_SYSCONFIGDATA_NAME UV_PROJECT_ENVIRONMENT="{{python_free_threaded_venv}}" UV_PYTHON=3.14t uv sync --frozen --inexact --no-install-project --project "{{python_project}}"
+    cd "{{python_project}}" && env -u PYO3_PYTHON -u PYTHONPATH -u _PYTHON_HOST_PLATFORM -u _PYTHON_SYSCONFIGDATA_NAME VIRTUAL_ENV="{{python_free_threaded_venv}}" UV_PYTHON="{{python_free_threaded_venv}}/bin/python" "{{python_free_threaded_venv}}/bin/maturin" develop --manifest-path Cargo.toml --release --generate-stubs
+    env -u VIRTUAL_ENV -u PYO3_PYTHON -u PYTHONPATH -u _PYTHON_HOST_PLATFORM -u _PYTHON_SYSCONFIGDATA_NAME UV_PROJECT_ENVIRONMENT="{{python_free_threaded_venv}}" UV_PYTHON="{{python_free_threaded_venv}}/bin/python" uv run --no-sync --project "{{python_project}}" python -m unittest discover -s python/tests -p "test_*.py"
 
 # Install/update the standalone local extension.
 python-local: sync-python
@@ -65,11 +80,11 @@ docs-serve port="8000": docs-build
 
 # Build API documentation for every Rust crate without dependency documentation.
 rust-docs-build:
-    RUSTDOCFLAGS="${RUSTDOCFLAGS:-} --html-in-header docs/_templates/docs-header.html" cargo doc --workspace --no-deps --exclude laddu-python --exclude laddu-python-local --exclude laddu-python-mpi
+    cargo doc --workspace --no-deps --exclude laddu-python --exclude laddu-python-local --exclude laddu-python-mpi
 
 # Build the Rust API documentation and open it in the default browser.
 rust-docs-open:
-    RUSTDOCFLAGS="${RUSTDOCFLAGS:-} --html-in-header docs/_templates/docs-header.html" cargo doc --workspace --no-deps --open --exclude laddu-python --exclude laddu-python-local --exclude laddu-python-mpi
+    cargo doc --workspace --no-deps --open --exclude laddu-python --exclude laddu-python-local --exclude laddu-python-mpi
 
 # Run the practical default closure example (backend: cpu, jit, or gpu).
 example backend="cpu" *args: require-python

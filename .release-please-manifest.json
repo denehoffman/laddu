@@ -1,3 +1,19 @@
 {
-  ".": "0.19.6"
+  "crates/laddu": "0.19.6",
+  "crates/laddu-amplitudes": "0.19.6",
+  "crates/laddu-autodiff": "0.19.6",
+  "crates/laddu-compile": "0.19.6",
+  "crates/laddu-data": "0.19.6",
+  "crates/laddu-expr": "0.19.6",
+  "crates/laddu-fit": "0.19.6",
+  "crates/laddu-generation": "0.19.6",
+  "crates/laddu-kernel": "0.19.6",
+  "crates/laddu-likelihood": "0.19.6",
+  "crates/laddu-memory": "0.19.6",
+  "crates/laddu-physics": "0.19.6",
+  "crates/laddu-runtime": "0.19.6",
+  "crates/laddu-wgpu": "0.19.6",
+  "python/laddu": "0.19.6",
+  "python/laddu-local": "0.19.6",
+  "python/laddu-mpi": "0.19.6"
 }

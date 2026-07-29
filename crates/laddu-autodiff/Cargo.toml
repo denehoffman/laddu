@@ -1,6 +1,6 @@
 [package]
 name = "laddu-autodiff"
-version = "0.1.0"
+version = "0.19.6"
 authors.workspace = true
 edition.workspace = true
 homepage.workspace = true
@@ -8,13 +8,16 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
+[package.metadata.docs.rs]
+rustdoc-args = ["--html-in-header", "docs-header.html"]
+
 [lints]
 workspace = true
 
 [dependencies]
-laddu-compile = { path = "../laddu-compile" }
-laddu-expr = { path = "../laddu-expr" }
-laddu-kernel = { path = "../laddu-kernel" }
+laddu-compile = { version = "0.19.6", path = "../laddu-compile" }
+laddu-expr = { version = "0.19.6", path = "../laddu-expr" }
+laddu-kernel = { version = "0.19.6", path = "../laddu-kernel" }
 num.workspace = true
 serde.workspace = true
 thiserror.workspace = true

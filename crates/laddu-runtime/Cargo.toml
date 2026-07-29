@@ -1,6 +1,6 @@
 [package]
 name = "laddu-runtime"
-version = "0.1.0"
+version = "0.19.6"
 authors.workspace = true
 edition.workspace = true
 homepage.workspace = true
@@ -8,18 +8,21 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
+[package.metadata.docs.rs]
+rustdoc-args = ["--html-in-header", "docs-header.html"]
+
 [lints]
 workspace = true
 
 [dependencies]
 cranelift = { workspace = true, optional = true }
-laddu-autodiff = { path = "../laddu-autodiff" }
-laddu-compile = { path = "../laddu-compile" }
-laddu-data = { path = "../laddu-data" }
-laddu-expr = { path = "../laddu-expr" }
-laddu-kernel = { path = "../laddu-kernel" }
-laddu-memory = { path = "../laddu-memory" }
-laddu-wgpu = { path = "../laddu-wgpu", optional = true }
+laddu-autodiff = { version = "0.19.6", path = "../laddu-autodiff" }
+laddu-compile = { version = "0.19.6", path = "../laddu-compile" }
+laddu-data = { version = "0.19.6", path = "../laddu-data" }
+laddu-expr = { version = "0.19.6", path = "../laddu-expr" }
+laddu-kernel = { version = "0.19.6", path = "../laddu-kernel" }
+laddu-memory = { version = "0.19.6", path = "../laddu-memory" }
+laddu-wgpu = { version = "0.19.6", path = "../laddu-wgpu", optional = true }
 mpi = { workspace = true, optional = true }
 nalgebra.workspace = true
 num.workspace = true

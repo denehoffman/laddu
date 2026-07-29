@@ -1,12 +1,15 @@
 [package]
 name = "laddu-memory"
-version = "0.1.0"
+version = "0.19.6"
 authors.workspace = true
 edition.workspace = true
 homepage.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
+
+[package.metadata.docs.rs]
+rustdoc-args = ["--html-in-header", "docs-header.html"]
 
 [lints]
 workspace = true

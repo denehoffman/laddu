@@ -1,6 +1,6 @@
 [package]
 name = "laddu-generation"
-version = "0.1.0"
+version = "0.19.6"
 authors.workspace = true
 edition.workspace = true
 homepage.workspace = true
@@ -8,15 +8,18 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
+[package.metadata.docs.rs]
+rustdoc-args = ["--html-in-header", "docs-header.html"]
+
 [lints]
 workspace = true
 
 [dependencies]
-laddu-compile = { path = "../laddu-compile" }
-laddu-data = { path = "../laddu-data" }
-laddu-expr = { path = "../laddu-expr" }
-laddu-physics = { path = "../laddu-physics" }
-laddu-runtime = { path = "../laddu-runtime" }
+laddu-compile = { version = "0.19.6", path = "../laddu-compile" }
+laddu-data = { version = "0.19.6", path = "../laddu-data" }
+laddu-expr = { version = "0.19.6", path = "../laddu-expr" }
+laddu-physics = { version = "0.19.6", path = "../laddu-physics" }
+laddu-runtime = { version = "0.19.6", path = "../laddu-runtime" }
 rayon.workspace = true
 serde.workspace = true
 smallvec.workspace = true

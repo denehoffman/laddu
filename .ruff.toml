@@ -1,6 +1,6 @@
 line-length = 120
 indent-width = 4
-target-version = "py310"
+target-version = "py311"
 
 exclude = [
   ".bzr",
@@ -17,6 +17,7 @@ exclude = [
   ".svn",
   ".tox",
   ".venv",
+  ".venv-3.14t",
   "__pypackages__",
   "_build",
   "buck-out",

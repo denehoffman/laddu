@@ -50,7 +50,7 @@ pub use laddu_fit::ganesh::python::ganesh;
 #[macro_export]
 macro_rules! laddu_python_module {
     ($name:ident, $backend:expr $(, $initializer:item)?) => {
-        #[pyo3::pymodule]
+        #[pyo3::pymodule(gil_used = false)]
         #[doc = "laddu's native Python analysis API."]
         pub mod $name {
             use pyo3::prelude::*;
