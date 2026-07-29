@@ -11,9 +11,8 @@
       "changelog-path": "/CHANGELOG.md",
       "extra-files": [
         {
-          "type": "toml",
-          "path": "/Cargo.toml",
-          "jsonpath": "$.workspace.package.version"
+          "type": "generic",
+          "path": "/Cargo.toml"
         },
         {
           "type": "generic",

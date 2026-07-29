@@ -30,6 +30,6 @@ fastrand-contrib.workspace = true
 
 [dev-dependencies]
 laddu-compile = { version = "0.19.6", path = "../laddu-compile" }
-laddu-runtime = { version = "0.19.6", path = "../laddu-runtime" }
+laddu_runtime.workspace = true
 criterion.workspace = true
 serde_json.workspace = true
