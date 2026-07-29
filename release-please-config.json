@@ -2,12 +2,12 @@
   "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
   "release-type": "rust",
   "include-v-in-tag": true,
+  "include-component-in-tag": false,
   "bump-minor-pre-major": true,
   "bump-patch-for-minor-pre-major": true,
   "packages": {
     "crates/laddu": {
       "component": "laddu",
-      "include-component-in-tag": false,
       "changelog-path": "/CHANGELOG.md",
       "extra-files": [
         {

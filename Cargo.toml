@@ -5,6 +5,7 @@ default-members = ["crates/*"]
 
 [workspace.package]
 authors = ["Nathaniel Dene Hoffman <nhoffman@wm.edu>"]
+description = "Amplitude analysis tools for Rust"
 edition = "2024"
 homepage = "https://github.com/denehoffman/laddu"
 license = "MIT OR Apache-2.0"

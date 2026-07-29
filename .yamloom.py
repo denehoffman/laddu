@@ -138,6 +138,12 @@ python_release_workflow = Workflow(
                     '--exclude laddu-python-local '
                     '--exclude laddu-python-mpi'
                 ),
+                script(
+                    'cargo metadata --no-deps --format-version 1 | '
+                    "jq -e 'all(.packages[].dependencies[]; "
+                    '.path == null or .req != "*")\'',
+                    name='Validate local dependency versions',
+                ),
                 script('cargo check -p laddu-python -p laddu-python-local -p laddu-python-mpi'),
                 script('uv sync --frozen --inexact --no-install-project --project python/laddu'),
                 script(
