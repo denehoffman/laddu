@@ -1,4 +1,6 @@
-Some code in laddu-core/src/utils/wigner.rs is derived from the <https://github.com/0382/WignerSymbol> library under the following license:
+Parts of crates/laddu-physics/src/math/wigner.rs are derived from the
+WignerSymbol library at <https://github.com/0382/WignerSymbol> under the
+following license:
 
 MIT License
 

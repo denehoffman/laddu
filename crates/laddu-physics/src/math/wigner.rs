@@ -1,0 +1,875 @@
+//! Efficient helper methods to calculate Clebsch-Gordon coefficients and Wigner 3j-symbols.
+//!
+//! Ported from <https://github.com/0382/WignerSymbol> to Rust by N. D. Hoffman, 2026.
+
+use laddu_expr::{Expr, cis};
+use serde::{Deserialize, Serialize};
+
+use self::utils::{binomial, const_imax, const_umin};
+use crate::{
+    LadduPhysicsError, LadduPhysicsResult,
+    quantum::{J, M},
+};
+
+mod utils {
+    const MAX_BINOMIAL: u64 = 67;
+    const SIZE: usize = table_size(MAX_BINOMIAL);
+
+    const fn table_size(n: u64) -> usize {
+        let x = n / 2 + 1;
+        (x * (x + (n & 1))) as usize
+    }
+    const fn index(n: u64, k: u64) -> usize {
+        let x = n / 2 + 1;
+        (x * (x - (1 - (n & 1))) + k) as usize
+    }
+    pub(crate) const fn const_umin(a: u64, b: u64) -> u64 {
+        if a < b { a } else { b }
+    }
+    pub(crate) const fn const_imax(a: i64, b: i64) -> i64 {
+        if a > b { a } else { b }
+    }
+    const fn build_binomial_table() -> [u64; SIZE] {
+        let mut data = [0u64; SIZE];
+        data[0] = 1;
+        let mut n = 1;
+        while n <= MAX_BINOMIAL {
+            let mut k = 0;
+            while k <= n / 2 {
+                let value = if k == 0 {
+                    1
+                } else {
+                    let nm1 = n - 1;
+                    let a_k = const_umin(k, nm1 - k);
+                    let km1 = k - 1;
+                    let b_k = const_umin(km1, nm1 - km1);
+                    data[index(nm1, a_k)] + data[index(nm1, b_k)]
+                };
+                data[index(n, k)] = value;
+                k += 1;
+            }
+            n += 1;
+        }
+        data
+    }
+    static BINOMIAL_TABLE: [u64; SIZE] = build_binomial_table();
+
+    /// Compute the binomial coefficient C(n, k).
+    ///
+    /// # Note
+    /// For n > 67, this value would exceed the u64 max, so it will instead return 0.
+    #[inline]
+    pub(crate) const fn binomial(n: u64, k: u64) -> u64 {
+        if n > MAX_BINOMIAL || k > n {
+            return 0;
+        }
+        let k = const_umin(k, n - k);
+        BINOMIAL_TABLE[index(n, k)]
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::binomial;
+        #[test]
+        fn test_binomial() {
+            assert_eq!(binomial(0, 0), 1);
+            assert_eq!(binomial(5, 0), 1);
+            assert_eq!(binomial(5, 1), 5);
+            assert_eq!(binomial(5, 2), 10);
+            assert_eq!(binomial(5, 3), 10);
+            assert_eq!(binomial(5, 4), 5);
+            assert_eq!(binomial(5, 5), 1);
+            assert_eq!(binomial(67, 33), 14_226_520_737_620_288_370);
+            assert_eq!(binomial(67, 34), 14_226_520_737_620_288_370);
+            assert_eq!(binomial(68, 1), 0);
+            assert_eq!(binomial(10, 11), 0);
+        }
+    }
+}
+
+/// (-1)^x but efficient
+#[inline]
+const fn phase(x: u64) -> i64 {
+    1 - (2 * (x & 1) as i64)
+}
+
+/// true if both j and m are either both integers or both half-integers, false for mixed cases
+#[inline]
+const fn check_parity(dj: i64, dm: i64) -> bool {
+    (dj ^ dm) & 1 == 0
+}
+#[inline]
+const fn check_jm(dj: i64, dm: i64) -> bool {
+    check_parity(dj, dm) && (dm.abs() <= dj)
+}
+#[inline]
+const fn check_coupling(dj1: i64, dj2: i64, dj3: i64) -> bool {
+    (dj1 >= 0)
+        && (dj2 >= 0)
+        && (dj3 >= (dj1 - dj2).abs())
+        && check_parity(dj1 + dj2, dj3)
+        && (dj3 <= (dj1 + dj2))
+}
+
+/// Computes the Clebsch–Gordan coefficient $`\langle j_1 m_1; j_2 m_2 \mid j m\rangle`$.
+///
+/// # Parameters
+///
+/// All angular momenta and projections are passed as strongly typed quantum numbers.
+///
+/// # Returns
+///
+/// Returns the Clebsch–Gordan coefficient as `f64`.
+///
+/// The function returns `0.0` when any standard selection rule is violated:
+/// - `(j, m)` is not a valid angular-momentum projection pair
+/// - $`j_1`$, $`j_2`$, and $`j`$ do not satisfy the triangle relation
+/// - $`m_1 + m_2 \ne m`$
+///
+/// # Examples
+///
+/// ```rust
+/// # use laddu_physics::{j, m};
+/// # use laddu_physics::math::clebsch_gordan;
+/// let cg = clebsch_gordan(j!(1), m!(1), j!(1), m!(-1), j!(1), m!(0));
+/// assert_eq!(cg, f64::sqrt(1.0 / 2.0));
+/// ```
+pub fn clebsch_gordan(j1: J, m1: M, j2: J, m2: M, j: J, m: M) -> f64 {
+    clebsch_gordan_doubled(
+        j1.doubled() as u64,
+        j2.doubled() as u64,
+        j.doubled() as u64,
+        m1.doubled() as i64,
+        m2.doubled() as i64,
+        m.doubled() as i64,
+    )
+}
+
+fn clebsch_gordan_doubled(dj1: u64, dj2: u64, dj3: u64, dm1: i64, dm2: i64, dm3: i64) -> f64 {
+    if !(check_jm(dj1 as i64, dm1) && check_jm(dj2 as i64, dm2) && check_jm(dj3 as i64, dm3)) {
+        return 0.0;
+    }
+    if !check_coupling(dj1 as i64, dj2 as i64, dj3 as i64) {
+        return 0.0;
+    }
+    if dm1 + dm2 != dm3 {
+        return 0.0;
+    }
+    if dm1 == 0 && dm2 == 0 && dm3 == 0 {
+        let j1 = dj1 / 2;
+        let j2 = dj2 / 2;
+        let j3 = dj3 / 2;
+        let j = j1 + j2 + j3;
+        let g = j / 2;
+        return phase(g - j3) as f64 * (binomial(g, j3) * binomial(j3, g - j1)) as f64
+            / ((binomial(j + 1, dj3 + 1) * binomial(dj3, j - dj1)) as f64).sqrt();
+    }
+    let j = (dj1 + dj2 + dj3) / 2;
+    let jm1 = j - dj1;
+    let jm2 = j - dj2;
+    let jm3 = j - dj3;
+    let j1mm1 = (dj1 as i64 - dm1) as u64 / 2;
+    let j2mm2 = (dj2 as i64 - dm2) as u64 / 2;
+    let j3mm3 = (dj3 as i64 - dm3) as u64 / 2;
+    let j2pm2 = (dj2 as i64 + dm2) as u64 / 2;
+    let a = ((binomial(dj1, jm2) * binomial(dj2, jm3)) as f64
+        / (binomial(j + 1, jm3)
+            * binomial(dj1, j1mm1)
+            * binomial(dj2, j2mm2)
+            * binomial(dj3, j3mm3)) as f64)
+        .sqrt();
+    let mut b: i64 = 0;
+    let k_min = const_imax(
+        0,
+        const_imax(j1mm1 as i64 - jm2 as i64, j2pm2 as i64 - jm1 as i64),
+    ) as u64;
+    let k_max = const_umin(jm3, const_umin(j1mm1, j2pm2));
+    for z in k_min..=k_max {
+        b = -b + (binomial(jm3, z) * binomial(jm2, j1mm1 - z) * binomial(jm1, j2pm2 - z)) as i64;
+    }
+    a * (phase(k_max) * b) as f64
+}
+
+/// Computes the Wigner 3-j symbol
+///
+/// $`\begin{pmatrix} j_1 & j_2 & j_3 \\ m_1 & m_2 & m_3 \end{pmatrix}`$
+///
+/// using the doubled-quantum-number convention.
+///
+/// # Parameters
+///
+/// All angular momenta and projections are passed as strongly typed quantum numbers.
+///
+/// # Returns
+///
+/// Returns the Wigner 3-j symbol as `f64`.
+///
+/// The function returns `0.0` when any selection rule fails:
+/// - `(j, m)` is invalid for any input pair
+/// - $`j_1`$, $`j_2`$, and $`j_3`$ violate the triangle condition
+/// - $`m_1 + m_2 + m_3 \ne 0`$
+///
+/// # Notes
+///
+/// - The implementation uses a finite alternating sum over binomial factors.
+///
+/// # Examples
+///
+/// Integer angular momentum:
+///
+/// ```rust
+/// # use laddu_physics::{j, m};
+/// # use laddu_physics::math::wigner_3j;
+/// let w = wigner_3j(j!(1), m!(1), j!(1), m!(-1), j!(1), m!(0)); // (1 1 1; 1 -1 0)
+/// assert_eq!(w, f64::sqrt(1.0 / 6.0))
+/// ```
+///
+/// Half-integer angular momentum:
+///
+/// ```rust
+/// # use laddu_physics::{j, m};
+/// # use laddu_physics::math::wigner_3j;
+/// let w = wigner_3j(j!(1/2), m!(1/2), j!(1/2), m!(-1/2), j!(1), m!(0)); // (1/2 1/2 1; 1/2 -1/2 0)
+/// assert_eq!(w, f64::sqrt(1.0 / 6.0))
+/// ```
+///
+/// # Convention
+///
+/// This symbol is related to the Clebsch–Gordon coefficient by
+///
+/// $`\begin{pmatrix} j_1 & j_2 & j_3 \\ m_1 & m_2 & m_3 \end{pmatrix} = ((-1)^{j_1 - j_2 - m_3} / \sqrt{2j_3 + 1}) \langle j_1 m_1; j_2 m_2 | j_3, -m_3\rangle`$
+pub fn wigner_3j(j1: J, m1: M, j2: J, m2: M, j3: J, m3: M) -> f64 {
+    wigner_3j_doubled(
+        j1.doubled() as u64,
+        j2.doubled() as u64,
+        j3.doubled() as u64,
+        m1.doubled() as i64,
+        m2.doubled() as i64,
+        m3.doubled() as i64,
+    )
+}
+
+fn wigner_3j_doubled(dj1: u64, dj2: u64, dj3: u64, dm1: i64, dm2: i64, dm3: i64) -> f64 {
+    if !(check_jm(dj1 as i64, dm1) && check_jm(dj2 as i64, dm2) && check_jm(dj3 as i64, dm3)) {
+        return 0.0;
+    }
+    if !check_coupling(dj1 as i64, dj2 as i64, dj3 as i64) {
+        return 0.0;
+    }
+    if dm1 + dm2 + dm3 != 0 {
+        return 0.0;
+    }
+    let j = (dj1 + dj2 + dj3) / 2;
+    let jm1 = j - dj1;
+    let jm2 = j - dj2;
+    let jm3 = j - dj3;
+    let j1mm1 = (dj1 as i64 - dm1) as u64 / 2;
+    let j2mm2 = (dj2 as i64 - dm2) as u64 / 2;
+    let j3mm3 = (dj3 as i64 - dm3) as u64 / 2;
+    let j1pm1 = (dj1 as i64 + dm1) as u64 / 2;
+    let a = ((binomial(dj1, jm2) * binomial(dj2, jm1)) as f64
+        / ((j + 1)
+            * binomial(j, jm3)
+            * binomial(dj1, j1mm1)
+            * binomial(dj2, j2mm2)
+            * binomial(dj3, j3mm3)) as f64)
+        .sqrt();
+    let mut b: i64 = 0;
+    let k_min = const_imax(
+        0,
+        const_imax(j1pm1 as i64 - jm2 as i64, j2mm2 as i64 - jm1 as i64),
+    ) as u64;
+    let k_max = const_umin(jm3, const_umin(j1pm1, j2mm2));
+    for z in k_min..=k_max {
+        b = -b + (binomial(jm3, z) * binomial(jm2, j1pm1 - z) * binomial(jm1, j2mm2 - z)) as i64;
+    }
+    a * (phase(dj1 + (dj3 as i64 + dm3) as u64 / 2 + k_max) * b) as f64
+}
+
+/// Precomputed helper for Wigner rotation matrix elements.
+///
+/// Stores all coefficients needed for repeated evaluation of
+///
+/// $`d^j_{m' m}(\beta)`$ and $`D^j_{m' m}(\alpha,\beta,\gamma)`$.
+///
+/// # Definitions
+///
+/// $`D^j_{m' m}(\alpha,\beta,\gamma) = e^{-i m' \alpha} d^j_{m' m}(\beta) e^{-i m \gamma}`$
+///
+/// # Notes
+///
+/// Designed for reuse across many angle evaluations.
+#[derive(Copy, Clone, Serialize, Deserialize)]
+pub struct WignerDMatrix {
+    dj: i64,    // 2 * j
+    dmp: i64,   // 2 * m'
+    dm: i64,    // 2 * m
+    jpm: i64,   // j + m
+    jmmp: i64,  // j - m'
+    delta: i64, // m' - m
+    s_min: i64,
+    s_max: i64,
+}
+impl WignerDMatrix {
+    /// Constructs a Wigner small-$`d`$/full-$`D`$ matrix element helper for fixed
+    /// quantum numbers $`j`$, $`m'`$, and $`m`$.
+    ///
+    /// All angular momenta and projections are passed as strongly typed quantum numbers.
+    ///
+    /// The constructed value precomputes the combinatorial factors and
+    /// summation bounds needed for repeated evaluation of:
+    /// - the reduced Wigner matrix element $`d^j_{m' m}(\beta)`$, and
+    /// - the full Wigner matrix element $`D^j_{m' m}(\alpha,\beta,\gamma)`$.
+    ///
+    /// # Errors
+    ///
+    /// This method will return an error result if:
+    /// - `|m'| > j`
+    /// - `|m| > j`
+    /// - `j` and `m'` do not have matching integer/half-integer parity
+    /// - `j` and `m` do not have matching integer/half-integer parity
+    /// - the internally derived summation bounds are inconsistent
+    ///
+    /// # Notes
+    ///
+    /// The returned struct is intended for reuse when evaluating the same
+    /// matrix element for many angles. This avoids recomputing factorial-based
+    /// prefactors on every call.
+    ///
+    /// # Examples
+    ///
+    /// Integer angular momentum:
+    ///
+    /// ```rust
+    /// # use laddu_physics::{j, m};
+    /// # use laddu_physics::math::WignerDMatrix;
+    /// let w = WignerDMatrix::new(j!(1), m!(1), m!(0)).unwrap(); // j = 1, m' = 1, m = 0
+    /// ```
+    ///
+    /// Half-integer angular momentum:
+    ///
+    /// ```rust
+    /// # use laddu_physics::{j, m};
+    /// # use laddu_physics::math::WignerDMatrix;
+    /// let w = WignerDMatrix::new(j!(1/2), m!(1/2), m!(-1/2)).unwrap(); // j = 1/2, m' = 1/2, m = -1/2
+    /// ```
+    pub fn new(
+        j: impl TryInto<J>,
+        mp: impl TryInto<M>,
+        m: impl TryInto<M>,
+    ) -> LadduPhysicsResult<Self> {
+        let j = j
+            .try_into()
+            .map_err(|_| LadduPhysicsError::ConversionError("J"))?;
+        let mp = mp
+            .try_into()
+            .map_err(|_| LadduPhysicsError::ConversionError("M"))?;
+        let m = m
+            .try_into()
+            .map_err(|_| LadduPhysicsError::ConversionError("M"))?;
+        Self::new_doubled(j.doubled() as u64, mp.doubled() as i64, m.doubled() as i64)
+    }
+
+    fn new_doubled(dj: u64, dmp: i64, dm: i64) -> LadduPhysicsResult<Self> {
+        let dj = dj as i64;
+        if dmp.abs() > dj {
+            return Err(LadduPhysicsError::invalid_relation(format!(
+                "|m'| <= j, got 2*j = {dj}, 2*m' = {dmp}"
+            )));
+        }
+        if dm.abs() > dj {
+            return Err(LadduPhysicsError::invalid_relation(format!(
+                "|m| <= j, got 2*j = {dj}, 2*m = {dm}"
+            )));
+        }
+        if !check_parity(dj, dmp) {
+            return Err(LadduPhysicsError::invalid_relation(format!(
+                "j and m' must have the same integer/half-integer parity, got 2*j = {dj}, 2*m' = {dmp}"
+            )));
+        }
+        if !check_parity(dj, dm) {
+            return Err(LadduPhysicsError::invalid_relation(format!(
+                "j and m must have the same integer/half-integer parity, got 2*j = {dj}, 2*m = {dm}"
+            )));
+        }
+        let jmmp = (dj - dmp) / 2;
+        let jpm = (dj + dm) / 2;
+        let delta = (dmp - dm) / 2;
+        let s_min = 0.max(-delta);
+        let s_max = jpm.min(jmmp);
+        assert!(
+            s_min <= s_max,
+            "summation bounds are incorrect (this shouldn't happen)!"
+        );
+        Ok(Self {
+            dj,
+            dmp,
+            dm,
+            jpm,
+            jmmp,
+            delta,
+            s_min,
+            s_max,
+        })
+    }
+    /// Evaluates the reduced Wigner small-$`d`$ matrix element $`d^j_{m' m}(\beta)`$.
+    ///
+    /// The quantum numbers $`j`$, $`m'`$, and $`m`$ are those fixed when the
+    /// [`WignerDMatrix`] was constructed.
+    ///
+    /// # Parameters
+    ///
+    /// - `beta`: expression for the middle Euler angle $`\beta`$, in radians
+    ///
+    /// # Returns
+    ///
+    /// Returns an expression graph for the real-valued reduced Wigner matrix
+    /// element $`d^j_{m' m}(\beta)`$.
+    ///
+    /// # Notes
+    ///
+    /// This method builds the standard finite sum in powers of
+    /// $`\cos(\beta/2)`$ and $`\sin(\beta/2)`$.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use laddu_physics::math::WignerDMatrix;
+    /// # use laddu_expr::event_scalar;
+    /// # use laddu_physics::{j, m};
+    /// let w = WignerDMatrix::new(j!(1), m!(1), m!(0)).unwrap(); // j = 1, m' = 1, m = 0
+    /// let expr = w.d(event_scalar("beta"));
+    /// ```
+    pub fn d(&self, beta: impl Into<Expr>) -> Expr {
+        let beta = beta.into();
+        let half_beta = 0.5 * beta;
+        let ch = half_beta.cos();
+        let sh = half_beta.sin();
+        let mut sum: Expr = 0.0.into();
+
+        for term in self.small_d_terms() {
+            let mut expr: Expr = term.coefficient.into();
+            if term.cos_power != 0 {
+                expr *= ch.powi(term.cos_power);
+            }
+            if term.sin_power != 0 {
+                expr *= sh.powi(term.sin_power);
+            }
+            sum += expr;
+        }
+
+        sum
+    }
+
+    /// Evaluates the full Wigner $`D`$ matrix element $`D^j_{m' m}(\alpha,\beta,\gamma)`$.
+    ///
+    /// The implemented convention is
+    ///
+    /// $`D^j_{m' m}(\alpha,\beta,\gamma) = e^{-\imath m' \alpha} d^j_{m' m}(\beta) e^{-\imath m \gamma}`$,
+    ///
+    /// # Parameters
+    ///
+    /// - `alpha`: expression for the first Euler angle $`\alpha`$, in radians
+    /// - `beta`: expression for the middle Euler angle $`\beta`$, in radians
+    /// - `gamma`: expression for the third Euler angle $`\gamma`$, in radians
+    ///
+    /// # Returns
+    ///
+    /// Returns an expression graph for the complex Wigner $`D`$ matrix element.
+    ///
+    /// # Notes
+    ///
+    /// Since $`d^j_{m' m}(\beta)`$ is real for real $`\beta`$, the complex phase comes
+    /// entirely from the $`\alpha`$ and $`\gamma`$ dependence.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use laddu_physics::math::WignerDMatrix;
+    /// # use laddu_expr::event_scalar;
+    /// # use laddu_physics::{j, m};
+    /// let w = WignerDMatrix::new(j!(1), m!(1), m!(0)).unwrap(); // j = 1, m' = 1, m = 0
+    /// let expr = w.D(event_scalar("alpha"), event_scalar("beta"), event_scalar("gamma"));
+    /// ```
+    #[allow(non_snake_case)]
+    pub fn D(&self, alpha: impl Into<Expr>, beta: impl Into<Expr>, gamma: impl Into<Expr>) -> Expr {
+        let alpha = alpha.into();
+        let gamma = gamma.into();
+        let phase = -0.5 * (self.dmp as f64 * alpha + self.dm as f64 * gamma);
+        cis(phase) * self.d(beta)
+    }
+
+    fn small_d_terms(&self) -> Vec<WignerDTerm> {
+        let j_plus_mp = (self.dj + self.dmp) / 2;
+        let j_minus_m = (self.dj - self.dm) / 2;
+        let mut ln_factorial = vec![0.0; self.dj as usize + 1];
+        for i in 1..=self.dj as usize {
+            ln_factorial[i] = ln_factorial[i - 1] + (i as f64).ln();
+        }
+        let ln_prefactor = 0.5
+            * (ln_factorial[j_plus_mp as usize]
+                + ln_factorial[self.jmmp as usize]
+                + ln_factorial[self.jpm as usize]
+                + ln_factorial[j_minus_m as usize]);
+
+        (self.s_min..=self.s_max)
+            .map(|s| {
+                let denom_ln = ln_factorial[(self.jpm - s) as usize]
+                    + ln_factorial[s as usize]
+                    + ln_factorial[(self.delta + s) as usize]
+                    + ln_factorial[(self.jmmp - s) as usize];
+                let sign = if ((s + self.delta) & 1) == 0 {
+                    1.0
+                } else {
+                    -1.0
+                };
+                WignerDTerm {
+                    coefficient: sign * (ln_prefactor - denom_ln).exp(),
+                    cos_power: (self.dj - self.delta - 2 * s) as i32,
+                    sin_power: (self.delta + 2 * s) as i32,
+                }
+            })
+            .collect()
+    }
+}
+
+#[derive(Copy, Clone, Debug, PartialEq)]
+struct WignerDTerm {
+    coefficient: f64,
+    cos_power: i32,
+    sin_power: i32,
+}
+
+#[cfg(test)]
+mod tests {
+    use std::f64::consts::{FRAC_1_SQRT_2, FRAC_PI_2};
+
+    use approx::assert_relative_eq;
+    use laddu_compile::CompiledModel;
+    use laddu_runtime::CpuBackend;
+    use num::complex::Complex64;
+
+    use super::*;
+    use crate::{j, m};
+
+    fn evaluate(expr: Expr) -> Complex64 {
+        let model = CompiledModel::from_expr(&expr).unwrap();
+        let params = model.params().default_values();
+        CpuBackend.prepare(&model).evaluate(&params).unwrap()
+    }
+
+    fn assert_complex_relative_eq(actual: Complex64, expected: Complex64) {
+        assert_relative_eq!(actual.re, expected.re);
+        assert_relative_eq!(actual.im, expected.im);
+    }
+
+    #[test]
+    fn test_phase() {
+        assert_eq!(phase(0), 1);
+        assert_eq!(phase(1), -1);
+        assert_eq!(phase(2), 1);
+        assert_eq!(phase(3), -1);
+    }
+
+    #[test]
+    fn singlet_triplet_for_two_spin_half() {
+        // <1/2,1/2; 1/2,1/2 | 1,1> = 1
+        assert_relative_eq!(clebsch_gordan_doubled(1, 1, 2, 1, 1, 2), 1.0);
+
+        // <1/2,1/2; 1/2,-1/2 | 1,0> = 1/sqrt(2)
+        assert_relative_eq!(clebsch_gordan_doubled(1, 1, 2, 1, -1, 0), FRAC_1_SQRT_2);
+
+        // <1/2,-1/2; 1/2,1/2 | 1,0> = 1/sqrt(2)
+        assert_relative_eq!(clebsch_gordan_doubled(1, 1, 2, -1, 1, 0), FRAC_1_SQRT_2);
+
+        // <1/2,1/2; 1/2,-1/2 | 0,0> = 1/sqrt(2)
+        assert_relative_eq!(clebsch_gordan_doubled(1, 1, 0, 1, -1, 0), FRAC_1_SQRT_2);
+
+        // <1/2,-1/2; 1/2,1/2 | 0,0> = -1/sqrt(2)
+        assert_relative_eq!(clebsch_gordan_doubled(1, 1, 0, -1, 1, 0), -FRAC_1_SQRT_2);
+    }
+
+    #[test]
+    fn typed_clebsch_gordan_matches_doubled_helper() {
+        assert_relative_eq!(
+            clebsch_gordan(j!(1 / 2), m!(1 / 2), j!(1 / 2), m!(-1 / 2), j!(1), m!(0)),
+            clebsch_gordan_doubled(1, 1, 2, 1, -1, 0)
+        );
+        assert_eq!(
+            clebsch_gordan(j!(1 / 2), m!(1 / 2), j!(1 / 2), m!(1 / 2), j!(1), m!(0)),
+            0.0
+        );
+    }
+
+    #[test]
+    fn highest_weight_state_is_one() {
+        // <1,1; 1,1 | 2,2> = 1
+        // doubled notation: j1=j2=1 -> dj1=dj2=2, m1=m2=1 -> dm1=dm2=2
+        assert_relative_eq!(clebsch_gordan_doubled(2, 2, 4, 2, 2, 4), 1.0);
+    }
+
+    #[test]
+    fn known_spin_one_couplings() {
+        // <1,1; 1,0 | 2,1> = 1/sqrt(2)
+        assert_relative_eq!(clebsch_gordan_doubled(2, 2, 4, 2, 0, 2), FRAC_1_SQRT_2);
+
+        // <1,0; 1,0 | 2,0> = sqrt(2/3)
+        assert_relative_eq!(
+            clebsch_gordan_doubled(2, 2, 4, 0, 0, 0),
+            (2.0 / 3.0_f64).sqrt()
+        );
+
+        // <1,0; 1,0 | 0,0> = -1/sqrt(3)
+        assert_relative_eq!(
+            clebsch_gordan_doubled(2, 2, 0, 0, 0, 0),
+            -1.0 / 3.0_f64.sqrt()
+        );
+    }
+
+    #[test]
+    fn zero_when_m_sum_fails() {
+        // dm1 + dm2 != dm3
+        assert_eq!(clebsch_gordan_doubled(1, 1, 2, 1, 1, 0), 0.0);
+    }
+
+    #[test]
+    fn zero_when_triangle_rule_fails() {
+        // 1/2 + 1/2 cannot couple to j=2
+        assert_eq!(clebsch_gordan_doubled(1, 1, 4, 1, 1, 2), 0.0);
+    }
+
+    #[test]
+    fn zero_when_m_out_of_range() {
+        // For dj=1 (j=1/2), dm must be ±1 only
+        assert_eq!(clebsch_gordan_doubled(1, 1, 2, 3, -1, 2), 0.0);
+    }
+
+    #[test]
+    fn normalization_for_fixed_jm() {
+        // For j1=j2=1/2 and total J=1, M=0:
+        // |<+,-|1,0>|^2 + |<-,+|1,0>|^2 = 1
+        let c1 = clebsch_gordan_doubled(1, 1, 2, 1, -1, 0);
+        let c2 = clebsch_gordan_doubled(1, 1, 2, -1, 1, 0);
+        assert_relative_eq!(c1 * c1 + c2 * c2, 1.0);
+    }
+
+    #[test]
+    fn normalization_for_singlet() {
+        // For j1=j2=1/2 and total J=0, M=0:
+        // |<+,-|0,0>|^2 + |<-,+|0,0>|^2 = 1
+        let c1 = clebsch_gordan_doubled(1, 1, 0, 1, -1, 0);
+        let c2 = clebsch_gordan_doubled(1, 1, 0, -1, 1, 0);
+        assert_relative_eq!(c1 * c1 + c2 * c2, 1.0);
+    }
+
+    #[test]
+    fn two_spin_half_cases() {
+        // (1/2 1/2 1 ; 1/2 1/2 -1) = -1/sqrt(3)
+        assert_relative_eq!(wigner_3j_doubled(1, 1, 2, 1, 1, -2), -1.0 / 3.0_f64.sqrt());
+
+        // (1/2 1/2 0 ; 1/2 -1/2 0) = 1/sqrt(2)
+        assert_relative_eq!(wigner_3j_doubled(1, 1, 0, 1, -1, 0), FRAC_1_SQRT_2);
+
+        // (1/2 1/2 0 ; -1/2 1/2 0) = -1/sqrt(2)
+        assert_relative_eq!(wigner_3j_doubled(1, 1, 0, -1, 1, 0), -FRAC_1_SQRT_2);
+    }
+
+    #[test]
+    fn spin_one_cases() {
+        // (1 1 0 ; 0 0 0) = -1/sqrt(3)
+        assert_relative_eq!(wigner_3j_doubled(2, 2, 0, 0, 0, 0), -1.0 / 3.0_f64.sqrt());
+
+        // (1 1 2 ; 1 -1 0) = 1/sqrt(30)
+        assert_relative_eq!(wigner_3j_doubled(2, 2, 4, 2, -2, 0), 1.0 / 30.0_f64.sqrt());
+
+        // (1 1 2 ; 0 0 0) = sqrt(2/15)
+        assert_relative_eq!(wigner_3j_doubled(2, 2, 4, 0, 0, 0), (2.0 / 15.0_f64).sqrt());
+    }
+
+    #[test]
+    fn selection_rule_failures_return_zero() {
+        // m1 + m2 + m3 != 0
+        assert_eq!(wigner_3j_doubled(1, 1, 0, 1, -1, 1), 0.0);
+
+        // triangle rule fails: 1/2 + 1/2 cannot couple to 2
+        assert_eq!(wigner_3j_doubled(1, 1, 4, 1, -1, 0), 0.0);
+
+        // invalid m for j = 1/2
+        assert_eq!(wigner_3j_doubled(1, 1, 0, 3, -1, -2), 0.0);
+    }
+
+    #[test]
+    fn odd_j_sum_with_all_zero_ms_vanishes() {
+        // For integer j's, (j1 j2 j3; 0 0 0) vanishes if j1+j2+j3 is odd.
+        // Here 1+1+1 = 3 is odd.
+        assert_eq!(wigner_3j_doubled(2, 2, 2, 0, 0, 0), 0.0);
+    }
+
+    #[test]
+    fn column_swap_symmetry_even_case() {
+        // Swapping first two columns gives factor (-1)^(j1+j2+j3).
+        // Here 1+1+2 = 4 is even, so unchanged.
+        let a = wigner_3j_doubled(2, 2, 4, 2, -2, 0);
+        let b = wigner_3j_doubled(2, 2, 4, -2, 2, 0);
+        assert_relative_eq!(a, b);
+    }
+
+    #[test]
+    fn column_swap_symmetry_odd_case() {
+        // Here 1/2 + 1/2 + 0 = 1 is odd, so swap picks up a minus sign.
+        let a = wigner_3j_doubled(1, 1, 0, 1, -1, 0);
+        let b = wigner_3j_doubled(1, 1, 0, -1, 1, 0);
+        assert_relative_eq!(a, -b);
+    }
+
+    #[test]
+    fn sign_flip_symmetry() {
+        // (j1 j2 j3; -m1 -m2 -m3) = (-1)^(j1+j2+j3) (j1 j2 j3; m1 m2 m3)
+        // For j1=j2=1/2, j3=0, total is odd => minus sign.
+        let a = wigner_3j_doubled(1, 1, 0, 1, -1, 0);
+        let b = wigner_3j_doubled(1, 1, 0, -1, 1, 0);
+        assert_relative_eq!(b, -a);
+
+        // For j1=j2=1, j3=2, total is even => same sign.
+        let c = wigner_3j_doubled(2, 2, 4, 2, -2, 0);
+        let d = wigner_3j_doubled(2, 2, 4, -2, 2, 0);
+        assert_relative_eq!(d, c);
+    }
+
+    #[test]
+    fn typed_wigner_3j_matches_doubled_helper() {
+        assert_relative_eq!(
+            wigner_3j(
+                crate::j!(1 / 2),
+                crate::m!(1 / 2),
+                crate::j!(1 / 2),
+                crate::m!(-1 / 2),
+                crate::j!(1),
+                crate::m!(0)
+            ),
+            wigner_3j_doubled(1, 1, 2, 1, -1, 0)
+        );
+        assert_eq!(
+            wigner_3j(
+                crate::j!(1 / 2),
+                crate::m!(1 / 2),
+                crate::j!(1 / 2),
+                crate::m!(1 / 2),
+                crate::j!(1),
+                crate::m!(0)
+            ),
+            0.0
+        );
+    }
+
+    #[test]
+    fn relation_to_clebsch_gordon_examples() {
+        // Using:
+        // (j1 j2 j3; m1 m2 -m3) = (-1)^(j1-j2+m3) / sqrt(2j3+1) * <j1 m1 j2 m2 | j3 m3>
+        //
+        // In doubled notation the phase exponent becomes (dj1 - dj2 + dm3)/2.
+
+        // <1/2,1/2; 1/2,-1/2 | 0,0> = 1/sqrt(2)
+        // => (1/2 1/2 0 ; 1/2 -1/2 0) = 1/sqrt(2)
+        let cg = clebsch_gordan_doubled(1, 1, 0, 1, -1, 0);
+        let w3j = wigner_3j_doubled(1, 1, 0, 1, -1, 0);
+        assert_relative_eq!(w3j, cg);
+
+        // <1,1; 1,-1 | 2,0> = 1/sqrt(6)
+        // => (1 1 2 ; 1 -1 0) = 1/sqrt(30)
+        let cg = clebsch_gordan_doubled(2, 2, 4, 2, -2, 0);
+        let expected = cg / 5.0_f64.sqrt(); // sqrt(2j3+1)=sqrt(5)
+        let w3j = wigner_3j_doubled(2, 2, 4, 2, -2, 0);
+        assert_relative_eq!(w3j, expected);
+    }
+
+    #[test]
+    fn construct_integer_case() {
+        let _ = WignerDMatrix::new(j!(1), m!(1), m!(0)).unwrap();
+    }
+
+    #[test]
+    fn construct_half_integer_case() {
+        let _ = WignerDMatrix::new(j!(1 / 2), m!(1 / 2), m!(-1 / 2)).unwrap();
+    }
+
+    #[test]
+    fn invalid_wigner_d_quantum_numbers_error() {
+        assert!(WignerDMatrix::new(j!(1), m!(2), m!(0)).is_err());
+        assert!(WignerDMatrix::new(j!(1), m!(0), m!(2)).is_err());
+        assert!(WignerDMatrix::new(j!(1), m!(1 / 2), m!(0)).is_err());
+        assert!(WignerDMatrix::new(j!(1), m!(0), m!(1 / 2)).is_err());
+    }
+
+    #[test]
+    fn small_d_matches_known_numerical_values() {
+        let beta = 1.1;
+        let cb = f64::cos(beta);
+        let sb = f64::sin(beta);
+
+        let w_11 = WignerDMatrix::new(j!(1), m!(1), m!(1)).unwrap();
+        let w_10 = WignerDMatrix::new(j!(1), m!(1), m!(0)).unwrap();
+        let w_1m1 = WignerDMatrix::new(j!(1), m!(1), m!(-1)).unwrap();
+        let w_00 = WignerDMatrix::new(j!(1), m!(0), m!(0)).unwrap();
+
+        assert_complex_relative_eq(evaluate(w_11.d(beta)), Complex64::from(0.5 * (1.0 + cb)));
+        assert_complex_relative_eq(evaluate(w_10.d(beta)), Complex64::from(-FRAC_1_SQRT_2 * sb));
+        assert_complex_relative_eq(evaluate(w_1m1.d(beta)), Complex64::from(0.5 * (1.0 - cb)));
+        assert_complex_relative_eq(evaluate(w_00.d(beta)), Complex64::from(cb));
+        assert_complex_relative_eq(evaluate(w_10.d(FRAC_PI_2)), Complex64::from(-FRAC_1_SQRT_2));
+    }
+
+    #[test]
+    fn full_d_matches_phase_definition_numerically() {
+        let alpha = 0.31;
+        let beta = 0.82;
+        let gamma = -0.47;
+        let w = WignerDMatrix::new(j!(3 / 2), m!(1 / 2), m!(-1 / 2)).unwrap();
+
+        let d = evaluate(w.d(beta));
+        let expected = Complex64::cis(-0.5 * (alpha - gamma)) * d;
+
+        assert_complex_relative_eq(evaluate(w.D(alpha, beta, gamma)), expected);
+    }
+
+    #[test]
+    fn small_d_builds_regular_expression_graph() {
+        use laddu_expr::{ExprNode, UnaryOp, event_scalar};
+
+        let w = WignerDMatrix::new(j!(1), m!(1), m!(0)).unwrap();
+        let graph = w.d(event_scalar("beta")).to_graph();
+
+        assert!(graph.nodes().iter().any(|node| matches!(
+            node,
+            ExprNode::Unary {
+                op: UnaryOp::Sin | UnaryOp::Cos | UnaryOp::PowI(_),
+                ..
+            }
+        )));
+    }
+
+    #[test]
+    fn full_d_builds_regular_expression_graph() {
+        use laddu_expr::{ExprNode, event_scalar};
+
+        let w = WignerDMatrix::new(j!(3 / 2), m!(1 / 2), m!(-1 / 2)).unwrap();
+        let graph = w
+            .D(
+                event_scalar("alpha"),
+                event_scalar("beta"),
+                event_scalar("gamma"),
+            )
+            .to_graph();
+
+        assert!(
+            graph
+                .nodes()
+                .iter()
+                .any(|node| matches!(node, ExprNode::ComplexConst(_)))
+        );
+        assert!(graph.nodes().iter().all(|node| !matches!(
+            node,
+            ExprNode::Solve { .. } | ExprNode::MatMul { .. } | ExprNode::MatVec { .. }
+        )));
+    }
+}

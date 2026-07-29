@@ -1,29 +1,24 @@
+# yamloom: generated from .yamloom.py
 ---
 name: Coverage
 "on":
   pull_request:
     paths:
       - "**.rs"
-      - "**.py"
-      - ".github/workflows/coverage.yml"
-    types:
-      - opened
-      - reopened
-      - synchronize
+      - Cargo.toml
+      - crates/**/Cargo.toml
   push:
     branches:
+      - development
       - main
     paths:
       - "**.rs"
-      - "**.py"
-      - ".github/workflows/coverage.yml"
-  workflow_call:
-    secrets:
-      codecov_token:
-        required: true
+      - Cargo.toml
+      - crates/**/Cargo.toml
   workflow_dispatch: ~
 jobs:
   coverage-rust:
+    name: Rust coverage
     permissions:
       contents: read
     runs-on: ubuntu-latest
@@ -35,64 +30,20 @@ jobs:
       - name: Setup Rust
         uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
-          toolchain: nightly
+          toolchain: 1.95.0
       - name: Setup MPI
         uses: mpi4py/setup-mpi@v1
       - name: Install Rust Tool
         uses: taiki-e/install-action@v2
         with:
           tool: cargo-llvm-cov
-      - run: cargo llvm-cov --workspace --codecov --output-path coverage-rust.json
-      - name: Upload Artifact
-        uses: actions/upload-artifact@v6
-        with:
-          path: coverage-rust.json
-          name: coverage-rust
-  coverage-python:
-    permissions:
-      contents: read
-    runs-on: ubuntu-latest
-    env:
-      CARGO_TERM_COLOR: always
-    steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v6
-      - name: Setup Rust
-        uses: actions-rust-lang/setup-rust-toolchain@v1
-      - name: Setup uv
-        uses: astral-sh/setup-uv@v7
-      - run: |-
-          uv venv
-          . .venv/bin/activate
-          echo PATH=$PATH >> $GITHUB_ENV
-          uvx --with "maturin[patchelf]>=1.7,<2" maturin build --manifest-path py-laddu-cpu/Cargo.toml --release -o py-laddu-cpu/dist
-          uv pip install --no-cache-dir --find-links py-laddu-cpu/dist laddu-cpu
-          uv pip install --no-cache-dir -e "py-laddu[tests]"
-          pytest --cov --cov-report xml:coverage-python.xml
-      - name: Upload Artifact
-        uses: actions/upload-artifact@v6
-        with:
-          path: coverage-python.xml
-          name: coverage-python
-  upload-coverage:
-    permissions:
-      contents: read
-    needs:
-      - coverage-rust
-      - coverage-python
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v6
-      - name: Download Artifact
-        uses: actions/download-artifact@v7
-        with:
-          merge-multiple: true
+      - run: cargo llvm-cov --workspace --exclude laddu-python --exclude laddu-python-local --exclude laddu-python-mpi --codecov --output-path coverage.json
       - name: Upload coverage
+        if: ${{ (github.event_name != 'pull_request') }}
         uses: codecov/codecov-action@v5
         with:
           fail_ci_if_error: true
-          files: "coverage-rust.json,coverage-python.xml"
+          files: coverage.json
           root_dir: ${{ github.workspace }}
           token: ${{ secrets.CODECOV_TOKEN }}
           verbose: true

@@ -1,19 +1,17 @@
+# yamloom: generated from .yamloom.py
 ---
 name: Build and Release laddu (Python)
 "on":
-  pull_request:
-    types:
-      - opened
-      - reopened
-      - synchronize
   push:
     branches:
+      - development
       - main
     tags:
-      - "*"
-  workflow_dispatch: ~
+      - v*
+  pull_request: ~
 jobs:
   build-check-test:
+    name: "Build, lint, and test"
     permissions:
       contents: read
     runs-on: ubuntu-latest
@@ -23,39 +21,52 @@ jobs:
       - name: Setup Rust
         uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
-          components: clippy
+          toolchain: 1.95.0
+          components: "clippy,rustfmt"
       - name: Setup uv
         uses: astral-sh/setup-uv@v7
         with:
-          python-version: "3.10"
+          python-version: "3.11"
       - name: Setup MPI
         uses: mpi4py/setup-mpi@v1
-      - run: cargo clippy
-      - name: Install Rust Tool
-        uses: taiki-e/install-action@v2
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --workspace --all-targets --all-features --exclude laddu-python --exclude laddu-python-local --exclude laddu-python-mpi -- -D warnings
+      - run: cargo test --workspace --exclude laddu-python --exclude laddu-python-local --exclude laddu-python-mpi
+      - run: cargo check -p laddu-python -p laddu-python-local -p laddu-python-mpi
+      - run: uv sync --frozen --inexact --no-install-project --project python/laddu
+      - run: uv run --no-sync --directory python/laddu maturin develop --manifest-path Cargo.toml --release --generate-stubs
+      - run: uv run --no-sync --project python/laddu ruff check . --exclude=.yamloom.py
+      - run: uv run --no-sync --project python/laddu ty check python docs crates/laddu/examples
+      - run: "uv run --no-sync --project python/laddu python -m unittest discover -s python/tests -p \"test_*.py\""
+      - run: uv pip install --python python/laddu/.venv/bin/python -r docs/requirements.txt
+      - run: uv run --no-sync --project python/laddu sphinx-build -E -W --keep-going -b html docs docs/_build/html
+  free-threaded-test:
+    name: Free-threaded Python
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v6
+      - name: Setup Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
-          tool: cargo-hack
-      - run: cargo hack check --rust-version --feature-powerset --no-dev-deps
-      - run: cargo hack test --each-feature
-      - run: |-
-          uv venv
-          . .venv/bin/activate
-          echo PATH=$PATH >> $GITHUB_ENV
-          uvx --with "maturin[patchelf]>=1.7,<2" maturin build --manifest-path py-laddu-cpu/Cargo.toml --release -o py-laddu-cpu/dist
-          uv pip install --no-cache-dir --find-links py-laddu-cpu/dist laddu-cpu
-          uv pip install --no-cache-dir -e "py-laddu[tests]"
-          uvx --with "maturin[patchelf]>=1.7,<2" maturin develop --manifest-path py-laddu-mpi/Cargo.toml --release
-      - run: uvx ruff check . --extend-exclude=.yamloom.py
-      - run: uvx ty check . --exclude=.yamloom.py
-      - run: uv run pytest
-      - run: LADDU_BACKEND=MPI mpirun -n 2 .venv/bin/python crates/laddu-extensions/scripts/check_python_mpi_dataset_iteration.py
-  linux-cpu:
-    name: Build Linux Wheels (cpu)
+          toolchain: 1.95.0
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          python-version: 3.14t
+      - run: uv sync --frozen --inexact --no-install-project --project python/laddu
+      - run: uv run --no-sync --directory python/laddu maturin develop --manifest-path Cargo.toml --release --generate-stubs
+      - run: "uv run --no-sync --project python/laddu python -m unittest discover -s python/tests -p \"test_*.py\""
+  laddu-linux:
+    name: Build Linux wheels
     permissions:
       contents: read
     needs:
       - build-check-test
-    if: ${{ (startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch')) }}
+      - free-threaded-test
+    if: ${{ startsWith(github.ref, 'refs/tags/') }}
     runs-on: ${{ matrix.platform.runner }}
     strategy:
       matrix:
@@ -63,173 +74,48 @@ jobs:
           - runner: ubuntu-22.04
             target: x86_64
             python_versions:
-              - "3.10"
               - "3.11"
               - "3.12"
               - "3.13"
-              - 3.13t
               - "3.14"
               - 3.14t
-              - pypy3.11
-          - runner: ubuntu-22.04
-            target: x86
-            python_versions:
-              - "3.10"
-              - "3.11"
-              - "3.12"
-              - "3.13"
-              - 3.13t
-              - "3.14"
-              - 3.14t
-              - pypy3.11
           - runner: ubuntu-22.04
             target: aarch64
             python_versions:
-              - "3.10"
               - "3.11"
               - "3.12"
               - "3.13"
-              - 3.13t
               - "3.14"
               - 3.14t
-              - pypy3.11
-          - runner: ubuntu-22.04
-            target: armv7
-            python_versions:
-              - "3.10"
-              - "3.11"
-              - "3.12"
-              - "3.13"
-              - 3.13t
-              - "3.14"
-              - 3.14t
-              - pypy3.11
-          - runner: ubuntu-22.04
-            target: s390x
-            python_versions:
-              - "3.10"
-              - "3.11"
-              - "3.12"
-              - "3.13"
-              - 3.13t
-              - "3.14"
-              - 3.14t
-              - pypy3.11
-          - runner: ubuntu-22.04
-            target: ppc64le
-            python_versions:
-              - "3.10"
-              - "3.11"
-              - "3.12"
-              - "3.13"
-              - 3.13t
-              - "3.14"
-              - 3.14t
-              - pypy3.11
       fail-fast: false
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v6
-      - run: printf "%s\n" ${{ join(matrix.platform.python_versions, ' ') }} >> version.txt
+      - run: printf "%s\n" ${{ join(matrix.platform.python_versions, ' ') }} > .yamloom-python-versions
       - name: Setup Python
         uses: actions/setup-python@v6
         with:
-          python-version-file: version.txt
+          python-version-file: ".yamloom-python-versions"
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
-          manylinux: 2_28
+          manylinux: "2014"
           target: ${{ matrix.platform.target }}
           sccache: ${{ !(startsWith(github.ref, 'refs/tags/')) }}
-          args: --release --out dist --manifest-path py-laddu-cpu/Cargo.toml --interpreter ${{ join(matrix.platform.python_versions, ' ') }}
+          args: --release --out dist --generate-stubs --manifest-path python/laddu/Cargo.toml --interpreter ${{ join(matrix.platform.python_versions, ' ') }}
       - name: Upload Artifact
         uses: actions/upload-artifact@v6
         with:
           path: dist
-          name: cpu-linux-${{ matrix.platform.target }}
-  musllinux-cpu:
-    name: Build (musl) Linux Wheels (cpu)
+          name: laddu-linux-${{ matrix.platform.target }}
+  laddu-windows:
+    name: Build Windows wheels
     permissions:
       contents: read
     needs:
       - build-check-test
-    if: ${{ (startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch')) }}
-    runs-on: ${{ matrix.platform.runner }}
-    strategy:
-      matrix:
-        platform:
-          - runner: ubuntu-22.04
-            target: x86_64
-            python_versions:
-              - "3.10"
-              - "3.11"
-              - "3.12"
-              - "3.13"
-              - 3.13t
-              - "3.14"
-              - 3.14t
-              - pypy3.11
-          - runner: ubuntu-22.04
-            target: x86
-            python_versions:
-              - "3.10"
-              - "3.11"
-              - "3.12"
-              - "3.13"
-              - 3.13t
-              - "3.14"
-              - 3.14t
-              - pypy3.11
-          - runner: ubuntu-22.04
-            target: aarch64
-            python_versions:
-              - "3.10"
-              - "3.11"
-              - "3.12"
-              - "3.13"
-              - 3.13t
-              - "3.14"
-              - 3.14t
-              - pypy3.11
-          - runner: ubuntu-22.04
-            target: armv7
-            python_versions:
-              - "3.10"
-              - "3.11"
-              - "3.12"
-              - "3.13"
-              - 3.13t
-              - "3.14"
-              - 3.14t
-              - pypy3.11
-      fail-fast: false
-    steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v6
-      - run: printf "%s\n" ${{ join(matrix.platform.python_versions, ' ') }} >> version.txt
-      - name: Setup Python
-        uses: actions/setup-python@v6
-        with:
-          python-version-file: version.txt
-      - name: Build wheels
-        uses: PyO3/maturin-action@v1
-        with:
-          manylinux: musllinux_1_2
-          target: ${{ matrix.platform.target }}
-          sccache: ${{ !(startsWith(github.ref, 'refs/tags/')) }}
-          args: --release --out dist --manifest-path py-laddu-cpu/Cargo.toml --interpreter ${{ join(matrix.platform.python_versions, ' ') }}
-      - name: Upload Artifact
-        uses: actions/upload-artifact@v6
-        with:
-          path: dist
-          name: cpu-musllinux-${{ matrix.platform.target }}
-  windows-cpu:
-    name: Build Windows Wheels (cpu)
-    permissions:
-      contents: read
-    needs:
-      - build-check-test
-    if: ${{ (startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch')) }}
+      - free-threaded-test
+    if: ${{ startsWith(github.ref, 'refs/tags/') }}
     runs-on: ${{ matrix.platform.runner }}
     strategy:
       matrix:
@@ -237,61 +123,41 @@ jobs:
           - runner: windows-latest
             target: x64
             python_versions:
-              - "3.10"
               - "3.11"
               - "3.12"
               - "3.13"
-              - 3.13t
               - "3.14"
               - 3.14t
-              - pypy3.11
             python_arch: x64
-          - runner: windows-latest
-            target: x86
-            python_versions:
-              - "3.10"
-              - "3.11"
-              - "3.12"
-              - "3.13"
-              - 3.13t
-              - "3.14"
-              - 3.14t
-            python_arch: x86
-          - runner: windows-11-arm
-            target: aarch64
-            python_versions:
-              - "3.12"
-              - "3.13"
-              - "3.14"
-            python_arch: arm64
       fail-fast: false
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v6
-      - run: printf "%s\n" ${{ join(matrix.platform.python_versions, ' ') }} >> version.txt
+      - run: printf "%s\n" ${{ join(matrix.platform.python_versions, ' ') }} > .yamloom-python-versions
       - name: Setup Python
         uses: actions/setup-python@v6
         with:
-          python-version-file: version.txt
+          python-version-file: ".yamloom-python-versions"
           architecture: ${{ matrix.platform.python_arch }}
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.platform.target }}
           sccache: ${{ !(startsWith(github.ref, 'refs/tags/')) }}
-          args: --release --out dist --manifest-path py-laddu-cpu/Cargo.toml --interpreter ${{ join(matrix.platform.python_versions, ' ') }}
+          args: --release --out dist --generate-stubs --manifest-path python/laddu/Cargo.toml --interpreter ${{ join(matrix.platform.python_versions, ' ') }}
       - name: Upload Artifact
         uses: actions/upload-artifact@v6
         with:
           path: dist
-          name: cpu-windows-${{ matrix.platform.target }}
-  macos-cpu:
-    name: Build macOS Wheels (cpu)
+          name: laddu-windows-${{ matrix.platform.target }}
+  laddu-macos:
+    name: Build macOS wheels
     permissions:
       contents: read
     needs:
       - build-check-test
-    if: ${{ (startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch')) }}
+      - free-threaded-test
+    if: ${{ startsWith(github.ref, 'refs/tags/') }}
     runs-on: ${{ matrix.platform.runner }}
     strategy:
       matrix:
@@ -299,110 +165,288 @@ jobs:
           - runner: macos-15-intel
             target: x86_64
             python_versions:
-              - "3.10"
               - "3.11"
               - "3.12"
               - "3.13"
-              - 3.13t
               - "3.14"
               - 3.14t
-              - pypy3.11
           - runner: macos-latest
             target: aarch64
             python_versions:
-              - "3.10"
               - "3.11"
               - "3.12"
               - "3.13"
-              - 3.13t
               - "3.14"
               - 3.14t
-              - pypy3.11
       fail-fast: false
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v6
-      - run: printf "%s\n" ${{ join(matrix.platform.python_versions, ' ') }} >> version.txt
+      - run: printf "%s\n" ${{ join(matrix.platform.python_versions, ' ') }} > .yamloom-python-versions
       - name: Setup Python
         uses: actions/setup-python@v6
         with:
-          python-version-file: version.txt
+          python-version-file: ".yamloom-python-versions"
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.platform.target }}
           sccache: ${{ !(startsWith(github.ref, 'refs/tags/')) }}
-          args: --release --out dist --manifest-path py-laddu-cpu/Cargo.toml --interpreter ${{ join(matrix.platform.python_versions, ' ') }}
+          args: --release --out dist --generate-stubs --manifest-path python/laddu/Cargo.toml --interpreter ${{ join(matrix.platform.python_versions, ' ') }}
       - name: Upload Artifact
         uses: actions/upload-artifact@v6
         with:
           path: dist
-          name: cpu-macos-${{ matrix.platform.target }}
-  sdist-cpu:
+          name: laddu-macos-${{ matrix.platform.target }}
+  laddu-sdist:
     name: Build Source Distribution
     permissions:
       contents: read
     needs:
       - build-check-test
-    if: ${{ (startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch')) }}
+      - free-threaded-test
+    if: ${{ startsWith(github.ref, 'refs/tags/') }}
     runs-on: ubuntu-22.04
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v6
-      - name: Build sdist
+      - name: Build source distribution
         uses: PyO3/maturin-action@v1
         with:
           command: sdist
-          args: "--out dist --manifest-path py-laddu-cpu/Cargo.toml"
+          args: "--out dist --manifest-path python/laddu/Cargo.toml"
       - name: Upload Artifact
         uses: actions/upload-artifact@v6
         with:
           path: dist
-          name: cpu-sdist
-  sdist-mpi:
-    name: Build MPI Source Distribution
+          name: laddu-sdist
+  laddu-local-linux:
+    name: Build Linux wheels
     permissions:
       contents: read
     needs:
       - build-check-test
-    if: ${{ (startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch')) }}
-    runs-on: ubuntu-22.04
+      - free-threaded-test
+    if: ${{ startsWith(github.ref, 'refs/tags/') }}
+    runs-on: ${{ matrix.platform.runner }}
+    strategy:
+      matrix:
+        platform:
+          - runner: ubuntu-22.04
+            target: x86_64
+            python_versions:
+              - "3.11"
+              - "3.12"
+              - "3.13"
+              - "3.14"
+              - 3.14t
+          - runner: ubuntu-22.04
+            target: aarch64
+            python_versions:
+              - "3.11"
+              - "3.12"
+              - "3.13"
+              - "3.14"
+              - 3.14t
+      fail-fast: false
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v6
-      - name: Build sdist
+      - run: printf "%s\n" ${{ join(matrix.platform.python_versions, ' ') }} > .yamloom-python-versions
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version-file: ".yamloom-python-versions"
+      - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
-          command: sdist
-          args: "--out dist --manifest-path py-laddu-mpi/Cargo.toml"
+          manylinux: "2014"
+          target: ${{ matrix.platform.target }}
+          sccache: ${{ !(startsWith(github.ref, 'refs/tags/')) }}
+          args: --release --out dist --generate-stubs --manifest-path python/laddu-local/Cargo.toml --interpreter ${{ join(matrix.platform.python_versions, ' ') }}
       - name: Upload Artifact
         uses: actions/upload-artifact@v6
         with:
           path: dist
-          name: mpi-sdist
-  release:
-    name: Release
+          name: laddu-local-linux-${{ matrix.platform.target }}
+  laddu-local-windows:
+    name: Build Windows wheels
     permissions:
-      contents: write
-      id-token: write
+      contents: read
     needs:
-      - linux-cpu
-      - musllinux-cpu
-      - windows-cpu
-      - macos-cpu
-      - sdist-cpu
-      - sdist-mpi
-    if: ${{ (startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch')) }}
-    runs-on: ubuntu-22.04
-    environment: pypi
+      - build-check-test
+      - free-threaded-test
+    if: ${{ startsWith(github.ref, 'refs/tags/') }}
+    runs-on: ${{ matrix.platform.runner }}
+    strategy:
+      matrix:
+        platform:
+          - runner: windows-latest
+            target: x64
+            python_versions:
+              - "3.11"
+              - "3.12"
+              - "3.13"
+              - "3.14"
+              - 3.14t
+            python_arch: x64
+      fail-fast: false
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v6
+      - run: printf "%s\n" ${{ join(matrix.platform.python_versions, ' ') }} > .yamloom-python-versions
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version-file: ".yamloom-python-versions"
+          architecture: ${{ matrix.platform.python_arch }}
+      - name: Build wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.platform.target }}
+          sccache: ${{ !(startsWith(github.ref, 'refs/tags/')) }}
+          args: --release --out dist --generate-stubs --manifest-path python/laddu-local/Cargo.toml --interpreter ${{ join(matrix.platform.python_versions, ' ') }}
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v6
+        with:
+          path: dist
+          name: laddu-local-windows-${{ matrix.platform.target }}
+  laddu-local-macos:
+    name: Build macOS wheels
+    permissions:
+      contents: read
+    needs:
+      - build-check-test
+      - free-threaded-test
+    if: ${{ startsWith(github.ref, 'refs/tags/') }}
+    runs-on: ${{ matrix.platform.runner }}
+    strategy:
+      matrix:
+        platform:
+          - runner: macos-15-intel
+            target: x86_64
+            python_versions:
+              - "3.11"
+              - "3.12"
+              - "3.13"
+              - "3.14"
+              - 3.14t
+          - runner: macos-latest
+            target: aarch64
+            python_versions:
+              - "3.11"
+              - "3.12"
+              - "3.13"
+              - "3.14"
+              - 3.14t
+      fail-fast: false
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v6
+      - run: printf "%s\n" ${{ join(matrix.platform.python_versions, ' ') }} > .yamloom-python-versions
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version-file: ".yamloom-python-versions"
+      - name: Build wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.platform.target }}
+          sccache: ${{ !(startsWith(github.ref, 'refs/tags/')) }}
+          args: --release --out dist --generate-stubs --manifest-path python/laddu-local/Cargo.toml --interpreter ${{ join(matrix.platform.python_versions, ' ') }}
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v6
+        with:
+          path: dist
+          name: laddu-local-macos-${{ matrix.platform.target }}
+  laddu-local-sdist:
+    name: Build Source Distribution
+    permissions:
+      contents: read
+    needs:
+      - build-check-test
+      - free-threaded-test
+    if: ${{ startsWith(github.ref, 'refs/tags/') }}
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v6
+      - name: Build source distribution
+        uses: PyO3/maturin-action@v1
+        with:
+          command: sdist
+          args: "--out dist --manifest-path python/laddu-local/Cargo.toml"
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v6
+        with:
+          path: dist
+          name: laddu-local-sdist
+  laddu-mpi-sdist:
+    name: Build Source Distribution
+    permissions:
+      contents: read
+    needs:
+      - build-check-test
+      - free-threaded-test
+    if: ${{ startsWith(github.ref, 'refs/tags/') }}
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v6
+      - name: Build source distribution
+        uses: PyO3/maturin-action@v1
+        with:
+          command: sdist
+          args: "--out dist --manifest-path python/laddu-mpi/Cargo.toml"
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v6
+        with:
+          path: dist
+          name: laddu-mpi-sdist
+  release:
+    name: Publish Python distributions
+    permissions:
+      id-token: write
+    needs:
+      - laddu-linux
+      - laddu-windows
+      - laddu-macos
+      - laddu-sdist
+      - laddu-local-linux
+      - laddu-local-windows
+      - laddu-local-macos
+      - laddu-local-sdist
+      - laddu-mpi-sdist
+    runs-on: ubuntu-22.04
+    environment: pypi
+    steps:
       - name: Download Artifact
         uses: actions/download-artifact@v7
-      - name: Setup uv
-        uses: astral-sh/setup-uv@v7
-      - run: uv publish --trusted-publishing always cpu-*/* cpu-sdist/* mpi-sdist/*
-      - run: |-
-          uv build py-laddu --out-dir dist
-          uv publish --trusted-publishing always dist/*
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist
+  publish-rust:
+    name: Publish Rust crates
+    permissions:
+      contents: read
+    needs:
+      - release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Setup MPI
+        uses: mpi4py/setup-mpi@v1
+      - name: Setup Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+      - name: Install Rust Tool
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-workspaces
+      - run: cargo workspaces publish --from-git --token ${{ secrets.CARGO_REGISTRY_TOKEN }} --yes

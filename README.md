@@ -1,432 +1,68 @@
 <p align="center">
-  <img
-    width="800"
-    src="media/wordmark.png"
-  />
-</p>
-<p align="center">
-    <h1 align="center">Amplitude analysis made short and sweet</h1>
+  <img width="800" src="media/wordmark.png" alt="laddu">
 </p>
 
+<h1 align="center">Amplitude analysis made short and sweet</h1>
+
 <p align="center">
-  <a href="https://github.com/denehoffman/laddu/releases" alt="Releases">
-    <img alt="GitHub Release" src="https://img.shields.io/github/v/release/denehoffman/laddu?style=for-the-badge&logo=github"></a>
-  <a href="https://github.com/denehoffman/laddu/commits/main/" alt="Lastest Commits">
-    <img alt="GitHub last commit" src="https://img.shields.io/github/last-commit/denehoffman/laddu?style=for-the-badge&logo=github"></a>
-  <a href="https://github.com/denehoffman/laddu/actions" alt="Build Status">
-    <img alt="GitHub Actions Workflow Status" src="https://img.shields.io/github/actions/workflow/status/denehoffman/laddu/python-release.yml?style=for-the-badge&logo=github"></a>
-  <a href="LICENSE-APACHE" alt="License">
-    <img alt="GitHub License" src="https://img.shields.io/github/license/denehoffman/laddu?style=for-the-badge"></a>
-  <a href="https://crates.io/crates/laddu" alt="Laddu on crates.io">
-    <img alt="Crates.io Version" src="https://img.shields.io/crates/v/laddu?style=for-the-badge&logo=rust&logoColor=red&color=red"></a>
-  <a href="https://docs.rs/laddu" alt="Laddu documentation on docs.rs">
-    <img alt="docs.rs" src="https://img.shields.io/docsrs/laddu?style=for-the-badge&logo=rust&logoColor=red"></a>
-  <a href="https://laddu.readthedocs.io/en/latest/" alt="Laddu documentation readthedocs.io">
-    <img alt="Read the Docs" src="https://img.shields.io/readthedocs/laddu?style=for-the-badge&logo=readthedocs&logoColor=%238CA1AF&label=Python%20Documentation"></a>
-  <a href="https://app.codecov.io/github/denehoffman/laddu/tree/main/" alt="Codecov coverage report">
-    <img alt="Codecov" src="https://img.shields.io/codecov/c/github/denehoffman/laddu?style=for-the-badge&logo=codecov"></a>
-  <a href="https://pypi.org/project/laddu/" alt="View project on PyPI">
-  <img alt="PyPI - Version" src="https://img.shields.io/pypi/v/laddu?style=for-the-badge&logo=python&logoColor=yellow&labelColor=blue"></a>
-  <a href="https://codspeed.io/denehoffman/laddu"><img src="https://img.shields.io/endpoint?url=https%3A%2F%2Fcodspeed.io%2Fbadge.json&style=for-the-badge" alt="CodSpeed Badge"/></a>
+  <a href="https://github.com/denehoffman/laddu/releases"><img alt="GitHub Release" src="https://img.shields.io/github/v/release/denehoffman/laddu?style=for-the-badge&logo=github"></a>
+  <a href="https://github.com/denehoffman/laddu/commits/main/"><img alt="GitHub last commit" src="https://img.shields.io/github/last-commit/denehoffman/laddu?style=for-the-badge&logo=github"></a>
+  <a href="https://github.com/denehoffman/laddu/actions"><img alt="GitHub Actions Workflow Status" src="https://img.shields.io/github/actions/workflow/status/denehoffman/laddu/python-release.yml?style=for-the-badge&logo=github"></a>
+  <a href="LICENSE-APACHE"><img alt="GitHub License" src="https://img.shields.io/github/license/denehoffman/laddu?style=for-the-badge"></a>
+  <a href="https://crates.io/crates/laddu"><img alt="Crates.io Version" src="https://img.shields.io/crates/v/laddu?style=for-the-badge&logo=rust&logoColor=red&color=red"></a>
+  <a href="https://docs.rs/laddu"><img alt="docs.rs" src="https://img.shields.io/docsrs/laddu?style=for-the-badge&logo=rust&logoColor=red"></a>
+  <a href="https://laddu.readthedocs.io/en/latest/"><img alt="Read the Docs" src="https://img.shields.io/readthedocs/laddu?style=for-the-badge&logo=readthedocs&logoColor=%238CA1AF&label=Python%20Documentation"></a>
+  <a href="https://app.codecov.io/github/denehoffman/laddu/tree/main/"><img alt="Codecov" src="https://img.shields.io/codecov/c/github/denehoffman/laddu?style=for-the-badge&logo=codecov"></a>
+  <a href="https://pypi.org/project/laddu/"><img alt="PyPI Version" src="https://img.shields.io/pypi/v/laddu?style=for-the-badge&logo=python&logoColor=yellow&labelColor=blue"></a>
+  <a href="https://codspeed.io/denehoffman/laddu"><img alt="CodSpeed" src="https://img.shields.io/endpoint?url=https%3A%2F%2Fcodspeed.io%2Fbadge.json&style=for-the-badge"></a>
 </p>
 
-`laddu` (/ˈlʌduː/) is a library for analysis of particle physics data. It is intended to be a simple and efficient alternative to some of the [other tools](#alternatives) out there. `laddu` is written in Rust with bindings to Python via [`PyO3`](https://github.com/PyO3/pyo3) and [`maturin`](https://github.com/PyO3/maturin) and is the spiritual successor to [`rustitude`](https://github.com/denehoffman/rustitude), one of my first Rust projects. The goal of this project is to allow users to perform complex amplitude analyses (like partial-wave analyses) without complex code or configuration files.
+`laddu` (/ˈlʌduː/) is a Python library for building, evaluating, generating, and fitting particle-physics amplitude models. Its symbolic interface is backed by a Rust runtime with automatic differentiation, multithreaded CPU execution, JIT compilation, WGPU acceleration, and optional MPI distribution.
 
 > [!CAUTION]
-> This crate is still in an early development phase, and the API is not stable. It can (and likely will) be subject to breaking changes before the 1.0.0 version release (and hopefully not many after that).
+> `laddu` is under active development and its API may change before 1.0. Pin the package version used for production analyses.
 
-# Table of Contents
+## Installation
 
-- [Key Features](#key-features)
-- [Installation](#installation)
-- [Quick Start](#quick-start)
-  - [Rust](#rust)
-    - [Writing a New Amplitude](#writing-a-new-amplitude)
-    - [Calculating a Likelihood](#calculating-a-likelihood)
-  - [Python](#python)
-    - [Fitting Data](#fitting-data)
-    - [Other Examples](#other-examples)
-- [Data Format](#data-format)
-- [MPI Support](#mpi-support)
-- [Future Plans](#future-plans)
-- [Alternatives](#alternatives)
+`laddu` requires Python 3.11 or later:
 
-# Key Features
-
-- A simple interface focused on combining `Amplitude`s into models which can be evaluated over `Dataset`s.
-- A single `Amplitude` trait which makes it easy to write new amplitudes and integrate them into the library.
-- Easy interfaces to precompute and cache values before the main calculation to speed up model evaluations.
-- Efficient parallelism using [`rayon`](https://github.com/rayon-rs/rayon).
-- Python bindings to allow users to write quick, easy-to-read code that just works.
-
-# Installation
-
-`laddu` can be added to a Rust project with `cargo`:
-
-```shell
-cargo add laddu
+```bash
+uv add laddu
 ```
 
-The library's Python bindings are located in a library by the same name, which can be installed simply with your favorite Python package manager:
+Install the MPI backend in an environment with a working MPI implementation:
 
-```shell
-pip install laddu
+```bash
+uv add "laddu[mpi]"
 ```
+(or use your favorite package manager)
 
-# Quick Start
+Published wheels include generated type information. When building a public module directly from an sdist, pass `--config-settings="maturin.build-args=--generate-stubs"` to `pip` or `uv` to generate the same stubs locally.
 
-## Rust
+## A small model
 
-### Writing a New Amplitude
-
-While it is probably easier for most users to skip to the Python section, there is currently no way to implement a new amplitude directly from Python. At the time of writing, Rust is not a common language used by particle physics, but this tutorial should hopefully convince the reader that they don't have to know the intricacies of Rust to write performant amplitudes. As an example, here is how one might write a Breit-Wigner, parameterized as follows:
-
-```math
-I_{\ell}(m; m_0, \Gamma_0, m_1, m_2) =  \frac{1}{\pi}\frac{m_0 \Gamma_0 B_{\ell}(m, m_1, m_2)}{(m_0^2 - m^2) - \imath m_0 \Gamma}
-```
-
-where
-
-```math
-\Gamma = \Gamma_0 \frac{m_0}{m} \frac{q(m, m_1, m_2)}{q(m_0, m_1, m_2)} \left(\frac{B_{\ell}(m, m_1, m_2)}{B_{\ell}(m_0, m_1, m_2)}\right)^2
-```
-
-is the relativistic width correction, $`q(m_a, m_b, m_c)`$ is the breakup momentum of a particle with mass $`m_a`$ decaying into two particles with masses $`m_b`$ and $`m_c`$, $`B_{\ell}(m_a, m_b, m_c)`$ is the Blatt-Weisskopf barrier factor for the same decay assuming particle $`a`$ has angular momentum $`\ell`$, $`m_0`$ is the mass of the resonance, $`\Gamma_0`$ is the nominal width of the resonance, $`m_1`$ and $`m_2`$ are the masses of the decay products, and $`m`$ is the "input" mass.
-
-Although this particular amplitude is already included in `laddu`, let's assume it isn't and imagine how we would write it from scratch:
-
-```rust
-use laddu::{
-   AmplitudeID, BarrierKind, Cache, DatasetMetadata, Event, Expression, LadduResult, Mass,
-   ParameterID, Parameter, Parameters, PI, QR_DEFAULT, Resources, ScalarID, Sheet,
-};
-use laddu::expression::{IntoTags, Tags};
-use laddu::traits::*;
-use laddu::math::{blatt_weisskopf_m, q_m};
-use laddu::{Deserialize, Serialize, typetag};
-use num::complex::Complex64;
-
-#[derive(Clone, Serialize, Deserialize)]
-pub struct MyBreitWigner {
-    tags: Tags,
-    mass: Parameter,
-    width: Parameter,
-    pid_mass: ParameterID,
-    pid_width: ParameterID,
-    l: usize,
-    daughter_1_mass: Mass,
-    daughter_2_mass: Mass,
-    resonance_mass: Mass,
-    daughter_1_mass_id: ScalarID,
-    daughter_2_mass_id: ScalarID,
-    resonance_mass_id: ScalarID,
-}
-impl MyBreitWigner {
-    pub fn new(
-        tags: impl IntoTags,
-        mass: Parameter,
-        width: Parameter,
-        l: usize,
-        daughter_1_mass: &Mass,
-        daughter_2_mass: &Mass,
-        resonance_mass: &Mass,
-    ) -> LadduResult<Expression> {
-        Self {
-            tags: tags.into_tags(),
-            mass,
-            width,
-            pid_mass: ParameterID::default(),
-            pid_width: ParameterID::default(),
-            l,
-            daughter_1_mass: daughter_1_mass.clone(),
-            daughter_2_mass: daughter_2_mass.clone(),
-            resonance_mass: resonance_mass.clone(),
-            daughter_1_mass_id: ScalarID::default(),
-            daughter_2_mass_id: ScalarID::default(),
-            resonance_mass_id: ScalarID::default(),
-        }
-        .into_expression()
-    }
-}
-
-#[typetag::serde]
-impl Amplitude for MyBreitWigner {
-    fn register(&mut self, resources: &mut Resources) -> LadduResult<AmplitudeID> {
-        self.pid_mass = resources.register_parameter(&self.mass)?;
-        self.pid_width = resources.register_parameter(&self.width)?;
-        self.daughter_1_mass_id = resources.register_scalar(None);
-        self.daughter_2_mass_id = resources.register_scalar(None);
-        self.resonance_mass_id = resources.register_scalar(None);
-        resources.register_amplitude(self.tags.clone())
-    }
-
-    fn bind(
-        &mut self,
-        metadata: &DatasetMetadata,
-    ) -> LadduResult<()> {
-        self.daughter_1_mass.bind(metadata)?;
-        self.daughter_2_mass.bind(metadata)?;
-        self.resonance_mass.bind(metadata)?;
-        Ok(())
-    }
-
-    fn precompute(&self, event: &Event<'_>, cache: &mut Cache) {
-        cache.store_scalar(self.daughter_1_mass_id, event.evaluate(&self.daughter_1_mass));
-        cache.store_scalar(self.daughter_2_mass_id, event.evaluate(&self.daughter_2_mass));
-        cache.store_scalar(self.resonance_mass_id, event.evaluate(&self.resonance_mass));
-    }
-
-    fn compute(&self, parameters: &Parameters, cache: &Cache) -> Complex64 {
-        let mass = cache.get_scalar(self.resonance_mass_id);
-        let mass0 = parameters.get(self.pid_mass).abs();
-        let width0 = parameters.get(self.pid_width).abs();
-        let mass1 = cache.get_scalar(self.daughter_1_mass_id);
-        let mass2 = cache.get_scalar(self.daughter_2_mass_id);
-        let q0 = q_m(mass0, mass1, mass2, Sheet::Physical);
-        let q = q_m(mass, mass1, mass2, Sheet::Physical);
-        let f0 = blatt_weisskopf_m(mass0, mass1, mass2, self.l, QR_DEFAULT, Sheet::Physical, BarrierKind::Full);
-        let f = blatt_weisskopf_m(mass, mass1, mass2, self.l, QR_DEFAULT, Sheet::Physical, BarrierKind::Full);
-        let width = width0 * (mass0 / mass) * (q / q0) * (f / f0).powi(2);
-        let n = (mass0 * width0 / PI).sqrt();
-        let d = Complex64::new(mass0.powi(2) - mass.powi(2), -(mass0 * width));
-        Complex64::from(f * n) / d
-    }
-}
-```
-
-### Calculating a Likelihood
-
-We could then write some code to use this amplitude. For demonstration purposes, let's just calculate an extended unbinned negative log-likelihood, assuming we have some data and Monte Carlo in the proper [parquet format](#data-format):
-
-```rust
-use laddu::{io, Scalar, Dataset, DatasetReadOptions, Mass, NLL, parameter};
-let p4_names = ["beam", "proton", "kshort1", "kshort2"];
-let aux_names = ["pol_magnitude", "pol_angle"];
-let options = DatasetReadOptions::default()
-    .p4_names(p4_names)
-    .aux_names(aux_names)
-    .alias("resonance", ["kshort1", "kshort2"]);
-let ds_data = io::read_parquet("test_data/data.parquet", &options).unwrap();
-let ds_mc = io::read_parquet("test_data/mc.parquet", &options).unwrap();
-
-let resonance_mass = Mass::new(["kshort1", "kshort2"]);
-let p1_mass = Mass::new(["kshort1"]);
-let p2_mass = Mass::new(["kshort2"]);
-let bw = MyBreitWigner::new(
-    "bw",
-    parameter("mass"),
-    parameter("width"),
-    2,
-    &p1_mass,
-    &p2_mass,
-    &resonance_mass,
-).unwrap();
-let mag = Scalar::new("mag", parameter("magnitude")).unwrap();
-let expr = (mag * bw).norm_sqr();
-
-let nll = NLL::new(&expr, &ds_data, &ds_mc).unwrap();
-println!("Parameters names and order: {:?}", nll.parameters());
-let result = nll.evaluate(&[1.27, 0.120, 100.0]);
-println!("The extended negative log-likelihood is {}", result);
-```
-
-In practice, amplitudes can also be added together, their real and imaginary parts can be taken, and evaluators should mostly take the real part of whatever complex value comes out of the model.
-
-## Python
-
-### Fitting Data
-
-While we cannot (yet) implement new amplitudes within the Python interface alone, it does contain all the functionality required to analyze data. Here's an example to show some of the syntax. This models includes three partial waves described by the $`Z_{\ell}^m`$ amplitude listed in Equation (D13) [here](https://arxiv.org/abs/1906.04841)[^1]. Since we take the squared norm of each individual sum, they are invariant up to a total phase, thus the S-wave was arbitrarily picked to be purely real.
-
-```python
-import laddu as ld
-import matplotlib.pyplot as plt
-import numpy as np
-from laddu import parameter
-
-def main():
-    p4_columns = ['beam', 'proton', 'kshort1', 'kshort2']
-    aux_columns = ['pol_magnitude', 'pol_angle']
-    ds_data = ld.io.read_parquet('path/to/data.parquet', p4s=p4_columns, aux=aux_columns)
-    ds_mc = ld.io.read_parquet('path/to/accmc.parquet', p4s=p4_columns, aux=aux_columns)
-    beam = ld.Particle.stored('beam')
-    target = ld.Particle.missing('target')
-    kshort1 = ld.Particle.stored('kshort1')
-    kshort2 = ld.Particle.stored('kshort2')
-    kk = ld.Particle.composite('kk', (kshort1, kshort2))
-    recoil = ld.Particle.stored('proton')
-    reaction = ld.Reaction.two_to_two(beam, target, kk, recoil)
-    polarization = reaction.polarization('pol_magnitude', 'pol_angle')
-    angles = reaction.decay('kk').angles('kshort1')
-
-    z00p = ld.Zlm("z00p", l=0, m=0, r="+", angles=angles, polarization=polarization)
-    z00n = ld.Zlm("z00n", l=0, m=0, r="-", angles=angles, polarization=polarization)
-    z22p = ld.Zlm("z22p", l=2, m=2, r="+", angles=angles, polarization=polarization)
-
-    s0p = ld.Scalar("s0p", value=parameter("s0p"))
-    s0n = ld.Scalar("s0n", value=parameter("s0n"))
-    d2p = ld.ComplexScalar("d2p", re=parameter("d2 re"), im=parameter("d2 im"))
-
-    pos_re = (s0p * z00p.real() + d2p * z22p.real()).norm_sqr()
-    pos_im = (s0p * z00p.imag() + d2p * z22p.imag()).norm_sqr()
-    neg_re = (s0n * z00n.real()).norm_sqr()
-    neg_im = (s0n * z00n.imag()).norm_sqr()
-    expr = pos_re + pos_im + neg_re + neg_im
-
-    nll = ld.NLL(expr, ds_data, ds_mc)
-    status = nll.minimize([1.0] * len(nll.parameters))
-    print(status)
-    fit_weights = nll.project_weights(status.x)
-    s0p_weights = nll.project_weights(status.x, subset=["z00p", "s0p"])
-    s0n_weights = nll.project_weights(status.x, subset=["z00n", "s0n"])
-    d2p_weights = nll.project_weights(status.x, subset=["z22p", "d2p"])
-    masses_mc = res_mass.value_on(ds_mc)
-    masses_data = res_mass.value_on(ds_data)
-    weights_data = ds_data.weights
-    plt.hist(masses_data, weights=weights_data, bins=80, range=(1.0, 2.0), label="Data", histtype="step")
-    plt.hist(masses_mc, weights=fit_weights, bins=80, range=(1.0, 2.0), label="Fit", histtype="step")
-    plt.hist(masses_mc, weights=s0p_weights, bins=80, range=(1.0, 2.0), label="$S_0^+$", histtype="step")
-    plt.hist(masses_mc, weights=s0n_weights, bins=80, range=(1.0, 2.0), label="$S_0^-$", histtype="step")
-    plt.hist(masses_mc, weights=d2p_weights, bins=80, range=(1.0, 2.0), label="$D_2^+$", histtype="step")
-    plt.legend()
-    plt.savefig("demo.svg")
-
-
-if __name__ == "__main__":
-    main()
-```
-
-This example would probably make the most sense for a binned fit, since there isn't actually any mass dependence in any of these amplitudes (so it will just plot the relative amount of each wave over the entire dataset).
-
-### Other Examples
-
-You can find other Python examples in the `py-laddu/examples` folder. These scripts have inline script metadata (PEP 723) which allows them to be run with `uv run` (which will automatically install the necessary dependencies).
-
-#### Example 1
-
-The first example script uses data generated with [gen_amp](https://github.com/JeffersonLab/halld_sim/tree/962c1fffc29eb4801b146d0a7f1e9aecb417374a/src/programs/Simulation/gen_amp). These data consist of a data file with two resonances, an $`f_0(1500)`$ modeled as a Breit-Wigner with a mass of $`1506\text{ MeV}/c^2`$ and a width of $`112\text{ MeV}/c^2`$ and an $`f_2'(1525)`$, also modeled as a Breit-Wigner, with a mass of $`1517\text{ MeV}/c^2`$ and a width of $`86\text{ MeV}/c^2`$, as per the [PDG](https://pdg.lbl.gov/2020/tables/rpp2020-tab-mesons-light.pdf). These were generated to decay to pairs of $`K_S^0`$s and are produced via photoproduction off a proton target (as in the GlueX experiment). The beam photon is polarized with an angle of $`0`$ degrees relative to the production plane and a polarization magnitude of $`0.3519`$ (out of unity). The configuration file used to generate the corresponding data and Monte Carlo files can also be found in the `python_examples`, and the datasets contain $`100,000`$ data events and $`1,000,000`$ Monte Carlo events (generated with the `-f` argument to create a Monte Carlo file without resonances). The result of this fit can be seen in the following image (using the default 50 bins):
-
-<p align="center">
-  <img
-    width="800"
-    src="py-laddu/examples/example_1/example_1.svg"
-  />
-</p>
-
-Additionally, this example has an optional MCMC analysis complete with a custom observer to monitor convergence based on the integrated autocorrelation time. This can be run using `example_1_mcmc.py` script after `example_1.py` has completed, as it uses data stored during the execution of `example_1.py` to initialize the walkers. A word of warning, this analysis takes a long time, but is meant more as a demonstration of what's possible with the current system. The custom autocorrelation observer plays an important role in choosing convergence criteria, since this problem has an implicit symmetry (the absolute phase between the two waves matters, but the sign is ambiguous) which cause the posterior distributions to sometimes be multimodal, which can lead to long IATs. Instead, the custom implementation projects the walkers' positions onto the two waves and uses those projections as a proxy to the real chain. This proxy is unimodal by definition, so the IATs calculated from it are much smaller and more realistically describe convergence.
-
-Some example plots can be seen below for the first data bin:
-
-<p align="center">
-  <table>
-    <tr>
-      <td><img width="250" src="py-laddu/examples/example_1/mcmc_plots/corner_0.svg" /></td>
-      <td><img width="250" src="py-laddu/examples/example_1/mcmc_plots/corner_transformed_0.svg" /></td>
-      <td><img width="250" src="py-laddu/examples/example_1/mcmc_plots/iat_0.svg" /></td>
-    </tr>
-      <tr>
-      <td colspan="3" align="center">
-        <img width="800" src="py-laddu/examples/example_1/mcmc_plots/trace_0.svg" />
-      </td>
-    </tr>
-  </table>
-</p>
-
-#### Example 2
-
-The second example uses linear algebra to calculate unpolarized and polarized moments $`H(\ell, m)`$ from the same data used in the first example. While the results are not as informative, it is a good demonstration of how `laddu` can also be used outside of the context of a maximum likelihood fit. The mechanism for obtaining moments could also be written with `numpy` and `scipy` alone, but `laddu`'s data format, variables, and amplitude evaluation make it easy to write the same code in a very straightforward way which will efficiently run in parallel or even over an MPI instance.
-
-A moment analysis is similar to a partial-wave analysis, except the target observables are coefficients attached to spherical harmonics in a standard sum rather than a coherent sum. This makes it difficult to extract these observables from a maximum likelihood fit, since the corresponding intensity function may be negative for some parameter values, making the logarithm of that intensity undefined. However, similar to a discrete Fourier transform, a moment analysis can be performed by simply summing the spherical harmonic evaluated on each event, and this is what the example does. However, there are two additional considerations. First, since the example data contains a polarized photon beam, we can extract polarized moments which span a basis of not only spherical harmonics of decay angles, but also sine and cosine functions of the polarization angle. Second, we have a Monte Carlo dataset which models the detector efficiency, so we have to construct a matrix of normalization integrals (similar to what we do in an extended maximum likelihood fit). Any non-unitary acceptance function will cause mixing between all of the moments, so we invert the normalization integral matrix and use the matrix-vector product to transform measured moments into the true physical moments.
-
-The resulting unpolarized moments are shown below:
-
-<p align="center">
-  <img
-    width="800"
-    src="py-laddu/examples/example_2/moments.svg"
-  />
-</p>
-
-# Data Format
-
-`laddu` focuses on a *column* layout rather than a specific file container. Each particle is represented by four floating-point columns (``_px``, ``_py``, ``_pz``, ``_e``), auxiliary scalars keep their explicit names (e.g. ``pol_magnitude``), and an optional ``weight`` column stores per-event weights. As long as those columns exist, the physical storage format may vary. Today, Parquet is the preferred container because it is small, language-agnostic, and easy to stream, but the Rust core can also read ROOT TTrees via [`oxyroot`](https://github.com/m-dupont/oxyroot), and the Python bindings add an AmpTools-aware backend on top of `uproot`. When the ``weight`` column is omitted, both the Rust and Python loaders fill it with ones so that unweighted samples continue to work without any extra preprocessing.
-
-For example, the following columns describe a dataset with four particles, the first of which is a polarized photon beam as in the GlueX experiment:
-
-| Column name | Data Type | Interpretation |
-| ----------- | --------- | -------------- |
-| `beam_px` | `Float32` or `Float64` | Beam momentum (x-component) |
-| `beam_py` | `Float32` or `Float64` | Beam momentum (y-component) |
-| `beam_pz` | `Float32` or `Float64` | Beam momentum (z-component) |
-| `beam_e`  | `Float32` or `Float64` | Beam energy |
-| `pol_magnitude` | `Float32` or `Float64` | Beam polarization magnitude |
-| `pol_angle` | `Float32` or `Float64` | Beam polarization angle |
-| `proton_px` | `Float32` or `Float64` | Recoil proton momentum (x-component) |
-| `proton_py` | `Float32` or `Float64` | Recoil proton momentum (y-component) |
-| `proton_pz` | `Float32` or `Float64` | Recoil proton momentum (z-component) |
-| `proton_e`  | `Float32` or `Float64` | Recoil proton energy |
-| `kshort1_px`  | `Float32` or `Float64` | Decay product 1 momentum (x-component) |
-| `kshort1_py`  | `Float32` or `Float64` | Decay product 1 momentum (y-component) |
-| `kshort1_pz`  | `Float32` or `Float64` | Decay product 1 momentum (z-component) |
-| `kshort1_e`   | `Float32` or `Float64` | Decay product 1 energy |
-| `kshort2_px`  | `Float32` or `Float64` | Decay product 2 momentum (x-component) |
-| `kshort2_py`  | `Float32` or `Float64` | Decay product 2 momentum (y-component) |
-| `kshort2_pz`  | `Float32` or `Float64` | Decay product 2 momentum (z-component) |
-| `kshort2_e`   | `Float32` or `Float64` | Decay product 2 energy |
-| `weight`    | `Float32` or `Float64` | Event weight |
-
-AmpTools-format ROOT files can be directly read as `Dataset` objects (this is currently implemented in the Python bindings; the Rust API still targets Parquet/standard ROOT TTrees):
+Models are expression graphs assembled from event data, constants, and parameters:
 
 ```python
 import laddu as ld
 
-dataset = ld.io.read_amptools(
-    'example_amp.root',
-    pol_in_beam=True,
-)
+s = ld.scalar("s")
+mass = ld.parameter("mass", initial=1.5, bounds=(1.3, 1.7))
+width = ld.parameter("width", initial=0.1, bounds=(0.01, 0.3))
+amplitude = 1.0 / (mass**2 - s - 1j * mass * width)
+model = ld.Model(amplitude.norm_sqr())
+
+print(model.parameter_names)
 ```
 
-This loads the ROOT tree, infers the particle names, and exposes the result through the same `Dataset` interface used for Parquet inputs.
+The [Python documentation](https://laddu.readthedocs.io/en/latest/) covers reactions, data I/O, common amplitudes, Monte Carlo generation, fitting, cross sections, MPI, and runtime selection. Rust users can find the public crate documentation on [docs.rs](https://docs.rs/laddu).
 
-# MPI Support
+## Citation and acknowledgments
 
-The latest version of `laddu` supports the Message Passing Interface (MPI) protocol for distributed computing. MPI-compatible versions of the core `laddu` methods have been written behind the `mpi` feature gate. To build `laddu` with MPI compatibility, it can be added with the `mpi` feature via `cargo add laddu --features mpi`. Note that this requires a working MPI installation, and [OpenMPI](https://www.open-mpi.org/) or [MPICH](https://www.mpich.org/) are recommended, as well as [LLVM](https://llvm.org/)/[Clang](https://clang.llvm.org/). The installation of these packages differs by system, but are generally available via each system's package manager. The Python implementation of `laddu` contains a library `laddu-cpu` and may be optionally installed with a dependency `laddu-mpi`. If the latter is available, it will be used at runtime unless otherwise specified. Note that this just selects the backend, and doesn't actually use MPI at all, it just gives the option to use it. You can install the optional dependency automatically with `pip install 'laddu[mpi]'`, which builds `laddu-mpi` against the local system MPI installation.
+If `laddu` contributes to published work, cite the software metadata in [`CITATION.cff`](CITATION.cff) and record the exact package version and execution capabilities used by the analysis.
 
-To use MPI in Rust, one must simply surround their main analysis code with a call to `laddu::mpi::use_mpi(true)` and `laddu::mpi::finalize_mpi()`. The first method has a boolean flag which allows for runtime switching of MPI use (for example, disabling MPI with an environment variable). These same methods exist in Python as `laddu.mpi.use_mpi(trigger=true)` and `laddu.mpi.finalize_mpi()`, and an additional context manager, `laddu.mpi.MPI(trigger=true)`, can be used to quickly wrap a `main()` function. See the [documentation](https://laddu.readthedocs.io/en/latest/) for more details.
+`laddu` builds on [NumPy](https://numpy.org/), [PyO3](https://pyo3.rs/) and [Maturin](https://www.maturin.rs/), [Ganesh](https://crates.io/crates/ganesh), [Apache Arrow and Parquet](https://arrow.apache.org/), [oxyroot](https://crates.io/crates/oxyroot), [wgpu](https://wgpu.rs/), and the [Message Passing Interface](https://www.mpi-forum.org/). The Wigner-symbol implementation includes code derived from [WignerSymbol](https://github.com/0382/WignerSymbol); its complete license is preserved in [`THIRD_PARTY_NOTICES`](THIRD_PARTY_NOTICES).
 
-In Python, the default `Dataset` interface keeps its usual global sequence semantics when MPI is enabled. That means `len(dataset)`, `dataset[i]`, `for event in dataset`, `list(dataset)`, `dataset.events`, `dataset.weights`, and `dataset.n_events_weighted` all behave as if the full dataset were present locally. Use `dataset.iter_local()`, `dataset.events_local`, `dataset.weights_local`, `dataset.n_events_local`, and `dataset.n_events_weighted_local` only when code explicitly wants rank-local ownership semantics. In non-MPI runs, local and global access behave the same way.
+## License
 
-The intended guarantees are:
-
-- Default/global access preserves the same dataset-wide ordering and indexing semantics in MPI and non-MPI runs.
-- `*_local` access is always limited to the current rank's ownership and should only be used for explicitly rank-local code paths.
-- `iter_global()` and the default iterator may fetch remote events under MPI; `iter_local()` never does.
-- Global counts and weighted sums (`n_events`, `n_events_weighted`, `weights`) remain valid for whole-dataset reporting under MPI.
-- Local/global results are identical in non-MPI runs because there is only one rank.
-
-# Future Plans
-
-- GPU integration (this is incredibly difficult to do right now, but it's something I'm looking into).
-- As always, more tests and documentation.
-
-# Alternatives
-
-While this is likely the first Rust project (aside from my previous attempt, [`rustitude`](https://github.com/denehoffman/rustitude)), there are several other amplitude analysis programs out there at time of writing. This library is a rewrite of `rustitude` which was written when I was just learning Rust and didn't have a firm grasp of a lot of the core concepts that are required to make the analysis pipeline memory- and CPU-efficient. In particular, `rustitude` worked well, but ate up a ton of memory and did not handle precalculation as nicely.
-
-### AmpTools
-
-The main inspiration for this project is the library most of my collaboration uses, [`AmpTools`](https://github.com/mashephe/AmpTools). `AmpTools` has several advantages over `laddu`: it's probably faster for almost every use case, but this is mainly because it is fully integrated with MPI and GPU support. I'm not actually sure if there's a fair benchmark between the two libraries, but I'd wager `AmpTools` would still win. `AmpTools` is a much older, more developed project, dating back to 2010. However, it does have its disadvantages. First and foremost, the primary interaction with the library is through configuration files which are not really code and sort of represent a domain specific language. As such, there isn't really a way to check if a particular config will work before running it. Users could technically code up their analyses in C++ as well, but I think this would generally be more work for very little benefit. AmpTools primarily interacts with Minuit, so there aren't simple ways to perform alternative optimization algorithms, and the outputs are a file which must also be parsed by code written by the user. This usually means some boilerplate setup for each analysis, a slew of input and output files, and, since it doesn't ship with any amplitudes, integration with other libraries. The data format is also very rigid, to the point where including beam polarization information feels hacked on (see the Zlm implementation [here](https://github.com/JeffersonLab/halld_sim/blob/6815c979cac4b79a47e5183cf285ce9589fe4c7f/src/libraries/AMPTOOLS_AMPS/Zlm.cc#L26) which requires the event-by-event polarization to be stored in the beam's four-momentum). While there isn't an official Python interface, Lawrence Ng has made some progress porting the code [here](https://github.com/lan13005/PyAmpTools).
-
-### PyPWA
-
-[`PyPWA`](https://github.com/JeffersonLab/PyPWA/tree/main) is a library written in pure Python. While this might seem like an issue for performance (and it sort of is), the library has several features which encourage the use of JIT compilers. The upside is that analyses can be quickly prototyped and run with very few dependencies, it can even run on GPUs and use multiprocessing. The downside is that recent development has been slow and the actual implementation of common amplitudes is, in my opinion, [messy](https://pypwa.jlab.org/AmplitudeTWOsim.py). I don't think that's a reason to not use it, but it does make it difficult for new users to get started.
-
-### ComPWA
-
-[`ComPWA`](https://compwa.github.io/) is a newcomer to the field. It's also a pure Python implementation and is comprised of three separate libraries. [`QRules`](https://github.com/ComPWA/qrules) can be used to validate and generate particle reaction topologies using conservation rules. [`AmpForm`](https://github.com/ComPWA/ampform) uses `SymPy` to transform these topologies into mathematical expressions, and it can also simplify the mathematical forms through the built-in CAS of `SymPy`. Finally, [`TensorWaves`](https://github.com/ComPWA/tensorwaves) connects `AmpForm` to various fitting methods. In general, these libraries have tons of neat features, are well-documented, and are really quite nice to use. I would like to eventually see `laddu` as a companion to `ComPWA` (rather than direct competition), but I don't really know enough about the libraries to say much more than that.
-
-### Others
-
-It could be the case that I am leaving out software with which I am not familiar. If so, I'd love to include it here for reference. I don't think that `laddu` will ever be the end-all-be-all of amplitude analysis, just an alternative that might improve on existing systems. It is important for physicists to be aware of these alternatives. For example, if you really don't want to learn Rust but need to implement an amplitude which isn't already included here, `laddu` isn't for you, and one of these alternatives might be best.
-
-[^1]: Mathieu, V., Albaladejo, M., Fernández-Ramírez, C., Jackura, A. W., Mikhasenko, M., Pilloni, A., & Szczepaniak, A. P. (2019). Moments of angular distribution and beam asymmetries in $`\eta\pi^0`$ photoproduction at GlueX. _Physical Review D_, **100**(5). [doi:10.1103/physrevd.100.054017](https://doi.org/10.1103/PhysRevD.100.054017)
+`laddu` is available under either the [MIT License](LICENSE-MIT) or the [Apache License 2.0](LICENSE-APACHE), at your option.

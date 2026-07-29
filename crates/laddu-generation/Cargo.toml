@@ -1,21 +1,37 @@
 [package]
 name = "laddu-generation"
 version = "0.19.6"
-description = "Monte Carlo event generation tools for laddu"
-documentation = "https://docs.rs/laddu-generation"
-edition.workspace = true
 authors.workspace = true
+edition.workspace = true
 homepage.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
+[package.metadata.docs.rs]
+rustdoc-args = ["--html-in-header", "docs-header.html"]
+
+[lints]
+workspace = true
+
 [dependencies]
-fastrand = { workspace = true }
-fastrand-contrib = { workspace = true }
-laddu-core = { workspace = true }
-serde = { workspace = true }
+laddu-compile = { version = "0.19.6", path = "../laddu-compile" }
+laddu-data = { version = "0.19.6", path = "../laddu-data" }
+laddu-expr = { version = "0.19.6", path = "../laddu-expr" }
+laddu-physics = { version = "0.19.6", path = "../laddu-physics" }
+laddu-runtime = { version = "0.19.6", path = "../laddu-runtime" }
+rayon.workspace = true
+serde.workspace = true
+smallvec.workspace = true
+thiserror.workspace = true
+
+[features]
+jit = ["laddu-runtime/jit"]
+wgpu = ["laddu-runtime/wgpu"]
 
 [dev-dependencies]
-approx = { workspace = true }
-laddu = { workspace = true }
+criterion.workspace = true
+
+[[bench]]
+name = "generation"
+harness = false

@@ -1,0 +1,32 @@
+[package]
+name = "laddu-wgpu"
+version = "0.19.6"
+authors.workspace = true
+edition.workspace = true
+homepage.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[package.metadata.docs.rs]
+rustdoc-args = ["--html-in-header", "docs-header.html"]
+
+[lints]
+workspace = true
+
+[dependencies]
+bytemuck.workspace = true
+laddu-autodiff = { version = "0.19.6", path = "../laddu-autodiff" }
+laddu-compile = { version = "0.19.6", path = "../laddu-compile" }
+laddu-data = { version = "0.19.6", path = "../laddu-data" }
+laddu-expr = { version = "0.19.6", path = "../laddu-expr" }
+laddu-kernel = { version = "0.19.6", path = "../laddu-kernel" }
+pollster.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+wgpu.workspace = true
+
+[dev-dependencies]
+laddu-runtime = { version = "0.19.6", path = "../laddu-runtime" }
+naga.workspace = true
+serde_json.workspace = true

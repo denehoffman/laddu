@@ -1,0 +1,33 @@
+[package]
+name = "laddu-memory"
+version = "0.19.6"
+authors.workspace = true
+edition.workspace = true
+homepage.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[package.metadata.docs.rs]
+rustdoc-args = ["--html-in-header", "docs-header.html"]
+
+[lints]
+workspace = true
+
+[dependencies]
+nvml-wrapper = { workspace = true, optional = true }
+serde.workspace = true
+sysinfo.workspace = true
+thiserror.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-metal.workspace = true
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { workspace = true, features = [
+  "Win32_Graphics_Dxgi",
+  "Win32_Graphics_Dxgi_Common",
+] }
+
+[features]
+nvml = ["dep:nvml-wrapper"]

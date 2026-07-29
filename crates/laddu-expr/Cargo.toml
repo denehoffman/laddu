@@ -1,0 +1,30 @@
+[package]
+name = "laddu-expr"
+version = "0.19.6"
+authors.workspace = true
+edition.workspace = true
+homepage.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[package.metadata.docs.rs]
+rustdoc-args = ["--html-in-header", "docs-header.html"]
+
+[lints]
+workspace = true
+
+[dependencies]
+num.workspace = true
+serde.workspace = true
+auto_ops.workspace = true
+thiserror.workspace = true
+fastrand.workspace = true
+fastrand-contrib.workspace = true
+layout-rs = { workspace = true, optional = true }
+
+[features]
+svg = ["dep:layout-rs"]
+
+[dev-dependencies]
+serde_json.workspace = true

@@ -1,0 +1,19 @@
+cff-version: 1.2.0
+message: "If you use laddu in published work, please cite the software and record the exact version used."
+type: software
+title: "laddu: Amplitude analysis made short and sweet"
+authors:
+  - family-names: Hoffman
+    given-names: Nathaniel Dene
+version: 0.19.6 # x-release-please-version
+repository-code: "https://github.com/denehoffman/laddu"
+url: "https://laddu.readthedocs.io/"
+license:
+  - Apache-2.0
+  - MIT
+keywords:
+  - amplitude analysis
+  - particle physics
+  - partial-wave analysis
+  - Python
+  - Rust

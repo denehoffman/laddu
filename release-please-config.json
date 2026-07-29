@@ -1,94 +1,141 @@
 {
   "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
-  "release-type": "simple",
+  "release-type": "rust",
   "include-v-in-tag": true,
   "bump-minor-pre-major": true,
   "bump-patch-for-minor-pre-major": true,
-  "plugins": [{ "type": "sentence-case" }],
   "packages": {
-    ".": {
+    "crates/laddu": {
+      "component": "laddu",
       "include-component-in-tag": false,
+      "changelog-path": "/CHANGELOG.md",
       "extra-files": [
         {
           "type": "toml",
-          "path": "Cargo.toml",
-          "jsonpath": "$.workspace.dependencies['laddu'].version"
-        },
-        {
-          "type": "toml",
-          "path": "Cargo.toml",
-          "jsonpath": "$.workspace.dependencies['laddu-core'].version"
-        },
-        {
-          "type": "toml",
-          "path": "Cargo.toml",
-          "jsonpath": "$.workspace.dependencies['laddu-amplitudes'].version"
-        },
-        {
-          "type": "toml",
-          "path": "Cargo.toml",
-          "jsonpath": "$.workspace.dependencies['laddu-extensions'].version"
-        },
-        {
-          "type": "toml",
-          "path": "Cargo.toml",
-          "jsonpath": "$.workspace.dependencies['laddu-generation'].version"
-        },
-        {
-          "type": "toml",
-          "path": "Cargo.toml",
-          "jsonpath": "$.workspace.dependencies['laddu-python'].version"
-        },
-        {
-          "type": "toml",
-          "path": "crates/laddu/Cargo.toml",
-          "jsonpath": "$.package.version"
-        },
-        {
-          "type": "toml",
-          "path": "crates/laddu-core/Cargo.toml",
-          "jsonpath": "$.package.version"
-        },
-        {
-          "type": "toml",
-          "path": "crates/laddu-amplitudes/Cargo.toml",
-          "jsonpath": "$.package.version"
-        },
-        {
-          "type": "toml",
-          "path": "crates/laddu-extensions/Cargo.toml",
-          "jsonpath": "$.package.version"
-        },
-        {
-          "type": "toml",
-          "path": "crates/laddu-generation/Cargo.toml",
-          "jsonpath": "$.package.version"
-        },
-        {
-          "type": "toml",
-          "path": "crates/laddu-python/Cargo.toml",
-          "jsonpath": "$.package.version"
-        },
-        {
-          "type": "toml",
-          "path": "py-laddu-cpu/Cargo.toml",
-          "jsonpath": "$.package.version"
-        },
-        {
-          "type": "toml",
-          "path": "py-laddu-mpi/Cargo.toml",
-          "jsonpath": "$.package.version"
-        },
-        {
-          "type": "toml",
-          "path": "py-laddu/pyproject.toml",
-          "jsonpath": "$.project.version"
+          "path": "/Cargo.toml",
+          "jsonpath": "$.workspace.package.version"
         },
         {
           "type": "generic",
-          "path": "py-laddu/pyproject.toml"
+          "path": "/python/laddu/pyproject.toml"
+        },
+        {
+          "type": "generic",
+          "path": "/CITATION.cff"
         }
       ]
+    },
+    "crates/laddu-amplitudes": {
+      "component": "laddu-amplitudes",
+      "skip-changelog": true,
+      "skip-github-release": true
+    },
+    "crates/laddu-autodiff": {
+      "component": "laddu-autodiff",
+      "skip-changelog": true,
+      "skip-github-release": true
+    },
+    "crates/laddu-compile": {
+      "component": "laddu-compile",
+      "skip-changelog": true,
+      "skip-github-release": true
+    },
+    "crates/laddu-data": {
+      "component": "laddu-data",
+      "skip-changelog": true,
+      "skip-github-release": true
+    },
+    "crates/laddu-expr": {
+      "component": "laddu-expr",
+      "skip-changelog": true,
+      "skip-github-release": true
+    },
+    "crates/laddu-fit": {
+      "component": "laddu-fit",
+      "skip-changelog": true,
+      "skip-github-release": true
+    },
+    "crates/laddu-generation": {
+      "component": "laddu-generation",
+      "skip-changelog": true,
+      "skip-github-release": true
+    },
+    "crates/laddu-kernel": {
+      "component": "laddu-kernel",
+      "skip-changelog": true,
+      "skip-github-release": true
+    },
+    "crates/laddu-likelihood": {
+      "component": "laddu-likelihood",
+      "skip-changelog": true,
+      "skip-github-release": true
+    },
+    "crates/laddu-memory": {
+      "component": "laddu-memory",
+      "skip-changelog": true,
+      "skip-github-release": true
+    },
+    "crates/laddu-physics": {
+      "component": "laddu-physics",
+      "skip-changelog": true,
+      "skip-github-release": true
+    },
+    "crates/laddu-runtime": {
+      "component": "laddu-runtime",
+      "skip-changelog": true,
+      "skip-github-release": true
+    },
+    "crates/laddu-wgpu": {
+      "component": "laddu-wgpu",
+      "skip-changelog": true,
+      "skip-github-release": true
+    },
+    "python/laddu": {
+      "component": "laddu-python",
+      "skip-changelog": true,
+      "skip-github-release": true
+    },
+    "python/laddu-local": {
+      "component": "laddu-python-local",
+      "skip-changelog": true,
+      "skip-github-release": true
+    },
+    "python/laddu-mpi": {
+      "component": "laddu-python-mpi",
+      "skip-changelog": true,
+      "skip-github-release": true
     }
-  }
+  },
+  "plugins": [
+    {
+      "type": "cargo-workspace",
+      "merge": false
+    },
+    {
+      "type": "linked-versions",
+      "groupName": "laddu",
+      "components": [
+        "laddu",
+        "laddu-amplitudes",
+        "laddu-autodiff",
+        "laddu-compile",
+        "laddu-data",
+        "laddu-expr",
+        "laddu-fit",
+        "laddu-generation",
+        "laddu-kernel",
+        "laddu-likelihood",
+        "laddu-memory",
+        "laddu-physics",
+        "laddu-runtime",
+        "laddu-wgpu",
+        "laddu-python",
+        "laddu-python-local",
+        "laddu-python-mpi"
+      ]
+    },
+    {
+      "type": "sentence-case"
+    }
+  ]
 }

@@ -1,66 +1,105 @@
 [package]
 name = "laddu"
 version = "0.19.6"
-description = "Amplitude analysis made short and sweet"
-documentation = "https://docs.rs/laddu"
-edition.workspace = true
 authors.workspace = true
+edition.workspace = true
 homepage.workspace = true
-keywords = ["PWA", "amplitude", "particle", "physics", "modeling"]
-categories = ["science", "mathematics"]
 license.workspace = true
-readme = "README.md"
 repository.workspace = true
 rust-version.workspace = true
 
-[dependencies]
-laddu-core = { workspace = true }
-laddu-amplitudes = { workspace = true }
-laddu-extensions = { workspace = true }
-laddu-generation = { workspace = true }
-mpi = { workspace = true, optional = true }
-num = { workspace = true }
-fastrand = { workspace = true }
-rayon = { workspace = true }
+[package.metadata.docs.rs]
+rustdoc-args = ["--html-in-header", "docs-header.html"]
 
-serde = { workspace = true }
-typetag = { workspace = true }
+[lints]
+workspace = true
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+laddu-amplitudes = { version = "0.19.6", path = "../laddu-amplitudes", optional = true }
+laddu-autodiff = { version = "0.19.6", path = "../laddu-autodiff" }
+laddu-compile = { version = "0.19.6", path = "../laddu-compile" }
+laddu-data = { version = "0.19.6", path = "../laddu-data" }
+laddu-expr = { version = "0.19.6", path = "../laddu-expr" }
+laddu-fit = { version = "0.19.6", path = "../laddu-fit", optional = true }
+laddu-generation = { version = "0.19.6", path = "../laddu-generation", optional = true }
+laddu-kernel = { version = "0.19.6", path = "../laddu-kernel" }
+laddu-likelihood = { version = "0.19.6", path = "../laddu-likelihood", optional = true }
+laddu-physics = { version = "0.19.6", path = "../laddu-physics" }
+laddu-runtime = { version = "0.19.6", path = "../laddu-runtime" }
+laddu-wgpu = { version = "0.19.6", path = "../laddu-wgpu", optional = true }
+mpi = { workspace = true, optional = true }
+num = { workspace = true, optional = true }
+numpy = { workspace = true, optional = true }
+pyo3 = { workspace = true, optional = true, features = [
+  "experimental-inspect",
+  "multiple-pymethods",
+  "num-complex",
+] }
+thiserror.workspace = true
+
+[features]
+default = ["amplitudes", "likelihood", "fit", "generation"]
+amplitudes = ["dep:laddu-amplitudes"]
+likelihood = ["dep:laddu-likelihood"]
+fit = ["likelihood", "dep:laddu-fit"]
+generation = ["dep:laddu-generation"]
+jit = ["laddu-runtime/jit", "laddu-likelihood?/jit", "laddu-generation?/jit"]
+mpi = [
+  "dep:mpi",
+  "laddu-data/mpi",
+  "laddu-runtime/mpi",
+  "laddu-likelihood?/mpi",
+]
+wgpu = [
+  "dep:laddu-wgpu",
+  "laddu-runtime/wgpu",
+  "laddu-likelihood?/wgpu",
+  "laddu-generation?/wgpu",
+]
+svg = ["laddu-expr/svg"]
+python = [
+  "amplitudes",
+  "fit",
+  "generation",
+  "laddu-fit/python",
+  "dep:fastrand",
+  "dep:num",
+  "dep:numpy",
+  "dep:pyo3",
+]
+
+[dependencies.fastrand]
+workspace = true
+optional = true
 
 [dev-dependencies]
-criterion = { workspace = true }
-fastrand-contrib = { workspace = true }
-nalgebra = { workspace = true }
-num_cpus = { workspace = true }
-
-[[bench]]
-name = "workflow_behavior_cpu_benchmarks"
-harness = false
-
-[[bench]]
-name = "workflow_behavior_mpi_benchmarks"
-harness = false
-required-features = ["mpi"]
+criterion.workspace = true
+num_cpus.workspace = true
+rayon.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 
 [[bench]]
 name = "kmatrix_benchmark"
 harness = false
+required-features = ["jit", "wgpu"]
 
-[[bin]]
-name = "profile_cached_paths"
-path = "bin/profile_cached_paths.rs"
+[[bench]]
+name = "jit_benchmark"
+harness = false
+required-features = ["jit"]
 
-[[bin]]
-name = "profile_value_hotspots"
-path = "bin/profile_value_hotspots.rs"
+[[example]]
+name = "generate_ksks"
+required-features = ["generation"]
 
-[features]
-default = ["rayon"]
-rayon = ["laddu-core/rayon"]
-python = [
-  "laddu-core/python",
-]
-mpi = ["laddu-core/mpi", "laddu-extensions/mpi", "dep:mpi"]
-execution-context-prototype = ["laddu-core/execution-context-prototype"]
+[[example]]
+name = "generate_and_fit_ksks"
+required-features = ["generation", "fit"]
 
-[package.metadata.docs.rs]
-rustdoc-args = ["--html-in-header", "./docs-header.html"]
+[[test]]
+name = "generation_fit"
+required-features = ["generation", "fit"]
