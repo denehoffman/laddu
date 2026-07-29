@@ -17,7 +17,7 @@ name = "laddu"
 crate-type = ["cdylib"]
 
 [dependencies]
-laddu-core = { package = "laddu", version = "0.19.6", path = "../../crates/laddu", features = [
+laddu-core = { workspace = true, features = [
   "python",
   "jit",
   "wgpu",
