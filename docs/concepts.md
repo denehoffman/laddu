@@ -1,7 +1,5 @@
 # Core concepts
 
-![The laddu analysis workflow: the channel defines both the model and Monte Carlo, which combine with data in a likelihood, fit, and projections.](_static/workflow.svg)
-
 ## Channels and events
 
 A {py:class}`laddu.Channel` is a directed reaction graph. Edges represent initial, intermediate, or final particles; vertices represent production and decay steps. An event is a row of named four-vectors and scalar values. laddu uses
