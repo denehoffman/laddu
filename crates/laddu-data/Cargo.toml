@@ -1,6 +1,6 @@
 [package]
 name = "laddu-data"
-version = "0.20.0"
+version = "0.20.1"
 authors.workspace = true
 description.workspace = true
 edition.workspace = true
@@ -30,8 +30,8 @@ log = "0.4.32"
 glob = "0.3.3"
 num.workspace = true
 
-laddu-physics = { version = "0.20.0", path = "../laddu-physics" }
-laddu-memory = { version = "0.20.0", path = "../laddu-memory" }
+laddu-physics = { version = "0.20.1", path = "../laddu-physics" }
+laddu-memory = { version = "0.20.1", path = "../laddu-memory" }
 
 [dev-dependencies]
 criterion.workspace = true

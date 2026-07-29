@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.20.1](https://github.com/denehoffman/laddu/compare/v0.20.0...v0.20.1) (2026-07-29)
+
+
+### Bug Fixes
+
+* **release:** Make Rust crates publishable ([ea7918a](https://github.com/denehoffman/laddu/commit/ea7918ad9caafce27ce09b7b974d2bf2040869ab))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * laddu-amplitudes bumped from 0.20.0 to 0.20.1
+    * laddu-autodiff bumped from 0.20.0 to 0.20.1
+    * laddu-compile bumped from 0.20.0 to 0.20.1
+    * laddu-data bumped from 0.20.0 to 0.20.1
+    * laddu-expr bumped from 0.20.0 to 0.20.1
+    * laddu-fit bumped from 0.20.0 to 0.20.1
+    * laddu-generation bumped from 0.20.0 to 0.20.1
+    * laddu-kernel bumped from 0.20.0 to 0.20.1
+    * laddu-likelihood bumped from 0.20.0 to 0.20.1
+    * laddu-physics bumped from 0.20.0 to 0.20.1
+    * laddu-runtime bumped from 0.20.0 to 0.20.1
+    * laddu-wgpu bumped from 0.20.0 to 0.20.1
+
 ## [0.20.0](https://github.com/denehoffman/laddu/compare/v0.19.6...v0.20.0) (2026-07-29)
 
 

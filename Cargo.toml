@@ -11,7 +11,7 @@ homepage = "https://github.com/denehoffman/laddu"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/denehoffman/laddu"
 rust-version = "1.95.0"
-version = "0.20.0" # x-release-please-version
+version = "0.20.1" # x-release-please-version
 
 [workspace.dependencies]
 accurate = "0.4.1"
@@ -33,8 +33,8 @@ ganesh = "0.28.1"
 indexmap = { version = "2.14.0", features = ["serde"] }
 lazy_static = "1.5.0"
 layout-rs = "0.1.3"
-laddu-core = { package = "laddu", version = "0.20.0", path = "crates/laddu" } # x-release-please-version
-laddu_runtime = { package = "laddu-runtime", version = "0.20.0", path = "crates/laddu-runtime" } # x-release-please-version
+laddu-core = { package = "laddu", version = "0.20.1", path = "crates/laddu" } # x-release-please-version
+laddu_runtime = { package = "laddu-runtime", version = "0.20.1", path = "crates/laddu-runtime" } # x-release-please-version
 mpi = { version = "0.8.2", features = ["complex"] }
 mpi_test = "0.1.1"
 nalgebra = { version = "0.35.0", features = ["serde-serialize"] }
