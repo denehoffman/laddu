@@ -32,7 +32,7 @@ from yamloom.workflows.maturin import (
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-MSRV = '1.94.0'
+MSRV = '1.95.0'
 MINIMUM_PYTHON = '3.11'
 PYTHON_MANIFESTS = {
     'laddu': 'python/laddu/Cargo.toml',
