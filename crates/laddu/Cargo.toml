@@ -1,6 +1,6 @@
 [package]
 name = "laddu"
-version = "0.19.6"
+version = "0.20.0"
 authors.workspace = true
 edition.workspace = true
 homepage.workspace = true
@@ -18,18 +18,18 @@ workspace = true
 crate-type = ["rlib"]
 
 [dependencies]
-laddu-amplitudes = { version = "0.19.6", path = "../laddu-amplitudes", optional = true }
-laddu-autodiff = { version = "0.19.6", path = "../laddu-autodiff" }
-laddu-compile = { version = "0.19.6", path = "../laddu-compile" }
-laddu-data = { version = "0.19.6", path = "../laddu-data" }
-laddu-expr = { version = "0.19.6", path = "../laddu-expr" }
-laddu-fit = { version = "0.19.6", path = "../laddu-fit", optional = true }
-laddu-generation = { version = "0.19.6", path = "../laddu-generation", optional = true }
-laddu-kernel = { version = "0.19.6", path = "../laddu-kernel" }
-laddu-likelihood = { version = "0.19.6", path = "../laddu-likelihood", optional = true }
-laddu-physics = { version = "0.19.6", path = "../laddu-physics" }
-laddu-runtime = { version = "0.19.6", path = "../laddu-runtime" }
-laddu-wgpu = { version = "0.19.6", path = "../laddu-wgpu", optional = true }
+laddu-amplitudes = { version = "0.20.0", path = "../laddu-amplitudes", optional = true }
+laddu-autodiff = { version = "0.20.0", path = "../laddu-autodiff" }
+laddu-compile = { version = "0.20.0", path = "../laddu-compile" }
+laddu-data = { version = "0.20.0", path = "../laddu-data" }
+laddu-expr = { version = "0.20.0", path = "../laddu-expr" }
+laddu-fit = { version = "0.20.0", path = "../laddu-fit", optional = true }
+laddu-generation = { version = "0.20.0", path = "../laddu-generation", optional = true }
+laddu-kernel = { version = "0.20.0", path = "../laddu-kernel" }
+laddu-likelihood = { version = "0.20.0", path = "../laddu-likelihood", optional = true }
+laddu-physics = { version = "0.20.0", path = "../laddu-physics" }
+laddu-runtime = { version = "0.20.0", path = "../laddu-runtime" }
+laddu-wgpu = { version = "0.20.0", path = "../laddu-wgpu", optional = true }
 mpi = { workspace = true, optional = true }
 num = { workspace = true, optional = true }
 numpy = { workspace = true, optional = true }

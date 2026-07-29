@@ -1,5 +1,130 @@
 # Changelog
 
+## [0.20.0](https://github.com/denehoffman/laddu/compare/v0.19.6...v0.20.0) (2026-07-29)
+
+
+### ⚠ BREAKING CHANGES
+
+* major rewrite of laddu to use expression trees for amplitudes
+* replace legacy laddu code with expression-based rewrite
+* remove legacy tree after migration
+* make memory budgets first-class
+* **physics:** Four-vector constructors, conversions, public fields, and positional arrays now use (E, px, py, pz) order.
+* expose direct ganesh fit and generation APIs
+* add metadata-aware fitting and closure projections
+* **generation:** UnweightedConfig::new now takes only the requested event count, and max_proposals is Option<usize>; use with_max_proposals to opt into a limit.
+* **generation:** remove FixedInitialState and InitialStateSampler; initial momentum sources now belong to channel edges and ChannelGenerator::new accepts only a Channel.
+* **runtime:** integrate WGPU likelihood execution
+* **runtime:** unify execution and likelihood APIs
+* **runtime:** unify dataset execution policies
+* **runtime:** add full primal CPU JIT
+* **expr:** lower complex parameters to expressions
+* **likelihood:** port K-matrix NLL benchmark
+* **amplitudes:** rename scalar kinematics and Breit-Wigner helpers to the expression-oriented API.
+* move Breit-Wigner functions to amplitudes
+* **compile:** the default optimizer now runs canonicalization and rewrite passes until graph shape converges, further changing optimized graph shape and operation order.
+* **compile:** the default optimizer now reassociates canonical Add/Mul trees and merges exp products, further changing optimized graph shape and floating-point operation order.
+* **compile:** expression graphs now include first-class Complex nodes and the default compile pipeline performs aggressive canonicalization/CSE.
+* **expr:** rebuild expression graph pipeline
+* replace the old laddu implementation with the new typed-kernel rewrite foundation.
+* replace Clebsch-Gordan helper API
+* redesign channel topology and generation APIs
+
+### Features
+
+* Add assignment operators to Expressions in Rust ([f3f672e](https://github.com/denehoffman/laddu/commit/f3f672ecd4ef7364f8b0797b09e465ebfbdcf0ab))
+* Add aux columns to generation and formalize MPI standards for generation ([df80f7c](https://github.com/denehoffman/laddu/commit/df80f7c66f57a6f626459a84d876ee21fc686377))
+* Add channel kinematics and p4 event expressions ([d9d4c81](https://github.com/denehoffman/laddu/commit/d9d4c813cdc434c3097ed085a679e82afa3234f9))
+* Add channel species and quantum number APIs ([6755359](https://github.com/denehoffman/laddu/commit/6755359af91b0bca370a0f91fa5fbabc2b8fcdd3))
+* Add configurable graph visualization ([d1d947e](https://github.com/denehoffman/laddu/commit/d1d947ec7c412930eab3005f5873296c68cd3454))
+* Add histogram uncertainty controls ([17ff935](https://github.com/denehoffman/laddu/commit/17ff9351508dd92b158d2dc643b4342d3b43794f))
+* Add lazy dataset queries and projections ([fbfde99](https://github.com/denehoffman/laddu/commit/fbfde995b7903e04833b1633cffb9f458d8f6f1d))
+* Add manual photoproduction model examples ([40db370](https://github.com/denehoffman/laddu/commit/40db3709000e4dde6577fd13a6f22a92f17e31d8))
+* Add metadata-aware fitting and closure projections ([f6d7857](https://github.com/denehoffman/laddu/commit/f6d78577b2c2f6cb6f6d707e58be03e8a9327eca))
+* **amplitudes:** Add composable K-matrix amplitudes ([07edf50](https://github.com/denehoffman/laddu/commit/07edf5034a82b9a7d9521ad1cdf54a6ea5af8199))
+* **autodiff:** Add forward gradients ([c98dba9](https://github.com/denehoffman/laddu/commit/c98dba948578b4c1d95d98598e5717d7cea671a2))
+* **compile:** Add canonical CSE and complex IR ([8c660ca](https://github.com/denehoffman/laddu/commit/8c660ca657c3e52e97e31bcbc6f4caf45740d20c))
+* **compile:** Gate norm-sqr expansion by optimizer cost ([ff4b774](https://github.com/denehoffman/laddu/commit/ff4b774cc3df10aae54787ab1c2353b68d145e1d))
+* **compile:** Iterate optimizer to fixed point ([3a2b38a](https://github.com/denehoffman/laddu/commit/3a2b38a3971d014967cae59c4a27671f522745e8))
+* **compile:** Merge exponential products ([5e91de5](https://github.com/denehoffman/laddu/commit/5e91de5ad9d2a0df6a293d7e6e14bed9bafcf144))
+* Derive generation from channel annotations ([ca84552](https://github.com/denehoffman/laddu/commit/ca845525e0eb875aa99a4a08d392fa6019866862))
+* Expose direct ganesh fit and generation APIs ([4525a01](https://github.com/denehoffman/laddu/commit/4525a01feac3855232de9a2aad7713336d90dd3c))
+* **expr:** Rebuild expression graph pipeline ([fa3a3ed](https://github.com/denehoffman/laddu/commit/fa3a3ed71a1b76f118b41813489d17e0a2f82590))
+* **fit:** Accept named initial values and seed walkers ([582e63a](https://github.com/denehoffman/laddu/commit/582e63a11fd7c95dc091f806016d9e8c7bce3f82))
+* **fit:** Add generation closure workflow ([4556eaa](https://github.com/denehoffman/laddu/commit/4556eaa4c358ad05beee3482e218354108a75f63))
+* **fit:** Integrate ganesh optimization and sampling ([79abcca](https://github.com/denehoffman/laddu/commit/79abcca5e12aa734c2616e93bcce6fc52cf3eed2))
+* **generation:** Add channel-driven event generation ([bdc0bd2](https://github.com/denehoffman/laddu/commit/bdc0bd212cbc72cee6637d9ddf78f1db59549737))
+* Improve public Rust API ergonomics ([86ce01b](https://github.com/denehoffman/laddu/commit/86ce01b6758e4db875aec021e40d9ed635f02199))
+* **likelihood:** Add cached normalized intensity fits ([6b90132](https://github.com/denehoffman/laddu/commit/6b90132584c4a3b7964164b20b8884924c948150))
+* **likelihood:** Add cross-section analysis API ([dd34c80](https://github.com/denehoffman/laddu/commit/dd34c80fd7f2e049369d285eeaa2b8c5aa66886d))
+* **likelihood:** Support custom additive terms ([1d33285](https://github.com/denehoffman/laddu/commit/1d332858adb80ffe69403a98346db7f4a33c9dd4))
+* Major rewrite of laddu to use expression trees for amplitudes ([5774f78](https://github.com/denehoffman/laddu/commit/5774f78b20b7a351222f8bc5e6bba1e154a7566a))
+* Make memory budgets first-class ([171e658](https://github.com/denehoffman/laddu/commit/171e658ed8cc1a69330f9a68d488e3061e498a55))
+* Periodic parameters, objectives, and a between query, as well as organizational changes to prepare for Python API ([b1e004f](https://github.com/denehoffman/laddu/commit/b1e004f1aa0b8c16075bbb1e19c580377ecc3317))
+* **physics:** Unify four-vector component order ([ad50eca](https://github.com/denehoffman/laddu/commit/ad50eca17b6a3e992494deb6b2794a8acd6e97dc))
+* **python:** Add native package ecosystem ([20df1fb](https://github.com/denehoffman/laddu/commit/20df1fbad711534e84564040bef5b659c2a034a1))
+* **quantum:** Expose selection rules in Python ([9091f5b](https://github.com/denehoffman/laddu/commit/9091f5b551ef87b300835cb800051fbc9ef5efc8))
+* Redesign channel topology and generation APIs ([9d3e3a4](https://github.com/denehoffman/laddu/commit/9d3e3a44467a6ac14192e064430b1e4932770714))
+* Replace Clebsch-Gordan helper API ([5aa660b](https://github.com/denehoffman/laddu/commit/5aa660bf28aaf9dbafb22cc7a98481c3394516aa))
+* Replace legacy laddu code with expression-based rewrite ([1ccc1a3](https://github.com/denehoffman/laddu/commit/1ccc1a3c000adcd7d8e41182bcc8f0b72401b0cc))
+* **runtime:** Add dataset-resident event caches ([fa52ebc](https://github.com/denehoffman/laddu/commit/fa52ebcdf2c52c544a1f79b2e7fc96a73b1793a3))
+* **runtime:** Add full primal CPU JIT ([58c40c9](https://github.com/denehoffman/laddu/commit/58c40c942b49ca4c4502165bdc5d8ace4c80fa08))
+* **runtime:** Add JIT gradient execution ([4ec096a](https://github.com/denehoffman/laddu/commit/4ec096a757750a9879fda1c99def667bcbda6db5))
+* **runtime:** Integrate WGPU likelihood execution ([05673fc](https://github.com/denehoffman/laddu/commit/05673fcee7dc5e44c7bac952e0681d630ca94f11))
+* **runtime:** Unify dataset execution policies ([3c85961](https://github.com/denehoffman/laddu/commit/3c85961909dab88f82cb2ff2d37171dc6e2c5408))
+* Start breaking laddu kernel rewrite ([8051e64](https://github.com/denehoffman/laddu/commit/8051e6444bba62877abdb62c2a06fbd002a0334d))
+* Update K-matrix benchmark to include all current evaluator pathways ([ceecc2d](https://github.com/denehoffman/laddu/commit/ceecc2ddeae3f57099f80f5e1c8f3eaa5933a50d))
+* Update quantum helpers to use typed inputs, remove Wigner3J amplitude, add operation overloads for M, Charge, and Parity and orbital_parity for L ([3d979ca](https://github.com/denehoffman/laddu/commit/3d979cacc4b348a7aaa744ec0dd738e38e4ce446))
+* **wgpu:** Add scalar gradient reductions ([9061b6a](https://github.com/denehoffman/laddu/commit/9061b6a3920253add7ee36c37d908501ebeb6253))
+
+
+### Bug Fixes
+
+* Clean up benchmarks, tests, and a few other gradient-related spots ([612376b](https://github.com/denehoffman/laddu/commit/612376bbbde51b86e28c143e14a55dceaebc716e))
+* Clear clippy lints, especially Errors/Panics sections in docstrings ([2f998db](https://github.com/denehoffman/laddu/commit/2f998db89faeeed9ed70822c3a1d25081873e1b1))
+* **python:** Improve generated type stubs ([35edd26](https://github.com/denehoffman/laddu/commit/35edd26ab72de8080475280cac7a30d22af8114b))
+* Reorganize all crates and provide convenience methods for dealing with parameters ([1751265](https://github.com/denehoffman/laddu/commit/1751265ba5473cad0a92eedbde6286afe60c8b92))
+
+
+### Performance Improvements
+
+* **generation:** Accelerate adaptive event sampling ([c978429](https://github.com/denehoffman/laddu/commit/c9784296cb89c2d1618a4336f741ab2f0d59b141))
+* **likelihood:** Port K-matrix NLL benchmark ([05d213d](https://github.com/denehoffman/laddu/commit/05d213d8d10ac73b8311af7a6c13e01395f2334d))
+* **runtime:** Cache selected solve rows ([a613067](https://github.com/denehoffman/laddu/commit/a613067cfa345442918069f5cdd41d9acbd86b09))
+* **runtime:** Execute scalar graphs with typed tape ([b5eac31](https://github.com/denehoffman/laddu/commit/b5eac31bb0e70a16954de6e9bd0831e1a142ac07))
+* **runtime:** Reuse f32 gradient kernels ([d03118c](https://github.com/denehoffman/laddu/commit/d03118cd3ba5302ac991eaac88ec9233cfe9d507))
+* **runtime:** Validate caches once per batch ([11316f4](https://github.com/denehoffman/laddu/commit/11316f42d112db4fb350a96a9a9084d2b60b68df))
+
+
+### Miscellaneous Chores
+
+* Remove legacy tree after migration ([cf43319](https://github.com/denehoffman/laddu/commit/cf43319bbee4357e2697857bdb2be69edfd10a83))
+
+
+### Code Refactoring
+
+* **expr:** Lower complex parameters to expressions ([5c528d2](https://github.com/denehoffman/laddu/commit/5c528d28aeb1afeb6678e76a8c329ad9f8efa453))
+* Move Breit-Wigner functions to amplitudes ([e990266](https://github.com/denehoffman/laddu/commit/e990266160ff779928411a73358b6c906b4a6a02))
+* **runtime:** Unify execution and likelihood APIs ([758b038](https://github.com/denehoffman/laddu/commit/758b03884caa0d690fb9beaa9f2e270c72c24a81))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * laddu-amplitudes bumped from 0.19.6 to 0.20.0
+    * laddu-autodiff bumped from 0.19.6 to 0.20.0
+    * laddu-compile bumped from 0.19.6 to 0.20.0
+    * laddu-data bumped from 0.19.6 to 0.20.0
+    * laddu-expr bumped from 0.19.6 to 0.20.0
+    * laddu-fit bumped from 0.19.6 to 0.20.0
+    * laddu-generation bumped from 0.19.6 to 0.20.0
+    * laddu-kernel bumped from 0.19.6 to 0.20.0
+    * laddu-likelihood bumped from 0.19.6 to 0.20.0
+    * laddu-physics bumped from 0.19.6 to 0.20.0
+    * laddu-runtime bumped from 0.19.6 to 0.20.0
+    * laddu-wgpu bumped from 0.19.6 to 0.20.0
+
 ## [0.19.6](https://github.com/denehoffman/laddu/compare/v0.19.5...v0.19.6) (2026-05-22)
 
 

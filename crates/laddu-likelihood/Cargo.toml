@@ -1,6 +1,6 @@
 [package]
 name = "laddu-likelihood"
-version = "0.19.6"
+version = "0.20.0"
 authors.workspace = true
 edition.workspace = true
 homepage.workspace = true
@@ -16,17 +16,17 @@ workspace = true
 
 [dependencies]
 auto_ops.workspace = true
-laddu-compile = { version = "0.19.6", path = "../laddu-compile" }
-laddu-data = { version = "0.19.6", path = "../laddu-data" }
-laddu-expr = { version = "0.19.6", path = "../laddu-expr" }
-laddu-runtime = { version = "0.19.6", path = "../laddu-runtime" }
+laddu-compile = { version = "0.20.0", path = "../laddu-compile" }
+laddu-data = { version = "0.20.0", path = "../laddu-data" }
+laddu-expr = { version = "0.20.0", path = "../laddu-expr" }
+laddu-runtime = { version = "0.20.0", path = "../laddu-runtime" }
 mpi = { workspace = true, optional = true }
 num.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
 approx.workspace = true
-laddu-amplitudes = { version = "0.19.6", path = "../laddu-amplitudes" }
+laddu-amplitudes = { version = "0.20.0", path = "../laddu-amplitudes" }
 mpi_test.workspace = true
 
 [features]
