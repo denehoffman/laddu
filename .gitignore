@@ -28,3 +28,6 @@ rustc-ice-*.txt
 .venv-3.14t
 __pycache__/
 *.py[cod]
+
+# macOS Finder metadata
+.DS_Store

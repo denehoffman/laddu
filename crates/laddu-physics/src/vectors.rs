@@ -1069,7 +1069,7 @@ mod tests {
         assert_relative_eq!(p.m2(), 50.0);
         assert_relative_eq!(p.m().unwrap(), f64::sqrt(50.0));
         assert_eq!(
-            format!("{}", p.to_p4_string()),
+            p.to_p4_string().to_string(),
             "[e = 10.00000; p = (3.00000, 4.00000, 5.00000); m = 7.07107]"
         );
         assert_relative_eq!(RealVec3::x().x, 1.0);

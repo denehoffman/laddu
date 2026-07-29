@@ -1077,17 +1077,22 @@ fn root_output_columns(
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicU64, Ordering};
+
     use super::*;
     use crate::data::{Dataset, EventBatchBuilder};
 
     fn temp_path(ext: &str) -> PathBuf {
+        static NEXT_TEMP_FILE_ID: AtomicU64 = AtomicU64::new(0);
+
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_nanos();
+        let id = NEXT_TEMP_FILE_ID.fetch_add(1, Ordering::Relaxed);
 
         std::env::temp_dir().join(format!(
-            "laddu-root-test-{}-{nanos}.{ext}",
+            "laddu-root-test-{}-{nanos}-{id}.{ext}",
             std::process::id()
         ))
     }

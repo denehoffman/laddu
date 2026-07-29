@@ -1420,7 +1420,9 @@ impl WgpuScalarKernel {
             .map_err(|error| WgpuError::BufferMap(error.to_string()))?;
         let result = self.decode_scalars(&mapped[..output_size as usize]);
         let values = result
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .map(|value| (value[0], value[1]))
             .collect();
         let singular = u32::from_ne_bytes(
