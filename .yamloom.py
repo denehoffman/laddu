@@ -237,7 +237,7 @@ benchmark_workflow = Workflow(
                 SetupRust(toolchain=MSRV),
                 InstallRustTool(tool=['cargo-codspeed']),
                 script(
-                    'cargo codspeed build --workspace',
+                    'cargo codspeed build',
                     env={'CARGO_BUILD_JOBS': '1'},
                 ),
                 action(
