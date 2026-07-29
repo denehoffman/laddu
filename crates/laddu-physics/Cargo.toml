@@ -1,6 +1,6 @@
 [package]
 name = "laddu-physics"
-version = "0.19.6"
+version = "0.20.0"
 authors.workspace = true
 edition.workspace = true
 homepage.workspace = true
@@ -15,7 +15,7 @@ rustdoc-args = ["--html-in-header", "docs-header.html"]
 workspace = true
 
 [dependencies]
-laddu-expr = { version = "0.19.6", path = "../laddu-expr" }
+laddu-expr = { version = "0.20.0", path = "../laddu-expr" }
 serde.workspace = true
 nalgebra.workspace = true
 thiserror.workspace = true
@@ -29,7 +29,7 @@ fastrand-contrib.workspace = true
 
 
 [dev-dependencies]
-laddu-compile = { version = "0.19.6", path = "../laddu-compile" }
+laddu-compile = { version = "0.20.0", path = "../laddu-compile" }
 laddu_runtime.workspace = true
 criterion.workspace = true
 serde_json.workspace = true

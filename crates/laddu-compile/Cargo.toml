@@ -1,6 +1,6 @@
 [package]
 name = "laddu-compile"
-version = "0.19.6"
+version = "0.20.0"
 authors.workspace = true
 edition.workspace = true
 homepage.workspace = true
@@ -15,8 +15,8 @@ rustdoc-args = ["--html-in-header", "docs-header.html"]
 workspace = true
 
 [dependencies]
-laddu-expr = { version = "0.19.6", path = "../laddu-expr" }
-laddu-kernel = { version = "0.19.6", path = "../laddu-kernel" }
+laddu-expr = { version = "0.20.0", path = "../laddu-expr" }
+laddu-kernel = { version = "0.20.0", path = "../laddu-kernel" }
 thiserror.workspace = true
 num.workspace = true
 serde.workspace = true

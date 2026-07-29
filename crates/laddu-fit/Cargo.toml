@@ -1,6 +1,6 @@
 [package]
 name = "laddu-fit"
-version = "0.19.6"
+version = "0.20.0"
 authors.workspace = true
 edition.workspace = true
 homepage.workspace = true
@@ -16,9 +16,9 @@ workspace = true
 
 [dependencies]
 ganesh.workspace = true
-laddu-expr = { version = "0.19.6", path = "../laddu-expr" }
-laddu-likelihood = { version = "0.19.6", path = "../laddu-likelihood" }
-laddu-runtime = { version = "0.19.6", path = "../laddu-runtime" }
+laddu-expr = { version = "0.20.0", path = "../laddu-expr" }
+laddu-likelihood = { version = "0.20.0", path = "../laddu-likelihood" }
+laddu-runtime = { version = "0.20.0", path = "../laddu-runtime" }
 parking_lot.workspace = true
 serde.workspace = true
 thiserror.workspace = true

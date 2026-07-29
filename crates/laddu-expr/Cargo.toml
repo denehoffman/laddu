@@ -1,6 +1,6 @@
 [package]
 name = "laddu-expr"
-version = "0.19.6"
+version = "0.20.0"
 authors.workspace = true
 edition.workspace = true
 homepage.workspace = true
