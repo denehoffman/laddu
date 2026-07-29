@@ -1,5 +1,5 @@
 <p align="center">
-  <img width="800" src="media/wordmark.svg" alt="laddu">
+  <img width="800" src="media/wordmark.png" alt="laddu">
 </p>
 
 <h1 align="center">Amplitude analysis made short and sweet</h1>
