@@ -34,7 +34,7 @@ jobs:
       - run: cargo test --workspace --exclude laddu-python --exclude laddu-python-local --exclude laddu-python-mpi
       - run: cargo check -p laddu-python -p laddu-python-local -p laddu-python-mpi
       - run: uv sync --frozen --inexact --no-install-project --project python/laddu
-      - run: uv run --no-sync --project python/laddu maturin develop --manifest-path python/laddu/Cargo.toml --release --generate-stubs
+      - run: uv run --no-sync --directory python/laddu maturin develop --manifest-path Cargo.toml --release --generate-stubs
       - run: uv run --no-sync --project python/laddu ruff check . --exclude=.yamloom.py
       - run: uv run --no-sync --project python/laddu ty check python docs crates/laddu/examples
       - run: "uv run --no-sync --project python/laddu python -m unittest discover -s python/tests -p \"test_*.py\""
@@ -57,7 +57,7 @@ jobs:
         with:
           python-version: 3.14t
       - run: uv sync --frozen --inexact --no-install-project --project python/laddu
-      - run: uv run --no-sync --project python/laddu maturin develop --manifest-path python/laddu/Cargo.toml --release --generate-stubs
+      - run: uv run --no-sync --directory python/laddu maturin develop --manifest-path Cargo.toml --release --generate-stubs
       - run: "uv run --no-sync --project python/laddu python -m unittest discover -s python/tests -p \"test_*.py\""
   laddu-linux:
     name: Build Linux wheels

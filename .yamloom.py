@@ -141,8 +141,8 @@ python_release_workflow = Workflow(
                 script('cargo check -p laddu-python -p laddu-python-local -p laddu-python-mpi'),
                 script('uv sync --frozen --inexact --no-install-project --project python/laddu'),
                 script(
-                    'uv run --no-sync --project python/laddu '
-                    'maturin develop --manifest-path python/laddu/Cargo.toml '
+                    'uv run --no-sync --directory python/laddu '
+                    'maturin develop --manifest-path Cargo.toml '
                     '--release --generate-stubs'
                 ),
                 script('uv run --no-sync --project python/laddu ruff check . --exclude=.yamloom.py'),
@@ -167,8 +167,8 @@ python_release_workflow = Workflow(
                 SetupUV(python_version='3.14t'),
                 script('uv sync --frozen --inexact --no-install-project --project python/laddu'),
                 script(
-                    'uv run --no-sync --project python/laddu '
-                    'maturin develop --manifest-path python/laddu/Cargo.toml '
+                    'uv run --no-sync --directory python/laddu '
+                    'maturin develop --manifest-path Cargo.toml '
                     '--release --generate-stubs'
                 ),
                 script(
@@ -237,7 +237,7 @@ benchmark_workflow = Workflow(
                 SetupRust(toolchain=MSRV),
                 InstallRustTool(tool=['cargo-codspeed']),
                 script(
-                    'cargo codspeed build --workspace --benches',
+                    'cargo codspeed build --workspace',
                     env={'CARGO_BUILD_JOBS': '1'},
                 ),
                 action(
