@@ -4,7 +4,7 @@ use laddu_likelihood::{
     CrossSectionIntegrals, ExtendedNllTerm, LassoPenalty, Likelihood, LikelihoodProjection,
     LikelihoodTerm, NllTerm, RidgePenalty,
 };
-use numpy::{PyArray1, PyReadonlyArray1};
+use numpy::PyArray1;
 use pyo3::{
     exceptions::PyTypeError,
     prelude::*,
@@ -15,6 +15,7 @@ use super::{
     cross_section::{PyCrossSection, PyEnsemble},
     data::PyDataset,
     error::to_py_err,
+    float_vec,
     model::PyModel,
     runtime::PyExecution,
 };
@@ -66,7 +67,7 @@ impl PyExtendedNll {
     /// LadduError
     ///     If model preparation or dataset schema validation fails.
     #[new]
-    #[pyo3(signature = (model, data, accepted_mc, *, name="extended_nll"))]
+    #[pyo3(signature = (model, *, data, accepted_mc, name="extended_nll"))]
     fn new(
         model: &PyModel,
         data: &PyDataset,
@@ -105,7 +106,7 @@ impl PyRidgePenalty {
     /// LadduError
     ///     If the name list or penalty strength is invalid.
     #[new]
-    #[pyo3(signature = (parameters, lambda_, *, name="ridge"))]
+    #[pyo3(signature = (parameters, *, lambda_, name="ridge"))]
     fn new(parameters: Vec<String>, lambda_: f64, name: &str) -> PyResult<Self> {
         Ok(Self {
             inner: RidgePenalty::new(name, parameters, lambda_).map_err(to_py_err)?,
@@ -138,7 +139,7 @@ impl PyLassoPenalty {
     /// LadduError
     ///     If the name list or penalty strength is invalid.
     #[new]
-    #[pyo3(signature = (parameters, lambda_, *, name="lasso"))]
+    #[pyo3(signature = (parameters, *, lambda_, name="lasso"))]
     fn new(parameters: Vec<String>, lambda_: f64, name: &str) -> PyResult<Self> {
         Ok(Self {
             inner: LassoPenalty::new(name, parameters, lambda_).map_err(to_py_err)?,
@@ -155,7 +156,7 @@ impl PyNll {
     /// LadduError
     ///     If model preparation or dataset schema validation fails.
     #[new]
-    #[pyo3(signature = (model, data, accepted_mc, *, name="nll"))]
+    #[pyo3(signature = (model, *, data, accepted_mc, name="nll"))]
     fn new(
         model: &PyModel,
         data: &PyDataset,
@@ -188,7 +189,7 @@ impl PyNll {
 /// --------
 /// >>> import laddu as ld
 /// >>> # Given model, data, and accepted_mc datasets:
-/// >>> # term = ld.NLL(model, data, accepted_mc, name="signal")
+/// >>> # term = ld.NLL(model, data=data, accepted_mc=accepted_mc, name="signal")
 /// >>> # likelihood = ld.Likelihood(\[term\])
 /// >>> # value = likelihood.nll(likelihood.default_parameters)
 pub struct PyLikelihood {
@@ -217,28 +218,28 @@ impl PyLikelihoodProjection {
         self.inner.name()
     }
 
-    #[pyo3(signature = (parameters: "Sequence[float] | dict[str, float]"))]
+    #[pyo3(signature = (parameters: "Sequence[float] | numpy.typing.NDArray[numpy.float32 | numpy.float64] | dict[str, float]"))]
     /// Evaluate the projected accepted-Monte-Carlo integral.
     fn accepted_integral(&self, parameters: &Bound<'_, PyAny>) -> PyResult<f64> {
         let values = free_values(&self.likelihood, parameters)?;
         self.inner.accepted_integral(&values).map_err(to_py_err)
     }
 
-    #[pyo3(signature = (parameters: "Sequence[float] | dict[str, float]"))]
+    #[pyo3(signature = (parameters: "Sequence[float] | numpy.typing.NDArray[numpy.float32 | numpy.float64] | dict[str, float]"))]
     /// Evaluate the projected generated-Monte-Carlo integral.
     fn generated_integral(&self, parameters: &Bound<'_, PyAny>) -> PyResult<f64> {
         let values = free_values(&self.likelihood, parameters)?;
         self.inner.generated_integral(&values).map_err(to_py_err)
     }
 
-    #[pyo3(signature = (parameters: "Sequence[float] | dict[str, float]"))]
+    #[pyo3(signature = (parameters: "Sequence[float] | numpy.typing.NDArray[numpy.float32 | numpy.float64] | dict[str, float]"))]
     /// Evaluate the projected accepted-to-generated integral ratio.
     fn acceptance(&self, parameters: &Bound<'_, PyAny>) -> PyResult<f64> {
         let values = free_values(&self.likelihood, parameters)?;
         self.inner.acceptance(&values).map_err(to_py_err)
     }
 
-    #[pyo3(signature = (parameters: "Sequence[float] | dict[str, float]"))]
+    #[pyo3(signature = (parameters: "Sequence[float] | numpy.typing.NDArray[numpy.float32 | numpy.float64] | dict[str, float]"))]
     /// Evaluate the full-model accepted-Monte-Carlo integral.
     fn full_accepted_integral(&self, parameters: &Bound<'_, PyAny>) -> PyResult<f64> {
         let values = free_values(&self.likelihood, parameters)?;
@@ -247,7 +248,7 @@ impl PyLikelihoodProjection {
             .map_err(to_py_err)
     }
 
-    #[pyo3(signature = (parameters: "Sequence[float] | dict[str, float]"))]
+    #[pyo3(signature = (parameters: "Sequence[float] | numpy.typing.NDArray[numpy.float32 | numpy.float64] | dict[str, float]"))]
     /// Evaluate the projected, acceptance-corrected event yield.
     fn acceptance_corrected_yield(&self, parameters: &Bound<'_, PyAny>) -> PyResult<f64> {
         let values = free_values(&self.likelihood, parameters)?;
@@ -257,19 +258,51 @@ impl PyLikelihoodProjection {
     }
 
     #[pyo3(signature = (
-        parameters: "Sequence[float] | dict[str, float]",
+        parameters: "Sequence[float] | numpy.typing.NDArray[numpy.float32 | numpy.float64] | dict[str, float]",
+        *,
         luminosity
     ))]
-    /// Evaluate the projected cross section for a positive luminosity.
-    fn cross_section(&self, parameters: &Bound<'_, PyAny>, luminosity: f64) -> PyResult<f64> {
+    /// Evaluate the observed-yield-normalized projected cross section.
+    fn observed_cross_section(
+        &self,
+        parameters: &Bound<'_, PyAny>,
+        luminosity: f64,
+    ) -> PyResult<f64> {
         let values = free_values(&self.likelihood, parameters)?;
         self.inner
-            .cross_section(&values, luminosity)
+            .observed_cross_section(&values, luminosity)
             .map_err(to_py_err)
     }
 
     #[pyo3(signature = (
-        parameters: "Sequence[float] | dict[str, float]"
+        parameters: "Sequence[float] | numpy.typing.NDArray[numpy.float32 | numpy.float64] | dict[str, float]",
+        *,
+        luminosity
+    ))]
+    /// Evaluate the fitted projected cross section for an absolute-rate term.
+    fn fitted_cross_section(
+        &self,
+        parameters: &Bound<'_, PyAny>,
+        luminosity: f64,
+    ) -> PyResult<f64> {
+        let values = free_values(&self.likelihood, parameters)?;
+        self.inner
+            .fitted_cross_section(&values, luminosity)
+            .map_err(to_py_err)
+    }
+
+    #[pyo3(signature = (
+        parameters: "Sequence[float] | numpy.typing.NDArray[numpy.float32 | numpy.float64] | dict[str, float]",
+        *,
+        luminosity
+    ))]
+    /// Alias for :meth:`observed_cross_section`.
+    fn cross_section(&self, parameters: &Bound<'_, PyAny>, luminosity: f64) -> PyResult<f64> {
+        self.observed_cross_section(parameters, luminosity)
+    }
+
+    #[pyo3(signature = (
+        parameters: "Sequence[float] | numpy.typing.NDArray[numpy.float32 | numpy.float64] | dict[str, float]"
     ) -> "Sequence[float]")]
     /// Evaluate projected intensities over generated Monte Carlo.
     fn intensities<'py>(
@@ -283,7 +316,7 @@ impl PyLikelihoodProjection {
     }
 
     #[pyo3(signature = (
-        parameters: "Sequence[float] | dict[str, float]",
+        parameters: "Sequence[float] | numpy.typing.NDArray[numpy.float32 | numpy.float64] | dict[str, float]",
         *,
         acceptance_corrected=true
     ) -> "Sequence[float]")]
@@ -351,28 +384,28 @@ impl PyCrossSectionIntegrals {
         self.inner.data_weight_sum()
     }
 
-    #[pyo3(signature = (parameters: "Sequence[float] | dict[str, float]"))]
+    #[pyo3(signature = (parameters: "Sequence[float] | numpy.typing.NDArray[numpy.float32 | numpy.float64] | dict[str, float]"))]
     /// Evaluate the selected accepted-Monte-Carlo intensity integral.
     fn accepted_integral(&self, parameters: &Bound<'_, PyAny>) -> PyResult<f64> {
         let values = free_values(&self.likelihood, parameters)?;
         self.inner.accepted_integral(&values).map_err(to_py_err)
     }
 
-    #[pyo3(signature = (parameters: "Sequence[float] | dict[str, float]"))]
+    #[pyo3(signature = (parameters: "Sequence[float] | numpy.typing.NDArray[numpy.float32 | numpy.float64] | dict[str, float]"))]
     /// Evaluate the selected generated-Monte-Carlo intensity integral.
     fn generated_integral(&self, parameters: &Bound<'_, PyAny>) -> PyResult<f64> {
         let values = free_values(&self.likelihood, parameters)?;
         self.inner.generated_integral(&values).map_err(to_py_err)
     }
 
-    #[pyo3(signature = (parameters: "Sequence[float] | dict[str, float]"))]
+    #[pyo3(signature = (parameters: "Sequence[float] | numpy.typing.NDArray[numpy.float32 | numpy.float64] | dict[str, float]"))]
     /// Evaluate the selected accepted-to-generated integral ratio.
     fn acceptance(&self, parameters: &Bound<'_, PyAny>) -> PyResult<f64> {
         let values = free_values(&self.likelihood, parameters)?;
         self.inner.acceptance(&values).map_err(to_py_err)
     }
 
-    #[pyo3(signature = (parameters: "Sequence[float] | dict[str, float]"))]
+    #[pyo3(signature = (parameters: "Sequence[float] | numpy.typing.NDArray[numpy.float32 | numpy.float64] | dict[str, float]"))]
     /// Evaluate the full-model accepted-Monte-Carlo integral.
     fn full_accepted_integral(&self, parameters: &Bound<'_, PyAny>) -> PyResult<f64> {
         let values = free_values(&self.likelihood, parameters)?;
@@ -382,7 +415,8 @@ impl PyCrossSectionIntegrals {
     }
 
     #[pyo3(signature = (
-        parameters: "Sequence[float] | dict[str, float]",
+        parameters: "Sequence[float] | numpy.typing.NDArray[numpy.float32 | numpy.float64] | dict[str, float]",
+        *,
         accepted_yield
     ))]
     /// Correct an accepted selected-component yield for finite acceptance.
@@ -398,15 +432,47 @@ impl PyCrossSectionIntegrals {
     }
 
     #[pyo3(signature = (
-        parameters: "Sequence[float] | dict[str, float]",
+        parameters: "Sequence[float] | numpy.typing.NDArray[numpy.float32 | numpy.float64] | dict[str, float]",
+        *,
         luminosity
     ))]
-    /// Evaluate the selected cross section for a positive luminosity.
-    fn cross_section(&self, parameters: &Bound<'_, PyAny>, luminosity: f64) -> PyResult<f64> {
+    /// Evaluate the observed-yield-normalized selected cross section.
+    fn observed_cross_section(
+        &self,
+        parameters: &Bound<'_, PyAny>,
+        luminosity: f64,
+    ) -> PyResult<f64> {
         let values = free_values(&self.likelihood, parameters)?;
         self.inner
-            .cross_section(&values, luminosity)
+            .observed_cross_section(&values, luminosity)
             .map_err(to_py_err)
+    }
+
+    #[pyo3(signature = (
+        parameters: "Sequence[float] | numpy.typing.NDArray[numpy.float32 | numpy.float64] | dict[str, float]",
+        *,
+        luminosity
+    ))]
+    /// Evaluate the fitted selected cross section for an absolute-rate term.
+    fn fitted_cross_section(
+        &self,
+        parameters: &Bound<'_, PyAny>,
+        luminosity: f64,
+    ) -> PyResult<f64> {
+        let values = free_values(&self.likelihood, parameters)?;
+        self.inner
+            .fitted_cross_section(&values, luminosity)
+            .map_err(to_py_err)
+    }
+
+    #[pyo3(signature = (
+        parameters: "Sequence[float] | numpy.typing.NDArray[numpy.float32 | numpy.float64] | dict[str, float]",
+        *,
+        luminosity
+    ))]
+    /// Alias for :meth:`observed_cross_section`.
+    fn cross_section(&self, parameters: &Bound<'_, PyAny>, luminosity: f64) -> PyResult<f64> {
+        self.observed_cross_section(parameters, luminosity)
     }
 }
 
@@ -415,10 +481,7 @@ impl PyCrossSectionIntegrals {
 /// A sequence is used directly. A mapping starts from the default values and
 /// replaces entries whose names are present.
 pub fn free_values(likelihood: &Likelihood, values: &Bound<'_, PyAny>) -> PyResult<Vec<f64>> {
-    if let Ok(array) = values.extract::<PyReadonlyArray1<'_, f64>>() {
-        return Ok(array.as_array().iter().copied().collect());
-    }
-    if let Ok(values) = values.extract::<Vec<f64>>() {
+    if let Ok(values) = float_vec(values) {
         return Ok(values);
     }
     if let Ok(mapping) = values.cast::<PyDict>() {
@@ -542,7 +605,7 @@ impl PyLikelihood {
         self.inner.sample_initial(seed)
     }
 
-    #[pyo3(signature = (parameters: "Sequence[float] | dict[str, float]"))]
+    #[pyo3(signature = (parameters: "Sequence[float] | numpy.typing.NDArray[numpy.float32 | numpy.float64] | dict[str, float]"))]
     /// Evaluate the total negative log-likelihood.
     ///
     /// Parameters
@@ -561,7 +624,7 @@ impl PyLikelihood {
             .map_err(to_py_err)
     }
 
-    #[pyo3(signature = (parameters: "Sequence[float] | dict[str, float]"))]
+    #[pyo3(signature = (parameters: "Sequence[float] | numpy.typing.NDArray[numpy.float32 | numpy.float64] | dict[str, float]"))]
     /// Evaluate the total negative log-likelihood.
     ///
     /// This is an alias for :meth:`value`.
@@ -570,7 +633,7 @@ impl PyLikelihood {
     }
 
     #[pyo3(signature = (
-        parameters: "Sequence[float] | dict[str, float]"
+        parameters: "Sequence[float] | numpy.typing.NDArray[numpy.float32 | numpy.float64] | dict[str, float]"
     ) -> "tuple[float, Sequence[float]]")]
     /// Evaluate the negative log-likelihood and its gradient.
     ///
@@ -601,10 +664,10 @@ impl PyLikelihood {
 
     #[pyo3(signature = (
         term_name,
-        generated_mc,
         *,
+        generated_mc,
         luminosity,
-        parameters: "Sequence[float] | dict[str, float]",
+        parameters: "Sequence[float] | numpy.typing.NDArray[numpy.float32 | numpy.float64] | dict[str, float]",
         ensemble=None
     ))]
     /// Prepare the preferred total, tagged, and differential cross-section analysis.
@@ -636,7 +699,7 @@ impl PyLikelihood {
         Ok(PyCrossSection { inner })
     }
 
-    #[pyo3(signature = (term_name, generated_mc, *, tags=None))]
+    #[pyo3(signature = (term_name, *, generated_mc, tags=None))]
     /// Prepare cross-section integrals for a model-backed term.
     ///
     /// Parameters
@@ -700,6 +763,7 @@ impl PyLikelihood {
     /// ------
     /// LadduError
     ///     If the term is unknown, cannot be projected, or schemas mismatch.
+    #[pyo3(signature = (term_name, *, generated_mc, tags))]
     fn projection(
         &self,
         term_name: &str,

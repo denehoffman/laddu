@@ -232,6 +232,15 @@ pub trait LikelihoodTerm: Debug + Send + Sync {
         None
     }
 
+    /// Reports whether this term determines an absolute expected event rate.
+    ///
+    /// Shape-only intensity terms leave their overall scale unconstrained.
+    /// Extended intensity terms override this when their normalization is part
+    /// of the objective.
+    fn has_absolute_rate(&self) -> bool {
+        false
+    }
+
     /// Boxes this term for use in a heterogeneous [`Likelihood`].
     fn boxed(self) -> Box<dyn LikelihoodTerm>
     where
@@ -521,10 +530,11 @@ impl Likelihood {
         let Some(term) = self.terms.iter().find(|term| term.name() == term_name) else {
             return Err(LikelihoodError::MissingTerm(term_name.to_owned()));
         };
+        let has_absolute_rate = term.has_absolute_rate();
         let Some(term) = term.as_intensity() else {
             return Err(LikelihoodError::NotIntensityTerm(term_name.to_owned()));
         };
-        term.cross_section_integrals(generated_mc, &self.execution)
+        term.cross_section_integrals(generated_mc, &self.execution, has_absolute_rate)
     }
 
     /// Prepares tag-narrowed accepted and generated Monte Carlo integrals.
@@ -546,10 +556,16 @@ impl Likelihood {
         let Some(term) = self.terms.iter().find(|term| term.name() == term_name) else {
             return Err(LikelihoodError::MissingTerm(term_name.to_owned()));
         };
+        let has_absolute_rate = term.has_absolute_rate();
         let Some(term) = term.as_intensity() else {
             return Err(LikelihoodError::NotIntensityTerm(term_name.to_owned()));
         };
-        term.cross_section_integrals_with_tags(generated_mc, tags, &self.execution)
+        term.cross_section_integrals_with_tags(
+            generated_mc,
+            tags,
+            &self.execution,
+            has_absolute_rate,
+        )
     }
 
     /// Returns the observed and accepted Monte Carlo sources for an intensity term.
@@ -583,10 +599,11 @@ impl Likelihood {
         let Some(term) = self.terms.iter().find(|term| term.name() == term_name) else {
             return Err(LikelihoodError::MissingTerm(term_name.to_owned()));
         };
+        let has_absolute_rate = term.has_absolute_rate();
         let Some(term) = term.as_intensity() else {
             return Err(LikelihoodError::NotIntensityTerm(term_name.to_owned()));
         };
-        term.projection(generated_mc, tags, &self.execution)
+        term.projection(generated_mc, tags, &self.execution, has_absolute_rate)
     }
 }
 
@@ -655,6 +672,7 @@ impl NllTerm {
         generated_mc: &Dataset,
         tags: impl IntoIterator<Item = &'a str>,
         execution: &Execution,
+        has_absolute_rate: bool,
     ) -> LikelihoodResult<LikelihoodProjection> {
         let projected_model =
             self.model
@@ -682,6 +700,7 @@ impl NllTerm {
             projected_plan,
             projected_params,
             data_weight_sum: self.data_weight_sum()?,
+            has_absolute_rate,
             execution: execution.clone(),
         })
     }
@@ -787,6 +806,7 @@ impl NllTerm {
         &self,
         generated_mc: &Dataset,
         execution: &Execution,
+        has_absolute_rate: bool,
     ) -> LikelihoodResult<CrossSectionIntegrals> {
         let plan = self.plan()?.clone();
         Ok(CrossSectionIntegrals {
@@ -801,6 +821,7 @@ impl NllTerm {
             accepted_mc: self.accepted_mc()?.clone(),
             generated_mc: plan.prepare_dataset(execution, generated_mc)?,
             data_weight_sum: self.data_weight_sum()?,
+            has_absolute_rate,
             execution: execution.clone(),
         })
     }
@@ -810,8 +831,9 @@ impl NllTerm {
         generated_mc: &Dataset,
         tags: impl IntoIterator<Item = &'a str>,
         execution: &Execution,
+        has_absolute_rate: bool,
     ) -> LikelihoodResult<CrossSectionIntegrals> {
-        let projection = self.projection(generated_mc, tags, execution)?;
+        let projection = self.projection(generated_mc, tags, execution, has_absolute_rate)?;
         Ok(CrossSectionIntegrals {
             name: projection.name,
             full_plan: projection.full_plan,
@@ -824,6 +846,7 @@ impl NllTerm {
             accepted_mc: projection.projected_accepted_mc,
             generated_mc: projection.projected_generated_mc,
             data_weight_sum: projection.data_weight_sum,
+            has_absolute_rate: projection.has_absolute_rate,
             execution: projection.execution,
         })
     }
@@ -1251,6 +1274,14 @@ impl LikelihoodTerm for ExtendedNllTerm {
             .scatter_gradient(&local_gradient, gradient)?;
         Ok(normalization - data_log_sum)
     }
+
+    fn as_intensity(&self) -> Option<&NllTerm> {
+        Some(&self.inner)
+    }
+
+    fn has_absolute_rate(&self) -> bool {
+        true
+    }
 }
 
 /// Quadratic regularization over selected parameters.
@@ -1489,6 +1520,7 @@ pub struct CrossSectionIntegrals {
     accepted_mc: PreparedDataset,
     generated_mc: PreparedDataset,
     data_weight_sum: f64,
+    has_absolute_rate: bool,
     execution: Execution,
 }
 
@@ -1516,6 +1548,7 @@ pub struct LikelihoodProjection {
     accepted_mc_source: Dataset,
     generated_mc_source: Dataset,
     data_weight_sum: f64,
+    has_absolute_rate: bool,
     execution: Execution,
 }
 
@@ -1587,17 +1620,45 @@ impl LikelihoodProjection {
         Ok(self.data_weight_sum * self.generated_integral(free)? / accepted)
     }
 
-    /// Returns the projected cross section for a positive luminosity.
+    /// Returns the observed-yield-normalized projected cross section.
     ///
     /// # Errors
     ///
     /// Returns [`LikelihoodError`] when `luminosity` is not positive or the
     /// acceptance-corrected yield cannot be evaluated.
-    pub fn cross_section(&self, free: &[f64], luminosity: f64) -> LikelihoodResult<f64> {
-        if luminosity <= 0.0 {
+    pub fn observed_cross_section(&self, free: &[f64], luminosity: f64) -> LikelihoodResult<f64> {
+        if !luminosity.is_finite() || luminosity <= 0.0 {
             return Err(LikelihoodError::NonPositiveLuminosity(luminosity));
         }
         Ok(self.acceptance_corrected_yield(free)? / luminosity)
+    }
+
+    /// Returns the fitted projected cross section from an absolute-rate term.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LikelihoodError::AbsoluteRateUnavailable`] for shape-only
+    /// terms, or [`LikelihoodError`] when luminosity or integral evaluation
+    /// fails.
+    pub fn fitted_cross_section(&self, free: &[f64], luminosity: f64) -> LikelihoodResult<f64> {
+        if !self.has_absolute_rate {
+            return Err(LikelihoodError::AbsoluteRateUnavailable(
+                self.name.as_str().to_owned(),
+            ));
+        }
+        if !luminosity.is_finite() || luminosity <= 0.0 {
+            return Err(LikelihoodError::NonPositiveLuminosity(luminosity));
+        }
+        Ok(self.generated_integral(free)? / luminosity)
+    }
+
+    /// Alias for [`Self::observed_cross_section`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LikelihoodError`] when luminosity or integral evaluation fails.
+    pub fn cross_section(&self, free: &[f64], luminosity: f64) -> LikelihoodResult<f64> {
+        self.observed_cross_section(free, luminosity)
     }
 
     /// Returns per-event projected weights over generated Monte Carlo.
@@ -1781,18 +1842,49 @@ impl CrossSectionIntegrals {
         Ok(accepted_yield * self.generated_integral(free)? / accepted)
     }
 
-    /// Returns the acceptance-corrected cross section for a positive luminosity.
+    /// Returns the observed-yield-normalized cross section.
     ///
     /// # Errors
     ///
     /// Returns [`LikelihoodError`] when `luminosity` is not positive or the
     /// acceptance-corrected yield cannot be evaluated.
-    pub fn cross_section(&self, free: &[f64], luminosity: f64) -> LikelihoodResult<f64> {
-        if luminosity <= 0.0 {
+    pub fn observed_cross_section(&self, free: &[f64], luminosity: f64) -> LikelihoodResult<f64> {
+        if !luminosity.is_finite() || luminosity <= 0.0 {
             return Err(LikelihoodError::NonPositiveLuminosity(luminosity));
         }
         let full_accepted = positive_integral("accepted MC", self.full_accepted_integral(free)?)?;
         Ok(self.data_weight_sum * self.generated_integral(free)? / full_accepted / luminosity)
+    }
+
+    /// Returns the fitted cross section from an absolute-rate term.
+    ///
+    /// For a tagged evaluator this uses the selected generated intensity
+    /// directly, without rescaling it to the observed yield.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LikelihoodError::AbsoluteRateUnavailable`] for shape-only
+    /// terms, or [`LikelihoodError`] when luminosity or integral evaluation
+    /// fails.
+    pub fn fitted_cross_section(&self, free: &[f64], luminosity: f64) -> LikelihoodResult<f64> {
+        if !self.has_absolute_rate {
+            return Err(LikelihoodError::AbsoluteRateUnavailable(
+                self.name.as_str().to_owned(),
+            ));
+        }
+        if !luminosity.is_finite() || luminosity <= 0.0 {
+            return Err(LikelihoodError::NonPositiveLuminosity(luminosity));
+        }
+        Ok(self.generated_integral(free)? / luminosity)
+    }
+
+    /// Alias for [`Self::observed_cross_section`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LikelihoodError`] when luminosity or integral evaluation fails.
+    pub fn cross_section(&self, free: &[f64], luminosity: f64) -> LikelihoodResult<f64> {
+        self.observed_cross_section(free, luminosity)
     }
 
     /// Returns the full-model accepted Monte Carlo integral.
@@ -2133,6 +2225,61 @@ mod tests {
             finite_difference_nll(&likelihood, &params, 0),
             epsilon = 1.0e-8
         );
+    }
+
+    #[test]
+    fn extended_nll_exposes_observed_and_fitted_cross_sections() {
+        let model =
+            CompiledModel::from_expr(&(event_scalar("x") * parameter!("scale", initial: 0.25)))
+                .unwrap();
+        let data = weighted_dataset(&[(2.0, 1.0), (3.0, 1.0)]);
+        let accepted_mc = weighted_dataset(&[(4.0, 1.0)]);
+        let generated_mc = weighted_dataset(&[(6.0, 1.0)]);
+        let likelihood =
+            Likelihood::new([
+                ExtendedNllTerm::new("extended", &model, &data, &accepted_mc).unwrap(),
+            ])
+            .unwrap();
+        let params = likelihood.default_params();
+        let integrals = likelihood
+            .cross_section_integrals("extended", &generated_mc)
+            .unwrap();
+
+        assert_relative_eq!(
+            integrals.observed_cross_section(&params, 10.0).unwrap(),
+            0.3
+        );
+        assert_relative_eq!(integrals.fitted_cross_section(&params, 10.0).unwrap(), 0.15);
+        assert_relative_eq!(
+            integrals.cross_section(&params, 10.0).unwrap(),
+            integrals.observed_cross_section(&params, 10.0).unwrap()
+        );
+        assert_relative_eq!(
+            likelihood
+                .intensity_datasets("extended")
+                .unwrap()
+                .0
+                .sum_weights()
+                .unwrap(),
+            data.sum_weights().unwrap()
+        );
+    }
+
+    #[test]
+    fn fitted_cross_section_rejects_shape_only_nll() {
+        let model = CompiledModel::from_expr(&event_scalar("x")).unwrap();
+        let data = weighted_dataset(&[(2.0, 1.0)]);
+        let accepted_mc = weighted_dataset(&[(4.0, 1.0)]);
+        let generated_mc = weighted_dataset(&[(6.0, 1.0)]);
+        let likelihood = single_term_likelihood("shape", &model, &data, &accepted_mc);
+        let integrals = likelihood
+            .cross_section_integrals("shape", &generated_mc)
+            .unwrap();
+
+        assert!(matches!(
+            integrals.fitted_cross_section(&[], 10.0),
+            Err(LikelihoodError::AbsoluteRateUnavailable(name)) if name == "shape"
+        ));
     }
 
     #[test]

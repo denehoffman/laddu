@@ -3,6 +3,79 @@
 // Python-facing fallibility is documented with NumPy-style ``Raises`` sections.
 #![allow(clippy::missing_errors_doc)]
 
+use numpy::{PyReadonlyArray1, PyReadonlyArray2, PyReadonlyArray3};
+use pyo3::{exceptions::PyTypeError, prelude::*, types::PyAny};
+
+/// Convert a one-dimensional Python float sequence or NumPy array to `f64`.
+pub(crate) fn float_vec(values: &Bound<'_, PyAny>) -> PyResult<Vec<f64>> {
+    if let Ok(values) = values.extract::<PyReadonlyArray1<'_, f64>>() {
+        return Ok(values.as_array().iter().copied().collect());
+    }
+    if let Ok(values) = values.extract::<PyReadonlyArray1<'_, f32>>() {
+        return Ok(values
+            .as_array()
+            .iter()
+            .map(|&value| f64::from(value))
+            .collect());
+    }
+    values.extract::<Vec<f64>>().map_err(|_| {
+        PyTypeError::new_err(
+            "expected a one-dimensional float sequence or float32/float64 NumPy array",
+        )
+    })
+}
+
+/// Convert a two-dimensional NumPy float array to nested `f64` vectors.
+pub(crate) fn float_matrix(values: &Bound<'_, PyAny>) -> PyResult<Vec<Vec<f64>>> {
+    if let Ok(values) = values.extract::<PyReadonlyArray2<'_, f64>>() {
+        return Ok(values
+            .as_array()
+            .outer_iter()
+            .map(|row| row.to_vec())
+            .collect());
+    }
+    if let Ok(values) = values.extract::<PyReadonlyArray2<'_, f32>>() {
+        return Ok(values
+            .as_array()
+            .outer_iter()
+            .map(|row| row.iter().map(|&value| f64::from(value)).collect())
+            .collect());
+    }
+    values.extract::<Vec<Vec<f64>>>().map_err(|_| {
+        PyTypeError::new_err(
+            "expected a two-dimensional float sequence or float32/float64 NumPy array",
+        )
+    })
+}
+
+/// Convert a three-dimensional NumPy float array to nested `f64` vectors.
+pub(crate) fn float_tensor3(values: &Bound<'_, PyAny>) -> PyResult<Vec<Vec<Vec<f64>>>> {
+    if let Ok(values) = values.extract::<PyReadonlyArray3<'_, f64>>() {
+        return Ok(values
+            .as_array()
+            .outer_iter()
+            .map(|matrix| matrix.outer_iter().map(|row| row.to_vec()).collect())
+            .collect());
+    }
+    if let Ok(values) = values.extract::<PyReadonlyArray3<'_, f32>>() {
+        return Ok(values
+            .as_array()
+            .outer_iter()
+            .map(|matrix| {
+                matrix
+                    .outer_iter()
+                    .map(|row| row.iter().map(|&value| f64::from(value)).collect())
+                    .collect()
+            })
+            .collect());
+    }
+    values.extract::<Vec<Vec<Vec<f64>>>>().map_err(|_| {
+        PyTypeError::new_err(
+            "expected a three-dimensional float sequence or float32/float64 NumPy array",
+        )
+    })
+}
+
 /// Python functions for constructing standard amplitude models.
 pub mod amplitude;
 /// Python vector, rotation, and angular-momentum helpers.
@@ -207,6 +280,8 @@ mod tests {
                 "acceptance",
                 "full_accepted_integral",
                 "acceptance_corrected_yield",
+                "observed_cross_section",
+                "fitted_cross_section",
                 "cross_section",
             ] {
                 assert!(
@@ -221,6 +296,8 @@ mod tests {
                 "acceptance",
                 "full_accepted_integral",
                 "acceptance_corrected_yield",
+                "observed_cross_section",
+                "fitted_cross_section",
                 "cross_section",
                 "intensities",
                 "weights",
@@ -233,6 +310,8 @@ mod tests {
             let cross_section = module.getattr(py, "CrossSection").unwrap();
             for method in [
                 "total",
+                "observed_total",
+                "fitted_total",
                 "acceptance",
                 "corrected_yield",
                 "differential",
