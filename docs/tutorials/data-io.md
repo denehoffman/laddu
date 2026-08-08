@@ -1,108 +1,109 @@
-# Reading, transforming, and writing data
+# Reading, transforming, and writing event data
 
-laddu datasets are typed collections of named four-vectors, named real scalars, and one event weight. This tutorial begins in memory, then moves to lazy file-backed data.
+A laddu {py:class}`laddu.Dataset` is a typed collection of named four-vectors,
+named real scalars, and one statistical weight per event. Names form the event
+schema: later expressions request columns by name rather than by position.
 
-## Construct a dataset from arrays
+## Construct data from NumPy arrays
 
-Four-vector arrays have shape `(events, 4)` in $(E,p_x,p_y,p_z)$ order. All columns and weights must have the same length.
+Four-vectors have shape `(events, 4)` in $(E,p_x,p_y,p_z)$ order. Scalar
+columns and weights have shape `(events,)`. Both `float32` and `float64` arrays
+are accepted and converted to laddu's internal real representation.
 
 ```python
 import laddu as ld
 import numpy as np
 
-beam = np.array([[9.0, 0.0, 0.0, 9.0], [8.5, 0.0, 0.0, 8.5]])
-recoil = np.array([[1.1, 0.1, 0.0, 0.55], [1.2, -0.1, 0.1, 0.70]])
 events = ld.Dataset.from_arrays(
-    p4s={"beam": beam, "recoil": recoil},
-    scalars={"run": np.array([12001.0, 12001.0])},
-    weights=np.array([1.0, 0.8]),
+    p4s={
+        "beam": np.array(
+            [[9.0, 0.0, 0.0, 9.0], [8.5, 0.0, 0.0, 8.5]],
+            dtype=np.float32,
+        ),
+        "recoil": np.array(
+            [[1.1, 0.1, 0.0, 0.55], [1.2, -0.1, 0.1, 0.70]],
+        ),
+    },
+    scalars={"run": np.array([12001, 12001], dtype=np.float32)},
+    weights=np.array([1.0, 0.8], dtype=np.float32),
 )
-
-print(events.p4_names(), events.scalar_names(), events.sum_weights())
 ```
 
-### The laddu event schema
-
-Each event has exactly three kinds of fields:
-
-- zero or more named four-vectors, each stored as four real components;
-- zero or more named real scalars;
-- one real event weight, which defaults to `1.0`.
-
-Names are schema keys, not array positions. A model that asks for
-`channel.mass("X")` or `ld.Vec4.event("beam")` resolves the required components
-by name when it is prepared against the dataset. All rows in one dataset share
-the same schema, and duplicate names or mismatched column lengths are rejected.
-
-Weights are multiplicative statistical weights. Selection retains them,
-subsampling retains them on selected rows, and bootstrap multiplies them by
-Poisson counts. Keep efficiency variables as scalar columns unless they are
-already incorporated into the event weights by the analysis convention.
+All columns must contain the same number of events. Duplicate names, invalid
+four-vector shapes, and length mismatches fail at construction.
 
 ```{note}
-Positional four-vector values use metric order `(E, px, py, pz)`, including
-rows passed to `Dataset.from_arrays` and the symbolic
-`Vec4(e, px, py, pz)` constructor. Dataset and file columns themselves are
-named, so their physical storage order is not part of the schema.
+laddu does not infer units. Use one convention—normally GeV and radians—for
+input data, particle masses, model parameters, bin edges, and reported results.
 ```
 
-Expressions are evaluated without exporting the event loop to Python. Scalar
-columns are addressed by name; channel helpers provide the usual four-vector
-invariants and angles for physics models:
+## Read file-backed data
+
+Convenience readers infer the laddu schema and create lazy datasets:
 
 ```python
-run_number = events.evaluate(ld.scalar("run"), real=True)
-
-# With a Channel describing these columns:
-mass = channel.mass("X")
-m_x = events.evaluate(mass, real=True)
+data = ld.read_parquet("accepted/*.parquet")
+control = ld.read_root("control.root", tree="events")
 ```
 
-## Parquet and ROOT
+Use `p4_names()` and `scalar_names()` to check unfamiliar files. A model-schema
+mismatch is reported when an expression is prepared, before optimization.
 
-Convenience readers create file-backed datasets:
+Memory and cache controls are optional operational choices:
 
 ```python
-data = ld.read_parquet("accepted/*.parquet", memory="2 GiB", cache="fastest")
-control = ld.read_root(
-    "control.root", tree="events", memory="25% available", cache="streaming"
+data = ld.read_parquet(
+    "accepted/*.parquet",
+    memory="2 GiB",
+    cache="fastest",
 )
 ```
 
-`fastest` retains decoded data when the full working set fits and otherwise
-streams memory-derived chunks. Use `resident` to require a fully cached dataset
-or `streaming` to require rereads. An explicit policy fails when its minimum
-working set cannot fit instead of exceeding the budget.
+`fastest` caches decoded data when it fits and otherwise streams chunks.
+`resident` requires a fully cached dataset; `streaming` requires rereads.
 
-ROOT and Parquet readers infer the laddu schema from column names. Use the
-source configuration when an external file uses a nonstandard tree, component
-layout, or weight column; inspect `p4_names()` and `scalar_names()` immediately
-after reading unfamiliar data. A schema mismatch is caught when an expression
-or model is prepared, before the fit loop starts.
+## Evaluate and transform
 
-Write the current transformed dataset through an explicit sink:
+Expressions keep event loops inside laddu. A scalar column is addressed by
+name, while reaction-channel helpers introduced in {doc}`quantum-numbers`
+construct invariant masses and angles from named four-vectors.
 
 ```python
-data.write_to(ld.ParquetSink("selected.parquet", precision="f64"))
-data.write_to(ld.RootSink("selected.root", tree="events", precision="f32"))
-```
+run = ld.scalar("run")
+run_values = events.evaluate(run, real=True)
 
-## Selection, resampling, and binning
-
-Predicates remain symbolic and execute in the selected backend:
-
-```python
-selected = data.select((mass > 1.0) & (mass < 2.0), execution=execution)
+selected = events.select((run >= 12000) & (run < 13000))
 small = selected.subsample(0.1, seed=4)
 replica = selected.bootstrap(seed=5)
-
-mass_bins = selected.bin_by(mass, ld.Bin.uniform(20, 1.0, 2.0), execution=execution)
-for item in mass_bins:
-    print(item.index, item.low, item.high, len(item.dataset))
 ```
 
-Bootstrap multiplies each existing event weight by an independent Poisson(1) draw. It preserves event coordinates and is therefore convenient for uncertainty studies.
+`bootstrap` multiplies each existing event weight by an independent
+Poisson$(1)$ draw while preserving event coordinates. `subsample` selects a
+reproducible subset without changing retained weights.
 
-```{warning}
-laddu does not infer units. Use one consistent convention—normally GeV and radians—through input, particle masses, line-shape parameters, plots, and reported results.
+## Bin event data
+
+A bin specification can be uniform or use explicit Python/NumPy edges:
+
+```python
+uniform = ld.Bin.uniform(20, low=12000.0, high=13000.0)
+explicit = ld.Bin(np.linspace(12000.0, 13000.0, 21, dtype=np.float32))
+
+run_bins = selected.bin_by(run, bins=explicit)
+first_bin_data = run_bins[0].dataset
 ```
+
+The result includes every interval in edge order, including empty bins. Each
+item retains its index, limits, and dataset.
+
+## Write transformed data
+
+Sinks make output format and precision explicit:
+
+```python
+selected.write_to(ld.ParquetSink("selected.parquet", precision="f64"))
+selected.write_to(ld.RootSink("selected.root", tree="events", precision="f32"))
+```
+
+The next chapter builds particles and a reaction channel whose edge names match
+the dataset schema.

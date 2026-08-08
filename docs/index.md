@@ -18,11 +18,10 @@ import laddu as ld
 
 execution = ld.Execution("auto", precision="f64")
 likelihood = ld.Likelihood(
-    [ld.NLL(model, data, accepted_mc, name="signal")],
+    [ld.NLL(model, data=data, accepted_mc=accepted_mc, name="signal")],
     execution=execution,
 )
 fit = likelihood.fit(
-    ld.ganesh.LBFGSBConfig(history_size=10),
     terminators=[ld.ganesh.MaxSteps(500)],
 )
 ```

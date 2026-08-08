@@ -1,175 +1,118 @@
-# Fitting an unbinned model
+# Fitting a model to unbinned event data
 
-This chapter assumes that `model`, observed `data`, and accepted normalization `mc` share a compatible schema. The normalization sample must pass the same reconstruction and selection as the data.
+This chapter uses the `model` built in {doc}`expressions`, observed `data`, and
+detector-selected `accepted_mc`. All three must have compatible schemas.
 
-## Build the objective
+## The normalized event likelihood
 
-For a normalized intensity, laddu minimizes
+For intensity $I(\Omega;\theta)$, laddu's normalized `NLL` minimizes
 
 $$
-\mathcal F(\boldsymbol\theta)
-=-\sum_{i=1}^{N_\mathrm{data}} w_i\log I(\Omega_i;\boldsymbol\theta)
-+\left(\sum_i w_i\right)\log \widehat{\mathcal N}(\boldsymbol\theta),
+\mathcal F(\theta)
+=-\sum_{i\in\mathrm{data}}w_i\log I(\Omega_i;\theta)
++N_w\log \widehat{\mathcal N}(\theta),
+\qquad
+N_w=\sum_i w_i,
 $$
 
-where $\widehat{\mathcal N}$ is a weighted accepted-MC integral. Overall intensity scale cancels, so fix one complex coupling as the reference amplitude.
+where the accepted-MC estimate of the normalization is
+
+$$
+\widehat{\mathcal N}(\theta)
+=\sum_{j\in\mathrm{accepted\ MC}}w_j I(\Omega_j;\theta).
+$$
+
+A global rescaling of $I$ cancels. Fix one complex amplitude's magnitude and
+phase to define a convention, as the `reference_wave` did in the preceding
+model.
+
+## Build and inspect the objective
 
 ```python
-import laddu as ld
-import numpy as np
-
-execution = ld.Execution("auto", precision="f64", autodiff="forward")
-term = ld.NLL(model, data, mc, name="signal")
-likelihood = ld.Likelihood([term], execution=execution)
+term = ld.NLL(model, data=data, accepted_mc=accepted_mc, name="signal")
+likelihood = ld.Likelihood([term])
 
 initial = likelihood.sample_parameters(seed=100)
 value, gradient = likelihood.value_and_gradient(initial)
-assert np.isfinite(value) and np.all(np.isfinite(gradient))
 ```
 
-## Fixing and freeing parameters
+Check that the initial objective and every gradient component are finite.
+`likelihood.parameter_names` defines the order of all parameter vectors.
 
-A parameter can be fixed when it is created:
+Parameters may instead be fixed in the expression or in a compiled model:
 
 ```python
 reference_re = ld.parameter("reference_re", fixed=1.0)
 reference_im = ld.parameter("reference_im", fixed=0.0)
+
+mass_fixed_model = model.fix("mass_0", 1.50)
+mass_freed_model = mass_fixed_model.free("mass_0")
 ```
 
-Fixed parameters remain part of the expression but are absent from
-`model.parameter_names` and optimizer vectors. This is the usual way to remove
-the unobservable overall magnitude and phase of a coherent amplitude.
+`fix` and `free` return new models. Rebuild the likelihood because its parameter
+layout has changed.
 
-Models also support immutable post-construction changes:
+## Minimize the likelihood
 
-```python
-nominal = ld.Model(intensity)
-mass_fixed = nominal.fix("resonance_mass", 1.50)
-mass_freed = mass_fixed.free("resonance_mass")
-
-assert "resonance_mass" not in mass_fixed.parameter_names
-assert "resonance_mass" in mass_freed.parameter_names
-```
-
-`fix` and `free` return recompiled models; they do not mutate the original.
-Build a new likelihood from the returned model because the parameter layout and
-gradient dimension have changed. Bounds and metadata are retained when a
-parameter is freed again.
-
-Use fixing for an intentional physical constraint or a staged fit, not to hide
-an unstable direction. Record the fixed values alongside the fit result.
-
-## Minimize
-
-L-BFGS-B uses model bounds and analytic automatic derivatives:
+With no optimizer configuration, `fit` uses L-BFGS-B with its default
+settings:
 
 ```python
 fit = likelihood.fit(
-    ld.ganesh.LBFGSBConfig(history_size=10),
     initial=initial,
     terminators=[ld.ganesh.MaxSteps(500)],
-    observers=[ld.ganesh.ProgressObserver(interval=10)],
 )
-assert isinstance(fit.x, np.ndarray)
+
 fitted = dict(zip(fit.parameter_names, fit.x, strict=True))
-print(fit)
 ```
 
-`initial` accepts a Python sequence, a one-dimensional NumPy array, or a
-dictionary keyed by free-parameter name. A dictionary starts from parameter
-defaults and overrides only the named entries:
+`initial` may be a Python sequence, a one-dimensional NumPy array of either
+floating dtype, or a partial mapping by parameter name:
 
 ```python
 fit = likelihood.fit(
-    ld.ganesh.LBFGSBConfig(),
-    initial={"resonance_mass": 1.52, "resonance_width": 0.12},
+    initial={"mass_0": 1.52, "width_0": 0.11},
 )
 ```
 
-Unknown dictionary keys are errors, which catches misspelled parameter names.
-`ganesh.VectorInit` remains available when interacting with ganesh directly,
-but is unnecessary for `Likelihood.fit`.
+Unknown names are errors. Run several seeded starts and compare objective
+values; periodic phases and symmetry-related solutions need not have identical
+coordinates.
 
-Nelder–Mead normally creates a scaled orthogonal simplex around `initial`.
-Supply all $n+1$ vertices explicitly through its configuration when the
-simplex geometry matters:
+## Project fitted components
+
+Tags attached during model construction define coherent projections:
 
 ```python
-center = np.asarray(initial, dtype=np.float64)
-steps = 0.01 * np.maximum(np.abs(center), 1.0)
-simplex = np.vstack([center, center + np.diag(steps)])
-
-fit = likelihood.fit(
-    ld.ganesh.NelderMeadConfig(initial_simplex=simplex),
-    initial=center,
-    terminators=[ld.ganesh.MaxSteps(2000)],
+projection = likelihood.projection(
+    "signal",
+    generated_mc=generated_mc,
+    tags=["reference", "second"],
 )
-```
 
-The simplex and `initial` are expressed in the same free-parameter order.
-
-Run multiple reproducibly seeded starts. Agreement in objective value is more meaningful than agreement in periodic phases or parameters related by model symmetries.
-
-## MCMC sampling
-
-The affine-invariant ensemble sampler requires a two-dimensional matrix with
-one free-parameter vector per walker. A small cloud around a converged minimum
-is a useful initialization for a local posterior exploration:
-
-```python
-n_walkers = max(32, 2 * len(fit.x))
-walkers = likelihood.walker_positions(
+projection_weights = projection.weights(
     fit.x,
-    n_walkers,
-    scale=1.0e-3,
-    seed=2026,
+    acceptance_corrected=True,
 )
-
-samples = likelihood.sample(
-    ld.ganesh.AIESConfig(),
-    ld.ganesh.AIESInit(walkers),
-    seed=2027,
-    terminators=[ld.ganesh.MaxSteps(5000)],
-)
-
-chain = samples.chain  # NumPy array: (walkers, steps, parameters)
 ```
 
-`walker_positions` uses each parameter's declared optimizer scale when one is
-available, otherwise `max(abs(center), 1)`. It resamples bounded coordinates
-and wraps periodic coordinates. This keeps the convenience API small: it
-generates positions only, while ganesh remains responsible for validating and
-running the ensemble. Use a broader or physics-informed ensemble when exploring
-separated modes; a tiny cloud around one minimum will not discover them by
-itself. Discard burn-in, check acceptance and autocorrelation diagnostics, and
-run enough independent ensembles to assess convergence.
+The selected amplitudes interfere with each other. Adding separately projected
+single-wave intensities generally does not reproduce the coherent projection.
 
-## Projection and uncertainty
+## Propagate statistical uncertainty
 
-Tag amplitude components before constructing `model`, then project them on generated MC:
+For bootstrap uncertainty, laddu can resample each observed dataset, refit the
+replica, and retain the pairing between data and fitted parameters:
 
 ```python
-projection = likelihood.projection("signal", generated_mc, ["wave_0", "wave_2"])
-weights = projection.weights(fitted, acceptance_corrected=True)
+bootstrap = likelihood.bootstrap_fit(
+    200,
+    initial=fit.x,
+    seed=12345,
+    terminators=[ld.ganesh.MaxSteps(500)],
+)
 ```
 
-The projection preserves coherent interference among the retained tags. A sum of single-wave projections is generally not the coherent total.
-
-For a robust first uncertainty estimate, bootstrap the data and refit from the central solution:
-
-```python
-replicas = []
-for seed in range(1000, 1100):
-    replica_data = data.bootstrap(seed=seed)
-    replica_likelihood = ld.Likelihood(
-        [ld.NLL(model, replica_data, mc, name="signal")], execution=execution
-    )
-    result = replica_likelihood.fit(
-        ld.ganesh.LBFGSBConfig(history_size=10),
-        initial=fitted,
-        terminators=[ld.ganesh.MaxSteps(300)],
-    )
-    replicas.append(result.x)
-```
-
-Inspect convergence state, gradients, boundary contacts, start-to-start stability, projection agreement, and pull behavior on closure samples before interpreting physical parameters.
+That pairing is important for yield and cross-section uncertainties. Inspect
+fit termination, gradient size, parameter boundaries, start-to-start
+stability, and bootstrap pull behavior before interpreting parameters.

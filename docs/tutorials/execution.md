@@ -1,110 +1,107 @@
-# Execution and compilation settings
+# Execution backends, memory, and MPI
 
-An `Execution` object makes performance and numerical choices explicit. Pass the same object to generation, dataset evaluation, binning, and likelihood preparation.
+Every earlier tutorial can use laddu's default execution. Introduce an explicit
+{py:class}`laddu.Execution` only when changing performance, precision, memory,
+or distribution. The physics model and likelihood API remain unchanged.
 
-## Backend selection
+## Local backends
 
 ```python
-import laddu as ld
-
 automatic = ld.Execution("auto")
-cpu = ld.Execution("cpu", threads=8, precision="f64", memory="60% available")
+cpu = ld.Execution("cpu", threads=8, precision="f64")
 jit = ld.Execution("jit", threads=8, precision="f64")
-gpu = ld.Execution(
-    "gpu",
-    device=0,
-    precision="f32",
-    memory=ld.MemoryPlan(host="2 GiB", device="70% available"),
+gpu = ld.Execution("gpu", device=0, precision="f32")
+```
+
+- `auto` chooses a local strategy and may compile when profitable.
+- `cpu` uses the interpreter and avoids compilation startup cost.
+- `jit` forces native CPU kernel compilation.
+- `gpu` compiles a WGPU compute kernel.
+
+Pass one execution object when constructing the likelihood; the prepared
+objective then reuses it throughout optimization and sampling:
+
+```python
+likelihood = ld.Likelihood(
+    [ld.NLL(model, data=data, accepted_mc=accepted_mc, name="signal")],
+    execution=jit,
 )
 ```
 
-- `auto` uses the local CPU and may JIT compile when profitable.
-- `cpu` retains the interpreter and avoids JIT startup cost.
-- `jit` forces native CPU kernel compilation; it is often useful when the prepared model is evaluated many times.
-- `gpu` compiles a WGPU compute kernel. It is most attractive for large batches and arithmetic-heavy models.
-
-Inspect adapters before choosing by index or name:
-
-```python
-for device in ld.gpu.devices():
-    print(device.index, device.name, device.supports_f64, device.max_buffer_size)
-```
-
-GPU selection also accepts a name or PCI bus ID.
+Use `f64` as the numerical validation baseline. Before adopting `f32`, compare
+objective values, gradients, fitted parameters, and projections on the real
+analysis workload.
 
 ## Memory planning
 
-Memory budgets are the primary control for data loading, compiled caches,
-generation, and CPU/GPU evaluation. They accept byte counts, strings such as
-`"8 GiB"`, or portable percentages such as `"70% total"` and
-`"60% available"`. Automatic planning uses less memory when the complete
-working set is smaller than the request.
+Memory budgets accept byte counts, strings, or percentages:
 
 ```python
-state = ld.MemoryState.current()
-state.refresh()
-print(state.host.total_bytes, state.host.available_bytes)
-
-execution = ld.Execution("jit", memory="50% available")
-# Prepare/evaluate work, then inspect the resolved strategy and chunk size.
-print(execution.memory_decisions())
-print(execution.memory_report())
-```
-
-The report includes current process RSS and virtual memory plus a sampled RSS
-high-water mark. These operating-system counters cover the complete process;
-the per-resource `reserved_bytes` and `high_water_bytes` fields separately
-show allocations tracked by laddu's budget pools.
-
-For MPI jobs, laddu shares a node budget among local ranks using launcher
-metadata. If that metadata is unavailable it conservatively shares across the
-whole communicator. Reports include the resolved MPI sharing policy.
-
-GPU discovery prefers NVIDIA NVML when the runtime library is installed. It
-otherwise uses DXGI's per-process video-memory budget on Windows, Metal's
-recommended working-set size on macOS, or DRM/sysfs on Linux. When none of
-those providers exposes capacity, laddu uses a clearly labeled adaptive
-buffer-limit estimate. Telemetry failures are non-fatal, and shared systems can
-supply authoritative capacity before constructing an execution:
-
-```python
-state.set_device_capacity(
-    "pci:0000:65:00.0", 24 * 1024**3, available_bytes=18 * 1024**3
+execution = ld.Execution(
+    "gpu",
+    device=0,
+    precision="f32",
+    memory=ld.MemoryPlan(
+        host="2 GiB",
+        device="70% available",
+    ),
 )
 ```
 
-## Precision and differentiation
+Dataset readers and generators also accept memory budgets. Automatic planning
+uses smaller chunks when the complete working set does not fit. Inspect
+`execution.memory_decisions()` and `execution.memory_report()` after preparing
+representative work when diagnosing capacity or chunking.
+
+## Automatic differentiation
 
 ```python
-forward64 = ld.Execution("jit", precision="f64", autodiff="forward")
-reverse32 = ld.Execution("gpu", precision="f32", autodiff="reverse")
+forward = ld.Execution("jit", precision="f64", autodiff="forward")
+reverse = ld.Execution("gpu", precision="f32", autodiff="reverse")
 ```
 
-Use `f64` as the validation baseline. Compare objective values, gradients, fitted parameters, and projections before adopting `f32`. Not every GPU supports double-precision shaders.
+Forward mode carries parameter derivatives with intermediate values; reverse
+mode records dependencies from the scalar objective. Parameter count is a
+useful first guide, but benchmark complete objective-and-gradient evaluations
+after compilation rather than isolated toy expressions.
 
-Forward mode propagates a derivative vector with intermediate values; reverse mode records and traverses dependencies from the scalar objective. Parameter count is a useful guide, not a substitute for measurement.
+## Distributed execution with MPI
 
-## A reproducible benchmark
+The MPI distribution exposes the same `import laddu as ld` interface. Every
+rank constructs the same model and enters collective operations in the same
+order; event traversal and reductions are distributed.
 
-Warm up compilation separately, then time repeated evaluations of the same prepared likelihood:
+```bash
+uv add "laddu[mpi]"
+mpiexec -n 4 python analysis.py
+```
 
 ```python
-import time
-import numpy as np
+distributed = ld.Execution(
+    "jit",
+    precision="f64",
+    mpi=True,
+    partitioning="file_groups",
+)
 
-likelihood = ld.Likelihood([ld.NLL(model, data, mc)], execution=execution)
-x = likelihood.default_parameters
-likelihood.value_and_gradient(x)  # preparation/warm-up
+likelihood = ld.Likelihood(
+    [ld.NLL(model, data=data, accepted_mc=accepted_mc, name="signal")],
+    execution=distributed,
+)
 
-started = time.perf_counter()
-for _ in range(20):
-    likelihood.value_and_gradient(x)
-elapsed = time.perf_counter() - started
-print(f"{elapsed / 20:.4f} s/evaluation")
+fit = likelihood.fit(
+    terminators=[ld.ganesh.MaxSteps(500)],
+)
 ```
 
-Benchmark the complete workload with realistic event counts and model complexity. Small examples are commonly dominated by compilation, transfer, or scheduling overhead.
+Partitioning policies match common storage layouts:
 
-```{note}
-Models are compiled when a model-backed likelihood is prepared. Construct the likelihood once, then reuse it throughout minimization and sampling.
-```
+- `contiguous` assigns contiguous global event ranges;
+- `file_groups` assigns source fragments and suits many similarly sized files;
+- `rows` distributes strided rows when a few files are badly imbalanced.
+
+For GPU clusters, one local MPI rank per GPU is a common layout. Map each rank
+to its local device rather than allowing every rank to choose adapter zero.
+Validate a small distributed `f64` run against the local result, then check
+rank-count invariance and file coverage. Reduction order can change final bits
+without changing the statistical result.

@@ -1,77 +1,114 @@
-# Quantum numbers and angular momentum
+# Particles, channels, and quantum numbers
 
-laddu represents integer and half-integer quantum numbers exactly. Constructors
-accept integers, exact half-integer floats, and {py:class}`fractions.Fraction`;
-the `doubled` property is useful when an exact integer representation is needed.
+Reaction topology connects the names in a dataset to their physical roles.
+Quantum-number types keep integer and half-integer values exact while the
+channel supplies invariant masses, frames, and decay angles.
+
+## Exact angular momentum
 
 ```python
 from fractions import Fraction
 
 import laddu as ld
 
-photon = ld.S(1)
-nucleon = ld.S(Fraction(1, 2))
-resonance = ld.J(1.5)
+photon_spin = ld.S(1)
+nucleon_spin = ld.S(Fraction(1, 2))
+resonance_spin = ld.J(1.5)
 
-assert resonance.doubled == 3
-assert resonance.multiplicity == 4
-assert resonance.projections() == [
-    ld.M(-1.5), ld.M(-0.5), ld.M(0.5), ld.M(1.5)
-]
+projections = resonance_spin.projections()
+allowed_totals = photon_spin.coupled_with(nucleon_spin)
+
+assert resonance_spin.doubled == 3
+assert resonance_spin.can_couple_to(photon_spin, nucleon_spin)
 ```
 
-## Coupling angular momenta
-
-Use `coupled_with` to enumerate triangle-rule results and `can_couple_to` to
-test a proposed total directly:
-
-```python
-totals = photon.coupled_with(nucleon)
-# [J(1/2), J(3/2)]
-
-assert ld.J(1.5).can_couple_to(photon, nucleon)
-assert not ld.J(0).can_couple_to(photon, nucleon)
-```
-
-Both {py:class}`laddu.J` and {py:class}`laddu.S` provide these methods. The
-returned totals are `J` values, which makes them suitable for a production or
-decay vertex without a separate top-level helper.
-
-## Orbital momentum, parity, and projections
-
-{py:class}`laddu.L` is always integral. Its string representation uses
-spectroscopic notation, and its `parity` property returns $(-1)^L$.
+Use {py:class}`laddu.J` for total angular momentum,
+{py:class}`laddu.S` for spin, {py:class}`laddu.L` for integral orbital
+momentum, and {py:class}`laddu.M` for signed projections or helicities.
+`L.parity` is $(-1)^L$.
 
 ```python
 d_wave = ld.L(2)
-assert str(d_wave) == "D"
 assert d_wave.parity == ld.Parity.POSITIVE
-
-for projection in d_wave.projections():
-    print(projection)
 ```
 
-Use {py:class}`laddu.M` for signed helicities and magnetic projections.
-Subtraction and negation remain exact, which avoids floating-point equality
-checks in Clebsch–Gordan and Wigner-function loops.
+## Particles
 
-## Angular functions
-
-The angular helpers accept the typed quantum numbers directly:
+The built-in catalog contains common particles:
 
 ```python
-coefficient = ld.clebsch_gordan(
-    photon,
-    ld.M(1),
-    nucleon,
-    ld.M(-0.5),
-    ld.J(1.5),
-    ld.M(0.5),
-)
-
-rotation = ld.WignerD(ld.J(1), ld.M(1), ld.M(0))
-angular_factor = rotation.D(phi, theta, 0.0)
+photon = ld.particles.PHOTON
+proton = ld.particles.PROTON
+kaon = ld.particles.K_SHORT
 ```
 
-Typed values make invalid integral/half-integral combinations fail near model
-construction instead of surfacing later during event evaluation.
+Create an explicit particle when the catalog does not encode the state or
+metadata required by the analysis:
+
+```python
+x_state = ld.Particle(
+    "X",
+    species="X",
+    self_conjugate=True,
+    spin=2,
+    parity="+",
+    statistics=ld.Statistics.BOSON,
+)
+```
+
+Particle metadata is used by selection rules and generation thresholds; event
+four-vectors still come from named dataset columns.
+
+## Reaction channels
+
+An edge describes an initial, intermediate, or final-state particle. A vertex
+connects incoming and outgoing edges. This channel represents
+$\gamma p\to Xp$, $X\to K_S^0K_S^0$:
+
+```python
+channel = ld.Channel(
+    "gamma p -> K_S K_S p",
+    edges=[
+        ld.Edge("gamma", p4="gamma", particle=photon, output=True),
+        ld.Edge("target", p4="target", particle=proton, output=True),
+        ld.Edge("X", particle=x_state),
+        ld.Edge("recoil", p4="recoil", particle=proton, output=True),
+        ld.Edge("ks1", p4="ks1", particle=kaon, output=True),
+        ld.Edge("ks2", p4="ks2", particle=kaon, output=True),
+    ],
+    vertices=[
+        ld.Vertex(
+            "production",
+            incoming=["gamma", "target"],
+            outgoing=["X", "recoil"],
+        ),
+        ld.Vertex("decay", incoming=["X"], outgoing=["ks1", "ks2"]),
+    ],
+)
+```
+
+The `p4` names must match the dataset schema. Intermediate four-vectors such as
+`X` are reconstructed from the topology.
+
+## Kinematic expressions and frames
+
+Channel helpers return symbolic expressions; no event data are traversed yet.
+
+```python
+mass_x = channel.mass("X")
+s_x = channel.s("X")
+
+production = channel.vertex("production")
+decay = channel.vertex("decay")
+
+beam_axis = production.vec3("gamma")
+helicity_axis = production.vec3("X")
+production_normal = beam_axis.cross(helicity_axis)
+
+theta_h = decay.theta("ks1", z_axis=helicity_axis, y_hint=production_normal)
+phi_h = decay.phi("ks1", z_axis=helicity_axis, y_hint=production_normal)
+```
+
+Define axes once from a documented frame convention and reuse them in model
+construction and validation. The next chapter applies explicit conservation
+rules before amplitudes are built.

@@ -1,100 +1,86 @@
-# Efficiency, extended likelihoods, and simultaneous samples
+# Sharing parameters across datasets
 
-A normalized {py:class}`laddu.NLL` determines an intensity shape. Its objective
-is invariant under multiplication of the complete intensity by a constant, so
-it cannot determine an absolute event yield. An
-{py:class}`laddu.ExtendedNLL` instead evaluates
+A simultaneous fit is a sum of named likelihood terms. Each term owns its
+observed and accepted-MC datasets; models share a parameter when they declare
+the same name with compatible bounds and metadata.
 
-$$
-\mathcal F_\mathrm{ext}(\boldsymbol\theta)
-=\widehat{\nu}(\boldsymbol\theta)
--\sum_{i\in\mathrm{data}}w_i\log I(\Omega_i;\boldsymbol\theta),
-$$
-
-where the accepted-MC weighted sum
-$\widehat{\nu}=\sum_{j\in\mathrm{accepted\ MC}}w_j I(\Omega_j)$ is interpreted
-as the expected yield. The MC weights must therefore include the phase-space,
-generation, exposure, and normalization factors needed to put this sum in
-expected-event units.
-
-## Efficiency and expected yields
-
-Generated and accepted samples should start from the same thrown distribution.
-In a bin $k$,
+For independent datasets $d$,
 
 $$
-\epsilon_k =
-\frac{\sum_{j\in\mathrm{accepted},k}w_j}
-     {\sum_{j\in\mathrm{generated},k}w_j}.
+\mathcal F_\mathrm{joint}(\theta)
+=\sum_d\mathcal F_d(\theta_d),
 $$
 
-Efficiency is not an extra multiplier in `ExtendedNLL` when accepted MC already
-encodes the detector selection: it is present through which generated events
-survive and through their weights. Applying it a second time would double-count
-acceptance.
+where each $\theta_d$ contains shared and dataset-specific coordinates.
 
-```python
-extended = ld.ExtendedNLL(model, data, accepted_mc, name="period_a")
-likelihood = ld.Likelihood([extended], execution=execution)
-```
+## One shape, several data-taking periods
 
-Include an explicit positive scale parameter in the intensity when its overall
-yield is to be fitted:
-
-```python
-yield_scale = ld.parameter(
-    "period_a_scale", initial=1.0, bounds=(0.0, None), scale=0.1
-)
-period_a_model = ld.Model(yield_scale * shape_intensity)
-```
-
-## Several datasets in one fit
-
-Create one term per statistically independent dataset. Parameters with the same
-name and compatible definitions are shared in the combined likelihood:
+Suppose two periods have different acceptance but share resonance parameters.
+Construct each model from the same shared expressions and give nuisance
+parameters distinct names:
 
 ```python
 scale_a = ld.parameter("period_a_scale", initial=1.0, bounds=(0.0, None))
 scale_b = ld.parameter("period_b_scale", initial=1.0, bounds=(0.0, None))
 
-model_a = ld.Model(scale_a * common_shape_a)
-model_b = ld.Model(scale_b * common_shape_b)
+model_a = ld.Model(scale_a * shared_shape_a)
+model_b = ld.Model(scale_b * shared_shape_b)
 
-term_a = ld.ExtendedNLL(model_a, data_a, accepted_mc_a, name="period_a")
-term_b = ld.ExtendedNLL(model_b, data_b, accepted_mc_b, name="period_b")
-joint = ld.Likelihood([term_a, term_b], execution=execution)
+term_a = ld.ExtendedNLL(
+    model_a,
+    data=data_a,
+    accepted_mc=accepted_mc_a,
+    name="period_a",
+)
+term_b = ld.ExtendedNLL(
+    model_b,
+    data=data_b,
+    accepted_mc=accepted_mc_b,
+    name="period_b",
+)
+
+joint = ld.Likelihood([term_a, term_b])
 ```
 
-No ad-hoc factor proportional to the number of data or MC events is needed.
-Each data sample contributes its own log sum, while each accepted-MC sample
-contributes an integral in the units established by its weights. Different MC
-sample sizes improve or degrade integration precision; they must not change the
-physical integral. If unweighted MC samples of different sizes represent the
-same exposure, assign weights proportional to the represented phase-space
-volume divided by the number generated.
+The expressions `shared_shape_a` and `shared_shape_b` may use different event
+columns or frames. Parameters such as `mass_0` and `width_0` are shared because
+their declarations use the same names and definitions.
 
-For shape-only simultaneous fits, use one `NLL` per sample. Each term then
-normalizes to its own observed weighted yield, so samples with more data
-naturally have more statistical influence. Use explicit term multipliers only
-for a deliberate composite-likelihood convention, not to compensate for MC
-sample size.
+Use `NLL` instead when each period contributes only shape information. Each
+normalized term then uses its own observed weighted yield and accepted-MC
+normalization.
 
-## Relative exposure and constrained scales
+## Relative exposure
 
-If the relative luminosity or exposure is known, encode it in the MC weights or
-in the model:
+If an extended fit has a known exposure ratio $r$, encode it in the MC weights
+or in the model normalization:
 
 ```python
-global_yield = ld.parameter("global_yield", initial=1.0, bounds=(0.0, None))
-model_a = ld.Model(global_yield * common_shape_a)
-model_b = ld.Model(global_yield * known_exposure_ratio * common_shape_b)
+global_scale = ld.parameter("global_scale", initial=1.0, bounds=(0.0, None))
+
+model_a = ld.Model(global_scale * shared_shape_a)
+model_b = ld.Model(global_scale * exposure_ratio * shared_shape_b)
 ```
 
-If the ratio is uncertain, promote it to a parameter and add an appropriate
-constraint term when one is available for the uncertainty model. Ridge and
-lasso penalties are regularizers, not substitutes for a correctly normalized
-Gaussian or log-normal nuisance constraint.
+Changing the number of MC events must not change the represented integral.
+When an unweighted sample represents a fixed phase-space volume or exposure,
+its per-event MC weight scales inversely with the number generated.
 
-Validate a simultaneous fit by splitting its objective into named term
-projections, checking accepted-MC convergence independently in every sample,
-and performing closure with the same exposure and efficiency conventions.
+## Fit and inspect named terms
+
+```python
+fit = joint.fit(
+    initial=joint.sample_parameters(seed=12),
+    terminators=[ld.ganesh.MaxSteps(1000)],
+)
+
+period_a_projection = joint.projection(
+    "period_a",
+    generated_mc=generated_mc_a,
+    tags=["reference", "second"],
+)
+```
+
+Validate accepted-MC convergence separately for each term. Compare individual
+and joint fits, and test whether shared parameters create tension between
+datasets rather than assuming agreement by construction.

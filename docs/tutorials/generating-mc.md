@@ -1,63 +1,102 @@
-# Generating phase-space Monte Carlo
+# Generating model-independent Monte Carlo
 
-Generation begins with a channel whose initial momenta, intermediate masses, and vertex proposals are fully specified. Consider $\gamma p\to Xp$, $X\to K_S^0K_S^0$.
+Phase-space Monte Carlo provides integration events before a physical intensity
+is chosen. Generation requires the reaction topology from
+{doc}`quantum-numbers` plus proposal distributions for initial momenta,
+intermediate masses, and vertices.
+
+## Add generation proposals
+
+For $\gamma p\to Xp$, $X\to K_S^0K_S^0$, the proposal may sample the photon
+energy, the intermediate mass, a forward-peaked production transfer, and an
+isotropic decay:
 
 ```python
-import laddu as ld
-
-kaon = ld.particles.K_SHORT
-channel = ld.Channel(
+generation_channel = ld.Channel(
     "gamma p -> K_S K_S p",
     edges=[
         ld.Edge(
-            "gamma", p4="gamma", particle=ld.particles.PHOTON, output=True,
-            initial_momentum=ld.InitialMomentum.uniform_energy(8.0, 9.0, [0, 0, 1]),
+            "gamma",
+            p4="gamma",
+            particle=ld.particles.PHOTON,
+            output=True,
+            initial_momentum=ld.InitialMomentum.uniform_energy(
+                low=8.0,
+                high=9.0,
+                direction=[0.0, 0.0, 1.0],
+            ),
         ),
         ld.Edge(
-            "target", p4="target", particle=ld.particles.PROTON, output=True,
-            initial_momentum=ld.InitialMomentum.momentum([0, 0, 0]),
+            "target",
+            p4="target",
+            particle=ld.particles.PROTON,
+            output=True,
+            initial_momentum=ld.InitialMomentum.momentum([0.0, 0.0, 0.0]),
         ),
-        ld.Edge("X", mass_proposal=ld.MassProposal(2 * kaon.mass, 2.0)),
-        ld.Edge("recoil", p4="recoil", particle=ld.particles.PROTON, output=True),
-        ld.Edge("ks1", p4="ks1", particle=kaon, output=True),
-        ld.Edge("ks2", p4="ks2", particle=kaon, output=True),
+        ld.Edge("X", mass_proposal=ld.MassProposal(0.995, high=2.0)),
+        ld.Edge(
+            "recoil", p4="recoil", particle=ld.particles.PROTON, output=True
+        ),
+        ld.Edge("ks1", p4="ks1", particle=ld.particles.K_SHORT, output=True),
+        ld.Edge("ks2", p4="ks2", particle=ld.particles.K_SHORT, output=True),
     ],
     vertices=[
         ld.Vertex(
-            "production", incoming=["gamma", "target"], outgoing=["X", "recoil"],
+            "production",
+            incoming=["gamma", "target"],
+            outgoing=["X", "recoil"],
             generation=ld.VertexProposal.t_exchange(
-                "gamma", "X", slope=4.0, uniform_fraction=0.2,
+                incoming="gamma",
+                outgoing="X",
+                slope=4.0,
+                uniform_fraction=0.2,
             ),
         ),
         ld.Vertex(
-            "decay", incoming=["X"], outgoing=["ks1", "ks2"],
+            "decay",
+            incoming=["X"],
+            outgoing=["ks1", "ks2"],
             generation=ld.VertexProposal.isotropic(),
         ),
     ],
 )
-channel.validate_generation()
+
+generation_channel.validate_generation()
+generator = ld.Generator(generation_channel)
 ```
 
-The proposal density should cover every region where the model is nonzero. It need not equal the physical distribution. Mixing a uniform tail into a forward-peaked $t$ proposal reduces the chance of missing low-probability regions.
+The proposal density $q(\Omega)$ must cover every region where a later model
+can be nonzero. It need not resemble the physical distribution. A uniform
+mixture in an otherwise forward-peaked proposal protects low-probability
+regions from receiving no samples.
 
-## Weighted phase space
+## Produce weighted phase space
 
-Omitting `model` yields the proposal/phase-space weights required for Monte Carlo integration:
+Without a model, `weighted` returns the phase-space/proposal weights required
+for Monte Carlo integration:
 
 ```python
-execution = ld.Execution("cpu", threads=8, precision="f64")
-generator = ld.Generator(channel)
-mc, report = generator.weighted(
-    200_000, execution=execution, memory="512 MiB", seed=17,
+generated_mc, report = generator.weighted(
+    200_000,
+    seed=17,
 )
-print(report.produced, report.chunk_events, report.estimated_peak_bytes)
-mc.write_to(ld.ParquetSink("generated.parquet"))
+
+generated_mc.write_to(ld.ParquetSink("generated.parquet"))
 ```
 
-Generation is deterministic for fixed inputs and seed regardless of the
-memory-derived chunk size. Treat the report, including its estimated and
-observed memory use, as part of the dataset provenance.
+Generation is reproducible for fixed inputs and seed. Event chunking and memory
+budgets are execution details deferred to {doc}`execution`.
 
-## Validate the proposal
+## Validate before modeling
 
-Plot every generated invariant and angle used later. Verify four-momentum conservation, thresholds, finite weights, and coverage at bin edges. Proposal defects cannot be repaired by a larger fit sample.
+Evaluate the invariants that will enter the model and check their support:
+
+```python
+mass_x = generation_channel.mass("X")
+
+mass_values = generated_mc.evaluate(mass_x, real=True)
+```
+
+Verify thresholds, four-momentum conservation, finite weights, coverage near
+analysis boundaries, and adequate effective sample size. A physical model can
+reweight a sound proposal; it cannot repair missing phase space.
