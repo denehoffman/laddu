@@ -8,9 +8,9 @@ use laddu_fit::{
     ganesh::{
         NalgebraProvider, Vector,
         algorithms::{
-            gradient::{Adam, GradientStatus, LBFGSB},
+            gradient::{Adam, AdamConfig, GradientStatus, LBFGSB, LBFGSBConfig},
             gradient_free::{GradientFreeStatus, NelderMead},
-            mcmc::{AIES, EnsembleStatus},
+            mcmc::{AIES, AIESConfig, EnsembleStatus},
         },
         core::{Callbacks, DebugObserver, MaxSteps, ProgressObserver},
         python::{
@@ -184,7 +184,7 @@ where
 #[pymethods]
 impl PyLikelihood {
     #[pyo3(signature = (
-        center: "Sequence[float] | dict[str, float]",
+        center: "Sequence[float] | numpy.typing.NDArray[numpy.float32 | numpy.float64] | dict[str, float]",
         n_walkers,
         *,
         scale=1.0e-3,
@@ -272,9 +272,9 @@ impl PyLikelihood {
     }
 
     #[pyo3(signature = (
-        config: "object",
+        initial: "Sequence[float] | numpy.typing.NDArray[numpy.float32 | numpy.float64] | dict[str, float] | None" = None,
         *,
-        initial: "object | None" = None,
+        config: "object | None" = None,
         terminators: "Sequence[object]" = Vec::new(),
         observers: "Sequence[object]" = Vec::new()
     ))]
@@ -282,12 +282,13 @@ impl PyLikelihood {
     ///
     /// Parameters
     /// ----------
-    /// config : ganesh.NelderMeadConfig or ganesh.LBFGSBConfig
-    ///     Optimizer configuration. L-BFGS-B uses analytic gradients and the
-    ///     bounds declared by model parameters.
     /// initial : sequence, numpy.ndarray, or dict[str, float], optional
     ///     Initial free-parameter values. A mapping may specify only the names
     ///     to override; remaining parameters use their defaults.
+    /// config : ganesh.NelderMeadConfig or ganesh.LBFGSBConfig, optional
+    ///     Optimizer configuration. ``None`` uses the default L-BFGS-B
+    ///     configuration. L-BFGS-B uses analytic gradients and the bounds
+    ///     declared by model parameters.
     /// terminators : sequence, optional
     ///     ganesh termination callbacks, such as ``ganesh.MaxSteps``.
     /// observers : sequence, optional
@@ -307,14 +308,16 @@ impl PyLikelihood {
     fn fit(
         &self,
         py: Python<'_>,
-        config: &Bound<'_, PyAny>,
         initial: Option<&Bound<'_, PyAny>>,
+        config: Option<&Bound<'_, PyAny>>,
         terminators: Vec<Py<PyAny>>,
         observers: Vec<Py<PyAny>>,
     ) -> PyResult<PyMinimizationSummary> {
         let initial = initial_vector(&self.inner, initial)?;
         let problem = OwnedProblem::new(Arc::clone(&self.inner));
-        if let Ok(config) = config.extract::<PyRef<'_, PyNelderMeadConfig>>() {
+        if let Some(config) = config
+            && let Ok(config) = config.extract::<PyRef<'_, PyNelderMeadConfig>>()
+        {
             let metadata = problem.metadata();
             let config = config
                 .to_rust()
@@ -338,42 +341,47 @@ impl PyLikelihood {
             )?;
             return Ok(summary.into());
         }
-        if let Ok(config) = config.extract::<PyRef<'_, PyLBFGSBConfig>>() {
-            let metadata = problem.metadata();
-            let config = config
+        let config = match config {
+            Some(config) => config
+                .extract::<PyRef<'_, PyLBFGSBConfig>>()
+                .map_err(|_| {
+                    PyTypeError::new_err(
+                        "fit config must be ganesh.NelderMeadConfig, ganesh.LBFGSBConfig, or None",
+                    )
+                })?
                 .to_rust()
-                .map_err(to_py_err)?
-                .with_parameter_names(metadata.parameter_names())
-                .with_transform(metadata.native_transform().map_err(to_py_err)?)
-                .map_err(to_py_err)?
-                .with_bounds(metadata.native_bounds())
-                .map_err(to_py_err)?;
-            let callbacks = callback_bundle::<LBFGSB, _, GradientStatus, _>(
-                py,
-                LBFGSB::default_callbacks(),
-                terminators,
-                observers,
-            )?;
-            let summary = process_with_python_callbacks(
-                &mut LBFGSB::default(),
-                &problem,
-                &(),
-                initial,
-                config,
-                callbacks,
-                to_py_err,
-            )?;
-            return Ok(summary.into());
-        }
-        Err(PyTypeError::new_err(
-            "fit config must be ganesh.NelderMeadConfig or ganesh.LBFGSBConfig",
-        ))
+                .map_err(to_py_err)?,
+            None => LBFGSBConfig::default(),
+        };
+        let metadata = problem.metadata();
+        let config = config
+            .with_parameter_names(metadata.parameter_names())
+            .with_transform(metadata.native_transform().map_err(to_py_err)?)
+            .map_err(to_py_err)?
+            .with_bounds(metadata.native_bounds())
+            .map_err(to_py_err)?;
+        let callbacks = callback_bundle::<LBFGSB, _, GradientStatus, _>(
+            py,
+            LBFGSB::default_callbacks(),
+            terminators,
+            observers,
+        )?;
+        let summary = process_with_python_callbacks(
+            &mut LBFGSB::default(),
+            &problem,
+            &(),
+            initial,
+            config,
+            callbacks,
+            to_py_err,
+        )?;
+        Ok(summary.into())
     }
 
     #[pyo3(signature = (
-        config,
+        initial: "Sequence[float] | numpy.typing.NDArray[numpy.float32 | numpy.float64] | dict[str, float] | None" = None,
         *,
-        initial: "object | None" = None,
+        config=None,
         fraction=0.1,
         seed=0,
         terminators: "Sequence[object]" = Vec::new(),
@@ -384,10 +392,11 @@ impl PyLikelihood {
     ///
     /// Parameters
     /// ----------
-    /// config : ganesh.AdamConfig
-    ///     Adam optimizer configuration.
     /// initial : sequence, numpy.ndarray, or dict[str, float], optional
     ///     Initial free-parameter values.
+    /// config : ganesh.AdamConfig, optional
+    ///     Adam optimizer configuration. ``None`` uses the default
+    ///     configuration.
     /// fraction : float, default=0.1
     ///     Fraction of events sampled for each stochastic evaluation. Must lie
     ///     in ``(0, 1]``.
@@ -410,8 +419,8 @@ impl PyLikelihood {
     fn fit_stochastic(
         &self,
         py: Python<'_>,
-        config: &PyAdamConfig,
         initial: Option<&Bound<'_, PyAny>>,
+        config: Option<&PyAdamConfig>,
         fraction: f64,
         seed: u64,
         terminators: Vec<Py<PyAny>>,
@@ -424,11 +433,12 @@ impl PyLikelihood {
         }
         let initial = initial_vector(&self.inner, initial)?;
         let metadata = FitProblem::<_, f64>::new(&*self.inner);
-        let config = config
-            .to_rust()
-            .map_err(to_py_err)?
-            .with_parameter_names(metadata.parameter_names())
-            .with_transform(metadata.minimizer_transform().map_err(to_py_err)?);
+        let config = match config {
+            Some(config) => config.to_rust().map_err(to_py_err)?,
+            None => AdamConfig::default(),
+        }
+        .with_parameter_names(metadata.parameter_names())
+        .with_transform(metadata.minimizer_transform().map_err(to_py_err)?);
         let problem = OwnedStochasticProblem {
             objective: Arc::clone(&self.inner),
             fraction,
@@ -454,9 +464,9 @@ impl PyLikelihood {
 
     #[pyo3(signature = (
         samples,
-        config: "object",
+        initial: "Sequence[float] | numpy.typing.NDArray[numpy.float32 | numpy.float64] | dict[str, float] | None" = None,
         *,
-        initial: "object | None" = None,
+        config: "object | None" = None,
         seed=0,
         terminators: "Sequence[object]" = Vec::new()
     ))]
@@ -466,8 +476,8 @@ impl PyLikelihood {
         &self,
         py: Python<'_>,
         samples: usize,
-        config: &Bound<'_, PyAny>,
         initial: Option<&Bound<'_, PyAny>>,
+        config: Option<&Bound<'_, PyAny>>,
         seed: u64,
         terminators: Vec<Py<PyAny>>,
     ) -> PyResult<PyEnsemble> {
@@ -479,7 +489,7 @@ impl PyLikelihood {
                 .iter()
                 .map(|callback| callback.clone_ref(py))
                 .collect();
-            let summary = replica_python.fit(py, config, initial, callbacks, Vec::new())?;
+            let summary = replica_python.fit(py, initial, config, callbacks, Vec::new())?;
             let summary = Py::new(py, summary)?;
             Ok(summary
                 .bind(py)
@@ -496,9 +506,9 @@ impl PyLikelihood {
     }
 
     #[pyo3(signature = (
-        config,
         init,
         *,
+        config=None,
         seed=0,
         terminators: "Sequence[object]" = Vec::new(),
         observers: "Sequence[object]" = Vec::new()
@@ -507,10 +517,11 @@ impl PyLikelihood {
     ///
     /// Parameters
     /// ----------
-    /// config : ganesh.AIESConfig
-    ///     Ensemble sampler configuration.
     /// init : ganesh.AIESInit
     ///     Initial walker ensemble.
+    /// config : ganesh.AIESConfig, optional
+    ///     Ensemble sampler configuration. ``None`` uses the default
+    ///     configuration.
     /// seed : int, default=0
     ///     Random seed for proposal generation.
     /// terminators, observers : sequence, optional
@@ -528,19 +539,20 @@ impl PyLikelihood {
     fn sample(
         &self,
         py: Python<'_>,
-        config: &PyAIESConfig,
         init: &PyAIESInit,
+        config: Option<&PyAIESConfig>,
         seed: u64,
         terminators: Vec<Py<PyAny>>,
         observers: Vec<Py<PyAny>>,
     ) -> PyResult<PyMCMCSummary> {
         let problem = OwnedProblem::new(Arc::clone(&self.inner));
         let metadata = problem.metadata();
-        let config = config
-            .to_rust()
-            .map_err(to_py_err)?
-            .with_parameter_names(metadata.parameter_names())
-            .with_transform(metadata.sampler_transform().map_err(to_py_err)?);
+        let config = match config {
+            Some(config) => config.to_rust().map_err(to_py_err)?,
+            None => AIESConfig::default(),
+        }
+        .with_parameter_names(metadata.parameter_names())
+        .with_transform(metadata.sampler_transform().map_err(to_py_err)?);
         let callbacks = callback_bundle::<AIES, _, EnsembleStatus, _>(
             py,
             AIES::default_callbacks(),
