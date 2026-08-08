@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.21.0](https://github.com/denehoffman/laddu/compare/v0.20.0...v0.21.0) (2026-08-08)
+
+
+### ⚠ BREAKING CHANGES
+
+* fit, fit_stochastic, bootstrap_fit, and sample now accept configuration through a keyword-only config argument.
+* Multi-argument Python constructors and helpers now require descriptive keyword arguments for non-primary inputs.
+* Python likelihood and cross-section constructors now use keyword-only arguments for dataset and normalization inputs.
+
+### Features
+
+* Clarify Python call signatures ([6d42e5d](https://github.com/denehoffman/laddu/commit/6d42e5de6dd5af6fca882068107cf018813f34b5))
+* Streamline likelihood optimization ([dc78419](https://github.com/denehoffman/laddu/commit/dc784191344f62d09cb3b990f4ac6803063ad447))
+* Support absolute-rate cross sections ([d870c57](https://github.com/denehoffman/laddu/commit/d870c572255bced807d3b5955fe13b875cf7630c))
+
+
+### Bug Fixes
+
+* **ci:** Avoid unsupported release JSONPath function ([2c3b2cb](https://github.com/denehoffman/laddu/commit/2c3b2cb43dfc0ccbfd20d6c4c813d69d61b88689))
+* **ci:** Synchronize workspace releases ([98fe14b](https://github.com/denehoffman/laddu/commit/98fe14bcc3e91f9cdeda5bf956a20d8ebe566d53))
+* **release:** Make Rust crates publishable ([ea7918a](https://github.com/denehoffman/laddu/commit/ea7918ad9caafce27ce09b7b974d2bf2040869ab))
+
 ## [0.20.0](https://github.com/denehoffman/laddu/compare/v0.19.6...v0.20.0) (2026-07-29)
 
 
