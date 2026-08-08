@@ -1,6 +1,6 @@
 [package]
 name = "laddu-amplitudes"
-version = "0.20.0"
+version = "0.20.1"
 authors.workspace = true
 description.workspace = true
 edition.workspace = true
@@ -16,9 +16,9 @@ rustdoc-args = ["--html-in-header", "docs-header.html"]
 workspace = true
 
 [dependencies]
-laddu-expr = { version = "0.20.0", path = "../laddu-expr" }
-laddu-kernel = { version = "0.20.0", path = "../laddu-kernel" }
-laddu-physics = { version = "0.20.0", path = "../laddu-physics" }
+laddu-expr = { version = "0.20.1", path = "../laddu-expr" }
+laddu-kernel = { version = "0.20.1", path = "../laddu-kernel" }
+laddu-physics = { version = "0.20.1", path = "../laddu-physics" }
 num.workspace = true
 thiserror.workspace = true
 fastrand.workspace = true
@@ -26,6 +26,6 @@ fastrand-contrib.workspace = true
 nalgebra.workspace = true
 
 [dev-dependencies]
-laddu-compile = { version = "0.20.0", path = "../laddu-compile" }
-laddu-runtime = { version = "0.20.0", path = "../laddu-runtime" }
+laddu-compile = { version = "0.20.1", path = "../laddu-compile" }
+laddu-runtime = { version = "0.20.1", path = "../laddu-runtime" }
 approx.workspace = true

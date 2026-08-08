@@ -1,5 +1,43 @@
 # Changelog
 
+## [0.21.0](https://github.com/denehoffman/laddu/compare/v0.20.0...v0.21.0) (2026-08-08)
+
+
+### ⚠ BREAKING CHANGES
+
+* fit, fit_stochastic, bootstrap_fit, and sample now accept configuration through a keyword-only config argument.
+* Multi-argument Python constructors and helpers now require descriptive keyword arguments for non-primary inputs.
+* Python likelihood and cross-section constructors now use keyword-only arguments for dataset and normalization inputs.
+
+### Features
+
+* Clarify Python call signatures ([6d42e5d](https://github.com/denehoffman/laddu/commit/6d42e5de6dd5af6fca882068107cf018813f34b5))
+* Streamline likelihood optimization ([dc78419](https://github.com/denehoffman/laddu/commit/dc784191344f62d09cb3b990f4ac6803063ad447))
+* Support absolute-rate cross sections ([d870c57](https://github.com/denehoffman/laddu/commit/d870c572255bced807d3b5955fe13b875cf7630c))
+
+
+### Bug Fixes
+
+* **release:** Make Rust crates publishable ([ea7918a](https://github.com/denehoffman/laddu/commit/ea7918ad9caafce27ce09b7b974d2bf2040869ab))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * laddu-amplitudes bumped from 0.20.0 to 0.20.1
+    * laddu-autodiff bumped from 0.20.0 to 0.20.1
+    * laddu-compile bumped from 0.20.0 to 0.20.1
+    * laddu-data bumped from 0.20.0 to 0.20.1
+    * laddu-expr bumped from 0.20.0 to 0.20.1
+    * laddu-fit bumped from 0.20.0 to 0.20.1
+    * laddu-generation bumped from 0.20.0 to 0.20.1
+    * laddu-kernel bumped from 0.20.0 to 0.20.1
+    * laddu-likelihood bumped from 0.20.0 to 0.21.0
+    * laddu-physics bumped from 0.20.0 to 0.20.1
+    * laddu-runtime bumped from 0.20.0 to 0.20.1
+    * laddu-wgpu bumped from 0.20.0 to 0.20.1
+
 ## [0.20.0](https://github.com/denehoffman/laddu/compare/v0.19.6...v0.20.0) (2026-07-29)
 
 
