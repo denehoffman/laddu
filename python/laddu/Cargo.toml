@@ -1,6 +1,6 @@
 [package]
 name = "laddu-python"
-version = "0.20.0"
+version.workspace = true
 authors.workspace = true
 edition.workspace = true
 homepage.workspace = true

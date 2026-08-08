@@ -1,6 +1,6 @@
 [package]
 name = "laddu-runtime"
-version = "0.20.0"
+version.workspace = true
 authors.workspace = true
 description.workspace = true
 edition.workspace = true
@@ -17,13 +17,13 @@ workspace = true
 
 [dependencies]
 cranelift = { workspace = true, optional = true }
-laddu-autodiff = { version = "0.20.0", path = "../laddu-autodiff" }
-laddu-compile = { version = "0.20.0", path = "../laddu-compile" }
-laddu-data = { version = "0.20.0", path = "../laddu-data" }
-laddu-expr = { version = "0.20.0", path = "../laddu-expr" }
-laddu-kernel = { version = "0.20.0", path = "../laddu-kernel" }
-laddu-memory = { version = "0.20.0", path = "../laddu-memory" }
-laddu-wgpu = { version = "0.20.0", path = "../laddu-wgpu", optional = true }
+laddu-autodiff.workspace = true
+laddu-compile.workspace = true
+laddu-data.workspace = true
+laddu-expr.workspace = true
+laddu-kernel.workspace = true
+laddu-memory.workspace = true
+laddu-wgpu = { workspace = true, optional = true }
 mpi = { workspace = true, optional = true }
 nalgebra.workspace = true
 num.workspace = true

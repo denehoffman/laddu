@@ -1,6 +1,6 @@
 [package]
 name = "laddu-python-local"
-version = "0.20.0"
+version.workspace = true
 authors.workspace = true
 edition.workspace = true
 homepage.workspace = true
@@ -17,5 +17,5 @@ name = "_laddu_local"
 crate-type = ["cdylib"]
 
 [dependencies]
-laddu = { version = "0.20.0", path = "../../crates/laddu", features = ["python", "jit", "wgpu"] }
+laddu = { workspace = true, features = ["python", "jit", "wgpu"] }
 pyo3 = { workspace = true, features = ["extension-module"] }

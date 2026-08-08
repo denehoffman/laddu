@@ -139,10 +139,10 @@ python_release_workflow = Workflow(
                     '--exclude laddu-python-mpi'
                 ),
                 script(
-                    'cargo metadata --no-deps --format-version 1 | '
-                    "jq -e 'all(.packages[].dependencies[]; "
-                    '.path == null or .req != "*")\'',
-                    name='Validate local dependency versions',
+                    'cargo metadata --locked --no-deps --format-version 1 | '
+                    "jq -e '([.packages[].version] | unique | length == 1) and "
+                    'all(.packages[].dependencies[]; .path == null or .req != "*")\'',
+                    name='Validate workspace versions',
                 ),
                 script('cargo check -p laddu-python -p laddu-python-local -p laddu-python-mpi'),
                 script('uv sync --frozen --inexact --no-install-project --project python/laddu'),
@@ -231,7 +231,7 @@ benchmark_workflow = Workflow(
     name='CodSpeed Benchmarks',
     on=Events(
         push=PushEvent(branches=['development', 'main']),
-        pull_request=PullRequestEvent(),
+        pull_request=PullRequestEvent(branches=['development']),
         workflow_dispatch=WorkflowDispatchEvent(),
     ),
     jobs={

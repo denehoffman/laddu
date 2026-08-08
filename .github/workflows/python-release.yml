@@ -32,8 +32,8 @@ jobs:
       - run: cargo fmt --all -- --check
       - run: cargo clippy --workspace --all-targets --all-features --exclude laddu-python --exclude laddu-python-local --exclude laddu-python-mpi -- -D warnings
       - run: cargo test --workspace --exclude laddu-python --exclude laddu-python-local --exclude laddu-python-mpi
-      - name: Validate local dependency versions
-        run: "cargo metadata --no-deps --format-version 1 | jq -e 'all(.packages[].dependencies[]; .path == null or .req != \"*\")'"
+      - name: Validate workspace versions
+        run: "cargo metadata --locked --no-deps --format-version 1 | jq -e '([.packages[].version] | unique | length == 1) and all(.packages[].dependencies[]; .path == null or .req != \"*\")'"
       - run: cargo check -p laddu-python -p laddu-python-local -p laddu-python-mpi
       - run: uv sync --frozen --inexact --no-install-project --project python/laddu
       - run: uv run --no-sync --directory python/laddu maturin develop --manifest-path Cargo.toml --release --generate-stubs
