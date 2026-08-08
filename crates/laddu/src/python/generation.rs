@@ -34,7 +34,7 @@ use super::{
 /// --------
 /// >>> import laddu as ld
 /// >>> fixed = ld.generation.MassProposal(0.13957)
-/// >>> broad = ld.generation.MassProposal(0.5, 1.5)
+/// >>> broad = ld.generation.MassProposal(0.5, high=1.5)
 pub struct PyMassProposal {
     pub(crate) inner: MassProposal,
 }
@@ -49,7 +49,7 @@ impl PyMassProposal {
     ///     If a limit is non-finite, a fixed mass is negative, or ``high`` is
     ///     not greater than ``value``.
     #[new]
-    #[pyo3(signature = (value, high=None))]
+    #[pyo3(signature = (value, *, high=None))]
     fn new(value: f64, high: Option<f64>) -> PyResult<Self> {
         if !value.is_finite() || high.is_some_and(|high| !high.is_finite()) {
             return Err(PyValueError::new_err("mass limits must be finite"));
@@ -125,6 +125,7 @@ impl PyInitialMomentum {
     ///     Initial-state energy.
     /// direction : sequence of 3 float
     ///     Direction vector, normalized internally.
+    #[pyo3(signature = (energy, *, direction))]
     fn energy(energy: f64, direction: [f64; 3]) -> Self {
         Self {
             inner: InitialMomentum::energy_direction(energy, real_vec3(direction)),
@@ -145,6 +146,7 @@ impl PyInitialMomentum {
     /// ------
     /// ValueError
     ///     If the energy interval is non-finite or empty.
+    #[pyo3(signature = (*, low, high, direction))]
     fn uniform_energy(low: f64, high: f64, direction: [f64; 3]) -> PyResult<Self> {
         if !low.is_finite() || !high.is_finite() || high <= low {
             return Err(PyValueError::new_err(
@@ -173,6 +175,7 @@ impl PyInitialMomentum {
     /// ------
     /// LadduError
     ///     If the histogram has no valid sampling support.
+    #[pyo3(signature = (histogram, *, direction))]
     fn histogram_energy(histogram: &PyHistogram, direction: [f64; 3]) -> PyResult<Self> {
         let source = ScalarSource::histogram(histogram.inner.clone());
         source.support().map_err(to_py_err)?;
@@ -200,7 +203,7 @@ impl PyVertexProposal {
     }
 
     #[staticmethod]
-    #[pyo3(signature = (incoming, outgoing, *, slope=None, uniform_fraction=0.0, t_min=None, t_max=None))]
+    #[pyo3(signature = (*, incoming, outgoing, slope=None, uniform_fraction=0.0, t_min=None, t_max=None))]
     /// Create a uniform, exponential, or mixed t-exchange proposal.
     ///
     /// Parameters
@@ -263,6 +266,7 @@ impl PyVertexProposal {
     ///     Non-negative pole mass.
     /// power : float
     ///     Positive pole power.
+    #[pyo3(signature = (*, incoming, outgoing, exchange_mass, power))]
     fn t_exchange_pole(
         incoming: String,
         outgoing: String,
@@ -291,6 +295,7 @@ impl PyVertexProposal {
     ///     Edge names defining the momentum transfer.
     /// histogram : Histogram
     ///     Non-negative transfer distribution with positive total weight.
+    #[pyo3(signature = (*, incoming, outgoing, histogram))]
     fn t_exchange_histogram(
         incoming: String,
         outgoing: String,
@@ -455,7 +460,7 @@ impl PyGenerator {
         events,
         *,
         model=None,
-        parameters: "Sequence[float] | dict[str, float] | None" = None,
+        parameters: "Sequence[float] | numpy.typing.NDArray[numpy.float32 | numpy.float64] | dict[str, float] | None" = None,
         execution=None,
         memory: "MemoryBudget | int | str | None" = None,
         seed=0,
@@ -537,7 +542,7 @@ impl PyGenerator {
         events,
         model,
         *,
-        parameters: "Sequence[float] | dict[str, float] | None" = None,
+        parameters: "Sequence[float] | numpy.typing.NDArray[numpy.float32 | numpy.float64] | dict[str, float] | None" = None,
         execution=None,
         memory: "MemoryBudget | int | str | None" = None,
         seed=0,

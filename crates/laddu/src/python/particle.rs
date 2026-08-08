@@ -236,6 +236,7 @@ impl PyParticle {
     ///     Intrinsic parity.
     #[pyo3(signature = (
         j: "J | S | L | int | float",
+        *,
         parity: "Parity | int | str"
     ))]
     fn jp(j: &Bound<'_, PyAny>, parity: &Bound<'_, PyAny>) -> PyResult<Self> {
@@ -245,6 +246,7 @@ impl PyParticle {
     #[staticmethod]
     #[pyo3(signature = (
         j: "J | S | L | int | float",
+        *,
         parity: "Parity | int | str",
         c_parity: "Parity | int | str"
     ))]
@@ -270,7 +272,7 @@ impl PyParticle {
     }
 
     #[staticmethod]
-    #[pyo3(signature = (electron=0, muon=0, tau=0))]
+    #[pyo3(signature = (*, electron=0, muon=0, tau=0))]
     /// Create a fermion with specified flavor lepton numbers.
     fn lepton(electron: i32, muon: i32, tau: i32) -> Self {
         ParticleProperties::lepton(electron, muon, tau).into()

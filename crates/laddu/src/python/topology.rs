@@ -257,6 +257,7 @@ impl PyVertexFrame {
     ///
     /// ``z_axis`` defines the polar axis and ``y_hint`` fixes the azimuthal
     /// orientation after orthogonalization.
+    #[pyo3(signature = (edge, *, z_axis, y_hint))]
     fn theta(&self, edge: &str, z_axis: &PyVec3, y_hint: &PyVec3) -> PyResult<PyExpr> {
         self.channel
             .get_vertex(&self.name)
@@ -267,6 +268,7 @@ impl PyVertexFrame {
     }
 
     /// Return the cosine of an edge's polar angle.
+    #[pyo3(signature = (edge, *, z_axis, y_hint))]
     fn costheta(&self, edge: &str, z_axis: &PyVec3, y_hint: &PyVec3) -> PyResult<PyExpr> {
         self.channel
             .get_vertex(&self.name)
@@ -277,6 +279,7 @@ impl PyVertexFrame {
     }
 
     /// Return an edge's azimuthal-angle expression.
+    #[pyo3(signature = (edge, *, z_axis, y_hint))]
     fn phi(&self, edge: &str, z_axis: &PyVec3, y_hint: &PyVec3) -> PyResult<PyExpr> {
         self.channel
             .get_vertex(&self.name)

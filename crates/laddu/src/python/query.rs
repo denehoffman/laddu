@@ -1,7 +1,7 @@
 use laddu_runtime::{BinSpec, IntervalClosure, Predicate};
-use pyo3::{exceptions::PyValueError, prelude::*};
+use pyo3::{exceptions::PyValueError, prelude::*, types::PyAny};
 
-use super::{error::to_py_err, expr::PyExpr};
+use super::{error::to_py_err, expr::PyExpr, float_vec};
 
 #[pyclass(name = "Predicate", module = "laddu", frozen, skip_from_py_object)]
 #[derive(Clone, Debug)]
@@ -38,7 +38,7 @@ impl PyPredicate {
     }
 
     #[staticmethod]
-    #[pyo3(signature = (value, low, high, *, closed="both"))]
+    #[pyo3(signature = (value, *, low, high, closed="both"))]
     /// Test whether an expression lies inside an interval.
     ///
     /// Parameters
@@ -102,9 +102,12 @@ impl PyBin {
     ///     If fewer than two edges are provided or edges are not finite and
     ///     strictly increasing.
     #[new]
-    fn new(edges: Vec<f64>) -> PyResult<Self> {
+    #[pyo3(signature = (
+        edges: "Sequence[float] | numpy.typing.NDArray[numpy.float32 | numpy.float64]"
+    ))]
+    fn new(edges: &Bound<'_, PyAny>) -> PyResult<Self> {
         Ok(Self {
-            inner: BinSpec::edges(edges).map_err(to_py_err)?,
+            inner: BinSpec::edges(float_vec(edges)?).map_err(to_py_err)?,
         })
     }
 
@@ -122,6 +125,7 @@ impl PyBin {
     /// ------
     /// LadduError
     ///     If the count or limits are invalid.
+    #[pyo3(signature = (count, *, low, high))]
     fn uniform(count: usize, low: f64, high: f64) -> PyResult<Self> {
         Ok(Self {
             inner: BinSpec::uniform(count, low, high).map_err(to_py_err)?,

@@ -1,7 +1,7 @@
 use laddu_physics::histogram::Histogram;
-use pyo3::prelude::*;
+use pyo3::{prelude::*, types::PyAny};
 
-use super::error::to_py_err;
+use super::{error::to_py_err, float_vec};
 
 #[pyclass(name = "Histogram", module = "laddu", skip_from_py_object)]
 #[derive(Clone)]
@@ -30,17 +30,30 @@ impl PyHistogram {
     /// LadduError
     ///     If counts and edges have inconsistent lengths or invalid values.
     #[new]
-    #[pyo3(signature = (counts, bin_edges, *, underflow=0.0, overflow=0.0, errors=None))]
+    #[pyo3(signature = (
+        counts: "Sequence[float] | numpy.typing.NDArray[numpy.float32 | numpy.float64]",
+        *,
+        bin_edges: "Sequence[float] | numpy.typing.NDArray[numpy.float32 | numpy.float64]",
+        underflow=0.0,
+        overflow=0.0,
+        errors: "Sequence[float] | numpy.typing.NDArray[numpy.float32 | numpy.float64] | None" = None
+    ))]
     fn new(
-        counts: Vec<f64>,
-        bin_edges: Vec<f64>,
+        counts: &Bound<'_, PyAny>,
+        bin_edges: &Bound<'_, PyAny>,
         underflow: f64,
         overflow: f64,
-        errors: Option<Vec<f64>>,
+        errors: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Self> {
-        let mut hist =
-            Histogram::new_with_flow(counts, bin_edges, underflow, overflow).map_err(to_py_err)?;
+        let mut hist = Histogram::new_with_flow(
+            float_vec(counts)?,
+            float_vec(bin_edges)?,
+            underflow,
+            overflow,
+        )
+        .map_err(to_py_err)?;
         if let Some(errors) = errors {
+            let errors = float_vec(errors)?;
             hist.set_errors(&errors).map_err(to_py_err)?;
         }
 
@@ -48,7 +61,13 @@ impl PyHistogram {
     }
 
     #[staticmethod]
-    #[pyo3(signature = (values, bins, limits, *, weights=None))]
+    #[pyo3(signature = (
+        values: "Sequence[float] | numpy.typing.NDArray[numpy.float32 | numpy.float64]",
+        *,
+        bins,
+        limits,
+        weights: "Sequence[float] | numpy.typing.NDArray[numpy.float32 | numpy.float64] | None" = None
+    ))]
     /// Histogram samples into uniform bins.
     ///
     /// Parameters
@@ -67,11 +86,13 @@ impl PyHistogram {
     /// LadduError
     ///     If limits, bin count, values, or weights are invalid.
     fn from_values(
-        values: Vec<f64>,
+        values: &Bound<'_, PyAny>,
         bins: usize,
         limits: (f64, f64),
-        weights: Option<Vec<f64>>,
+        weights: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Self> {
+        let values = float_vec(values)?;
+        let weights = weights.map(float_vec).transpose()?;
         Ok(Self {
             inner: Histogram::from_values(&values, bins, limits, weights.as_deref())
                 .map_err(to_py_err)?,
@@ -79,7 +100,12 @@ impl PyHistogram {
     }
 
     #[staticmethod]
-    #[pyo3(signature = (values, bin_edges, *, weights=None))]
+    #[pyo3(signature = (
+        values: "Sequence[float] | numpy.typing.NDArray[numpy.float32 | numpy.float64]",
+        *,
+        bin_edges: "Sequence[float] | numpy.typing.NDArray[numpy.float32 | numpy.float64]",
+        weights: "Sequence[float] | numpy.typing.NDArray[numpy.float32 | numpy.float64] | None" = None
+    ))]
     /// Histogram samples using explicit bin edges.
     ///
     /// Parameters
@@ -96,10 +122,13 @@ impl PyHistogram {
     /// LadduError
     ///     If edges or weights are invalid.
     fn from_values_with_edges(
-        values: Vec<f64>,
-        bin_edges: Vec<f64>,
-        weights: Option<Vec<f64>>,
+        values: &Bound<'_, PyAny>,
+        bin_edges: &Bound<'_, PyAny>,
+        weights: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Self> {
+        let values = float_vec(values)?;
+        let bin_edges = float_vec(bin_edges)?;
+        let weights = weights.map(float_vec).transpose()?;
         Ok(Self {
             inner: Histogram::from_values_with_edges(&values, bin_edges, weights.as_deref())
                 .map_err(to_py_err)?,
@@ -114,7 +143,8 @@ impl PyHistogram {
 
     #[setter(counts)]
     /// Replace all regular-bin contents without changing their uncertainties.
-    fn set_counts(&mut self, counts: Vec<f64>) -> PyResult<()> {
+    fn set_counts(&mut self, counts: &Bound<'_, PyAny>) -> PyResult<()> {
+        let counts = float_vec(counts)?;
         self.inner.set_counts(&counts).map_err(to_py_err)
     }
 
@@ -126,7 +156,8 @@ impl PyHistogram {
 
     #[setter(errors)]
     /// Replace all regular-bin uncertainties.
-    fn set_errors(&mut self, errors: Vec<f64>) -> PyResult<()> {
+    fn set_errors(&mut self, errors: &Bound<'_, PyAny>) -> PyResult<()> {
+        let errors = float_vec(errors)?;
         self.inner.set_errors(&errors).map_err(to_py_err)
     }
 

@@ -593,7 +593,7 @@ impl PyParity {
 /// Examples
 /// --------
 /// >>> import laddu as ld
-/// >>> proton_isospin = ld.Isospin(0.5, 0.5)
+/// >>> proton_isospin = ld.Isospin(0.5, projection=0.5)
 pub struct PyIsospin {
     pub(crate) inner: Isospin,
 }
@@ -611,6 +611,7 @@ impl PyIsospin {
     #[new]
     #[pyo3(signature = (
         isospin: "J | S | L | int | float",
+        *,
         projection: "M | int | float | None"=None
     ))]
     fn new(isospin: &Bound<'_, PyAny>, projection: Option<&Bound<'_, PyAny>>) -> PyResult<Self> {
@@ -1088,6 +1089,7 @@ impl PyRuleSet {
 
     #[pyo3(signature = (
         parent,
+        *,
         daughter_a,
         daughter_b,
         l: "L | J | S | int | float",
@@ -1255,6 +1257,7 @@ impl PySelectionRules {
     }
 
     /// Return all allowed waves for ``parent -> daughter_a daughter_b``.
+    #[pyo3(signature = (parent, *, daughter_a, daughter_b))]
     fn allowed_partial_waves(
         &self,
         parent: &PyParticle,
