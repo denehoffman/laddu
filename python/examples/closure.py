@@ -18,14 +18,10 @@ import json
 import math
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
 
 import laddu as ld
 import matplotlib as mpl
 import numpy as np
-
-if TYPE_CHECKING:
-    from collections.abc import Sequence
 
 mpl.use('Agg')
 import matplotlib.pyplot as plt
@@ -53,7 +49,11 @@ def build_channel() -> ld.Channel:
                 p4='gamma',
                 particle=ld.particles.PHOTON,
                 output=True,
-                initial_momentum=ld.InitialMomentum.uniform_energy(8.0, 9.0, [0.0, 0.0, 1.0]),
+                initial_momentum=ld.InitialMomentum.uniform_energy(
+                    low=8.0,
+                    high=9.0,
+                    direction=[0.0, 0.0, 1.0],
+                ),
             ),
             ld.Edge(
                 'target',
@@ -62,7 +62,7 @@ def build_channel() -> ld.Channel:
                 output=True,
                 initial_momentum=ld.InitialMomentum.momentum([0.0, 0.0, 0.0]),
             ),
-            ld.Edge('X', mass_proposal=ld.MassProposal(threshold, 2.0)),
+            ld.Edge('X', mass_proposal=ld.MassProposal(threshold, high=2.0)),
             ld.Edge('recoil', p4='recoil', particle=ld.particles.PROTON, output=True),
             ld.Edge('ks1', p4='ks1', particle=kaon, output=True),
             ld.Edge('ks2', p4='ks2', particle=kaon, output=True),
@@ -72,7 +72,12 @@ def build_channel() -> ld.Channel:
                 'production',
                 incoming=['gamma', 'target'],
                 outgoing=['X', 'recoil'],
-                generation=ld.VertexProposal.t_exchange('gamma', 'X', slope=4.0, uniform_fraction=0.2),
+                generation=ld.VertexProposal.t_exchange(
+                    incoming='gamma',
+                    outgoing='X',
+                    slope=4.0,
+                    uniform_fraction=0.2,
+                ),
             ),
             ld.Vertex(
                 'decay',
@@ -115,10 +120,10 @@ def sequential_wave(
     helicity_axis = production.vec3('X')
     production_normal = beam_axis.cross(helicity_axis)
     y_axis = ld.Vec3.y_axis()
-    production_theta = production.theta('X', beam_axis, y_axis)
-    production_phi = production.phi('X', beam_axis, y_axis)
-    decay_theta = decay.theta('ks1', helicity_axis, production_normal)
-    decay_phi = decay.phi('ks1', helicity_axis, production_normal)
+    production_theta = production.theta('X', z_axis=beam_axis, y_hint=y_axis)
+    production_phi = production.phi('X', z_axis=beam_axis, y_hint=y_axis)
+    decay_theta = decay.theta('ks1', z_axis=helicity_axis, y_hint=production_normal)
+    decay_phi = decay.phi('ks1', z_axis=helicity_axis, y_hint=production_normal)
 
     resonance_spin = resonance.spin
     photon_spin = channel.particle('gamma').spin
@@ -135,40 +140,40 @@ def sequential_wave(
     decay_helicity = first_kaon_helicity - second_kaon_helicity
     initial_projection = photon_helicity - target_helicity
     initial_coupling = ld.clebsch_gordan(
-        photon_spin,
-        photon_helicity,
-        target_spin,
-        -target_helicity,
-        production_spin,
-        initial_projection,
+        j1=photon_spin,
+        m1=photon_helicity,
+        j2=target_spin,
+        m2=-target_helicity,
+        j=production_spin,
+        m=initial_projection,
     )
 
     angular = ld.Expr(0.0)
     for resonance_helicity in resonance_spin.projections():
         final_projection = resonance_helicity - recoil_helicity
         production_coupling = ld.clebsch_gordan(
-            resonance_spin,
-            resonance_helicity,
-            recoil_spin,
-            -recoil_helicity,
-            production_spin,
-            final_projection,
+            j1=resonance_spin,
+            m1=resonance_helicity,
+            j2=recoil_spin,
+            m2=-recoil_helicity,
+            j=production_spin,
+            m=final_projection,
         )
         daughter_spin_coupling = ld.clebsch_gordan(
-            first_kaon_spin,
-            first_kaon_helicity,
-            second_kaon_spin,
-            -second_kaon_helicity,
-            decay_spin,
-            decay_helicity,
+            j1=first_kaon_spin,
+            m1=first_kaon_helicity,
+            j2=second_kaon_spin,
+            m2=-second_kaon_helicity,
+            j=decay_spin,
+            m=decay_helicity,
         )
         orbital_coupling = ld.clebsch_gordan(
-            decay_orbital,
-            ld.M(0),
-            decay_spin,
-            decay_helicity,
-            resonance_spin,
-            decay_helicity,
+            j1=decay_orbital,
+            m1=ld.M(0),
+            j2=decay_spin,
+            m2=decay_helicity,
+            j=resonance_spin,
+            m=decay_helicity,
         )
         coefficient = initial_coupling * production_coupling * daughter_spin_coupling * orbital_coupling
         if coefficient == 0.0:
@@ -180,7 +185,7 @@ def sequential_wave(
                 initial_projection,
                 final_projection,
             )
-            .D(production_phi, production_theta)
+            .D(alpha=production_phi, beta=production_theta)
             .conj()
         )
         decay_d = (
@@ -189,7 +194,7 @@ def sequential_wave(
                 resonance_helicity,
                 decay_helicity,
             )
-            .D(decay_phi, decay_theta)
+            .D(alpha=decay_phi, beta=decay_theta)
             .conj()
         )
         angular += coefficient * production_d * decay_d
@@ -206,8 +211,22 @@ def build_model(channel: ld.Channel, efficiency: ld.Expr | None = None) -> ld.Mo
 
     f0_particle = ld.Particle('f0(1500)', spin=ld.S(0), parity=ld.Parity.POSITIVE, mass=F0_MASS)
     f2_particle = ld.Particle('f2(1270)', spin=ld.S(2), parity=ld.Parity.POSITIVE, mass=F2_MASS)
-    f0 = ld.relativistic_breit_wigner(s, f0_particle.mass, F0_WIDTH, kaon_mass, kaon_mass, l=0)
-    f2 = ld.relativistic_breit_wigner(s, f2_particle.mass, F2_WIDTH, kaon_mass, kaon_mass, l=2)
+    f0 = ld.relativistic_breit_wigner(
+        s,
+        mass=f0_particle.mass,
+        width=F0_WIDTH,
+        mass1=kaon_mass,
+        mass2=kaon_mass,
+        l=0,
+    )
+    f2 = ld.relativistic_breit_wigner(
+        s,
+        mass=f2_particle.mass,
+        width=F2_WIDTH,
+        mass1=kaon_mass,
+        mass2=kaon_mass,
+        l=2,
+    )
 
     magnitude = ld.parameter('f2_magnitude', initial=0.35, bounds=(0.0, 2.0), scale=0.5)
     phase = ld.parameter(
@@ -283,7 +302,6 @@ def fit_likelihood(
     """Fit one likelihood, optionally showing the central fit's progress."""
     observers = [ld.ganesh.ProgressObserver(interval=1)] if progress else []
     return likelihood.fit(
-        ld.ganesh.LBFGSBConfig(history_size=10),
         initial=ld.ganesh.VectorInit(initial),
         terminators=[ld.ganesh.MaxSteps(max_steps)],
         observers=observers,
@@ -311,7 +329,6 @@ def plot_closure(
     print(f'running {bootstrap_samples} paired Poisson-bootstrap refits...', flush=True)
     ensemble = likelihood.bootstrap_fit(
         bootstrap_samples,
-        ld.ganesh.LBFGSBConfig(history_size=10),
         initial=[fitted[name] for name in likelihood.parameter_names],
         seed=seed,
         terminators=[ld.ganesh.MaxSteps(bootstrap_fit_steps)],
@@ -319,13 +336,13 @@ def plot_closure(
     print('bootstrap refits complete; propagating projection uncertainties...', flush=True)
     cross_section = likelihood.cross_section(
         'ksks',
-        normalization,
+        generated_mc=normalization,
         luminosity=1.0,
         parameters=fitted,
         ensemble=ensemble,
     )
     differential = cross_section.differential(
-        ld.Axis(mass, cast('Sequence[float]', edges)),
+        ld.Axis(mass, edges=edges),
         components={'f0': ['f0'], 'f2': ['f2']},
     )
 
@@ -527,7 +544,10 @@ def main() -> None:  # noqa: PLR0915
 
     started = time.perf_counter()
     print('preparing likelihood...', flush=True)
-    likelihood = ld.Likelihood([ld.NLL(model, data, normalization, name='ksks')], execution=execution)
+    likelihood = ld.Likelihood(
+        [ld.NLL(model, data=data, accepted_mc=normalization, name='ksks')],
+        execution=execution,
+    )
     initial = likelihood.sample_parameters(seed=args.seed + 2)
     initial_nll, initial_gradient = likelihood.value_and_gradient(initial)
     preparation_time = time.perf_counter() - started

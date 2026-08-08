@@ -17,7 +17,7 @@ import json
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 import laddu as ld
 import matplotlib as mpl
@@ -129,7 +129,7 @@ def integrate_binned(estimate: ld.BinnedEstimate, widths: np.ndarray) -> ld.Esti
     """Integrate a one-dimensional differential estimate over its bins."""
     central = float(np.dot(np.asarray(estimate.central, dtype=float), widths))
     draws = np.asarray(estimate.draws, dtype=float) @ widths
-    return ld.Estimate(central, draws.tolist())
+    return ld.Estimate(central, draws=draws.tolist())
 
 
 def plot_acceptance_diagnostics(
@@ -434,7 +434,7 @@ def main() -> None:  # noqa: PLR0915
         generated_samples.append(generated)
         accepted_samples.append(accepted)
         data_samples.append(data)
-        terms.append(ld.NLL(model, data, accepted, name=period.name))
+        terms.append(ld.NLL(model, data=data, accepted_mc=accepted, name=period.name))
 
     generation_time = time.perf_counter() - generation_started
     print('preparing the four-term joint likelihood...', flush=True)
@@ -454,7 +454,6 @@ def main() -> None:  # noqa: PLR0915
     print(f'running {args.bootstrap_samples} paired joint bootstrap refits...', flush=True)
     ensemble = likelihood.bootstrap_fit(
         args.bootstrap_samples,
-        ld.ganesh.LBFGSBConfig(history_size=10),
         initial=fit.x,
         seed=args.seed + 2,
         terminators=[ld.ganesh.MaxSteps(args.max_fit_steps)],
@@ -469,7 +468,7 @@ def main() -> None:  # noqa: PLR0915
         cross_sections.append(
             likelihood.cross_section(
                 period.name,
-                generated,
+                generated_mc=generated,
                 luminosity=period.luminosity,
                 parameters=fitted,
                 ensemble=ensemble,
@@ -481,9 +480,9 @@ def main() -> None:  # noqa: PLR0915
     print(f'cross-section preparation completed in {cross_section_time:.3f}s', flush=True)
     limits = (2.0 * channel.particle('ks1').mass, 2.0)
     edges = np.linspace(*limits, args.projection_bins + 1)
-    axis = ld.Axis(mass, cast('Sequence[float]', edges))
+    axis = ld.Axis(mass, edges=edges)
     diagnostic_edges = np.linspace(*limits, min(16, args.projection_bins) + 1)
-    diagnostic_axis = ld.Axis(mass, cast('Sequence[float]', diagnostic_edges))
+    diagnostic_axis = ld.Axis(mass, edges=diagnostic_edges)
     period_differential_started = time.perf_counter()
     distributions = []
     for period, cross_section in zip(periods, cross_sections, strict=True):

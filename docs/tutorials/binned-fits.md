@@ -1,80 +1,83 @@
-# Mass-independent binned fits
+# Fitting models across bins of event data
 
-A mass-independent fit divides an invariant mass $m$ into intervals and fits the angular distribution independently in each interval. No resonance line shape connects neighboring bins. This makes the result a useful intermediate representation for later resonance-model studies.
+Here the data and accepted MC are partitioned by an observable, and an
+independent angular model is fitted in each interval. The model itself is not a
+"binned model": the likelihood still evaluates individual events within every
+bin.
 
-For angular basis functions $\psi_a(\Omega)$, use
+A mass-independent analysis is a common example. With angular basis functions
+$\psi_a(\Omega)$,
 
 $$
-I_b(\Omega)=\left|\psi_0(\Omega)+\sum_{a>0}c_{ab}\psi_a(\Omega)\right|^2,
-\qquad c_{ab}=r_{ab}e^{i\phi_{ab}}.
+I_b(\Omega)=\left|\psi_0(\Omega)
++\sum_{a>0}c_{ab}\psi_a(\Omega)\right|^2,
+\qquad c_{ab}=r_{ab}e^{i\phi_{ab}},
 $$
 
-The fixed coefficient of $\psi_0$ removes the unobservable scale and phase convention within each normalized bin.
+and each mass interval $b$ has its own complex coefficients.
 
-## Partition data and accepted MC
+## Partition observed and normalization data
 
 ```python
-import laddu as ld
+mass = generation_channel.mass("X")
+mass_edges = np.linspace(1.0, 2.0, 31, dtype=np.float32)
+binning = ld.Bin(mass_edges)
 
-mass = channel.mass("X")
-binning = ld.Bin.uniform(30, 1.0, 2.0)
-data_bins = data.bin_by(mass, binning, execution=execution)
-mc_bins = accepted_mc.bin_by(mass, binning, execution=execution)
+data_bins = data.bin_by(mass, bins=binning)
+accepted_bins = accepted_mc.bin_by(mass, bins=binning)
 ```
 
-Both calls return all intervals in order, including empty intervals. Check statistics before constructing likelihood terms.
+Both results contain every interval in order. Decide how to handle empty or
+low-statistics bins before looking for structures.
 
-## Give each bin independent couplings
+## Construct one event likelihood per interval
 
-Assume `s_wave` and `d_wave` are angular expressions without mass-dependent line shapes. Construct one model and one term per populated interval:
+Assume `s_wave` and `d_wave` are angular expressions without a mass-dependent
+line shape:
 
 ```python
 terms = []
-models = {}
 
-for observed, normalization in zip(data_bins, mc_bins, strict=True):
+for observed, normalization in zip(data_bins, accepted_bins, strict=True):
     if len(observed.dataset) == 0 or len(normalization.dataset) == 0:
         continue
 
-    label = f"bin_{observed.index:02d}"
-    radius = ld.parameter(
-        f"{label}_d_magnitude", initial=0.2, bounds=(0.0, 5.0), scale=0.5
+    prefix = f"bin_{observed.index:02d}"
+    magnitude = ld.parameter(
+        f"{prefix}_d_magnitude",
+        initial=0.2,
+        bounds=(0.0, 5.0),
     )
     phase = ld.parameter(
-        f"{label}_d_phase",
+        f"{prefix}_d_phase",
         initial=0.0,
         bounds=(-3.141592653589793, 3.141592653589793),
         periodic=True,
     )
-    amplitude = s_wave.tagged(f"{label}_s") + ld.polar_complex(radius, phase) * d_wave.tagged(f"{label}_d")
-    models[label] = ld.Model(amplitude.norm_sqr())
+
+    amplitude = s_wave + ld.polar_complex(magnitude, phase) * d_wave
+    bin_model = ld.Model(amplitude.norm_sqr())
     terms.append(
         ld.NLL(
-            models[label],
-            observed.dataset,
-            normalization.dataset,
-            name=label,
+            bin_model,
+            data=observed.dataset,
+            accepted_mc=normalization.dataset,
+            name=prefix,
         )
     )
 
-likelihood = ld.Likelihood(terms, execution=execution)
-```
-
-Since parameter names are unique by bin, the combined likelihood is a convenient single optimization problem whose gradient spans all intervals. Alternatively fit bins separately to isolate failures and parallelize at the workflow level.
-
-```python
+likelihood = ld.Likelihood(terms)
 fit = likelihood.fit(
-    ld.ganesh.LBFGSBConfig(history_size=10),
-    initial=ld.ganesh.VectorInit(likelihood.sample_parameters(seed=9)),
+    initial=likelihood.sample_parameters(seed=9),
     terminators=[ld.ganesh.MaxSteps(1000)],
 )
 ```
 
-## Report the result
+Unique parameter names make this one block-diagonal optimization problem.
+Fitting bins separately is also reasonable when failure isolation or workflow
+parallelism matters.
 
-For each interval report its center and width, fitted complex amplitudes or spin-density elements, statistical covariance or bootstrap intervals, fit status, event counts, accepted-MC effective statistics, and the phase convention. Do not draw a smooth resonance curve through bins as though it had been fitted.
-
-```{important}
-Low acceptance in one angular region can make an individual mass bin poorly identifiable. Inspect the accepted-MC angular coverage per bin and merge or remove bins using criteria chosen before viewing resonance-like structures.
-```
-
+Report each interval's edges, event and effective accepted-MC statistics,
+fitted complex coefficients, uncertainty, fit status, and phase convention.
+Do not draw a smooth resonance curve through the points as though a resonance
+line shape had been fitted.
