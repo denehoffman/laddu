@@ -20,6 +20,7 @@ use pyo3::{
 use super::{
     error::to_py_err,
     expr::PyExpr,
+    float_vec,
     query::{PyBin, PyPredicate},
     runtime::{PyExecution, memory_decision_dict, parse_memory_budget},
 };
@@ -311,6 +312,9 @@ fn scalar_array(values: &Bound<'_, PyAny>, name: &str) -> PyResult<Arc<[f64]>> {
             .map(|&value| value as f64)
             .collect());
     }
+    if let Ok(values) = float_vec(values) {
+        return Ok(values.into());
+    }
     Err(PyValueError::new_err(format!(
         "scalar column {name:?} must be a float32 or float64 NumPy array"
     )))
@@ -373,9 +377,9 @@ impl PyDataset {
     #[staticmethod]
     #[pyo3(signature = (
         *,
-        p4s: "dict",
-        scalars: "dict",
-        weights: "Sequence[float] | None" = None
+        p4s: "dict[str, numpy.typing.NDArray[numpy.float32 | numpy.float64]]",
+        scalars: "dict[str, numpy.typing.NDArray[numpy.float32 | numpy.float64]]",
+        weights: "Sequence[float] | numpy.typing.NDArray[numpy.float32 | numpy.float64] | None" = None
     ))]
     /// Create an in-memory dataset from NumPy columns.
     ///
@@ -679,7 +683,7 @@ impl PyDataset {
         })
     }
 
-    #[pyo3(signature = (expr, bins, *, execution=None))]
+    #[pyo3(signature = (expr, *, bins, execution=None))]
     /// Partition events into bins of an evaluated expression.
     ///
     /// Parameters

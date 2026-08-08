@@ -18,6 +18,7 @@ use super::{
 #[pyfunction]
 #[pyo3(signature = (
     s: "Expr | int | float",
+    *,
     mass: "Expr | int | float",
     width: "Expr | int | float"
 ))]
@@ -52,11 +53,11 @@ pub fn breit_wigner(
 #[pyfunction]
 #[pyo3(signature = (
     s: "Expr | int | float",
+    *,
     mass: "Expr | int | float",
     width: "Expr | int | float",
     mass1: "Expr | int | float",
     mass2: "Expr | int | float",
-    *,
     l: "int | float | None" = None
 ))]
 /// Construct a relativistic two-body Breit-Wigner amplitude.
@@ -108,12 +109,12 @@ pub fn relativistic_breit_wigner(
 #[pyfunction]
 #[pyo3(signature = (
     s: "Expr | int | float",
+    *,
     mass: "Expr | int | float",
     width: "Expr | int | float",
     mass1: "Expr | int | float",
     mass2: "Expr | int | float",
     l: "int | float",
-    *,
     barrier_factors=true,
     q_r=1.0
 ))]
@@ -171,11 +172,11 @@ pub fn relativistic_breit_wigner_custom(
 #[pyfunction]
 #[pyo3(signature = (
     s: "Expr | int | float",
+    *,
     channel_mass_1: "Expr | int | float",
     channel_mass_2: "Expr | int | float",
     pole_masses: "Expr | int | float",
     l: "int | float",
-    *,
     q_r=1.0
 ))]
 /// Build channel-by-pole Blatt-Weisskopf barrier factors.
@@ -227,10 +228,10 @@ pub fn blatt_weisskopf_barriers(
 #[pyfunction]
 #[pyo3(signature = (
     s: "Expr | int | float",
+    *,
     pole_masses: "Expr | int | float",
     couplings: "Expr | int | float",
     barriers: "Expr | int | float",
-    *,
     background: "Expr | int | float | None" = None
 ))]
 /// Construct a coupled-channel K-matrix expression.
@@ -287,11 +288,11 @@ pub fn k_matrix(
 #[pyfunction]
 #[pyo3(signature = (
     s: "Expr | int | float",
+    *,
     pole_masses: "Expr | int | float",
     production: "Expr | int | float",
     couplings: "Expr | int | float",
     barriers: "Expr | int | float",
-    *,
     background: "Expr | int | float | None" = None
 ))]
 /// Construct the production vector for a coupled-channel model.
@@ -351,6 +352,7 @@ pub fn p_vector(
 #[pyfunction]
 #[pyo3(signature = (
     s: "Expr | int | float",
+    *,
     pole_masses: "Expr | int | float",
     k: "Expr | int | float",
     p: "Expr | int | float",
@@ -403,6 +405,7 @@ pub fn f_vector(
 #[pyfunction]
 #[pyo3(signature = (
     s: "Expr | int | float",
+    *,
     production: "list[Expr | int | float] | tuple[Expr | int | float, ...]"
 ))]
 /// Construct the published two-pole Kopf rho amplitude.
@@ -442,6 +445,7 @@ pub fn kopf_rho(s: &Bound<'_, PyAny>, production: Vec<Bound<'_, PyAny>>) -> PyRe
 #[pyfunction]
 #[pyo3(signature = (
     s: "Expr | int | float",
+    *,
     production: "list[Expr | int | float] | tuple[Expr | int | float, ...]"
 ))]
 /// Construct the published one-pole Kopf pi1 amplitude.

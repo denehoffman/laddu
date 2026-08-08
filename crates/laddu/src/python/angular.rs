@@ -412,6 +412,7 @@ impl PyVec4 {
 
 #[pyfunction]
 #[pyo3(signature = (
+    *,
     j1: "J | S | L | int | float",
     m1: "M | int | float",
     j2: "J | S | L | int | float",
@@ -442,7 +443,7 @@ impl PyVec4 {
 /// Examples
 /// --------
 /// >>> import laddu as ld
-/// >>> ld.clebsch_gordan(0.5, 0.5, 0.5, -0.5, 0, 0)
+/// >>> ld.clebsch_gordan(j1=0.5, m1=0.5, j2=0.5, m2=-0.5, j=0, m=0)
 /// 0.7071067811865476
 pub fn clebsch_gordan(
     j1: &Bound<'_, PyAny>,
@@ -519,6 +520,7 @@ impl PyWignerD {
 
     #[allow(non_snake_case)]
     #[pyo3(signature = (
+        *,
         alpha: "Expr | int | float",
         beta: "Expr | int | float",
         gamma: "Expr | int | float | None" = None

@@ -7,7 +7,7 @@ use pyo3::{
     types::{PyAny, PyDict},
 };
 
-use super::{data::PyDataset, error::to_py_err, expr::PyExpr, runtime::PyExecution};
+use super::{data::PyDataset, error::to_py_err, expr::PyExpr, float_vec, runtime::PyExecution};
 
 /// Resolve Python parameter values into the model's free-parameter order.
 ///
@@ -22,7 +22,7 @@ use super::{data::PyDataset, error::to_py_err, expr::PyExpr, runtime::PyExecutio
 /// LadduError
 ///     If the compiled parameter layout is inconsistent.
 pub fn model_free_values(model: &CompiledModel, values: &Bound<'_, PyAny>) -> PyResult<Vec<f64>> {
-    if let Ok(values) = values.extract::<Vec<f64>>() {
+    if let Ok(values) = float_vec(values) {
         return Ok(values);
     }
     if let Ok(mapping) = values.cast::<PyDict>() {
@@ -161,7 +161,7 @@ impl PyModel {
     #[pyo3(signature = (
         dataset,
         *,
-        parameters: "Sequence[float] | dict[str, float] | None" = None,
+        parameters: "Sequence[float] | numpy.typing.NDArray[numpy.float32 | numpy.float64] | dict[str, float] | None" = None,
         execution=None,
         real=false
     ) -> "Sequence[float]")]
@@ -240,7 +240,7 @@ impl PyModel {
     #[pyo3(signature = (
         dataset,
         *,
-        parameters: "Sequence[float] | dict[str, float] | None" = None,
+        parameters: "Sequence[float] | numpy.typing.NDArray[numpy.float32 | numpy.float64] | dict[str, float] | None" = None,
         execution=None,
         real=false
     ) -> "tuple[Sequence[float], Sequence[Sequence[float]]]")]
