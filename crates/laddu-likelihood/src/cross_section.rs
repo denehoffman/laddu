@@ -857,29 +857,69 @@ impl CrossSection {
         })
     }
 
-    /// Full-model total cross section.
+    /// Full-model observed-yield-normalized cross section.
     ///
     /// # Errors
     /// Returns an error when model integrals or ensemble evaluation fail.
-    pub fn total(&self) -> LikelihoodResult<Estimate> {
-        self.total_selected(None)
+    pub fn observed_total(&self) -> LikelihoodResult<Estimate> {
+        self.observed_total_selected(None)
     }
 
-    /// Tag-narrowed total cross section.
+    /// Tag-narrowed observed-yield-normalized cross section.
     ///
     /// # Errors
     /// Returns an error when tag projection, integrals, or ensemble evaluation fail.
-    pub fn total_with_tags(&self, tags: &[String]) -> LikelihoodResult<Estimate> {
-        self.total_selected(Some(tags))
+    pub fn observed_total_with_tags(&self, tags: &[String]) -> LikelihoodResult<Estimate> {
+        self.observed_total_selected(Some(tags))
     }
 
-    fn total_selected(&self, tags: Option<&[String]>) -> LikelihoodResult<Estimate> {
+    fn observed_total_selected(&self, tags: Option<&[String]>) -> LikelihoodResult<Estimate> {
         if self.members.is_some() {
             return self.combined_total(tags);
         }
         self.evaluate_estimate(tags, |integrals, parameters| {
-            integrals.cross_section(parameters, self.luminosity)
+            integrals.observed_cross_section(parameters, self.luminosity)
         })
+    }
+
+    /// Full-model fitted cross section from an absolute-rate likelihood term.
+    ///
+    /// # Errors
+    /// Returns an error for shape-only terms, combined analyses, invalid
+    /// luminosity, or failed integral or ensemble evaluation.
+    pub fn fitted_total(&self) -> LikelihoodResult<Estimate> {
+        self.fitted_total_selected(None)
+    }
+
+    /// Tag-narrowed fitted cross section from an absolute-rate likelihood term.
+    ///
+    /// # Errors
+    /// Returns an error for shape-only terms, combined analyses, invalid
+    /// luminosity, or failed tag projection, integral, or ensemble evaluation.
+    pub fn fitted_total_with_tags(&self, tags: &[String]) -> LikelihoodResult<Estimate> {
+        self.fitted_total_selected(Some(tags))
+    }
+
+    fn fitted_total_selected(&self, tags: Option<&[String]>) -> LikelihoodResult<Estimate> {
+        self.evaluate_estimate(tags, |integrals, parameters| {
+            integrals.fitted_cross_section(parameters, self.luminosity)
+        })
+    }
+
+    /// Alias for [`Self::observed_total`].
+    ///
+    /// # Errors
+    /// Returns an error when model integrals or ensemble evaluation fail.
+    pub fn total(&self) -> LikelihoodResult<Estimate> {
+        self.observed_total()
+    }
+
+    /// Alias for [`Self::observed_total_with_tags`].
+    ///
+    /// # Errors
+    /// Returns an error when tag projection, integrals, or ensemble evaluation fail.
+    pub fn total_with_tags(&self, tags: &[String]) -> LikelihoodResult<Estimate> {
+        self.observed_total_with_tags(tags)
     }
 
     /// Full-model acceptance.
@@ -1590,6 +1630,7 @@ fn bin_index(value: f64, edges: &[f64]) -> Option<usize> {
 
 #[cfg(test)]
 mod tests {
+    use approx::assert_relative_eq;
     use laddu_compile::CompiledModel;
     use laddu_data::{
         data::{EventBatch, OwnedEvent},
@@ -1669,6 +1710,32 @@ mod tests {
         .unwrap();
         assert_eq!(ensemble.len(), 3);
         assert_eq!(ensemble.replicas().len(), 3);
+    }
+
+    #[test]
+    fn extended_nll_cross_section_distinguishes_observed_and_fitted_totals() {
+        let model =
+            CompiledModel::from_expr(&(event_scalar("x") * parameter!("scale", initial: 0.25)))
+                .unwrap();
+        let data = weighted_dataset(&[(2.0, 1.0), (3.0, 1.0)]);
+        let accepted = weighted_dataset(&[(4.0, 1.0)]);
+        let generated = weighted_dataset(&[(6.0, 1.0)]);
+        let likelihood = Arc::new(
+            Likelihood::new([
+                crate::ExtendedNllTerm::new("signal", &model, &data, &accepted).unwrap(),
+            ])
+            .unwrap(),
+        );
+        let cross_section = likelihood
+            .cross_section("signal", generated, 10.0, likelihood.default_params())
+            .unwrap();
+
+        assert_relative_eq!(cross_section.observed_total().unwrap().value(), 0.3);
+        assert_relative_eq!(cross_section.fitted_total().unwrap().value(), 0.15);
+        assert_relative_eq!(
+            cross_section.total().unwrap().value(),
+            cross_section.observed_total().unwrap().value()
+        );
     }
 
     #[test]

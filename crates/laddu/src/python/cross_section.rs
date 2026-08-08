@@ -5,14 +5,14 @@ use std::collections::HashMap;
 use laddu_likelihood::{
     Axis, BinnedEstimate, CrossSection, DifferentialCrossSection, Ensemble, Estimate,
 };
-use numpy::{PyArray1, PyArray2, PyReadonlyArray2, PyReadonlyArray3};
+use numpy::{PyArray1, PyArray2};
 use pyo3::{
     exceptions::{PyTypeError, PyValueError},
     prelude::*,
     types::PyAny,
 };
 
-use super::{error::to_py_err, expr::PyExpr};
+use super::{error::to_py_err, expr::PyExpr, float_matrix, float_tensor3, float_vec};
 
 #[pyclass(name = "Ensemble", module = "laddu", frozen, skip_from_py_object)]
 #[derive(Clone)]
@@ -24,18 +24,19 @@ pub struct PyEnsemble {
 #[pymethods]
 impl PyEnsemble {
     #[staticmethod]
-    #[pyo3(signature = (values, parameter_names, *, source_id=None))]
+    #[pyo3(signature = (
+        values: "Sequence[Sequence[float]] | numpy.typing.NDArray[numpy.float32 | numpy.float64]",
+        *,
+        parameter_names,
+        source_id=None
+    ))]
     /// Build an ensemble from a two-dimensional array of parameter draws.
     fn from_arrays(
-        values: PyReadonlyArray2<'_, f64>,
+        values: &Bound<'_, PyAny>,
         parameter_names: Vec<String>,
         source_id: Option<u64>,
     ) -> PyResult<Self> {
-        let draws = values
-            .as_array()
-            .outer_iter()
-            .map(|row| row.to_vec())
-            .collect();
+        let draws = float_matrix(values)?;
         let inner = match source_id {
             Some(source_id) => Ensemble::with_source_id(parameter_names, draws, source_id),
             None => Ensemble::new(parameter_names, draws),
@@ -52,14 +53,7 @@ impl PyEnsemble {
             .getattr("parameter_names")?
             .extract::<Option<Vec<String>>>()?
             .ok_or_else(|| PyValueError::new_err("MCMC summary has no parameter names"))?;
-        let chain = summary
-            .getattr("chain")?
-            .extract::<PyReadonlyArray3<'_, f64>>()?;
-        let chain = chain
-            .as_array()
-            .outer_iter()
-            .map(|walker| walker.outer_iter().map(|step| step.to_vec()).collect())
-            .collect::<Vec<Vec<Vec<f64>>>>();
+        let chain = float_tensor3(&summary.getattr("chain")?)?;
         Ok(Self {
             inner: Ensemble::from_chain(parameter_names, &chain, discard, thin)
                 .map_err(to_py_err)?,
@@ -102,9 +96,18 @@ impl From<Estimate> for PyEstimate {
 #[pymethods]
 impl PyEstimate {
     #[new]
-    #[pyo3(signature = (central, draws=None, *, source_id=None))]
-    fn new(central: f64, draws: Option<Vec<f64>>, source_id: Option<u64>) -> PyResult<Self> {
-        let draws = draws.unwrap_or_default();
+    #[pyo3(signature = (
+        central,
+        *,
+        draws: "Sequence[float] | numpy.typing.NDArray[numpy.float32 | numpy.float64] | None" = None,
+        source_id=None
+    ))]
+    fn new(
+        central: f64,
+        draws: Option<&Bound<'_, PyAny>>,
+        source_id: Option<u64>,
+    ) -> PyResult<Self> {
+        let draws = draws.map(float_vec).transpose()?.unwrap_or_default();
         let inner = match source_id {
             Some(source_id) => Estimate::with_source_id(central, draws, Some(source_id)),
             None => Estimate::new(central, draws),
@@ -191,10 +194,14 @@ pub struct PyAxis {
 #[pymethods]
 impl PyAxis {
     #[new]
-    #[pyo3(signature = (expr, edges: "Sequence[float]"))]
-    fn new(expr: &PyExpr, edges: Vec<f64>) -> PyResult<Self> {
+    #[pyo3(signature = (
+        expr,
+        *,
+        edges: "Sequence[float] | numpy.typing.NDArray[numpy.float32 | numpy.float64]"
+    ))]
+    fn new(expr: &PyExpr, edges: &Bound<'_, PyAny>) -> PyResult<Self> {
         Ok(Self {
-            inner: Axis::new(expr.inner.clone(), edges).map_err(to_py_err)?,
+            inner: Axis::new(expr.inner.clone(), float_vec(edges)?).map_err(to_py_err)?,
         })
     }
 
@@ -343,13 +350,31 @@ impl PyCrossSection {
     }
 
     #[pyo3(signature = (*, tags=None))]
-    fn total(&self, tags: Option<Vec<String>>) -> PyResult<PyEstimate> {
+    /// Return the observed-yield-normalized cross section.
+    fn observed_total(&self, tags: Option<Vec<String>>) -> PyResult<PyEstimate> {
         match tags {
-            Some(tags) => self.inner.total_with_tags(&tags),
-            None => self.inner.total(),
+            Some(tags) => self.inner.observed_total_with_tags(&tags),
+            None => self.inner.observed_total(),
         }
         .map(Into::into)
         .map_err(to_py_err)
+    }
+
+    #[pyo3(signature = (*, tags=None))]
+    /// Return the fitted cross section from an absolute-rate likelihood term.
+    fn fitted_total(&self, tags: Option<Vec<String>>) -> PyResult<PyEstimate> {
+        match tags {
+            Some(tags) => self.inner.fitted_total_with_tags(&tags),
+            None => self.inner.fitted_total(),
+        }
+        .map(Into::into)
+        .map_err(to_py_err)
+    }
+
+    #[pyo3(signature = (*, tags=None))]
+    /// Alias for :meth:`observed_total`.
+    fn total(&self, tags: Option<Vec<String>>) -> PyResult<PyEstimate> {
+        self.observed_total(tags)
     }
 
     #[pyo3(signature = (*, tags=None))]

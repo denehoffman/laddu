@@ -41,6 +41,9 @@ pub enum LikelihoodError {
     /// The requested term was not an intensity term.
     #[error("likelihood term is not an intensity term: {0}")]
     NotIntensityTerm(String),
+    /// The requested term does not determine an absolute intensity scale.
+    #[error("likelihood term does not determine an absolute rate: {0}")]
+    AbsoluteRateUnavailable(String),
     /// A term referenced a parameter absent from the global layout.
     #[error("likelihood term {term} references unknown parameter {parameter}")]
     MissingParameter {
