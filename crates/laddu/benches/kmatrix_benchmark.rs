@@ -449,6 +449,38 @@ fn kmatrix_nll_benchmark(c: &mut Criterion) {
     }
 }
 
+/// Retains the benchmark IDs used through v0.19.6 so CodSpeed can compare the
+/// kernel rewrite against the previous evaluator. The f64 CPU interpreter is
+/// the closest current equivalent to that evaluator.
+fn historical_kmatrix_nll_benchmark(c: &mut Criterion) {
+    let term = kmatrix_term(1);
+    let mut group = c.benchmark_group("K-Matrix NLL Performance");
+    let thread_counts = (0..)
+        .map(|power| 1 << power)
+        .take_while(|threads| *threads <= num_cpus::get());
+
+    for threads in thread_counts {
+        let backend = BenchmarkBackend::CpuInterpreter {
+            threads,
+            precision: Precision::F64,
+        };
+        let likelihood = likelihood(&term, backend);
+        group.bench_with_input(
+            BenchmarkId::from_parameter(threads),
+            &threads,
+            |b, _threads| {
+                let mut rng = fastrand::Rng::with_seed(0x4b_4d_41_54_52_49_58);
+                b.iter_batched(
+                    || likelihood.params_with(|_| rng.f64() * 200.0 - 100.0),
+                    |params| black_box(likelihood.nll(black_box(&params)).unwrap()),
+                    BatchSize::SmallInput,
+                )
+            },
+        );
+    }
+    group.finish();
+}
+
 fn kmatrix_nll_gradient_benchmark(c: &mut Criterion) {
     for batches in [1, 2] {
         let term = kmatrix_term(batches);
@@ -688,6 +720,6 @@ fn validate_gradient_parity(likelihoods: &[(BenchmarkBackend, Likelihood)]) {
 criterion_group! {
     name = benches;
     config = Criterion::default().sample_size(500);
-    targets = kmatrix_nll_benchmark, kmatrix_nll_gradient_benchmark
+    targets = historical_kmatrix_nll_benchmark, kmatrix_nll_benchmark, kmatrix_nll_gradient_benchmark
 }
 criterion_main!(benches);
