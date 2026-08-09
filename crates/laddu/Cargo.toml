@@ -78,6 +78,7 @@ optional = true
 
 [dev-dependencies]
 criterion.workspace = true
+fastrand.workspace = true
 num_cpus.workspace = true
 rayon.workspace = true
 serde.workspace = true

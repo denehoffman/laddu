@@ -243,7 +243,11 @@ benchmark_workflow = Workflow(
                 SetupRust(toolchain=MSRV),
                 InstallRustTool(tool=['cargo-codspeed']),
                 script(
-                    'cargo codspeed build',
+                    'cargo codspeed build '
+                    '--bench generation '
+                    '--bench jit_benchmark '
+                    '--bench kmatrix_benchmark '
+                    '--features laddu/jit,laddu/wgpu',
                     env={'CARGO_BUILD_JOBS': '1'},
                 ),
                 action(
