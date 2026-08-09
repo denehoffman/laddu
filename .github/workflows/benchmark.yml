@@ -27,7 +27,7 @@ jobs:
         uses: taiki-e/install-action@v2
         with:
           tool: cargo-codspeed
-      - run: "cargo codspeed build --bench generation --bench jit_benchmark --bench kmatrix_benchmark --features laddu/jit,laddu/wgpu"
+      - run: cargo codspeed build --bench generation --bench jit_benchmark --bench kmatrix_benchmark --features laddu/jit
         env:
           CARGO_BUILD_JOBS: "1"
       - name: CodSpeed Action
