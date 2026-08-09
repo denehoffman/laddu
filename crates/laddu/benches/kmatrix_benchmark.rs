@@ -28,12 +28,18 @@ use laddu::{
         vectors::{Vec3, Vec4},
     },
     runtime::{
-        CpuOptions, Device, Execution, ExecutionOptions, GpuBackend, GpuOptions, JitPolicy,
-        Precision, ThreadPolicy,
+        CpuOptions, Device, Execution, ExecutionOptions, JitPolicy, Precision, ThreadPolicy,
     },
 };
 
+#[cfg(feature = "wgpu")]
+use laddu::runtime::{GpuBackend, GpuOptions};
+
 #[derive(Copy, Clone)]
+#[allow(
+    clippy::enum_variant_names,
+    reason = "CPU-only builds compile out the WGPU variants"
+)]
 enum BenchmarkBackend {
     CpuInterpreter {
         threads: usize,
@@ -48,7 +54,9 @@ enum BenchmarkBackend {
         precision: Precision,
         jit: JitPolicy,
     },
+    #[cfg(feature = "wgpu")]
     Wgpu,
+    #[cfg(feature = "wgpu")]
     WgpuReverse,
 }
 
@@ -77,7 +85,9 @@ impl BenchmarkBackend {
                     JitPolicy::Auto => "auto",
                 }
             ),
+            #[cfg(feature = "wgpu")]
             Self::Wgpu => "wgpu-f32".to_string(),
+            #[cfg(feature = "wgpu")]
             Self::WgpuReverse => "wgpu-reverse-f32".to_string(),
         }
     }
@@ -86,6 +96,7 @@ impl BenchmarkBackend {
         match self {
             Self::CpuInterpreter { precision, .. } | Self::CpuJit { precision, .. } => precision,
             Self::CpuReverse { precision, .. } => precision,
+            #[cfg(feature = "wgpu")]
             Self::Wgpu | Self::WgpuReverse => Precision::F32,
         }
     }
@@ -117,6 +128,7 @@ impl BenchmarkBackend {
                 }),
                 precision,
             ),
+            #[cfg(feature = "wgpu")]
             Self::Wgpu | Self::WgpuReverse => (
                 Device::Gpu(GpuOptions {
                     backend: GpuBackend::Wgpu,
@@ -129,7 +141,9 @@ impl BenchmarkBackend {
             device,
             precision,
             autodiff: match self {
-                Self::CpuReverse { .. } | Self::WgpuReverse => AutodiffMode::Reverse,
+                Self::CpuReverse { .. } => AutodiffMode::Reverse,
+                #[cfg(feature = "wgpu")]
+                Self::WgpuReverse => AutodiffMode::Reverse,
                 _ => AutodiffMode::Forward,
             },
             ..ExecutionOptions::default()
@@ -144,6 +158,7 @@ fn benchmark_backends() -> Vec<BenchmarkBackend> {
     if maximum != 1 {
         backends.extend(cpu_backends(maximum));
     }
+    #[cfg(feature = "wgpu")]
     backends.push(BenchmarkBackend::Wgpu);
     backends
 }
@@ -151,6 +166,7 @@ fn benchmark_backends() -> Vec<BenchmarkBackend> {
 fn benchmark_gradient_backends() -> Vec<BenchmarkBackend> {
     let maximum = num_cpus::get().max(1);
     let mut backends = benchmark_backends();
+    #[cfg(feature = "wgpu")]
     backends.push(BenchmarkBackend::WgpuReverse);
     backends.extend(reverse_backends(1));
     if maximum != 1 {

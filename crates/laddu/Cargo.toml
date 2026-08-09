@@ -87,7 +87,7 @@ serde_json.workspace = true
 [[bench]]
 name = "kmatrix_benchmark"
 harness = false
-required-features = ["jit", "wgpu"]
+required-features = ["jit"]
 
 [[bench]]
 name = "jit_benchmark"
