@@ -230,8 +230,8 @@ release_please_workflow = Workflow(
 benchmark_workflow = Workflow(
     name='CodSpeed Benchmarks',
     on=Events(
-        push=PushEvent(branches=['development', 'main']),
-        pull_request=PullRequestEvent(branches=['development']),
+        push=PushEvent(branches=['main']),
+        pull_request=PullRequestEvent(),
         workflow_dispatch=WorkflowDispatchEvent(),
     ),
     jobs={

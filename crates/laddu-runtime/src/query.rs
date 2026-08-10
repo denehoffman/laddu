@@ -816,6 +816,9 @@ mod tests {
         let model = PreparedModel::prepare(&compiled, &execution).unwrap();
         let prepared = model.prepare_dataset(&execution, &selected).unwrap();
 
+        #[cfg(not(feature = "wgpu"))]
+        let crate::PreparedDataset::Cpu(prepared_cpu) = &prepared;
+        #[cfg(feature = "wgpu")]
         let crate::PreparedDataset::Cpu(prepared_cpu) = &prepared else {
             panic!("default execution prepares CPU datasets");
         };
