@@ -2,13 +2,10 @@
 ---
 name: CodSpeed Benchmarks
 "on":
-  pull_request:
-    branches:
-      - development
   push:
     branches:
-      - development
       - main
+  pull_request: ~
   workflow_dispatch: ~
 jobs:
   benchmarks:

@@ -1165,7 +1165,8 @@ mod tests {
         let read_batches: Vec<EventBatch> = source
             .batches(ReadPlan {
                 chunk_size: Some(2),
-                ..ReadPlan::default()
+                #[cfg(feature = "mpi")]
+                distribution: Default::default(),
             })
             .unwrap()
             .map(Result::unwrap)
