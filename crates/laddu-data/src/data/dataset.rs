@@ -1,4 +1,7 @@
-use std::sync::{Arc, Mutex};
+use std::sync::{
+    Arc, Mutex,
+    atomic::{AtomicU64, Ordering},
+};
 
 use crate::{
     LadduDataError, LadduDataResult,
@@ -17,6 +20,135 @@ enum DatasetOp {
     Bootstrap { seed: u64 },
 }
 
+struct CoalescedBatches {
+    input: Box<dyn Iterator<Item = LadduDataResult<EventBatch>> + Send>,
+    target: usize,
+    pending: Vec<EventBatch>,
+    pending_len: usize,
+    deferred: Option<LadduDataResult<EventBatch>>,
+    finished: bool,
+    stats: Option<Arc<Mutex<DatasetStatsCache>>>,
+    observed_events: u64,
+    observed_sum: f64,
+    observed_correction: f64,
+}
+
+impl CoalescedBatches {
+    fn emit_pending(&mut self) -> Option<LadduDataResult<EventBatch>> {
+        if self.pending.is_empty() {
+            return None;
+        }
+        self.pending_len = 0;
+        let batches = std::mem::take(&mut self.pending);
+        let result = if batches.len() == 1 {
+            Ok(batches.into_iter().next().expect("one pending batch"))
+        } else {
+            EventBatch::concat(&batches)
+        };
+        match &result {
+            Ok(batch) => {
+                self.observed_events = self.observed_events.saturating_add(batch.len() as u64);
+                for row in 0..batch.len() {
+                    let corrected = batch.weights_at(row) - self.observed_correction;
+                    let next = self.observed_sum + corrected;
+                    self.observed_correction = (next - self.observed_sum) - corrected;
+                    self.observed_sum = next;
+                }
+            }
+            Err(_) => self.stats = None,
+        }
+        Some(result)
+    }
+
+    fn commit_stats(&mut self) {
+        let Some(stats) = self.stats.take() else {
+            return;
+        };
+        let mut stats = stats.lock().unwrap_or_else(|error| error.into_inner());
+        stats.events = Some(self.observed_events);
+        stats.sum_weights = Some(self.observed_sum);
+    }
+}
+
+impl Iterator for CoalescedBatches {
+    type Item = LadduDataResult<EventBatch>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            if self.pending_len == self.target {
+                return self.emit_pending();
+            }
+
+            let item = if let Some(item) = self.deferred.take() {
+                Some(item)
+            } else if self.finished {
+                None
+            } else {
+                self.input.next()
+            };
+
+            let Some(item) = item else {
+                self.finished = true;
+                if let Some(batch) = self.emit_pending() {
+                    return Some(batch);
+                }
+                self.commit_stats();
+                return None;
+            };
+            let batch = match item {
+                Ok(batch) => batch,
+                Err(error) => {
+                    self.stats = None;
+                    if self.pending.is_empty() {
+                        return Some(Err(error));
+                    }
+                    self.deferred = Some(Err(error));
+                    return self.emit_pending();
+                }
+            };
+            if batch.is_empty() {
+                continue;
+            }
+
+            let available = self.target - self.pending_len;
+            if batch.len() <= available {
+                self.pending_len += batch.len();
+                self.pending.push(batch);
+                continue;
+            }
+
+            self.pending.push(batch.slice(0, available));
+            self.pending_len += available;
+            self.deferred = Some(Ok(batch.slice(available, batch.len())));
+        }
+    }
+}
+
+/// Cached statistics for an immutable dataset view.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct DatasetStats {
+    events: u64,
+    sum_weights: f64,
+}
+
+impl DatasetStats {
+    /// Returns the number of transformed events.
+    pub fn events(&self) -> u64 {
+        self.events
+    }
+
+    /// Returns the accurately accumulated event-weight sum.
+    pub fn sum_weights(&self) -> f64 {
+        self.sum_weights
+    }
+}
+
+#[derive(Default)]
+struct DatasetStatsCache {
+    events: Option<u64>,
+    sum_weights: Option<f64>,
+}
+
 /// Lazy event dataset combining a source, read plan, and row transformations.
 #[derive(Clone)]
 pub struct Dataset {
@@ -27,6 +159,8 @@ pub struct Dataset {
     memory_policy: MemoryPolicy,
     memory_budget: MemoryBudget,
     last_memory_decision: Arc<Mutex<Option<MemoryDecision>>>,
+    stats: Arc<Mutex<DatasetStatsCache>>,
+    source_traversals: Arc<AtomicU64>,
 }
 
 /// Memory policy for compiled event-dependent model caches.
@@ -65,6 +199,8 @@ impl Dataset {
             memory_policy: MemoryPolicy::Fastest,
             memory_budget: MemoryBudget::Auto,
             last_memory_decision: Default::default(),
+            stats: Default::default(),
+            source_traversals: Default::default(),
         }
     }
 
@@ -78,6 +214,8 @@ impl Dataset {
             memory_policy: MemoryPolicy::Fastest,
             memory_budget: MemoryBudget::Auto,
             last_memory_decision: Default::default(),
+            stats: Default::default(),
+            source_traversals: Default::default(),
         }
     }
 
@@ -95,6 +233,8 @@ impl Dataset {
             memory_policy: self.memory_policy,
             memory_budget: self.memory_budget,
             last_memory_decision: Default::default(),
+            stats: Default::default(),
+            source_traversals: Default::default(),
         }
     }
 
@@ -145,7 +285,87 @@ impl Dataset {
     ///
     /// Returns an error when source metadata cannot be read.
     pub fn num_events(&self) -> LadduDataResult<Option<u64>> {
-        self.source.num_events()
+        {
+            let stats = self.stats.lock().unwrap_or_else(|error| error.into_inner());
+            if let Some(events) = stats.events {
+                return Ok(Some(events));
+            }
+        }
+
+        if self
+            .ops
+            .iter()
+            .any(|op| !matches!(op, DatasetOp::Bootstrap { .. }))
+        {
+            return Ok(None);
+        }
+
+        let events = self.source.num_events()?;
+        if let Some(events) = events {
+            self.stats
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .events = Some(events);
+        }
+        Ok(events)
+    }
+
+    /// Returns cached event-count and weight-sum statistics, computing them once if needed.
+    ///
+    /// Clones of a dataset view share this cache. Failed traversals are not cached and may be
+    /// retried.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduDataError`] when reading or transforming the dataset fails.
+    pub fn stats(&self) -> LadduDataResult<DatasetStats> {
+        {
+            let cache = self.stats.lock().unwrap_or_else(|error| error.into_inner());
+            if let (Some(events), Some(sum_weights)) = (cache.events, cache.sum_weights) {
+                return Ok(DatasetStats {
+                    events,
+                    sum_weights,
+                });
+            }
+        }
+
+        if self.ops.is_empty()
+            && let (Some(events), Some(sum_weights)) =
+                (self.source.num_events()?, self.source.weighted_total()?)
+        {
+            let stats = DatasetStats {
+                events,
+                sum_weights,
+            };
+            let mut cache = self.stats.lock().unwrap_or_else(|error| error.into_inner());
+            cache.events = Some(events);
+            cache.sum_weights = Some(sum_weights);
+            return Ok(stats);
+        }
+
+        let mut events = 0_u64;
+        let mut sum = 0.0;
+        let mut correction = 0.0;
+        for batch in self.batches()? {
+            let batch = batch?;
+            events = events.saturating_add(batch.len() as u64);
+            for row in 0..batch.len() {
+                let weight = batch.weights_at(row);
+                let corrected = weight - correction;
+                let next = sum + corrected;
+                correction = (next - sum) - corrected;
+                sum = next;
+            }
+        }
+
+        let stats = DatasetStats {
+            events,
+            sum_weights: sum,
+        };
+        let mut cache = self.stats.lock().unwrap_or_else(|error| error.into_inner());
+        cache.events = Some(events);
+        cache.sum_weights = Some(sum);
+        Ok(stats)
     }
 
     /// Returns the current read plan.
@@ -174,6 +394,11 @@ impl Dataset {
             .lock()
             .unwrap_or_else(|error| error.into_inner())
             .clone()
+    }
+
+    /// Returns the number of transformed source iterators opened by this dataset view.
+    pub fn source_traversals(&self) -> u64 {
+        self.source_traversals.load(Ordering::Relaxed)
     }
 
     /// Returns this dataset with a host-memory budget.
@@ -291,13 +516,29 @@ impl Dataset {
         F: FnMut(Event<'_>) -> LadduDataResult<()>,
     {
         let mut offset = 0_u64;
+        let mut events = 0_u64;
+        let mut sum = 0.0;
+        let mut correction = 0.0;
 
+        self.source_traversals.fetch_add(1, Ordering::Relaxed);
         for batch in self.source.batches(self.plan)? {
             let batch = batch?;
             let base = offset;
             offset += batch.len() as u64;
-            eval_batch(&batch, &self.ops, base, &mut f)?;
+            eval_batch(&batch, &self.ops, base, |event| {
+                f(event)?;
+                events = events.saturating_add(1);
+                let corrected = event.weight() - correction;
+                let next = sum + corrected;
+                correction = (next - sum) - corrected;
+                sum = next;
+                Ok(())
+            })?;
         }
+
+        let mut stats = self.stats.lock().unwrap_or_else(|error| error.into_inner());
+        stats.events = Some(events);
+        stats.sum_weights = Some(sum);
 
         Ok(())
     }
@@ -413,7 +654,7 @@ impl Dataset {
     /// Returns [`LadduDataError`] when reading or transforming the source
     /// fails.
     pub fn sum_weights(&self) -> LadduDataResult<f64> {
-        self.fold_events(0.0, |sum, ev| sum + ev.weight())
+        Ok(self.stats()?.sum_weights())
     }
 
     /// Sums `weight * f(event)` over transformed events.
@@ -500,10 +741,11 @@ impl Dataset {
                 .lock()
                 .unwrap_or_else(|error| error.into_inner()) = Some(decision);
         }
+        self.source_traversals.fetch_add(1, Ordering::Relaxed);
         let iter = self.source.batches(plan)?;
         let ops = Arc::clone(&self.ops);
 
-        Ok(Box::new(iter.scan(0_u64, move |offset, batch| {
+        let transformed = Box::new(iter.scan(0_u64, move |offset, batch| {
             let batch = match batch {
                 Ok(batch) => batch,
                 Err(err) => return Some(Err(err)),
@@ -513,7 +755,19 @@ impl Dataset {
             *offset += batch.len() as u64;
 
             Some(materialize_batch(&batch, &ops, base))
-        })))
+        }));
+        Ok(Box::new(CoalescedBatches {
+            input: transformed,
+            target: plan.chunk_size.unwrap_or(usize::MAX).max(1),
+            pending: Vec::new(),
+            pending_len: 0,
+            deferred: None,
+            finished: false,
+            stats: (!plan.is_distributed()).then(|| Arc::clone(&self.stats)),
+            observed_events: 0,
+            observed_sum: 0.0,
+            observed_correction: 0.0,
+        }))
     }
 
     /// Visits each transformed batch and stops at the first error.
@@ -569,6 +823,11 @@ impl Dataset {
     }
 
     fn push_op(self, op: DatasetOp) -> Self {
+        let preserved_events = if matches!(&op, DatasetOp::Bootstrap { .. }) {
+            self.num_events().ok().flatten()
+        } else {
+            None
+        };
         let mut ops = self.ops.to_vec();
         ops.push(op);
 
@@ -580,6 +839,11 @@ impl Dataset {
             memory_policy: self.memory_policy,
             memory_budget: self.memory_budget,
             last_memory_decision: Default::default(),
+            stats: Arc::new(Mutex::new(DatasetStatsCache {
+                events: preserved_events,
+                sum_weights: None,
+            })),
+            source_traversals: Default::default(),
         }
     }
 }
@@ -771,7 +1035,28 @@ pub mod accurate {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::io::memory::MemorySink;
+    use crate::io::{EventSource, ReadPlan, memory::MemorySink};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[derive(Clone)]
+    struct CountingSource {
+        batch: EventBatch,
+        reads: Arc<AtomicUsize>,
+    }
+
+    impl EventSource for CountingSource {
+        fn schema(&self) -> LadduDataResult<Arc<Schema>> {
+            Ok(Arc::clone(self.batch.schema()))
+        }
+
+        fn batches(
+            &self,
+            _plan: ReadPlan,
+        ) -> LadduDataResult<Box<dyn Iterator<Item = LadduDataResult<EventBatch>> + Send>> {
+            self.reads.fetch_add(1, Ordering::Relaxed);
+            Ok(Box::new(std::iter::once(Ok(self.batch.clone()))))
+        }
+    }
 
     fn v(x: f64) -> RealVec4 {
         RealVec4 {
@@ -810,6 +1095,65 @@ mod tests {
 
     fn scalar_values(batch: &EventBatch) -> Vec<f64> {
         batch.scalar_column(0).to_vec()
+    }
+
+    #[test]
+    fn dataset_statistics_are_shared_per_view_and_invalidated_by_selection() {
+        let reads = Arc::new(AtomicUsize::new(0));
+        let dataset = Dataset::new(CountingSource {
+            batch: weighted_batch(0, 5),
+            reads: Arc::clone(&reads),
+        });
+        let clone = dataset.clone();
+
+        assert_eq!(dataset.num_events().unwrap(), None);
+        assert_eq!(dataset.stats().unwrap().events(), 5);
+        assert_eq!(clone.sum_weights().unwrap(), 60.0);
+        assert_eq!(clone.num_events().unwrap(), Some(5));
+        assert_eq!(reads.load(Ordering::Relaxed), 1);
+
+        let bootstrapped = dataset.clone().bootstrap(7);
+        assert_eq!(bootstrapped.num_events().unwrap(), Some(5));
+        assert_eq!(reads.load(Ordering::Relaxed), 1);
+
+        let filtered = dataset.filter(|event| event.scalar(0) >= 2.0);
+        assert_eq!(filtered.num_events().unwrap(), None);
+        assert_eq!(
+            filtered.map_events(|event| event.scalar(0)).unwrap(),
+            [2.0, 3.0, 4.0]
+        );
+        assert_eq!(reads.load(Ordering::Relaxed), 2);
+        assert_eq!(filtered.stats().unwrap().events(), 3);
+        assert_eq!(reads.load(Ordering::Relaxed), 2);
+    }
+
+    #[test]
+    fn transformed_fragments_are_coalesced_to_the_read_chunk_size() {
+        let fragments = (0..10)
+            .map(|index| weighted_batch(index, 1))
+            .collect::<Vec<_>>();
+        let dataset = Dataset::from_batches(fragments)
+            .unwrap()
+            .filter(|_| true)
+            .chunked(4)
+            .unwrap();
+
+        let batches = dataset
+            .batches()
+            .unwrap()
+            .collect::<LadduDataResult<Vec<_>>>()
+            .unwrap();
+        assert_eq!(
+            batches.iter().map(EventBatch::len).collect::<Vec<_>>(),
+            [4, 4, 2]
+        );
+        assert_eq!(
+            batches
+                .iter()
+                .flat_map(|batch| batch.scalar_column(0).iter().copied())
+                .collect::<Vec<_>>(),
+            (0..10).map(|value| value as f64).collect::<Vec<_>>()
+        );
     }
 
     #[test]

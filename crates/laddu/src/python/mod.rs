@@ -172,8 +172,10 @@ macro_rules! laddu_python_module {
             #[pymodule_export]
             use $crate::python::likelihood::{
                 PyCrossSectionIntegrals as CrossSectionIntegrals,
+                PyDatasetDiagnostics as DatasetDiagnostics,
                 PyExtendedNll as ExtendedNLL, PyLassoPenalty as LassoPenalty,
-                PyLikelihood as Likelihood, PyLikelihoodProjection as LikelihoodProjection,
+                PyLikelihood as Likelihood, PyLikelihoodDiagnostics as LikelihoodDiagnostics,
+                PyLikelihoodProjection as LikelihoodProjection,
                 PyNll as NLL, PyRidgePenalty as RidgePenalty,
             };
             #[pymodule_export]

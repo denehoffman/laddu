@@ -1290,6 +1290,38 @@ impl RealGradientAccumulator {
     }
 }
 
+#[derive(Copy, Clone, Debug)]
+struct DatasetScanStats {
+    events: usize,
+    batches: usize,
+    sum_weights: f64,
+}
+
+fn scan_dataset_stats(
+    dataset: &Dataset,
+    read_plan: laddu_data::io::ReadPlan,
+) -> RuntimeResult<DatasetScanStats> {
+    let mut events = 0;
+    let mut batches = 0;
+    let mut sum_weights = AccurateF64::zero();
+    for batch in dataset
+        .batches_with_plan(read_plan)
+        .map_err(|error| RuntimeError::Data(error.to_string()))?
+    {
+        let batch = batch.map_err(|error| RuntimeError::Data(error.to_string()))?;
+        events += batch.len();
+        batches += 1;
+        for row in 0..batch.len() {
+            sum_weights.push(batch.weights_at(row));
+        }
+    }
+    Ok(DatasetScanStats {
+        events,
+        batches,
+        sum_weights: sum_weights.finish(),
+    })
+}
+
 impl CpuPlan {
     fn supports_f32_scalar_execution(&self) -> bool {
         self.scalar_kernel.as_ref().is_some_and(|kernel| {
@@ -2263,10 +2295,22 @@ impl CpuPlan {
         let cache_one = self.cache_memory_estimate(1);
         let cache_zero = self.cache_memory_estimate(0);
         let cache_bytes_per_event = cache_one.saturating_sub(cache_zero);
-        let local_event_limit = dataset
+        let known_local_events = dataset
             .num_events()
             .map_err(|error| RuntimeError::Data(error.to_string()))?
-            .and_then(|events| usize::try_from(events).ok())
+            .and_then(|events| usize::try_from(events).ok());
+        let discovered =
+            if known_local_events.is_none() && dataset.memory_policy() != MemoryPolicy::Streaming {
+                let local = scan_dataset_stats(dataset, read_plan);
+                if !execution.all_succeeded(local.is_ok()) {
+                    return local.and(Err(RuntimeError::DistributedPeerFailure));
+                }
+                Some(local?)
+            } else {
+                None
+            };
+        let local_event_limit = known_local_events
+            .or_else(|| discovered.map(|stats| stats.events))
             .unwrap_or(usize::MAX);
         let host_remaining = execution.host_memory().remaining();
         let resident_plan = resident_cache_plan(
@@ -2365,40 +2409,24 @@ impl CpuPlan {
                     )
                 })?;
                 Ok(CpuPreparedDataset::Resident {
-                    dataset,
+                    dataset: Arc::new(dataset),
                     stats,
                     memory_lease,
                 })
             }
             CacheStorage::Streaming => {
-                let local = (|| {
-                    let mut local_events = 0;
-                    let mut local_batches = 0;
-                    let mut sum_weights = AccurateF64::zero();
-                    for batch in dataset
-                        .batches_with_plan(read_plan)
-                        .map_err(|error| RuntimeError::Data(error.to_string()))?
-                    {
-                        let batch = batch.map_err(|error| RuntimeError::Data(error.to_string()))?;
-                        local_events += batch.len();
-                        local_batches += 1;
-                        for row in 0..batch.len() {
-                            sum_weights.push(batch.weights_at(row));
-                        }
-                    }
-                    Ok::<_, RuntimeError>((local_events, local_batches, sum_weights.finish()))
-                })();
+                let local = scan_dataset_stats(dataset, read_plan);
                 if !execution.all_succeeded(local.is_ok()) {
                     return local.and(Err(RuntimeError::DistributedPeerFailure));
                 }
-                let (local_events, local_batches, sum_weights) = local?;
+                let local = local?;
                 Ok(CpuPreparedDataset::Streaming {
                     dataset: dataset.clone(),
                     stats: PreparedDatasetStats {
-                        local_events,
-                        global_events: execution.sum_usize(local_events),
-                        local_batches,
-                        sum_weights: execution.sum_f64(sum_weights),
+                        local_events: local.events,
+                        global_events: execution.sum_usize(local.events),
+                        local_batches: local.batches,
+                        sum_weights: execution.sum_f64(local.sum_weights),
                         resident_bytes: 0,
                         storage: CacheStorage::Streaming,
                     },
@@ -2816,7 +2844,7 @@ impl CpuPlan {
         dataset: &CpuCachedDataset,
         reduction: ReductionPlan,
     ) -> RuntimeResult<f64> {
-        if execution.is_parallel() {
+        if execution.is_parallel() && dataset.len().div_ceil(SCALAR_BLOCK_SIZE) >= 2 {
             execution.install(|| {
                 self.par_try_weighted_sum_cached(params, dataset, |value| {
                     self.apply_reduction(reduction, value)
@@ -2859,7 +2887,7 @@ impl CpuPlan {
         E: From<RuntimeError> + Send,
         F: Fn(Complex64) -> Result<(f64, f64), E> + Send + Sync,
     {
-        if execution.is_parallel() {
+        if execution.is_parallel() && dataset.len().div_ceil(SCALAR_BLOCK_SIZE) >= 2 {
             execution.install(|| {
                 self.par_try_weighted_real_sum_with_gradient_cached(params, dataset, transform)
             })
@@ -6091,7 +6119,7 @@ pub enum CpuPreparedDataset {
     /// A dataset whose event caches are resident in memory.
     Resident {
         /// Fully cached dataset.
-        dataset: CpuCachedDataset,
+        dataset: Arc<CpuCachedDataset>,
         /// Preparation statistics.
         stats: PreparedDatasetStats,
         /// Persistent host-memory reservation shared by clones.

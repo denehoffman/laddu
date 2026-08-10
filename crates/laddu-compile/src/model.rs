@@ -6,7 +6,7 @@ use crate::CompileResult;
 #[cfg(test)]
 use laddu_expr::parameters::ParamError;
 use laddu_expr::{
-    Expr, ExprGraph, ExprId, ExprNode, ValueKind,
+    BinaryOp, Expr, ExprGraph, ExprId, ExprNode, UnaryOp, ValueKind,
     parameters::{ParamLayout, ParamRegistry},
 };
 use serde::{Deserialize, Serialize};
@@ -382,6 +382,74 @@ impl CompiledModel {
     /// Returns the optimized graph.
     pub fn graph(&self) -> &ExprGraph {
         &self.graph
+    }
+
+    /// Returns the proven polynomial degree in free parameters, or `None` for a
+    /// graph containing a parameter-dependent non-polynomial operation.
+    pub fn parameter_polynomial_degree(&self) -> Option<usize> {
+        let mut degrees: Vec<Option<usize>> = Vec::with_capacity(self.graph.nodes().len());
+        for node in self.graph.nodes() {
+            let child = |id: ExprId| degrees.get(id.index()).copied().flatten();
+            let degree = match node {
+                ExprNode::RealConst(_)
+                | ExprNode::ComplexConst(_)
+                | ExprNode::EventScalar(_)
+                | ExprNode::EventP4Component { .. } => Some(0),
+                ExprNode::ScalarParam(_) => Some(1),
+                ExprNode::Unary { op, input } => {
+                    let input = child(*input)?;
+                    match op {
+                        UnaryOp::Neg | UnaryOp::Real | UnaryOp::Imag | UnaryOp::Conj => Some(input),
+                        UnaryOp::NormSqr => input.checked_mul(2),
+                        UnaryOp::PowI(power) if *power >= 0 => input.checked_mul(*power as usize),
+                        UnaryOp::Sqrt
+                        | UnaryOp::Exp
+                        | UnaryOp::Sin
+                        | UnaryOp::Cos
+                        | UnaryOp::Log
+                        | UnaryOp::PowI(_) => (input == 0).then_some(0),
+                    }
+                }
+                ExprNode::Binary { op, lhs, rhs } => {
+                    let lhs = child(*lhs)?;
+                    let rhs = child(*rhs)?;
+                    match op {
+                        BinaryOp::Add | BinaryOp::Sub => Some(lhs.max(rhs)),
+                        BinaryOp::Mul => lhs.checked_add(rhs),
+                        BinaryOp::Div if rhs == 0 => Some(lhs),
+                        BinaryOp::Atan2 if lhs == 0 && rhs == 0 => Some(0),
+                        BinaryOp::Div | BinaryOp::Atan2 => None,
+                    }
+                }
+                ExprNode::NaryAdd { terms } => terms
+                    .iter()
+                    .map(|id| child(*id))
+                    .collect::<Option<Vec<_>>>()?
+                    .into_iter()
+                    .max(),
+                ExprNode::NaryMul { factors } => factors
+                    .iter()
+                    .try_fold(0usize, |degree, id| degree.checked_add(child(*id)?)),
+                ExprNode::Complex { re, im } => Some(child(*re)?.max(child(*im)?)),
+                ExprNode::Vector { elements } | ExprNode::Matrix { elements, .. } => elements
+                    .iter()
+                    .map(|id| child(*id))
+                    .collect::<Option<Vec<_>>>()?
+                    .into_iter()
+                    .max(),
+                ExprNode::Component { input, .. } | ExprNode::MatrixElement { input, .. } => {
+                    child(*input)
+                }
+                ExprNode::MatMul { lhs, rhs } | ExprNode::Dot { lhs, rhs } => {
+                    child(*lhs)?.checked_add(child(*rhs)?)
+                }
+                ExprNode::MatVec { matrix, vector } => child(*matrix)?.checked_add(child(*vector)?),
+                ExprNode::Solve { matrix, rhs } if child(*matrix)? == 0 => child(*rhs),
+                ExprNode::Solve { .. } => None,
+            };
+            degrees.push(degree);
+        }
+        degrees.get(self.graph.root().index()).copied().flatten()
     }
 
     /// Creates an indented-tree display of the optimized graph.
@@ -823,6 +891,30 @@ mod tests {
             compiled.graph().node(compiled.graph().root()),
             Some(ExprNode::RealConst(25.0))
         ));
+    }
+
+    #[test]
+    fn default_pipeline_reduces_structural_squared_norms() {
+        let value = complex(event_scalar("x"), event_scalar("y"));
+        let compiled = CompiledModel::from_expr(&value.clone().conj().norm_sqr()).unwrap();
+
+        assert_eq!(count_unary_op(&compiled, UnaryOp::Conj), 0);
+        assert_eq!(count_unary_op(&compiled, UnaryOp::NormSqr), 0);
+        assert_eq!(count_unary_op(&compiled, UnaryOp::PowI(2)), 2);
+        assert!(matches!(
+            compiled.graph().node(compiled.graph().root()),
+            Some(ExprNode::NaryAdd { terms }) if terms.len() == 2
+        ));
+    }
+
+    #[test]
+    fn parameter_polynomial_degree_proves_quadratic_models_and_rejects_nonlinear_coefficients() {
+        let linear = complex(parameter!("re"), parameter!("im")) * complex(event_scalar("x"), 1.0);
+        let quadratic = CompiledModel::from_expr(&linear.norm_sqr()).unwrap();
+        assert_eq!(quadratic.parameter_polynomial_degree(), Some(2));
+
+        let nonlinear = CompiledModel::from_expr(&Expr::from(parameter!("phase")).sin()).unwrap();
+        assert_eq!(nonlinear.parameter_polynomial_degree(), None);
     }
 
     #[test]

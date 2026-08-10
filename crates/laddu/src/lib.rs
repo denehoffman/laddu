@@ -125,11 +125,11 @@ pub mod prelude {
     };
     #[cfg(feature = "likelihood")]
     pub use laddu_likelihood::{
-        Axis, BinnedEstimate, BootstrapFitError, CrossSection, CrossSectionIntegrals,
-        DifferentialCrossSection, Ensemble, Estimate, ExtendedNllTerm, LassoPenalty, Likelihood,
-        LikelihoodError, LikelihoodEvaluation, LikelihoodName, LikelihoodProjection,
-        LikelihoodResult, LikelihoodTerm, NllTerm, Objective, RidgePenalty, StochasticObjective,
-        next_uncertainty_source_id,
+        Axis, BinnedEstimate, BootstrapFitError, CrossSection, CrossSectionDiagnostics,
+        CrossSectionIntegrals, DifferentialCrossSection, Ensemble, Estimate, ExtendedNllTerm,
+        LassoPenalty, Likelihood, LikelihoodError, LikelihoodEvaluation, LikelihoodName,
+        LikelihoodProjection, LikelihoodResult, LikelihoodTerm, NllTerm, Objective, RidgePenalty,
+        StochasticObjective, next_uncertainty_source_id,
     };
     pub use laddu_physics::quantum::builtin as particles;
     pub use laddu_physics::{

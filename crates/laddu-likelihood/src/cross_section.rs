@@ -3,7 +3,7 @@
 use std::{
     collections::HashMap,
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicU64, Ordering},
     },
 };
@@ -584,6 +584,10 @@ impl DifferentialCrossSection {
 }
 
 /// A prepared total, tagged, differential, and combinable cross-section analysis.
+type IntegralCacheKey = (usize, Option<Vec<String>>);
+type IntegralCache = Arc<Mutex<HashMap<IntegralCacheKey, CrossSectionIntegrals>>>;
+
+/// A prepared total, tagged, differential, and combinable cross-section analysis.
 #[derive(Clone)]
 pub struct CrossSection {
     likelihood: Arc<Likelihood>,
@@ -594,6 +598,37 @@ pub struct CrossSection {
     parameters: Vec<f64>,
     ensemble: Option<Ensemble>,
     members: Option<Arc<Vec<(CrossSection, Estimate)>>>,
+    integral_cache: IntegralCache,
+    cache_hits: Arc<AtomicU64>,
+    cache_misses: Arc<AtomicU64>,
+}
+
+/// Integral-preparation cache statistics for a cross-section analysis.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct CrossSectionDiagnostics {
+    cache_hits: u64,
+    cache_misses: u64,
+    cached_integrals: usize,
+    prepared_bytes: usize,
+}
+
+impl CrossSectionDiagnostics {
+    /// Returns successful integral-cache lookups.
+    pub fn cache_hits(&self) -> u64 {
+        self.cache_hits
+    }
+    /// Returns integral preparations caused by cache misses.
+    pub fn cache_misses(&self) -> u64 {
+        self.cache_misses
+    }
+    /// Returns the number of unique likelihood/tag integral records retained.
+    pub fn cached_integrals(&self) -> usize {
+        self.cached_integrals
+    }
+    /// Returns the summed prepared bytes reported by cached integral records.
+    pub fn prepared_bytes(&self) -> usize {
+        self.prepared_bytes
+    }
 }
 
 struct BinnedMeasurement {
@@ -801,6 +836,9 @@ impl CrossSection {
             }
         }
         let full_integrals = likelihood.cross_section_integrals(&term_name, &generated_mc)?;
+        let likelihood_key = Arc::as_ptr(&likelihood) as usize;
+        let mut integral_cache = HashMap::new();
+        integral_cache.insert((likelihood_key, None), full_integrals.clone());
         Ok(Self {
             likelihood,
             term_name,
@@ -810,6 +848,9 @@ impl CrossSection {
             parameters,
             ensemble,
             members: None,
+            integral_cache: Arc::new(Mutex::new(integral_cache)),
+            cache_hits: Default::default(),
+            cache_misses: Arc::new(AtomicU64::new(1)),
         })
     }
 
@@ -854,6 +895,9 @@ impl CrossSection {
             parameters: template.parameters,
             ensemble: None,
             members: Some(Arc::new(members.into_iter().zip(factors).collect())),
+            integral_cache: template.integral_cache,
+            cache_hits: template.cache_hits,
+            cache_misses: template.cache_misses,
         })
     }
 
@@ -863,6 +907,23 @@ impl CrossSection {
     /// Returns an error when model integrals or ensemble evaluation fail.
     pub fn observed_total(&self) -> LikelihoodResult<Estimate> {
         self.observed_total_selected(None)
+    }
+
+    /// Returns integral-cache hit, miss, count, and retained-byte diagnostics.
+    pub fn diagnostics(&self) -> CrossSectionDiagnostics {
+        let cache = self
+            .integral_cache
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        CrossSectionDiagnostics {
+            cache_hits: self.cache_hits.load(Ordering::Relaxed),
+            cache_misses: self.cache_misses.load(Ordering::Relaxed),
+            cached_integrals: cache.len(),
+            prepared_bytes: cache
+                .values()
+                .map(CrossSectionIntegrals::resident_bytes)
+                .sum(),
+        }
     }
 
     /// Tag-narrowed observed-yield-normalized cross section.
@@ -993,17 +1054,37 @@ impl CrossSection {
         likelihood: &Likelihood,
         tags: Option<&[String]>,
     ) -> LikelihoodResult<CrossSectionIntegrals> {
-        if tags.is_none() && std::ptr::eq(likelihood, self.likelihood.as_ref()) {
-            return Ok(self.full_integrals.clone());
+        let key_tags = tags.map(|tags| {
+            let mut tags = tags.to_vec();
+            tags.sort();
+            tags.dedup();
+            tags
+        });
+        let key = (likelihood as *const Likelihood as usize, key_tags.clone());
+        if let Some(integrals) = self
+            .integral_cache
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .get(&key)
+            .cloned()
+        {
+            self.cache_hits.fetch_add(1, Ordering::Relaxed);
+            return Ok(integrals);
         }
-        match tags {
+        self.cache_misses.fetch_add(1, Ordering::Relaxed);
+        let integrals = match key_tags.as_deref() {
             Some(tags) => likelihood.cross_section_integrals_with_tags(
                 &self.term_name,
                 &self.generated_mc,
                 tags.iter().map(String::as_str),
             ),
             None => likelihood.cross_section_integrals(&self.term_name, &self.generated_mc),
-        }
+        }?;
+        self.integral_cache
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .insert(key, integrals.clone());
+        Ok(integrals)
     }
 
     fn evaluate_estimate(
@@ -1695,6 +1776,13 @@ mod tests {
             .cross_section("signal", generated, 10.0, Vec::new())
             .unwrap();
         assert!(cross_section.total().unwrap().value().is_finite());
+        let before = cross_section.diagnostics();
+        assert!(cross_section.total().unwrap().value().is_finite());
+        let after = cross_section.diagnostics();
+        assert_eq!(after.cache_hits(), before.cache_hits() + 1);
+        assert_eq!(after.cache_misses(), 1);
+        assert_eq!(after.cached_integrals(), 1);
+        assert!(after.prepared_bytes() > 0);
 
         let axis = Axis::new(event_scalar("x"), vec![0.0, 1.0, 2.0]).unwrap();
         let differential = cross_section

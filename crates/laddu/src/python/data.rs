@@ -602,8 +602,12 @@ impl PyDataset {
 
     fn __len__(&self, py: Python<'_>) -> PyResult<usize> {
         let dataset = self.inner.clone();
-        py.detach(move || dataset.try_fold_events(0usize, |count, _| Ok(count + 1)))
-            .map_err(to_py_err)
+        let events = py
+            .detach(move || dataset.stats().map(|stats| stats.events()))
+            .map_err(to_py_err)?;
+        usize::try_from(events).map_err(|_| {
+            pyo3::exceptions::PyOverflowError::new_err("dataset length does not fit in usize")
+        })
     }
 
     #[pyo3(signature = (fraction, *, seed=0))]
