@@ -252,6 +252,7 @@ impl RewritePass {
             .with_rule(ConstantFoldScalarRule)
             .with_rule(AlgebraicIdentityRule)
             .with_rule(TrigIdentityRule)
+            .with_rule(NormSqrReductionRule)
             .with_rule(ComplexFactRule)
             .with_rule(MatrixVectorRule)
     }
@@ -787,6 +788,88 @@ impl RewriteRule for AlgebraicIdentityRule {
                     return Ok(Rewrite::Keep);
                 };
                 Ok(alias_or_preserve(element, metadata, context))
+            }
+            _ => Ok(Rewrite::Keep),
+        }
+    }
+}
+
+/// Reduces squared norms whose child structure proves a cheaper real expression.
+#[derive(Copy, Clone, Debug, Default)]
+pub struct NormSqrReductionRule;
+
+impl RewriteRule for NormSqrReductionRule {
+    fn name(&self) -> &'static str {
+        "norm-sqr-reduction"
+    }
+
+    fn rewrite(
+        &self,
+        node: &ExprNode,
+        metadata: &ExprMetadata,
+        context: &RewriteContext<'_>,
+    ) -> CompileResult<Rewrite> {
+        let ExprNode::Unary {
+            op: UnaryOp::NormSqr,
+            input,
+        } = node
+        else {
+            return Ok(Rewrite::Keep);
+        };
+
+        if context
+            .facts(*input)
+            .is_some_and(|facts| facts.number_class == NumberClass::Real)
+        {
+            return Ok(Rewrite::Replace {
+                node: ExprNode::Unary {
+                    op: UnaryOp::PowI(2),
+                    input: *input,
+                },
+                metadata: metadata.clone(),
+            });
+        }
+
+        match context.node(*input) {
+            Some(ExprNode::Unary {
+                op: UnaryOp::Conj | UnaryOp::Neg,
+                input,
+            }) => Ok(Rewrite::Replace {
+                node: ExprNode::Unary {
+                    op: UnaryOp::NormSqr,
+                    input: *input,
+                },
+                metadata: metadata.clone(),
+            }),
+            Some(ExprNode::Complex { re, im })
+                if [*re, *im].into_iter().all(|id| {
+                    context
+                        .facts(id)
+                        .is_some_and(|facts| facts.number_class == NumberClass::Real)
+                }) =>
+            {
+                let mut builder = ReplacementFragment::new(context);
+                let re_square = builder.push(
+                    ExprNode::Unary {
+                        op: UnaryOp::PowI(2),
+                        input: *re,
+                    },
+                    ExprMetadata::new(ExprSourceKind::Unary),
+                );
+                let im_square = builder.push(
+                    ExprNode::Unary {
+                        op: UnaryOp::PowI(2),
+                        input: *im,
+                    },
+                    ExprMetadata::new(ExprSourceKind::Unary),
+                );
+                builder.push(
+                    ExprNode::NaryAdd {
+                        terms: vec![re_square, im_square],
+                    },
+                    metadata.clone(),
+                );
+                Ok(builder.into_rewrite())
             }
             _ => Ok(Rewrite::Keep),
         }

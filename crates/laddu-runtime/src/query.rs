@@ -4,7 +4,7 @@ use laddu_compile::CompiledModel;
 use laddu_data::{
     LadduDataError, LadduDataResult,
     data::{Dataset, EventBatch},
-    io::{EventBatchIter, EventSource, ReadPlan, SourceCapabilities},
+    io::{EventBatchIter, EventSource, ReadPlan, SourceCapabilities, memory::MemorySource},
     schema::Schema,
 };
 use laddu_expr::{Expr, ExprShape, ValueKind};
@@ -277,7 +277,7 @@ pub trait DatasetExprExt {
     /// Returns [`RuntimeError`] when predicate compilation or evaluation
     /// fails, or its expression is not real scalar-valued.
     fn select(&self, predicate: &Predicate, execution: &Execution) -> RuntimeResult<Dataset>;
-    /// Splits the dataset into lazy datasets according to an expression and bin specification.
+    /// Partitions the dataset in one pass according to an expression and bin specification.
     ///
     /// # Errors
     ///
@@ -329,22 +329,44 @@ impl DatasetExprExt for Dataset {
         bins: BinSpec,
         execution: &Execution,
     ) -> RuntimeResult<Vec<DatasetBin>> {
-        let query = Arc::new(QueryExpr::prepare(expr, execution, true)?);
-        Ok((0..bins.bin_count())
-            .map(|index| DatasetBin {
-                index,
-                lower: bins.edges[index],
-                upper: bins.edges[index + 1],
-                dataset: self.with_derived_source(QuerySource {
-                    source: self.clone(),
-                    filter: QueryFilter::Bin {
-                        query: Arc::clone(&query),
-                        bins: bins.clone(),
-                        index,
-                    },
-                }),
+        let query = QueryExpr::prepare(expr, execution, true)?;
+        let schema = self.schema().map_err(data_error)?;
+        let mut partitions = vec![Vec::new(); bins.bin_count()];
+        for batch in self.batches().map_err(data_error)? {
+            let batch = batch.map_err(data_error)?;
+            let mut rows = vec![Vec::new(); bins.bin_count()];
+            for (row, value) in query.evaluate_batch(&batch)?.into_iter().enumerate() {
+                if let Some(index) = bins.index(value.re) {
+                    rows[index].push(row);
+                }
+            }
+            for (partition, rows) in partitions.iter_mut().zip(rows) {
+                if !rows.is_empty() {
+                    partition.push(batch.select(&rows));
+                }
+            }
+        }
+
+        partitions
+            .into_iter()
+            .enumerate()
+            .map(|(index, batches)| {
+                let source = if batches.is_empty() {
+                    MemorySource::new(
+                        EventBatch::from_events(Arc::clone(&schema), std::iter::empty())
+                            .map_err(data_error)?,
+                    )
+                } else {
+                    MemorySource::from_batches(batches).map_err(data_error)?
+                };
+                Ok(DatasetBin {
+                    index,
+                    lower: bins.edges[index],
+                    upper: bins.edges[index + 1],
+                    dataset: self.with_derived_source(source),
+                })
             })
-            .collect())
+            .collect()
     }
 }
 
@@ -505,11 +527,6 @@ struct QuerySource {
 #[derive(Clone)]
 enum QueryFilter {
     Predicate(Arc<CompiledPredicate>),
-    Bin {
-        query: Arc<QueryExpr>,
-        bins: BinSpec,
-        index: usize,
-    },
 }
 
 impl EventSource for QuerySource {
@@ -556,12 +573,6 @@ impl QueryFilter {
                 .into_iter()
                 .enumerate()
                 .filter_map(|(row, keep)| keep.then_some(row))
-                .collect()),
-            Self::Bin { query, bins, index } => Ok(query
-                .evaluate_batch(batch)?
-                .into_iter()
-                .enumerate()
-                .filter_map(|(row, value)| (bins.index(value.re) == Some(*index)).then_some(row))
                 .collect()),
         }
     }
@@ -674,6 +685,37 @@ mod tests {
     }
 
     #[test]
+    fn traversing_all_bins_reads_the_source_once() {
+        let reads = Arc::new(AtomicUsize::new(0));
+        let source = CountingSource {
+            inner: match dataset().batches().unwrap().next().unwrap() {
+                Ok(batch) => MemorySource::new(batch),
+                Err(error) => panic!("unexpected source error: {error}"),
+            },
+            reads: Arc::clone(&reads),
+        };
+        let dataset = Dataset::new(source).chunked(1).unwrap();
+        let bins = dataset
+            .bin_by(
+                &event_scalar("x"),
+                BinSpec::uniform(4, -1.0, 3.0).unwrap(),
+                &Execution::default(),
+            )
+            .unwrap();
+
+        let values = bins
+            .into_iter()
+            .map(|bin| {
+                bin.into_dataset()
+                    .map_events(|event| event.scalar(0))
+                    .unwrap()
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(values, [vec![-1.0], vec![0.0], vec![1.0], vec![2.0]]);
+        assert_eq!(reads.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
     fn between_predicates_have_explicit_endpoint_semantics() {
         let dataset = dataset();
         let execution = Execution::default();
@@ -716,7 +758,7 @@ mod tests {
     }
 
     #[test]
-    fn selection_and_binning_are_lazy_and_preserve_streaming_policy() {
+    fn selection_is_lazy_and_one_pass_binning_preserves_streaming_policy() {
         let source = dataset();
         let batch = source.batches().unwrap().next().unwrap().unwrap();
         let reads = Arc::new(AtomicUsize::new(0));
@@ -734,7 +776,7 @@ mod tests {
         let bins = dataset
             .bin_by(&x, BinSpec::uniform(2, 0.0, 2.0).unwrap(), &execution)
             .unwrap();
-        assert_eq!(reads.load(Ordering::Relaxed), 0);
+        assert_eq!(reads.load(Ordering::Relaxed), 1);
         assert_eq!(
             selected.cache_storage(),
             laddu_data::data::CacheStorage::Streaming
@@ -744,7 +786,7 @@ mod tests {
             selected.map_events(|event| event.scalar(0)).unwrap(),
             vec![0.0, 1.0, 2.0]
         );
-        assert_eq!(reads.load(Ordering::Relaxed), 1);
+        assert_eq!(reads.load(Ordering::Relaxed), 2);
         assert_eq!(
             bins[0]
                 .dataset()
@@ -752,6 +794,51 @@ mod tests {
                 .unwrap(),
             vec![0.0]
         );
+        assert_eq!(reads.load(Ordering::Relaxed), 2);
+    }
+
+    #[test]
+    fn unknown_cardinality_fastest_discovers_and_retains_small_selection() {
+        let source = dataset();
+        let batch = source.batches().unwrap().next().unwrap().unwrap();
+        let reads = Arc::new(AtomicUsize::new(0));
+        let dataset = Dataset::new(CountingSource {
+            inner: MemorySource::new(batch),
+            reads: Arc::clone(&reads),
+        });
+        let execution = Execution::default();
+        let x = event_scalar("x");
+        let selected = dataset
+            .select(&Predicate::ge(x.clone(), 0.0), &execution)
+            .unwrap();
+        let compiled = CompiledModel::from_expr(&x).unwrap();
+        let params = compiled.params().default_values();
+        let model = PreparedModel::prepare(&compiled, &execution).unwrap();
+        let prepared = model.prepare_dataset(&execution, &selected).unwrap();
+
+        let crate::PreparedDataset::Cpu(prepared_cpu) = &prepared else {
+            panic!("default execution prepares CPU datasets");
+        };
+        assert_eq!(
+            prepared_cpu.stats().storage(),
+            laddu_data::data::CacheStorage::Resident
+        );
+        assert_eq!(prepared_cpu.stats().local_events(), 3);
+        assert_eq!(reads.load(Ordering::Relaxed), 2);
+
+        for _ in 0..2 {
+            assert_eq!(
+                model
+                    .reduce(
+                        &execution,
+                        &params,
+                        &prepared,
+                        laddu_compile::ReductionPlan::weighted_real(),
+                    )
+                    .unwrap(),
+                5.5
+            );
+        }
         assert_eq!(reads.load(Ordering::Relaxed), 2);
     }
 }

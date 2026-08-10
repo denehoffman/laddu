@@ -94,6 +94,11 @@ name = "jit_benchmark"
 harness = false
 required-features = ["jit"]
 
+[[bench]]
+name = "likelihood_pipeline_benchmark"
+harness = false
+required-features = ["jit", "likelihood"]
+
 [[example]]
 name = "generate_ksks"
 required-features = ["generation"]

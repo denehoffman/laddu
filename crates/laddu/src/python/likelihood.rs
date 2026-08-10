@@ -1,14 +1,14 @@
 use std::sync::Arc;
 
 use laddu_likelihood::{
-    CrossSectionIntegrals, ExtendedNllTerm, LassoPenalty, Likelihood, LikelihoodProjection,
-    LikelihoodTerm, NllTerm, RidgePenalty,
+    CrossSectionIntegrals, DatasetDiagnostics, DatasetRole, ExtendedNllTerm, LassoPenalty,
+    Likelihood, LikelihoodDiagnostics, LikelihoodProjection, LikelihoodTerm, NllTerm, RidgePenalty,
 };
 use numpy::PyArray1;
 use pyo3::{
     exceptions::PyTypeError,
     prelude::*,
-    types::{PyAny, PyDict},
+    types::{PyAny, PyDict, PyList},
 };
 
 use super::{
@@ -19,6 +19,123 @@ use super::{
     model::PyModel,
     runtime::PyExecution,
 };
+
+#[pyclass(
+    name = "DatasetDiagnostics",
+    module = "laddu",
+    frozen,
+    skip_from_py_object
+)]
+#[derive(Clone)]
+/// Preparation statistics for one dataset used by a likelihood term.
+pub struct PyDatasetDiagnostics {
+    inner: DatasetDiagnostics,
+}
+
+#[pymethods]
+impl PyDatasetDiagnostics {
+    #[getter]
+    fn term(&self) -> &str {
+        self.inner.term()
+    }
+
+    #[getter]
+    fn role(&self) -> &'static str {
+        match self.inner.role() {
+            DatasetRole::Observed => "observed",
+            DatasetRole::AcceptedMc => "accepted_mc",
+        }
+    }
+
+    #[getter]
+    fn storage(&self) -> &'static str {
+        match self.inner.stats().storage() {
+            laddu_data::data::CacheStorage::Resident => "resident",
+            laddu_data::data::CacheStorage::Streaming => "streaming",
+        }
+    }
+
+    #[getter]
+    fn local_events(&self) -> usize {
+        self.inner.stats().local_events()
+    }
+
+    #[getter]
+    fn global_events(&self) -> usize {
+        self.inner.stats().global_events()
+    }
+
+    #[getter]
+    fn local_batches(&self) -> usize {
+        self.inner.stats().local_batches()
+    }
+
+    #[getter]
+    fn sum_weights(&self) -> f64 {
+        self.inner.stats().sum_weights()
+    }
+
+    #[getter]
+    fn resident_bytes(&self) -> usize {
+        self.inner.stats().resident_bytes()
+    }
+
+    #[getter]
+    fn uses_quadratic_normalization(&self) -> bool {
+        self.inner.uses_quadratic_normalization()
+    }
+
+    #[getter]
+    fn source_traversals(&self) -> u64 {
+        self.inner.source_traversals()
+    }
+}
+
+#[pyclass(
+    name = "LikelihoodDiagnostics",
+    module = "laddu",
+    frozen,
+    skip_from_py_object
+)]
+#[derive(Clone)]
+/// Snapshot of likelihood preparation, memory planning, and evaluation counts.
+pub struct PyLikelihoodDiagnostics {
+    inner: LikelihoodDiagnostics,
+}
+
+#[pymethods]
+impl PyLikelihoodDiagnostics {
+    #[getter]
+    fn datasets(&self, py: Python<'_>) -> PyResult<Vec<Py<PyDatasetDiagnostics>>> {
+        self.inner
+            .datasets()
+            .iter()
+            .cloned()
+            .map(|inner| Py::new(py, PyDatasetDiagnostics { inner }))
+            .collect()
+    }
+
+    #[getter]
+    fn objective_evaluations(&self) -> u64 {
+        self.inner.objective_evaluations()
+    }
+
+    #[getter]
+    fn gradient_evaluations(&self) -> u64 {
+        self.inner.gradient_evaluations()
+    }
+
+    #[getter]
+    fn memory_decisions<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyList>> {
+        let decisions = self
+            .inner
+            .memory_decisions()
+            .iter()
+            .map(|decision| super::runtime::memory_decision_dict(py, decision))
+            .collect::<PyResult<Vec<_>>>()?;
+        PyList::new(py, decisions)
+    }
+}
 
 #[pyclass(name = "NLL", module = "laddu", frozen, skip_from_py_object)]
 #[derive(Clone)]
@@ -564,6 +681,13 @@ impl PyLikelihood {
 
     fn __repr__(&self) -> String {
         format!("Likelihood(parameters={:?})", self.parameter_names())
+    }
+
+    /// Return preparation strategy, memory decisions, and objective evaluation counts.
+    fn diagnostics(&self) -> PyLikelihoodDiagnostics {
+        PyLikelihoodDiagnostics {
+            inner: self.inner.diagnostics(),
+        }
     }
 
     #[getter]

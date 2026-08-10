@@ -24,7 +24,7 @@ use laddu_fit::{
 use laddu_likelihood::{
     BootstrapFitError, Ensemble, Likelihood, LikelihoodEvaluation, Objective, StochasticObjective,
 };
-use numpy::{PyArray2, PyReadonlyArray1};
+use numpy::{PyArray1, PyArray2, PyReadonlyArray1};
 use pyo3::{exceptions::PyTypeError, prelude::*, types::PyAny};
 
 use super::{
@@ -376,6 +376,53 @@ impl PyLikelihood {
             to_py_err,
         )?;
         Ok(summary.into())
+    }
+
+    #[pyo3(signature = (
+        restarts,
+        initial: "Sequence[float] | numpy.typing.NDArray[numpy.float32 | numpy.float64] | dict[str, float] | None" = None,
+        *,
+        config: "object | None" = None,
+        seed=0,
+        terminators: "Sequence[object]" = Vec::new()
+    ))]
+    /// Run a deterministic ensemble of independent fit restarts.
+    ///
+    /// The first restart uses ``initial`` when supplied. Remaining starts are
+    /// reproducibly sampled from parameter initialization ranges. Fits execute
+    /// serially so Python callbacks and per-fit thread pools are not oversubscribed.
+    fn fit_restarts(
+        &self,
+        py: Python<'_>,
+        restarts: usize,
+        initial: Option<&Bound<'_, PyAny>>,
+        config: Option<&Bound<'_, PyAny>>,
+        seed: u64,
+        terminators: Vec<Py<PyAny>>,
+    ) -> PyResult<Vec<PyMinimizationSummary>> {
+        if restarts == 0 {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "restarts must be positive",
+            ));
+        }
+        let mut summaries = Vec::with_capacity(restarts);
+        for index in 0..restarts {
+            let callbacks = terminators
+                .iter()
+                .map(|callback| callback.clone_ref(py))
+                .collect();
+            let summary = if index == 0 && initial.is_some() {
+                self.fit(py, initial, config, callbacks, Vec::new())?
+            } else {
+                let start = self.inner.sample_initial(
+                    seed.wrapping_add((index as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15)),
+                );
+                let start = PyArray1::from_vec(py, start).into_any();
+                self.fit(py, Some(&start), config, callbacks, Vec::new())?
+            };
+            summaries.push(summary);
+        }
+        Ok(summaries)
     }
 
     #[pyo3(signature = (

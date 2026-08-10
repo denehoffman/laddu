@@ -219,7 +219,7 @@ pub enum WgpuPreparedDataset {
     /// GPU-resident prepared batches.
     Resident {
         /// Prepared GPU batches.
-        batches: Vec<laddu_wgpu::WgpuPreparedBatch>,
+        batches: std::sync::Arc<[laddu_wgpu::WgpuPreparedBatch]>,
         /// Preparation statistics.
         stats: PreparedDatasetStats,
         /// Persistent device-memory reservation.
@@ -269,10 +269,33 @@ impl WgpuPlan {
     ) -> RuntimeResult<WgpuPreparedDataset> {
         let read_plan = execution.read_plan(dataset.read_plan());
         let mut read_plan = read_plan;
-        let local_event_limit = dataset
+        let known_local_events = dataset
             .num_events()
             .map_err(|error| RuntimeError::Data(error.to_string()))?
-            .and_then(|events| usize::try_from(events).ok())
+            .and_then(|events| usize::try_from(events).ok());
+        let discovered_events =
+            if known_local_events.is_none() && dataset.memory_policy() != MemoryPolicy::Streaming {
+                let local = (|| {
+                    let mut events = 0;
+                    for batch in dataset
+                        .batches_with_plan(read_plan)
+                        .map_err(|error| RuntimeError::Data(error.to_string()))?
+                    {
+                        events += batch
+                            .map_err(|error| RuntimeError::Data(error.to_string()))?
+                            .len();
+                    }
+                    Ok::<_, RuntimeError>(events)
+                })();
+                if !execution.all_succeeded(local.is_ok()) {
+                    return local.and(Err(RuntimeError::DistributedPeerFailure));
+                }
+                Some(local?)
+            } else {
+                None
+            };
+        let local_event_limit = known_local_events
+            .or(discovered_events)
             .unwrap_or(usize::MAX);
         let fixed = self
             .kernel
@@ -362,28 +385,35 @@ impl WgpuPlan {
         );
         execution.record_memory_decision(device_decision.clone());
         execution.record_memory_decision(host_decision);
-        let mut batches = Vec::new();
-        let mut events = 0;
-        let mut batch_count = 0;
-        let mut sum_weights = AccurateF64::zero();
-        for batch in dataset
-            .batches_with_plan(read_plan)
-            .map_err(|error| RuntimeError::Data(error.to_string()))?
-        {
-            let batch = batch.map_err(|error| RuntimeError::Data(error.to_string()))?;
-            events += batch.len();
-            batch_count += 1;
-            for row in 0..batch.len() {
-                sum_weights.push(batch.weights_at(row));
+        let local = (|| {
+            let mut batches = Vec::new();
+            let mut events = 0;
+            let mut batch_count = 0;
+            let mut sum_weights = AccurateF64::zero();
+            for batch in dataset
+                .batches_with_plan(read_plan)
+                .map_err(|error| RuntimeError::Data(error.to_string()))?
+            {
+                let batch = batch.map_err(|error| RuntimeError::Data(error.to_string()))?;
+                events += batch.len();
+                batch_count += 1;
+                for row in 0..batch.len() {
+                    sum_weights.push(batch.weights_at(row));
+                }
+                if storage == CacheStorage::Resident {
+                    batches.push(
+                        self.kernel
+                            .prepare_batch(&self.context, &self.preparation_params, &batch)
+                            .map_err(wgpu_error)?,
+                    );
+                }
             }
-            if storage == CacheStorage::Resident {
-                batches.push(
-                    self.kernel
-                        .prepare_batch(&self.context, &self.preparation_params, &batch)
-                        .map_err(wgpu_error)?,
-                );
-            }
+            Ok::<_, RuntimeError>((batches, events, batch_count, sum_weights.finish()))
+        })();
+        if !execution.all_succeeded(local.is_ok()) {
+            return local.and(Err(RuntimeError::DistributedPeerFailure));
         }
+        let (batches, events, batch_count, sum_weights) = local?;
         let resident_bytes = batches
             .iter()
             .map(laddu_wgpu::WgpuPreparedBatch::resident_bytes)
@@ -392,13 +422,13 @@ impl WgpuPlan {
             events,
             execution.sum_usize(events),
             batch_count,
-            execution.sum_f64(sum_weights.finish()),
+            execution.sum_f64(sum_weights),
             resident_bytes,
             storage,
         );
         Ok(match storage {
             CacheStorage::Resident => WgpuPreparedDataset::Resident {
-                batches,
+                batches: batches.into(),
                 stats,
                 memory_lease: memory_lease.ok_or_else(|| {
                     RuntimeError::Wgpu("resident GPU dataset did not reserve device memory".into())
@@ -424,7 +454,7 @@ impl WgpuPlan {
         let mut total = AccurateF64::zero();
         match dataset {
             WgpuPreparedDataset::Resident { batches, .. } => {
-                for batch in batches {
+                for batch in batches.iter() {
                     total.push(
                         self.kernel
                             .reduce_prepared_batch(&self.context, params, batch, reduction)
@@ -518,7 +548,7 @@ impl WgpuPlan {
         };
         match dataset {
             WgpuPreparedDataset::Resident { batches, .. } => {
-                for batch in batches {
+                for batch in batches.iter() {
                     consume(batch)?;
                 }
             }

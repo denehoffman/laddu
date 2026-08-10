@@ -9,7 +9,7 @@ use numpy::{PyArray1, PyArray2};
 use pyo3::{
     exceptions::{PyTypeError, PyValueError},
     prelude::*,
-    types::PyAny,
+    types::{PyAny, PyDict},
 };
 
 use super::{error::to_py_err, expr::PyExpr, float_matrix, float_tensor3, float_vec};
@@ -309,6 +309,17 @@ pub struct PyCrossSection {
 
 #[pymethods]
 impl PyCrossSection {
+    /// Return integral-cache hit, miss, count, and retained-byte diagnostics.
+    fn diagnostics<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        let diagnostics = self.inner.diagnostics();
+        let out = PyDict::new(py);
+        out.set_item("cache_hits", diagnostics.cache_hits())?;
+        out.set_item("cache_misses", diagnostics.cache_misses())?;
+        out.set_item("cached_integrals", diagnostics.cached_integrals())?;
+        out.set_item("prepared_bytes", diagnostics.prepared_bytes())?;
+        Ok(out)
+    }
+
     #[staticmethod]
     #[pyo3(signature = (
         members,
