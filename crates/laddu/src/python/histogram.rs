@@ -286,3 +286,5 @@ impl PyHistogram {
         })
     }
 }
+
+impl_json_methods!(PyHistogram);

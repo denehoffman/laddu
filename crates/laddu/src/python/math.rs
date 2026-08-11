@@ -346,3 +346,6 @@ pub fn blatt_weisskopf_custom(
         .map(PyExpr::from)
         .map_err(to_py_err)
 }
+
+impl_json_methods!(PySheet);
+impl_json_methods!(PyBarrierKind);

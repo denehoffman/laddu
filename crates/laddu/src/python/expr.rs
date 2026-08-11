@@ -661,3 +661,5 @@ binary_function!(
     expr_solve,
     "Solve a symbolic linear system.\n\nParameters\n----------\nlhs : Expr\n    Square coefficient-matrix expression.\nrhs : Expr\n    Right-hand-side vector or matrix expression.\n\nReturns\n-------\nExpr\n    Symbolic solution of the system.\n\nRaises\n------\nTypeError\n    If either operand cannot be converted to an expression."
 );
+
+impl_json_methods!(PyExpr);

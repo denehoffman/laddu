@@ -331,3 +331,5 @@ impl PyModel {
         }
     }
 }
+
+impl_json_methods!(PyModel);

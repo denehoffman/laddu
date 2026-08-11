@@ -606,3 +606,5 @@ pub mod particles {
         Ok(())
     }
 }
+
+impl_json_methods!(PyParticle);

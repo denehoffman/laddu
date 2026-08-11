@@ -39,6 +39,8 @@ pyo3 = { workspace = true, optional = true, features = [
   "multiple-pymethods",
   "num-complex",
 ] }
+serde = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
 thiserror.workspace = true
 
 [features]
@@ -70,6 +72,8 @@ python = [
   "dep:num",
   "dep:numpy",
   "dep:pyo3",
+  "dep:serde",
+  "dep:serde_json",
 ]
 
 [dependencies.fastrand]
@@ -81,8 +85,6 @@ criterion.workspace = true
 fastrand.workspace = true
 num_cpus.workspace = true
 rayon.workspace = true
-serde.workspace = true
-serde_json.workspace = true
 
 [[bench]]
 name = "kmatrix_benchmark"

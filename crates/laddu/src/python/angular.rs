@@ -562,3 +562,7 @@ impl PyWignerD {
             .into())
     }
 }
+
+impl_json_methods!(PyVec3);
+impl_json_methods!(PyVec4);
+impl_json_methods!(PyWignerD);

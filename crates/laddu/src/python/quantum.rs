@@ -1271,3 +1271,17 @@ impl PySelectionRules {
             .collect()
     }
 }
+
+impl_json_methods!(PyJ);
+impl_json_methods!(PyS);
+impl_json_methods!(PyL);
+impl_json_methods!(PyM);
+impl_json_methods!(PyParity);
+impl_json_methods!(PyIsospin);
+impl_json_methods!(PyStatistics);
+impl_json_methods!(PyMandelstamChannel);
+impl_json_methods!(PyRuleCheck);
+impl_json_methods!(PyRuleReport);
+impl_json_methods!(PyRuleSet);
+impl_json_methods!(PyPartialWave);
+impl_json_methods!(PyAllowedPartialWave);
