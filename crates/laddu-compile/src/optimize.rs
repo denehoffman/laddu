@@ -1,4 +1,8 @@
-use std::{collections::HashMap, fmt};
+use std::{
+    collections::HashMap,
+    fmt,
+    hash::{Hash, Hasher},
+};
 
 use laddu_expr::{
     BinaryOp, ExprGraph, ExprId, ExprMetadata, ExprNode, ExprSourceKind, P4Component, UnaryOp,
@@ -22,6 +26,26 @@ pub struct OptimizationPipeline {
 }
 
 impl OptimizationPipeline {
+    pub(crate) fn normalization_analysis_passes() -> Self {
+        Self::new()
+            .with_pass(RewritePass::simplify())
+            .with_pass(CanonicalCsePass)
+            .with_pass(RewritePass::normalize_add_mul())
+            .with_pass(CanonicalCsePass)
+            .with_pass(RewritePass::combine_like_terms())
+            .with_pass(CanonicalCsePass)
+            .with_pass(RewritePass::factor_common_products())
+            .with_pass(RewritePass::normalize_add_mul())
+            .with_pass(CanonicalCsePass)
+            .with_pass(RewritePass::exponential())
+            .with_pass(RewritePass::simplify())
+            .with_max_iterations(DEFAULT_MAX_ITERATIONS)
+    }
+
+    pub(crate) fn normalization_target_lowering_passes() -> Self {
+        Self::new().with_pass(CostGatePass::new(Self::norm_sqr_expansion_candidate()))
+    }
+
     /// Creates an empty single-iteration pipeline.
     pub fn new() -> Self {
         Self {
@@ -102,11 +126,11 @@ impl OptimizationPipeline {
     /// cannot transform the graph.
     pub fn run(&self, mut graph: ExprGraph) -> CompileResult<ExprGraph> {
         for _ in 0..self.max_iterations {
-            let previous = graph.clone();
+            let previous = graph_fingerprint(&graph);
             for pass in &self.passes {
                 graph = pass.run(graph)?;
             }
-            if graph_shape_eq(&previous, &graph) {
+            if previous == graph_fingerprint(&graph) {
                 break;
             }
         }
@@ -134,8 +158,22 @@ impl fmt::Debug for OptimizationPipeline {
     }
 }
 
-fn graph_shape_eq(lhs: &ExprGraph, rhs: &ExprGraph) -> bool {
-    lhs.root() == rhs.root() && lhs.nodes() == rhs.nodes()
+fn graph_fingerprint(graph: &ExprGraph) -> u64 {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    graph.root().index().hash(&mut hasher);
+    graph.nodes().len().hash(&mut hasher);
+    for node in graph.nodes() {
+        format!("{node:?}").hash(&mut hasher);
+    }
+    hasher.finish()
+}
+
+/// Result of one optimization pass with explicit convergence state.
+pub struct OptimizationPassOutcome {
+    /// Transformed graph.
+    pub graph: ExprGraph,
+    /// Whether the graph's executable structure changed.
+    pub changed: bool,
 }
 
 /// One whole-graph transformation in an [`OptimizationPipeline`].
@@ -149,6 +187,22 @@ pub trait OptimizationPass: Send + Sync {
     /// Returns [`CompileError`](crate::CompileError) when the graph cannot be
     /// transformed into a valid result.
     fn run(&self, graph: ExprGraph) -> CompileResult<ExprGraph>;
+
+    /// Runs this pass and reports structural change without cloning the graph.
+    ///
+    /// Custom passes receive fingerprint-based change detection by default and
+    /// may override this method when they can report change directly.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CompileError`](crate::CompileError) when this pass cannot
+    /// transform the graph.
+    fn run_with_change(&self, graph: ExprGraph) -> CompileResult<OptimizationPassOutcome> {
+        let before = graph_fingerprint(&graph);
+        let graph = self.run(graph)?;
+        let changed = before != graph_fingerprint(&graph);
+        Ok(OptimizationPassOutcome { graph, changed })
+    }
 }
 
 /// Runs a candidate pipeline only when it strictly improves static cost.

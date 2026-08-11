@@ -3654,6 +3654,7 @@ impl CpuPlan {
             scalar_at(&values, self.graph.root().index())?
         };
         let gradient = match self.autodiff.mode() {
+            AutodiffMode::Auto => unreachable!("autodiff mode is resolved during preparation"),
             AutodiffMode::Forward => {
                 DerivativeWorkspace::new(self, &values, cached_factors).gradient()?
             }
@@ -6060,7 +6061,6 @@ pub struct PreparedDatasetStats {
 }
 
 impl PreparedDatasetStats {
-    #[cfg(feature = "wgpu")]
     pub(crate) fn new(
         local_events: usize,
         global_events: usize,

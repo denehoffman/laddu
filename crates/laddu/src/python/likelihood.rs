@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use laddu_compile::NormalizationStrategy;
 use laddu_likelihood::{
     CrossSectionIntegrals, DatasetDiagnostics, DatasetRole, ExtendedNllTerm, LassoPenalty,
     Likelihood, LikelihoodDiagnostics, LikelihoodProjection, LikelihoodTerm, NllTerm, RidgePenalty,
@@ -83,6 +84,77 @@ impl PyDatasetDiagnostics {
     #[getter]
     fn uses_quadratic_normalization(&self) -> bool {
         self.inner.uses_quadratic_normalization()
+    }
+
+    #[getter]
+    fn normalization_strategy(&self) -> Option<&'static str> {
+        self.inner
+            .normalization()
+            .map(|normalization| match normalization.strategy() {
+                NormalizationStrategy::Hermitian => "hermitian",
+                NormalizationStrategy::LinearStatistics => "linear_statistics",
+                NormalizationStrategy::Hybrid => "hybrid",
+                NormalizationStrategy::General => "general",
+            })
+    }
+
+    #[getter]
+    fn normalization_basis_count(&self) -> Option<usize> {
+        self.inner
+            .normalization()
+            .map(|normalization| normalization.compiler().basis_count())
+    }
+
+    #[getter]
+    fn normalization_coherent_group_count(&self) -> Option<usize> {
+        self.inner
+            .normalization()
+            .map(|normalization| normalization.compiler().coherent_group_count())
+    }
+
+    #[getter]
+    fn normalization_has_residual(&self) -> Option<bool> {
+        self.inner
+            .normalization()
+            .map(|normalization| normalization.compiler().has_residual())
+    }
+
+    #[getter]
+    fn normalization_retained_bytes(&self) -> Option<usize> {
+        self.inner
+            .normalization()
+            .map(|normalization| normalization.retained_bytes())
+    }
+
+    #[getter]
+    fn normalization_preparation_passes(&self) -> Option<usize> {
+        self.inner
+            .normalization()
+            .map(|normalization| normalization.preparation_passes())
+    }
+
+    #[getter]
+    fn normalization_cache_reused(&self) -> Option<bool> {
+        self.inner
+            .normalization()
+            .map(|normalization| normalization.cache_hit())
+    }
+
+    #[getter]
+    fn normalization_tag_reused_parent(&self) -> Option<bool> {
+        self.inner
+            .normalization()
+            .map(|normalization| normalization.tag_projection_reused_parent())
+    }
+
+    #[getter]
+    fn normalization_fallback_reason(&self) -> Option<String> {
+        self.inner.normalization().and_then(|normalization| {
+            normalization
+                .compiler()
+                .fallback_reason()
+                .map(|reason| format!("{reason:?}"))
+        })
     }
 
     #[getter]

@@ -7,19 +7,23 @@ mod executable;
 /// Per-node value, number, and dependency analysis.
 pub mod facts;
 mod model;
+mod normalization;
 /// Extensible expression-graph optimization passes and rewrite rules.
 pub mod optimize;
 mod reduction;
 
-pub use cost::OptimizationCost;
+pub use cost::{LifecycleCost, OptimizationCost};
 pub use error::{CompileError, CompileResult};
 pub use executable::{ExecutablePlan, SolveComponentPlan, SolveRowMatrixPlan};
 pub use facts::{DependencyFacts, EvaluationClass, GraphFacts, NodeFacts, NumberClass};
 pub use model::*;
+pub use normalization::{
+    NormalizationDiagnostics, NormalizationFallbackReason, NormalizationPlan, NormalizationStrategy,
+};
 pub use optimize::{
     AlgebraicIdentityRule, CanonicalCsePass, ComplexFactRule, ConjugationRule,
     ConstantFoldScalarRule, CostGatePass, ExponentialRule, FactorCommonProductRule,
-    MatrixVectorRule, NormSqrExpansionRule, OptimizationPass, OptimizationPipeline, Rewrite,
-    RewriteContext, RewritePass, RewriteRule,
+    MatrixVectorRule, NormSqrExpansionRule, OptimizationPass, OptimizationPassOutcome,
+    OptimizationPipeline, Rewrite, RewriteContext, RewritePass, RewriteRule,
 };
 pub use reduction::{ReductionError, ReductionOutput, ReductionPlan, ReductionTransform};

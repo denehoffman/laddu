@@ -8,6 +8,7 @@ use std::sync::{
 
 use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use laddu::prelude::*;
+use laddu_runtime::NormalizationMode;
 
 #[derive(Clone)]
 struct CountingSource {
@@ -81,19 +82,42 @@ fn source(events: usize, fragments: usize, known_events: bool) -> CountingSource
     }
 }
 
-fn model() -> CompiledModel {
-    let coefficient = complex(
-        parameter!("coefficient_re", initial: 0.8),
-        parameter!("coefficient_im", initial: -0.1),
-    );
-    let amplitude = complex(event_scalar("x") + 0.2, event_scalar("x").cos());
-    CompiledModel::from_expr(&(coefficient * amplitude).norm_sqr()).unwrap()
+fn model(coefficients: usize) -> CompiledModel {
+    let x = event_scalar("x");
+    let amplitude = (0..coefficients)
+        .map(|index| {
+            let re =
+                Expr::from(Parameter::free(format!("coefficient_{index}_re")).with_initial(0.8));
+            let im =
+                Expr::from(Parameter::free(format!("coefficient_{index}_im")).with_initial(-0.1));
+            let basis = complex(
+                x.clone().powi((index % 3 + 1) as i32) + 0.2,
+                (x.clone() * (index + 1) as f64).cos(),
+            );
+            complex(re, im) * basis
+        })
+        .reduce(|sum, term| sum + term)
+        .expect("benchmark models contain at least one coefficient");
+    CompiledModel::from_expr(&amplitude.norm_sqr()).unwrap()
 }
 
-fn likelihood(source: CountingSource) -> Likelihood {
+fn likelihood(
+    source: CountingSource,
+    coefficients: usize,
+    normalization: NormalizationMode,
+) -> Likelihood {
     let dataset = Dataset::new(source).fastest();
-    let model = model();
-    Likelihood::new([NllTerm::new("synthetic", &model, &dataset, &dataset).unwrap()]).unwrap()
+    let model = model(coefficients);
+    let execution = Execution::local(ExecutionOptions {
+        normalization,
+        ..ExecutionOptions::default()
+    })
+    .unwrap();
+    Likelihood::with_execution(
+        [NllTerm::new("synthetic", &model, &dataset, &dataset).unwrap()],
+        &execution,
+    )
+    .unwrap()
 }
 
 fn pipeline_benchmark(criterion: &mut Criterion) {
@@ -104,31 +128,56 @@ fn pipeline_benchmark(criterion: &mut Criterion) {
                 BenchmarkId::new(if known { "known" } else { "unknown" }, fragments),
                 &(known, fragments),
                 |bencher, &(known, fragments)| {
-                    bencher.iter(|| likelihood(black_box(source(10_000, fragments, known))))
+                    bencher.iter(|| {
+                        likelihood(
+                            black_box(source(10_000, fragments, known)),
+                            1,
+                            NormalizationMode::Auto,
+                        )
+                    })
                 },
             );
         }
     }
     preparation.finish();
 
-    let source = source(10_000, 1_000, false);
-    let traversals = Arc::clone(&source.traversals);
-    let likelihood = likelihood(source);
+    let dataset_source = source(10_000, 1_000, false);
+    let traversals = Arc::clone(&dataset_source.traversals);
+    let resident_likelihood = likelihood(dataset_source, 1, NormalizationMode::Auto);
     let reads_after_preparation = traversals.load(Ordering::Relaxed);
-    let parameters = likelihood.default_params();
+    let parameters = resident_likelihood.default_params();
     let mut evaluation = criterion.benchmark_group("resident likelihood evaluation");
     evaluation.bench_function("value", |bencher| {
-        bencher.iter(|| likelihood.nll(black_box(&parameters)).unwrap())
+        bencher.iter(|| resident_likelihood.nll(black_box(&parameters)).unwrap())
     });
     evaluation.bench_function("value and gradient", |bencher| {
         bencher.iter(|| {
-            likelihood
+            resident_likelihood
                 .nll_with_gradient(black_box(&parameters))
                 .unwrap()
         })
     });
     evaluation.finish();
     assert_eq!(traversals.load(Ordering::Relaxed), reads_after_preparation);
+
+    let mut scaling = criterion.benchmark_group("normalization strategy scaling");
+    for coefficients in [1, 4, 8] {
+        for normalization in [NormalizationMode::Auto, NormalizationMode::General] {
+            let likelihood = likelihood(source(10_000, 1_000, false), coefficients, normalization);
+            let parameters = likelihood.default_params();
+            let strategy = match normalization {
+                NormalizationMode::Auto => "statistics",
+                NormalizationMode::General => "general",
+                NormalizationMode::Verify => unreachable!(),
+            };
+            scaling.bench_with_input(
+                BenchmarkId::new(strategy, coefficients),
+                &coefficients,
+                |bencher, _| bencher.iter(|| likelihood.nll(black_box(&parameters)).unwrap()),
+            );
+        }
+    }
+    scaling.finish();
 }
 
 criterion_group!(benches, pipeline_benchmark);

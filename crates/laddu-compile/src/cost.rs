@@ -1,5 +1,59 @@
 use laddu_expr::{BinaryOp, ExprGraph, ExprNode, UnaryOp};
 
+use crate::{DependencyFacts, GraphFacts};
+
+/// Weighted work partitioned by the lifecycle that pays for it.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub struct LifecycleCost {
+    compile: u64,
+    dataset_event: u64,
+    evaluation_invariant: u64,
+    evaluation_event: u64,
+}
+
+impl LifecycleCost {
+    /// Work performed once while compiling or preparing a parameter-only program.
+    pub fn compile(&self) -> u64 {
+        self.compile
+    }
+
+    /// Work performed once per event while preparing a dataset.
+    pub fn dataset_event(&self) -> u64 {
+        self.dataset_event
+    }
+
+    /// Parameter-only work performed once per objective evaluation.
+    pub fn evaluation_invariant(&self) -> u64 {
+        self.evaluation_invariant
+    }
+
+    /// Mixed parameter/event work performed for every event and evaluation.
+    pub fn evaluation_event(&self) -> u64 {
+        self.evaluation_event
+    }
+
+    fn add(&mut self, dependency: DependencyFacts, weight: u64) {
+        match (
+            dependency.depends_on_free_params,
+            dependency.depends_on_event,
+        ) {
+            (false, false) => self.compile += weight,
+            (false, true) => self.dataset_event += weight,
+            (true, false) => self.evaluation_invariant += weight,
+            (true, true) => self.evaluation_event += weight,
+        }
+    }
+
+    fn hot_path_key(self) -> (u64, u64, u64, u64) {
+        (
+            self.evaluation_event,
+            self.evaluation_invariant,
+            self.dataset_event,
+            self.compile,
+        )
+    }
+}
+
 /// Static counts and weighted score used to compare expression graphs.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct OptimizationCost {
@@ -15,14 +69,19 @@ pub struct OptimizationCost {
     constructors: usize,
     extractions: usize,
     linear_algebra_ops: usize,
+    lifecycle: LifecycleCost,
 }
 
 impl OptimizationCost {
     /// Computes the cost metrics for `graph`.
     pub fn analyze(graph: &ExprGraph) -> Self {
+        let facts = GraphFacts::analyze(graph);
         let mut cost = Self::default();
-        for node in graph.nodes() {
+        for (node, facts) in graph.nodes().iter().zip(facts.nodes()) {
+            let before = cost.weighted_ops;
             cost.add_node(node);
+            cost.lifecycle
+                .add(facts.dependency, cost.weighted_ops - before);
         }
         cost
     }
@@ -39,15 +98,25 @@ impl OptimizationCost {
 
     /// Returns whether this cost is strictly lower than `baseline`.
     pub fn is_better_than(&self, baseline: &Self) -> bool {
-        self.weighted_ops < baseline.weighted_ops
-            || (self.weighted_ops == baseline.weighted_ops && self.node_count < baseline.node_count)
+        self.lifecycle.hot_path_key() < baseline.lifecycle.hot_path_key()
+            || (self.lifecycle == baseline.lifecycle
+                && (self.weighted_ops < baseline.weighted_ops
+                    || (self.weighted_ops == baseline.weighted_ops
+                        && self.node_count < baseline.node_count)))
     }
 
     /// Returns whether this cost is lower than or equal to `baseline`.
     pub fn is_no_worse_than(&self, baseline: &Self) -> bool {
-        self.weighted_ops < baseline.weighted_ops
-            || (self.weighted_ops == baseline.weighted_ops
-                && self.node_count <= baseline.node_count)
+        self.lifecycle.hot_path_key() < baseline.lifecycle.hot_path_key()
+            || (self.lifecycle == baseline.lifecycle
+                && (self.weighted_ops < baseline.weighted_ops
+                    || (self.weighted_ops == baseline.weighted_ops
+                        && self.node_count <= baseline.node_count)))
+    }
+
+    /// Returns weighted work split by compilation and execution lifecycle.
+    pub fn lifecycle(&self) -> LifecycleCost {
+        self.lifecycle
     }
 
     /// Returns the number of constants, parameters, and event inputs.
@@ -185,5 +254,24 @@ fn powi_weight(power: i32) -> u64 {
         0 | 1 => 0,
         2 | 3 => 3,
         _ => 4,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use laddu_expr::{event_scalar, parameter};
+
+    use super::*;
+
+    #[test]
+    fn partitions_operation_work_by_execution_lifecycle() {
+        let parameter_only = parameter!("scale") + 1.0;
+        let event_only = event_scalar("x") + 2.0;
+        let mixed = parameter_only * event_only;
+        let graph = mixed.to_graph();
+        let cost = OptimizationCost::analyze(&graph).lifecycle();
+        assert!(cost.evaluation_invariant() > 0);
+        assert!(cost.dataset_event() > 0);
+        assert!(cost.evaluation_event() > 0);
     }
 }

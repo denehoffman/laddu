@@ -6,8 +6,10 @@ use serde::{Deserialize, Serialize};
 /// Algorithm selected for automatic differentiation.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum AutodiffMode {
-    /// Propagate one tangent per free parameter through the primal graph.
+    /// Select forward or reverse mode from compiler work estimates.
     #[default]
+    Auto,
+    /// Propagate one tangent per free parameter through the primal graph.
     Forward,
     /// Propagate adjoints backward from the scalar output.
     Reverse,
@@ -17,6 +19,7 @@ pub enum AutodiffMode {
 #[derive(Clone, Debug)]
 pub struct AutodiffPlan {
     mode: AutodiffMode,
+    parameter_count: usize,
     active_nodes: Vec<Vec<ExprId>>,
 }
 
@@ -30,39 +33,62 @@ impl AutodiffPlan {
     /// error without changing this API.
     pub fn from_model(model: &CompiledModel, mode: AutodiffMode) -> AutodiffResult<Self> {
         let parameter_count = model.params().n_free();
-        let mut node_dependencies = Vec::<Vec<bool>>::with_capacity(model.graph().nodes().len());
+        if mode == AutodiffMode::Reverse {
+            return Ok(Self {
+                mode,
+                parameter_count,
+                active_nodes: Vec::new(),
+            });
+        }
+        let mut node_dependencies = Vec::<Vec<usize>>::with_capacity(model.graph().nodes().len());
 
         for node in model.graph().nodes() {
-            let mut dependencies = vec![false; parameter_count];
-            match node {
+            let dependencies = match node {
                 ExprNode::ScalarParam(parameter) => {
-                    Self::mark_parameter_dependency(model, parameter.name(), &mut dependencies);
+                    Self::parameter_dependency(model, parameter.name())
+                        .into_iter()
+                        .collect()
                 }
                 _ => {
+                    let mut dependencies = Vec::new();
                     for child in Self::children(node) {
-                        for (target, source) in dependencies
-                            .iter_mut()
-                            .zip(&node_dependencies[child.index()])
-                        {
-                            *target |= *source;
-                        }
+                        dependencies =
+                            merge_sorted_unique(&dependencies, &node_dependencies[child.index()]);
                     }
+                    dependencies
                 }
-            }
+            };
             node_dependencies.push(dependencies);
+        }
+
+        let forward_work = node_dependencies.iter().map(Vec::len).sum::<usize>();
+        let reverse_work = model
+            .graph()
+            .nodes()
+            .len()
+            .saturating_mul(2)
+            .saturating_add(parameter_count);
+        if mode == AutodiffMode::Auto && reverse_work < forward_work {
+            return Ok(Self {
+                mode: AutodiffMode::Reverse,
+                parameter_count,
+                active_nodes: Vec::new(),
+            });
         }
 
         let mut active_nodes = vec![Vec::new(); parameter_count];
         for (index, dependencies) in node_dependencies.iter().enumerate() {
             let id = ExprId::from_index(index);
-            for (parameter, active) in dependencies.iter().copied().enumerate() {
-                if active {
-                    active_nodes[parameter].push(id);
-                }
+            for parameter in dependencies {
+                active_nodes[*parameter].push(id);
             }
         }
 
-        Ok(Self { mode, active_nodes })
+        Ok(Self {
+            mode: AutodiffMode::Forward,
+            parameter_count,
+            active_nodes,
+        })
     }
 
     /// Returns the selected differentiation mode.
@@ -72,7 +98,7 @@ impl AutodiffPlan {
 
     /// Returns the number of free parameters.
     pub fn parameter_count(&self) -> usize {
-        self.active_nodes.len()
+        self.parameter_count
     }
 
     /// Returns graph nodes depending on one free parameter.
@@ -80,14 +106,12 @@ impl AutodiffPlan {
         self.active_nodes.get(free_parameter).map(Vec::as_slice)
     }
 
-    fn mark_parameter_dependency(model: &CompiledModel, name: &str, dependencies: &mut [bool]) {
-        let Some(id) = model.params().id(name) else {
-            return;
-        };
+    fn parameter_dependency(model: &CompiledModel, name: &str) -> Option<usize> {
+        let id = model.params().id(name)?;
         let Ok(Some(free_id)) = model.params().free_id(id) else {
-            return;
+            return None;
         };
-        dependencies[free_id.index()] = true;
+        Some(free_id.index())
     }
 
     fn children(node: &ExprNode) -> Vec<ExprId> {
@@ -111,6 +135,39 @@ impl AutodiffPlan {
             | ExprNode::EventP4Component { .. } => Vec::new(),
         }
     }
+}
+
+fn merge_sorted_unique(lhs: &[usize], rhs: &[usize]) -> Vec<usize> {
+    let mut merged = Vec::with_capacity(lhs.len() + rhs.len());
+    let (mut left, mut right) = (0, 0);
+    while left < lhs.len() || right < rhs.len() {
+        let next = match (lhs.get(left), rhs.get(right)) {
+            (Some(lhs), Some(rhs)) if lhs < rhs => {
+                left += 1;
+                *lhs
+            }
+            (Some(lhs), Some(rhs)) if rhs < lhs => {
+                right += 1;
+                *rhs
+            }
+            (Some(value), Some(_)) => {
+                left += 1;
+                right += 1;
+                *value
+            }
+            (Some(value), None) => {
+                left += 1;
+                *value
+            }
+            (None, Some(value)) => {
+                right += 1;
+                *value
+            }
+            (None, None) => break,
+        };
+        merged.push(next);
+    }
+    merged
 }
 
 #[cfg(test)]
@@ -149,5 +206,22 @@ mod tests {
 
         assert_eq!(plan.mode(), AutodiffMode::Reverse);
         assert_eq!(plan.parameter_count(), 1);
+    }
+
+    #[test]
+    fn auto_selects_reverse_without_dense_forward_dependencies() {
+        let sum = parameter!("a")
+            + parameter!("b")
+            + parameter!("c")
+            + parameter!("d")
+            + parameter!("e")
+            + parameter!("f");
+        let expression = sum.sin().exp().cos().powi(2);
+        let model = CompiledModel::from_expr(&expression).unwrap();
+        let plan = AutodiffPlan::from_model(&model, AutodiffMode::Auto).unwrap();
+
+        assert_eq!(plan.mode(), AutodiffMode::Reverse);
+        assert_eq!(plan.parameter_count(), 6);
+        assert!(plan.active_nodes(0).is_none());
     }
 }
