@@ -9,7 +9,7 @@ dynamic = ["version"]
 dependencies = ["numpy>=2"]
 
 [project.optional-dependencies]
-mpi = ["laddu-mpi==0.21.0"] # x-release-please-version
+mpi = ["laddu-mpi==0.21.1"] # x-release-please-version
 
 [dependency-groups]
 dev = [

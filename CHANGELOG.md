@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.21.1](https://github.com/denehoffman/laddu/compare/v0.21.0...v0.21.1) (2026-08-11)
+
+
+### Features
+
+* **compiler:** Add normalization analysis pass ([cce8b93](https://github.com/denehoffman/laddu/commit/cce8b93cf36a6968d423265f29104a57822751f0))
+
+
+### Bug Fixes
+
+* **ci:** Handle feature-gated warnings and benchmark triggers ([2f8b91b](https://github.com/denehoffman/laddu/commit/2f8b91b9cbd37097a90664c27ddc703ef52a6d49))
+
+
+### Performance Improvements
+
+* **runtime:** Optimize transformed likelihood pipelines ([25fe4f3](https://github.com/denehoffman/laddu/commit/25fe4f332fff84698abf2f162841f471a8b61e2f))
+
 ## [0.21.0](https://github.com/denehoffman/laddu/compare/v0.20.0...v0.21.0) (2026-08-08)
 
 
