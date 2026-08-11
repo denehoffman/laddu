@@ -138,3 +138,5 @@ impl PyBin {
         self.inner.edges_slice().to_vec()
     }
 }
+
+impl_json_methods!(PyBin);

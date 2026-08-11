@@ -665,3 +665,8 @@ pub mod generation {
         PyVertexProposal as VertexProposal,
     };
 }
+
+impl_json_methods!(PyMassProposal);
+impl_json_methods!(PyInitialMomentum);
+impl_json_methods!(PyVertexProposal);
+impl_json_methods!(PyGenerationReport);

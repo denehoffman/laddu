@@ -879,3 +879,7 @@ pub mod gpu {
         !devices().is_empty()
     }
 }
+
+impl_json_methods!(PyMemoryBudget);
+impl_json_methods!(PyMemoryPlan);
+impl_json_methods!(PyMemoryResource);

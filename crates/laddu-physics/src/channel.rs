@@ -420,7 +420,7 @@ impl Edge {
             name,
             p4: None,
             properties: None,
-            output: false,
+            output: true,
             mass_proposal: None,
             initial_momentum: None,
         }
@@ -911,6 +911,16 @@ mod tests {
         assert_relative_eq!(eval(actual.py()), expected.py(), epsilon = 1e-12);
         assert_relative_eq!(eval(actual.pz()), expected.pz(), epsilon = 1e-12);
         assert_relative_eq!(eval(actual.e()), expected.e(), epsilon = 1e-12);
+    }
+
+    #[test]
+    fn edges_are_outputs_by_default() {
+        let mut channel = Channel::new("generated");
+        channel.edge("included");
+        channel.edge("excluded").generated_only();
+
+        assert!(channel.require_edge("included").unwrap().is_output());
+        assert!(!channel.require_edge("excluded").unwrap().is_output());
     }
 
     #[test]

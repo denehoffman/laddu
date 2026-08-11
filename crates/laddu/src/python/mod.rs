@@ -4,7 +4,41 @@
 #![allow(clippy::missing_errors_doc)]
 
 use numpy::{PyReadonlyArray1, PyReadonlyArray2, PyReadonlyArray3};
-use pyo3::{exceptions::PyTypeError, prelude::*, types::PyAny};
+use pyo3::{
+    exceptions::{PyTypeError, PyValueError},
+    prelude::*,
+    types::PyAny,
+};
+use serde::{Serialize, de::DeserializeOwned};
+
+fn to_json<T: Serialize>(value: &T) -> PyResult<String> {
+    serde_json::to_string(value).map_err(|error| PyValueError::new_err(error.to_string()))
+}
+
+fn from_json<T: DeserializeOwned>(json: &str) -> PyResult<T> {
+    serde_json::from_str(json).map_err(|error| PyValueError::new_err(error.to_string()))
+}
+
+macro_rules! impl_json_methods {
+    ($py_type:ty) => {
+        #[pymethods]
+        impl $py_type {
+            /// Serialize this object to a JSON string.
+            #[allow(clippy::wrong_self_convention)]
+            fn to_json(&self) -> PyResult<String> {
+                super::to_json(&self.inner)
+            }
+
+            /// Construct an object from a JSON string.
+            #[staticmethod]
+            fn from_json(json: &str) -> PyResult<Self> {
+                Ok(Self {
+                    inner: super::from_json(json)?,
+                })
+            }
+        }
+    };
+}
 
 /// Convert a one-dimensional Python float sequence or NumPy array to `f64`.
 pub(crate) fn float_vec(values: &Bound<'_, PyAny>) -> PyResult<Vec<f64>> {
@@ -231,7 +265,109 @@ laddu_python_module!(
 
 #[cfg(test)]
 mod tests {
+    use pyo3::exceptions::PyValueError;
     use pyo3::prelude::*;
+    use pyo3::types::PyDict;
+
+    #[test]
+    fn python_json_methods_round_trip_and_reject_invalid_json() {
+        Python::initialize();
+        Python::attach(|py| {
+            let module = pyo3::wrap_pymodule!(super::api)(py);
+            for name in [
+                "Expr",
+                "Particle",
+                "Channel",
+                "Vec3",
+                "Vec4",
+                "WignerD",
+                "MassProposal",
+                "InitialMomentum",
+                "VertexProposal",
+                "GenerationReport",
+                "Histogram",
+                "Sheet",
+                "BarrierKind",
+                "Model",
+                "J",
+                "S",
+                "L",
+                "M",
+                "Parity",
+                "Isospin",
+                "Statistics",
+                "MandelstamChannel",
+                "RuleCheck",
+                "RuleReport",
+                "RuleSet",
+                "PartialWave",
+                "AllowedPartialWave",
+                "Bin",
+                "MemoryBudget",
+                "MemoryPlan",
+                "MemoryResource",
+            ] {
+                let class = module.getattr(py, name).unwrap();
+                assert!(
+                    class.getattr(py, "from_json").is_ok(),
+                    "missing {name}.from_json"
+                );
+                assert!(
+                    class.getattr(py, "to_json").is_ok(),
+                    "missing {name}.to_json"
+                );
+            }
+            let class = module.getattr(py, "J").unwrap();
+            let value = class.call1(py, (1.5,)).unwrap();
+            let json = value
+                .call_method0(py, "to_json")
+                .unwrap()
+                .extract::<String>(py)
+                .unwrap();
+            let restored = class.call_method1(py, "from_json", (json,)).unwrap();
+
+            assert_eq!(
+                restored
+                    .getattr(py, "value")
+                    .unwrap()
+                    .extract::<f64>(py)
+                    .unwrap(),
+                1.5
+            );
+            let error = class
+                .call_method1(py, "from_json", ("not JSON",))
+                .unwrap_err();
+            assert!(error.is_instance_of::<PyValueError>(py));
+        });
+    }
+
+    #[test]
+    fn python_edges_are_outputs_by_default() {
+        Python::initialize();
+        Python::attach(|py| {
+            let module = pyo3::wrap_pymodule!(super::api)(py);
+            let class = module.getattr(py, "Edge").unwrap();
+            let included = class.call1(py, ("included",)).unwrap();
+            assert!(
+                included
+                    .getattr(py, "output")
+                    .unwrap()
+                    .extract::<bool>(py)
+                    .unwrap()
+            );
+
+            let kwargs = PyDict::new(py);
+            kwargs.set_item("output", false).unwrap();
+            let excluded = class.call(py, ("excluded",), Some(&kwargs)).unwrap();
+            assert!(
+                !excluded
+                    .getattr(py, "output")
+                    .unwrap()
+                    .extract::<bool>(py)
+                    .unwrap()
+            );
+        });
+    }
 
     #[test]
     fn python_module_exports_the_analysis_spine() {

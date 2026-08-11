@@ -22,7 +22,7 @@ use super::{
 ///     Dataset four-vector column used for observed events.
 /// particle : Particle, optional
 ///     Particle properties such as mass and quantum numbers.
-/// output : bool, default=False
+/// output : bool, default=True
 ///     Include this edge as a four-vector column in generated datasets.
 /// mass_proposal : MassProposal, optional
 ///     Mass distribution for generation.
@@ -49,7 +49,7 @@ impl PyEdge {
     ///     If ``name`` is empty.
     #[new]
     #[cfg(feature = "generation")]
-    #[pyo3(signature = (name, *, p4=None, particle=None, output=false, mass_proposal=None, initial_momentum=None))]
+    #[pyo3(signature = (name, *, p4=None, particle=None, output=true, mass_proposal=None, initial_momentum=None))]
     fn new(
         name: String,
         p4: Option<String>,
@@ -481,3 +481,5 @@ impl PyChannel {
         self.inner.validate().map_err(to_py_err)
     }
 }
+
+impl_json_methods!(PyChannel);
