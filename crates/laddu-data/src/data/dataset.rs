@@ -13,6 +13,12 @@ use laddu_memory::{MemoryBudget, MemoryDecision, MemoryState};
 use laddu_physics::vectors::RealVec4;
 use num::complex::Complex64;
 
+static NEXT_DATASET_IDENTITY: AtomicU64 = AtomicU64::new(1);
+
+fn next_dataset_identity() -> u64 {
+    NEXT_DATASET_IDENTITY.fetch_add(1, Ordering::Relaxed)
+}
+
 #[derive(Clone)]
 enum DatasetOp {
     Filter(Arc<dyn Fn(Event<'_>) -> bool + Send + Sync>),
@@ -152,6 +158,7 @@ struct DatasetStatsCache {
 /// Lazy event dataset combining a source, read plan, and row transformations.
 #[derive(Clone)]
 pub struct Dataset {
+    identity: u64,
     source: Arc<dyn EventSource>,
     plan: ReadPlan,
     ops: Arc<[DatasetOp]>,
@@ -192,6 +199,7 @@ impl Dataset {
         S: EventSource + 'static,
     {
         Self {
+            identity: next_dataset_identity(),
             source: Arc::new(source),
             plan: ReadPlan::default(),
             ops: Arc::from([]),
@@ -207,6 +215,7 @@ impl Dataset {
     /// Creates a dataset from a shared dynamically dispatched source.
     pub fn from_arc(source: Arc<dyn EventSource>) -> Self {
         Self {
+            identity: next_dataset_identity(),
             source,
             plan: ReadPlan::default(),
             ops: Arc::from([]),
@@ -226,6 +235,7 @@ impl Dataset {
         S: EventSource + 'static,
     {
         Self {
+            identity: next_dataset_identity(),
             source: Arc::new(source),
             plan: self.plan,
             ops: Arc::from([]),
@@ -399,6 +409,15 @@ impl Dataset {
     /// Returns the number of transformed source iterators opened by this dataset view.
     pub fn source_traversals(&self) -> u64 {
         self.source_traversals.load(Ordering::Relaxed)
+    }
+
+    /// Returns the immutable identity of this dataset view.
+    ///
+    /// Clones retain identity, while row, weight, and source transformations
+    /// create a new identity. This is intended for execution-scoped caches.
+    #[doc(hidden)]
+    pub fn identity(&self) -> u64 {
+        self.identity
     }
 
     /// Returns this dataset with a host-memory budget.
@@ -832,6 +851,7 @@ impl Dataset {
         ops.push(op);
 
         Self {
+            identity: next_dataset_identity(),
             source: self.source,
             plan: self.plan,
             ops: ops.into(),
@@ -1264,5 +1284,21 @@ mod tests {
 
         assert_eq!(scalar_values(&captured), vec![2.0, 3.0, 4.0]);
         assert_eq!(captured.weights_column().unwrap(), &[12.0, 13.0, 14.0]);
+    }
+
+    #[test]
+    fn immutable_dataset_identity_tracks_semantic_views() {
+        let dataset = Dataset::from_batch(weighted_batch(0, 3));
+        assert_eq!(dataset.identity(), dataset.clone().identity());
+        assert_eq!(dataset.identity(), dataset.clone().streaming().identity());
+        assert_ne!(
+            dataset.identity(),
+            dataset.clone().subsample(1.0, 7).unwrap().identity()
+        );
+        assert_ne!(dataset.identity(), dataset.clone().bootstrap(7).identity());
+        assert_ne!(
+            dataset.identity(),
+            dataset.clone().filter(|_| true).identity()
+        );
     }
 }

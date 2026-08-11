@@ -2,7 +2,8 @@ use laddu_autodiff::AutodiffMode;
 use laddu_data::io::Partitioning;
 use laddu_runtime::{
     CpuOptions, Device, Execution, ExecutionOptions, GpuBackend, GpuDeviceSelector, GpuOptions,
-    JitPolicy, MemoryBudget, MemoryPlan, MemoryResource, MemoryState, Precision, ThreadPolicy,
+    JitPolicy, MemoryBudget, MemoryPlan, MemoryResource, MemoryState, NormalizationMode, Precision,
+    ThreadPolicy,
 };
 use pyo3::{
     exceptions::PyValueError,
@@ -42,10 +43,22 @@ fn parse_precision(value: &str) -> PyResult<Precision> {
 
 fn parse_autodiff(value: &str) -> PyResult<AutodiffMode> {
     match normalize(value).as_str() {
+        "auto" => Ok(AutodiffMode::Auto),
         "forward" => Ok(AutodiffMode::Forward),
         "reverse" => Ok(AutodiffMode::Reverse),
         _ => Err(PyValueError::new_err(
-            "autodiff must be 'forward' or 'reverse'",
+            "autodiff must be 'auto', 'forward', or 'reverse'",
+        )),
+    }
+}
+
+fn parse_normalization(value: &str) -> PyResult<NormalizationMode> {
+    match normalize(value).as_str() {
+        "auto" => Ok(NormalizationMode::Auto),
+        "general" => Ok(NormalizationMode::General),
+        "verify" => Ok(NormalizationMode::Verify),
+        _ => Err(PyValueError::new_err(
+            "normalization must be 'auto', 'general', or 'verify'",
         )),
     }
 }
@@ -402,8 +415,11 @@ pub(crate) fn memory_decision_dict<'py>(
 ///     Evaluation backend. ``'auto'`` may enable JIT compilation when useful.
 /// precision : {'auto', 'f32', 'f64'}, default='auto'
 ///     Numeric precision requested from the backend.
-/// autodiff : {'forward', 'reverse'}, default='forward'
+/// autodiff : {'auto', 'forward', 'reverse'}, default='auto'
 ///     Automatic-differentiation strategy.
+/// normalization : {'auto', 'general', 'verify'}, default='auto'
+///     Accepted-normalization strategy. ``'verify'`` compares compiler-native
+///     statistics against the general event reduction.
 /// threads : int, optional
 ///     CPU worker count. One selects serial execution.
 /// device : int or str, optional
@@ -439,7 +455,9 @@ impl PyExecution {
     /// LadduError
     ///     If the requested local or distributed runtime cannot be initialized.
     pub(crate) fn default_inner() -> PyResult<Self> {
-        Self::new("auto", "auto", "forward", None, None, None, None, "auto")
+        Self::new(
+            "auto", "auto", "auto", "auto", None, None, None, None, "auto",
+        )
     }
 }
 
@@ -450,7 +468,8 @@ impl PyExecution {
         backend="auto",
         *,
         precision="auto",
-        autodiff="forward",
+        autodiff="auto",
+        normalization="auto",
         threads=None,
         device: "int | str | None" = None,
         memory: "MemoryPlan | MemoryBudget | int | str | None" = None,
@@ -462,6 +481,7 @@ impl PyExecution {
         backend: &str,
         precision: &str,
         autodiff: &str,
+        normalization: &str,
         threads: Option<usize>,
         device: Option<&Bound<'_, PyAny>>,
         memory: Option<&Bound<'_, PyAny>>,
@@ -534,6 +554,7 @@ impl PyExecution {
             device: device_options,
             precision: parse_precision(precision)?,
             autodiff: parse_autodiff(autodiff)?,
+            normalization: parse_normalization(normalization)?,
             partitioning: parse_partitioning(partitioning)?,
             memory,
         };
@@ -561,10 +582,11 @@ impl PyExecution {
 
     fn __repr__(&self) -> String {
         format!(
-            "Execution(backend={:?}, precision={:?}, autodiff={:?}, rank={}, world_size={})",
+            "Execution(backend={:?}, precision={:?}, autodiff={:?}, normalization={:?}, rank={}, world_size={})",
             self.backend,
             self.inner.precision(),
             self.inner.autodiff_mode(),
+            self.inner.normalization_mode(),
             self.inner.rank(),
             self.inner.nranks(),
         )
@@ -587,11 +609,22 @@ impl PyExecution {
     }
 
     #[getter]
-    /// {'forward', 'reverse'}: Automatic-differentiation mode.
+    /// {'auto', 'forward', 'reverse'}: Automatic-differentiation mode.
     fn autodiff(&self) -> &'static str {
         match self.inner.autodiff_mode() {
+            AutodiffMode::Auto => "auto",
             AutodiffMode::Forward => "forward",
             AutodiffMode::Reverse => "reverse",
+        }
+    }
+
+    #[getter]
+    /// {'auto', 'general', 'verify'}: Accepted-normalization mode.
+    fn normalization(&self) -> &'static str {
+        match self.inner.normalization_mode() {
+            NormalizationMode::Auto => "auto",
+            NormalizationMode::General => "general",
+            NormalizationMode::Verify => "verify",
         }
     }
 

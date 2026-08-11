@@ -1,4 +1,7 @@
-use std::sync::{Arc, Mutex};
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex, Weak},
+};
 
 use laddu_autodiff::AutodiffMode;
 use laddu_data::io::{Partitioning, ReadPlan};
@@ -14,6 +17,9 @@ use serde::{Deserialize, Serialize};
 #[cfg(feature = "wgpu")]
 use crate::RuntimeError;
 use crate::{ExecutionError, RuntimeResult};
+
+pub(crate) type NormalizationCache =
+    HashMap<(u64, u64, NormalizationMode), Weak<crate::PreparedNormalization>>;
 
 #[cfg(feature = "mpi")]
 use mpi::{
@@ -56,6 +62,18 @@ pub enum JitPolicy {
     Enabled,
     /// Always use the interpreter.
     Disabled,
+}
+
+/// Policy controlling compiler-native accepted normalization.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum NormalizationMode {
+    /// Select exact sufficient statistics when cost and memory estimates are favorable.
+    #[default]
+    Auto,
+    /// Always use the ordinary accepted-event reduction path.
+    General,
+    /// Evaluate both selected and general paths and reject disagreements.
+    Verify,
 }
 
 /// CPU-specific execution options.
@@ -123,6 +141,9 @@ pub struct ExecutionOptions {
     pub precision: Precision,
     /// Automatic-differentiation strategy.
     pub autodiff: AutodiffMode,
+    /// Accepted-normalization selection and verification policy.
+    #[serde(default)]
+    pub normalization: NormalizationMode,
     /// Dataset partitioning strategy for distributed execution.
     pub partitioning: Partitioning,
     /// Host and accelerator memory budgets.
@@ -135,6 +156,7 @@ pub struct Execution {
     requested_device: Device,
     precision: Precision,
     autodiff: AutodiffMode,
+    normalization: NormalizationMode,
     threads: ThreadPolicy,
     jit: JitPolicy,
     pool: Option<Arc<ThreadPool>>,
@@ -143,6 +165,7 @@ pub struct Execution {
     host_memory: MemoryPool,
     device_memory: Option<MemoryPool>,
     memory_decisions: Arc<Mutex<Vec<MemoryDecision>>>,
+    normalization_cache: Arc<Mutex<NormalizationCache>>,
     #[cfg(feature = "wgpu")]
     wgpu: Option<Arc<laddu_wgpu::WgpuContext>>,
     #[cfg(feature = "mpi")]
@@ -161,6 +184,7 @@ impl std::fmt::Debug for Execution {
             .field("resolved_device", &resolved_device)
             .field("precision", &self.precision)
             .field("autodiff", &self.autodiff)
+            .field("normalization", &self.normalization)
             .field("threads", &self.threads)
             .field("jit", &self.jit)
             .field("partitioning", &self.partitioning)
@@ -184,7 +208,8 @@ impl Default for Execution {
         Self {
             requested_device: Device::Auto,
             precision: Precision::F64,
-            autodiff: AutodiffMode::Forward,
+            autodiff: AutodiffMode::Auto,
+            normalization: NormalizationMode::Auto,
             threads: ThreadPolicy::Auto,
             jit: JitPolicy::Auto,
             pool: None,
@@ -193,6 +218,7 @@ impl Default for Execution {
             host_memory,
             device_memory: None,
             memory_decisions: Default::default(),
+            normalization_cache: Default::default(),
             #[cfg(feature = "wgpu")]
             wgpu: None,
             #[cfg(feature = "mpi")]
@@ -311,6 +337,7 @@ impl Execution {
             requested_device: options.device,
             precision,
             autodiff: options.autodiff,
+            normalization: options.normalization,
             threads: cpu.threads,
             jit: cpu.jit,
             pool,
@@ -319,6 +346,7 @@ impl Execution {
             host_memory,
             device_memory,
             memory_decisions: Default::default(),
+            normalization_cache: Default::default(),
             #[cfg(feature = "wgpu")]
             wgpu,
             #[cfg(feature = "mpi")]
@@ -375,6 +403,15 @@ impl Execution {
     /// Returns the automatic-differentiation strategy.
     pub fn autodiff_mode(&self) -> AutodiffMode {
         self.autodiff
+    }
+
+    /// Returns the accepted-normalization policy.
+    pub fn normalization_mode(&self) -> NormalizationMode {
+        self.normalization
+    }
+
+    pub(crate) fn normalization_cache(&self) -> &Mutex<NormalizationCache> {
+        &self.normalization_cache
     }
 
     /// Returns the CPU worker-thread policy.
@@ -570,6 +607,7 @@ mod tests {
             }),
             precision: Precision::F64,
             autodiff: AutodiffMode::Reverse,
+            normalization: NormalizationMode::Verify,
             partitioning: Partitioning::FileGroups,
             memory: MemoryPlan::host_device(
                 MemoryBudget::PercentAvailable(0.5),

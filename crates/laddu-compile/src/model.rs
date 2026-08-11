@@ -1,4 +1,7 @@
-use std::mem::size_of;
+use std::{
+    hash::{Hash, Hasher},
+    mem::size_of,
+};
 
 #[cfg(test)]
 use crate::CompileError;
@@ -14,16 +17,28 @@ use serde::{Deserialize, Serialize};
 #[cfg(test)]
 use crate::facts::NumberClass;
 use crate::{
+    NormalizationDiagnostics, NormalizationPlan,
     cost::OptimizationCost,
     facts::{DependencyFacts, EvaluationClass, GraphFacts, NodeFacts},
     optimize::*,
 };
 
 /// Options controlling graph optimization and event-cache planning.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct CompileOptions {
     pipeline: OptimizationPipeline,
     cache_policy: CachePolicy,
+    staged_default_pipeline: bool,
+}
+
+impl Default for CompileOptions {
+    fn default() -> Self {
+        Self {
+            pipeline: OptimizationPipeline::normalization_target_lowering_passes(),
+            cache_policy: CachePolicy::default(),
+            staged_default_pipeline: true,
+        }
+    }
 }
 
 impl CompileOptions {
@@ -37,6 +52,7 @@ impl CompileOptions {
         Self {
             pipeline: OptimizationPipeline::new(),
             cache_policy: CachePolicy::default(),
+            staged_default_pipeline: false,
         }
     }
 
@@ -45,6 +61,7 @@ impl CompileOptions {
         Self {
             pipeline,
             cache_policy: CachePolicy::default(),
+            staged_default_pipeline: false,
         }
     }
 
@@ -294,6 +311,7 @@ pub struct CompiledModel {
     params: ParamLayout,
     facts: GraphFacts,
     cache_plan: CachePlan,
+    normalization_plan: NormalizationPlan,
 }
 
 impl Serialize for CompiledModel {
@@ -315,6 +333,15 @@ impl<'de> Deserialize<'de> for CompiledModel {
 }
 
 impl CompiledModel {
+    /// Returns a structural key for execution-scoped compiled-artifact caches.
+    #[doc(hidden)]
+    pub fn optimized_digest(&self) -> u64 {
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        format!("{:?}", self.graph.nodes()).hash(&mut hasher);
+        format!("{:?}", self.params.specs()).hash(&mut hasher);
+        hasher.finish()
+    }
+
     /// Projects the source graph to selected tags and recompiles it.
     ///
     /// # Errors
@@ -367,15 +394,47 @@ impl CompiledModel {
     ) -> CompileResult<Self> {
         let params = collect_params(&graph)?;
         let source_graph = graph;
-        let graph = options.pipeline.run(bake_fixed_parameters(&source_graph))?;
+        let baked = bake_fixed_parameters(&source_graph);
+        let canonical = if options.staged_default_pipeline {
+            OptimizationPipeline::normalization_analysis_passes().run(baked)?
+        } else {
+            baked
+        };
+        let normalization_plan = options.staged_default_pipeline.then(|| {
+            let normalization_facts = GraphFacts::analyze(&canonical);
+            NormalizationPlan::analyze(&canonical, &normalization_facts)
+        });
+        let graph = options.pipeline.run(canonical)?;
         let facts = GraphFacts::analyze(&graph);
         let cache_plan = CachePlan::new(&graph, &facts, options.cache_policy);
+        let normalization_plan =
+            normalization_plan.unwrap_or_else(|| NormalizationPlan::analyze(&graph, &facts));
         Ok(Self {
             source_graph,
             graph,
             params,
             facts,
             cache_plan,
+            normalization_plan,
+        })
+    }
+
+    pub(crate) fn from_graph_without_normalization(graph: ExprGraph) -> CompileResult<Self> {
+        let params = collect_params(&graph)?;
+        let source_graph = graph;
+        let graph = OptimizationPipeline::new()
+            .with_pass(CanonicalCsePass)
+            .run(bake_fixed_parameters(&source_graph))?;
+        let facts = GraphFacts::analyze(&graph);
+        let cache_plan = CachePlan::new(&graph, &facts, CachePolicy::EventDependent);
+        let normalization_plan = NormalizationPlan::analyze_disabled(&graph);
+        Ok(Self {
+            source_graph,
+            graph,
+            params,
+            facts,
+            cache_plan,
+            normalization_plan,
         })
     }
 
@@ -524,6 +583,17 @@ impl CompiledModel {
     /// Returns the event-cache plan.
     pub fn cache_plan(&self) -> &CachePlan {
         &self.cache_plan
+    }
+
+    /// Returns stable compiler-native normalization analysis diagnostics.
+    pub fn normalization_diagnostics(&self) -> &NormalizationDiagnostics {
+        self.normalization_plan.diagnostics()
+    }
+
+    /// Returns the exact normalization compiler artifact for runtime lowering.
+    #[doc(hidden)]
+    pub fn normalization_plan(&self) -> &NormalizationPlan {
+        &self.normalization_plan
     }
 
     /// Computes the optimized graph's operation cost.

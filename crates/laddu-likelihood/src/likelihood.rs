@@ -13,7 +13,12 @@ use laddu_data::data::Dataset;
 #[cfg(test)]
 use laddu_expr::parameters::ParamError;
 use laddu_expr::parameters::{ParamId, ParamLayout, ParamRegistry, ParamValues};
-use laddu_runtime::{Execution, PreparedDataset, PreparedModel, RuntimeError};
+#[cfg(test)]
+use laddu_runtime::NormalizationMode;
+use laddu_runtime::{
+    Execution, PreparedDataset, PreparedModel, PreparedNormalization,
+    PreparedNormalizationDiagnostics, RuntimeError,
+};
 
 /// Role of a prepared dataset within a likelihood term.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -31,6 +36,7 @@ pub struct DatasetDiagnostics {
     role: DatasetRole,
     stats: laddu_runtime::PreparedDatasetStats,
     quadratic_normalization: bool,
+    normalization: Option<PreparedNormalizationDiagnostics>,
     source_traversals: u64,
 }
 
@@ -50,9 +56,16 @@ impl DatasetDiagnostics {
         &self.stats
     }
 
-    /// Returns whether accepted normalization uses precomputed quadratic statistics.
+    /// Returns whether accepted normalization uses compiler-native sufficient statistics.
+    ///
+    /// The historical method name is retained for compatibility.
     pub fn uses_quadratic_normalization(&self) -> bool {
         self.quadratic_normalization
+    }
+
+    /// Returns compiler-native normalization preparation diagnostics.
+    pub fn normalization(&self) -> Option<&PreparedNormalizationDiagnostics> {
+        self.normalization.as_ref()
     }
 
     /// Returns the number of source traversals opened through this dataset view.
@@ -759,85 +772,6 @@ impl StochasticObjective for Likelihood {
     }
 }
 
-/// A shape-normalized unbinned negative-log-likelihood term.
-#[derive(Clone, Debug)]
-struct QuadraticNormalization {
-    constant: f64,
-    linear: Vec<f64>,
-    quadratic: Vec<f64>,
-}
-
-impl QuadraticNormalization {
-    fn prepare(
-        model: &CompiledModel,
-        plan: &PreparedModel,
-        dataset: &PreparedDataset,
-        execution: &Execution,
-    ) -> LikelihoodResult<Option<Self>> {
-        if model
-            .parameter_polynomial_degree()
-            .is_none_or(|degree| degree > 2)
-        {
-            return Ok(None);
-        }
-        let count = model.params().n_free();
-        let evaluate = |free: &[f64]| -> LikelihoodResult<f64> {
-            let values = model.params().values(free)?;
-            plan.reduce(execution, &values, dataset, ReductionPlan::weighted_real())
-                .map_err(|error| map_reduction_error("accepted MC", error))
-        };
-        let zero = vec![0.0; count];
-        let constant = evaluate(&zero)?;
-        let mut linear = vec![0.0; count];
-        let mut quadratic = vec![0.0; count * count];
-        for index in 0..count {
-            let mut positive = zero.clone();
-            positive[index] = 1.0;
-            let mut negative = zero.clone();
-            negative[index] = -1.0;
-            let positive = evaluate(&positive)?;
-            let negative = evaluate(&negative)?;
-            linear[index] = 0.5 * (positive - negative);
-            quadratic[index * count + index] = 0.5 * (positive + negative) - constant;
-        }
-        for row in 0..count {
-            for col in row + 1..count {
-                let mut pair = zero.clone();
-                pair[row] = 1.0;
-                pair[col] = 1.0;
-                let cross = 0.5
-                    * (evaluate(&pair)?
-                        - constant
-                        - linear[row]
-                        - linear[col]
-                        - quadratic[row * count + row]
-                        - quadratic[col * count + col]);
-                quadratic[row * count + col] = cross;
-                quadratic[col * count + row] = cross;
-            }
-        }
-        Ok(Some(Self {
-            constant,
-            linear,
-            quadratic,
-        }))
-    }
-
-    fn evaluate(&self, free: &[f64]) -> (f64, Vec<f64>) {
-        let count = self.linear.len();
-        let mut value = self.constant;
-        let mut gradient = self.linear.clone();
-        for row in 0..count {
-            value += self.linear[row] * free[row];
-            for col in 0..count {
-                value += free[row] * self.quadratic[row * count + col] * free[col];
-                gradient[row] += 2.0 * self.quadratic[row * count + col] * free[col];
-            }
-        }
-        (value, gradient)
-    }
-}
-
 #[derive(Clone)]
 /// A shape-normalized unbinned negative-log-likelihood term.
 pub struct NllTerm {
@@ -851,7 +785,7 @@ pub struct NllTerm {
     data: Option<PreparedDataset>,
     accepted_mc: Option<PreparedDataset>,
     data_weight_sum: Option<f64>,
-    quadratic_normalization: Option<QuadraticNormalization>,
+    normalization: Option<Arc<PreparedNormalization>>,
     execution: Option<Execution>,
 }
 
@@ -868,12 +802,9 @@ impl std::fmt::Debug for NllTerm {
 impl NllTerm {
     fn bootstrap_term(&self, seed: u64) -> LikelihoodResult<Self> {
         let data_source = self.data_source.clone().bootstrap(seed);
-        let (Some(plan), Some(projection), Some(accepted_mc), Some(execution)) = (
-            &self.plan,
-            &self.projection,
-            &self.accepted_mc,
-            &self.execution,
-        ) else {
+        let (Some(plan), Some(projection), Some(execution)) =
+            (&self.plan, &self.projection, &self.execution)
+        else {
             return Self::new(
                 self.name(),
                 &self.model,
@@ -892,9 +823,9 @@ impl NllTerm {
             data_source,
             accepted_mc_source: self.accepted_mc_source.clone(),
             data: Some(data),
-            accepted_mc: Some(accepted_mc.clone()),
+            accepted_mc: self.accepted_mc.clone(),
             data_weight_sum: Some(data_weight_sum),
-            quadratic_normalization: self.quadratic_normalization.clone(),
+            normalization: self.normalization.clone(),
             execution: Some(execution.clone()),
         })
     }
@@ -913,6 +844,12 @@ impl NllTerm {
                     message: error.to_string(),
                 })?;
         let projected_plan = PreparedModel::prepare(&projected_model, execution)?;
+        let projected_normalization = PreparedNormalization::prepare(
+            &projected_model,
+            &projected_plan,
+            &self.accepted_mc_source,
+            execution,
+        )?;
         let projected_params = ParamProjection::new(
             Arc::clone(&self.resolved_projection()?.global_layout),
             projected_model.params(),
@@ -922,9 +859,11 @@ impl NllTerm {
             name: self.name.clone(),
             full_plan: self.plan()?.clone(),
             full_projection: self.resolved_projection()?.clone(),
-            full_accepted_mc: self.accepted_mc()?.clone(),
+            full_accepted_mc: self.accepted_mc_for_analysis(execution)?,
+            full_normalization: self.normalization.clone(),
             projected_accepted_mc: projected_plan
                 .prepare_dataset(execution, &self.accepted_mc_source)?,
+            projected_normalization,
             projected_generated_mc: projected_plan.prepare_dataset(execution, generated_mc)?,
             accepted_mc_source: self.accepted_mc_source.clone(),
             generated_mc_source: generated_mc.clone(),
@@ -959,7 +898,7 @@ impl NllTerm {
             data: None,
             accepted_mc: None,
             data_weight_sum: None,
-            quadratic_normalization: None,
+            normalization: None,
             execution: None,
         })
     }
@@ -992,6 +931,15 @@ impl NllTerm {
         self.accepted_mc
             .as_ref()
             .ok_or_else(|| LikelihoodError::UnresolvedTerm(self.name().to_owned()))
+    }
+
+    fn accepted_mc_for_analysis(&self, execution: &Execution) -> LikelihoodResult<PreparedDataset> {
+        if let Some(accepted_mc) = &self.accepted_mc {
+            return Ok(accepted_mc.clone());
+        }
+        Ok(self
+            .plan()?
+            .prepare_dataset(execution, &self.accepted_mc_source)?)
     }
 
     /// Returns the observed dataset's total event weight.
@@ -1041,16 +989,19 @@ impl NllTerm {
         has_absolute_rate: bool,
     ) -> LikelihoodResult<CrossSectionIntegrals> {
         let plan = self.plan()?.clone();
+        let accepted_mc = self.accepted_mc_for_analysis(execution)?;
         Ok(CrossSectionIntegrals {
             name: self.name.clone(),
             full_plan: plan.clone(),
             full_projection: self.resolved_projection()?.clone(),
-            full_accepted_mc: self.accepted_mc()?.clone(),
+            full_accepted_mc: accepted_mc.clone(),
+            full_normalization: self.normalization.clone(),
             accepted_mc_source: self.accepted_mc_source.clone(),
             generated_mc_source: generated_mc.clone(),
             plan: plan.clone(),
             projection: self.resolved_projection()?.clone(),
-            accepted_mc: self.accepted_mc()?.clone(),
+            accepted_mc,
+            normalization: self.normalization.clone(),
             generated_mc: plan.prepare_dataset(execution, generated_mc)?,
             data_weight_sum: self.data_weight_sum()?,
             has_absolute_rate,
@@ -1071,11 +1022,13 @@ impl NllTerm {
             full_plan: projection.full_plan,
             full_projection: projection.full_projection,
             full_accepted_mc: projection.full_accepted_mc,
+            full_normalization: projection.full_normalization,
             accepted_mc_source: projection.accepted_mc_source,
             generated_mc_source: projection.generated_mc_source,
             plan: projection.projected_plan,
             projection: projection.projected_params,
             accepted_mc: projection.projected_accepted_mc,
+            normalization: projection.projected_normalization,
             generated_mc: projection.projected_generated_mc,
             data_weight_sum: projection.data_weight_sum,
             has_absolute_rate: projection.has_absolute_rate,
@@ -1088,8 +1041,10 @@ impl NllTerm {
         params: &ParamValues,
         execution: &Execution,
     ) -> LikelihoodResult<f64> {
-        if let Some(normalization) = &self.quadratic_normalization {
-            return Ok(normalization.evaluate(&params.free_values()).0);
+        if let Some(normalization) = &self.normalization {
+            return normalization
+                .value(params, execution)
+                .map_err(LikelihoodError::from);
         }
         self.plan()?
             .reduce(
@@ -1106,8 +1061,10 @@ impl NllTerm {
         params: &ParamValues,
         execution: &Execution,
     ) -> LikelihoodResult<(f64, Vec<f64>)> {
-        if let Some(normalization) = &self.quadratic_normalization {
-            return Ok(normalization.evaluate(&params.free_values()));
+        if let Some(normalization) = &self.normalization {
+            return normalization
+                .value_gradient(params, execution)
+                .map_err(LikelihoodError::from);
         }
         Ok(self
             .plan()?
@@ -1191,22 +1148,37 @@ impl LikelihoodTerm for NllTerm {
                 role: DatasetRole::Observed,
                 stats: *data.stats(),
                 quadratic_normalization: false,
+                normalization: None,
                 source_traversals: self.data_source.source_traversals(),
             });
         }
-        if let Some(accepted_mc) = &self.accepted_mc {
+        if let Some(normalization) = &self.normalization {
+            diagnostics.push(DatasetDiagnostics {
+                term: self.name.as_str().to_owned(),
+                role: DatasetRole::AcceptedMc,
+                stats: *normalization.stats(),
+                quadratic_normalization: true,
+                normalization: Some(normalization.diagnostics()),
+                source_traversals: self.accepted_mc_source.source_traversals(),
+            });
+        } else if let Some(accepted_mc) = &self.accepted_mc {
             diagnostics.push(DatasetDiagnostics {
                 term: self.name.as_str().to_owned(),
                 role: DatasetRole::AcceptedMc,
                 stats: *accepted_mc.stats(),
-                quadratic_normalization: self.quadratic_normalization.is_some(),
+                quadratic_normalization: false,
+                normalization: Some(PreparedNormalizationDiagnostics::general(
+                    self.model.normalization_diagnostics().clone(),
+                )),
                 source_traversals: self.accepted_mc_source.source_traversals(),
             });
         }
     }
 
     fn bootstrap_clone_is_prepared(&self) -> bool {
-        self.plan.is_some() && self.data.is_some() && self.accepted_mc.is_some()
+        self.plan.is_some()
+            && self.data.is_some()
+            && (self.accepted_mc.is_some() || self.normalization.is_some())
     }
 
     fn bootstrap_clone(&self, seed: u64) -> LikelihoodResult<Box<dyn LikelihoodTerm>> {
@@ -1232,14 +1204,22 @@ impl LikelihoodTerm for NllTerm {
         )?);
         let plan = PreparedModel::prepare(&self.model, execution)?;
         let data = plan.prepare_dataset(execution, &self.data_source)?;
-        let accepted_mc = plan.prepare_dataset(execution, &self.accepted_mc_source)?;
-        let quadratic_normalization =
-            QuadraticNormalization::prepare(&self.model, &plan, &accepted_mc, execution)?;
+        let normalization = PreparedNormalization::prepare(
+            &self.model,
+            &plan,
+            &self.accepted_mc_source,
+            execution,
+        )?;
+        let accepted_mc = if normalization.is_some() {
+            None
+        } else {
+            Some(plan.prepare_dataset(execution, &self.accepted_mc_source)?)
+        };
         self.data = Some(data);
-        self.accepted_mc = Some(accepted_mc);
+        self.accepted_mc = accepted_mc;
         self.plan = Some(plan);
         self.data_weight_sum = Some(self.data()?.stats().sum_weights());
-        self.quadratic_normalization = quadratic_normalization;
+        self.normalization = normalization;
         self.execution = Some(execution.clone());
         Ok(())
     }
@@ -1304,13 +1284,8 @@ impl LikelihoodTerm for NllTerm {
         seed: u64,
     ) -> LikelihoodResult<f64> {
         let local_params = self.local_values(params)?;
-        let normalization_evaluation = self.plan()?.reduce_with_gradient(
-            execution,
-            &local_params,
-            self.accepted_mc()?,
-            ReductionPlan::weighted_positive_real(),
-        )?;
-        let (normalization, normalization_gradient) = normalization_evaluation.into_parts();
+        let (normalization, normalization_gradient) =
+            self.normalization_with_gradient(&local_params, execution)?;
         let normalization = positive_integral("accepted MC", normalization)?;
         let (data_log_sum, data_log_gradient) =
             self.stochastic_data_evaluation(&local_params, execution, fraction, seed)?;
@@ -1780,11 +1755,13 @@ pub struct CrossSectionIntegrals {
     full_plan: PreparedModel,
     full_projection: ParamProjection,
     full_accepted_mc: PreparedDataset,
+    full_normalization: Option<Arc<PreparedNormalization>>,
     accepted_mc_source: Dataset,
     generated_mc_source: Dataset,
     plan: PreparedModel,
     projection: ParamProjection,
     accepted_mc: PreparedDataset,
+    normalization: Option<Arc<PreparedNormalization>>,
     generated_mc: PreparedDataset,
     data_weight_sum: f64,
     has_absolute_rate: bool,
@@ -1808,9 +1785,11 @@ pub struct LikelihoodProjection {
     full_plan: PreparedModel,
     full_projection: ParamProjection,
     full_accepted_mc: PreparedDataset,
+    full_normalization: Option<Arc<PreparedNormalization>>,
     projected_plan: PreparedModel,
     projected_params: ParamProjection,
     projected_accepted_mc: PreparedDataset,
+    projected_normalization: Option<Arc<PreparedNormalization>>,
     projected_generated_mc: PreparedDataset,
     accepted_mc_source: Dataset,
     generated_mc_source: Dataset,
@@ -1832,6 +1811,13 @@ impl LikelihoodProjection {
     /// Returns [`LikelihoodError`] when parameters are invalid, runtime
     /// evaluation fails, or an intensity is not positive.
     pub fn accepted_integral(&self, free: &[f64]) -> LikelihoodResult<f64> {
+        if let Some(normalization) = &self.projected_normalization {
+            let global = self.projected_params.global_layout.values(free)?;
+            let local = self.projected_params.project(&global)?;
+            return normalization
+                .value(&local, &self.execution)
+                .map_err(LikelihoodError::from);
+        }
         self.projected_integral(free, &self.projected_accepted_mc, "accepted MC")
     }
 
@@ -1866,6 +1852,11 @@ impl LikelihoodProjection {
     pub fn full_accepted_integral(&self, free: &[f64]) -> LikelihoodResult<f64> {
         let global = self.full_projection.global_layout.values(free)?;
         let local = self.full_projection.project(&global)?;
+        if let Some(normalization) = &self.full_normalization {
+            return normalization
+                .value(&local, &self.execution)
+                .map_err(LikelihoodError::from);
+        }
         self.full_plan
             .reduce(
                 &self.execution,
@@ -2009,11 +2000,30 @@ impl LikelihoodProjection {
 impl CrossSectionIntegrals {
     /// Returns retained prepared-dataset bytes used by these integrals.
     pub fn resident_bytes(&self) -> usize {
-        self.full_accepted_mc
+        let dataset_bytes = self
+            .full_accepted_mc
             .stats()
             .resident_bytes()
             .saturating_add(self.accepted_mc.stats().resident_bytes())
-            .saturating_add(self.generated_mc.stats().resident_bytes())
+            .saturating_add(self.generated_mc.stats().resident_bytes());
+        let full_statistics = self
+            .full_normalization
+            .as_ref()
+            .map_or(0, |normalization| normalization.resident_bytes());
+        let projected_statistics = self.normalization.as_ref().map_or(0, |normalization| {
+            if self
+                .full_normalization
+                .as_ref()
+                .is_some_and(|full| Arc::ptr_eq(full, normalization))
+            {
+                0
+            } else {
+                normalization.resident_bytes()
+            }
+        });
+        dataset_bytes
+            .saturating_add(full_statistics)
+            .saturating_add(projected_statistics)
     }
 
     /// Returns the source likelihood term name.
@@ -2055,6 +2065,11 @@ impl CrossSectionIntegrals {
     pub fn accepted_integral(&self, free: &[f64]) -> LikelihoodResult<f64> {
         let params = self.projection.global_layout.values(free)?;
         let local_params = self.projection.project(&params)?;
+        if let Some(normalization) = &self.normalization {
+            return normalization
+                .value(&local_params, &self.execution)
+                .map_err(LikelihoodError::from);
+        }
         self.weighted_intensity_sum(&local_params, &self.accepted_mc, "accepted MC")
     }
 
@@ -2175,6 +2190,11 @@ impl CrossSectionIntegrals {
     pub fn full_accepted_integral(&self, free: &[f64]) -> LikelihoodResult<f64> {
         let params = self.full_projection.global_layout.values(free)?;
         let local_params = self.full_projection.project(&params)?;
+        if let Some(normalization) = &self.full_normalization {
+            return normalization
+                .value(&local_params, &self.execution)
+                .map_err(LikelihoodError::from);
+        }
         self.full_plan
             .reduce(
                 &self.execution,
@@ -3390,13 +3410,18 @@ mod tests {
         let optimized = term
             .normalization_with_gradient(&local, likelihood.execution())
             .unwrap();
+        let general_dataset = term
+            .plan()
+            .unwrap()
+            .prepare_dataset(likelihood.execution(), &term.accepted_mc_source)
+            .unwrap();
         let general = term
             .plan()
             .unwrap()
             .reduce_with_gradient(
                 likelihood.execution(),
                 &local,
-                term.accepted_mc().unwrap(),
+                &general_dataset,
                 ReductionPlan::weighted_positive_real(),
             )
             .unwrap()
@@ -3412,6 +3437,141 @@ mod tests {
                 .iter()
                 .any(DatasetDiagnostics::uses_quadratic_normalization)
         );
+    }
+
+    #[test]
+    fn packed_hermitian_normalization_matches_general_interference() {
+        let first = complex(
+            parameter!("first_re", initial: 0.7),
+            parameter!("first_im", initial: -0.2),
+        ) * complex(event_scalar("x"), 0.5);
+        let second = complex(
+            parameter!("second_re", initial: -0.3),
+            parameter!("second_im", initial: 0.4),
+        ) * complex(event_scalar("x").powi(2), -0.25);
+        let model = CompiledModel::from_expr(&(first + second).norm_sqr()).unwrap();
+        assert_eq!(
+            model.normalization_diagnostics().strategy(),
+            laddu_compile::NormalizationStrategy::Hermitian
+        );
+        assert_eq!(model.normalization_diagnostics().basis_count(), 3);
+        let sample = weighted_dataset(&[(0.5, 1.0), (1.5, -0.2), (2.5, 0.75)]);
+        let likelihood = single_term_likelihood("hermitian", &model, &sample, &sample);
+        let term = likelihood.terms()[0].as_intensity().unwrap();
+        let free = vec![0.4, -0.6, 0.2, 0.8];
+        let global = term.global_values(&free).unwrap();
+        let local = term.local_values(&global).unwrap();
+        let optimized = term
+            .normalization_with_gradient(&local, likelihood.execution())
+            .unwrap();
+        let general_dataset = term
+            .plan()
+            .unwrap()
+            .prepare_dataset(likelihood.execution(), &term.accepted_mc_source)
+            .unwrap();
+        let general = term
+            .plan()
+            .unwrap()
+            .reduce_with_gradient(
+                likelihood.execution(),
+                &local,
+                &general_dataset,
+                ReductionPlan::weighted_positive_real(),
+            )
+            .unwrap()
+            .into_parts();
+        assert_relative_eq!(optimized.0, general.0, epsilon = 1.0e-11);
+        for (optimized, general) in optimized.1.iter().zip(general.1) {
+            assert_relative_eq!(optimized, &general, epsilon = 1.0e-10);
+        }
+    }
+
+    #[test]
+    fn normalization_mode_general_forces_event_reduction() {
+        let scale = parameter!("scale", initial: 0.7);
+        let model = CompiledModel::from_expr(&(scale * event_scalar("x")).powi(2)).unwrap();
+        let sample = weighted_dataset(&[(0.5, 1.0), (1.5, 2.0)]);
+        let execution = Execution::local(ExecutionOptions {
+            normalization: NormalizationMode::General,
+            ..ExecutionOptions::default()
+        })
+        .unwrap();
+        let likelihood =
+            single_term_likelihood_with_execution("general", &model, &sample, &sample, execution);
+        let diagnostics = likelihood.diagnostics();
+        let accepted = diagnostics
+            .datasets()
+            .iter()
+            .find(|dataset| dataset.role() == DatasetRole::AcceptedMc)
+            .unwrap();
+        assert!(!accepted.uses_quadratic_normalization());
+        assert_eq!(
+            accepted.normalization().unwrap().strategy(),
+            laddu_compile::NormalizationStrategy::General
+        );
+    }
+
+    #[test]
+    fn verify_mode_checks_hybrid_values_and_gradients() {
+        let scale = parameter!("scale", initial: 0.2);
+        let mixed = (scale.clone() * event_scalar("x")).sin();
+        let separable = scale * (event_scalar("x") + 2.0);
+        let model = CompiledModel::from_expr(&(separable + mixed + 3.0)).unwrap();
+        let sample = weighted_dataset(&[(0.2, 1.0), (0.8, -0.25), (1.4, 2.0)]);
+        let execution = Execution::local(ExecutionOptions {
+            normalization: NormalizationMode::Verify,
+            ..ExecutionOptions::default()
+        })
+        .unwrap();
+        let likelihood =
+            single_term_likelihood_with_execution("hybrid", &model, &sample, &sample, execution);
+        let evaluation = likelihood
+            .nll_with_gradient(&likelihood.default_params())
+            .unwrap();
+        assert!(evaluation.value().is_finite());
+        let diagnostics = likelihood.diagnostics();
+        let normalization = diagnostics
+            .datasets()
+            .iter()
+            .find_map(DatasetDiagnostics::normalization)
+            .unwrap();
+        assert_eq!(
+            normalization.compiler().strategy(),
+            laddu_compile::NormalizationStrategy::Hybrid
+        );
+        assert!(normalization.compiler().has_residual());
+    }
+
+    #[test]
+    fn normalization_preparation_cache_reuses_dataset_statistics() {
+        let scale = parameter!("scale", initial: 0.4);
+        let model = CompiledModel::from_expr(&(scale * event_scalar("x")).powi(2)).unwrap();
+        let first_data = weighted_dataset(&[(0.5, 1.0)]);
+        let second_data = weighted_dataset(&[(0.7, 1.0)]);
+        let accepted = weighted_dataset(&[(0.5, 1.0), (1.5, 2.0), (2.5, 0.75)]);
+        let execution = Execution::default();
+        let likelihood = Likelihood::with_execution(
+            [
+                NllTerm::new("first", &model, &first_data, &accepted).unwrap(),
+                NllTerm::new("second", &model, &second_data, &accepted).unwrap(),
+            ],
+            &execution,
+        )
+        .unwrap();
+
+        let diagnostics = likelihood.diagnostics();
+        let accepted_diagnostics = diagnostics
+            .datasets()
+            .iter()
+            .filter(|dataset| dataset.role() == DatasetRole::AcceptedMc)
+            .collect::<Vec<_>>();
+        assert_eq!(accepted_diagnostics.len(), 2);
+        assert_eq!(accepted.source_traversals(), 1);
+        assert!(accepted_diagnostics.iter().all(|dataset| {
+            dataset
+                .normalization()
+                .is_some_and(PreparedNormalizationDiagnostics::cache_hit)
+        }));
     }
 
     #[test]
