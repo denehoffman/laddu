@@ -1,9 +1,6 @@
 pub mod laddu_expr
 pub mod laddu_expr::parameters
 pub enum laddu_expr::parameters::FreeValueValidationError
-pub laddu_expr::parameters::FreeValueValidationError::DimensionMismatch
-pub laddu_expr::parameters::FreeValueValidationError::DimensionMismatch::actual: usize
-pub laddu_expr::parameters::FreeValueValidationError::DimensionMismatch::expected: usize
 pub laddu_expr::parameters::FreeValueValidationError::NonFiniteValue
 pub laddu_expr::parameters::FreeValueValidationError::NonFiniteValue::id: laddu_expr::parameters::FreeParamId
 pub laddu_expr::parameters::FreeValueValidationError::NonFiniteValue::name: alloc::string::String
@@ -12,11 +9,15 @@ pub laddu_expr::parameters::FreeValueValidationError::OutsideSupport
 pub laddu_expr::parameters::FreeValueValidationError::OutsideSupport::id: laddu_expr::parameters::FreeParamId
 pub laddu_expr::parameters::FreeValueValidationError::OutsideSupport::name: alloc::string::String
 pub laddu_expr::parameters::FreeValueValidationError::OutsideSupport::value: f64
+pub laddu_expr::parameters::FreeValueValidationError::Parameter(laddu_expr::ParamError)
 impl core::clone::Clone for laddu_expr::parameters::FreeValueValidationError
 pub fn laddu_expr::parameters::FreeValueValidationError::clone(&self) -> laddu_expr::parameters::FreeValueValidationError
 impl core::cmp::PartialEq for laddu_expr::parameters::FreeValueValidationError
 pub fn laddu_expr::parameters::FreeValueValidationError::eq(&self, &laddu_expr::parameters::FreeValueValidationError) -> bool
+impl core::convert::From<laddu_expr::ParamError> for laddu_expr::parameters::FreeValueValidationError
+pub fn laddu_expr::parameters::FreeValueValidationError::from(laddu_expr::ParamError) -> Self
 impl core::error::Error for laddu_expr::parameters::FreeValueValidationError
+pub fn laddu_expr::parameters::FreeValueValidationError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
 impl core::fmt::Debug for laddu_expr::parameters::FreeValueValidationError
 pub fn laddu_expr::parameters::FreeValueValidationError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::fmt::Display for laddu_expr::parameters::FreeValueValidationError
@@ -98,6 +99,8 @@ impl core::cmp::PartialEq for laddu_expr::ParamError
 pub fn laddu_expr::ParamError::eq(&self, &laddu_expr::ParamError) -> bool
 impl core::convert::From<laddu_expr::ParamError> for laddu_expr::ExprError
 pub fn laddu_expr::ExprError::from(laddu_expr::ParamError) -> Self
+impl core::convert::From<laddu_expr::ParamError> for laddu_expr::parameters::FreeValueValidationError
+pub fn laddu_expr::parameters::FreeValueValidationError::from(laddu_expr::ParamError) -> Self
 impl core::error::Error for laddu_expr::ParamError
 impl core::fmt::Debug for laddu_expr::ParamError
 pub fn laddu_expr::ParamError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
@@ -1006,6 +1009,8 @@ impl core::cmp::PartialEq for laddu_expr::ParamError
 pub fn laddu_expr::ParamError::eq(&self, &laddu_expr::ParamError) -> bool
 impl core::convert::From<laddu_expr::ParamError> for laddu_expr::ExprError
 pub fn laddu_expr::ExprError::from(laddu_expr::ParamError) -> Self
+impl core::convert::From<laddu_expr::ParamError> for laddu_expr::parameters::FreeValueValidationError
+pub fn laddu_expr::parameters::FreeValueValidationError::from(laddu_expr::ParamError) -> Self
 impl core::error::Error for laddu_expr::ParamError
 impl core::fmt::Debug for laddu_expr::ParamError
 pub fn laddu_expr::ParamError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
