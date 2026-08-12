@@ -3,9 +3,9 @@
 use std::sync::Arc;
 
 use laddu_expr::{
-    BinaryOp, Expr, ExprDependencyKind, ExprGraph, ExprId, ExprMetadata, ExprNode,
-    ExprNodeSemantics, ExprSourceKind, NumberClass, P4Component, ParamError, UnaryOp, ValueKind,
-    complex, dot, event_scalar, matrix_from_flat, parameter,
+    BinaryOp, Expr, ExprDependencyKind, ExprGraph, ExprGraphRebuilder, ExprId, ExprMetadata,
+    ExprNode, ExprNodeSemantics, ExprSourceKind, NumberClass, P4Component, ParamError, UnaryOp,
+    ValueKind, complex, dot, event_scalar, matrix_from_flat, parameter,
     parameters::{ParamLayout, Parameter},
     vector,
 };
@@ -172,6 +172,63 @@ fn every_node_variant_reports_children_in_semantic_order() {
             "mapped children: {description}"
         );
     }
+}
+
+#[test]
+fn graph_rebuilder_keeps_remaps_and_metadata_aligned() {
+    let mut rebuild = ExprGraphRebuilder::with_capacity(3);
+    let lhs = rebuild.emit(
+        "lhs",
+        ExprNode::RealConst(1.0),
+        ExprMetadata::new(ExprSourceKind::Const),
+    );
+    let rhs = rebuild.emit(
+        "rhs",
+        ExprNode::EventScalar(Arc::from("x")),
+        ExprMetadata::new(ExprSourceKind::Event),
+    );
+    let root = rebuild.emit(
+        "root",
+        ExprNode::Binary {
+            op: BinaryOp::Add,
+            lhs,
+            rhs,
+        },
+        ExprMetadata::new(ExprSourceKind::Binary),
+    );
+
+    assert_eq!(rebuild.remapped(&"lhs"), Some(lhs));
+    assert_eq!(rebuild.remapped(&"rhs"), Some(rhs));
+    assert_eq!(rebuild.remapped(&"root"), Some(root));
+
+    let graph = rebuild.finish(root).unwrap();
+    assert_eq!(graph.root(), root);
+    assert_eq!(
+        graph.node(root).unwrap().children().collect::<Vec<_>>(),
+        [lhs, rhs]
+    );
+    assert_eq!(
+        [lhs, rhs, root].map(|id| graph.metadata(id).unwrap().source()),
+        [
+            ExprSourceKind::Const,
+            ExprSourceKind::Event,
+            ExprSourceKind::Binary,
+        ]
+    );
+}
+
+#[test]
+#[should_panic(expected = "children must be emitted before their parent")]
+fn graph_rebuilder_rejects_parent_before_child_emission() {
+    let mut rebuild = ExprGraphRebuilder::with_capacity(1);
+    rebuild.emit(
+        "root",
+        ExprNode::Unary {
+            op: UnaryOp::Neg,
+            input: id(0),
+        },
+        ExprMetadata::new(ExprSourceKind::Unary),
+    );
 }
 
 #[test]

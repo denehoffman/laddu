@@ -1,6 +1,7 @@
 use std::{
     collections::HashMap,
     fmt,
+    hash::Hash,
     sync::{Arc, OnceLock},
 };
 
@@ -1966,6 +1967,65 @@ pub struct ExprGraph {
     metadata: Vec<ExprMetadata>,
 }
 
+/// Workspace-internal accumulator for rebuilding expression graphs.
+///
+/// Nodes and metadata are emitted together in child-before-parent order. The
+/// caller owns rewrite policy and chooses the remap key, which may include
+/// traversal context in addition to the source node identifier.
+#[doc(hidden)]
+pub struct ExprGraphRebuilder<K> {
+    nodes: Vec<ExprNode>,
+    metadata: Vec<ExprMetadata>,
+    remapped: HashMap<K, ExprId>,
+}
+
+#[doc(hidden)]
+impl<K> ExprGraphRebuilder<K>
+where
+    K: Eq + Hash,
+{
+    /// Creates an empty rebuild accumulator sized for the expected output.
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self {
+            nodes: Vec::with_capacity(capacity),
+            metadata: Vec::with_capacity(capacity),
+            remapped: HashMap::with_capacity(capacity),
+        }
+    }
+
+    /// Returns the emitted identifier associated with `key`, if any.
+    pub fn remapped(&self, key: &K) -> Option<ExprId> {
+        self.remapped.get(key).copied()
+    }
+
+    /// Emits one node and its aligned metadata after all of its children.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `key` was emitted previously or if the node references a
+    /// child that has not already been emitted.
+    pub fn emit(&mut self, key: K, node: ExprNode, metadata: ExprMetadata) -> ExprId {
+        let id = ExprId::from_index(self.nodes.len());
+        assert!(
+            !self.remapped.contains_key(&key),
+            "a rebuild key may only be emitted once"
+        );
+        assert!(
+            node.children().all(|child| child.index() < id.index()),
+            "rebuilt expression children must be emitted before their parent"
+        );
+        self.nodes.push(node);
+        self.metadata.push(metadata);
+        self.remapped.insert(key, id);
+        id
+    }
+
+    /// Validates and finishes the rebuilt graph with `root` as its root node.
+    pub fn finish(self, root: ExprId) -> Result<ExprGraph, ExprGraphError> {
+        ExprGraph::from_parts(root, self.nodes, self.metadata)
+    }
+}
+
 impl ExprGraph {
     /// Return a copy of this graph with the named scalar parameter fixed.
     ///
@@ -2021,24 +2081,17 @@ impl ExprGraph {
     ///
     /// Untagged nodes remain active, and a matching tagged node retains its
     /// entire subtree.
+    ///
+    /// # Panics
+    ///
+    /// Panics only if an internal graph-rebuild invariant is violated.
     pub fn project_tags<'a>(&self, tags: impl IntoIterator<Item = &'a str>) -> Self {
         let tags: Vec<_> = tags.into_iter().collect();
-        let mut nodes = Vec::new();
-        let mut metadata = Vec::new();
-        let mut remapped = HashMap::new();
-        let root = self.project_node(
-            self.root,
-            &tags,
-            false,
-            &mut nodes,
-            &mut metadata,
-            &mut remapped,
-        );
-        Self {
-            root,
-            nodes,
-            metadata,
-        }
+        let mut rebuild = ExprGraphRebuilder::with_capacity(self.nodes.len());
+        let root = self.project_node(self.root, &tags, false, &mut rebuild);
+        rebuild
+            .finish(root)
+            .expect("tag projection rebuilds a valid expression graph")
     }
 
     fn project_node(
@@ -2046,12 +2099,11 @@ impl ExprGraph {
         old: ExprId,
         tags: &[&str],
         retain_all: bool,
-        nodes: &mut Vec<ExprNode>,
-        metadata: &mut Vec<ExprMetadata>,
-        remapped: &mut HashMap<(ExprId, bool), ExprId>,
+        rebuild: &mut ExprGraphRebuilder<(ExprId, bool)>,
     ) -> ExprId {
-        if let Some(id) = remapped.get(&(old, retain_all)) {
-            return *id;
+        let key = (old, retain_all);
+        if let Some(id) = rebuild.remapped(&key) {
+            return id;
         }
         let old_metadata = &self.metadata[old.index()];
         let matches = old_metadata
@@ -2062,19 +2114,15 @@ impl ExprGraph {
             ExprNode::RealConst(0.0)
         } else {
             let retain_children = retain_all || matches;
-            self.nodes[old.index()].map_children(|child| {
-                self.project_node(child, tags, retain_children, nodes, metadata, remapped)
-            })
+            self.nodes[old.index()]
+                .map_children(|child| self.project_node(child, tags, retain_children, rebuild))
         };
-        let id = ExprId::from_index(nodes.len());
-        nodes.push(node);
-        metadata.push(if matches || retain_all {
+        let metadata = if matches || retain_all {
             old_metadata.clone()
         } else {
             ExprMetadata::new(old_metadata.source)
-        });
-        remapped.insert((old, retain_all), id);
-        id
+        };
+        rebuild.emit(key, node, metadata)
     }
 
     /// Validates and constructs a graph from its serialized parts.
