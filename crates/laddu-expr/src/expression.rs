@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fmt,
     hash::Hash,
     sync::{Arc, OnceLock},
@@ -1051,6 +1051,109 @@ enum DagNodeKind {
     },
 }
 
+impl DagNodeKind {
+    fn child_count(&self) -> usize {
+        match self {
+            Self::RealConst(_)
+            | Self::ComplexConst(_)
+            | Self::ScalarParam(_)
+            | Self::EventScalar(_)
+            | Self::EventP4Component { .. } => 0,
+            Self::Unary { .. } | Self::Component { .. } | Self::MatrixElement { .. } => 1,
+            Self::Binary { .. }
+            | Self::Complex { .. }
+            | Self::MatMul { .. }
+            | Self::MatVec { .. }
+            | Self::Dot { .. }
+            | Self::Solve { .. } => 2,
+            Self::Vector { elements } | Self::Matrix { elements, .. } => elements.len(),
+        }
+    }
+
+    fn child_at(&self, index: usize) -> &Expr {
+        match self {
+            Self::Unary { input, .. }
+            | Self::Component { input, .. }
+            | Self::MatrixElement { input, .. } => input,
+            Self::Binary { lhs, rhs, .. } | Self::MatMul { lhs, rhs } | Self::Dot { lhs, rhs } => {
+                [lhs, rhs][index]
+            }
+            Self::Complex { re, im } => [re, im][index],
+            Self::MatVec { matrix, vector } => [matrix, vector][index],
+            Self::Solve { matrix, rhs } => [matrix, rhs][index],
+            Self::Vector { elements } | Self::Matrix { elements, .. } => &elements[index],
+            Self::RealConst(_)
+            | Self::ComplexConst(_)
+            | Self::ScalarParam(_)
+            | Self::EventScalar(_)
+            | Self::EventP4Component { .. } => unreachable!("leaf nodes have no children"),
+        }
+    }
+
+    fn map_children(&self, mut map: impl FnMut(&Expr) -> Expr) -> Self {
+        match self {
+            Self::RealConst(value) => Self::RealConst(*value),
+            Self::ComplexConst(value) => Self::ComplexConst(*value),
+            Self::ScalarParam(parameter) => Self::ScalarParam(parameter.clone()),
+            Self::EventScalar(name) => Self::EventScalar(Arc::clone(name)),
+            Self::EventP4Component { name, component } => Self::EventP4Component {
+                name: Arc::clone(name),
+                component: *component,
+            },
+            Self::Unary { op, input } => Self::Unary {
+                op: *op,
+                input: map(input),
+            },
+            Self::Binary { op, lhs, rhs } => Self::Binary {
+                op: *op,
+                lhs: map(lhs),
+                rhs: map(rhs),
+            },
+            Self::Complex { re, im } => Self::Complex {
+                re: map(re),
+                im: map(im),
+            },
+            Self::Vector { elements } => Self::Vector {
+                elements: elements.iter().map(&mut map).collect(),
+            },
+            Self::Matrix {
+                rows,
+                cols,
+                elements,
+            } => Self::Matrix {
+                rows: *rows,
+                cols: *cols,
+                elements: elements.iter().map(&mut map).collect(),
+            },
+            Self::Component { input, index } => Self::Component {
+                input: map(input),
+                index: *index,
+            },
+            Self::MatrixElement { input, row, col } => Self::MatrixElement {
+                input: map(input),
+                row: *row,
+                col: *col,
+            },
+            Self::MatMul { lhs, rhs } => Self::MatMul {
+                lhs: map(lhs),
+                rhs: map(rhs),
+            },
+            Self::MatVec { matrix, vector } => Self::MatVec {
+                matrix: map(matrix),
+                vector: map(vector),
+            },
+            Self::Dot { lhs, rhs } => Self::Dot {
+                lhs: map(lhs),
+                rhs: map(rhs),
+            },
+            Self::Solve { matrix, rhs } => Self::Solve {
+                matrix: map(matrix),
+                rhs: map(rhs),
+            },
+        }
+    }
+}
+
 impl Expr {
     fn new(kind: DagNodeKind) -> Self {
         let source = source_kind(&kind);
@@ -1088,88 +1191,55 @@ impl Expr {
     /// Untagged nodes remain active, while a matching tagged node retains its complete subtree.
     pub fn project_tags<'a>(&self, tags: impl IntoIterator<Item = &'a str>) -> Self {
         let tags: Vec<_> = tags.into_iter().collect();
-        self.project_tags_inner(&tags)
-    }
-
-    fn project_tags_inner(&self, tags: &[&str]) -> Self {
-        if !self.node.metadata.tags.is_empty() {
-            return if self
-                .node
-                .metadata
-                .tags
-                .iter()
-                .any(|candidate| tags.contains(&candidate.as_ref()))
-            {
-                self.clone()
-            } else {
-                self.zero_like()
-            };
+        enum Frame {
+            Visit(Expr),
+            Rebuild(Expr, usize),
         }
 
-        let kind = match &self.node.kind {
-            DagNodeKind::RealConst(_)
-            | DagNodeKind::ComplexConst(_)
-            | DagNodeKind::ScalarParam(_)
-            | DagNodeKind::EventScalar(_)
-            | DagNodeKind::EventP4Component { .. } => return self.clone(),
-            DagNodeKind::Unary { op, input } => DagNodeKind::Unary {
-                op: *op,
-                input: input.project_tags_inner(tags),
-            },
-            DagNodeKind::Binary { op, lhs, rhs } => DagNodeKind::Binary {
-                op: *op,
-                lhs: lhs.project_tags_inner(tags),
-                rhs: rhs.project_tags_inner(tags),
-            },
-            DagNodeKind::Complex { re, im } => DagNodeKind::Complex {
-                re: re.project_tags_inner(tags),
-                im: im.project_tags_inner(tags),
-            },
-            DagNodeKind::Vector { elements } => DagNodeKind::Vector {
-                elements: elements
-                    .iter()
-                    .map(|value| value.project_tags_inner(tags))
-                    .collect(),
-            },
-            DagNodeKind::Matrix {
-                rows,
-                cols,
-                elements,
-            } => DagNodeKind::Matrix {
-                rows: *rows,
-                cols: *cols,
-                elements: elements
-                    .iter()
-                    .map(|value| value.project_tags_inner(tags))
-                    .collect(),
-            },
-            DagNodeKind::Component { input, index } => DagNodeKind::Component {
-                input: input.project_tags_inner(tags),
-                index: *index,
-            },
-            DagNodeKind::MatrixElement { input, row, col } => DagNodeKind::MatrixElement {
-                input: input.project_tags_inner(tags),
-                row: *row,
-                col: *col,
-            },
-            DagNodeKind::MatMul { lhs, rhs } => DagNodeKind::MatMul {
-                lhs: lhs.project_tags_inner(tags),
-                rhs: rhs.project_tags_inner(tags),
-            },
-            DagNodeKind::MatVec { matrix, vector } => DagNodeKind::MatVec {
-                matrix: matrix.project_tags_inner(tags),
-                vector: vector.project_tags_inner(tags),
-            },
-            DagNodeKind::Dot { lhs, rhs } => DagNodeKind::Dot {
-                lhs: lhs.project_tags_inner(tags),
-                rhs: rhs.project_tags_inner(tags),
-            },
-            DagNodeKind::Solve { matrix, rhs } => DagNodeKind::Solve {
-                matrix: matrix.project_tags_inner(tags),
-                rhs: rhs.project_tags_inner(tags),
-            },
-        };
-        Expr::new(kind).with_metadata(|metadata| *metadata = self.node.metadata.clone())
+        let mut projected = Vec::new();
+        let mut stack = vec![Frame::Visit(self.clone())];
+        while let Some(frame) = stack.pop() {
+            match frame {
+                Frame::Visit(expr) => {
+                    let has_tags = !expr.node.metadata.tags.is_empty();
+                    if has_tags || expr.node.kind.child_count() == 0 {
+                        projected.push(
+                            if !has_tags
+                                || expr
+                                    .node
+                                    .metadata
+                                    .tags
+                                    .iter()
+                                    .any(|candidate| tags.contains(&candidate.as_ref()))
+                            {
+                                expr.clone()
+                            } else {
+                                expr.zero_like()
+                            },
+                        );
+                        continue;
+                    }
+                    let child_count = expr.node.kind.child_count();
+                    stack.push(Frame::Rebuild(expr.clone(), child_count));
+                    for index in (0..child_count).rev() {
+                        stack.push(Frame::Visit(expr.node.kind.child_at(index).clone()));
+                    }
+                }
+                Frame::Rebuild(expr, child_count) => {
+                    let child_start = projected.len() - child_count;
+                    let children = projected.split_off(child_start);
+                    let mut children = children.into_iter();
+                    let kind = expr.node.kind.map_children(|original| {
+                        children.next().unwrap_or_else(|| original.clone())
+                    });
+                    projected.push(
+                        Expr::new(kind)
+                            .with_metadata(|metadata| *metadata = expr.node.metadata.clone()),
+                    );
+                }
+            }
+        }
+        projected.pop().unwrap_or_else(|| self.clone())
     }
 
     fn zero_like(&self) -> Self {
@@ -2027,6 +2097,42 @@ where
 }
 
 impl ExprGraph {
+    /// Returns the nodes reachable from `roots` in child-before-parent order.
+    ///
+    /// The traversal is iterative, visits each node at most once, and preserves
+    /// semantic child order. This is a workspace-internal traversal primitive
+    /// for graph consumers that must remain safe for deeply nested graphs.
+    #[doc(hidden)]
+    pub fn reachable_post_order(&self, roots: impl IntoIterator<Item = ExprId>) -> Vec<ExprId> {
+        let roots = roots.into_iter().collect::<Vec<_>>();
+        let mut visited = HashSet::with_capacity(self.nodes.len());
+        let mut stack = Vec::new();
+        let mut order = Vec::new();
+
+        for root in roots.into_iter().rev() {
+            stack.push((root, false));
+        }
+        while let Some((id, expanded)) = stack.pop() {
+            if expanded {
+                order.push(id);
+                continue;
+            }
+            if self.node(id).is_none() {
+                continue;
+            }
+            if !visited.insert(id) {
+                continue;
+            }
+            stack.push((id, true));
+            if let Some(node) = self.node(id) {
+                for child in node.children().rev() {
+                    stack.push((child, false));
+                }
+            }
+        }
+        order
+    }
+
     /// Return a copy of this graph with the named scalar parameter fixed.
     ///
     /// # Errors
@@ -2088,41 +2194,56 @@ impl ExprGraph {
     pub fn project_tags<'a>(&self, tags: impl IntoIterator<Item = &'a str>) -> Self {
         let tags: Vec<_> = tags.into_iter().collect();
         let mut rebuild = ExprGraphRebuilder::with_capacity(self.nodes.len());
-        let root = self.project_node(self.root, &tags, false, &mut rebuild);
+        let root_key = (self.root, false);
+        let mut visited = HashSet::with_capacity(self.nodes.len());
+        let mut stack = vec![(root_key, false)];
+        while let Some((key @ (old, retain_all), expanded)) = stack.pop() {
+            if expanded {
+                let old_metadata = &self.metadata[old.index()];
+                let matches = old_metadata
+                    .tags
+                    .iter()
+                    .any(|tag| tags.contains(&tag.as_ref()));
+                let node = if !retain_all && !old_metadata.tags.is_empty() && !matches {
+                    ExprNode::RealConst(0.0)
+                } else {
+                    let retain_children = retain_all || matches;
+                    self.nodes[old.index()].map_children(|child| {
+                        rebuild
+                            .remapped(&(child, retain_children))
+                            .expect("tag projection emits children before parents")
+                    })
+                };
+                let metadata = if matches || retain_all {
+                    old_metadata.clone()
+                } else {
+                    ExprMetadata::new(old_metadata.source)
+                };
+                rebuild.emit(key, node, metadata);
+                continue;
+            }
+            if !visited.insert(key) {
+                continue;
+            }
+            stack.push((key, true));
+            let old_metadata = &self.metadata[old.index()];
+            let matches = old_metadata
+                .tags
+                .iter()
+                .any(|tag| tags.contains(&tag.as_ref()));
+            if retain_all || old_metadata.tags.is_empty() || matches {
+                let retain_children = retain_all || matches;
+                for child in self.nodes[old.index()].children().rev() {
+                    stack.push(((child, retain_children), false));
+                }
+            }
+        }
+        let root = rebuild
+            .remapped(&root_key)
+            .expect("tag projection emits its root");
         rebuild
             .finish(root)
             .expect("tag projection rebuilds a valid expression graph")
-    }
-
-    fn project_node(
-        &self,
-        old: ExprId,
-        tags: &[&str],
-        retain_all: bool,
-        rebuild: &mut ExprGraphRebuilder<(ExprId, bool)>,
-    ) -> ExprId {
-        let key = (old, retain_all);
-        if let Some(id) = rebuild.remapped(&key) {
-            return id;
-        }
-        let old_metadata = &self.metadata[old.index()];
-        let matches = old_metadata
-            .tags
-            .iter()
-            .any(|tag| tags.contains(&tag.as_ref()));
-        let node = if !retain_all && !old_metadata.tags.is_empty() && !matches {
-            ExprNode::RealConst(0.0)
-        } else {
-            let retain_children = retain_all || matches;
-            self.nodes[old.index()]
-                .map_children(|child| self.project_node(child, tags, retain_children, rebuild))
-        };
-        let metadata = if matches || retain_all {
-            old_metadata.clone()
-        } else {
-            ExprMetadata::new(old_metadata.source)
-        };
-        rebuild.emit(key, node, metadata)
     }
 
     /// Validates and constructs a graph from its serialized parts.
@@ -2244,7 +2365,26 @@ impl GraphBuilder {
     }
 
     fn build(mut self, expr: &Expr) -> ExprGraph {
-        let root = self.visit(expr);
+        let mut stack = vec![(expr.clone(), false)];
+        while let Some((expr, expanded)) = stack.pop() {
+            let key = Arc::as_ptr(&expr.node) as usize;
+            if self.ids.contains_key(&key) {
+                continue;
+            }
+            if expanded {
+                let node = self.lower(&expr.node.kind);
+                let id = ExprId::from_index(self.nodes.len());
+                self.nodes.push(node);
+                self.metadata.push(expr.node.metadata.clone());
+                self.ids.insert(key, id);
+                continue;
+            }
+            stack.push((expr.clone(), true));
+            for index in (0..expr.node.kind.child_count()).rev() {
+                stack.push((expr.node.kind.child_at(index).clone(), false));
+            }
+        }
+        let root = self.id(expr);
         ExprGraph {
             root,
             nodes: self.nodes,
@@ -2252,12 +2392,13 @@ impl GraphBuilder {
         }
     }
 
-    fn visit(&mut self, expr: &Expr) -> ExprId {
+    fn id(&self, expr: &Expr) -> ExprId {
         let key = Arc::as_ptr(&expr.node) as usize;
-        if let Some(id) = self.ids.get(&key) {
-            return *id;
-        }
-        let node = match &expr.node.kind {
+        self.ids[&key]
+    }
+
+    fn lower(&self, kind: &DagNodeKind) -> ExprNode {
+        match kind {
             DagNodeKind::RealConst(value) => ExprNode::RealConst(*value),
             DagNodeKind::ComplexConst(value) => ExprNode::ComplexConst(*value),
             DagNodeKind::ScalarParam(parameter) => ExprNode::ScalarParam(parameter.clone()),
@@ -2267,21 +2408,21 @@ impl GraphBuilder {
                 component: *component,
             },
             DagNodeKind::Unary { op, input } => {
-                let input = self.visit(input);
+                let input = self.id(input);
                 ExprNode::Unary { op: *op, input }
             }
             DagNodeKind::Binary { op, lhs, rhs } => {
-                let lhs = self.visit(lhs);
-                let rhs = self.visit(rhs);
+                let lhs = self.id(lhs);
+                let rhs = self.id(rhs);
                 ExprNode::Binary { op: *op, lhs, rhs }
             }
             DagNodeKind::Complex { re, im } => {
-                let re = self.visit(re);
-                let im = self.visit(im);
+                let re = self.id(re);
+                let im = self.id(im);
                 ExprNode::Complex { re, im }
             }
             DagNodeKind::Vector { elements } => ExprNode::Vector {
-                elements: elements.iter().map(|expr| self.visit(expr)).collect(),
+                elements: elements.iter().map(|expr| self.id(expr)).collect(),
             },
             DagNodeKind::Matrix {
                 rows,
@@ -2290,17 +2431,17 @@ impl GraphBuilder {
             } => ExprNode::Matrix {
                 rows: *rows,
                 cols: *cols,
-                elements: elements.iter().map(|expr| self.visit(expr)).collect(),
+                elements: elements.iter().map(|expr| self.id(expr)).collect(),
             },
             DagNodeKind::Component { input, index } => {
-                let input = self.visit(input);
+                let input = self.id(input);
                 ExprNode::Component {
                     input,
                     index: *index,
                 }
             }
             DagNodeKind::MatrixElement { input, row, col } => {
-                let input = self.visit(input);
+                let input = self.id(input);
                 ExprNode::MatrixElement {
                     input,
                     row: *row,
@@ -2308,32 +2449,26 @@ impl GraphBuilder {
                 }
             }
             DagNodeKind::MatMul { lhs, rhs } => {
-                let lhs = self.visit(lhs);
-                let rhs = self.visit(rhs);
+                let lhs = self.id(lhs);
+                let rhs = self.id(rhs);
                 ExprNode::MatMul { lhs, rhs }
             }
             DagNodeKind::MatVec { matrix, vector } => {
-                let matrix = self.visit(matrix);
-                let vector = self.visit(vector);
+                let matrix = self.id(matrix);
+                let vector = self.id(vector);
                 ExprNode::MatVec { matrix, vector }
             }
             DagNodeKind::Dot { lhs, rhs } => {
-                let lhs = self.visit(lhs);
-                let rhs = self.visit(rhs);
+                let lhs = self.id(lhs);
+                let rhs = self.id(rhs);
                 ExprNode::Dot { lhs, rhs }
             }
             DagNodeKind::Solve { matrix, rhs } => {
-                let matrix = self.visit(matrix);
-                let rhs = self.visit(rhs);
+                let matrix = self.id(matrix);
+                let rhs = self.id(rhs);
                 ExprNode::Solve { matrix, rhs }
             }
-        };
-
-        let id = ExprId::from_index(self.nodes.len());
-        self.nodes.push(node);
-        self.metadata.push(expr.node.metadata.clone());
-        self.ids.insert(key, id);
-        id
+        }
     }
 }
 
@@ -2632,6 +2767,65 @@ mod tests {
             panic!("root should be a vector");
         };
         assert!(elements.windows(2).all(|pair| pair[0] == pair[1]));
+    }
+
+    #[test]
+    fn expression_projection_preserves_occurrence_rebuild_behavior() {
+        let shared = event_scalar("x").sin();
+        let projected = (shared.clone() + shared).project_tags(["selected"]);
+        let graph = projected.to_graph();
+
+        assert_eq!(
+            graph
+                .nodes()
+                .iter()
+                .filter(|node| matches!(
+                    node,
+                    ExprNode::Unary {
+                        op: UnaryOp::Sin,
+                        ..
+                    }
+                ))
+                .count(),
+            2
+        );
+    }
+
+    #[test]
+    fn iterative_construction_and_projection_handle_deep_expressions() {
+        let mut expression = event_scalar("x");
+        for _ in 0..10_000 {
+            expression = expression.sin();
+        }
+
+        let projected = expression.project_tags(["selected"]);
+        let graph = projected.to_graph();
+
+        assert_eq!(graph.nodes().len(), 10_001);
+        assert_eq!(
+            graph.reachable_post_order([graph.root()]).len(),
+            graph.nodes().len()
+        );
+
+        // Deep `Arc` chains also recurse when their final owner is dropped;
+        // this test targets traversal behavior rather than destructor policy.
+        std::mem::forget(expression);
+        std::mem::forget(projected);
+    }
+
+    #[test]
+    fn reachable_post_order_preserves_child_order_and_deduplicates_shared_nodes() {
+        let shared = event_scalar("x").sin();
+        let graph = (shared.clone() + shared).to_graph();
+        let order = graph.reachable_post_order([graph.root()]);
+
+        assert_eq!(order.len(), graph.nodes().len());
+        assert_eq!(order.last(), Some(&graph.root()));
+        for id in order {
+            for child in graph.node(id).unwrap().children() {
+                assert!(child.index() < id.index());
+            }
+        }
     }
 
     #[test]

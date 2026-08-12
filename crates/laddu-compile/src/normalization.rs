@@ -675,7 +675,9 @@ fn push_node(
 
 fn compact_root(graph: &ExprGraph, root: ExprId) -> ExprGraph {
     let mut required = vec![false; graph.nodes().len()];
-    mark_required(graph, root, &mut required);
+    for id in graph.reachable_post_order([root]) {
+        required[id.index()] = true;
+    }
     let mut remap = vec![None; graph.nodes().len()];
     let mut nodes = Vec::new();
     let mut metadata = Vec::new();
@@ -699,20 +701,6 @@ fn compact_root(graph: &ExprGraph, root: ExprId) -> ExprGraph {
         metadata,
     )
     .expect("compacted normalization graph is valid")
-}
-
-fn mark_required(graph: &ExprGraph, id: ExprId, required: &mut [bool]) {
-    if required[id.index()] {
-        return;
-    }
-    required[id.index()] = true;
-    for child in graph
-        .node(id)
-        .expect("normalization node exists")
-        .children()
-    {
-        mark_required(graph, child, required);
-    }
 }
 
 fn remap_node(node: &ExprNode, remap: &[Option<ExprId>]) -> ExprNode {

@@ -170,8 +170,8 @@ impl CachePlan {
             })
             .collect::<Vec<_>>();
         let mut required = vec![false; graph.nodes().len()];
-        for entry in &entries {
-            mark_cache_requirement(graph, entry.node, &mut required);
+        for id in graph.reachable_post_order(entries.iter().map(|entry| entry.node)) {
+            required[id.index()] = true;
         }
         let materialization_nodes = required
             .into_iter()
@@ -217,18 +217,6 @@ impl CachePlan {
             .iter()
             .map(|entry| entry.storage_kind().bytes_per_event())
             .sum()
-    }
-}
-
-fn mark_cache_requirement(graph: &ExprGraph, id: ExprId, required: &mut [bool]) {
-    if required[id.index()] {
-        return;
-    }
-    required[id.index()] = true;
-    if let Some(node) = graph.node(id) {
-        for child in node.children() {
-            mark_cache_requirement(graph, child, required);
-        }
     }
 }
 
