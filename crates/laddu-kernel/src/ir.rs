@@ -187,30 +187,55 @@ pub enum KernelInstruction {
 impl KernelInstruction {
     /// Returns the direct input value identifiers.
     pub fn operands(&self) -> Vec<KernelValueId> {
+        let mut operands = Vec::new();
+        self.visit_operands(|operand| operands.push(operand));
+        operands
+    }
+
+    fn visit_operands(&self, mut visit: impl FnMut(KernelValueId)) {
         match self {
             Self::Cached(_)
             | Self::RealConstant(_)
             | Self::ComplexConstant(_)
-            | Self::Parameter(_) => Vec::new(),
+            | Self::Parameter(_) => {}
             Self::Unary { input, .. }
             | Self::Component { input, .. }
             | Self::MatrixElement { input, .. }
-            | Self::SolveRowAdjointElement { adjoint: input, .. } => vec![*input],
+            | Self::SolveRowAdjointElement { adjoint: input, .. } => visit(*input),
             Self::Binary { lhs, rhs, .. } | Self::MatMul { lhs, rhs } | Self::Dot { lhs, rhs } => {
-                vec![*lhs, *rhs]
+                visit(*lhs);
+                visit(*rhs);
             }
             Self::MatVec { matrix, vector }
             | Self::Solve {
                 matrix,
                 rhs: vector,
-            } => vec![*matrix, *vector],
+            } => {
+                visit(*matrix);
+                visit(*vector);
+            }
             Self::Add(values)
             | Self::Mul(values)
             | Self::Vector(values)
-            | Self::SolveRow { rhs: values, .. } => values.clone(),
-            Self::Complex { re, im } => vec![*re, *im],
-            Self::Matrix { elements, .. } => elements.clone(),
+            | Self::SolveRow { rhs: values, .. } => values.iter().copied().for_each(visit),
+            Self::Complex { re, im } => {
+                visit(*re);
+                visit(*im);
+            }
+            Self::Matrix { elements, .. } => elements.iter().copied().for_each(visit),
         }
+    }
+
+    fn validate_operand_order(&self, value: usize) -> Result<(), KernelIrError> {
+        let mut invalid_operand = None;
+        self.visit_operands(|operand| {
+            if invalid_operand.is_none() && operand.index() >= value {
+                invalid_operand = Some(operand.index());
+            }
+        });
+        invalid_operand.map_or(Ok(()), |operand| {
+            Err(KernelIrError::InvalidOperand { value, operand })
+        })
     }
 
     fn shape_error(
@@ -438,14 +463,15 @@ impl KernelInstruction {
             Self::RealConstant(_) | Self::ComplexConstant(_) | Self::Parameter(_) => {
                 KernelValueClass::Invariant
             }
-            _ if self
-                .operands()
-                .iter()
-                .any(|operand| values[operand.index()].class == KernelValueClass::Event) =>
-            {
-                KernelValueClass::Event
+            _ => {
+                let mut class = KernelValueClass::Invariant;
+                self.visit_operands(|operand| {
+                    if values[operand.index()].class == KernelValueClass::Event {
+                        class = KernelValueClass::Event;
+                    }
+                });
+                class
             }
-            _ => KernelValueClass::Invariant,
         }
     }
 }
@@ -543,14 +569,7 @@ impl ScalarKernelIr {
             });
         }
         for (index, value) in values.iter().enumerate() {
-            for operand in value.instruction.operands() {
-                if operand.index() >= index {
-                    return Err(KernelIrError::InvalidOperand {
-                        value: index,
-                        operand: operand.index(),
-                    });
-                }
-            }
+            value.instruction.validate_operand_order(index)?;
             if let Some(expected) = value.instruction.expected_kind(values, index)?
                 && value.kind != expected
             {
@@ -715,14 +734,7 @@ impl KernelIrBuilder {
     /// value kind cannot be inferred.
     pub fn push(&mut self, instruction: KernelInstruction) -> Result<KernelValueId, KernelIrError> {
         let index = self.values.len();
-        for operand in instruction.operands() {
-            if operand.index() >= index {
-                return Err(KernelIrError::InvalidOperand {
-                    value: index,
-                    operand: operand.index(),
-                });
-            }
-        }
+        instruction.validate_operand_order(index)?;
         let kind = instruction
             .expected_kind(&self.values, index)?
             .ok_or_else(|| KernelIrError::InvalidShape {
