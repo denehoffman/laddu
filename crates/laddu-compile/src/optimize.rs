@@ -4230,42 +4230,20 @@ fn compact_graph(graph: ExprGraph) -> CompileResult<ExprGraph> {
     let mut old_to_new = vec![None; graph.nodes().len()];
     let mut nodes = Vec::new();
     let mut metadata = Vec::new();
-    let root = compact_visit(
-        graph.root(),
-        &graph,
-        &mut old_to_new,
-        &mut nodes,
-        &mut metadata,
-    );
+    for old_id in graph.reachable_post_order([graph.root()]) {
+        let node = remap_compacted_node(graph.node(old_id).expect("valid graph"), &old_to_new);
+        let new_id = ExprId::from_index(nodes.len());
+        nodes.push(node);
+        metadata.push(
+            graph
+                .metadata(old_id)
+                .expect("graph metadata length is validated")
+                .clone(),
+        );
+        old_to_new[old_id.index()] = Some(new_id);
+    }
+    let root = old_to_new[graph.root().index()].expect("the compacted graph includes its root");
     Ok(ExprGraph::from_parts(root, nodes, metadata)?)
-}
-
-fn compact_visit(
-    old_id: ExprId,
-    graph: &ExprGraph,
-    old_to_new: &mut [Option<ExprId>],
-    nodes: &mut Vec<ExprNode>,
-    metadata: &mut Vec<ExprMetadata>,
-) -> ExprId {
-    if let Some(new_id) = old_to_new[old_id.index()] {
-        return new_id;
-    }
-
-    for child in graph.node(old_id).expect("valid graph").children() {
-        compact_visit(child, graph, old_to_new, nodes, metadata);
-    }
-
-    let node = remap_compacted_node(graph.node(old_id).expect("valid graph"), old_to_new);
-    let new_id = ExprId::from_index(nodes.len());
-    nodes.push(node);
-    metadata.push(
-        graph
-            .metadata(old_id)
-            .expect("graph metadata length is validated")
-            .clone(),
-    );
-    old_to_new[old_id.index()] = Some(new_id);
-    new_id
 }
 
 fn alias_or_preserve(

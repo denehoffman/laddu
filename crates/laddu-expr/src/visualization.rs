@@ -1328,53 +1328,56 @@ impl<'a> ExprGraphTreeDisplay<'a> {
         self.options.rules.push(rule);
         self
     }
-
-    fn fmt_node(
-        &self,
-        f: &mut fmt::Formatter<'_>,
-        id: ExprId,
-        prefix: &str,
-        edge: Option<(&str, bool)>,
-        visited: &mut HashSet<ExprId>,
-    ) -> fmt::Result {
-        let Some(node) = self.graph.node(id) else {
-            return write_tree_line(f, prefix, edge, &format!("#{} <missing node>", id.index()));
-        };
-        let repeated = !visited.insert(id);
-        let mut line = if repeated && !self.options.expand_repeated {
-            format!("#{0} <reference to #{0}>", id.index())
-        } else {
-            self.graph.node_label(id, node)
-        };
-        line = self.options.resolve(self.graph, id, node).ansi(line);
-        write_tree_line(f, prefix, edge, &line)?;
-        if repeated && !self.options.expand_repeated {
-            return Ok(());
-        }
-
-        let children = node_children(node);
-        let child_prefix = match edge {
-            Some((_, true)) => format!("{prefix}   "),
-            Some((_, false)) => format!("{prefix}┃  "),
-            None => prefix.to_owned(),
-        };
-        for (index, (label, child)) in children.iter().enumerate() {
-            self.fmt_node(
-                f,
-                *child,
-                &child_prefix,
-                Some((label, index + 1 == children.len())),
-                visited,
-            )?;
-        }
-        Ok(())
-    }
 }
 
 impl fmt::Display for ExprGraphTreeDisplay<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(f, "ExprGraph(root=#{})", self.graph.root().index())?;
-        self.fmt_node(f, self.graph.root(), "", None, &mut HashSet::new())
+        let mut visited = HashSet::new();
+        let mut stack = vec![(self.graph.root(), String::new(), None::<(String, bool)>)];
+        while let Some((id, prefix, edge)) = stack.pop() {
+            let Some(node) = self.graph.node(id) else {
+                write_tree_line(
+                    f,
+                    &prefix,
+                    edge.as_ref().map(|(label, last)| (label.as_str(), *last)),
+                    &format!("#{} <missing node>", id.index()),
+                )?;
+                continue;
+            };
+            let repeated = !visited.insert(id);
+            let mut line = if repeated && !self.options.expand_repeated {
+                format!("#{0} <reference to #{0}>", id.index())
+            } else {
+                self.graph.node_label(id, node)
+            };
+            line = self.options.resolve(self.graph, id, node).ansi(line);
+            write_tree_line(
+                f,
+                &prefix,
+                edge.as_ref().map(|(label, last)| (label.as_str(), *last)),
+                &line,
+            )?;
+            if repeated && !self.options.expand_repeated {
+                continue;
+            }
+
+            let children = node_children(node);
+            let child_prefix = match edge {
+                Some((_, true)) => format!("{prefix}   "),
+                Some((_, false)) => format!("{prefix}┃  "),
+                None => prefix,
+            };
+            let child_count = children.len();
+            for (index, (label, child)) in children.into_iter().enumerate().rev() {
+                stack.push((
+                    child,
+                    child_prefix.clone(),
+                    Some((label, index + 1 == child_count)),
+                ));
+            }
+        }
+        Ok(())
     }
 }
 
@@ -1452,52 +1455,103 @@ impl<'a> ExprGraphDotDisplay<'a> {
         attributes.join(", ")
     }
 
-    fn write_expanded(
-        &self,
-        f: &mut fmt::Formatter<'_>,
-        id: ExprId,
-        occurrence: &mut usize,
-    ) -> fmt::Result {
-        let current = *occurrence;
-        *occurrence += 1;
-        let Some(node) = self.graph.node(id) else {
-            return Ok(());
-        };
-        writeln!(f, "  n{current} [{}];", self.node_attributes(id, node))?;
-        for (label, child) in node_children(node) {
-            let child_occurrence = *occurrence;
-            self.write_expanded(f, child, occurrence)?;
-            writeln!(
-                f,
-                "  n{current} -> n{child_occurrence} [label=\"{}\"];",
-                escape_dot(&label)
-            )?;
+    fn write_expanded(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        enum Frame {
+            Visit(ExprId),
+            Children {
+                parent: usize,
+                children: Vec<(String, ExprId)>,
+                index: usize,
+            },
+            Edge {
+                parent: usize,
+                child: usize,
+                label: String,
+            },
+        }
+
+        let mut occurrence = 0;
+        let mut stack = vec![Frame::Visit(self.graph.root())];
+        while let Some(frame) = stack.pop() {
+            match frame {
+                Frame::Visit(id) => {
+                    let current = occurrence;
+                    occurrence += 1;
+                    let Some(node) = self.graph.node(id) else {
+                        continue;
+                    };
+                    writeln!(f, "  n{current} [{}];", self.node_attributes(id, node))?;
+                    stack.push(Frame::Children {
+                        parent: current,
+                        children: node_children(node),
+                        index: 0,
+                    });
+                }
+                Frame::Children {
+                    parent,
+                    children,
+                    index,
+                } => {
+                    if let Some((label, child)) = children.get(index).cloned() {
+                        let child_occurrence = occurrence;
+                        stack.push(Frame::Children {
+                            parent,
+                            children,
+                            index: index + 1,
+                        });
+                        stack.push(Frame::Edge {
+                            parent,
+                            child: child_occurrence,
+                            label,
+                        });
+                        stack.push(Frame::Visit(child));
+                    }
+                }
+                Frame::Edge {
+                    parent,
+                    child,
+                    label,
+                } => writeln!(
+                    f,
+                    "  n{parent} -> n{child} [label=\"{}\"];",
+                    escape_dot(&label)
+                )?,
+            }
         }
         Ok(())
     }
 
-    fn write_shared(
-        &self,
-        f: &mut fmt::Formatter<'_>,
-        id: ExprId,
-        visited: &mut HashSet<ExprId>,
-    ) -> fmt::Result {
-        if !visited.insert(id) {
-            return Ok(());
+    fn write_shared(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        enum Frame {
+            Visit(ExprId),
+            Edge(ExprId, ExprId, String),
         }
-        let Some(node) = self.graph.node(id) else {
-            return Ok(());
-        };
-        writeln!(f, "  n{} [{}];", id.index(), self.node_attributes(id, node))?;
-        for (label, child) in node_children(node) {
-            self.write_shared(f, child, visited)?;
-            writeln!(
-                f,
-                "  n{} -> n{} [label=\"{}\"];",
-                id.index(),
-                child.index(),
-                escape_dot(&label)
-            )?;
+
+        let mut visited = HashSet::new();
+        let mut stack = vec![Frame::Visit(self.graph.root())];
+        while let Some(frame) = stack.pop() {
+            match frame {
+                Frame::Visit(id) => {
+                    if !visited.insert(id) {
+                        continue;
+                    }
+                    let Some(node) = self.graph.node(id) else {
+                        continue;
+                    };
+                    writeln!(f, "  n{} [{}];", id.index(), self.node_attributes(id, node))?;
+                    for (label, child) in node_children(node).into_iter().rev() {
+                        stack.push(Frame::Edge(id, child, label));
+                        stack.push(Frame::Visit(child));
+                    }
+                }
+                Frame::Edge(parent, child, label) => writeln!(
+                    f,
+                    "  n{} -> n{} [label=\"{}\"];",
+                    parent.index(),
+                    child.index(),
+                    escape_dot(&label)
+                )?,
+            }
         }
         Ok(())
     }
@@ -1516,9 +1570,9 @@ impl fmt::Display for ExprGraphDotDisplay<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(f, "digraph ExprGraph {{")?;
         if self.options.expand_repeated {
-            self.write_expanded(f, self.graph.root(), &mut 0)?;
+            self.write_expanded(f)?;
         } else {
-            self.write_shared(f, self.graph.root(), &mut HashSet::new())?;
+            self.write_shared(f)?;
         }
         writeln!(f, "}}")
     }
@@ -1548,8 +1602,10 @@ fn escape_dot(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::*;
-    use crate::event_scalar;
+    use crate::{ExprSourceKind, event_scalar};
 
     fn shared_graph() -> ExprGraph {
         let shared = event_scalar("x").named("shared").tagged("data");
@@ -1668,6 +1724,26 @@ mod tests {
 
         assert!(dot.contains("x\\\\\\\"y"));
         assert!(dot.contains("quoted\\\"name"));
+    }
+
+    #[test]
+    fn iterative_dot_display_handles_deep_graphs() {
+        let metadata = ExprMetadata::new(ExprSourceKind::Unary);
+        let mut nodes = vec![ExprNode::EventScalar(Arc::from("x"))];
+        let mut metadata_nodes = vec![ExprMetadata::new(ExprSourceKind::Event)];
+        for index in 1..20_000 {
+            nodes.push(ExprNode::Unary {
+                op: UnaryOp::Sin,
+                input: ExprId::from_index(index - 1),
+            });
+            metadata_nodes.push(metadata.clone());
+        }
+        let graph = ExprGraph::from_parts(ExprId::from_index(19_999), nodes, metadata_nodes)
+            .expect("deep graph is valid");
+
+        let dot = graph.display_dot().expand_repeated(false).to_string();
+        assert!(dot.starts_with("digraph ExprGraph {\n"));
+        assert_eq!(dot.matches(" -> ").count(), 19_999);
     }
 
     #[cfg(feature = "svg")]

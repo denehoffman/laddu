@@ -60,7 +60,14 @@ for package in "${packages[@]}"; do
 
         actual="$temporary_root/$package.$feature_set.txt"
         expected="$snapshot_root/$package.$feature_set.txt"
-        cargo "+$public_api_toolchain" public-api "${public_api_args[@]}" >"$actual"
+        command_log="$temporary_root/$package.$feature_set.log"
+        if ! cargo "+$public_api_toolchain" public-api "${public_api_args[@]}" \
+            >"$actual" 2>"$command_log"; then
+            echo "failed to generate public API for $package ($feature_set)" >&2
+            cat "$command_log" >&2
+            status=1
+            continue
+        fi
 
         if [[ "$mode" == "--update" ]]; then
             cp "$actual" "$expected"

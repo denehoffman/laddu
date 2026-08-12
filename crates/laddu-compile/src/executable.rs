@@ -742,60 +742,32 @@ impl ExecutablePlan {
         solve_rhs_elements: &[Option<Vec<ExprId>>],
         required: &mut [bool],
     ) {
-        if required[id.index()] {
-            return;
-        }
-        required[id.index()] = true;
-        if cache_slots[id.index()].is_some() {
-            return;
-        }
-        if let Some(plan) = solve_components[id.index()] {
-            if let Some(elements) = &solve_rhs_elements[plan.rhs.index()] {
-                for element in elements {
-                    Self::mark_evaluation_node(
-                        graph,
-                        *element,
-                        cache_slots,
-                        solve_components,
-                        solve_rhs_elements,
-                        required,
-                    );
-                }
-            } else {
-                Self::mark_evaluation_node(
-                    graph,
-                    plan.rhs,
-                    cache_slots,
-                    solve_components,
-                    solve_rhs_elements,
-                    required,
-                );
+        let mut stack = vec![id];
+        while let Some(id) = stack.pop() {
+            if required[id.index()] {
+                continue;
             }
-            return;
-        }
-        if let Some(node) = graph.node(id) {
-            for child in node.children() {
-                Self::mark_evaluation_node(
-                    graph,
-                    child,
-                    cache_slots,
-                    solve_components,
-                    solve_rhs_elements,
-                    required,
-                );
+            required[id.index()] = true;
+            if cache_slots[id.index()].is_some() {
+                continue;
+            }
+            if let Some(plan) = solve_components[id.index()] {
+                if let Some(elements) = &solve_rhs_elements[plan.rhs.index()] {
+                    stack.extend(elements.iter().rev().copied());
+                } else {
+                    stack.push(plan.rhs);
+                }
+                continue;
+            }
+            if let Some(node) = graph.node(id) {
+                stack.extend(node.children().rev());
             }
         }
     }
 
     fn mark_required(graph: &ExprGraph, id: ExprId, required: &mut [bool]) {
-        if required[id.index()] {
-            return;
-        }
-        required[id.index()] = true;
-        if let Some(node) = graph.node(id) {
-            for child in node.children() {
-                Self::mark_required(graph, child, required);
-            }
+        for id in graph.reachable_post_order([id]) {
+            required[id.index()] = true;
         }
     }
 
