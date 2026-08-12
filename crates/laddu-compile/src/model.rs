@@ -29,7 +29,13 @@ use crate::{
 pub struct CompileOptions {
     pipeline: OptimizationPipeline,
     cache_policy: CachePolicy,
-    staged_default_pipeline: bool,
+    normalization_analysis: NormalizationAnalysisMode,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+enum NormalizationAnalysisMode {
+    BeforeExecutionLowering,
+    ExecutionGraph,
 }
 
 impl Default for CompileOptions {
@@ -37,7 +43,7 @@ impl Default for CompileOptions {
         Self {
             pipeline: OptimizationPipeline::normalization_target_lowering_passes(),
             cache_policy: CachePolicy::default(),
-            staged_default_pipeline: true,
+            normalization_analysis: NormalizationAnalysisMode::BeforeExecutionLowering,
         }
     }
 }
@@ -53,7 +59,7 @@ impl CompileOptions {
         Self {
             pipeline: OptimizationPipeline::new(),
             cache_policy: CachePolicy::default(),
-            staged_default_pipeline: false,
+            normalization_analysis: NormalizationAnalysisMode::ExecutionGraph,
         }
     }
 
@@ -62,7 +68,7 @@ impl CompileOptions {
         Self {
             pipeline,
             cache_policy: CachePolicy::default(),
-            staged_default_pipeline: false,
+            normalization_analysis: NormalizationAnalysisMode::ExecutionGraph,
         }
     }
 
@@ -90,6 +96,139 @@ impl CompileOptions {
     pub fn with_cache_policy(mut self, cache_policy: CachePolicy) -> Self {
         self.set_cache_policy(cache_policy);
         self
+    }
+}
+
+struct CompileRecipe<'a> {
+    normalization: NormalizationRecipe,
+    execution_pipeline: &'a OptimizationPipeline,
+    cache_policy: CachePolicy,
+}
+
+enum NormalizationRecipe {
+    AnalyzeBeforeExecution(OptimizationPipeline),
+    AnalyzeExecutionGraph,
+    Disabled,
+}
+
+impl<'a> CompileRecipe<'a> {
+    fn from_options(options: &'a CompileOptions) -> Self {
+        let normalization = match options.normalization_analysis {
+            NormalizationAnalysisMode::BeforeExecutionLowering => {
+                NormalizationRecipe::AnalyzeBeforeExecution(
+                    OptimizationPipeline::normalization_analysis_passes(),
+                )
+            }
+            NormalizationAnalysisMode::ExecutionGraph => NormalizationRecipe::AnalyzeExecutionGraph,
+        };
+        Self {
+            normalization,
+            execution_pipeline: &options.pipeline,
+            cache_policy: options.cache_policy,
+        }
+    }
+
+    fn normalization_submodel(execution_pipeline: &'a OptimizationPipeline) -> Self {
+        Self {
+            normalization: NormalizationRecipe::Disabled,
+            execution_pipeline,
+            cache_policy: CachePolicy::EventDependent,
+        }
+    }
+}
+
+struct Compiler<'a> {
+    source_graph: ExprGraph,
+    params: ParamLayout,
+    recipe: CompileRecipe<'a>,
+}
+
+struct PreparedNormalization {
+    execution_input: ExprGraph,
+    plan: PreparedNormalizationPlan,
+}
+
+enum PreparedNormalizationPlan {
+    Ready(NormalizationPlan),
+    AnalyzeExecutionGraph,
+    Disabled,
+}
+
+impl<'a> Compiler<'a> {
+    fn new(source_graph: ExprGraph, recipe: CompileRecipe<'a>) -> CompileResult<Self> {
+        let params = collect_params(&source_graph)?;
+        Ok(Self {
+            source_graph,
+            params,
+            recipe,
+        })
+    }
+
+    fn compile(self) -> CompileResult<CompiledModel> {
+        let Self {
+            source_graph,
+            params,
+            recipe,
+        } = self;
+        let parameter_baked = Self::bake_parameters(&source_graph);
+        let prepared = Self::prepare_normalization(parameter_baked, recipe.normalization)?;
+        let execution_graph =
+            Self::lower_execution(prepared.execution_input, recipe.execution_pipeline)?;
+        let facts = GraphFacts::analyze(&execution_graph);
+        let cache_plan = CachePlan::new(&execution_graph, &facts, recipe.cache_policy);
+        let normalization_plan = match prepared.plan {
+            PreparedNormalizationPlan::Ready(plan) => plan,
+            PreparedNormalizationPlan::AnalyzeExecutionGraph => {
+                NormalizationPlan::analyze(&execution_graph, &facts)
+            }
+            PreparedNormalizationPlan::Disabled => {
+                NormalizationPlan::analyze_disabled(&execution_graph)
+            }
+        };
+        Ok(CompiledModel {
+            source_graph,
+            graph: execution_graph,
+            params,
+            facts,
+            cache_plan,
+            normalization_plan,
+        })
+    }
+
+    fn bake_parameters(source: &ExprGraph) -> ExprGraph {
+        bake_fixed_parameters(source)
+    }
+
+    fn prepare_normalization(
+        parameter_baked: ExprGraph,
+        recipe: NormalizationRecipe,
+    ) -> CompileResult<PreparedNormalization> {
+        match recipe {
+            NormalizationRecipe::AnalyzeBeforeExecution(pipeline) => {
+                let normalization_input = pipeline.run(parameter_baked)?;
+                let facts = GraphFacts::analyze(&normalization_input);
+                let plan = NormalizationPlan::analyze(&normalization_input, &facts);
+                Ok(PreparedNormalization {
+                    execution_input: normalization_input,
+                    plan: PreparedNormalizationPlan::Ready(plan),
+                })
+            }
+            NormalizationRecipe::AnalyzeExecutionGraph => Ok(PreparedNormalization {
+                execution_input: parameter_baked,
+                plan: PreparedNormalizationPlan::AnalyzeExecutionGraph,
+            }),
+            NormalizationRecipe::Disabled => Ok(PreparedNormalization {
+                execution_input: parameter_baked,
+                plan: PreparedNormalizationPlan::Disabled,
+            }),
+        }
+    }
+
+    fn lower_execution(
+        execution_input: ExprGraph,
+        pipeline: &OptimizationPipeline,
+    ) -> CompileResult<ExprGraph> {
+        pipeline.run(execution_input)
     }
 }
 
@@ -388,50 +527,16 @@ impl CompiledModel {
         graph: ExprGraph,
         options: &CompileOptions,
     ) -> CompileResult<Self> {
-        let params = collect_params(&graph)?;
-        let source_graph = graph;
-        let baked = bake_fixed_parameters(&source_graph);
-        let canonical = if options.staged_default_pipeline {
-            OptimizationPipeline::normalization_analysis_passes().run(baked)?
-        } else {
-            baked
-        };
-        let normalization_plan = options.staged_default_pipeline.then(|| {
-            let normalization_facts = GraphFacts::analyze(&canonical);
-            NormalizationPlan::analyze(&canonical, &normalization_facts)
-        });
-        let graph = options.pipeline.run(canonical)?;
-        let facts = GraphFacts::analyze(&graph);
-        let cache_plan = CachePlan::new(&graph, &facts, options.cache_policy);
-        let normalization_plan =
-            normalization_plan.unwrap_or_else(|| NormalizationPlan::analyze(&graph, &facts));
-        Ok(Self {
-            source_graph,
-            graph,
-            params,
-            facts,
-            cache_plan,
-            normalization_plan,
-        })
+        Compiler::new(graph, CompileRecipe::from_options(options))?.compile()
     }
 
     pub(crate) fn from_graph_without_normalization(graph: ExprGraph) -> CompileResult<Self> {
-        let params = collect_params(&graph)?;
-        let source_graph = graph;
-        let graph = OptimizationPipeline::new()
-            .with_pass(CanonicalCsePass)
-            .run(bake_fixed_parameters(&source_graph))?;
-        let facts = GraphFacts::analyze(&graph);
-        let cache_plan = CachePlan::new(&graph, &facts, CachePolicy::EventDependent);
-        let normalization_plan = NormalizationPlan::analyze_disabled(&graph);
-        Ok(Self {
-            source_graph,
+        let execution_pipeline = OptimizationPipeline::new().with_pass(CanonicalCsePass);
+        Compiler::new(
             graph,
-            params,
-            facts,
-            cache_plan,
-            normalization_plan,
-        })
+            CompileRecipe::normalization_submodel(&execution_pipeline),
+        )?
+        .compile()
     }
 
     /// Returns the optimized graph.
@@ -771,6 +876,78 @@ mod tests {
         CompiledModel::from_expr_with_options(expr, &CompileOptions::with_pipeline(pipeline))
             .unwrap()
             .cost()
+    }
+
+    #[test]
+    fn compile_option_constructors_select_explicit_normalization_boundaries() {
+        assert_eq!(
+            CompileOptions::default().normalization_analysis,
+            NormalizationAnalysisMode::BeforeExecutionLowering
+        );
+        assert_eq!(
+            CompileOptions::without_optimizations().normalization_analysis,
+            NormalizationAnalysisMode::ExecutionGraph
+        );
+        assert_eq!(
+            CompileOptions::with_pipeline(OptimizationPipeline::new()).normalization_analysis,
+            NormalizationAnalysisMode::ExecutionGraph
+        );
+    }
+
+    #[test]
+    fn compiler_phase_methods_keep_normalization_and_execution_inputs_distinct() {
+        let source = (Expr::from(Parameter::fixed("scale", 2.0)) * event_scalar("x")).to_graph();
+        let parameter_baked = Compiler::bake_parameters(&source);
+        assert!(
+            !parameter_baked
+                .nodes()
+                .iter()
+                .any(|node| matches!(node, ExprNode::ScalarParam(_)))
+        );
+
+        let prepared = Compiler::prepare_normalization(
+            parameter_baked,
+            NormalizationRecipe::AnalyzeBeforeExecution(OptimizationPipeline::new()),
+        )
+        .unwrap();
+        assert!(matches!(prepared.plan, PreparedNormalizationPlan::Ready(_)));
+        assert!(!matches!(
+            prepared
+                .execution_input
+                .node(prepared.execution_input.root()),
+            Some(ExprNode::Unary {
+                op: UnaryOp::Exp,
+                ..
+            })
+        ));
+
+        let execution_pipeline = OptimizationPipeline::new().with_pass(WrapRootInExp);
+        let execution_graph =
+            Compiler::lower_execution(prepared.execution_input, &execution_pipeline).unwrap();
+        assert!(matches!(
+            execution_graph.node(execution_graph.root()),
+            Some(ExprNode::Unary {
+                op: UnaryOp::Exp,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn normalization_submodel_recipe_disables_analysis_after_execution_lowering() {
+        let source = (event_scalar("x") + event_scalar("x")).to_graph();
+        let compiled = CompiledModel::from_graph_without_normalization(source).unwrap();
+
+        assert!(matches!(
+            compiled.normalization_diagnostics().fallback_reason(),
+            Some(
+                crate::NormalizationFallbackReason::UnsupportedMixedOperation {
+                    operation: "normalization analysis disabled",
+                    ..
+                }
+            )
+        ));
+        assert_eq!(compiled.cache_plan().len(), 1);
     }
 
     #[test]
