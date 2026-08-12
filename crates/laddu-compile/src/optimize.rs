@@ -4245,7 +4245,7 @@ fn compact_visit(
         return new_id;
     }
 
-    for child in child_ids(graph.node(old_id).expect("valid graph")) {
+    for child in graph.node(old_id).expect("valid graph").children() {
         compact_visit(child, graph, old_to_new, nodes, metadata);
     }
 
@@ -4695,167 +4695,9 @@ impl From<UnaryOp> for UnaryKey {
 }
 
 fn remap_node(node: &ExprNode, old_to_new: &[ExprId]) -> ExprNode {
-    match node {
-        ExprNode::RealConst(_)
-        | ExprNode::ComplexConst(_)
-        | ExprNode::ScalarParam(_)
-        | ExprNode::EventScalar(_)
-        | ExprNode::EventP4Component { .. } => node.clone(),
-        ExprNode::Unary { op, input } => ExprNode::Unary {
-            op: *op,
-            input: old_to_new[input.index()],
-        },
-        ExprNode::Binary { op, lhs, rhs } => ExprNode::Binary {
-            op: *op,
-            lhs: old_to_new[lhs.index()],
-            rhs: old_to_new[rhs.index()],
-        },
-        ExprNode::NaryAdd { terms } => ExprNode::NaryAdd {
-            terms: terms.iter().map(|id| old_to_new[id.index()]).collect(),
-        },
-        ExprNode::NaryMul { factors } => ExprNode::NaryMul {
-            factors: factors.iter().map(|id| old_to_new[id.index()]).collect(),
-        },
-        ExprNode::Complex { re, im } => ExprNode::Complex {
-            re: old_to_new[re.index()],
-            im: old_to_new[im.index()],
-        },
-        ExprNode::Vector { elements } => ExprNode::Vector {
-            elements: elements.iter().map(|id| old_to_new[id.index()]).collect(),
-        },
-        ExprNode::Matrix {
-            rows,
-            cols,
-            elements,
-        } => ExprNode::Matrix {
-            rows: *rows,
-            cols: *cols,
-            elements: elements.iter().map(|id| old_to_new[id.index()]).collect(),
-        },
-        ExprNode::Component { input, index } => ExprNode::Component {
-            input: old_to_new[input.index()],
-            index: *index,
-        },
-        ExprNode::MatrixElement { input, row, col } => ExprNode::MatrixElement {
-            input: old_to_new[input.index()],
-            row: *row,
-            col: *col,
-        },
-        ExprNode::MatMul { lhs, rhs } => ExprNode::MatMul {
-            lhs: old_to_new[lhs.index()],
-            rhs: old_to_new[rhs.index()],
-        },
-        ExprNode::MatVec { matrix, vector } => ExprNode::MatVec {
-            matrix: old_to_new[matrix.index()],
-            vector: old_to_new[vector.index()],
-        },
-        ExprNode::Dot { lhs, rhs } => ExprNode::Dot {
-            lhs: old_to_new[lhs.index()],
-            rhs: old_to_new[rhs.index()],
-        },
-        ExprNode::Solve { matrix, rhs } => ExprNode::Solve {
-            matrix: old_to_new[matrix.index()],
-            rhs: old_to_new[rhs.index()],
-        },
-    }
+    node.map_children(|id| old_to_new[id.index()])
 }
 
 fn remap_compacted_node(node: &ExprNode, old_to_new: &[Option<ExprId>]) -> ExprNode {
-    match node {
-        ExprNode::RealConst(_)
-        | ExprNode::ComplexConst(_)
-        | ExprNode::ScalarParam(_)
-        | ExprNode::EventScalar(_)
-        | ExprNode::EventP4Component { .. } => node.clone(),
-        ExprNode::Unary { op, input } => ExprNode::Unary {
-            op: *op,
-            input: old_to_new[input.index()].expect("child was compacted first"),
-        },
-        ExprNode::Binary { op, lhs, rhs } => ExprNode::Binary {
-            op: *op,
-            lhs: old_to_new[lhs.index()].expect("child was compacted first"),
-            rhs: old_to_new[rhs.index()].expect("child was compacted first"),
-        },
-        ExprNode::NaryAdd { terms } => ExprNode::NaryAdd {
-            terms: terms
-                .iter()
-                .map(|id| old_to_new[id.index()].expect("child was compacted first"))
-                .collect(),
-        },
-        ExprNode::NaryMul { factors } => ExprNode::NaryMul {
-            factors: factors
-                .iter()
-                .map(|id| old_to_new[id.index()].expect("child was compacted first"))
-                .collect(),
-        },
-        ExprNode::Complex { re, im } => ExprNode::Complex {
-            re: old_to_new[re.index()].expect("child was compacted first"),
-            im: old_to_new[im.index()].expect("child was compacted first"),
-        },
-        ExprNode::Vector { elements } => ExprNode::Vector {
-            elements: elements
-                .iter()
-                .map(|id| old_to_new[id.index()].expect("child was compacted first"))
-                .collect(),
-        },
-        ExprNode::Matrix {
-            rows,
-            cols,
-            elements,
-        } => ExprNode::Matrix {
-            rows: *rows,
-            cols: *cols,
-            elements: elements
-                .iter()
-                .map(|id| old_to_new[id.index()].expect("child was compacted first"))
-                .collect(),
-        },
-        ExprNode::Component { input, index } => ExprNode::Component {
-            input: old_to_new[input.index()].expect("child was compacted first"),
-            index: *index,
-        },
-        ExprNode::MatrixElement { input, row, col } => ExprNode::MatrixElement {
-            input: old_to_new[input.index()].expect("child was compacted first"),
-            row: *row,
-            col: *col,
-        },
-        ExprNode::MatMul { lhs, rhs } => ExprNode::MatMul {
-            lhs: old_to_new[lhs.index()].expect("child was compacted first"),
-            rhs: old_to_new[rhs.index()].expect("child was compacted first"),
-        },
-        ExprNode::MatVec { matrix, vector } => ExprNode::MatVec {
-            matrix: old_to_new[matrix.index()].expect("child was compacted first"),
-            vector: old_to_new[vector.index()].expect("child was compacted first"),
-        },
-        ExprNode::Dot { lhs, rhs } => ExprNode::Dot {
-            lhs: old_to_new[lhs.index()].expect("child was compacted first"),
-            rhs: old_to_new[rhs.index()].expect("child was compacted first"),
-        },
-        ExprNode::Solve { matrix, rhs } => ExprNode::Solve {
-            matrix: old_to_new[matrix.index()].expect("child was compacted first"),
-            rhs: old_to_new[rhs.index()].expect("child was compacted first"),
-        },
-    }
-}
-
-fn child_ids(node: &ExprNode) -> Vec<ExprId> {
-    match node {
-        ExprNode::RealConst(_)
-        | ExprNode::ComplexConst(_)
-        | ExprNode::ScalarParam(_)
-        | ExprNode::EventScalar(_)
-        | ExprNode::EventP4Component { .. } => Vec::new(),
-        ExprNode::Unary { input, .. }
-        | ExprNode::Component { input, .. }
-        | ExprNode::MatrixElement { input, .. } => vec![*input],
-        ExprNode::Complex { re, im } => vec![*re, *im],
-        ExprNode::NaryAdd { terms } => terms.clone(),
-        ExprNode::NaryMul { factors } => factors.clone(),
-        ExprNode::Binary { lhs, rhs, .. }
-        | ExprNode::MatMul { lhs, rhs }
-        | ExprNode::Dot { lhs, rhs } => vec![*lhs, *rhs],
-        ExprNode::MatVec { matrix, vector } => vec![*matrix, *vector],
-        ExprNode::Solve { matrix, rhs } => vec![*matrix, *rhs],
-        ExprNode::Vector { elements } | ExprNode::Matrix { elements, .. } => elements.clone(),
-    }
+    node.map_children(|id| old_to_new[id.index()].expect("child was compacted first"))
 }

@@ -146,7 +146,7 @@ impl CachePlan {
             if cacheable[index] {
                 continue;
             }
-            for child in node.child_ids() {
+            for child in node.children() {
                 if cacheable[child.index()] {
                     frontier[child.index()] = true;
                 }
@@ -226,7 +226,7 @@ fn mark_cache_requirement(graph: &ExprGraph, id: ExprId, required: &mut [bool]) 
     }
     required[id.index()] = true;
     if let Some(node) = graph.node(id) {
-        for child in node.child_ids() {
+        for child in node.children() {
             mark_cache_requirement(graph, child, required);
         }
     }

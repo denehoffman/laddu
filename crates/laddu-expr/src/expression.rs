@@ -354,26 +354,132 @@ impl ExprNode {
             .is_some_and(|value| value == Complex64::ONE)
     }
 
+    /// Iterates over this node's direct dependencies in semantic operand order.
+    ///
+    /// The iterator borrows the node and does not allocate. Binary operands are
+    /// returned left-to-right, and vector, matrix, sum, and product children
+    /// retain their stored order.
+    pub fn children(&self) -> impl ExactSizeIterator<Item = ExprId> + DoubleEndedIterator + '_ {
+        (0..self.child_count()).map(|index| self.child_at(index))
+    }
+
     /// Returns the identifiers of this node's direct dependencies.
+    ///
+    /// This compatibility helper collects [`Self::children`]. Prefer the
+    /// borrowed iterator when an owned vector is not required.
     pub fn child_ids(&self) -> Vec<ExprId> {
+        self.children().collect()
+    }
+
+    /// Returns a copy of this node with each direct dependency transformed.
+    ///
+    /// Children are passed to `map` in the same semantic order as
+    /// [`Self::children`]. Non-child fields are preserved exactly.
+    pub fn map_children(&self, mut map: impl FnMut(ExprId) -> ExprId) -> Self {
         match self {
             Self::RealConst(_)
             | Self::ComplexConst(_)
             | Self::ScalarParam(_)
             | Self::EventScalar(_)
-            | Self::EventP4Component { .. } => Vec::new(),
+            | Self::EventP4Component { .. } => self.clone(),
+            Self::Unary { op, input } => Self::Unary {
+                op: *op,
+                input: map(*input),
+            },
+            Self::Binary { op, lhs, rhs } => Self::Binary {
+                op: *op,
+                lhs: map(*lhs),
+                rhs: map(*rhs),
+            },
+            Self::NaryAdd { terms } => Self::NaryAdd {
+                terms: terms.iter().copied().map(&mut map).collect(),
+            },
+            Self::NaryMul { factors } => Self::NaryMul {
+                factors: factors.iter().copied().map(&mut map).collect(),
+            },
+            Self::Complex { re, im } => Self::Complex {
+                re: map(*re),
+                im: map(*im),
+            },
+            Self::Vector { elements } => Self::Vector {
+                elements: elements.iter().copied().map(&mut map).collect(),
+            },
+            Self::Matrix {
+                rows,
+                cols,
+                elements,
+            } => Self::Matrix {
+                rows: *rows,
+                cols: *cols,
+                elements: elements.iter().copied().map(&mut map).collect(),
+            },
+            Self::Component { input, index } => Self::Component {
+                input: map(*input),
+                index: *index,
+            },
+            Self::MatrixElement { input, row, col } => Self::MatrixElement {
+                input: map(*input),
+                row: *row,
+                col: *col,
+            },
+            Self::MatMul { lhs, rhs } => Self::MatMul {
+                lhs: map(*lhs),
+                rhs: map(*rhs),
+            },
+            Self::MatVec { matrix, vector } => Self::MatVec {
+                matrix: map(*matrix),
+                vector: map(*vector),
+            },
+            Self::Dot { lhs, rhs } => Self::Dot {
+                lhs: map(*lhs),
+                rhs: map(*rhs),
+            },
+            Self::Solve { matrix, rhs } => Self::Solve {
+                matrix: map(*matrix),
+                rhs: map(*rhs),
+            },
+        }
+    }
+
+    fn child_count(&self) -> usize {
+        match self {
+            Self::RealConst(_)
+            | Self::ComplexConst(_)
+            | Self::ScalarParam(_)
+            | Self::EventScalar(_)
+            | Self::EventP4Component { .. } => 0,
+            Self::Unary { .. } | Self::Component { .. } | Self::MatrixElement { .. } => 1,
+            Self::Binary { .. }
+            | Self::Complex { .. }
+            | Self::MatMul { .. }
+            | Self::MatVec { .. }
+            | Self::Dot { .. }
+            | Self::Solve { .. } => 2,
+            Self::NaryAdd { terms } => terms.len(),
+            Self::NaryMul { factors } => factors.len(),
+            Self::Vector { elements } | Self::Matrix { elements, .. } => elements.len(),
+        }
+    }
+
+    fn child_at(&self, index: usize) -> ExprId {
+        match self {
             Self::Unary { input, .. }
             | Self::Component { input, .. }
-            | Self::MatrixElement { input, .. } => vec![*input],
+            | Self::MatrixElement { input, .. } => *input,
             Self::Binary { lhs, rhs, .. }
             | Self::Complex { re: lhs, im: rhs }
             | Self::MatMul { lhs, rhs }
-            | Self::Dot { lhs, rhs } => vec![*lhs, *rhs],
-            Self::NaryAdd { terms } => terms.clone(),
-            Self::NaryMul { factors } => factors.clone(),
-            Self::Vector { elements } | Self::Matrix { elements, .. } => elements.clone(),
-            Self::MatVec { matrix, vector } => vec![*matrix, *vector],
-            Self::Solve { matrix, rhs } => vec![*matrix, *rhs],
+            | Self::Dot { lhs, rhs } => [*lhs, *rhs][index],
+            Self::MatVec { matrix, vector } => [*matrix, *vector][index],
+            Self::Solve { matrix, rhs } => [*matrix, *rhs][index],
+            Self::NaryAdd { terms } => terms[index],
+            Self::NaryMul { factors } => factors[index],
+            Self::Vector { elements } | Self::Matrix { elements, .. } => elements[index],
+            Self::RealConst(_)
+            | Self::ComplexConst(_)
+            | Self::ScalarParam(_)
+            | Self::EventScalar(_)
+            | Self::EventP4Component { .. } => unreachable!("leaf node has no children"),
         }
     }
 }
@@ -1523,88 +1629,9 @@ impl ExprGraph {
             ExprNode::RealConst(0.0)
         } else {
             let retain_children = retain_all || matches;
-            let map =
-                |id, nodes: &mut Vec<_>, metadata: &mut Vec<_>, remapped: &mut HashMap<_, _>| {
-                    self.project_node(id, tags, retain_children, nodes, metadata, remapped)
-                };
-            match &self.nodes[old.index()] {
-                ExprNode::RealConst(value) => ExprNode::RealConst(*value),
-                ExprNode::ComplexConst(value) => ExprNode::ComplexConst(*value),
-                ExprNode::ScalarParam(value) => ExprNode::ScalarParam(value.clone()),
-                ExprNode::EventScalar(value) => ExprNode::EventScalar(Arc::clone(value)),
-                ExprNode::EventP4Component { name, component } => ExprNode::EventP4Component {
-                    name: Arc::clone(name),
-                    component: *component,
-                },
-                ExprNode::Unary { op, input } => ExprNode::Unary {
-                    op: *op,
-                    input: map(*input, nodes, metadata, remapped),
-                },
-                ExprNode::Binary { op, lhs, rhs } => ExprNode::Binary {
-                    op: *op,
-                    lhs: map(*lhs, nodes, metadata, remapped),
-                    rhs: map(*rhs, nodes, metadata, remapped),
-                },
-                ExprNode::NaryAdd { terms } => ExprNode::NaryAdd {
-                    terms: terms
-                        .iter()
-                        .map(|id| map(*id, nodes, metadata, remapped))
-                        .collect(),
-                },
-                ExprNode::NaryMul { factors } => ExprNode::NaryMul {
-                    factors: factors
-                        .iter()
-                        .map(|id| map(*id, nodes, metadata, remapped))
-                        .collect(),
-                },
-                ExprNode::Complex { re, im } => ExprNode::Complex {
-                    re: map(*re, nodes, metadata, remapped),
-                    im: map(*im, nodes, metadata, remapped),
-                },
-                ExprNode::Vector { elements } => ExprNode::Vector {
-                    elements: elements
-                        .iter()
-                        .map(|id| map(*id, nodes, metadata, remapped))
-                        .collect(),
-                },
-                ExprNode::Matrix {
-                    rows,
-                    cols,
-                    elements,
-                } => ExprNode::Matrix {
-                    rows: *rows,
-                    cols: *cols,
-                    elements: elements
-                        .iter()
-                        .map(|id| map(*id, nodes, metadata, remapped))
-                        .collect(),
-                },
-                ExprNode::Component { input, index } => ExprNode::Component {
-                    input: map(*input, nodes, metadata, remapped),
-                    index: *index,
-                },
-                ExprNode::MatrixElement { input, row, col } => ExprNode::MatrixElement {
-                    input: map(*input, nodes, metadata, remapped),
-                    row: *row,
-                    col: *col,
-                },
-                ExprNode::MatMul { lhs, rhs } => ExprNode::MatMul {
-                    lhs: map(*lhs, nodes, metadata, remapped),
-                    rhs: map(*rhs, nodes, metadata, remapped),
-                },
-                ExprNode::MatVec { matrix, vector } => ExprNode::MatVec {
-                    matrix: map(*matrix, nodes, metadata, remapped),
-                    vector: map(*vector, nodes, metadata, remapped),
-                },
-                ExprNode::Dot { lhs, rhs } => ExprNode::Dot {
-                    lhs: map(*lhs, nodes, metadata, remapped),
-                    rhs: map(*rhs, nodes, metadata, remapped),
-                },
-                ExprNode::Solve { matrix, rhs } => ExprNode::Solve {
-                    matrix: map(*matrix, nodes, metadata, remapped),
-                    rhs: map(*rhs, nodes, metadata, remapped),
-                },
-            }
+            self.nodes[old.index()].map_children(|child| {
+                self.project_node(child, tags, retain_children, nodes, metadata, remapped)
+            })
         };
         let id = ExprId::from_index(nodes.len());
         nodes.push(node);
@@ -1648,7 +1675,7 @@ impl ExprGraph {
             });
         }
         for (index, node) in nodes.iter().enumerate() {
-            for child in node_child_ids(node) {
+            for child in node.children() {
                 if child.index() >= nodes.len() {
                     return Err(ExprGraphError::InvalidChild {
                         node: index,
@@ -1692,53 +1719,35 @@ impl ExprGraph {
 }
 
 pub(crate) fn node_children(node: &ExprNode) -> Vec<(String, ExprId)> {
+    node.children()
+        .enumerate()
+        .map(|(index, child)| (node_child_label(node, index), child))
+        .collect()
+}
+
+fn node_child_label(node: &ExprNode, index: usize) -> String {
     match node {
+        ExprNode::Unary { .. } | ExprNode::Component { .. } | ExprNode::MatrixElement { .. } => {
+            "input".into()
+        }
+        ExprNode::Binary { .. } | ExprNode::MatMul { .. } | ExprNode::Dot { .. } => {
+            if index == 0 { "lhs" } else { "rhs" }.into()
+        }
+        ExprNode::NaryAdd { .. } => format!("term[{index}]"),
+        ExprNode::NaryMul { .. } => format!("factor[{index}]"),
+        ExprNode::Complex { .. } => if index == 0 { "re" } else { "im" }.into(),
+        ExprNode::Vector { .. } => format!("element[{index}]"),
+        ExprNode::Matrix { cols, .. } => {
+            format!("element[{},{}]", index / cols, index % cols)
+        }
+        ExprNode::MatVec { .. } => if index == 0 { "matrix" } else { "vector" }.into(),
+        ExprNode::Solve { .. } => if index == 0 { "matrix" } else { "rhs" }.into(),
         ExprNode::RealConst(_)
         | ExprNode::ComplexConst(_)
         | ExprNode::ScalarParam(_)
         | ExprNode::EventScalar(_)
-        | ExprNode::EventP4Component { .. } => Vec::new(),
-        ExprNode::Unary { input, .. } => vec![("input".into(), *input)],
-        ExprNode::Binary { lhs, rhs, .. } => vec![("lhs".into(), *lhs), ("rhs".into(), *rhs)],
-        ExprNode::NaryAdd { terms } => terms
-            .iter()
-            .enumerate()
-            .map(|(index, id)| (format!("term[{index}]"), *id))
-            .collect(),
-        ExprNode::NaryMul { factors } => factors
-            .iter()
-            .enumerate()
-            .map(|(index, id)| (format!("factor[{index}]"), *id))
-            .collect(),
-        ExprNode::Complex { re, im } => vec![("re".into(), *re), ("im".into(), *im)],
-        ExprNode::Vector { elements } => elements
-            .iter()
-            .enumerate()
-            .map(|(index, id)| (format!("element[{index}]"), *id))
-            .collect(),
-        ExprNode::Matrix { cols, elements, .. } => elements
-            .iter()
-            .enumerate()
-            .map(|(index, id)| (format!("element[{},{}]", index / cols, index % cols), *id))
-            .collect(),
-        ExprNode::Component { input, .. } | ExprNode::MatrixElement { input, .. } => {
-            vec![("input".into(), *input)]
-        }
-        ExprNode::MatMul { lhs, rhs } | ExprNode::Dot { lhs, rhs } => {
-            vec![("lhs".into(), *lhs), ("rhs".into(), *rhs)]
-        }
-        ExprNode::MatVec { matrix, vector } => {
-            vec![("matrix".into(), *matrix), ("vector".into(), *vector)]
-        }
-        ExprNode::Solve { matrix, rhs } => vec![("matrix".into(), *matrix), ("rhs".into(), *rhs)],
+        | ExprNode::EventP4Component { .. } => unreachable!("leaf nodes have no child labels"),
     }
-}
-
-fn node_child_ids(node: &ExprNode) -> Vec<ExprId> {
-    node_children(node)
-        .into_iter()
-        .map(|(_, child)| child)
-        .collect()
 }
 
 #[derive(Default)]
