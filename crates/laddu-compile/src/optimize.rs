@@ -5,8 +5,8 @@ use std::{
 };
 
 use laddu_expr::{
-    BinaryOp, ExprGraph, ExprId, ExprMetadata, ExprNode, ExprNodeSemantics, ExprNodeStructuralKey,
-    ExprSourceKind, UnaryOp, ValueKind,
+    BinaryOp, ExprGraph, ExprGraphRebuilder, ExprId, ExprMetadata, ExprNode, ExprNodeSemantics,
+    ExprNodeStructuralKey, ExprSourceKind, UnaryOp, ValueKind,
 };
 use num::complex::Complex64;
 
@@ -14,6 +14,7 @@ use crate::{
     CompileResult,
     cost::OptimizationCost,
     facts::{NodeFacts, NumberClass},
+    graph_utils::compact_to_root,
 };
 
 const DEFAULT_MAX_ITERATIONS: usize = 16;
@@ -270,7 +271,7 @@ impl OptimizationPass for CanonicalCsePass {
                 .expect("graph metadata length is validated")
                 .clone();
             let new_id = emit_canonical_node(
-                remap_node(node, &old_to_new),
+                node.map_children(|id| old_to_new[id.index()]),
                 node_metadata,
                 &mut nodes,
                 &mut metadata,
@@ -280,7 +281,8 @@ impl OptimizationPass for CanonicalCsePass {
         }
 
         let root = old_to_new[graph.root().index()];
-        compact_graph(ExprGraph::from_parts(root, nodes, metadata)?)
+        let graph = ExprGraph::from_parts(root, nodes, metadata)?;
+        compact_to_root(&graph, root)
     }
 }
 
@@ -368,7 +370,8 @@ impl OptimizationPass for RewritePass {
 
     fn run(&self, graph: ExprGraph) -> CompileResult<ExprGraph> {
         let rewritten = RewriteBuilder::new(&self.rules).rewrite(graph)?;
-        compact_graph(rewritten)
+        let root = rewritten.root();
+        compact_to_root(&rewritten, root)
     }
 }
 
@@ -450,7 +453,8 @@ impl<'a> RewriteContext<'a> {
         let mut metadata_nodes = self.metadata.to_vec();
         nodes.push(node);
         metadata_nodes.push(metadata);
-        let graph = compact_graph(ExprGraph::from_parts(root, nodes, metadata_nodes)?)?;
+        let graph = ExprGraph::from_parts(root, nodes, metadata_nodes)?;
+        let graph = compact_to_root(&graph, root)?;
         Ok(OptimizationCost::analyze(&graph))
     }
 
@@ -463,7 +467,8 @@ impl<'a> RewriteContext<'a> {
         let mut metadata = self.metadata.to_vec();
         nodes.extend(fragment.iter().map(|(node, _)| node.clone()));
         metadata.extend(fragment.iter().map(|(_, metadata)| metadata.clone()));
-        let graph = compact_graph(ExprGraph::from_parts(root, nodes, metadata)?)?;
+        let graph = ExprGraph::from_parts(root, nodes, metadata)?;
+        let graph = compact_to_root(&graph, root)?;
         Ok(OptimizationCost::analyze(&graph))
     }
 
@@ -4136,22 +4141,24 @@ impl<'a> RewriteBuilder<'a> {
     }
 
     fn rewrite(&self, graph: ExprGraph) -> CompileResult<ExprGraph> {
-        let mut nodes = Vec::with_capacity(graph.nodes().len());
-        let mut metadata = Vec::with_capacity(graph.nodes().len());
+        let mut rebuild = ExprGraphRebuilder::with_capacity(graph.nodes().len());
         let mut facts = Vec::with_capacity(graph.nodes().len());
         let mut semantics = Vec::with_capacity(graph.nodes().len());
-        let mut old_to_new = Vec::with_capacity(graph.nodes().len());
 
         for (old_index, node) in graph.nodes().iter().enumerate() {
-            let node = remap_node(node, &old_to_new);
             let old_id = ExprId::from_index(old_index);
+            let node = node.map_children(|child| {
+                rebuild
+                    .remapped(&child)
+                    .expect("validated graph children precede their parents")
+            });
             let metadata_for_node = graph
                 .metadata(old_id)
                 .expect("graph metadata length is validated")
                 .clone();
             let context = RewriteContext {
-                nodes: &nodes,
-                metadata: &metadata,
+                nodes: rebuild.nodes(),
+                metadata: rebuild.metadata(),
                 facts: &facts,
             };
 
@@ -4167,8 +4174,7 @@ impl<'a> RewriteBuilder<'a> {
                 Rewrite::Keep => push_node(
                     node,
                     metadata_for_node,
-                    &mut nodes,
-                    &mut metadata,
+                    &mut rebuild,
                     &mut facts,
                     &mut semantics,
                 ),
@@ -4179,8 +4185,7 @@ impl<'a> RewriteBuilder<'a> {
                 } => push_node(
                     node,
                     replacement_metadata,
-                    &mut nodes,
-                    &mut metadata,
+                    &mut rebuild,
                     &mut facts,
                     &mut semantics,
                 ),
@@ -4192,8 +4197,7 @@ impl<'a> RewriteBuilder<'a> {
                         root = Some(push_node(
                             node,
                             replacement_metadata,
-                            &mut nodes,
-                            &mut metadata,
+                            &mut rebuild,
                             &mut facts,
                             &mut semantics,
                         ));
@@ -4201,49 +4205,30 @@ impl<'a> RewriteBuilder<'a> {
                     root.expect("replacement fragment must contain at least one node")
                 }
             };
-            old_to_new.push(new_id);
+            rebuild.alias(old_id, new_id);
         }
 
-        let root = old_to_new[graph.root().index()];
-        Ok(ExprGraph::from_parts(root, nodes, metadata)?)
+        let root = rebuild
+            .remapped(&graph.root())
+            .expect("the rebuilt graph includes its root");
+        Ok(rebuild.finish(root)?)
     }
 }
 
 fn push_node(
     node: ExprNode,
     node_metadata: ExprMetadata,
-    nodes: &mut Vec<ExprNode>,
-    metadata: &mut Vec<ExprMetadata>,
+    rebuild: &mut ExprGraphRebuilder<ExprId>,
     facts: &mut Vec<NodeFacts>,
     semantics: &mut Vec<ExprNodeSemantics>,
 ) -> ExprId {
-    let id = ExprId::from_index(nodes.len());
+    let id = ExprId::from_index(rebuild.nodes().len());
     let node_semantics = node.semantics(semantics);
     facts.push(NodeFacts::for_node(&node, facts, node_semantics));
     semantics.push(node_semantics);
-    nodes.push(node);
-    metadata.push(node_metadata);
-    id
-}
-
-fn compact_graph(graph: ExprGraph) -> CompileResult<ExprGraph> {
-    let mut old_to_new = vec![None; graph.nodes().len()];
-    let mut nodes = Vec::new();
-    let mut metadata = Vec::new();
-    for old_id in graph.reachable_post_order([graph.root()]) {
-        let node = remap_compacted_node(graph.node(old_id).expect("valid graph"), &old_to_new);
-        let new_id = ExprId::from_index(nodes.len());
-        nodes.push(node);
-        metadata.push(
-            graph
-                .metadata(old_id)
-                .expect("graph metadata length is validated")
-                .clone(),
-        );
-        old_to_new[old_id.index()] = Some(new_id);
-    }
-    let root = old_to_new[graph.root().index()].expect("the compacted graph includes its root");
-    Ok(ExprGraph::from_parts(root, nodes, metadata)?)
+    let emitted = rebuild.emit_anonymous(node, node_metadata);
+    debug_assert_eq!(id, emitted);
+    emitted
 }
 
 fn alias_or_preserve(
@@ -4433,12 +4418,4 @@ fn canonicalize_node(node: ExprNode) -> ExprNode {
         },
         node => node,
     }
-}
-
-fn remap_node(node: &ExprNode, old_to_new: &[ExprId]) -> ExprNode {
-    node.map_children(|id| old_to_new[id.index()])
-}
-
-fn remap_compacted_node(node: &ExprNode, old_to_new: &[Option<ExprId>]) -> ExprNode {
-    node.map_children(|id| old_to_new[id.index()].expect("child was compacted first"))
 }

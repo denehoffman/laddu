@@ -3,7 +3,7 @@ use laddu_expr::{
 };
 use num::complex::Complex64;
 
-use crate::{CompileError, CompileResult, CompiledModel, GraphFacts};
+use crate::{CompileError, CompileResult, CompiledModel, GraphFacts, graph_utils::compact_to_root};
 
 const DEFAULT_EXPANSION_BUDGET: usize = 4_096;
 
@@ -196,10 +196,10 @@ impl NormalizationPlan {
         self.terms
             .iter()
             .map(|term| {
-                CompiledModel::from_graph_without_normalization(compact_root(
+                CompiledModel::from_graph_without_normalization(compact_to_root(
                     &self.graph,
                     term.basis,
-                ))
+                )?)
             })
             .collect()
     }
@@ -253,7 +253,7 @@ impl NormalizationPlan {
             ExprSourceKind::Unary,
         );
         let graph = ExprGraph::from_parts(root, nodes, metadata)?;
-        CompiledModel::from_graph_without_normalization(compact_root(&graph, root))
+        CompiledModel::from_graph_without_normalization(compact_to_root(&graph, root)?)
     }
 
     /// Builds the nonseparable residual model, when present.
@@ -264,7 +264,7 @@ impl NormalizationPlan {
     pub fn residual_model(&self) -> CompileResult<Option<CompiledModel>> {
         self.residual
             .map(|root| {
-                CompiledModel::from_graph_without_normalization(compact_root(&self.graph, root))
+                CompiledModel::from_graph_without_normalization(compact_to_root(&self.graph, root)?)
             })
             .transpose()
     }
@@ -671,40 +671,6 @@ fn push_node(
     nodes.push(node);
     metadata.push(ExprMetadata::new(source));
     id
-}
-
-fn compact_root(graph: &ExprGraph, root: ExprId) -> ExprGraph {
-    let mut required = vec![false; graph.nodes().len()];
-    for id in graph.reachable_post_order([root]) {
-        required[id.index()] = true;
-    }
-    let mut remap = vec![None; graph.nodes().len()];
-    let mut nodes = Vec::new();
-    let mut metadata = Vec::new();
-    for (index, node) in graph.nodes().iter().enumerate() {
-        if !required[index] {
-            continue;
-        }
-        let id = ExprId::from_index(nodes.len());
-        remap[index] = Some(id);
-        nodes.push(remap_node(node, &remap));
-        metadata.push(
-            graph
-                .metadata(ExprId::from_index(index))
-                .expect("normalization graph metadata is complete")
-                .clone(),
-        );
-    }
-    ExprGraph::from_parts(
-        remap[root.index()].expect("normalization root is required"),
-        nodes,
-        metadata,
-    )
-    .expect("compacted normalization graph is valid")
-}
-
-fn remap_node(node: &ExprNode, remap: &[Option<ExprId>]) -> ExprNode {
-    node.map_children(|id| remap[id.index()].expect("children precede normalization nodes"))
 }
 
 #[cfg(test)]
