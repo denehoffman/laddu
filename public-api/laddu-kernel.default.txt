@@ -1,5 +1,18 @@
 pub mod laddu_kernel
 pub mod laddu_kernel::ir
+pub enum laddu_kernel::ir::KernelEventDependence
+pub laddu_kernel::ir::KernelEventDependence::Event
+pub laddu_kernel::ir::KernelEventDependence::Invariant
+pub laddu_kernel::ir::KernelEventDependence::Operands
+impl core::clone::Clone for laddu_kernel::ir::KernelEventDependence
+pub fn laddu_kernel::ir::KernelEventDependence::clone(&self) -> laddu_kernel::ir::KernelEventDependence
+impl core::cmp::Eq for laddu_kernel::ir::KernelEventDependence
+impl core::cmp::PartialEq for laddu_kernel::ir::KernelEventDependence
+pub fn laddu_kernel::ir::KernelEventDependence::eq(&self, &laddu_kernel::ir::KernelEventDependence) -> bool
+impl core::fmt::Debug for laddu_kernel::ir::KernelEventDependence
+pub fn laddu_kernel::ir::KernelEventDependence::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for laddu_kernel::ir::KernelEventDependence
+impl core::marker::StructuralPartialEq for laddu_kernel::ir::KernelEventDependence
 pub enum laddu_kernel::ir::KernelInstruction
 pub laddu_kernel::ir::KernelInstruction::Add(alloc::vec::Vec<laddu_kernel::ir::KernelValueId>)
 pub laddu_kernel::ir::KernelInstruction::Binary
@@ -50,6 +63,8 @@ pub laddu_kernel::ir::KernelInstruction::Unary::input: laddu_kernel::ir::KernelV
 pub laddu_kernel::ir::KernelInstruction::Unary::op: laddu_expr::expression::UnaryOp
 pub laddu_kernel::ir::KernelInstruction::Vector(alloc::vec::Vec<laddu_kernel::ir::KernelValueId>)
 impl laddu_kernel::ir::KernelInstruction
+pub fn laddu_kernel::ir::KernelInstruction::diagnostic_name(&self) -> &'static str
+pub fn laddu_kernel::ir::KernelInstruction::event_dependence(&self) -> laddu_kernel::ir::KernelEventDependence
 pub fn laddu_kernel::ir::KernelInstruction::operands(&self) -> alloc::vec::Vec<laddu_kernel::ir::KernelValueId>
 impl core::clone::Clone for laddu_kernel::ir::KernelInstruction
 pub fn laddu_kernel::ir::KernelInstruction::clone(&self) -> laddu_kernel::ir::KernelInstruction
