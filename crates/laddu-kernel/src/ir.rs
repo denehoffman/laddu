@@ -765,6 +765,535 @@ impl KernelIrBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use laddu_expr::parameters::{ParamLayout, Parameter};
+
+    fn id(index: usize) -> KernelValueId {
+        KernelValueId::from_index(index)
+    }
+
+    fn value(
+        kind: KernelValueKind,
+        class: KernelValueClass,
+        instruction: KernelInstruction,
+    ) -> KernelValue {
+        KernelValue {
+            kind,
+            class,
+            instruction,
+        }
+    }
+
+    fn inference_inputs() -> Vec<KernelValue> {
+        vec![
+            value(
+                KernelValueKind::Real,
+                KernelValueClass::Invariant,
+                KernelInstruction::RealConstant(1.0),
+            ),
+            value(
+                KernelValueKind::Complex,
+                KernelValueClass::Invariant,
+                KernelInstruction::ComplexConstant(Complex64::new(1.0, 1.0)),
+            ),
+            value(
+                KernelValueKind::Real,
+                KernelValueClass::Event,
+                KernelInstruction::Cached(0),
+            ),
+            value(
+                KernelValueKind::Vector { len: 2 },
+                KernelValueClass::Invariant,
+                KernelInstruction::Vector(vec![id(0), id(1)]),
+            ),
+            value(
+                KernelValueKind::Matrix { rows: 2, cols: 2 },
+                KernelValueClass::Invariant,
+                KernelInstruction::Matrix {
+                    rows: 2,
+                    cols: 2,
+                    elements: vec![id(0), id(1), id(1), id(0)],
+                },
+            ),
+            value(
+                KernelValueKind::Vector { len: 2 },
+                KernelValueClass::Event,
+                KernelInstruction::Vector(vec![id(2), id(1)]),
+            ),
+            value(
+                KernelValueKind::Matrix { rows: 2, cols: 2 },
+                KernelValueClass::Event,
+                KernelInstruction::Matrix {
+                    rows: 2,
+                    cols: 2,
+                    elements: vec![id(2), id(1), id(1), id(0)],
+                },
+            ),
+        ]
+    }
+
+    fn assert_inference(
+        instruction: KernelInstruction,
+        expected_kind: Option<KernelValueKind>,
+        expected_class: KernelValueClass,
+    ) {
+        let values = inference_inputs();
+        assert_eq!(
+            instruction.expected_kind(&values, values.len()).unwrap(),
+            expected_kind
+        );
+        assert_eq!(instruction.expected_class(&values), expected_class);
+    }
+
+    fn assert_shape_error(instruction: KernelInstruction, operation: &'static str) {
+        let values = inference_inputs();
+        assert!(matches!(
+            instruction.expected_kind(&values, values.len()),
+            Err(KernelIrError::InvalidShape {
+                value: 7,
+                operation: actual,
+                ..
+            }) if actual == operation
+        ));
+    }
+
+    #[test]
+    fn operand_discovery_is_complete_and_ordered() {
+        let parameter = ParamLayout::new([Parameter::free("p")])
+            .unwrap()
+            .id("p")
+            .unwrap();
+        let cases = [
+            (KernelInstruction::Cached(0), vec![]),
+            (KernelInstruction::RealConstant(1.0), vec![]),
+            (
+                KernelInstruction::ComplexConstant(Complex64::new(1.0, 2.0)),
+                vec![],
+            ),
+            (KernelInstruction::Parameter(parameter), vec![]),
+            (
+                KernelInstruction::Unary {
+                    op: UnaryOp::Neg,
+                    input: id(0),
+                },
+                vec![id(0)],
+            ),
+            (
+                KernelInstruction::Binary {
+                    op: BinaryOp::Add,
+                    lhs: id(0),
+                    rhs: id(1),
+                },
+                vec![id(0), id(1)],
+            ),
+            (
+                KernelInstruction::Add(vec![id(2), id(0)]),
+                vec![id(2), id(0)],
+            ),
+            (
+                KernelInstruction::Mul(vec![id(1), id(2)]),
+                vec![id(1), id(2)],
+            ),
+            (
+                KernelInstruction::Complex {
+                    re: id(0),
+                    im: id(1),
+                },
+                vec![id(0), id(1)],
+            ),
+            (
+                KernelInstruction::Vector(vec![id(1), id(0)]),
+                vec![id(1), id(0)],
+            ),
+            (
+                KernelInstruction::Matrix {
+                    rows: 1,
+                    cols: 2,
+                    elements: vec![id(0), id(1)],
+                },
+                vec![id(0), id(1)],
+            ),
+            (
+                KernelInstruction::Component {
+                    input: id(3),
+                    index: 0,
+                },
+                vec![id(3)],
+            ),
+            (
+                KernelInstruction::MatrixElement {
+                    input: id(4),
+                    row: 0,
+                    col: 1,
+                },
+                vec![id(4)],
+            ),
+            (
+                KernelInstruction::MatMul {
+                    lhs: id(4),
+                    rhs: id(6),
+                },
+                vec![id(4), id(6)],
+            ),
+            (
+                KernelInstruction::MatVec {
+                    matrix: id(4),
+                    vector: id(5),
+                },
+                vec![id(4), id(5)],
+            ),
+            (
+                KernelInstruction::Dot {
+                    lhs: id(3),
+                    rhs: id(5),
+                },
+                vec![id(3), id(5)],
+            ),
+            (
+                KernelInstruction::Solve {
+                    matrix: id(4),
+                    rhs: id(5),
+                },
+                vec![id(4), id(5)],
+            ),
+            (
+                KernelInstruction::SolveRow {
+                    row_slot: 0,
+                    rhs: vec![id(1), id(0)],
+                },
+                vec![id(1), id(0)],
+            ),
+            (
+                KernelInstruction::SolveRowAdjointElement {
+                    row_slot: 0,
+                    index: 0,
+                    len: 2,
+                    adjoint: id(1),
+                },
+                vec![id(1)],
+            ),
+        ];
+
+        for (instruction, expected) in cases {
+            assert_eq!(instruction.operands(), expected);
+        }
+    }
+
+    #[test]
+    fn scalar_kind_inference_and_promotion_are_characterized() {
+        let invariant = KernelValueClass::Invariant;
+        for (instruction, expected) in [
+            (
+                KernelInstruction::Unary {
+                    op: UnaryOp::Neg,
+                    input: id(0),
+                },
+                KernelValueKind::Real,
+            ),
+            (
+                KernelInstruction::Unary {
+                    op: UnaryOp::Neg,
+                    input: id(1),
+                },
+                KernelValueKind::Complex,
+            ),
+            (
+                KernelInstruction::Unary {
+                    op: UnaryOp::NormSqr,
+                    input: id(1),
+                },
+                KernelValueKind::Real,
+            ),
+            (
+                KernelInstruction::Binary {
+                    op: BinaryOp::Add,
+                    lhs: id(0),
+                    rhs: id(0),
+                },
+                KernelValueKind::Real,
+            ),
+            (
+                KernelInstruction::Binary {
+                    op: BinaryOp::Mul,
+                    lhs: id(0),
+                    rhs: id(1),
+                },
+                KernelValueKind::Complex,
+            ),
+            (
+                KernelInstruction::Binary {
+                    op: BinaryOp::Atan2,
+                    lhs: id(0),
+                    rhs: id(0),
+                },
+                KernelValueKind::Real,
+            ),
+            (
+                KernelInstruction::Add(vec![id(0), id(1)]),
+                KernelValueKind::Complex,
+            ),
+            (
+                KernelInstruction::Mul(vec![id(0), id(0)]),
+                KernelValueKind::Real,
+            ),
+        ] {
+            assert_inference(instruction, Some(expected), invariant);
+        }
+
+        assert_shape_error(
+            KernelInstruction::Unary {
+                op: UnaryOp::Neg,
+                input: id(3),
+            },
+            "unary operation",
+        );
+        assert_shape_error(
+            KernelInstruction::Binary {
+                op: BinaryOp::Atan2,
+                lhs: id(0),
+                rhs: id(1),
+            },
+            "atan2",
+        );
+        assert_shape_error(KernelInstruction::Add(vec![id(0), id(3)]), "addition");
+
+        let values = inference_inputs();
+        for (instruction, operation) in [
+            (KernelInstruction::Add(vec![]), "addition"),
+            (KernelInstruction::Mul(vec![]), "multiplication"),
+        ] {
+            assert_eq!(
+                instruction.expected_kind(&values, values.len()),
+                Err(KernelIrError::EmptyOperands {
+                    value: 7,
+                    operation,
+                })
+            );
+        }
+    }
+
+    #[test]
+    fn constants_construction_and_event_class_are_characterized() {
+        assert_inference(
+            KernelInstruction::ComplexConstant(Complex64::new(2.0, 0.0)),
+            Some(KernelValueKind::Real),
+            KernelValueClass::Invariant,
+        );
+        assert_inference(
+            KernelInstruction::ComplexConstant(Complex64::new(2.0, -0.5)),
+            Some(KernelValueKind::Complex),
+            KernelValueClass::Invariant,
+        );
+        assert_inference(KernelInstruction::Cached(3), None, KernelValueClass::Event);
+        assert_inference(
+            KernelInstruction::Complex {
+                re: id(0),
+                im: id(0),
+            },
+            Some(KernelValueKind::Complex),
+            KernelValueClass::Invariant,
+        );
+        assert_shape_error(
+            KernelInstruction::Complex {
+                re: id(1),
+                im: id(0),
+            },
+            "complex construction",
+        );
+
+        for instruction in [
+            KernelInstruction::Unary {
+                op: UnaryOp::Sin,
+                input: id(2),
+            },
+            KernelInstruction::Add(vec![id(0), id(2)]),
+            KernelInstruction::Vector(vec![id(0), id(2)]),
+        ] {
+            assert_eq!(
+                instruction.expected_class(&inference_inputs()),
+                KernelValueClass::Event
+            );
+        }
+        assert_inference(
+            KernelInstruction::SolveRow {
+                row_slot: 0,
+                rhs: vec![id(0)],
+            },
+            Some(KernelValueKind::Complex),
+            KernelValueClass::Event,
+        );
+        assert_inference(
+            KernelInstruction::SolveRowAdjointElement {
+                row_slot: 0,
+                index: 0,
+                len: 1,
+                adjoint: id(0),
+            },
+            Some(KernelValueKind::Complex),
+            KernelValueClass::Event,
+        );
+    }
+
+    #[test]
+    fn vector_matrix_shapes_and_indices_are_characterized() {
+        assert_inference(
+            KernelInstruction::Vector(vec![]),
+            Some(KernelValueKind::Vector { len: 0 }),
+            KernelValueClass::Invariant,
+        );
+        assert_inference(
+            KernelInstruction::Matrix {
+                rows: 1,
+                cols: 2,
+                elements: vec![id(0), id(1)],
+            },
+            Some(KernelValueKind::Matrix { rows: 1, cols: 2 }),
+            KernelValueClass::Invariant,
+        );
+        assert_inference(
+            KernelInstruction::Component {
+                input: id(3),
+                index: 1,
+            },
+            Some(KernelValueKind::Complex),
+            KernelValueClass::Invariant,
+        );
+        assert_inference(
+            KernelInstruction::MatrixElement {
+                input: id(4),
+                row: 1,
+                col: 1,
+            },
+            Some(KernelValueKind::Complex),
+            KernelValueClass::Invariant,
+        );
+
+        assert_shape_error(
+            KernelInstruction::Vector(vec![id(3)]),
+            "vector construction",
+        );
+        assert_shape_error(
+            KernelInstruction::Matrix {
+                rows: 2,
+                cols: 2,
+                elements: vec![id(0)],
+            },
+            "matrix construction",
+        );
+        assert_shape_error(
+            KernelInstruction::Component {
+                input: id(3),
+                index: 2,
+            },
+            "component",
+        );
+        assert_shape_error(
+            KernelInstruction::MatrixElement {
+                input: id(4),
+                row: 2,
+                col: 0,
+            },
+            "matrix element",
+        );
+    }
+
+    #[test]
+    fn linear_algebra_compatibility_is_characterized() {
+        let invariant = KernelValueClass::Invariant;
+        assert_inference(
+            KernelInstruction::MatMul {
+                lhs: id(4),
+                rhs: id(4),
+            },
+            Some(KernelValueKind::Matrix { rows: 2, cols: 2 }),
+            invariant,
+        );
+        assert_inference(
+            KernelInstruction::MatVec {
+                matrix: id(4),
+                vector: id(3),
+            },
+            Some(KernelValueKind::Vector { len: 2 }),
+            invariant,
+        );
+        assert_inference(
+            KernelInstruction::Dot {
+                lhs: id(3),
+                rhs: id(3),
+            },
+            Some(KernelValueKind::Complex),
+            invariant,
+        );
+        assert_inference(
+            KernelInstruction::Solve {
+                matrix: id(4),
+                rhs: id(3),
+            },
+            Some(KernelValueKind::Vector { len: 2 }),
+            invariant,
+        );
+
+        for (instruction, operation) in [
+            (
+                KernelInstruction::MatMul {
+                    lhs: id(4),
+                    rhs: id(3),
+                },
+                "matrix multiplication",
+            ),
+            (
+                KernelInstruction::MatVec {
+                    matrix: id(4),
+                    vector: id(0),
+                },
+                "matrix-vector multiplication",
+            ),
+            (
+                KernelInstruction::Dot {
+                    lhs: id(3),
+                    rhs: id(0),
+                },
+                "dot product",
+            ),
+            (
+                KernelInstruction::Solve {
+                    matrix: id(3),
+                    rhs: id(3),
+                },
+                "linear solve",
+            ),
+        ] {
+            assert_shape_error(instruction, operation);
+        }
+    }
+
+    #[test]
+    fn specialized_solve_shape_errors_are_structured() {
+        assert_shape_error(
+            KernelInstruction::SolveRow {
+                row_slot: 0,
+                rhs: vec![],
+            },
+            "specialized solve row",
+        );
+        assert_shape_error(
+            KernelInstruction::SolveRow {
+                row_slot: 0,
+                rhs: vec![id(3)],
+            },
+            "specialized solve row",
+        );
+        for (index, len, adjoint) in [(0, 0, id(0)), (2, 2, id(0)), (0, 1, id(3))] {
+            assert_shape_error(
+                KernelInstruction::SolveRowAdjointElement {
+                    row_slot: 0,
+                    index,
+                    len,
+                    adjoint,
+                },
+                "specialized solve-row adjoint",
+            );
+        }
+    }
 
     #[test]
     fn validates_aggregate_operations() {
