@@ -5,9 +5,8 @@ use std::{
 };
 
 use laddu_expr::{
-    BinaryOp, ExprGraph, ExprId, ExprMetadata, ExprNode, ExprSourceKind, P4Component, UnaryOp,
-    ValueKind,
-    parameters::{InitialSpec, ParamState, Parameter},
+    BinaryOp, ExprGraph, ExprId, ExprMetadata, ExprNode, ExprNodeSemantics, ExprNodeStructuralKey,
+    ExprSourceKind, UnaryOp, ValueKind,
 };
 use num::complex::Complex64;
 
@@ -163,7 +162,7 @@ fn graph_fingerprint(graph: &ExprGraph) -> u64 {
     graph.root().index().hash(&mut hasher);
     graph.nodes().len().hash(&mut hasher);
     for node in graph.nodes() {
-        format!("{node:?}").hash(&mut hasher);
+        node.structural_key().hash(&mut hasher);
     }
     hasher.finish()
 }
@@ -4140,6 +4139,7 @@ impl<'a> RewriteBuilder<'a> {
         let mut nodes = Vec::with_capacity(graph.nodes().len());
         let mut metadata = Vec::with_capacity(graph.nodes().len());
         let mut facts = Vec::with_capacity(graph.nodes().len());
+        let mut semantics = Vec::with_capacity(graph.nodes().len());
         let mut old_to_new = Vec::with_capacity(graph.nodes().len());
 
         for (old_index, node) in graph.nodes().iter().enumerate() {
@@ -4170,6 +4170,7 @@ impl<'a> RewriteBuilder<'a> {
                     &mut nodes,
                     &mut metadata,
                     &mut facts,
+                    &mut semantics,
                 ),
                 Rewrite::Alias(id) => id,
                 Rewrite::Replace {
@@ -4181,6 +4182,7 @@ impl<'a> RewriteBuilder<'a> {
                     &mut nodes,
                     &mut metadata,
                     &mut facts,
+                    &mut semantics,
                 ),
                 Rewrite::ReplaceMany {
                     nodes: replacement_nodes,
@@ -4193,6 +4195,7 @@ impl<'a> RewriteBuilder<'a> {
                             &mut nodes,
                             &mut metadata,
                             &mut facts,
+                            &mut semantics,
                         ));
                     }
                     root.expect("replacement fragment must contain at least one node")
@@ -4212,9 +4215,12 @@ fn push_node(
     nodes: &mut Vec<ExprNode>,
     metadata: &mut Vec<ExprMetadata>,
     facts: &mut Vec<NodeFacts>,
+    semantics: &mut Vec<ExprNodeSemantics>,
 ) -> ExprId {
     let id = ExprId::from_index(nodes.len());
-    facts.push(NodeFacts::for_node(&node, facts));
+    let node_semantics = node.semantics(semantics);
+    facts.push(NodeFacts::for_node(&node, facts, node_semantics));
+    semantics.push(node_semantics);
     nodes.push(node);
     metadata.push(node_metadata);
     id
@@ -4276,7 +4282,7 @@ fn emit_canonical_node(
     node_metadata: ExprMetadata,
     nodes: &mut Vec<ExprNode>,
     metadata: &mut Vec<ExprMetadata>,
-    keys: &mut HashMap<StructuralKey, ExprId>,
+    keys: &mut HashMap<ExprNodeStructuralKey, ExprId>,
 ) -> ExprId {
     match node {
         ExprNode::Binary {
@@ -4305,7 +4311,7 @@ fn emit_canonical_associative(
     node_metadata: ExprMetadata,
     nodes: &mut Vec<ExprNode>,
     metadata: &mut Vec<ExprMetadata>,
-    keys: &mut HashMap<StructuralKey, ExprId>,
+    keys: &mut HashMap<ExprNodeStructuralKey, ExprId>,
 ) -> ExprId {
     let mut flattened = Vec::new();
     for operand in operands {
@@ -4352,10 +4358,10 @@ fn intern_canonical_node(
     node_metadata: ExprMetadata,
     nodes: &mut Vec<ExprNode>,
     metadata: &mut Vec<ExprMetadata>,
-    keys: &mut HashMap<StructuralKey, ExprId>,
+    keys: &mut HashMap<ExprNodeStructuralKey, ExprId>,
 ) -> ExprId {
     let canonical = canonicalize_node(node);
-    let key = StructuralKey::from_node(&canonical);
+    let key = canonical.structural_key();
     if let Some(id) = keys.get(&key).copied() {
         return id;
     }
@@ -4399,7 +4405,7 @@ fn collect_associative_operands(
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 struct OperandSortKey {
     category: u8,
-    structural: String,
+    structural: ExprNodeStructuralKey,
     id: usize,
 }
 
@@ -4431,7 +4437,7 @@ fn operand_sort_key(op: BinaryOp, id: ExprId, nodes: &[ExprNode]) -> OperandSort
     };
     OperandSortKey {
         category,
-        structural: format!("{:?}", StructuralKey::from_node(node)),
+        structural: node.structural_key(),
         id: id.index(),
     }
 }
@@ -4448,249 +4454,6 @@ fn canonicalize_node(node: ExprNode) -> ExprNode {
             rhs: lhs,
         },
         node => node,
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-enum StructuralKey {
-    RealConst(u64),
-    ComplexConst {
-        re: u64,
-        im: u64,
-    },
-    ScalarParam(ParameterKey),
-    EventScalar(String),
-    EventP4Component {
-        name: String,
-        component: P4Component,
-    },
-    Unary {
-        op: UnaryKey,
-        input: usize,
-    },
-    Binary {
-        op: BinaryOp,
-        lhs: usize,
-        rhs: usize,
-    },
-    NaryAdd {
-        terms: Vec<usize>,
-    },
-    NaryMul {
-        factors: Vec<usize>,
-    },
-    Complex {
-        re: usize,
-        im: usize,
-    },
-    Vector {
-        elements: Vec<usize>,
-    },
-    Matrix {
-        rows: usize,
-        cols: usize,
-        elements: Vec<usize>,
-    },
-    Component {
-        input: usize,
-        index: usize,
-    },
-    MatrixElement {
-        input: usize,
-        row: usize,
-        col: usize,
-    },
-    MatMul {
-        lhs: usize,
-        rhs: usize,
-    },
-    MatVec {
-        matrix: usize,
-        vector: usize,
-    },
-    Dot {
-        lhs: usize,
-        rhs: usize,
-    },
-    Solve {
-        matrix: usize,
-        rhs: usize,
-    },
-}
-
-impl StructuralKey {
-    fn from_node(node: &ExprNode) -> Self {
-        match node {
-            ExprNode::RealConst(value) => Self::RealConst(value.to_bits()),
-            ExprNode::ComplexConst(value) => Self::ComplexConst {
-                re: value.re.to_bits(),
-                im: value.im.to_bits(),
-            },
-            ExprNode::ScalarParam(parameter) => Self::ScalarParam(ParameterKey::from(parameter)),
-            ExprNode::EventScalar(name) => Self::EventScalar(name.to_string()),
-            ExprNode::EventP4Component { name, component } => Self::EventP4Component {
-                name: name.to_string(),
-                component: *component,
-            },
-            ExprNode::Unary { op, input } => Self::Unary {
-                op: UnaryKey::from(*op),
-                input: input.index(),
-            },
-            ExprNode::Binary { op, lhs, rhs } => Self::Binary {
-                op: *op,
-                lhs: lhs.index(),
-                rhs: rhs.index(),
-            },
-            ExprNode::NaryAdd { terms } => Self::NaryAdd {
-                terms: terms.iter().map(|id| id.index()).collect(),
-            },
-            ExprNode::NaryMul { factors } => Self::NaryMul {
-                factors: factors.iter().map(|id| id.index()).collect(),
-            },
-            ExprNode::Complex { re, im } => Self::Complex {
-                re: re.index(),
-                im: im.index(),
-            },
-            ExprNode::Vector { elements } => Self::Vector {
-                elements: elements.iter().map(|id| id.index()).collect(),
-            },
-            ExprNode::Matrix {
-                rows,
-                cols,
-                elements,
-            } => Self::Matrix {
-                rows: *rows,
-                cols: *cols,
-                elements: elements.iter().map(|id| id.index()).collect(),
-            },
-            ExprNode::Component { input, index } => Self::Component {
-                input: input.index(),
-                index: *index,
-            },
-            ExprNode::MatrixElement { input, row, col } => Self::MatrixElement {
-                input: input.index(),
-                row: *row,
-                col: *col,
-            },
-            ExprNode::MatMul { lhs, rhs } => Self::MatMul {
-                lhs: lhs.index(),
-                rhs: rhs.index(),
-            },
-            ExprNode::MatVec { matrix, vector } => Self::MatVec {
-                matrix: matrix.index(),
-                vector: vector.index(),
-            },
-            ExprNode::Dot { lhs, rhs } => Self::Dot {
-                lhs: lhs.index(),
-                rhs: rhs.index(),
-            },
-            ExprNode::Solve { matrix, rhs } => Self::Solve {
-                matrix: matrix.index(),
-                rhs: rhs.index(),
-            },
-        }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-struct ParameterKey {
-    name: String,
-    state: ParamStateKey,
-    initial: InitialSpecKey,
-    bounds: BoundsKey,
-    unit: Option<String>,
-    latex: Option<String>,
-    description: Option<String>,
-}
-
-impl From<&Parameter> for ParameterKey {
-    fn from(parameter: &Parameter) -> Self {
-        Self {
-            name: parameter.name().to_owned(),
-            state: ParamStateKey::from(parameter.state()),
-            initial: InitialSpecKey::from(parameter.initial_spec()),
-            bounds: BoundsKey {
-                min: parameter.bounds_spec().min.map(f64::to_bits),
-                max: parameter.bounds_spec().max.map(f64::to_bits),
-            },
-            unit: parameter.unit_label().map(str::to_owned),
-            latex: parameter.latex_label().map(str::to_owned),
-            description: parameter.description_text().map(str::to_owned),
-        }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-enum ParamStateKey {
-    Free,
-    Fixed(u64),
-}
-
-impl From<&ParamState> for ParamStateKey {
-    fn from(state: &ParamState) -> Self {
-        match state {
-            ParamState::Free => Self::Free,
-            ParamState::Fixed(value) => Self::Fixed(value.to_bits()),
-        }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-enum InitialSpecKey {
-    Default,
-    Value(u64),
-    Uniform { min: u64, max: u64 },
-}
-
-impl From<&InitialSpec> for InitialSpecKey {
-    fn from(initial: &InitialSpec) -> Self {
-        match initial {
-            InitialSpec::Default => Self::Default,
-            InitialSpec::Value(value) => Self::Value(value.to_bits()),
-            InitialSpec::Uniform { min, max } => Self::Uniform {
-                min: min.to_bits(),
-                max: max.to_bits(),
-            },
-        }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-struct BoundsKey {
-    min: Option<u64>,
-    max: Option<u64>,
-}
-
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
-enum UnaryKey {
-    Neg,
-    Real,
-    Imag,
-    Conj,
-    NormSqr,
-    Sqrt,
-    Exp,
-    Sin,
-    Cos,
-    Log,
-    PowI(i32),
-}
-
-impl From<UnaryOp> for UnaryKey {
-    fn from(op: UnaryOp) -> Self {
-        match op {
-            UnaryOp::Neg => Self::Neg,
-            UnaryOp::Real => Self::Real,
-            UnaryOp::Imag => Self::Imag,
-            UnaryOp::Conj => Self::Conj,
-            UnaryOp::NormSqr => Self::NormSqr,
-            UnaryOp::Sqrt => Self::Sqrt,
-            UnaryOp::Exp => Self::Exp,
-            UnaryOp::Sin => Self::Sin,
-            UnaryOp::Cos => Self::Cos,
-            UnaryOp::Log => Self::Log,
-            UnaryOp::PowI(power) => Self::PowI(power),
-        }
     }
 }
 

@@ -1,4 +1,5 @@
 pub mod laddu_compile
+pub use laddu_compile::NumberClass
 pub mod laddu_compile::cost
 pub struct laddu_compile::cost::LifecycleCost
 impl laddu_compile::cost::LifecycleCost
@@ -46,6 +47,7 @@ impl core::fmt::Debug for laddu_compile::cost::OptimizationCost
 pub fn laddu_compile::cost::OptimizationCost::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::StructuralPartialEq for laddu_compile::cost::OptimizationCost
 pub mod laddu_compile::facts
+pub use laddu_compile::facts::NumberClass
 pub enum laddu_compile::facts::EvaluationClass
 pub laddu_compile::facts::EvaluationClass::PerCompile
 pub laddu_compile::facts::EvaluationClass::PerEvaluation
@@ -59,20 +61,6 @@ impl core::fmt::Debug for laddu_compile::facts::EvaluationClass
 pub fn laddu_compile::facts::EvaluationClass::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::Copy for laddu_compile::facts::EvaluationClass
 impl core::marker::StructuralPartialEq for laddu_compile::facts::EvaluationClass
-pub enum laddu_compile::facts::NumberClass
-pub laddu_compile::facts::NumberClass::Complex
-pub laddu_compile::facts::NumberClass::Imaginary
-pub laddu_compile::facts::NumberClass::Real
-pub laddu_compile::facts::NumberClass::Unknown
-impl core::clone::Clone for laddu_compile::facts::NumberClass
-pub fn laddu_compile::facts::NumberClass::clone(&self) -> laddu_compile::facts::NumberClass
-impl core::cmp::Eq for laddu_compile::facts::NumberClass
-impl core::cmp::PartialEq for laddu_compile::facts::NumberClass
-pub fn laddu_compile::facts::NumberClass::eq(&self, &laddu_compile::facts::NumberClass) -> bool
-impl core::fmt::Debug for laddu_compile::facts::NumberClass
-pub fn laddu_compile::facts::NumberClass::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::marker::Copy for laddu_compile::facts::NumberClass
-impl core::marker::StructuralPartialEq for laddu_compile::facts::NumberClass
 pub struct laddu_compile::facts::DependencyFacts
 pub laddu_compile::facts::DependencyFacts::depends_on_event: bool
 pub laddu_compile::facts::DependencyFacts::depends_on_fixed_params: bool
@@ -109,7 +97,7 @@ pub fn laddu_compile::facts::GraphFacts::fmt(&self, &mut core::fmt::Formatter<'_
 impl core::marker::StructuralPartialEq for laddu_compile::facts::GraphFacts
 pub struct laddu_compile::facts::NodeFacts
 pub laddu_compile::facts::NodeFacts::dependency: laddu_compile::facts::DependencyFacts
-pub laddu_compile::facts::NodeFacts::number_class: laddu_compile::facts::NumberClass
+pub laddu_compile::facts::NodeFacts::number_class: laddu_expr::expression::NumberClass
 pub laddu_compile::facts::NodeFacts::value_kind: laddu_expr::expression::ValueKind
 impl laddu_compile::facts::NodeFacts
 pub fn laddu_compile::facts::NodeFacts::evaluation_class(self) -> laddu_compile::facts::EvaluationClass
@@ -471,20 +459,6 @@ impl core::fmt::Debug for laddu_compile::NormalizationStrategy
 pub fn laddu_compile::NormalizationStrategy::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::Copy for laddu_compile::NormalizationStrategy
 impl core::marker::StructuralPartialEq for laddu_compile::NormalizationStrategy
-pub enum laddu_compile::NumberClass
-pub laddu_compile::NumberClass::Complex
-pub laddu_compile::NumberClass::Imaginary
-pub laddu_compile::NumberClass::Real
-pub laddu_compile::NumberClass::Unknown
-impl core::clone::Clone for laddu_compile::facts::NumberClass
-pub fn laddu_compile::facts::NumberClass::clone(&self) -> laddu_compile::facts::NumberClass
-impl core::cmp::Eq for laddu_compile::facts::NumberClass
-impl core::cmp::PartialEq for laddu_compile::facts::NumberClass
-pub fn laddu_compile::facts::NumberClass::eq(&self, &laddu_compile::facts::NumberClass) -> bool
-impl core::fmt::Debug for laddu_compile::facts::NumberClass
-pub fn laddu_compile::facts::NumberClass::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::marker::Copy for laddu_compile::facts::NumberClass
-impl core::marker::StructuralPartialEq for laddu_compile::facts::NumberClass
 pub enum laddu_compile::ReductionError
 pub laddu_compile::ReductionError::NonPositiveValue
 pub laddu_compile::ReductionError::NonPositiveValue::transform: laddu_compile::ReductionTransform
@@ -784,7 +758,7 @@ pub fn laddu_compile::optimize::MatrixVectorRule::name(&self) -> &'static str
 pub fn laddu_compile::optimize::MatrixVectorRule::rewrite(&self, &laddu_expr::expression::ExprNode, &laddu_expr::expression::ExprMetadata, &laddu_compile::optimize::RewriteContext<'_>) -> laddu_compile::CompileResult<laddu_compile::optimize::Rewrite>
 pub struct laddu_compile::NodeFacts
 pub laddu_compile::NodeFacts::dependency: laddu_compile::facts::DependencyFacts
-pub laddu_compile::NodeFacts::number_class: laddu_compile::facts::NumberClass
+pub laddu_compile::NodeFacts::number_class: laddu_expr::expression::NumberClass
 pub laddu_compile::NodeFacts::value_kind: laddu_expr::expression::ValueKind
 impl laddu_compile::facts::NodeFacts
 pub fn laddu_compile::facts::NodeFacts::evaluation_class(self) -> laddu_compile::facts::EvaluationClass
