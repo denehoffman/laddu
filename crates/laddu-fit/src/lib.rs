@@ -18,7 +18,7 @@ use ganesh::traits::{
     PeriodicTransform, ScaleTransform, Transform,
 };
 use ganesh::{LinearAlgebra, RealScalar, Vector};
-use laddu_expr::parameters::{ParamLayout, Parameter};
+use laddu_expr::parameters::ParamLayout;
 use laddu_likelihood::{LikelihoodError, LikelihoodEvaluation, Objective, StochasticObjective};
 use parking_lot::Mutex;
 use thiserror::Error;
@@ -239,7 +239,9 @@ impl<'a, O: Objective + ?Sized, T, B> FitProblem<'a, O, T, B> {
 
     /// Return free parameter names in optimizer-vector order.
     pub fn parameter_names(&self) -> Vec<String> {
-        free_parameters(self.objective.parameter_layout())
+        self.objective
+            .parameter_layout()
+            .free_parameters()
             .map(|parameter| parameter.name().to_owned())
             .collect()
     }
@@ -288,7 +290,9 @@ impl<'a, O: Objective + ?Sized, T, B> FitProblem<'a, O, T, B> {
         T: RealScalar,
         B: LinearAlgebra<T>,
     {
-        free_parameters(self.objective.parameter_layout())
+        self.objective
+            .parameter_layout()
+            .free_parameters()
             .map(|parameter| {
                 if parameter.is_periodic() {
                     (T::literal(f64::NEG_INFINITY), T::infinity())
@@ -399,14 +403,6 @@ where
     }
 }
 
-fn free_parameters(layout: &ParamLayout) -> impl Iterator<Item = &Parameter> {
-    layout.free_params().iter().map(|id| {
-        layout
-            .spec(*id)
-            .expect("layout owns every free parameter id")
-    })
-}
-
 fn append_transform<T, B, X>(
     current: Option<Box<dyn Transform<T, B>>>,
     next: X,
@@ -427,7 +423,7 @@ where
     T: RealScalar,
     B: LinearAlgebra<T>,
 {
-    let parameters = free_parameters(layout).collect::<Vec<_>>();
+    let parameters = layout.free_parameters().collect::<Vec<_>>();
     if parameters
         .iter()
         .all(|parameter| parameter.scale().is_none())
@@ -450,7 +446,7 @@ where
     T: RealScalar,
     B: LinearAlgebra<T>,
 {
-    let parameters = free_parameters(layout).collect::<Vec<_>>();
+    let parameters = layout.free_parameters().collect::<Vec<_>>();
     let mut transform = scale_transform(layout)?;
 
     if parameters.iter().any(|parameter| parameter.is_periodic()) {
