@@ -33,32 +33,30 @@ struct SupportRow {
 fn support(instruction: &KernelInstruction) -> SupportRow {
     use Support::{Rejected, Supported};
 
-    let (name, autodiff, wgpu) = match instruction {
-        KernelInstruction::Cached(_) => ("Cached", Supported, Supported),
-        KernelInstruction::RealConstant(_) => ("RealConstant", Supported, Supported),
-        KernelInstruction::ComplexConstant(_) => ("ComplexConstant", Supported, Supported),
-        KernelInstruction::Parameter(_) => ("Parameter", Supported, Supported),
-        KernelInstruction::Unary { .. } => ("Unary", Supported, Supported),
-        KernelInstruction::Binary { .. } => ("Binary", Supported, Supported),
-        KernelInstruction::Add(_) => ("Add", Supported, Supported),
-        KernelInstruction::Mul(_) => ("Mul", Supported, Supported),
-        KernelInstruction::Complex { .. } => ("Complex", Supported, Supported),
-        KernelInstruction::Vector(_) => ("Vector", Supported, Supported),
-        KernelInstruction::Matrix { .. } => ("Matrix", Supported, Supported),
-        KernelInstruction::Component { .. } => ("Component", Supported, Supported),
-        KernelInstruction::MatrixElement { .. } => ("MatrixElement", Supported, Supported),
-        KernelInstruction::MatMul { .. } => ("MatMul", Supported, Supported),
-        KernelInstruction::MatVec { .. } => ("MatVec", Supported, Supported),
-        KernelInstruction::Dot { .. } => ("Dot", Supported, Supported),
-        KernelInstruction::Solve { .. } => ("Solve", Supported, Supported),
-        KernelInstruction::SolveRow { .. } => ("SolveRow", Supported, Rejected),
-        KernelInstruction::SolveRowAdjointElement { .. } => {
-            ("SolveRowAdjointElement", Rejected, Rejected)
-        }
+    let (autodiff, wgpu) = match instruction {
+        KernelInstruction::Cached(_)
+        | KernelInstruction::RealConstant(_)
+        | KernelInstruction::ComplexConstant(_)
+        | KernelInstruction::Parameter(_)
+        | KernelInstruction::Unary { .. }
+        | KernelInstruction::Binary { .. }
+        | KernelInstruction::Add(_)
+        | KernelInstruction::Mul(_)
+        | KernelInstruction::Complex { .. }
+        | KernelInstruction::Vector(_)
+        | KernelInstruction::Matrix { .. }
+        | KernelInstruction::Component { .. }
+        | KernelInstruction::MatrixElement { .. }
+        | KernelInstruction::MatMul { .. }
+        | KernelInstruction::MatVec { .. }
+        | KernelInstruction::Dot { .. }
+        | KernelInstruction::Solve { .. } => (Supported, Supported),
+        KernelInstruction::SolveRow { .. } => (Supported, Rejected),
+        KernelInstruction::SolveRowAdjointElement { .. } => (Rejected, Rejected),
     };
 
     SupportRow {
-        name,
+        name: instruction.diagnostic_name(),
         validation: Supported,
         autodiff,
         cpu_interpreter: Supported,

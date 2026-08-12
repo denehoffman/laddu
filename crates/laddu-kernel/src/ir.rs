@@ -41,11 +41,17 @@ pub enum KernelValueKind {
 
 impl KernelValueKind {
     /// Returns the number of logical scalar elements.
+    ///
+    /// # Panics
+    ///
+    /// Panics when matrix dimensions exceed the addressable `usize` width.
+    /// Validated kernel IR rejects such dimensions during construction.
     pub fn width(self) -> usize {
         match self {
             Self::Real | Self::Complex => 1,
             Self::Vector { len } => len,
-            Self::Matrix { rows, cols } => rows * cols,
+            Self::Matrix { rows, cols } => checked_matrix_width(rows, cols)
+                .expect("kernel matrix dimensions exceed addressable width"),
         }
     }
 
@@ -62,6 +68,18 @@ impl KernelValueKind {
     }
 }
 
+fn checked_matrix_width(rows: usize, cols: usize) -> Option<usize> {
+    rows.checked_mul(cols)
+}
+
+fn checked_row_major_index(rows: usize, cols: usize, row: usize, col: usize) -> Option<usize> {
+    checked_matrix_width(rows, cols)?;
+    if row >= rows || col >= cols {
+        return None;
+    }
+    row.checked_mul(cols)?.checked_add(col)
+}
+
 /// Whether a kernel value is constant across events or event-dependent.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum KernelValueClass {
@@ -69,6 +87,17 @@ pub enum KernelValueClass {
     Invariant,
     /// The value depends on event data or cache inputs.
     Event,
+}
+
+/// How an instruction's event dependence is determined.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum KernelEventDependence {
+    /// The instruction is invariant regardless of its operands.
+    Invariant,
+    /// The instruction is event-dependent regardless of its operands.
+    Event,
+    /// The instruction is event-dependent when any direct operand is event-dependent.
+    Operands,
 }
 
 /// Operation that produces one value in kernel IR.
@@ -276,14 +305,20 @@ impl InferenceContext<'_> {
         cols: usize,
         elements: &[KernelValueId],
     ) -> Result<KernelValueKind, KernelIrError> {
-        if elements.len() != rows * cols
+        let width = checked_matrix_width(rows, cols).ok_or_else(|| {
+            self.invalid_shape(
+                "matrix construction",
+                format!("shape {rows}x{cols} exceeds addressable width"),
+            )
+        })?;
+        if elements.len() != width
             || elements
                 .iter()
                 .any(|element| !self.kind(*element).is_scalar())
         {
             return Err(self.invalid_shape(
                 "matrix construction",
-                format!("expected {} scalar elements", rows * cols),
+                format!("expected {width} scalar elements"),
             ));
         }
         Ok(KernelValueKind::Matrix { rows, cols })
@@ -310,7 +345,9 @@ impl InferenceContext<'_> {
         col: usize,
     ) -> Result<KernelValueKind, KernelIrError> {
         match self.kind(input) {
-            KernelValueKind::Matrix { rows, cols } if row < rows && col < cols => {
+            KernelValueKind::Matrix { rows, cols }
+                if checked_row_major_index(rows, cols, row, col).is_some() =>
+            {
                 Ok(KernelValueKind::Complex)
             }
             actual => Err(self.invalid_shape(
@@ -419,6 +456,44 @@ impl InferenceContext<'_> {
 }
 
 impl KernelInstruction {
+    /// Returns the stable instruction name used in diagnostics and support reporting.
+    pub fn diagnostic_name(&self) -> &'static str {
+        match self {
+            Self::Cached(_) => "Cached",
+            Self::RealConstant(_) => "RealConstant",
+            Self::ComplexConstant(_) => "ComplexConstant",
+            Self::Parameter(_) => "Parameter",
+            Self::Unary { .. } => "Unary",
+            Self::Binary { .. } => "Binary",
+            Self::Add(_) => "Add",
+            Self::Mul(_) => "Mul",
+            Self::Complex { .. } => "Complex",
+            Self::Vector(_) => "Vector",
+            Self::Matrix { .. } => "Matrix",
+            Self::Component { .. } => "Component",
+            Self::MatrixElement { .. } => "MatrixElement",
+            Self::MatMul { .. } => "MatMul",
+            Self::MatVec { .. } => "MatVec",
+            Self::Dot { .. } => "Dot",
+            Self::Solve { .. } => "Solve",
+            Self::SolveRow { .. } => "SolveRow",
+            Self::SolveRowAdjointElement { .. } => "SolveRowAdjointElement",
+        }
+    }
+
+    /// Returns the backend-independent event-dependence rule for this instruction.
+    pub fn event_dependence(&self) -> KernelEventDependence {
+        match self {
+            Self::Cached(_) | Self::SolveRow { .. } | Self::SolveRowAdjointElement { .. } => {
+                KernelEventDependence::Event
+            }
+            Self::RealConstant(_) | Self::ComplexConstant(_) | Self::Parameter(_) => {
+                KernelEventDependence::Invariant
+            }
+            _ => KernelEventDependence::Operands,
+        }
+    }
+
     /// Returns the direct input value identifiers.
     pub fn operands(&self) -> Vec<KernelValueId> {
         let mut operands = Vec::new();
@@ -529,14 +604,10 @@ impl KernelInstruction {
     }
 
     fn expected_class(&self, values: &[KernelValue]) -> KernelValueClass {
-        match self {
-            Self::Cached(_) | Self::SolveRow { .. } | Self::SolveRowAdjointElement { .. } => {
-                KernelValueClass::Event
-            }
-            Self::RealConstant(_) | Self::ComplexConstant(_) | Self::Parameter(_) => {
-                KernelValueClass::Invariant
-            }
-            _ => {
+        match self.event_dependence() {
+            KernelEventDependence::Invariant => KernelValueClass::Invariant,
+            KernelEventDependence::Event => KernelValueClass::Event,
+            KernelEventDependence::Operands => {
                 let mut class = KernelValueClass::Invariant;
                 self.visit_operands(|operand| {
                     if values[operand.index()].class == KernelValueClass::Event {
@@ -603,6 +674,15 @@ fn validate_graph(values: &[KernelValue]) -> Result<(), KernelIrError> {
         return Err(KernelIrError::Empty);
     }
     for (index, value) in values.iter().enumerate() {
+        if let KernelValueKind::Matrix { rows, cols } = value.kind
+            && checked_matrix_width(rows, cols).is_none()
+        {
+            return Err(KernelInstruction::shape_error(
+                index,
+                "matrix shape",
+                format!("shape {rows}x{cols} exceeds addressable width"),
+            ));
+        }
         value.instruction.validate_operand_order(index)?;
         if let Some(expected) = value.instruction.expected_kind(values, index)?
             && value.kind != expected
@@ -982,6 +1062,75 @@ mod tests {
                 ..
             }) if actual == operation
         ));
+    }
+
+    #[test]
+    fn instruction_metadata_covers_intrinsic_and_operand_event_dependence() {
+        assert_eq!(
+            KernelInstruction::RealConstant(1.0).event_dependence(),
+            KernelEventDependence::Invariant
+        );
+        assert_eq!(
+            KernelInstruction::Cached(0).event_dependence(),
+            KernelEventDependence::Event
+        );
+        assert_eq!(
+            KernelInstruction::Add(vec![id(0)]).event_dependence(),
+            KernelEventDependence::Operands
+        );
+        assert_eq!(
+            KernelInstruction::SolveRowAdjointElement {
+                row_slot: 0,
+                index: 0,
+                len: 1,
+                adjoint: id(0),
+            }
+            .diagnostic_name(),
+            "SolveRowAdjointElement"
+        );
+    }
+
+    #[test]
+    fn matrix_shape_arithmetic_is_checked() {
+        assert_eq!(checked_matrix_width(3, 4), Some(12));
+        assert_eq!(checked_matrix_width(usize::MAX, 2), None);
+        assert_eq!(checked_row_major_index(3, 4, 2, 3), Some(11));
+        assert_eq!(checked_row_major_index(3, 4, 3, 0), None);
+        assert_eq!(checked_row_major_index(usize::MAX, usize::MAX, 0, 0), None);
+        assert_eq!(
+            checked_row_major_index(usize::MAX, usize::MAX, usize::MAX - 1, 0),
+            None
+        );
+
+        let error = ScalarKernelIr::new(
+            vec![value(
+                KernelValueKind::Matrix {
+                    rows: usize::MAX,
+                    cols: 2,
+                },
+                KernelValueClass::Event,
+                KernelInstruction::Cached(0),
+            )],
+            id(0),
+        )
+        .unwrap_err();
+        assert!(matches!(
+            error,
+            KernelIrError::InvalidShape {
+                value: 0,
+                operation: "matrix shape",
+                ..
+            }
+        ));
+
+        assert_shape_error(
+            KernelInstruction::Matrix {
+                rows: usize::MAX,
+                cols: 2,
+                elements: Vec::new(),
+            },
+            "matrix construction",
+        );
     }
 
     #[test]
