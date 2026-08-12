@@ -147,6 +147,8 @@ pub mod query;
 pub mod runtime;
 /// Python reaction-channel, edge, vertex, and frame types.
 pub mod topology;
+/// Python expression-visualization colors, selectors, and style rules.
+pub mod visualization;
 
 pub use laddu_fit::ganesh::python::ganesh;
 
@@ -242,6 +244,12 @@ macro_rules! laddu_python_module {
                 PyChannel as Channel, PyEdge as Edge, PyVertex as Vertex,
                 PyVertexFrame as VertexFrame,
             };
+            #[pymodule_export]
+            use $crate::python::visualization::{
+                PyDisplayColor as DisplayColor, PyExprNodeKind as ExprNodeKind,
+                PyNodeSelector as NodeSelector, PyNodeStyle as NodeStyle,
+                PyNodeStyleRule as NodeStyleRule,
+            };
 
             /// Return the native backend selected for this extension.
             #[pyfunction]
@@ -267,7 +275,7 @@ laddu_python_module!(
 mod tests {
     use pyo3::exceptions::PyValueError;
     use pyo3::prelude::*;
-    use pyo3::types::PyDict;
+    use pyo3::types::{PyDict, PyList};
 
     #[test]
     fn python_json_methods_round_trip_and_reject_invalid_json() {
@@ -402,6 +410,11 @@ mod tests {
                 "ganesh",
                 "clebsch_gordan",
                 "WignerD",
+                "ExprNodeKind",
+                "DisplayColor",
+                "NodeStyle",
+                "NodeSelector",
+                "NodeStyleRule",
             ] {
                 assert!(
                     module.getattr(py, name).is_ok(),
@@ -411,6 +424,15 @@ mod tests {
             assert!(module.getattr(py, "particles").is_ok());
             assert!(module.getattr(py, "gpu").is_ok());
             assert!(module.getattr(py, "ganesh").is_ok());
+            for class_name in ["Expr", "Model"] {
+                let class = module.getattr(py, class_name).unwrap();
+                for method in ["equation", "latex", "tree", "dot", "svg"] {
+                    assert!(
+                        class.getattr(py, method).is_ok(),
+                        "missing {class_name}.{method}"
+                    );
+                }
+            }
             let cross_sections = module.getattr(py, "CrossSectionIntegrals").unwrap();
             for method in [
                 "accepted_integral",
@@ -467,6 +489,100 @@ mod tests {
                     "missing Ensemble.{method}"
                 );
             }
+        });
+    }
+
+    #[test]
+    fn python_visualization_rules_customize_all_rendering_modes() {
+        Python::initialize();
+        Python::attach(|py| {
+            let module = pyo3::wrap_pymodule!(super::api)(py);
+            let color = module
+                .getattr(py, "DisplayColor")
+                .unwrap()
+                .call1(py, (1, 2, 3))
+                .unwrap();
+            let fill = module
+                .getattr(py, "DisplayColor")
+                .unwrap()
+                .call1(py, (4, 5, 6))
+                .unwrap();
+            let border = module
+                .getattr(py, "DisplayColor")
+                .unwrap()
+                .call1(py, (7, 8, 9))
+                .unwrap();
+            let style_kwargs = PyDict::new(py);
+            style_kwargs.set_item("foreground", color).unwrap();
+            style_kwargs.set_item("fill", fill).unwrap();
+            style_kwargs.set_item("border", border).unwrap();
+            let style = module
+                .getattr(py, "NodeStyle")
+                .unwrap()
+                .call(py, (), Some(&style_kwargs))
+                .unwrap();
+            let event_kind = module
+                .getattr(py, "ExprNodeKind")
+                .unwrap()
+                .getattr(py, "EVENT_SCALAR")
+                .unwrap();
+            let selector = module
+                .getattr(py, "NodeSelector")
+                .unwrap()
+                .call_method1(py, "kind", (event_kind,))
+                .unwrap();
+            let rule = module
+                .getattr(py, "NodeStyleRule")
+                .unwrap()
+                .call1(py, (selector, style))
+                .unwrap();
+            let rules = PyList::new(py, [rule]).unwrap();
+            let expression = module
+                .getattr(py, "scalar")
+                .unwrap()
+                .call1(py, ("debug_node",))
+                .unwrap();
+            let kwargs = PyDict::new(py);
+            kwargs.set_item("style_rules", rules).unwrap();
+
+            let equation = expression
+                .call_method(py, "equation", (), Some(&kwargs))
+                .unwrap()
+                .extract::<String>(py)
+                .unwrap();
+            let tree = expression
+                .call_method(py, "tree", (), Some(&kwargs))
+                .unwrap()
+                .extract::<String>(py)
+                .unwrap();
+            let latex = expression
+                .call_method(py, "latex", (), Some(&kwargs))
+                .unwrap()
+                .extract::<String>(py)
+                .unwrap();
+            let dot = expression
+                .call_method(py, "dot", (), Some(&kwargs))
+                .unwrap()
+                .extract::<String>(py)
+                .unwrap();
+            let svg_path = std::env::temp_dir().join(format!(
+                "laddu-python-visualization-{}.svg",
+                std::process::id()
+            ));
+            expression
+                .call_method(py, "svg", (svg_path.clone(),), Some(&kwargs))
+                .unwrap();
+            let svg = std::fs::read_to_string(&svg_path).unwrap();
+            std::fs::remove_file(svg_path).unwrap();
+
+            assert!(equation.contains("\x1b[38;2;1;2;3m"));
+            assert!(tree.contains("\x1b[48;2;4;5;6m"));
+            assert!(latex.contains("\\color[RGB]{1,2,3}"));
+            assert!(dot.contains("fontcolor=\"#010203\""));
+            assert!(dot.contains("fillcolor=\"#040506\""));
+            assert!(dot.contains("color=\"#070809\""));
+            assert!(svg.contains("<svg"));
+            assert!(svg.contains("</svg>"));
         });
     }
 }

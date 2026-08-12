@@ -48,9 +48,9 @@ pub use laddu_expr::parameters::Parameter;
 pub use laddu_expr::{
     BinaryOp, ColorPreset, ComponentIndex, DisplayColor, Expr, ExprGraph, ExprGraphDotDisplay,
     ExprGraphTreeDisplay, ExprId, ExprMetadata, ExprNode, ExprNodeKind, ExprShape, ExprShapeError,
-    ExprSourceKind, NodeSelector, NodeStyle, NodeStyleRule, P4Component, RepeatedSubtrees, UnaryOp,
-    acos, atan2, cis, complex, dot, event_p4_component, event_scalar, matmul, matrix,
-    matrix_from_flat, matvec, polar_complex, solve, vector,
+    ExprSourceKind, NodeSelector, NodeStyle, NodeStyleRule, P4Component, UnaryOp, acos, atan2, cis,
+    complex, dot, event_p4_component, event_scalar, matmul, matrix, matrix_from_flat, matvec,
+    polar_complex, solve, vector,
 };
 pub use laddu_runtime::{
     BinSpec, Comparison, DatasetBin, DatasetExprExt, DeviceIdentity, IntervalClosure, MemoryBudget,
@@ -110,8 +110,8 @@ pub mod prelude {
         BinaryOp, ColorPreset, ComponentIndex, DisplayColor, Expr, ExprGraph, ExprGraphDotDisplay,
         ExprGraphTreeDisplay, ExprId, ExprMetadata, ExprNode, ExprNodeKind, ExprShape,
         ExprShapeError, ExprSourceKind, NodeSelector, NodeStyle, NodeStyleRule, P4Component,
-        RepeatedSubtrees, UnaryOp, acos, atan2, cis, complex, dot, event_p4_component,
-        event_scalar, matmul, matrix, matrix_from_flat, matvec, polar_complex, solve, vector,
+        UnaryOp, acos, atan2, cis, complex, dot, event_p4_component, event_scalar, matmul, matrix,
+        matrix_from_flat, matvec, polar_complex, solve, vector,
     };
     #[cfg(feature = "fit")]
     pub use laddu_fit::{FitError, FitProblem, FitResult, StochasticFitProblem, ganesh};
