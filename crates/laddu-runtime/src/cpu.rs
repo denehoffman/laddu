@@ -7072,7 +7072,7 @@ mod tests {
 
     #[cfg(feature = "jit")]
     #[test]
-    fn reverse_jit_gradients_match_interpreters_in_both_precisions() {
+    fn forward_and_reverse_gradients_match_interpreter_and_jit_in_both_precisions() {
         let event = event_scalar("x");
         let scale = laddu_expr::Expr::from(parameter!("scale", initial: 0.4));
         let phase = laddu_expr::Expr::from(parameter!("phase", initial: -0.2));
@@ -7095,36 +7095,36 @@ mod tests {
         .unwrap();
 
         for (precision, tolerance) in [(Precision::F32, 1.0e-6), (Precision::F64, 1.0e-12)] {
-            let jit = CpuBackend
+            let baseline = CpuBackend
                 .prepare_with_modes_precision(
                     &model,
-                    AutodiffMode::Reverse,
-                    CpuExecutionMode::Auto,
-                    precision,
-                )
-                .unwrap();
-            let interpreter = CpuBackend
-                .prepare_with_modes_precision(
-                    &model,
-                    AutodiffMode::Reverse,
+                    AutodiffMode::Forward,
                     CpuExecutionMode::Interpreter,
                     precision,
                 )
                 .unwrap();
-            assert!(matches!(jit.gradient_executor, GradientExecutor::Jit(_)));
+            let expected = baseline
+                .evaluate_cache_with_gradient(&params, &baseline.cache_event_batch(&batch).unwrap())
+                .unwrap();
 
-            let actual = jit
-                .evaluate_cache_with_gradient(&params, &jit.cache_event_batch(&batch).unwrap())
-                .unwrap();
-            let expected = interpreter
-                .evaluate_cache_with_gradient(
-                    &params,
-                    &interpreter.cache_event_batch(&batch).unwrap(),
-                )
-                .unwrap();
-            for (actual, expected) in actual.iter().zip(expected) {
-                assert!((actual.value() - expected.value()).norm() < tolerance);
-                assert_gradient_close(actual.gradient(), expected.gradient(), tolerance);
+            for (autodiff, execution) in [
+                (AutodiffMode::Reverse, CpuExecutionMode::Interpreter),
+                (AutodiffMode::Forward, CpuExecutionMode::Auto),
+                (AutodiffMode::Reverse, CpuExecutionMode::Auto),
+            ] {
+                let plan = CpuBackend
+                    .prepare_with_modes_precision(&model, autodiff, execution, precision)
+                    .unwrap();
+                if execution == CpuExecutionMode::Auto {
+                    assert!(matches!(plan.gradient_executor, GradientExecutor::Jit(_)));
+                }
+                let actual = plan
+                    .evaluate_cache_with_gradient(&params, &plan.cache_event_batch(&batch).unwrap())
+                    .unwrap();
+                for (actual, expected) in actual.iter().zip(&expected) {
+                    assert!((actual.value() - expected.value()).norm() < tolerance);
+                    assert_gradient_close(actual.gradient(), expected.gradient(), tolerance);
+                }
             }
         }
     }
