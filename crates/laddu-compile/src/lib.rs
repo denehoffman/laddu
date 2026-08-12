@@ -17,7 +17,10 @@ pub use cost::{LifecycleCost, OptimizationCost};
 pub use error::{CompileError, CompileResult};
 pub use executable::{ExecutablePlan, SolveComponentPlan, SolveRowMatrixPlan};
 pub use facts::{DependencyFacts, EvaluationClass, GraphFacts, NodeFacts, NumberClass};
-pub use model::*;
+pub use model::{
+    CacheEntry, CachePlan, CachePolicy, CacheStorageKind, CompileOptions, CompiledModel,
+    collect_params,
+};
 pub use normalization::{
     NormalizationDiagnostics, NormalizationFallbackReason, NormalizationPlan, NormalizationStrategy,
 };

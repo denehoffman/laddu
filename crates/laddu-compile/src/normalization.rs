@@ -84,6 +84,11 @@ struct SeparableTerm {
 }
 
 /// Exact compiler artifact consumed by execution backends.
+///
+/// This is a workspace-internal contract shared with `laddu-runtime`. It is
+/// public only because Rust crate boundaries do not provide workspace-scoped
+/// visibility. Downstream users should use [`NormalizationDiagnostics`]
+/// instead of depending on this artifact's representation or methods.
 #[doc(hidden)]
 #[derive(Clone, Debug)]
 pub struct NormalizationPlan {

@@ -259,9 +259,81 @@ fn powi_weight(power: i32) -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use laddu_expr::{event_scalar, parameter};
+    use laddu_expr::{BinaryOp, Expr, UnaryOp, event_scalar, parameter};
+    use num::complex::Complex64;
+
+    use crate::{
+        CanonicalCsePass, CompileOptions, CompiledModel, OptimizationPipeline, RewritePass,
+    };
 
     use super::*;
+
+    fn compile_cost(expr: &Expr, pipeline: OptimizationPipeline) -> OptimizationCost {
+        CompiledModel::from_expr_with_options(expr, &CompileOptions::with_pipeline(pipeline))
+            .unwrap()
+            .cost()
+    }
+
+    #[test]
+    fn unary_operation_cost_table_is_exhaustive() {
+        let cases = [
+            (UnaryOp::Neg, (1, 0, 0, 1)),
+            (UnaryOp::Real, (1, 0, 0, 1)),
+            (UnaryOp::Imag, (1, 0, 0, 1)),
+            (UnaryOp::Conj, (1, 0, 0, 1)),
+            (UnaryOp::NormSqr, (1, 0, 0, 4)),
+            (UnaryOp::PowI(0), (0, 1, 0, 0)),
+            (UnaryOp::PowI(2), (0, 1, 0, 3)),
+            (UnaryOp::PowI(-4), (0, 1, 0, 4)),
+            (UnaryOp::Sqrt, (0, 0, 1, 8)),
+            (UnaryOp::Exp, (0, 0, 1, 20)),
+            (UnaryOp::Sin, (0, 0, 1, 20)),
+            (UnaryOp::Cos, (0, 0, 1, 20)),
+            (UnaryOp::Log, (0, 0, 1, 20)),
+        ];
+
+        for (op, expected) in cases {
+            let mut cost = OptimizationCost::default();
+            cost.add_unary(op);
+            assert_eq!(
+                (
+                    cost.cheap_unary_ops,
+                    cost.power_ops,
+                    cost.transcendental_ops,
+                    cost.weighted_ops,
+                ),
+                expected,
+                "unexpected cost for {op:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn binary_and_nary_operation_costs_share_one_table() {
+        let cases = [
+            (BinaryOp::Add, (3, 0, 0, 0, 3)),
+            (BinaryOp::Sub, (3, 0, 0, 0, 3)),
+            (BinaryOp::Mul, (0, 3, 0, 0, 6)),
+            (BinaryOp::Div, (0, 0, 3, 0, 18)),
+            (BinaryOp::Atan2, (0, 0, 0, 3, 60)),
+        ];
+
+        for (op, expected) in cases {
+            let mut cost = OptimizationCost::default();
+            cost.add_binary(op, 4);
+            assert_eq!(
+                (
+                    cost.scalar_adds,
+                    cost.scalar_muls,
+                    cost.scalar_divs,
+                    cost.transcendental_ops,
+                    cost.weighted_ops,
+                ),
+                expected,
+                "unexpected cost for {op:?}"
+            );
+        }
+    }
 
     #[test]
     fn partitions_operation_work_by_execution_lifecycle() {
@@ -273,5 +345,51 @@ mod tests {
         assert!(cost.evaluation_invariant() > 0);
         assert!(cost.dataset_event() > 0);
         assert!(cost.evaluation_event() > 0);
+    }
+
+    #[test]
+    fn optimization_cost_reports_weighted_operation_breakdown() {
+        let x = Expr::from(parameter!("x"));
+        let compiled = CompiledModel::from_expr_with_options(
+            &(x.sin() + x.exp() * x.powi(2)),
+            &CompileOptions::without_optimizations(),
+        )
+        .unwrap();
+        let cost = compiled.cost();
+
+        assert_eq!(cost.transcendental_ops(), 2);
+        assert_eq!(cost.power_ops(), 1);
+        assert_eq!(cost.scalar_adds(), 1);
+        assert_eq!(cost.scalar_muls(), 1);
+        assert_eq!(cost.weighted_ops(), 46);
+    }
+
+    #[test]
+    fn optimization_cost_compares_pipeline_effectiveness() {
+        let phi = Expr::from(parameter!("phi"));
+        let euler = phi.cos() + Complex64::I * phi.sin();
+        let without_exponential = compile_cost(
+            &euler,
+            OptimizationPipeline::new()
+                .with_pass(RewritePass::simplify())
+                .with_pass(CanonicalCsePass)
+                .with_pass(RewritePass::normalize_add_mul())
+                .with_pass(CanonicalCsePass)
+                .with_max_iterations(4),
+        );
+        let with_exponential = compile_cost(
+            &euler,
+            OptimizationPipeline::new()
+                .with_pass(RewritePass::simplify())
+                .with_pass(CanonicalCsePass)
+                .with_pass(RewritePass::normalize_add_mul())
+                .with_pass(CanonicalCsePass)
+                .with_pass(RewritePass::exponential())
+                .with_pass(RewritePass::simplify())
+                .with_max_iterations(4),
+        );
+
+        assert!(with_exponential.weighted_ops() < without_exponential.weighted_ops());
+        assert_eq!(with_exponential.transcendental_ops(), 1);
     }
 }

@@ -143,10 +143,80 @@ fn dependency(node: &ExprNode, facts: &[NodeFacts]) -> DependencyFacts {
         ExprNode::EventScalar(_) | ExprNode::EventP4Component { .. } => {
             DependencyFacts::from_event()
         }
-        _ => node
-            .children()
-            .fold(DependencyFacts::per_compile(), |dependency, child| {
-                dependency.union(facts[child.index()].dependency)
-            }),
+        ExprNode::Unary { .. }
+        | ExprNode::Binary { .. }
+        | ExprNode::NaryAdd { .. }
+        | ExprNode::NaryMul { .. }
+        | ExprNode::Complex { .. }
+        | ExprNode::Vector { .. }
+        | ExprNode::Matrix { .. }
+        | ExprNode::Component { .. }
+        | ExprNode::MatrixElement { .. }
+        | ExprNode::MatMul { .. }
+        | ExprNode::MatVec { .. }
+        | ExprNode::Dot { .. }
+        | ExprNode::Solve { .. } => union_children(node, facts),
+    }
+}
+
+fn union_children(node: &ExprNode, facts: &[NodeFacts]) -> DependencyFacts {
+    node.children()
+        .fold(DependencyFacts::per_compile(), |dependency, child| {
+            dependency.union(facts[child.index()].dependency)
+        })
+}
+
+#[cfg(test)]
+mod tests {
+    use laddu_expr::{
+        Expr, ExprId, ExprNode, ValueKind, event_scalar, parameter, parameters::Parameter,
+    };
+
+    use crate::{CompileOptions, CompiledModel, EvaluationClass};
+
+    #[test]
+    fn facts_track_number_class_and_dependencies() {
+        let model =
+            event_scalar("mass") * Expr::from(Parameter::fixed("scale", 2.0)) + parameter!("x");
+        let compiled =
+            CompiledModel::from_expr_with_options(&model, &CompileOptions::without_optimizations())
+                .unwrap();
+
+        let event_id = compiled
+            .graph()
+            .nodes()
+            .iter()
+            .position(|node| matches!(node, ExprNode::EventScalar(name) if name.as_ref() == "mass"))
+            .map(ExprId::from_index)
+            .unwrap();
+        let root_facts = compiled.node_facts(compiled.graph().root()).unwrap();
+
+        assert_eq!(
+            compiled.node_facts(event_id).unwrap().value_kind,
+            ValueKind::Real
+        );
+        assert!(
+            compiled
+                .node_facts(event_id)
+                .unwrap()
+                .dependency
+                .depends_on_event
+        );
+        assert!(!compiled.graph().nodes().iter().any(
+            |node| matches!(node, ExprNode::ScalarParam(parameter) if parameter.name() == "scale")
+        ));
+        assert!(
+            compiled
+                .graph()
+                .nodes()
+                .iter()
+                .any(|node| matches!(node, ExprNode::RealConst(value) if *value == 2.0))
+        );
+        assert!(root_facts.dependency.depends_on_free_params);
+        assert!(root_facts.dependency.depends_on_event);
+        assert_eq!(
+            root_facts.evaluation_class(),
+            EvaluationClass::PerEvaluation
+        );
     }
 }
