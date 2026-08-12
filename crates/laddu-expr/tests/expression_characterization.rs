@@ -3,8 +3,9 @@
 use std::sync::Arc;
 
 use laddu_expr::{
-    BinaryOp, Expr, ExprGraph, ExprId, ExprMetadata, ExprNode, ExprSourceKind, P4Component,
-    ParamError, UnaryOp, complex, dot, event_scalar, matrix_from_flat, parameter,
+    BinaryOp, Expr, ExprDependencyKind, ExprGraph, ExprId, ExprMetadata, ExprNode,
+    ExprNodeSemantics, ExprSourceKind, NumberClass, P4Component, ParamError, UnaryOp, ValueKind,
+    complex, dot, event_scalar, matrix_from_flat, parameter,
     parameters::{ParamLayout, Parameter},
     vector,
 };
@@ -221,6 +222,101 @@ fn intrinsic_constant_and_source_facts_are_stable() {
         let graph = expression.to_graph();
         assert_eq!(graph.metadata(graph.root()).unwrap().source(), expected);
     }
+}
+
+#[test]
+fn node_semantics_are_context_free_and_exhaustive() {
+    let no_children: &[ExprNodeSemantics] = &[];
+    let real = ExprNode::RealConst(1.0);
+    assert_eq!(
+        real.semantics(no_children),
+        ExprNodeSemantics {
+            value_kind: ValueKind::Real,
+            number_class: NumberClass::Real,
+        }
+    );
+    assert_eq!(real.dependency_kind(), ExprDependencyKind::Constant);
+
+    let imaginary = ExprNode::ComplexConst(Complex64::new(0.0, 1.0));
+    assert_eq!(
+        imaginary.semantics(no_children),
+        ExprNodeSemantics {
+            value_kind: ValueKind::Complex,
+            number_class: NumberClass::Imaginary,
+        }
+    );
+
+    let real_projection = ExprNode::Unary {
+        op: UnaryOp::NormSqr,
+        input: id(0),
+    };
+    assert_eq!(
+        real_projection.semantics(no_children),
+        ExprNodeSemantics {
+            value_kind: ValueKind::Real,
+            number_class: NumberClass::Real,
+        }
+    );
+    assert_eq!(
+        real_projection.dependency_kind(),
+        ExprDependencyKind::Children
+    );
+
+    let inherited = ExprNode::Unary {
+        op: UnaryOp::Neg,
+        input: id(0),
+    };
+    assert_eq!(
+        inherited.semantics(&[ExprNodeSemantics {
+            value_kind: ValueKind::Complex,
+            number_class: NumberClass::Imaginary,
+        }]),
+        ExprNodeSemantics {
+            value_kind: ValueKind::Complex,
+            number_class: NumberClass::Imaginary,
+        }
+    );
+    assert_eq!(
+        ExprNode::ScalarParam(Parameter::free("p")).dependency_kind(),
+        ExprDependencyKind::Parameter
+    );
+    assert_eq!(
+        ExprNode::EventScalar(Arc::from("x")).dependency_kind(),
+        ExprDependencyKind::Event
+    );
+}
+
+#[test]
+fn structural_identity_is_bit_exact_and_includes_parameter_semantics() {
+    assert_ne!(
+        ExprNode::RealConst(0.0).structural_key(),
+        ExprNode::RealConst(-0.0).structural_key()
+    );
+
+    let nan_a = f64::from_bits(0x7ff8_0000_0000_0001);
+    let nan_b = f64::from_bits(0x7ff8_0000_0000_0002);
+    assert_eq!(
+        ExprNode::RealConst(nan_a).structural_key(),
+        ExprNode::RealConst(nan_a).structural_key()
+    );
+    assert_ne!(
+        ExprNode::RealConst(nan_a).structural_key(),
+        ExprNode::RealConst(nan_b).structural_key()
+    );
+
+    let base = Parameter::free("p");
+    let decorated = base
+        .clone()
+        .with_bounds(-1.0, 1.0)
+        .with_periodic()
+        .with_scale(0.25)
+        .with_unit("GeV")
+        .with_latex("p")
+        .with_description("fit parameter");
+    assert_ne!(
+        ExprNode::ScalarParam(base).structural_key(),
+        ExprNode::ScalarParam(decorated).structural_key()
+    );
 }
 
 #[test]

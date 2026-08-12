@@ -9,7 +9,7 @@ use crate::CompileResult;
 #[cfg(test)]
 use laddu_expr::parameters::ParamError;
 use laddu_expr::{
-    BinaryOp, Expr, ExprGraph, ExprId, ExprNode, UnaryOp, ValueKind,
+    BinaryOp, Expr, ExprGraph, ExprId, ExprNode, ParameterStructuralKey, UnaryOp, ValueKind,
     parameters::{ParamLayout, ParamRegistry},
 };
 use serde::{Deserialize, Serialize};
@@ -333,12 +333,21 @@ impl<'de> Deserialize<'de> for CompiledModel {
 }
 
 impl CompiledModel {
-    /// Returns a structural key for execution-scoped compiled-artifact caches.
+    /// Returns a process-local structural digest for execution-scoped caches.
+    ///
+    /// The digest is bit-exact and excludes expression metadata, but its hash
+    /// algorithm and values are not a stable persisted format.
     #[doc(hidden)]
     pub fn optimized_digest(&self) -> u64 {
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        format!("{:?}", self.graph.nodes()).hash(&mut hasher);
-        format!("{:?}", self.params.specs()).hash(&mut hasher);
+        self.graph.root().hash(&mut hasher);
+        self.graph.nodes().len().hash(&mut hasher);
+        for node in self.graph.nodes() {
+            node.structural_key().hash(&mut hasher);
+        }
+        for parameter in self.params.specs() {
+            ParameterStructuralKey::from(parameter).hash(&mut hasher);
+        }
         hasher.finish()
     }
 
@@ -655,6 +664,23 @@ mod tests {
     use num::complex::Complex64;
 
     use super::*;
+
+    #[test]
+    fn optimized_digest_uses_semantic_identity_and_excludes_expression_metadata() {
+        let plain = CompiledModel::from_expr(&Expr::from(2.0)).unwrap();
+        let named = CompiledModel::from_expr(&Expr::from(2.0).named("display-only")).unwrap();
+        assert_eq!(plain.optimized_digest(), named.optimized_digest());
+
+        let base = CompiledModel::from_expr(&Expr::from(Parameter::free("p"))).unwrap();
+        let scaled = CompiledModel::from_expr(&Expr::from(
+            Parameter::free("p")
+                .with_scale(0.5)
+                .with_unit("GeV")
+                .with_description("semantic parameter metadata"),
+        ))
+        .unwrap();
+        assert_ne!(base.optimized_digest(), scaled.optimized_digest());
+    }
 
     #[derive(Copy, Clone, Debug)]
     struct ReplaceTwoWithFour;

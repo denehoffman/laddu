@@ -617,8 +617,12 @@ pub fn laddu_expr::BinaryOp::evaluate(&self, num_complex::Complex64, num_complex
 impl core::clone::Clone for laddu_expr::BinaryOp
 pub fn laddu_expr::BinaryOp::clone(&self) -> laddu_expr::BinaryOp
 impl core::cmp::Eq for laddu_expr::BinaryOp
+impl core::cmp::Ord for laddu_expr::BinaryOp
+pub fn laddu_expr::BinaryOp::cmp(&self, &laddu_expr::BinaryOp) -> core::cmp::Ordering
 impl core::cmp::PartialEq for laddu_expr::BinaryOp
 pub fn laddu_expr::BinaryOp::eq(&self, &laddu_expr::BinaryOp) -> bool
+impl core::cmp::PartialOrd for laddu_expr::BinaryOp
+pub fn laddu_expr::BinaryOp::partial_cmp(&self, &laddu_expr::BinaryOp) -> core::option::Option<core::cmp::Ordering>
 impl core::fmt::Debug for laddu_expr::BinaryOp
 pub fn laddu_expr::BinaryOp::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::hash::Hash for laddu_expr::BinaryOp
@@ -641,6 +645,22 @@ impl core::fmt::Debug for laddu_expr::ColorPreset
 pub fn laddu_expr::ColorPreset::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::Copy for laddu_expr::ColorPreset
 impl core::marker::StructuralPartialEq for laddu_expr::ColorPreset
+pub enum laddu_expr::ExprDependencyKind
+pub laddu_expr::ExprDependencyKind::Children
+pub laddu_expr::ExprDependencyKind::Constant
+pub laddu_expr::ExprDependencyKind::Event
+pub laddu_expr::ExprDependencyKind::Parameter
+impl core::clone::Clone for laddu_expr::ExprDependencyKind
+pub fn laddu_expr::ExprDependencyKind::clone(&self) -> laddu_expr::ExprDependencyKind
+impl core::cmp::Eq for laddu_expr::ExprDependencyKind
+impl core::cmp::PartialEq for laddu_expr::ExprDependencyKind
+pub fn laddu_expr::ExprDependencyKind::eq(&self, &laddu_expr::ExprDependencyKind) -> bool
+impl core::fmt::Debug for laddu_expr::ExprDependencyKind
+pub fn laddu_expr::ExprDependencyKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for laddu_expr::ExprDependencyKind
+pub fn laddu_expr::ExprDependencyKind::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for laddu_expr::ExprDependencyKind
+impl core::marker::StructuralPartialEq for laddu_expr::ExprDependencyKind
 pub enum laddu_expr::ExprError
 pub laddu_expr::ExprError::Graph(laddu_expr::ExprGraphError)
 pub laddu_expr::ExprError::Params(laddu_expr::ParamError)
@@ -740,10 +760,12 @@ impl laddu_expr::ExprNode
 pub fn laddu_expr::ExprNode::child_ids(&self) -> alloc::vec::Vec<laddu_expr::ExprId>
 pub fn laddu_expr::ExprNode::children(&self) -> impl core::iter::traits::exact_size::ExactSizeIterator<Item = laddu_expr::ExprId> + core::iter::traits::double_ended::DoubleEndedIterator + '_
 pub fn laddu_expr::ExprNode::const_value(&self) -> core::option::Option<num_complex::Complex64>
+pub fn laddu_expr::ExprNode::dependency_kind(&self) -> laddu_expr::ExprDependencyKind
 pub fn laddu_expr::ExprNode::from_folded_const(num_complex::Complex64) -> Self
 pub fn laddu_expr::ExprNode::is_one(&laddu_expr::ExprNode) -> bool
 pub fn laddu_expr::ExprNode::is_zero(&laddu_expr::ExprNode) -> bool
 pub fn laddu_expr::ExprNode::map_children(&self, impl core::ops::function::FnMut(laddu_expr::ExprId) -> laddu_expr::ExprId) -> Self
+pub fn laddu_expr::ExprNode::semantics(&self, &[laddu_expr::ExprNodeSemantics]) -> laddu_expr::ExprNodeSemantics
 impl core::clone::Clone for laddu_expr::ExprNode
 pub fn laddu_expr::ExprNode::clone(&self) -> laddu_expr::ExprNode
 impl core::cmp::PartialEq for laddu_expr::ExprNode
@@ -851,6 +873,22 @@ pub fn laddu_expr::NodeSelector::eq(&self, &laddu_expr::NodeSelector) -> bool
 impl core::fmt::Debug for laddu_expr::NodeSelector
 pub fn laddu_expr::NodeSelector::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::StructuralPartialEq for laddu_expr::NodeSelector
+pub enum laddu_expr::NumberClass
+pub laddu_expr::NumberClass::Complex
+pub laddu_expr::NumberClass::Imaginary
+pub laddu_expr::NumberClass::Real
+pub laddu_expr::NumberClass::Unknown
+impl core::clone::Clone for laddu_expr::NumberClass
+pub fn laddu_expr::NumberClass::clone(&self) -> laddu_expr::NumberClass
+impl core::cmp::Eq for laddu_expr::NumberClass
+impl core::cmp::PartialEq for laddu_expr::NumberClass
+pub fn laddu_expr::NumberClass::eq(&self, &laddu_expr::NumberClass) -> bool
+impl core::fmt::Debug for laddu_expr::NumberClass
+pub fn laddu_expr::NumberClass::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for laddu_expr::NumberClass
+pub fn laddu_expr::NumberClass::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for laddu_expr::NumberClass
+impl core::marker::StructuralPartialEq for laddu_expr::NumberClass
 pub enum laddu_expr::P4Component
 pub laddu_expr::P4Component::E
 pub laddu_expr::P4Component::Px
@@ -862,8 +900,12 @@ pub fn laddu_expr::P4Component::label(self) -> &'static str
 impl core::clone::Clone for laddu_expr::P4Component
 pub fn laddu_expr::P4Component::clone(&self) -> laddu_expr::P4Component
 impl core::cmp::Eq for laddu_expr::P4Component
+impl core::cmp::Ord for laddu_expr::P4Component
+pub fn laddu_expr::P4Component::cmp(&self, &laddu_expr::P4Component) -> core::cmp::Ordering
 impl core::cmp::PartialEq for laddu_expr::P4Component
 pub fn laddu_expr::P4Component::eq(&self, &laddu_expr::P4Component) -> bool
+impl core::cmp::PartialOrd for laddu_expr::P4Component
+pub fn laddu_expr::P4Component::partial_cmp(&self, &laddu_expr::P4Component) -> core::option::Option<core::cmp::Ordering>
 impl core::fmt::Debug for laddu_expr::P4Component
 pub fn laddu_expr::P4Component::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::hash::Hash for laddu_expr::P4Component
@@ -950,8 +992,12 @@ pub fn laddu_expr::UnaryOp::evaluate(&self, num_complex::Complex64) -> num_compl
 impl core::clone::Clone for laddu_expr::UnaryOp
 pub fn laddu_expr::UnaryOp::clone(&self) -> laddu_expr::UnaryOp
 impl core::cmp::Eq for laddu_expr::UnaryOp
+impl core::cmp::Ord for laddu_expr::UnaryOp
+pub fn laddu_expr::UnaryOp::cmp(&self, &laddu_expr::UnaryOp) -> core::cmp::Ordering
 impl core::cmp::PartialEq for laddu_expr::UnaryOp
 pub fn laddu_expr::UnaryOp::eq(&self, &laddu_expr::UnaryOp) -> bool
+impl core::cmp::PartialOrd for laddu_expr::UnaryOp
+pub fn laddu_expr::UnaryOp::partial_cmp(&self, &laddu_expr::UnaryOp) -> core::option::Option<core::cmp::Ordering>
 impl core::fmt::Debug for laddu_expr::UnaryOp
 pub fn laddu_expr::UnaryOp::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::hash::Hash for laddu_expr::UnaryOp
@@ -1505,8 +1551,12 @@ pub fn laddu_expr::ExprId::index(self) -> usize
 impl core::clone::Clone for laddu_expr::ExprId
 pub fn laddu_expr::ExprId::clone(&self) -> laddu_expr::ExprId
 impl core::cmp::Eq for laddu_expr::ExprId
+impl core::cmp::Ord for laddu_expr::ExprId
+pub fn laddu_expr::ExprId::cmp(&self, &laddu_expr::ExprId) -> core::cmp::Ordering
 impl core::cmp::PartialEq for laddu_expr::ExprId
 pub fn laddu_expr::ExprId::eq(&self, &laddu_expr::ExprId) -> bool
+impl core::cmp::PartialOrd for laddu_expr::ExprId
+pub fn laddu_expr::ExprId::partial_cmp(&self, &laddu_expr::ExprId) -> core::option::Option<core::cmp::Ordering>
 impl core::fmt::Debug for laddu_expr::ExprId
 pub fn laddu_expr::ExprId::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::hash::Hash for laddu_expr::ExprId
@@ -1536,6 +1586,18 @@ impl serde_core::ser::Serialize for laddu_expr::ExprMetadata
 pub fn laddu_expr::ExprMetadata::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
 impl<'de> serde_core::de::Deserialize<'de> for laddu_expr::ExprMetadata
 pub fn laddu_expr::ExprMetadata::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct laddu_expr::ExprNodeSemantics
+pub laddu_expr::ExprNodeSemantics::number_class: laddu_expr::NumberClass
+pub laddu_expr::ExprNodeSemantics::value_kind: laddu_expr::ValueKind
+impl core::clone::Clone for laddu_expr::ExprNodeSemantics
+pub fn laddu_expr::ExprNodeSemantics::clone(&self) -> laddu_expr::ExprNodeSemantics
+impl core::cmp::Eq for laddu_expr::ExprNodeSemantics
+impl core::cmp::PartialEq for laddu_expr::ExprNodeSemantics
+pub fn laddu_expr::ExprNodeSemantics::eq(&self, &laddu_expr::ExprNodeSemantics) -> bool
+impl core::fmt::Debug for laddu_expr::ExprNodeSemantics
+pub fn laddu_expr::ExprNodeSemantics::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for laddu_expr::ExprNodeSemantics
+impl core::marker::StructuralPartialEq for laddu_expr::ExprNodeSemantics
 pub struct laddu_expr::ExprShapeError
 impl core::clone::Clone for laddu_expr::ExprShapeError
 pub fn laddu_expr::ExprShapeError::clone(&self) -> laddu_expr::ExprShapeError

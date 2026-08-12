@@ -7,10 +7,13 @@ use std::{
 use num::complex::Complex64;
 use serde::{Deserialize, Serialize};
 
-use crate::{ExprGraphError, ExprShapeError, ParamError, ParamResult, parameters::Parameter};
+use crate::{
+    ExprGraphError, ExprShapeError, ParamError, ParamResult,
+    parameters::{InitialSpec, ParamState, Parameter},
+};
 
 /// Stable identifier for a node in a serialized [`ExprGraph`].
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct ExprId(u64);
 
 impl ExprId {
@@ -44,6 +47,62 @@ pub enum ValueKind {
         /// Number of columns.
         cols: usize,
     },
+}
+
+/// Statically known scalar number category.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub enum NumberClass {
+    /// No narrower category is known.
+    Unknown,
+    /// The value is real.
+    Real,
+    /// The value is purely imaginary.
+    Imaginary,
+    /// The value may have real and imaginary components.
+    Complex,
+}
+
+/// Context-free value semantics inferred for one expression node.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct ExprNodeSemantics {
+    /// Runtime value kind.
+    pub value_kind: ValueKind,
+    /// Known relationship between real and imaginary components.
+    pub number_class: NumberClass,
+}
+
+fn add_number_class(lhs: NumberClass, rhs: NumberClass) -> NumberClass {
+    use NumberClass::{Complex, Imaginary, Real, Unknown};
+    match (lhs, rhs) {
+        (Real, Real) => Real,
+        (Imaginary, Imaginary) => Imaginary,
+        (Complex, _) | (_, Complex) => Complex,
+        (Unknown, _) | (_, Unknown) => Unknown,
+        _ => Complex,
+    }
+}
+
+fn mul_number_class(lhs: NumberClass, rhs: NumberClass) -> NumberClass {
+    use NumberClass::{Complex, Imaginary, Real, Unknown};
+    match (lhs, rhs) {
+        (Real, Real) | (Imaginary, Imaginary) => Real,
+        (Real, Imaginary) | (Imaginary, Real) => Imaginary,
+        (Complex, _) | (_, Complex) => Complex,
+        (Unknown, _) | (_, Unknown) => Unknown,
+    }
+}
+
+/// Intrinsic source of a node's evaluation dependencies.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub enum ExprDependencyKind {
+    /// The node is a compile-time constant.
+    Constant,
+    /// The node directly reads a parameter definition.
+    Parameter,
+    /// The node directly reads event data.
+    Event,
+    /// The node inherits the union of its children's dependencies.
+    Children,
 }
 
 /// Structural shape of an expression.
@@ -93,7 +152,7 @@ impl ComponentIndex for i32 {
     }
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 /// A named component of a four-momentum in `(E, px, py, pz)` order.
 pub enum P4Component {
     /// Energy.
@@ -129,7 +188,7 @@ impl P4Component {
 }
 
 /// Unary operation in an expression graph.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum UnaryOp {
     /// Arithmetic negation.
     Neg,
@@ -175,7 +234,7 @@ impl UnaryOp {
 }
 
 /// Binary operation in an expression graph.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum BinaryOp {
     /// Addition.
     Add,
@@ -313,6 +372,145 @@ pub enum ExprNode {
     },
 }
 
+/// Bit-exact structural identity for a scalar parameter definition.
+///
+/// Equality includes state, initial-value policy, bounds, periodicity, scale,
+/// and user-facing labels. Floating-point values are compared by their bit
+/// patterns, so signed zero and distinct NaN payloads remain distinct.
+#[doc(hidden)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ParameterStructuralKey {
+    name: Arc<str>,
+    state: ParameterStateStructuralKey,
+    initial: InitialStructuralKey,
+    bounds: (Option<u64>, Option<u64>),
+    periodic: bool,
+    scale: Option<u64>,
+    unit: Option<Arc<str>>,
+    latex: Option<Arc<str>>,
+    description: Option<Arc<str>>,
+}
+
+#[doc(hidden)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum ParameterStateStructuralKey {
+    Free,
+    Fixed(u64),
+}
+
+#[doc(hidden)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum InitialStructuralKey {
+    Default,
+    Value(u64),
+    Uniform { min: u64, max: u64 },
+}
+
+/// Bit-exact, metadata-free structural identity for an expression node.
+///
+/// The key includes the node variant, semantic payload, child identifiers, and
+/// complete parameter definitions. It deliberately excludes [`ExprMetadata`].
+/// Its ordering is deterministic but its representation and hash values are an
+/// internal workspace contract, not a stable serialized or persisted format.
+#[doc(hidden)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum ExprNodeStructuralKey {
+    RealConst(u64),
+    ComplexConst {
+        re: u64,
+        im: u64,
+    },
+    ScalarParam(ParameterStructuralKey),
+    EventScalar(Arc<str>),
+    EventP4Component {
+        name: Arc<str>,
+        component: P4Component,
+    },
+    Unary {
+        op: UnaryOp,
+        input: ExprId,
+    },
+    Binary {
+        op: BinaryOp,
+        lhs: ExprId,
+        rhs: ExprId,
+    },
+    NaryAdd {
+        terms: Vec<ExprId>,
+    },
+    NaryMul {
+        factors: Vec<ExprId>,
+    },
+    Complex {
+        re: ExprId,
+        im: ExprId,
+    },
+    Vector {
+        elements: Vec<ExprId>,
+    },
+    Matrix {
+        rows: usize,
+        cols: usize,
+        elements: Vec<ExprId>,
+    },
+    Component {
+        input: ExprId,
+        index: usize,
+    },
+    MatrixElement {
+        input: ExprId,
+        row: usize,
+        col: usize,
+    },
+    MatMul {
+        lhs: ExprId,
+        rhs: ExprId,
+    },
+    MatVec {
+        matrix: ExprId,
+        vector: ExprId,
+    },
+    Dot {
+        lhs: ExprId,
+        rhs: ExprId,
+    },
+    Solve {
+        matrix: ExprId,
+        rhs: ExprId,
+    },
+}
+
+impl From<&Parameter> for ParameterStructuralKey {
+    fn from(parameter: &Parameter) -> Self {
+        let state = match parameter.state() {
+            ParamState::Free => ParameterStateStructuralKey::Free,
+            ParamState::Fixed(value) => ParameterStateStructuralKey::Fixed(value.to_bits()),
+        };
+        let initial = match parameter.initial_spec() {
+            InitialSpec::Default => InitialStructuralKey::Default,
+            InitialSpec::Value(value) => InitialStructuralKey::Value(value.to_bits()),
+            InitialSpec::Uniform { min, max } => InitialStructuralKey::Uniform {
+                min: min.to_bits(),
+                max: max.to_bits(),
+            },
+        };
+        Self {
+            name: Arc::from(parameter.name()),
+            state,
+            initial,
+            bounds: (
+                parameter.bounds_spec().min.map(f64::to_bits),
+                parameter.bounds_spec().max.map(f64::to_bits),
+            ),
+            periodic: parameter.is_periodic(),
+            scale: parameter.scale().map(f64::to_bits),
+            unit: parameter.unit_label().map(Arc::from),
+            latex: parameter.latex_label().map(Arc::from),
+            description: parameter.description_text().map(Arc::from),
+        }
+    }
+}
+
 impl From<Complex64> for ExprNode {
     fn from(value: Complex64) -> Self {
         if value.im == 0.0 {
@@ -324,6 +522,241 @@ impl From<Complex64> for ExprNode {
 }
 
 impl ExprNode {
+    /// Infers this node's context-free value semantics from the already
+    /// computed semantics of earlier nodes in the expression graph.
+    pub fn semantics(&self, children: &[ExprNodeSemantics]) -> ExprNodeSemantics {
+        ExprNodeSemantics {
+            value_kind: self.infer_value_kind(children),
+            number_class: self.infer_number_class(children),
+        }
+    }
+
+    fn infer_value_kind(&self, children: &[ExprNodeSemantics]) -> ValueKind {
+        match self {
+            Self::RealConst(_) | Self::ScalarParam(_) => ValueKind::Real,
+            Self::ComplexConst(value) => {
+                if value.im == 0.0 {
+                    ValueKind::Real
+                } else {
+                    ValueKind::Complex
+                }
+            }
+            Self::EventScalar(_) | Self::EventP4Component { .. } => ValueKind::Real,
+            Self::Unary { op, input } => match op {
+                UnaryOp::Real | UnaryOp::Imag | UnaryOp::NormSqr => ValueKind::Real,
+                UnaryOp::Neg
+                | UnaryOp::Conj
+                | UnaryOp::Sqrt
+                | UnaryOp::Exp
+                | UnaryOp::Sin
+                | UnaryOp::Cos
+                | UnaryOp::Log
+                | UnaryOp::PowI(_) => children[input.index()].value_kind,
+            },
+            Self::Binary { op, lhs, rhs } => {
+                if *op == BinaryOp::Atan2 {
+                    return ValueKind::Real;
+                }
+                if children[lhs.index()].value_kind == ValueKind::Real
+                    && children[rhs.index()].value_kind == ValueKind::Real
+                {
+                    ValueKind::Real
+                } else {
+                    ValueKind::Complex
+                }
+            }
+            Self::NaryAdd { terms } => {
+                if terms
+                    .iter()
+                    .all(|id| children[id.index()].value_kind == ValueKind::Real)
+                {
+                    ValueKind::Real
+                } else {
+                    ValueKind::Complex
+                }
+            }
+            Self::NaryMul { factors } => {
+                if factors
+                    .iter()
+                    .all(|id| children[id.index()].value_kind == ValueKind::Real)
+                {
+                    ValueKind::Real
+                } else {
+                    ValueKind::Complex
+                }
+            }
+            Self::Complex { .. } => ValueKind::Complex,
+            Self::Vector { elements } => ValueKind::Vector {
+                len: elements.len(),
+            },
+            Self::Matrix { rows, cols, .. } => ValueKind::Matrix {
+                rows: *rows,
+                cols: *cols,
+            },
+            Self::Component { input, .. } => match children[input.index()].value_kind {
+                ValueKind::Vector { .. } => ValueKind::Complex,
+                kind => kind,
+            },
+            Self::MatrixElement { .. } | Self::Dot { .. } => ValueKind::Complex,
+            Self::MatMul { lhs, rhs } => {
+                let ValueKind::Matrix { rows, .. } = children[lhs.index()].value_kind else {
+                    return ValueKind::Complex;
+                };
+                let ValueKind::Matrix { cols, .. } = children[rhs.index()].value_kind else {
+                    return ValueKind::Complex;
+                };
+                ValueKind::Matrix { rows, cols }
+            }
+            Self::MatVec { matrix, .. } => {
+                let ValueKind::Matrix { rows, .. } = children[matrix.index()].value_kind else {
+                    return ValueKind::Complex;
+                };
+                ValueKind::Vector { len: rows }
+            }
+            Self::Solve { rhs, .. } => children[rhs.index()].value_kind,
+        }
+    }
+
+    fn infer_number_class(&self, children: &[ExprNodeSemantics]) -> NumberClass {
+        match self {
+            Self::RealConst(_) | Self::ScalarParam(_) => NumberClass::Real,
+            Self::ComplexConst(value) => match (value.re == 0.0, value.im == 0.0) {
+                (_, true) => NumberClass::Real,
+                (true, false) => NumberClass::Imaginary,
+                (false, false) => NumberClass::Complex,
+            },
+            Self::EventScalar(_) | Self::EventP4Component { .. } => NumberClass::Real,
+            Self::Unary { op, input } => match op {
+                UnaryOp::Neg | UnaryOp::Conj => children[input.index()].number_class,
+                UnaryOp::Real | UnaryOp::Imag | UnaryOp::NormSqr => NumberClass::Real,
+                UnaryOp::Exp | UnaryOp::Sin | UnaryOp::Cos | UnaryOp::PowI(_) => {
+                    let input = children[input.index()].number_class;
+                    if input == NumberClass::Real {
+                        NumberClass::Real
+                    } else {
+                        NumberClass::Unknown
+                    }
+                }
+                UnaryOp::Sqrt | UnaryOp::Log => NumberClass::Unknown,
+            },
+            Self::Binary { op, lhs, rhs } => {
+                let lhs = children[lhs.index()].number_class;
+                let rhs = children[rhs.index()].number_class;
+                match op {
+                    BinaryOp::Add | BinaryOp::Sub => add_number_class(lhs, rhs),
+                    BinaryOp::Mul | BinaryOp::Div => mul_number_class(lhs, rhs),
+                    BinaryOp::Atan2 => NumberClass::Real,
+                }
+            }
+            Self::NaryAdd { terms } => {
+                let mut classes = terms.iter().map(|id| children[id.index()].number_class);
+                let Some(first) = classes.next() else {
+                    return NumberClass::Real;
+                };
+                classes.fold(first, add_number_class)
+            }
+            Self::NaryMul { factors } => {
+                let mut classes = factors.iter().map(|id| children[id.index()].number_class);
+                let Some(first) = classes.next() else {
+                    return NumberClass::Real;
+                };
+                classes.fold(first, mul_number_class)
+            }
+            Self::Complex { .. } => NumberClass::Complex,
+            Self::Vector { .. }
+            | Self::Matrix { .. }
+            | Self::Component { .. }
+            | Self::MatrixElement { .. }
+            | Self::MatMul { .. }
+            | Self::MatVec { .. }
+            | Self::Dot { .. }
+            | Self::Solve { .. } => NumberClass::Unknown,
+        }
+    }
+
+    /// Returns the intrinsic source of this node's evaluation dependencies.
+    pub fn dependency_kind(&self) -> ExprDependencyKind {
+        match self {
+            Self::RealConst(_) | Self::ComplexConst(_) => ExprDependencyKind::Constant,
+            Self::ScalarParam(_) => ExprDependencyKind::Parameter,
+            Self::EventScalar(_) | Self::EventP4Component { .. } => ExprDependencyKind::Event,
+            _ => ExprDependencyKind::Children,
+        }
+    }
+
+    /// Returns this node's bit-exact, metadata-free structural identity.
+    #[doc(hidden)]
+    pub fn structural_key(&self) -> ExprNodeStructuralKey {
+        match self {
+            Self::RealConst(value) => ExprNodeStructuralKey::RealConst(value.to_bits()),
+            Self::ComplexConst(value) => ExprNodeStructuralKey::ComplexConst {
+                re: value.re.to_bits(),
+                im: value.im.to_bits(),
+            },
+            Self::ScalarParam(parameter) => {
+                ExprNodeStructuralKey::ScalarParam(ParameterStructuralKey::from(parameter))
+            }
+            Self::EventScalar(name) => ExprNodeStructuralKey::EventScalar(Arc::clone(name)),
+            Self::EventP4Component { name, component } => ExprNodeStructuralKey::EventP4Component {
+                name: Arc::clone(name),
+                component: *component,
+            },
+            Self::Unary { op, input } => ExprNodeStructuralKey::Unary {
+                op: *op,
+                input: *input,
+            },
+            Self::Binary { op, lhs, rhs } => ExprNodeStructuralKey::Binary {
+                op: *op,
+                lhs: *lhs,
+                rhs: *rhs,
+            },
+            Self::NaryAdd { terms } => ExprNodeStructuralKey::NaryAdd {
+                terms: terms.clone(),
+            },
+            Self::NaryMul { factors } => ExprNodeStructuralKey::NaryMul {
+                factors: factors.clone(),
+            },
+            Self::Complex { re, im } => ExprNodeStructuralKey::Complex { re: *re, im: *im },
+            Self::Vector { elements } => ExprNodeStructuralKey::Vector {
+                elements: elements.clone(),
+            },
+            Self::Matrix {
+                rows,
+                cols,
+                elements,
+            } => ExprNodeStructuralKey::Matrix {
+                rows: *rows,
+                cols: *cols,
+                elements: elements.clone(),
+            },
+            Self::Component { input, index } => ExprNodeStructuralKey::Component {
+                input: *input,
+                index: *index,
+            },
+            Self::MatrixElement { input, row, col } => ExprNodeStructuralKey::MatrixElement {
+                input: *input,
+                row: *row,
+                col: *col,
+            },
+            Self::MatMul { lhs, rhs } => ExprNodeStructuralKey::MatMul {
+                lhs: *lhs,
+                rhs: *rhs,
+            },
+            Self::MatVec { matrix, vector } => ExprNodeStructuralKey::MatVec {
+                matrix: *matrix,
+                vector: *vector,
+            },
+            Self::Dot { lhs, rhs } => ExprNodeStructuralKey::Dot {
+                lhs: *lhs,
+                rhs: *rhs,
+            },
+            Self::Solve { matrix, rhs } => ExprNodeStructuralKey::Solve {
+                matrix: *matrix,
+                rhs: *rhs,
+            },
+        }
+    }
+
     /// Creates the most compact constant-node representation for `value`.
     pub fn from_folded_const(value: Complex64) -> Self {
         if value.im == 0.0 && value.im.is_sign_positive() {
