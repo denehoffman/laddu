@@ -1,0 +1,999 @@
+pub mod laddu_compile
+pub mod laddu_compile::cost
+pub struct laddu_compile::cost::LifecycleCost
+impl laddu_compile::cost::LifecycleCost
+pub fn laddu_compile::cost::LifecycleCost::compile(&self) -> u64
+pub fn laddu_compile::cost::LifecycleCost::dataset_event(&self) -> u64
+pub fn laddu_compile::cost::LifecycleCost::evaluation_event(&self) -> u64
+pub fn laddu_compile::cost::LifecycleCost::evaluation_invariant(&self) -> u64
+impl core::clone::Clone for laddu_compile::cost::LifecycleCost
+pub fn laddu_compile::cost::LifecycleCost::clone(&self) -> laddu_compile::cost::LifecycleCost
+impl core::cmp::Eq for laddu_compile::cost::LifecycleCost
+impl core::cmp::PartialEq for laddu_compile::cost::LifecycleCost
+pub fn laddu_compile::cost::LifecycleCost::eq(&self, &laddu_compile::cost::LifecycleCost) -> bool
+impl core::default::Default for laddu_compile::cost::LifecycleCost
+pub fn laddu_compile::cost::LifecycleCost::default() -> laddu_compile::cost::LifecycleCost
+impl core::fmt::Debug for laddu_compile::cost::LifecycleCost
+pub fn laddu_compile::cost::LifecycleCost::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for laddu_compile::cost::LifecycleCost
+impl core::marker::StructuralPartialEq for laddu_compile::cost::LifecycleCost
+pub struct laddu_compile::cost::OptimizationCost
+impl laddu_compile::cost::OptimizationCost
+pub fn laddu_compile::cost::OptimizationCost::analyze(&laddu_expr::expression::ExprGraph) -> Self
+pub fn laddu_compile::cost::OptimizationCost::cheap_unary_ops(&self) -> usize
+pub fn laddu_compile::cost::OptimizationCost::constructors(&self) -> usize
+pub fn laddu_compile::cost::OptimizationCost::extractions(&self) -> usize
+pub fn laddu_compile::cost::OptimizationCost::free_nodes(&self) -> usize
+pub fn laddu_compile::cost::OptimizationCost::is_better_than(&self, &Self) -> bool
+pub fn laddu_compile::cost::OptimizationCost::is_no_worse_than(&self, &Self) -> bool
+pub fn laddu_compile::cost::OptimizationCost::lifecycle(&self) -> laddu_compile::cost::LifecycleCost
+pub fn laddu_compile::cost::OptimizationCost::linear_algebra_ops(&self) -> usize
+pub fn laddu_compile::cost::OptimizationCost::node_count(&self) -> usize
+pub fn laddu_compile::cost::OptimizationCost::power_ops(&self) -> usize
+pub fn laddu_compile::cost::OptimizationCost::scalar_adds(&self) -> usize
+pub fn laddu_compile::cost::OptimizationCost::scalar_divs(&self) -> usize
+pub fn laddu_compile::cost::OptimizationCost::scalar_muls(&self) -> usize
+pub fn laddu_compile::cost::OptimizationCost::transcendental_ops(&self) -> usize
+pub fn laddu_compile::cost::OptimizationCost::weighted_ops(&self) -> u64
+impl core::clone::Clone for laddu_compile::cost::OptimizationCost
+pub fn laddu_compile::cost::OptimizationCost::clone(&self) -> laddu_compile::cost::OptimizationCost
+impl core::cmp::Eq for laddu_compile::cost::OptimizationCost
+impl core::cmp::PartialEq for laddu_compile::cost::OptimizationCost
+pub fn laddu_compile::cost::OptimizationCost::eq(&self, &laddu_compile::cost::OptimizationCost) -> bool
+impl core::default::Default for laddu_compile::cost::OptimizationCost
+pub fn laddu_compile::cost::OptimizationCost::default() -> laddu_compile::cost::OptimizationCost
+impl core::fmt::Debug for laddu_compile::cost::OptimizationCost
+pub fn laddu_compile::cost::OptimizationCost::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for laddu_compile::cost::OptimizationCost
+pub mod laddu_compile::facts
+pub enum laddu_compile::facts::EvaluationClass
+pub laddu_compile::facts::EvaluationClass::PerCompile
+pub laddu_compile::facts::EvaluationClass::PerEvaluation
+pub laddu_compile::facts::EvaluationClass::PerEvent
+impl core::clone::Clone for laddu_compile::facts::EvaluationClass
+pub fn laddu_compile::facts::EvaluationClass::clone(&self) -> laddu_compile::facts::EvaluationClass
+impl core::cmp::Eq for laddu_compile::facts::EvaluationClass
+impl core::cmp::PartialEq for laddu_compile::facts::EvaluationClass
+pub fn laddu_compile::facts::EvaluationClass::eq(&self, &laddu_compile::facts::EvaluationClass) -> bool
+impl core::fmt::Debug for laddu_compile::facts::EvaluationClass
+pub fn laddu_compile::facts::EvaluationClass::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for laddu_compile::facts::EvaluationClass
+impl core::marker::StructuralPartialEq for laddu_compile::facts::EvaluationClass
+pub enum laddu_compile::facts::NumberClass
+pub laddu_compile::facts::NumberClass::Complex
+pub laddu_compile::facts::NumberClass::Imaginary
+pub laddu_compile::facts::NumberClass::Real
+pub laddu_compile::facts::NumberClass::Unknown
+impl core::clone::Clone for laddu_compile::facts::NumberClass
+pub fn laddu_compile::facts::NumberClass::clone(&self) -> laddu_compile::facts::NumberClass
+impl core::cmp::Eq for laddu_compile::facts::NumberClass
+impl core::cmp::PartialEq for laddu_compile::facts::NumberClass
+pub fn laddu_compile::facts::NumberClass::eq(&self, &laddu_compile::facts::NumberClass) -> bool
+impl core::fmt::Debug for laddu_compile::facts::NumberClass
+pub fn laddu_compile::facts::NumberClass::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for laddu_compile::facts::NumberClass
+impl core::marker::StructuralPartialEq for laddu_compile::facts::NumberClass
+pub struct laddu_compile::facts::DependencyFacts
+pub laddu_compile::facts::DependencyFacts::depends_on_event: bool
+pub laddu_compile::facts::DependencyFacts::depends_on_fixed_params: bool
+pub laddu_compile::facts::DependencyFacts::depends_on_free_params: bool
+impl laddu_compile::facts::DependencyFacts
+pub fn laddu_compile::facts::DependencyFacts::evaluation_class(self) -> laddu_compile::facts::EvaluationClass
+pub fn laddu_compile::facts::DependencyFacts::from_event() -> Self
+pub fn laddu_compile::facts::DependencyFacts::from_parameter(&laddu_expr::parameters::Parameter) -> Self
+pub fn laddu_compile::facts::DependencyFacts::per_compile() -> Self
+pub fn laddu_compile::facts::DependencyFacts::union(self, Self) -> Self
+impl core::clone::Clone for laddu_compile::facts::DependencyFacts
+pub fn laddu_compile::facts::DependencyFacts::clone(&self) -> laddu_compile::facts::DependencyFacts
+impl core::cmp::Eq for laddu_compile::facts::DependencyFacts
+impl core::cmp::PartialEq for laddu_compile::facts::DependencyFacts
+pub fn laddu_compile::facts::DependencyFacts::eq(&self, &laddu_compile::facts::DependencyFacts) -> bool
+impl core::default::Default for laddu_compile::facts::DependencyFacts
+pub fn laddu_compile::facts::DependencyFacts::default() -> laddu_compile::facts::DependencyFacts
+impl core::fmt::Debug for laddu_compile::facts::DependencyFacts
+pub fn laddu_compile::facts::DependencyFacts::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for laddu_compile::facts::DependencyFacts
+impl core::marker::StructuralPartialEq for laddu_compile::facts::DependencyFacts
+pub struct laddu_compile::facts::GraphFacts
+impl laddu_compile::facts::GraphFacts
+pub fn laddu_compile::facts::GraphFacts::analyze(&laddu_expr::expression::ExprGraph) -> Self
+pub fn laddu_compile::facts::GraphFacts::get(&self, laddu_expr::expression::ExprId) -> core::option::Option<&laddu_compile::facts::NodeFacts>
+pub fn laddu_compile::facts::GraphFacts::nodes(&self) -> &[laddu_compile::facts::NodeFacts]
+impl core::clone::Clone for laddu_compile::facts::GraphFacts
+pub fn laddu_compile::facts::GraphFacts::clone(&self) -> laddu_compile::facts::GraphFacts
+impl core::cmp::Eq for laddu_compile::facts::GraphFacts
+impl core::cmp::PartialEq for laddu_compile::facts::GraphFacts
+pub fn laddu_compile::facts::GraphFacts::eq(&self, &laddu_compile::facts::GraphFacts) -> bool
+impl core::fmt::Debug for laddu_compile::facts::GraphFacts
+pub fn laddu_compile::facts::GraphFacts::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for laddu_compile::facts::GraphFacts
+pub struct laddu_compile::facts::NodeFacts
+pub laddu_compile::facts::NodeFacts::dependency: laddu_compile::facts::DependencyFacts
+pub laddu_compile::facts::NodeFacts::number_class: laddu_compile::facts::NumberClass
+pub laddu_compile::facts::NodeFacts::value_kind: laddu_expr::expression::ValueKind
+impl laddu_compile::facts::NodeFacts
+pub fn laddu_compile::facts::NodeFacts::evaluation_class(self) -> laddu_compile::facts::EvaluationClass
+impl core::clone::Clone for laddu_compile::facts::NodeFacts
+pub fn laddu_compile::facts::NodeFacts::clone(&self) -> laddu_compile::facts::NodeFacts
+impl core::cmp::Eq for laddu_compile::facts::NodeFacts
+impl core::cmp::PartialEq for laddu_compile::facts::NodeFacts
+pub fn laddu_compile::facts::NodeFacts::eq(&self, &laddu_compile::facts::NodeFacts) -> bool
+impl core::fmt::Debug for laddu_compile::facts::NodeFacts
+pub fn laddu_compile::facts::NodeFacts::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for laddu_compile::facts::NodeFacts
+impl core::marker::StructuralPartialEq for laddu_compile::facts::NodeFacts
+pub mod laddu_compile::optimize
+pub enum laddu_compile::optimize::Rewrite
+pub laddu_compile::optimize::Rewrite::Alias(laddu_expr::expression::ExprId)
+pub laddu_compile::optimize::Rewrite::Keep
+pub laddu_compile::optimize::Rewrite::Replace
+pub laddu_compile::optimize::Rewrite::Replace::metadata: laddu_expr::expression::ExprMetadata
+pub laddu_compile::optimize::Rewrite::Replace::node: laddu_expr::expression::ExprNode
+pub laddu_compile::optimize::Rewrite::ReplaceMany
+pub laddu_compile::optimize::Rewrite::ReplaceMany::nodes: alloc::vec::Vec<(laddu_expr::expression::ExprNode, laddu_expr::expression::ExprMetadata)>
+impl core::clone::Clone for laddu_compile::optimize::Rewrite
+pub fn laddu_compile::optimize::Rewrite::clone(&self) -> laddu_compile::optimize::Rewrite
+impl core::cmp::PartialEq for laddu_compile::optimize::Rewrite
+pub fn laddu_compile::optimize::Rewrite::eq(&self, &laddu_compile::optimize::Rewrite) -> bool
+impl core::fmt::Debug for laddu_compile::optimize::Rewrite
+pub fn laddu_compile::optimize::Rewrite::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for laddu_compile::optimize::Rewrite
+pub struct laddu_compile::optimize::AlgebraicIdentityRule
+impl core::clone::Clone for laddu_compile::optimize::AlgebraicIdentityRule
+pub fn laddu_compile::optimize::AlgebraicIdentityRule::clone(&self) -> laddu_compile::optimize::AlgebraicIdentityRule
+impl core::default::Default for laddu_compile::optimize::AlgebraicIdentityRule
+pub fn laddu_compile::optimize::AlgebraicIdentityRule::default() -> laddu_compile::optimize::AlgebraicIdentityRule
+impl core::fmt::Debug for laddu_compile::optimize::AlgebraicIdentityRule
+pub fn laddu_compile::optimize::AlgebraicIdentityRule::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for laddu_compile::optimize::AlgebraicIdentityRule
+impl laddu_compile::optimize::RewriteRule for laddu_compile::optimize::AlgebraicIdentityRule
+pub fn laddu_compile::optimize::AlgebraicIdentityRule::name(&self) -> &'static str
+pub fn laddu_compile::optimize::AlgebraicIdentityRule::rewrite(&self, &laddu_expr::expression::ExprNode, &laddu_expr::expression::ExprMetadata, &laddu_compile::optimize::RewriteContext<'_>) -> laddu_compile::CompileResult<laddu_compile::optimize::Rewrite>
+pub struct laddu_compile::optimize::CanonicalCsePass
+impl core::clone::Clone for laddu_compile::optimize::CanonicalCsePass
+pub fn laddu_compile::optimize::CanonicalCsePass::clone(&self) -> laddu_compile::optimize::CanonicalCsePass
+impl core::default::Default for laddu_compile::optimize::CanonicalCsePass
+pub fn laddu_compile::optimize::CanonicalCsePass::default() -> laddu_compile::optimize::CanonicalCsePass
+impl core::fmt::Debug for laddu_compile::optimize::CanonicalCsePass
+pub fn laddu_compile::optimize::CanonicalCsePass::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for laddu_compile::optimize::CanonicalCsePass
+impl laddu_compile::optimize::OptimizationPass for laddu_compile::optimize::CanonicalCsePass
+pub fn laddu_compile::optimize::CanonicalCsePass::name(&self) -> &'static str
+pub fn laddu_compile::optimize::CanonicalCsePass::run(&self, laddu_expr::expression::ExprGraph) -> laddu_compile::CompileResult<laddu_expr::expression::ExprGraph>
+pub fn laddu_compile::optimize::CanonicalCsePass::run_with_change(&self, laddu_expr::expression::ExprGraph) -> laddu_compile::CompileResult<laddu_compile::optimize::OptimizationPassOutcome>
+pub struct laddu_compile::optimize::CombineLikeTermsRule
+impl core::clone::Clone for laddu_compile::optimize::CombineLikeTermsRule
+pub fn laddu_compile::optimize::CombineLikeTermsRule::clone(&self) -> laddu_compile::optimize::CombineLikeTermsRule
+impl core::default::Default for laddu_compile::optimize::CombineLikeTermsRule
+pub fn laddu_compile::optimize::CombineLikeTermsRule::default() -> laddu_compile::optimize::CombineLikeTermsRule
+impl core::fmt::Debug for laddu_compile::optimize::CombineLikeTermsRule
+pub fn laddu_compile::optimize::CombineLikeTermsRule::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for laddu_compile::optimize::CombineLikeTermsRule
+impl laddu_compile::optimize::RewriteRule for laddu_compile::optimize::CombineLikeTermsRule
+pub fn laddu_compile::optimize::CombineLikeTermsRule::name(&self) -> &'static str
+pub fn laddu_compile::optimize::CombineLikeTermsRule::rewrite(&self, &laddu_expr::expression::ExprNode, &laddu_expr::expression::ExprMetadata, &laddu_compile::optimize::RewriteContext<'_>) -> laddu_compile::CompileResult<laddu_compile::optimize::Rewrite>
+pub struct laddu_compile::optimize::ComplexFactRule
+impl core::clone::Clone for laddu_compile::optimize::ComplexFactRule
+pub fn laddu_compile::optimize::ComplexFactRule::clone(&self) -> laddu_compile::optimize::ComplexFactRule
+impl core::default::Default for laddu_compile::optimize::ComplexFactRule
+pub fn laddu_compile::optimize::ComplexFactRule::default() -> laddu_compile::optimize::ComplexFactRule
+impl core::fmt::Debug for laddu_compile::optimize::ComplexFactRule
+pub fn laddu_compile::optimize::ComplexFactRule::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for laddu_compile::optimize::ComplexFactRule
+impl laddu_compile::optimize::RewriteRule for laddu_compile::optimize::ComplexFactRule
+pub fn laddu_compile::optimize::ComplexFactRule::name(&self) -> &'static str
+pub fn laddu_compile::optimize::ComplexFactRule::rewrite(&self, &laddu_expr::expression::ExprNode, &laddu_expr::expression::ExprMetadata, &laddu_compile::optimize::RewriteContext<'_>) -> laddu_compile::CompileResult<laddu_compile::optimize::Rewrite>
+pub struct laddu_compile::optimize::ConjugationRule
+impl core::clone::Clone for laddu_compile::optimize::ConjugationRule
+pub fn laddu_compile::optimize::ConjugationRule::clone(&self) -> laddu_compile::optimize::ConjugationRule
+impl core::default::Default for laddu_compile::optimize::ConjugationRule
+pub fn laddu_compile::optimize::ConjugationRule::default() -> laddu_compile::optimize::ConjugationRule
+impl core::fmt::Debug for laddu_compile::optimize::ConjugationRule
+pub fn laddu_compile::optimize::ConjugationRule::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for laddu_compile::optimize::ConjugationRule
+impl laddu_compile::optimize::RewriteRule for laddu_compile::optimize::ConjugationRule
+pub fn laddu_compile::optimize::ConjugationRule::name(&self) -> &'static str
+pub fn laddu_compile::optimize::ConjugationRule::rewrite(&self, &laddu_expr::expression::ExprNode, &laddu_expr::expression::ExprMetadata, &laddu_compile::optimize::RewriteContext<'_>) -> laddu_compile::CompileResult<laddu_compile::optimize::Rewrite>
+pub struct laddu_compile::optimize::ConstantFoldScalarRule
+impl core::clone::Clone for laddu_compile::optimize::ConstantFoldScalarRule
+pub fn laddu_compile::optimize::ConstantFoldScalarRule::clone(&self) -> laddu_compile::optimize::ConstantFoldScalarRule
+impl core::default::Default for laddu_compile::optimize::ConstantFoldScalarRule
+pub fn laddu_compile::optimize::ConstantFoldScalarRule::default() -> laddu_compile::optimize::ConstantFoldScalarRule
+impl core::fmt::Debug for laddu_compile::optimize::ConstantFoldScalarRule
+pub fn laddu_compile::optimize::ConstantFoldScalarRule::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for laddu_compile::optimize::ConstantFoldScalarRule
+impl laddu_compile::optimize::RewriteRule for laddu_compile::optimize::ConstantFoldScalarRule
+pub fn laddu_compile::optimize::ConstantFoldScalarRule::name(&self) -> &'static str
+pub fn laddu_compile::optimize::ConstantFoldScalarRule::rewrite(&self, &laddu_expr::expression::ExprNode, &laddu_expr::expression::ExprMetadata, &laddu_compile::optimize::RewriteContext<'_>) -> laddu_compile::CompileResult<laddu_compile::optimize::Rewrite>
+pub struct laddu_compile::optimize::CostGatePass
+impl laddu_compile::optimize::CostGatePass
+pub fn laddu_compile::optimize::CostGatePass::named(&'static str, laddu_compile::optimize::OptimizationPipeline) -> Self
+pub fn laddu_compile::optimize::CostGatePass::new(laddu_compile::optimize::OptimizationPipeline) -> Self
+impl core::fmt::Debug for laddu_compile::optimize::CostGatePass
+pub fn laddu_compile::optimize::CostGatePass::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl laddu_compile::optimize::OptimizationPass for laddu_compile::optimize::CostGatePass
+pub fn laddu_compile::optimize::CostGatePass::name(&self) -> &'static str
+pub fn laddu_compile::optimize::CostGatePass::run(&self, laddu_expr::expression::ExprGraph) -> laddu_compile::CompileResult<laddu_expr::expression::ExprGraph>
+pub fn laddu_compile::optimize::CostGatePass::run_with_change(&self, laddu_expr::expression::ExprGraph) -> laddu_compile::CompileResult<laddu_compile::optimize::OptimizationPassOutcome>
+pub struct laddu_compile::optimize::ExponentialRule
+impl core::clone::Clone for laddu_compile::optimize::ExponentialRule
+pub fn laddu_compile::optimize::ExponentialRule::clone(&self) -> laddu_compile::optimize::ExponentialRule
+impl core::default::Default for laddu_compile::optimize::ExponentialRule
+pub fn laddu_compile::optimize::ExponentialRule::default() -> laddu_compile::optimize::ExponentialRule
+impl core::fmt::Debug for laddu_compile::optimize::ExponentialRule
+pub fn laddu_compile::optimize::ExponentialRule::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for laddu_compile::optimize::ExponentialRule
+impl laddu_compile::optimize::RewriteRule for laddu_compile::optimize::ExponentialRule
+pub fn laddu_compile::optimize::ExponentialRule::name(&self) -> &'static str
+pub fn laddu_compile::optimize::ExponentialRule::rewrite(&self, &laddu_expr::expression::ExprNode, &laddu_expr::expression::ExprMetadata, &laddu_compile::optimize::RewriteContext<'_>) -> laddu_compile::CompileResult<laddu_compile::optimize::Rewrite>
+pub struct laddu_compile::optimize::FactorCommonProductRule
+impl core::clone::Clone for laddu_compile::optimize::FactorCommonProductRule
+pub fn laddu_compile::optimize::FactorCommonProductRule::clone(&self) -> laddu_compile::optimize::FactorCommonProductRule
+impl core::default::Default for laddu_compile::optimize::FactorCommonProductRule
+pub fn laddu_compile::optimize::FactorCommonProductRule::default() -> laddu_compile::optimize::FactorCommonProductRule
+impl core::fmt::Debug for laddu_compile::optimize::FactorCommonProductRule
+pub fn laddu_compile::optimize::FactorCommonProductRule::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for laddu_compile::optimize::FactorCommonProductRule
+impl laddu_compile::optimize::RewriteRule for laddu_compile::optimize::FactorCommonProductRule
+pub fn laddu_compile::optimize::FactorCommonProductRule::name(&self) -> &'static str
+pub fn laddu_compile::optimize::FactorCommonProductRule::rewrite(&self, &laddu_expr::expression::ExprNode, &laddu_expr::expression::ExprMetadata, &laddu_compile::optimize::RewriteContext<'_>) -> laddu_compile::CompileResult<laddu_compile::optimize::Rewrite>
+pub struct laddu_compile::optimize::MatrixVectorRule
+impl core::clone::Clone for laddu_compile::optimize::MatrixVectorRule
+pub fn laddu_compile::optimize::MatrixVectorRule::clone(&self) -> laddu_compile::optimize::MatrixVectorRule
+impl core::default::Default for laddu_compile::optimize::MatrixVectorRule
+pub fn laddu_compile::optimize::MatrixVectorRule::default() -> laddu_compile::optimize::MatrixVectorRule
+impl core::fmt::Debug for laddu_compile::optimize::MatrixVectorRule
+pub fn laddu_compile::optimize::MatrixVectorRule::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for laddu_compile::optimize::MatrixVectorRule
+impl laddu_compile::optimize::RewriteRule for laddu_compile::optimize::MatrixVectorRule
+pub fn laddu_compile::optimize::MatrixVectorRule::name(&self) -> &'static str
+pub fn laddu_compile::optimize::MatrixVectorRule::rewrite(&self, &laddu_expr::expression::ExprNode, &laddu_expr::expression::ExprMetadata, &laddu_compile::optimize::RewriteContext<'_>) -> laddu_compile::CompileResult<laddu_compile::optimize::Rewrite>
+pub struct laddu_compile::optimize::NormSqrExpansionRule
+impl core::clone::Clone for laddu_compile::optimize::NormSqrExpansionRule
+pub fn laddu_compile::optimize::NormSqrExpansionRule::clone(&self) -> laddu_compile::optimize::NormSqrExpansionRule
+impl core::default::Default for laddu_compile::optimize::NormSqrExpansionRule
+pub fn laddu_compile::optimize::NormSqrExpansionRule::default() -> laddu_compile::optimize::NormSqrExpansionRule
+impl core::fmt::Debug for laddu_compile::optimize::NormSqrExpansionRule
+pub fn laddu_compile::optimize::NormSqrExpansionRule::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for laddu_compile::optimize::NormSqrExpansionRule
+impl laddu_compile::optimize::RewriteRule for laddu_compile::optimize::NormSqrExpansionRule
+pub fn laddu_compile::optimize::NormSqrExpansionRule::name(&self) -> &'static str
+pub fn laddu_compile::optimize::NormSqrExpansionRule::rewrite(&self, &laddu_expr::expression::ExprNode, &laddu_expr::expression::ExprMetadata, &laddu_compile::optimize::RewriteContext<'_>) -> laddu_compile::CompileResult<laddu_compile::optimize::Rewrite>
+pub struct laddu_compile::optimize::NormSqrReductionRule
+impl core::clone::Clone for laddu_compile::optimize::NormSqrReductionRule
+pub fn laddu_compile::optimize::NormSqrReductionRule::clone(&self) -> laddu_compile::optimize::NormSqrReductionRule
+impl core::default::Default for laddu_compile::optimize::NormSqrReductionRule
+pub fn laddu_compile::optimize::NormSqrReductionRule::default() -> laddu_compile::optimize::NormSqrReductionRule
+impl core::fmt::Debug for laddu_compile::optimize::NormSqrReductionRule
+pub fn laddu_compile::optimize::NormSqrReductionRule::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for laddu_compile::optimize::NormSqrReductionRule
+impl laddu_compile::optimize::RewriteRule for laddu_compile::optimize::NormSqrReductionRule
+pub fn laddu_compile::optimize::NormSqrReductionRule::name(&self) -> &'static str
+pub fn laddu_compile::optimize::NormSqrReductionRule::rewrite(&self, &laddu_expr::expression::ExprNode, &laddu_expr::expression::ExprMetadata, &laddu_compile::optimize::RewriteContext<'_>) -> laddu_compile::CompileResult<laddu_compile::optimize::Rewrite>
+pub struct laddu_compile::optimize::OptimizationPassOutcome
+pub laddu_compile::optimize::OptimizationPassOutcome::changed: bool
+pub laddu_compile::optimize::OptimizationPassOutcome::graph: laddu_expr::expression::ExprGraph
+pub struct laddu_compile::optimize::OptimizationPipeline
+impl laddu_compile::optimize::OptimizationPipeline
+pub fn laddu_compile::optimize::OptimizationPipeline::add_pass(&mut self, impl laddu_compile::optimize::OptimizationPass + 'static)
+pub fn laddu_compile::optimize::OptimizationPipeline::is_empty(&self) -> bool
+pub fn laddu_compile::optimize::OptimizationPipeline::max_iterations(&self) -> usize
+pub fn laddu_compile::optimize::OptimizationPipeline::new() -> Self
+pub fn laddu_compile::optimize::OptimizationPipeline::norm_sqr_expansion_candidate() -> Self
+pub fn laddu_compile::optimize::OptimizationPipeline::run(&self, laddu_expr::expression::ExprGraph) -> laddu_compile::CompileResult<laddu_expr::expression::ExprGraph>
+pub fn laddu_compile::optimize::OptimizationPipeline::set_max_iterations(&mut self, usize)
+pub fn laddu_compile::optimize::OptimizationPipeline::with_default_passes() -> Self
+pub fn laddu_compile::optimize::OptimizationPipeline::with_max_iterations(self, usize) -> Self
+pub fn laddu_compile::optimize::OptimizationPipeline::with_pass(self, impl laddu_compile::optimize::OptimizationPass + 'static) -> Self
+impl core::default::Default for laddu_compile::optimize::OptimizationPipeline
+pub fn laddu_compile::optimize::OptimizationPipeline::default() -> Self
+impl core::fmt::Debug for laddu_compile::optimize::OptimizationPipeline
+pub fn laddu_compile::optimize::OptimizationPipeline::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub struct laddu_compile::optimize::RewriteContext<'a>
+impl<'a> laddu_compile::optimize::RewriteContext<'a>
+pub fn laddu_compile::optimize::RewriteContext<'a>::facts(&self, laddu_expr::expression::ExprId) -> core::option::Option<&'a laddu_compile::facts::NodeFacts>
+pub fn laddu_compile::optimize::RewriteContext<'a>::metadata(&self, laddu_expr::expression::ExprId) -> core::option::Option<&'a laddu_expr::expression::ExprMetadata>
+pub fn laddu_compile::optimize::RewriteContext<'a>::next_id(&self) -> laddu_expr::expression::ExprId
+pub fn laddu_compile::optimize::RewriteContext<'a>::node(&self, laddu_expr::expression::ExprId) -> core::option::Option<&'a laddu_expr::expression::ExprNode>
+pub struct laddu_compile::optimize::RewritePass
+impl laddu_compile::optimize::RewritePass
+pub fn laddu_compile::optimize::RewritePass::add_rule(&mut self, impl laddu_compile::optimize::RewriteRule + 'static)
+pub fn laddu_compile::optimize::RewritePass::combine_like_terms() -> Self
+pub fn laddu_compile::optimize::RewritePass::conjugation() -> Self
+pub fn laddu_compile::optimize::RewritePass::exponential() -> Self
+pub fn laddu_compile::optimize::RewritePass::factor_common_products() -> Self
+pub fn laddu_compile::optimize::RewritePass::new(&'static str) -> Self
+pub fn laddu_compile::optimize::RewritePass::norm_sqr_expansion() -> Self
+pub fn laddu_compile::optimize::RewritePass::normalize_add_mul() -> Self
+pub fn laddu_compile::optimize::RewritePass::simplify() -> Self
+pub fn laddu_compile::optimize::RewritePass::with_rule(self, impl laddu_compile::optimize::RewriteRule + 'static) -> Self
+impl core::fmt::Debug for laddu_compile::optimize::RewritePass
+pub fn laddu_compile::optimize::RewritePass::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl laddu_compile::optimize::OptimizationPass for laddu_compile::optimize::RewritePass
+pub fn laddu_compile::optimize::RewritePass::name(&self) -> &'static str
+pub fn laddu_compile::optimize::RewritePass::run(&self, laddu_expr::expression::ExprGraph) -> laddu_compile::CompileResult<laddu_expr::expression::ExprGraph>
+pub fn laddu_compile::optimize::RewritePass::run_with_change(&self, laddu_expr::expression::ExprGraph) -> laddu_compile::CompileResult<laddu_compile::optimize::OptimizationPassOutcome>
+pub struct laddu_compile::optimize::TrigIdentityRule
+impl core::clone::Clone for laddu_compile::optimize::TrigIdentityRule
+pub fn laddu_compile::optimize::TrigIdentityRule::clone(&self) -> laddu_compile::optimize::TrigIdentityRule
+impl core::default::Default for laddu_compile::optimize::TrigIdentityRule
+pub fn laddu_compile::optimize::TrigIdentityRule::default() -> laddu_compile::optimize::TrigIdentityRule
+impl core::fmt::Debug for laddu_compile::optimize::TrigIdentityRule
+pub fn laddu_compile::optimize::TrigIdentityRule::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for laddu_compile::optimize::TrigIdentityRule
+impl laddu_compile::optimize::RewriteRule for laddu_compile::optimize::TrigIdentityRule
+pub fn laddu_compile::optimize::TrigIdentityRule::name(&self) -> &'static str
+pub fn laddu_compile::optimize::TrigIdentityRule::rewrite(&self, &laddu_expr::expression::ExprNode, &laddu_expr::expression::ExprMetadata, &laddu_compile::optimize::RewriteContext<'_>) -> laddu_compile::CompileResult<laddu_compile::optimize::Rewrite>
+pub trait laddu_compile::optimize::OptimizationPass: core::marker::Send + core::marker::Sync
+pub fn laddu_compile::optimize::OptimizationPass::name(&self) -> &'static str
+pub fn laddu_compile::optimize::OptimizationPass::run(&self, laddu_expr::expression::ExprGraph) -> laddu_compile::CompileResult<laddu_expr::expression::ExprGraph>
+pub fn laddu_compile::optimize::OptimizationPass::run_with_change(&self, laddu_expr::expression::ExprGraph) -> laddu_compile::CompileResult<laddu_compile::optimize::OptimizationPassOutcome>
+impl laddu_compile::optimize::OptimizationPass for laddu_compile::optimize::CanonicalCsePass
+pub fn laddu_compile::optimize::CanonicalCsePass::name(&self) -> &'static str
+pub fn laddu_compile::optimize::CanonicalCsePass::run(&self, laddu_expr::expression::ExprGraph) -> laddu_compile::CompileResult<laddu_expr::expression::ExprGraph>
+pub fn laddu_compile::optimize::CanonicalCsePass::run_with_change(&self, laddu_expr::expression::ExprGraph) -> laddu_compile::CompileResult<laddu_compile::optimize::OptimizationPassOutcome>
+impl laddu_compile::optimize::OptimizationPass for laddu_compile::optimize::CostGatePass
+pub fn laddu_compile::optimize::CostGatePass::name(&self) -> &'static str
+pub fn laddu_compile::optimize::CostGatePass::run(&self, laddu_expr::expression::ExprGraph) -> laddu_compile::CompileResult<laddu_expr::expression::ExprGraph>
+pub fn laddu_compile::optimize::CostGatePass::run_with_change(&self, laddu_expr::expression::ExprGraph) -> laddu_compile::CompileResult<laddu_compile::optimize::OptimizationPassOutcome>
+impl laddu_compile::optimize::OptimizationPass for laddu_compile::optimize::RewritePass
+pub fn laddu_compile::optimize::RewritePass::name(&self) -> &'static str
+pub fn laddu_compile::optimize::RewritePass::run(&self, laddu_expr::expression::ExprGraph) -> laddu_compile::CompileResult<laddu_expr::expression::ExprGraph>
+pub fn laddu_compile::optimize::RewritePass::run_with_change(&self, laddu_expr::expression::ExprGraph) -> laddu_compile::CompileResult<laddu_compile::optimize::OptimizationPassOutcome>
+pub trait laddu_compile::optimize::RewriteRule: core::marker::Send + core::marker::Sync
+pub fn laddu_compile::optimize::RewriteRule::name(&self) -> &'static str
+pub fn laddu_compile::optimize::RewriteRule::rewrite(&self, &laddu_expr::expression::ExprNode, &laddu_expr::expression::ExprMetadata, &laddu_compile::optimize::RewriteContext<'_>) -> laddu_compile::CompileResult<laddu_compile::optimize::Rewrite>
+impl laddu_compile::optimize::RewriteRule for laddu_compile::optimize::AlgebraicIdentityRule
+pub fn laddu_compile::optimize::AlgebraicIdentityRule::name(&self) -> &'static str
+pub fn laddu_compile::optimize::AlgebraicIdentityRule::rewrite(&self, &laddu_expr::expression::ExprNode, &laddu_expr::expression::ExprMetadata, &laddu_compile::optimize::RewriteContext<'_>) -> laddu_compile::CompileResult<laddu_compile::optimize::Rewrite>
+impl laddu_compile::optimize::RewriteRule for laddu_compile::optimize::CombineLikeTermsRule
+pub fn laddu_compile::optimize::CombineLikeTermsRule::name(&self) -> &'static str
+pub fn laddu_compile::optimize::CombineLikeTermsRule::rewrite(&self, &laddu_expr::expression::ExprNode, &laddu_expr::expression::ExprMetadata, &laddu_compile::optimize::RewriteContext<'_>) -> laddu_compile::CompileResult<laddu_compile::optimize::Rewrite>
+impl laddu_compile::optimize::RewriteRule for laddu_compile::optimize::ComplexFactRule
+pub fn laddu_compile::optimize::ComplexFactRule::name(&self) -> &'static str
+pub fn laddu_compile::optimize::ComplexFactRule::rewrite(&self, &laddu_expr::expression::ExprNode, &laddu_expr::expression::ExprMetadata, &laddu_compile::optimize::RewriteContext<'_>) -> laddu_compile::CompileResult<laddu_compile::optimize::Rewrite>
+impl laddu_compile::optimize::RewriteRule for laddu_compile::optimize::ConjugationRule
+pub fn laddu_compile::optimize::ConjugationRule::name(&self) -> &'static str
+pub fn laddu_compile::optimize::ConjugationRule::rewrite(&self, &laddu_expr::expression::ExprNode, &laddu_expr::expression::ExprMetadata, &laddu_compile::optimize::RewriteContext<'_>) -> laddu_compile::CompileResult<laddu_compile::optimize::Rewrite>
+impl laddu_compile::optimize::RewriteRule for laddu_compile::optimize::ConstantFoldScalarRule
+pub fn laddu_compile::optimize::ConstantFoldScalarRule::name(&self) -> &'static str
+pub fn laddu_compile::optimize::ConstantFoldScalarRule::rewrite(&self, &laddu_expr::expression::ExprNode, &laddu_expr::expression::ExprMetadata, &laddu_compile::optimize::RewriteContext<'_>) -> laddu_compile::CompileResult<laddu_compile::optimize::Rewrite>
+impl laddu_compile::optimize::RewriteRule for laddu_compile::optimize::ExponentialRule
+pub fn laddu_compile::optimize::ExponentialRule::name(&self) -> &'static str
+pub fn laddu_compile::optimize::ExponentialRule::rewrite(&self, &laddu_expr::expression::ExprNode, &laddu_expr::expression::ExprMetadata, &laddu_compile::optimize::RewriteContext<'_>) -> laddu_compile::CompileResult<laddu_compile::optimize::Rewrite>
+impl laddu_compile::optimize::RewriteRule for laddu_compile::optimize::FactorCommonProductRule
+pub fn laddu_compile::optimize::FactorCommonProductRule::name(&self) -> &'static str
+pub fn laddu_compile::optimize::FactorCommonProductRule::rewrite(&self, &laddu_expr::expression::ExprNode, &laddu_expr::expression::ExprMetadata, &laddu_compile::optimize::RewriteContext<'_>) -> laddu_compile::CompileResult<laddu_compile::optimize::Rewrite>
+impl laddu_compile::optimize::RewriteRule for laddu_compile::optimize::MatrixVectorRule
+pub fn laddu_compile::optimize::MatrixVectorRule::name(&self) -> &'static str
+pub fn laddu_compile::optimize::MatrixVectorRule::rewrite(&self, &laddu_expr::expression::ExprNode, &laddu_expr::expression::ExprMetadata, &laddu_compile::optimize::RewriteContext<'_>) -> laddu_compile::CompileResult<laddu_compile::optimize::Rewrite>
+impl laddu_compile::optimize::RewriteRule for laddu_compile::optimize::NormSqrExpansionRule
+pub fn laddu_compile::optimize::NormSqrExpansionRule::name(&self) -> &'static str
+pub fn laddu_compile::optimize::NormSqrExpansionRule::rewrite(&self, &laddu_expr::expression::ExprNode, &laddu_expr::expression::ExprMetadata, &laddu_compile::optimize::RewriteContext<'_>) -> laddu_compile::CompileResult<laddu_compile::optimize::Rewrite>
+impl laddu_compile::optimize::RewriteRule for laddu_compile::optimize::NormSqrReductionRule
+pub fn laddu_compile::optimize::NormSqrReductionRule::name(&self) -> &'static str
+pub fn laddu_compile::optimize::NormSqrReductionRule::rewrite(&self, &laddu_expr::expression::ExprNode, &laddu_expr::expression::ExprMetadata, &laddu_compile::optimize::RewriteContext<'_>) -> laddu_compile::CompileResult<laddu_compile::optimize::Rewrite>
+impl laddu_compile::optimize::RewriteRule for laddu_compile::optimize::TrigIdentityRule
+pub fn laddu_compile::optimize::TrigIdentityRule::name(&self) -> &'static str
+pub fn laddu_compile::optimize::TrigIdentityRule::rewrite(&self, &laddu_expr::expression::ExprNode, &laddu_expr::expression::ExprMetadata, &laddu_compile::optimize::RewriteContext<'_>) -> laddu_compile::CompileResult<laddu_compile::optimize::Rewrite>
+pub enum laddu_compile::CachePolicy
+pub laddu_compile::CachePolicy::EventDependent
+pub laddu_compile::CachePolicy::Off
+impl core::clone::Clone for laddu_compile::CachePolicy
+pub fn laddu_compile::CachePolicy::clone(&self) -> laddu_compile::CachePolicy
+impl core::cmp::Eq for laddu_compile::CachePolicy
+impl core::cmp::PartialEq for laddu_compile::CachePolicy
+pub fn laddu_compile::CachePolicy::eq(&self, &laddu_compile::CachePolicy) -> bool
+impl core::default::Default for laddu_compile::CachePolicy
+pub fn laddu_compile::CachePolicy::default() -> laddu_compile::CachePolicy
+impl core::fmt::Debug for laddu_compile::CachePolicy
+pub fn laddu_compile::CachePolicy::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for laddu_compile::CachePolicy
+impl core::marker::StructuralPartialEq for laddu_compile::CachePolicy
+pub enum laddu_compile::CacheStorageKind
+pub laddu_compile::CacheStorageKind::Complex
+pub laddu_compile::CacheStorageKind::Complex::width: usize
+pub laddu_compile::CacheStorageKind::Real
+impl laddu_compile::CacheStorageKind
+pub fn laddu_compile::CacheStorageKind::bytes_per_event(self) -> usize
+pub fn laddu_compile::CacheStorageKind::width(self) -> usize
+impl core::clone::Clone for laddu_compile::CacheStorageKind
+pub fn laddu_compile::CacheStorageKind::clone(&self) -> laddu_compile::CacheStorageKind
+impl core::cmp::Eq for laddu_compile::CacheStorageKind
+impl core::cmp::PartialEq for laddu_compile::CacheStorageKind
+pub fn laddu_compile::CacheStorageKind::eq(&self, &laddu_compile::CacheStorageKind) -> bool
+impl core::fmt::Debug for laddu_compile::CacheStorageKind
+pub fn laddu_compile::CacheStorageKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for laddu_compile::CacheStorageKind
+impl core::marker::StructuralPartialEq for laddu_compile::CacheStorageKind
+pub enum laddu_compile::CompileError
+pub laddu_compile::CompileError::Graph(laddu_expr::error::ExprGraphError)
+pub laddu_compile::CompileError::InvalidExecutablePlan(alloc::string::String)
+pub laddu_compile::CompileError::Kernel(laddu_kernel::error::KernelIrError)
+pub laddu_compile::CompileError::Params(laddu_expr::error::ParamError)
+pub laddu_compile::CompileError::Unsupported(&'static str)
+impl core::clone::Clone for laddu_compile::CompileError
+pub fn laddu_compile::CompileError::clone(&self) -> laddu_compile::CompileError
+impl core::cmp::PartialEq for laddu_compile::CompileError
+pub fn laddu_compile::CompileError::eq(&self, &laddu_compile::CompileError) -> bool
+impl core::convert::From<laddu_expr::error::ExprGraphError> for laddu_compile::CompileError
+pub fn laddu_compile::CompileError::from(laddu_expr::error::ExprGraphError) -> Self
+impl core::convert::From<laddu_expr::error::ParamError> for laddu_compile::CompileError
+pub fn laddu_compile::CompileError::from(laddu_expr::error::ParamError) -> Self
+impl core::convert::From<laddu_kernel::error::KernelError> for laddu_compile::CompileError
+pub fn laddu_compile::CompileError::from(laddu_kernel::error::KernelIrError) -> Self
+impl core::error::Error for laddu_compile::CompileError
+pub fn laddu_compile::CompileError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
+impl core::fmt::Debug for laddu_compile::CompileError
+pub fn laddu_compile::CompileError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for laddu_compile::CompileError
+pub fn laddu_compile::CompileError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for laddu_compile::CompileError
+pub enum laddu_compile::EvaluationClass
+pub laddu_compile::EvaluationClass::PerCompile
+pub laddu_compile::EvaluationClass::PerEvaluation
+pub laddu_compile::EvaluationClass::PerEvent
+impl core::clone::Clone for laddu_compile::facts::EvaluationClass
+pub fn laddu_compile::facts::EvaluationClass::clone(&self) -> laddu_compile::facts::EvaluationClass
+impl core::cmp::Eq for laddu_compile::facts::EvaluationClass
+impl core::cmp::PartialEq for laddu_compile::facts::EvaluationClass
+pub fn laddu_compile::facts::EvaluationClass::eq(&self, &laddu_compile::facts::EvaluationClass) -> bool
+impl core::fmt::Debug for laddu_compile::facts::EvaluationClass
+pub fn laddu_compile::facts::EvaluationClass::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for laddu_compile::facts::EvaluationClass
+impl core::marker::StructuralPartialEq for laddu_compile::facts::EvaluationClass
+pub enum laddu_compile::NormalizationFallbackReason
+pub laddu_compile::NormalizationFallbackReason::ExpansionBudgetExceeded
+pub laddu_compile::NormalizationFallbackReason::ExpansionBudgetExceeded::budget: usize
+pub laddu_compile::NormalizationFallbackReason::NonScalarIntensity
+pub laddu_compile::NormalizationFallbackReason::UnsupportedMixedOperation
+pub laddu_compile::NormalizationFallbackReason::UnsupportedMixedOperation::node: laddu_expr::expression::ExprId
+pub laddu_compile::NormalizationFallbackReason::UnsupportedMixedOperation::operation: &'static str
+impl core::clone::Clone for laddu_compile::NormalizationFallbackReason
+pub fn laddu_compile::NormalizationFallbackReason::clone(&self) -> laddu_compile::NormalizationFallbackReason
+impl core::cmp::Eq for laddu_compile::NormalizationFallbackReason
+impl core::cmp::PartialEq for laddu_compile::NormalizationFallbackReason
+pub fn laddu_compile::NormalizationFallbackReason::eq(&self, &laddu_compile::NormalizationFallbackReason) -> bool
+impl core::fmt::Debug for laddu_compile::NormalizationFallbackReason
+pub fn laddu_compile::NormalizationFallbackReason::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for laddu_compile::NormalizationFallbackReason
+pub enum laddu_compile::NormalizationStrategy
+pub laddu_compile::NormalizationStrategy::General
+pub laddu_compile::NormalizationStrategy::Hermitian
+pub laddu_compile::NormalizationStrategy::Hybrid
+pub laddu_compile::NormalizationStrategy::LinearStatistics
+impl core::clone::Clone for laddu_compile::NormalizationStrategy
+pub fn laddu_compile::NormalizationStrategy::clone(&self) -> laddu_compile::NormalizationStrategy
+impl core::cmp::Eq for laddu_compile::NormalizationStrategy
+impl core::cmp::PartialEq for laddu_compile::NormalizationStrategy
+pub fn laddu_compile::NormalizationStrategy::eq(&self, &laddu_compile::NormalizationStrategy) -> bool
+impl core::fmt::Debug for laddu_compile::NormalizationStrategy
+pub fn laddu_compile::NormalizationStrategy::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for laddu_compile::NormalizationStrategy
+impl core::marker::StructuralPartialEq for laddu_compile::NormalizationStrategy
+pub enum laddu_compile::NumberClass
+pub laddu_compile::NumberClass::Complex
+pub laddu_compile::NumberClass::Imaginary
+pub laddu_compile::NumberClass::Real
+pub laddu_compile::NumberClass::Unknown
+impl core::clone::Clone for laddu_compile::facts::NumberClass
+pub fn laddu_compile::facts::NumberClass::clone(&self) -> laddu_compile::facts::NumberClass
+impl core::cmp::Eq for laddu_compile::facts::NumberClass
+impl core::cmp::PartialEq for laddu_compile::facts::NumberClass
+pub fn laddu_compile::facts::NumberClass::eq(&self, &laddu_compile::facts::NumberClass) -> bool
+impl core::fmt::Debug for laddu_compile::facts::NumberClass
+pub fn laddu_compile::facts::NumberClass::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for laddu_compile::facts::NumberClass
+impl core::marker::StructuralPartialEq for laddu_compile::facts::NumberClass
+pub enum laddu_compile::ReductionError
+pub laddu_compile::ReductionError::NonPositiveValue
+pub laddu_compile::ReductionError::NonPositiveValue::transform: laddu_compile::ReductionTransform
+pub laddu_compile::ReductionError::NonPositiveValue::value: f64
+impl core::clone::Clone for laddu_compile::ReductionError
+pub fn laddu_compile::ReductionError::clone(&self) -> laddu_compile::ReductionError
+impl core::cmp::PartialEq for laddu_compile::ReductionError
+pub fn laddu_compile::ReductionError::eq(&self, &laddu_compile::ReductionError) -> bool
+impl core::error::Error for laddu_compile::ReductionError
+impl core::fmt::Debug for laddu_compile::ReductionError
+pub fn laddu_compile::ReductionError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for laddu_compile::ReductionError
+pub fn laddu_compile::ReductionError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for laddu_compile::ReductionError
+impl core::marker::StructuralPartialEq for laddu_compile::ReductionError
+pub enum laddu_compile::ReductionTransform
+pub laddu_compile::ReductionTransform::LogPositiveReal
+pub laddu_compile::ReductionTransform::PositiveReal
+pub laddu_compile::ReductionTransform::Real
+impl core::clone::Clone for laddu_compile::ReductionTransform
+pub fn laddu_compile::ReductionTransform::clone(&self) -> laddu_compile::ReductionTransform
+impl core::cmp::Eq for laddu_compile::ReductionTransform
+impl core::cmp::PartialEq for laddu_compile::ReductionTransform
+pub fn laddu_compile::ReductionTransform::eq(&self, &laddu_compile::ReductionTransform) -> bool
+impl core::fmt::Debug for laddu_compile::ReductionTransform
+pub fn laddu_compile::ReductionTransform::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for laddu_compile::ReductionTransform
+impl core::marker::StructuralPartialEq for laddu_compile::ReductionTransform
+pub enum laddu_compile::Rewrite
+pub laddu_compile::Rewrite::Alias(laddu_expr::expression::ExprId)
+pub laddu_compile::Rewrite::Keep
+pub laddu_compile::Rewrite::Replace
+pub laddu_compile::Rewrite::Replace::metadata: laddu_expr::expression::ExprMetadata
+pub laddu_compile::Rewrite::Replace::node: laddu_expr::expression::ExprNode
+pub laddu_compile::Rewrite::ReplaceMany
+pub laddu_compile::Rewrite::ReplaceMany::nodes: alloc::vec::Vec<(laddu_expr::expression::ExprNode, laddu_expr::expression::ExprMetadata)>
+impl core::clone::Clone for laddu_compile::optimize::Rewrite
+pub fn laddu_compile::optimize::Rewrite::clone(&self) -> laddu_compile::optimize::Rewrite
+impl core::cmp::PartialEq for laddu_compile::optimize::Rewrite
+pub fn laddu_compile::optimize::Rewrite::eq(&self, &laddu_compile::optimize::Rewrite) -> bool
+impl core::fmt::Debug for laddu_compile::optimize::Rewrite
+pub fn laddu_compile::optimize::Rewrite::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for laddu_compile::optimize::Rewrite
+pub struct laddu_compile::AlgebraicIdentityRule
+impl core::clone::Clone for laddu_compile::optimize::AlgebraicIdentityRule
+pub fn laddu_compile::optimize::AlgebraicIdentityRule::clone(&self) -> laddu_compile::optimize::AlgebraicIdentityRule
+impl core::default::Default for laddu_compile::optimize::AlgebraicIdentityRule
+pub fn laddu_compile::optimize::AlgebraicIdentityRule::default() -> laddu_compile::optimize::AlgebraicIdentityRule
+impl core::fmt::Debug for laddu_compile::optimize::AlgebraicIdentityRule
+pub fn laddu_compile::optimize::AlgebraicIdentityRule::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for laddu_compile::optimize::AlgebraicIdentityRule
+impl laddu_compile::optimize::RewriteRule for laddu_compile::optimize::AlgebraicIdentityRule
+pub fn laddu_compile::optimize::AlgebraicIdentityRule::name(&self) -> &'static str
+pub fn laddu_compile::optimize::AlgebraicIdentityRule::rewrite(&self, &laddu_expr::expression::ExprNode, &laddu_expr::expression::ExprMetadata, &laddu_compile::optimize::RewriteContext<'_>) -> laddu_compile::CompileResult<laddu_compile::optimize::Rewrite>
+pub struct laddu_compile::CacheEntry
+impl laddu_compile::CacheEntry
+pub fn laddu_compile::CacheEntry::dependency(&self) -> laddu_compile::facts::DependencyFacts
+pub fn laddu_compile::CacheEntry::evaluation_class(&self) -> laddu_compile::facts::EvaluationClass
+pub fn laddu_compile::CacheEntry::node(&self) -> laddu_expr::expression::ExprId
+pub fn laddu_compile::CacheEntry::storage_kind(&self) -> laddu_compile::CacheStorageKind
+pub fn laddu_compile::CacheEntry::value_kind(&self) -> laddu_expr::expression::ValueKind
+impl core::clone::Clone for laddu_compile::CacheEntry
+pub fn laddu_compile::CacheEntry::clone(&self) -> laddu_compile::CacheEntry
+impl core::cmp::Eq for laddu_compile::CacheEntry
+impl core::cmp::PartialEq for laddu_compile::CacheEntry
+pub fn laddu_compile::CacheEntry::eq(&self, &laddu_compile::CacheEntry) -> bool
+impl core::fmt::Debug for laddu_compile::CacheEntry
+pub fn laddu_compile::CacheEntry::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for laddu_compile::CacheEntry
+impl core::marker::StructuralPartialEq for laddu_compile::CacheEntry
+pub struct laddu_compile::CachePlan
+impl laddu_compile::CachePlan
+pub fn laddu_compile::CachePlan::bytes_per_event(&self) -> usize
+pub fn laddu_compile::CachePlan::entries(&self) -> &[laddu_compile::CacheEntry]
+pub fn laddu_compile::CachePlan::is_empty(&self) -> bool
+pub fn laddu_compile::CachePlan::len(&self) -> usize
+pub fn laddu_compile::CachePlan::materialization_nodes(&self) -> &[laddu_expr::expression::ExprId]
+pub fn laddu_compile::CachePlan::node_slot(&self, laddu_expr::expression::ExprId) -> core::option::Option<usize>
+impl core::clone::Clone for laddu_compile::CachePlan
+pub fn laddu_compile::CachePlan::clone(&self) -> laddu_compile::CachePlan
+impl core::cmp::Eq for laddu_compile::CachePlan
+impl core::cmp::PartialEq for laddu_compile::CachePlan
+pub fn laddu_compile::CachePlan::eq(&self, &laddu_compile::CachePlan) -> bool
+impl core::default::Default for laddu_compile::CachePlan
+pub fn laddu_compile::CachePlan::default() -> laddu_compile::CachePlan
+impl core::fmt::Debug for laddu_compile::CachePlan
+pub fn laddu_compile::CachePlan::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for laddu_compile::CachePlan
+pub struct laddu_compile::CanonicalCsePass
+impl core::clone::Clone for laddu_compile::optimize::CanonicalCsePass
+pub fn laddu_compile::optimize::CanonicalCsePass::clone(&self) -> laddu_compile::optimize::CanonicalCsePass
+impl core::default::Default for laddu_compile::optimize::CanonicalCsePass
+pub fn laddu_compile::optimize::CanonicalCsePass::default() -> laddu_compile::optimize::CanonicalCsePass
+impl core::fmt::Debug for laddu_compile::optimize::CanonicalCsePass
+pub fn laddu_compile::optimize::CanonicalCsePass::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for laddu_compile::optimize::CanonicalCsePass
+impl laddu_compile::optimize::OptimizationPass for laddu_compile::optimize::CanonicalCsePass
+pub fn laddu_compile::optimize::CanonicalCsePass::name(&self) -> &'static str
+pub fn laddu_compile::optimize::CanonicalCsePass::run(&self, laddu_expr::expression::ExprGraph) -> laddu_compile::CompileResult<laddu_expr::expression::ExprGraph>
+pub fn laddu_compile::optimize::CanonicalCsePass::run_with_change(&self, laddu_expr::expression::ExprGraph) -> laddu_compile::CompileResult<laddu_compile::optimize::OptimizationPassOutcome>
+pub struct laddu_compile::CompileOptions
+impl laddu_compile::CompileOptions
+pub fn laddu_compile::CompileOptions::cache_policy(&self) -> laddu_compile::CachePolicy
+pub fn laddu_compile::CompileOptions::new() -> Self
+pub fn laddu_compile::CompileOptions::pipeline(&self) -> &laddu_compile::optimize::OptimizationPipeline
+pub fn laddu_compile::CompileOptions::pipeline_mut(&mut self) -> &mut laddu_compile::optimize::OptimizationPipeline
+pub fn laddu_compile::CompileOptions::set_cache_policy(&mut self, laddu_compile::CachePolicy)
+pub fn laddu_compile::CompileOptions::with_cache_policy(self, laddu_compile::CachePolicy) -> Self
+pub fn laddu_compile::CompileOptions::with_pipeline(laddu_compile::optimize::OptimizationPipeline) -> Self
+pub fn laddu_compile::CompileOptions::without_optimizations() -> Self
+impl core::default::Default for laddu_compile::CompileOptions
+pub fn laddu_compile::CompileOptions::default() -> Self
+impl core::fmt::Debug for laddu_compile::CompileOptions
+pub fn laddu_compile::CompileOptions::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub struct laddu_compile::CompiledModel
+impl laddu_compile::CompiledModel
+pub fn laddu_compile::CompiledModel::cache_plan(&self) -> &laddu_compile::CachePlan
+pub fn laddu_compile::CompiledModel::cost(&self) -> laddu_compile::cost::OptimizationCost
+pub fn laddu_compile::CompiledModel::display_dot(&self) -> laddu_expr::visualization::ExprGraphDotDisplay<'_>
+pub fn laddu_compile::CompiledModel::display_tree(&self) -> laddu_expr::visualization::ExprGraphTreeDisplay<'_>
+pub fn laddu_compile::CompiledModel::facts(&self) -> &laddu_compile::facts::GraphFacts
+pub fn laddu_compile::CompiledModel::fix_parameter(&self, &str, f64) -> laddu_compile::CompileResult<Self>
+pub fn laddu_compile::CompiledModel::fix_parameter_with_options(&self, &str, f64, &laddu_compile::CompileOptions) -> laddu_compile::CompileResult<Self>
+pub fn laddu_compile::CompiledModel::free_parameter(&self, &str) -> laddu_compile::CompileResult<Self>
+pub fn laddu_compile::CompiledModel::free_parameter_with_options(&self, &str, &laddu_compile::CompileOptions) -> laddu_compile::CompileResult<Self>
+pub fn laddu_compile::CompiledModel::from_expr(&laddu_expr::expression::Expr) -> laddu_compile::CompileResult<Self>
+pub fn laddu_compile::CompiledModel::from_expr_with_options(&laddu_expr::expression::Expr, &laddu_compile::CompileOptions) -> laddu_compile::CompileResult<Self>
+pub fn laddu_compile::CompiledModel::from_graph(laddu_expr::expression::ExprGraph) -> laddu_compile::CompileResult<Self>
+pub fn laddu_compile::CompiledModel::from_graph_with_options(laddu_expr::expression::ExprGraph, &laddu_compile::CompileOptions) -> laddu_compile::CompileResult<Self>
+pub fn laddu_compile::CompiledModel::graph(&self) -> &laddu_expr::expression::ExprGraph
+pub fn laddu_compile::CompiledModel::node_facts(&self, laddu_expr::expression::ExprId) -> core::option::Option<&laddu_compile::facts::NodeFacts>
+pub fn laddu_compile::CompiledModel::normalization_diagnostics(&self) -> &laddu_compile::NormalizationDiagnostics
+pub fn laddu_compile::CompiledModel::parameter_polynomial_degree(&self) -> core::option::Option<usize>
+pub fn laddu_compile::CompiledModel::params(&self) -> &laddu_expr::parameters::ParamLayout
+pub fn laddu_compile::CompiledModel::project_tags<'a>(&self, impl core::iter::traits::collect::IntoIterator<Item = &'a str>) -> laddu_compile::CompileResult<Self>
+impl core::clone::Clone for laddu_compile::CompiledModel
+pub fn laddu_compile::CompiledModel::clone(&self) -> laddu_compile::CompiledModel
+impl core::fmt::Debug for laddu_compile::CompiledModel
+pub fn laddu_compile::CompiledModel::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for laddu_compile::CompiledModel
+pub fn laddu_compile::CompiledModel::serialize<S>(&self, S) -> core::result::Result<<S as serde_core::ser::Serializer>::Ok, <S as serde_core::ser::Serializer>::Error> where S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for laddu_compile::CompiledModel
+pub fn laddu_compile::CompiledModel::deserialize<D>(D) -> core::result::Result<Self, <D as serde_core::de::Deserializer>::Error> where D: serde_core::de::Deserializer<'de>
+pub struct laddu_compile::ComplexFactRule
+impl core::clone::Clone for laddu_compile::optimize::ComplexFactRule
+pub fn laddu_compile::optimize::ComplexFactRule::clone(&self) -> laddu_compile::optimize::ComplexFactRule
+impl core::default::Default for laddu_compile::optimize::ComplexFactRule
+pub fn laddu_compile::optimize::ComplexFactRule::default() -> laddu_compile::optimize::ComplexFactRule
+impl core::fmt::Debug for laddu_compile::optimize::ComplexFactRule
+pub fn laddu_compile::optimize::ComplexFactRule::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for laddu_compile::optimize::ComplexFactRule
+impl laddu_compile::optimize::RewriteRule for laddu_compile::optimize::ComplexFactRule
+pub fn laddu_compile::optimize::ComplexFactRule::name(&self) -> &'static str
+pub fn laddu_compile::optimize::ComplexFactRule::rewrite(&self, &laddu_expr::expression::ExprNode, &laddu_expr::expression::ExprMetadata, &laddu_compile::optimize::RewriteContext<'_>) -> laddu_compile::CompileResult<laddu_compile::optimize::Rewrite>
+pub struct laddu_compile::ConjugationRule
+impl core::clone::Clone for laddu_compile::optimize::ConjugationRule
+pub fn laddu_compile::optimize::ConjugationRule::clone(&self) -> laddu_compile::optimize::ConjugationRule
+impl core::default::Default for laddu_compile::optimize::ConjugationRule
+pub fn laddu_compile::optimize::ConjugationRule::default() -> laddu_compile::optimize::ConjugationRule
+impl core::fmt::Debug for laddu_compile::optimize::ConjugationRule
+pub fn laddu_compile::optimize::ConjugationRule::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for laddu_compile::optimize::ConjugationRule
+impl laddu_compile::optimize::RewriteRule for laddu_compile::optimize::ConjugationRule
+pub fn laddu_compile::optimize::ConjugationRule::name(&self) -> &'static str
+pub fn laddu_compile::optimize::ConjugationRule::rewrite(&self, &laddu_expr::expression::ExprNode, &laddu_expr::expression::ExprMetadata, &laddu_compile::optimize::RewriteContext<'_>) -> laddu_compile::CompileResult<laddu_compile::optimize::Rewrite>
+pub struct laddu_compile::ConstantFoldScalarRule
+impl core::clone::Clone for laddu_compile::optimize::ConstantFoldScalarRule
+pub fn laddu_compile::optimize::ConstantFoldScalarRule::clone(&self) -> laddu_compile::optimize::ConstantFoldScalarRule
+impl core::default::Default for laddu_compile::optimize::ConstantFoldScalarRule
+pub fn laddu_compile::optimize::ConstantFoldScalarRule::default() -> laddu_compile::optimize::ConstantFoldScalarRule
+impl core::fmt::Debug for laddu_compile::optimize::ConstantFoldScalarRule
+pub fn laddu_compile::optimize::ConstantFoldScalarRule::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for laddu_compile::optimize::ConstantFoldScalarRule
+impl laddu_compile::optimize::RewriteRule for laddu_compile::optimize::ConstantFoldScalarRule
+pub fn laddu_compile::optimize::ConstantFoldScalarRule::name(&self) -> &'static str
+pub fn laddu_compile::optimize::ConstantFoldScalarRule::rewrite(&self, &laddu_expr::expression::ExprNode, &laddu_expr::expression::ExprMetadata, &laddu_compile::optimize::RewriteContext<'_>) -> laddu_compile::CompileResult<laddu_compile::optimize::Rewrite>
+pub struct laddu_compile::CostGatePass
+impl laddu_compile::optimize::CostGatePass
+pub fn laddu_compile::optimize::CostGatePass::named(&'static str, laddu_compile::optimize::OptimizationPipeline) -> Self
+pub fn laddu_compile::optimize::CostGatePass::new(laddu_compile::optimize::OptimizationPipeline) -> Self
+impl core::fmt::Debug for laddu_compile::optimize::CostGatePass
+pub fn laddu_compile::optimize::CostGatePass::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl laddu_compile::optimize::OptimizationPass for laddu_compile::optimize::CostGatePass
+pub fn laddu_compile::optimize::CostGatePass::name(&self) -> &'static str
+pub fn laddu_compile::optimize::CostGatePass::run(&self, laddu_expr::expression::ExprGraph) -> laddu_compile::CompileResult<laddu_expr::expression::ExprGraph>
+pub fn laddu_compile::optimize::CostGatePass::run_with_change(&self, laddu_expr::expression::ExprGraph) -> laddu_compile::CompileResult<laddu_compile::optimize::OptimizationPassOutcome>
+pub struct laddu_compile::DependencyFacts
+pub laddu_compile::DependencyFacts::depends_on_event: bool
+pub laddu_compile::DependencyFacts::depends_on_fixed_params: bool
+pub laddu_compile::DependencyFacts::depends_on_free_params: bool
+impl laddu_compile::facts::DependencyFacts
+pub fn laddu_compile::facts::DependencyFacts::evaluation_class(self) -> laddu_compile::facts::EvaluationClass
+pub fn laddu_compile::facts::DependencyFacts::from_event() -> Self
+pub fn laddu_compile::facts::DependencyFacts::from_parameter(&laddu_expr::parameters::Parameter) -> Self
+pub fn laddu_compile::facts::DependencyFacts::per_compile() -> Self
+pub fn laddu_compile::facts::DependencyFacts::union(self, Self) -> Self
+impl core::clone::Clone for laddu_compile::facts::DependencyFacts
+pub fn laddu_compile::facts::DependencyFacts::clone(&self) -> laddu_compile::facts::DependencyFacts
+impl core::cmp::Eq for laddu_compile::facts::DependencyFacts
+impl core::cmp::PartialEq for laddu_compile::facts::DependencyFacts
+pub fn laddu_compile::facts::DependencyFacts::eq(&self, &laddu_compile::facts::DependencyFacts) -> bool
+impl core::default::Default for laddu_compile::facts::DependencyFacts
+pub fn laddu_compile::facts::DependencyFacts::default() -> laddu_compile::facts::DependencyFacts
+impl core::fmt::Debug for laddu_compile::facts::DependencyFacts
+pub fn laddu_compile::facts::DependencyFacts::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for laddu_compile::facts::DependencyFacts
+impl core::marker::StructuralPartialEq for laddu_compile::facts::DependencyFacts
+pub struct laddu_compile::ExecutablePlan
+impl laddu_compile::ExecutablePlan
+pub fn laddu_compile::ExecutablePlan::cache_input_nodes(&self) -> &[laddu_expr::expression::ExprId]
+pub fn laddu_compile::ExecutablePlan::cache_kernel(&self) -> core::option::Option<&laddu_kernel::ir::CacheKernelIr>
+pub fn laddu_compile::ExecutablePlan::cache_materialization_nodes(&self) -> &[laddu_expr::expression::ExprId]
+pub fn laddu_compile::ExecutablePlan::cache_plan(&self) -> &laddu_compile::CachePlan
+pub fn laddu_compile::ExecutablePlan::cache_slots(&self) -> &[core::option::Option<usize>]
+pub fn laddu_compile::ExecutablePlan::constant_factor_matrices(&self) -> &[(laddu_expr::expression::ExprId, usize)]
+pub fn laddu_compile::ExecutablePlan::constant_factor_slots(&self) -> &[core::option::Option<usize>]
+pub fn laddu_compile::ExecutablePlan::evaluation_nodes(&self) -> &[laddu_expr::expression::ExprId]
+pub fn laddu_compile::ExecutablePlan::factor_matrices(&self) -> &[(laddu_expr::expression::ExprId, usize)]
+pub fn laddu_compile::ExecutablePlan::factor_matrix_slots(&self) -> &[core::option::Option<usize>]
+pub fn laddu_compile::ExecutablePlan::from_model(&laddu_compile::CompiledModel) -> laddu_compile::CompileResult<Self>
+pub fn laddu_compile::ExecutablePlan::from_model_without_solve_rows(&laddu_compile::CompiledModel) -> laddu_compile::CompileResult<Self>
+pub fn laddu_compile::ExecutablePlan::graph(&self) -> &laddu_expr::expression::ExprGraph
+pub fn laddu_compile::ExecutablePlan::parameter_slots(&self) -> &[core::option::Option<laddu_expr::parameters::ParamId>]
+pub fn laddu_compile::ExecutablePlan::params(&self) -> &laddu_expr::parameters::ParamLayout
+pub fn laddu_compile::ExecutablePlan::scalar_kernel(&self) -> core::option::Option<&laddu_kernel::ir::ScalarKernelIr>
+pub fn laddu_compile::ExecutablePlan::solve_components(&self) -> &[core::option::Option<laddu_compile::SolveComponentPlan>]
+pub fn laddu_compile::ExecutablePlan::solve_rhs_elements(&self) -> &[core::option::Option<alloc::vec::Vec<laddu_expr::expression::ExprId>>]
+pub fn laddu_compile::ExecutablePlan::solve_row_keys(&self) -> &[(laddu_expr::expression::ExprId, usize, usize)]
+pub fn laddu_compile::ExecutablePlan::solve_row_matrices(&self) -> &[laddu_compile::SolveRowMatrixPlan]
+pub fn laddu_compile::ExecutablePlan::value_slots(&self) -> &[core::option::Option<usize>]
+impl core::clone::Clone for laddu_compile::ExecutablePlan
+pub fn laddu_compile::ExecutablePlan::clone(&self) -> laddu_compile::ExecutablePlan
+impl core::fmt::Debug for laddu_compile::ExecutablePlan
+pub fn laddu_compile::ExecutablePlan::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub struct laddu_compile::ExponentialRule
+impl core::clone::Clone for laddu_compile::optimize::ExponentialRule
+pub fn laddu_compile::optimize::ExponentialRule::clone(&self) -> laddu_compile::optimize::ExponentialRule
+impl core::default::Default for laddu_compile::optimize::ExponentialRule
+pub fn laddu_compile::optimize::ExponentialRule::default() -> laddu_compile::optimize::ExponentialRule
+impl core::fmt::Debug for laddu_compile::optimize::ExponentialRule
+pub fn laddu_compile::optimize::ExponentialRule::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for laddu_compile::optimize::ExponentialRule
+impl laddu_compile::optimize::RewriteRule for laddu_compile::optimize::ExponentialRule
+pub fn laddu_compile::optimize::ExponentialRule::name(&self) -> &'static str
+pub fn laddu_compile::optimize::ExponentialRule::rewrite(&self, &laddu_expr::expression::ExprNode, &laddu_expr::expression::ExprMetadata, &laddu_compile::optimize::RewriteContext<'_>) -> laddu_compile::CompileResult<laddu_compile::optimize::Rewrite>
+pub struct laddu_compile::FactorCommonProductRule
+impl core::clone::Clone for laddu_compile::optimize::FactorCommonProductRule
+pub fn laddu_compile::optimize::FactorCommonProductRule::clone(&self) -> laddu_compile::optimize::FactorCommonProductRule
+impl core::default::Default for laddu_compile::optimize::FactorCommonProductRule
+pub fn laddu_compile::optimize::FactorCommonProductRule::default() -> laddu_compile::optimize::FactorCommonProductRule
+impl core::fmt::Debug for laddu_compile::optimize::FactorCommonProductRule
+pub fn laddu_compile::optimize::FactorCommonProductRule::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for laddu_compile::optimize::FactorCommonProductRule
+impl laddu_compile::optimize::RewriteRule for laddu_compile::optimize::FactorCommonProductRule
+pub fn laddu_compile::optimize::FactorCommonProductRule::name(&self) -> &'static str
+pub fn laddu_compile::optimize::FactorCommonProductRule::rewrite(&self, &laddu_expr::expression::ExprNode, &laddu_expr::expression::ExprMetadata, &laddu_compile::optimize::RewriteContext<'_>) -> laddu_compile::CompileResult<laddu_compile::optimize::Rewrite>
+pub struct laddu_compile::GraphFacts
+impl laddu_compile::facts::GraphFacts
+pub fn laddu_compile::facts::GraphFacts::analyze(&laddu_expr::expression::ExprGraph) -> Self
+pub fn laddu_compile::facts::GraphFacts::get(&self, laddu_expr::expression::ExprId) -> core::option::Option<&laddu_compile::facts::NodeFacts>
+pub fn laddu_compile::facts::GraphFacts::nodes(&self) -> &[laddu_compile::facts::NodeFacts]
+impl core::clone::Clone for laddu_compile::facts::GraphFacts
+pub fn laddu_compile::facts::GraphFacts::clone(&self) -> laddu_compile::facts::GraphFacts
+impl core::cmp::Eq for laddu_compile::facts::GraphFacts
+impl core::cmp::PartialEq for laddu_compile::facts::GraphFacts
+pub fn laddu_compile::facts::GraphFacts::eq(&self, &laddu_compile::facts::GraphFacts) -> bool
+impl core::fmt::Debug for laddu_compile::facts::GraphFacts
+pub fn laddu_compile::facts::GraphFacts::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for laddu_compile::facts::GraphFacts
+pub struct laddu_compile::LifecycleCost
+impl laddu_compile::cost::LifecycleCost
+pub fn laddu_compile::cost::LifecycleCost::compile(&self) -> u64
+pub fn laddu_compile::cost::LifecycleCost::dataset_event(&self) -> u64
+pub fn laddu_compile::cost::LifecycleCost::evaluation_event(&self) -> u64
+pub fn laddu_compile::cost::LifecycleCost::evaluation_invariant(&self) -> u64
+impl core::clone::Clone for laddu_compile::cost::LifecycleCost
+pub fn laddu_compile::cost::LifecycleCost::clone(&self) -> laddu_compile::cost::LifecycleCost
+impl core::cmp::Eq for laddu_compile::cost::LifecycleCost
+impl core::cmp::PartialEq for laddu_compile::cost::LifecycleCost
+pub fn laddu_compile::cost::LifecycleCost::eq(&self, &laddu_compile::cost::LifecycleCost) -> bool
+impl core::default::Default for laddu_compile::cost::LifecycleCost
+pub fn laddu_compile::cost::LifecycleCost::default() -> laddu_compile::cost::LifecycleCost
+impl core::fmt::Debug for laddu_compile::cost::LifecycleCost
+pub fn laddu_compile::cost::LifecycleCost::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for laddu_compile::cost::LifecycleCost
+impl core::marker::StructuralPartialEq for laddu_compile::cost::LifecycleCost
+pub struct laddu_compile::MatrixVectorRule
+impl core::clone::Clone for laddu_compile::optimize::MatrixVectorRule
+pub fn laddu_compile::optimize::MatrixVectorRule::clone(&self) -> laddu_compile::optimize::MatrixVectorRule
+impl core::default::Default for laddu_compile::optimize::MatrixVectorRule
+pub fn laddu_compile::optimize::MatrixVectorRule::default() -> laddu_compile::optimize::MatrixVectorRule
+impl core::fmt::Debug for laddu_compile::optimize::MatrixVectorRule
+pub fn laddu_compile::optimize::MatrixVectorRule::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for laddu_compile::optimize::MatrixVectorRule
+impl laddu_compile::optimize::RewriteRule for laddu_compile::optimize::MatrixVectorRule
+pub fn laddu_compile::optimize::MatrixVectorRule::name(&self) -> &'static str
+pub fn laddu_compile::optimize::MatrixVectorRule::rewrite(&self, &laddu_expr::expression::ExprNode, &laddu_expr::expression::ExprMetadata, &laddu_compile::optimize::RewriteContext<'_>) -> laddu_compile::CompileResult<laddu_compile::optimize::Rewrite>
+pub struct laddu_compile::NodeFacts
+pub laddu_compile::NodeFacts::dependency: laddu_compile::facts::DependencyFacts
+pub laddu_compile::NodeFacts::number_class: laddu_compile::facts::NumberClass
+pub laddu_compile::NodeFacts::value_kind: laddu_expr::expression::ValueKind
+impl laddu_compile::facts::NodeFacts
+pub fn laddu_compile::facts::NodeFacts::evaluation_class(self) -> laddu_compile::facts::EvaluationClass
+impl core::clone::Clone for laddu_compile::facts::NodeFacts
+pub fn laddu_compile::facts::NodeFacts::clone(&self) -> laddu_compile::facts::NodeFacts
+impl core::cmp::Eq for laddu_compile::facts::NodeFacts
+impl core::cmp::PartialEq for laddu_compile::facts::NodeFacts
+pub fn laddu_compile::facts::NodeFacts::eq(&self, &laddu_compile::facts::NodeFacts) -> bool
+impl core::fmt::Debug for laddu_compile::facts::NodeFacts
+pub fn laddu_compile::facts::NodeFacts::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for laddu_compile::facts::NodeFacts
+impl core::marker::StructuralPartialEq for laddu_compile::facts::NodeFacts
+pub struct laddu_compile::NormSqrExpansionRule
+impl core::clone::Clone for laddu_compile::optimize::NormSqrExpansionRule
+pub fn laddu_compile::optimize::NormSqrExpansionRule::clone(&self) -> laddu_compile::optimize::NormSqrExpansionRule
+impl core::default::Default for laddu_compile::optimize::NormSqrExpansionRule
+pub fn laddu_compile::optimize::NormSqrExpansionRule::default() -> laddu_compile::optimize::NormSqrExpansionRule
+impl core::fmt::Debug for laddu_compile::optimize::NormSqrExpansionRule
+pub fn laddu_compile::optimize::NormSqrExpansionRule::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for laddu_compile::optimize::NormSqrExpansionRule
+impl laddu_compile::optimize::RewriteRule for laddu_compile::optimize::NormSqrExpansionRule
+pub fn laddu_compile::optimize::NormSqrExpansionRule::name(&self) -> &'static str
+pub fn laddu_compile::optimize::NormSqrExpansionRule::rewrite(&self, &laddu_expr::expression::ExprNode, &laddu_expr::expression::ExprMetadata, &laddu_compile::optimize::RewriteContext<'_>) -> laddu_compile::CompileResult<laddu_compile::optimize::Rewrite>
+pub struct laddu_compile::NormalizationDiagnostics
+impl laddu_compile::NormalizationDiagnostics
+pub fn laddu_compile::NormalizationDiagnostics::basis_count(&self) -> usize
+pub fn laddu_compile::NormalizationDiagnostics::coherent_group_count(&self) -> usize
+pub fn laddu_compile::NormalizationDiagnostics::fallback_reason(&self) -> core::option::Option<&laddu_compile::NormalizationFallbackReason>
+pub fn laddu_compile::NormalizationDiagnostics::has_residual(&self) -> bool
+pub fn laddu_compile::NormalizationDiagnostics::strategy(&self) -> laddu_compile::NormalizationStrategy
+impl core::clone::Clone for laddu_compile::NormalizationDiagnostics
+pub fn laddu_compile::NormalizationDiagnostics::clone(&self) -> laddu_compile::NormalizationDiagnostics
+impl core::cmp::Eq for laddu_compile::NormalizationDiagnostics
+impl core::cmp::PartialEq for laddu_compile::NormalizationDiagnostics
+pub fn laddu_compile::NormalizationDiagnostics::eq(&self, &laddu_compile::NormalizationDiagnostics) -> bool
+impl core::fmt::Debug for laddu_compile::NormalizationDiagnostics
+pub fn laddu_compile::NormalizationDiagnostics::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for laddu_compile::NormalizationDiagnostics
+pub struct laddu_compile::OptimizationCost
+impl laddu_compile::cost::OptimizationCost
+pub fn laddu_compile::cost::OptimizationCost::analyze(&laddu_expr::expression::ExprGraph) -> Self
+pub fn laddu_compile::cost::OptimizationCost::cheap_unary_ops(&self) -> usize
+pub fn laddu_compile::cost::OptimizationCost::constructors(&self) -> usize
+pub fn laddu_compile::cost::OptimizationCost::extractions(&self) -> usize
+pub fn laddu_compile::cost::OptimizationCost::free_nodes(&self) -> usize
+pub fn laddu_compile::cost::OptimizationCost::is_better_than(&self, &Self) -> bool
+pub fn laddu_compile::cost::OptimizationCost::is_no_worse_than(&self, &Self) -> bool
+pub fn laddu_compile::cost::OptimizationCost::lifecycle(&self) -> laddu_compile::cost::LifecycleCost
+pub fn laddu_compile::cost::OptimizationCost::linear_algebra_ops(&self) -> usize
+pub fn laddu_compile::cost::OptimizationCost::node_count(&self) -> usize
+pub fn laddu_compile::cost::OptimizationCost::power_ops(&self) -> usize
+pub fn laddu_compile::cost::OptimizationCost::scalar_adds(&self) -> usize
+pub fn laddu_compile::cost::OptimizationCost::scalar_divs(&self) -> usize
+pub fn laddu_compile::cost::OptimizationCost::scalar_muls(&self) -> usize
+pub fn laddu_compile::cost::OptimizationCost::transcendental_ops(&self) -> usize
+pub fn laddu_compile::cost::OptimizationCost::weighted_ops(&self) -> u64
+impl core::clone::Clone for laddu_compile::cost::OptimizationCost
+pub fn laddu_compile::cost::OptimizationCost::clone(&self) -> laddu_compile::cost::OptimizationCost
+impl core::cmp::Eq for laddu_compile::cost::OptimizationCost
+impl core::cmp::PartialEq for laddu_compile::cost::OptimizationCost
+pub fn laddu_compile::cost::OptimizationCost::eq(&self, &laddu_compile::cost::OptimizationCost) -> bool
+impl core::default::Default for laddu_compile::cost::OptimizationCost
+pub fn laddu_compile::cost::OptimizationCost::default() -> laddu_compile::cost::OptimizationCost
+impl core::fmt::Debug for laddu_compile::cost::OptimizationCost
+pub fn laddu_compile::cost::OptimizationCost::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for laddu_compile::cost::OptimizationCost
+pub struct laddu_compile::OptimizationPassOutcome
+pub laddu_compile::OptimizationPassOutcome::changed: bool
+pub laddu_compile::OptimizationPassOutcome::graph: laddu_expr::expression::ExprGraph
+pub struct laddu_compile::OptimizationPipeline
+impl laddu_compile::optimize::OptimizationPipeline
+pub fn laddu_compile::optimize::OptimizationPipeline::add_pass(&mut self, impl laddu_compile::optimize::OptimizationPass + 'static)
+pub fn laddu_compile::optimize::OptimizationPipeline::is_empty(&self) -> bool
+pub fn laddu_compile::optimize::OptimizationPipeline::max_iterations(&self) -> usize
+pub fn laddu_compile::optimize::OptimizationPipeline::new() -> Self
+pub fn laddu_compile::optimize::OptimizationPipeline::norm_sqr_expansion_candidate() -> Self
+pub fn laddu_compile::optimize::OptimizationPipeline::run(&self, laddu_expr::expression::ExprGraph) -> laddu_compile::CompileResult<laddu_expr::expression::ExprGraph>
+pub fn laddu_compile::optimize::OptimizationPipeline::set_max_iterations(&mut self, usize)
+pub fn laddu_compile::optimize::OptimizationPipeline::with_default_passes() -> Self
+pub fn laddu_compile::optimize::OptimizationPipeline::with_max_iterations(self, usize) -> Self
+pub fn laddu_compile::optimize::OptimizationPipeline::with_pass(self, impl laddu_compile::optimize::OptimizationPass + 'static) -> Self
+impl core::default::Default for laddu_compile::optimize::OptimizationPipeline
+pub fn laddu_compile::optimize::OptimizationPipeline::default() -> Self
+impl core::fmt::Debug for laddu_compile::optimize::OptimizationPipeline
+pub fn laddu_compile::optimize::OptimizationPipeline::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub struct laddu_compile::ReductionOutput
+impl laddu_compile::ReductionOutput
+pub const fn laddu_compile::ReductionOutput::derivative(self) -> f64
+pub const fn laddu_compile::ReductionOutput::into_parts(self) -> (f64, f64)
+pub const fn laddu_compile::ReductionOutput::value(self) -> f64
+impl core::clone::Clone for laddu_compile::ReductionOutput
+pub fn laddu_compile::ReductionOutput::clone(&self) -> laddu_compile::ReductionOutput
+impl core::cmp::PartialEq for laddu_compile::ReductionOutput
+pub fn laddu_compile::ReductionOutput::eq(&self, &laddu_compile::ReductionOutput) -> bool
+impl core::fmt::Debug for laddu_compile::ReductionOutput
+pub fn laddu_compile::ReductionOutput::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for laddu_compile::ReductionOutput
+impl core::marker::StructuralPartialEq for laddu_compile::ReductionOutput
+pub struct laddu_compile::ReductionPlan
+impl laddu_compile::ReductionPlan
+pub fn laddu_compile::ReductionPlan::apply(self, num_complex::Complex64) -> core::result::Result<laddu_compile::ReductionOutput, laddu_compile::ReductionError>
+pub const fn laddu_compile::ReductionPlan::transform(self) -> laddu_compile::ReductionTransform
+pub const fn laddu_compile::ReductionPlan::weighted(laddu_compile::ReductionTransform) -> Self
+pub const fn laddu_compile::ReductionPlan::weighted_log_positive_real() -> Self
+pub const fn laddu_compile::ReductionPlan::weighted_positive_real() -> Self
+pub const fn laddu_compile::ReductionPlan::weighted_real() -> Self
+impl core::clone::Clone for laddu_compile::ReductionPlan
+pub fn laddu_compile::ReductionPlan::clone(&self) -> laddu_compile::ReductionPlan
+impl core::cmp::Eq for laddu_compile::ReductionPlan
+impl core::cmp::PartialEq for laddu_compile::ReductionPlan
+pub fn laddu_compile::ReductionPlan::eq(&self, &laddu_compile::ReductionPlan) -> bool
+impl core::fmt::Debug for laddu_compile::ReductionPlan
+pub fn laddu_compile::ReductionPlan::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for laddu_compile::ReductionPlan
+impl core::marker::StructuralPartialEq for laddu_compile::ReductionPlan
+pub struct laddu_compile::RewriteContext<'a>
+impl<'a> laddu_compile::optimize::RewriteContext<'a>
+pub fn laddu_compile::optimize::RewriteContext<'a>::facts(&self, laddu_expr::expression::ExprId) -> core::option::Option<&'a laddu_compile::facts::NodeFacts>
+pub fn laddu_compile::optimize::RewriteContext<'a>::metadata(&self, laddu_expr::expression::ExprId) -> core::option::Option<&'a laddu_expr::expression::ExprMetadata>
+pub fn laddu_compile::optimize::RewriteContext<'a>::next_id(&self) -> laddu_expr::expression::ExprId
+pub fn laddu_compile::optimize::RewriteContext<'a>::node(&self, laddu_expr::expression::ExprId) -> core::option::Option<&'a laddu_expr::expression::ExprNode>
+pub struct laddu_compile::RewritePass
+impl laddu_compile::optimize::RewritePass
+pub fn laddu_compile::optimize::RewritePass::add_rule(&mut self, impl laddu_compile::optimize::RewriteRule + 'static)
+pub fn laddu_compile::optimize::RewritePass::combine_like_terms() -> Self
+pub fn laddu_compile::optimize::RewritePass::conjugation() -> Self
+pub fn laddu_compile::optimize::RewritePass::exponential() -> Self
+pub fn laddu_compile::optimize::RewritePass::factor_common_products() -> Self
+pub fn laddu_compile::optimize::RewritePass::new(&'static str) -> Self
+pub fn laddu_compile::optimize::RewritePass::norm_sqr_expansion() -> Self
+pub fn laddu_compile::optimize::RewritePass::normalize_add_mul() -> Self
+pub fn laddu_compile::optimize::RewritePass::simplify() -> Self
+pub fn laddu_compile::optimize::RewritePass::with_rule(self, impl laddu_compile::optimize::RewriteRule + 'static) -> Self
+impl core::fmt::Debug for laddu_compile::optimize::RewritePass
+pub fn laddu_compile::optimize::RewritePass::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl laddu_compile::optimize::OptimizationPass for laddu_compile::optimize::RewritePass
+pub fn laddu_compile::optimize::RewritePass::name(&self) -> &'static str
+pub fn laddu_compile::optimize::RewritePass::run(&self, laddu_expr::expression::ExprGraph) -> laddu_compile::CompileResult<laddu_expr::expression::ExprGraph>
+pub fn laddu_compile::optimize::RewritePass::run_with_change(&self, laddu_expr::expression::ExprGraph) -> laddu_compile::CompileResult<laddu_compile::optimize::OptimizationPassOutcome>
+pub struct laddu_compile::SolveComponentPlan
+impl laddu_compile::SolveComponentPlan
+pub fn laddu_compile::SolveComponentPlan::dimension(self) -> usize
+pub fn laddu_compile::SolveComponentPlan::rhs(self) -> laddu_expr::expression::ExprId
+pub fn laddu_compile::SolveComponentPlan::row_slot(self) -> usize
+impl core::clone::Clone for laddu_compile::SolveComponentPlan
+pub fn laddu_compile::SolveComponentPlan::clone(&self) -> laddu_compile::SolveComponentPlan
+impl core::fmt::Debug for laddu_compile::SolveComponentPlan
+pub fn laddu_compile::SolveComponentPlan::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for laddu_compile::SolveComponentPlan
+pub struct laddu_compile::SolveRowMatrixPlan
+impl laddu_compile::SolveRowMatrixPlan
+pub fn laddu_compile::SolveRowMatrixPlan::dimension(&self) -> usize
+pub fn laddu_compile::SolveRowMatrixPlan::matrix(&self) -> laddu_expr::expression::ExprId
+pub fn laddu_compile::SolveRowMatrixPlan::rows(&self) -> &[(usize, usize)]
+impl core::clone::Clone for laddu_compile::SolveRowMatrixPlan
+pub fn laddu_compile::SolveRowMatrixPlan::clone(&self) -> laddu_compile::SolveRowMatrixPlan
+impl core::fmt::Debug for laddu_compile::SolveRowMatrixPlan
+pub fn laddu_compile::SolveRowMatrixPlan::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub trait laddu_compile::OptimizationPass: core::marker::Send + core::marker::Sync
+pub fn laddu_compile::OptimizationPass::name(&self) -> &'static str
+pub fn laddu_compile::OptimizationPass::run(&self, laddu_expr::expression::ExprGraph) -> laddu_compile::CompileResult<laddu_expr::expression::ExprGraph>
+pub fn laddu_compile::OptimizationPass::run_with_change(&self, laddu_expr::expression::ExprGraph) -> laddu_compile::CompileResult<laddu_compile::optimize::OptimizationPassOutcome>
+impl laddu_compile::optimize::OptimizationPass for laddu_compile::optimize::CanonicalCsePass
+pub fn laddu_compile::optimize::CanonicalCsePass::name(&self) -> &'static str
+pub fn laddu_compile::optimize::CanonicalCsePass::run(&self, laddu_expr::expression::ExprGraph) -> laddu_compile::CompileResult<laddu_expr::expression::ExprGraph>
+pub fn laddu_compile::optimize::CanonicalCsePass::run_with_change(&self, laddu_expr::expression::ExprGraph) -> laddu_compile::CompileResult<laddu_compile::optimize::OptimizationPassOutcome>
+impl laddu_compile::optimize::OptimizationPass for laddu_compile::optimize::CostGatePass
+pub fn laddu_compile::optimize::CostGatePass::name(&self) -> &'static str
+pub fn laddu_compile::optimize::CostGatePass::run(&self, laddu_expr::expression::ExprGraph) -> laddu_compile::CompileResult<laddu_expr::expression::ExprGraph>
+pub fn laddu_compile::optimize::CostGatePass::run_with_change(&self, laddu_expr::expression::ExprGraph) -> laddu_compile::CompileResult<laddu_compile::optimize::OptimizationPassOutcome>
+impl laddu_compile::optimize::OptimizationPass for laddu_compile::optimize::RewritePass
+pub fn laddu_compile::optimize::RewritePass::name(&self) -> &'static str
+pub fn laddu_compile::optimize::RewritePass::run(&self, laddu_expr::expression::ExprGraph) -> laddu_compile::CompileResult<laddu_expr::expression::ExprGraph>
+pub fn laddu_compile::optimize::RewritePass::run_with_change(&self, laddu_expr::expression::ExprGraph) -> laddu_compile::CompileResult<laddu_compile::optimize::OptimizationPassOutcome>
+pub trait laddu_compile::RewriteRule: core::marker::Send + core::marker::Sync
+pub fn laddu_compile::RewriteRule::name(&self) -> &'static str
+pub fn laddu_compile::RewriteRule::rewrite(&self, &laddu_expr::expression::ExprNode, &laddu_expr::expression::ExprMetadata, &laddu_compile::optimize::RewriteContext<'_>) -> laddu_compile::CompileResult<laddu_compile::optimize::Rewrite>
+impl laddu_compile::optimize::RewriteRule for laddu_compile::optimize::AlgebraicIdentityRule
+pub fn laddu_compile::optimize::AlgebraicIdentityRule::name(&self) -> &'static str
+pub fn laddu_compile::optimize::AlgebraicIdentityRule::rewrite(&self, &laddu_expr::expression::ExprNode, &laddu_expr::expression::ExprMetadata, &laddu_compile::optimize::RewriteContext<'_>) -> laddu_compile::CompileResult<laddu_compile::optimize::Rewrite>
+impl laddu_compile::optimize::RewriteRule for laddu_compile::optimize::CombineLikeTermsRule
+pub fn laddu_compile::optimize::CombineLikeTermsRule::name(&self) -> &'static str
+pub fn laddu_compile::optimize::CombineLikeTermsRule::rewrite(&self, &laddu_expr::expression::ExprNode, &laddu_expr::expression::ExprMetadata, &laddu_compile::optimize::RewriteContext<'_>) -> laddu_compile::CompileResult<laddu_compile::optimize::Rewrite>
+impl laddu_compile::optimize::RewriteRule for laddu_compile::optimize::ComplexFactRule
+pub fn laddu_compile::optimize::ComplexFactRule::name(&self) -> &'static str
+pub fn laddu_compile::optimize::ComplexFactRule::rewrite(&self, &laddu_expr::expression::ExprNode, &laddu_expr::expression::ExprMetadata, &laddu_compile::optimize::RewriteContext<'_>) -> laddu_compile::CompileResult<laddu_compile::optimize::Rewrite>
+impl laddu_compile::optimize::RewriteRule for laddu_compile::optimize::ConjugationRule
+pub fn laddu_compile::optimize::ConjugationRule::name(&self) -> &'static str
+pub fn laddu_compile::optimize::ConjugationRule::rewrite(&self, &laddu_expr::expression::ExprNode, &laddu_expr::expression::ExprMetadata, &laddu_compile::optimize::RewriteContext<'_>) -> laddu_compile::CompileResult<laddu_compile::optimize::Rewrite>
+impl laddu_compile::optimize::RewriteRule for laddu_compile::optimize::ConstantFoldScalarRule
+pub fn laddu_compile::optimize::ConstantFoldScalarRule::name(&self) -> &'static str
+pub fn laddu_compile::optimize::ConstantFoldScalarRule::rewrite(&self, &laddu_expr::expression::ExprNode, &laddu_expr::expression::ExprMetadata, &laddu_compile::optimize::RewriteContext<'_>) -> laddu_compile::CompileResult<laddu_compile::optimize::Rewrite>
+impl laddu_compile::optimize::RewriteRule for laddu_compile::optimize::ExponentialRule
+pub fn laddu_compile::optimize::ExponentialRule::name(&self) -> &'static str
+pub fn laddu_compile::optimize::ExponentialRule::rewrite(&self, &laddu_expr::expression::ExprNode, &laddu_expr::expression::ExprMetadata, &laddu_compile::optimize::RewriteContext<'_>) -> laddu_compile::CompileResult<laddu_compile::optimize::Rewrite>
+impl laddu_compile::optimize::RewriteRule for laddu_compile::optimize::FactorCommonProductRule
+pub fn laddu_compile::optimize::FactorCommonProductRule::name(&self) -> &'static str
+pub fn laddu_compile::optimize::FactorCommonProductRule::rewrite(&self, &laddu_expr::expression::ExprNode, &laddu_expr::expression::ExprMetadata, &laddu_compile::optimize::RewriteContext<'_>) -> laddu_compile::CompileResult<laddu_compile::optimize::Rewrite>
+impl laddu_compile::optimize::RewriteRule for laddu_compile::optimize::MatrixVectorRule
+pub fn laddu_compile::optimize::MatrixVectorRule::name(&self) -> &'static str
+pub fn laddu_compile::optimize::MatrixVectorRule::rewrite(&self, &laddu_expr::expression::ExprNode, &laddu_expr::expression::ExprMetadata, &laddu_compile::optimize::RewriteContext<'_>) -> laddu_compile::CompileResult<laddu_compile::optimize::Rewrite>
+impl laddu_compile::optimize::RewriteRule for laddu_compile::optimize::NormSqrExpansionRule
+pub fn laddu_compile::optimize::NormSqrExpansionRule::name(&self) -> &'static str
+pub fn laddu_compile::optimize::NormSqrExpansionRule::rewrite(&self, &laddu_expr::expression::ExprNode, &laddu_expr::expression::ExprMetadata, &laddu_compile::optimize::RewriteContext<'_>) -> laddu_compile::CompileResult<laddu_compile::optimize::Rewrite>
+impl laddu_compile::optimize::RewriteRule for laddu_compile::optimize::NormSqrReductionRule
+pub fn laddu_compile::optimize::NormSqrReductionRule::name(&self) -> &'static str
+pub fn laddu_compile::optimize::NormSqrReductionRule::rewrite(&self, &laddu_expr::expression::ExprNode, &laddu_expr::expression::ExprMetadata, &laddu_compile::optimize::RewriteContext<'_>) -> laddu_compile::CompileResult<laddu_compile::optimize::Rewrite>
+impl laddu_compile::optimize::RewriteRule for laddu_compile::optimize::TrigIdentityRule
+pub fn laddu_compile::optimize::TrigIdentityRule::name(&self) -> &'static str
+pub fn laddu_compile::optimize::TrigIdentityRule::rewrite(&self, &laddu_expr::expression::ExprNode, &laddu_expr::expression::ExprMetadata, &laddu_compile::optimize::RewriteContext<'_>) -> laddu_compile::CompileResult<laddu_compile::optimize::Rewrite>
+pub fn laddu_compile::collect_params(&laddu_expr::expression::ExprGraph) -> laddu_compile::CompileResult<laddu_expr::parameters::ParamLayout>
+pub type laddu_compile::CompileResult<T> = core::result::Result<T, laddu_compile::CompileError>

@@ -1,0 +1,1619 @@
+pub mod laddu_expr
+pub mod laddu_expr::parameters
+pub enum laddu_expr::parameters::InitialSpec
+pub laddu_expr::parameters::InitialSpec::Default
+pub laddu_expr::parameters::InitialSpec::Uniform
+pub laddu_expr::parameters::InitialSpec::Uniform::max: f64
+pub laddu_expr::parameters::InitialSpec::Uniform::min: f64
+pub laddu_expr::parameters::InitialSpec::Value(f64)
+impl core::clone::Clone for laddu_expr::parameters::InitialSpec
+pub fn laddu_expr::parameters::InitialSpec::clone(&self) -> laddu_expr::parameters::InitialSpec
+impl core::cmp::PartialEq for laddu_expr::parameters::InitialSpec
+pub fn laddu_expr::parameters::InitialSpec::eq(&self, &laddu_expr::parameters::InitialSpec) -> bool
+impl core::convert::From<(f64, f64)> for laddu_expr::parameters::InitialSpec
+pub fn laddu_expr::parameters::InitialSpec::from((f64, f64)) -> Self
+impl core::convert::From<f64> for laddu_expr::parameters::InitialSpec
+pub fn laddu_expr::parameters::InitialSpec::from(f64) -> Self
+impl core::default::Default for laddu_expr::parameters::InitialSpec
+pub fn laddu_expr::parameters::InitialSpec::default() -> laddu_expr::parameters::InitialSpec
+impl core::fmt::Debug for laddu_expr::parameters::InitialSpec
+pub fn laddu_expr::parameters::InitialSpec::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for laddu_expr::parameters::InitialSpec
+impl serde_core::ser::Serialize for laddu_expr::parameters::InitialSpec
+pub fn laddu_expr::parameters::InitialSpec::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for laddu_expr::parameters::InitialSpec
+pub fn laddu_expr::parameters::InitialSpec::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub enum laddu_expr::parameters::ParamError
+pub laddu_expr::parameters::ParamError::DuplicateName(alloc::string::String)
+pub laddu_expr::parameters::ParamError::EmptyName
+pub laddu_expr::parameters::ParamError::FixedValueOutOfBounds
+pub laddu_expr::parameters::ParamError::FixedValueOutOfBounds::name: alloc::string::String
+pub laddu_expr::parameters::ParamError::FixedValueOutOfBounds::value: f64
+pub laddu_expr::parameters::ParamError::FreeLengthMismatch
+pub laddu_expr::parameters::ParamError::FreeLengthMismatch::actual: usize
+pub laddu_expr::parameters::ParamError::FreeLengthMismatch::expected: usize
+pub laddu_expr::parameters::ParamError::InitialOutOfBounds
+pub laddu_expr::parameters::ParamError::InitialOutOfBounds::name: alloc::string::String
+pub laddu_expr::parameters::ParamError::InitialOutOfBounds::value: f64
+pub laddu_expr::parameters::ParamError::InitialRangeOutOfBounds
+pub laddu_expr::parameters::ParamError::InitialRangeOutOfBounds::max: f64
+pub laddu_expr::parameters::ParamError::InitialRangeOutOfBounds::min: f64
+pub laddu_expr::parameters::ParamError::InitialRangeOutOfBounds::name: alloc::string::String
+pub laddu_expr::parameters::ParamError::InvalidBounds
+pub laddu_expr::parameters::ParamError::InvalidBounds::max: f64
+pub laddu_expr::parameters::ParamError::InvalidBounds::min: f64
+pub laddu_expr::parameters::ParamError::InvalidBounds::name: alloc::string::String
+pub laddu_expr::parameters::ParamError::InvalidFreeParamId
+pub laddu_expr::parameters::ParamError::InvalidFreeParamId::id: usize
+pub laddu_expr::parameters::ParamError::InvalidFreeParamId::len: usize
+pub laddu_expr::parameters::ParamError::InvalidInitialRange
+pub laddu_expr::parameters::ParamError::InvalidInitialRange::max: f64
+pub laddu_expr::parameters::ParamError::InvalidInitialRange::min: f64
+pub laddu_expr::parameters::ParamError::InvalidInitialRange::name: alloc::string::String
+pub laddu_expr::parameters::ParamError::InvalidParamId
+pub laddu_expr::parameters::ParamError::InvalidParamId::id: usize
+pub laddu_expr::parameters::ParamError::InvalidParamId::len: usize
+pub laddu_expr::parameters::ParamError::InvalidScale
+pub laddu_expr::parameters::ParamError::InvalidScale::name: alloc::string::String
+pub laddu_expr::parameters::ParamError::InvalidScale::scale: f64
+pub laddu_expr::parameters::ParamError::ParameterConflict
+pub laddu_expr::parameters::ParamError::ParameterConflict::name: alloc::string::String
+pub laddu_expr::parameters::ParamError::ParameterConflict::reason: alloc::string::String
+pub laddu_expr::parameters::ParamError::PeriodicRequiresFiniteBounds
+pub laddu_expr::parameters::ParamError::PeriodicRequiresFiniteBounds::name: alloc::string::String
+pub laddu_expr::parameters::ParamError::UnknownName(alloc::string::String)
+pub laddu_expr::parameters::ParamError::ValueOutOfBounds
+pub laddu_expr::parameters::ParamError::ValueOutOfBounds::name: alloc::string::String
+pub laddu_expr::parameters::ParamError::ValueOutOfBounds::value: f64
+pub laddu_expr::parameters::ParamError::ValueOutsidePeriodicDomain
+pub laddu_expr::parameters::ParamError::ValueOutsidePeriodicDomain::max: f64
+pub laddu_expr::parameters::ParamError::ValueOutsidePeriodicDomain::min: f64
+pub laddu_expr::parameters::ParamError::ValueOutsidePeriodicDomain::name: alloc::string::String
+pub laddu_expr::parameters::ParamError::ValueOutsidePeriodicDomain::value: f64
+impl core::clone::Clone for laddu_expr::ParamError
+pub fn laddu_expr::ParamError::clone(&self) -> laddu_expr::ParamError
+impl core::cmp::PartialEq for laddu_expr::ParamError
+pub fn laddu_expr::ParamError::eq(&self, &laddu_expr::ParamError) -> bool
+impl core::convert::From<laddu_expr::ParamError> for laddu_expr::ExprError
+pub fn laddu_expr::ExprError::from(laddu_expr::ParamError) -> Self
+impl core::error::Error for laddu_expr::ParamError
+impl core::fmt::Debug for laddu_expr::ParamError
+pub fn laddu_expr::ParamError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for laddu_expr::ParamError
+pub fn laddu_expr::ParamError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for laddu_expr::ParamError
+pub enum laddu_expr::parameters::ParamState
+pub laddu_expr::parameters::ParamState::Fixed(f64)
+pub laddu_expr::parameters::ParamState::Free
+impl core::clone::Clone for laddu_expr::parameters::ParamState
+pub fn laddu_expr::parameters::ParamState::clone(&self) -> laddu_expr::parameters::ParamState
+impl core::cmp::PartialEq for laddu_expr::parameters::ParamState
+pub fn laddu_expr::parameters::ParamState::eq(&self, &laddu_expr::parameters::ParamState) -> bool
+impl core::fmt::Debug for laddu_expr::parameters::ParamState
+pub fn laddu_expr::parameters::ParamState::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for laddu_expr::parameters::ParamState
+impl serde_core::ser::Serialize for laddu_expr::parameters::ParamState
+pub fn laddu_expr::parameters::ParamState::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for laddu_expr::parameters::ParamState
+pub fn laddu_expr::parameters::ParamState::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct laddu_expr::parameters::Bounds
+pub laddu_expr::parameters::Bounds::max: core::option::Option<f64>
+pub laddu_expr::parameters::Bounds::min: core::option::Option<f64>
+impl laddu_expr::parameters::Bounds
+pub fn laddu_expr::parameters::Bounds::contains(&self, f64) -> bool
+pub fn laddu_expr::parameters::Bounds::new(impl core::convert::Into<core::option::Option<f64>>, impl core::convert::Into<core::option::Option<f64>>) -> Self
+impl core::clone::Clone for laddu_expr::parameters::Bounds
+pub fn laddu_expr::parameters::Bounds::clone(&self) -> laddu_expr::parameters::Bounds
+impl core::cmp::PartialEq for laddu_expr::parameters::Bounds
+pub fn laddu_expr::parameters::Bounds::eq(&self, &laddu_expr::parameters::Bounds) -> bool
+impl core::default::Default for laddu_expr::parameters::Bounds
+pub fn laddu_expr::parameters::Bounds::default() -> laddu_expr::parameters::Bounds
+impl core::fmt::Debug for laddu_expr::parameters::Bounds
+pub fn laddu_expr::parameters::Bounds::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for laddu_expr::parameters::Bounds
+impl serde_core::ser::Serialize for laddu_expr::parameters::Bounds
+pub fn laddu_expr::parameters::Bounds::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for laddu_expr::parameters::Bounds
+pub fn laddu_expr::parameters::Bounds::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct laddu_expr::parameters::FreeParamId(_)
+impl laddu_expr::parameters::FreeParamId
+pub fn laddu_expr::parameters::FreeParamId::index(self) -> usize
+impl core::clone::Clone for laddu_expr::parameters::FreeParamId
+pub fn laddu_expr::parameters::FreeParamId::clone(&self) -> laddu_expr::parameters::FreeParamId
+impl core::cmp::Eq for laddu_expr::parameters::FreeParamId
+impl core::cmp::PartialEq for laddu_expr::parameters::FreeParamId
+pub fn laddu_expr::parameters::FreeParamId::eq(&self, &laddu_expr::parameters::FreeParamId) -> bool
+impl core::fmt::Debug for laddu_expr::parameters::FreeParamId
+pub fn laddu_expr::parameters::FreeParamId::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for laddu_expr::parameters::FreeParamId
+pub fn laddu_expr::parameters::FreeParamId::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for laddu_expr::parameters::FreeParamId
+impl core::marker::StructuralPartialEq for laddu_expr::parameters::FreeParamId
+impl serde_core::ser::Serialize for laddu_expr::parameters::FreeParamId
+pub fn laddu_expr::parameters::FreeParamId::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for laddu_expr::parameters::FreeParamId
+pub fn laddu_expr::parameters::FreeParamId::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct laddu_expr::parameters::ParamId(_)
+impl laddu_expr::parameters::ParamId
+pub fn laddu_expr::parameters::ParamId::index(self) -> usize
+impl core::clone::Clone for laddu_expr::parameters::ParamId
+pub fn laddu_expr::parameters::ParamId::clone(&self) -> laddu_expr::parameters::ParamId
+impl core::cmp::Eq for laddu_expr::parameters::ParamId
+impl core::cmp::PartialEq for laddu_expr::parameters::ParamId
+pub fn laddu_expr::parameters::ParamId::eq(&self, &laddu_expr::parameters::ParamId) -> bool
+impl core::fmt::Debug for laddu_expr::parameters::ParamId
+pub fn laddu_expr::parameters::ParamId::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for laddu_expr::parameters::ParamId
+pub fn laddu_expr::parameters::ParamId::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for laddu_expr::parameters::ParamId
+impl core::marker::StructuralPartialEq for laddu_expr::parameters::ParamId
+impl serde_core::ser::Serialize for laddu_expr::parameters::ParamId
+pub fn laddu_expr::parameters::ParamId::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for laddu_expr::parameters::ParamId
+pub fn laddu_expr::parameters::ParamId::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct laddu_expr::parameters::ParamLayout
+impl laddu_expr::parameters::ParamLayout
+pub fn laddu_expr::parameters::ParamLayout::default_values(&self) -> laddu_expr::parameters::ParamValues
+pub fn laddu_expr::parameters::ParamLayout::free_id(&self, laddu_expr::parameters::ParamId) -> laddu_expr::ParamResult<core::option::Option<laddu_expr::parameters::FreeParamId>>
+pub fn laddu_expr::parameters::ParamLayout::free_params(&self) -> &[laddu_expr::parameters::ParamId]
+pub fn laddu_expr::parameters::ParamLayout::free_values_with(&self, impl core::ops::function::FnMut(&laddu_expr::parameters::Parameter) -> f64) -> alloc::vec::Vec<f64>
+pub fn laddu_expr::parameters::ParamLayout::id(&self, &str) -> core::option::Option<laddu_expr::parameters::ParamId>
+pub fn laddu_expr::parameters::ParamLayout::initial_free_values(&self) -> alloc::vec::Vec<f64>
+pub fn laddu_expr::parameters::ParamLayout::is_empty(&self) -> bool
+pub fn laddu_expr::parameters::ParamLayout::len(&self) -> usize
+pub fn laddu_expr::parameters::ParamLayout::n_free(&self) -> usize
+pub fn laddu_expr::parameters::ParamLayout::name(&self, laddu_expr::parameters::ParamId) -> laddu_expr::ParamResult<&str>
+pub fn laddu_expr::parameters::ParamLayout::new<S>(impl core::iter::traits::collect::IntoIterator<Item = S>) -> laddu_expr::ParamResult<Self> where S: core::convert::Into<laddu_expr::parameters::Parameter>
+pub fn laddu_expr::parameters::ParamLayout::sample_initial(&self, u64) -> alloc::vec::Vec<f64>
+pub fn laddu_expr::parameters::ParamLayout::spec(&self, laddu_expr::parameters::ParamId) -> laddu_expr::ParamResult<&laddu_expr::parameters::Parameter>
+pub fn laddu_expr::parameters::ParamLayout::specs(&self) -> &[laddu_expr::parameters::Parameter]
+pub fn laddu_expr::parameters::ParamLayout::validate_free_values(&self, &[f64]) -> laddu_expr::ParamResult<()>
+pub fn laddu_expr::parameters::ParamLayout::values(&self, &[f64]) -> laddu_expr::ParamResult<laddu_expr::parameters::ParamValues>
+pub fn laddu_expr::parameters::ParamLayout::wrap_periodic_free_values(&self, &[f64]) -> laddu_expr::ParamResult<alloc::vec::Vec<f64>>
+impl core::clone::Clone for laddu_expr::parameters::ParamLayout
+pub fn laddu_expr::parameters::ParamLayout::clone(&self) -> laddu_expr::parameters::ParamLayout
+impl core::fmt::Debug for laddu_expr::parameters::ParamLayout
+pub fn laddu_expr::parameters::ParamLayout::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for laddu_expr::parameters::ParamLayout
+pub fn laddu_expr::parameters::ParamLayout::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for laddu_expr::parameters::ParamLayout
+pub fn laddu_expr::parameters::ParamLayout::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct laddu_expr::parameters::ParamRegistry
+impl laddu_expr::parameters::ParamRegistry
+pub fn laddu_expr::parameters::ParamRegistry::layout(&self) -> laddu_expr::ParamResult<laddu_expr::parameters::ParamLayout>
+pub fn laddu_expr::parameters::ParamRegistry::new() -> Self
+pub fn laddu_expr::parameters::ParamRegistry::register<S>(&mut self, S) -> laddu_expr::ParamResult<laddu_expr::parameters::ParamId> where S: core::convert::Into<laddu_expr::parameters::Parameter>
+impl core::clone::Clone for laddu_expr::parameters::ParamRegistry
+pub fn laddu_expr::parameters::ParamRegistry::clone(&self) -> laddu_expr::parameters::ParamRegistry
+impl core::default::Default for laddu_expr::parameters::ParamRegistry
+pub fn laddu_expr::parameters::ParamRegistry::default() -> laddu_expr::parameters::ParamRegistry
+impl core::fmt::Debug for laddu_expr::parameters::ParamRegistry
+pub fn laddu_expr::parameters::ParamRegistry::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub struct laddu_expr::parameters::ParamValues
+impl laddu_expr::parameters::ParamValues
+pub fn laddu_expr::parameters::ParamValues::as_slice(&self) -> &[f64]
+pub fn laddu_expr::parameters::ParamValues::free_values(&self) -> alloc::vec::Vec<f64>
+pub fn laddu_expr::parameters::ParamValues::get(&self, laddu_expr::parameters::ParamId) -> laddu_expr::ParamResult<f64>
+pub fn laddu_expr::parameters::ParamValues::layout(&self) -> &alloc::sync::Arc<laddu_expr::parameters::ParamLayout>
+pub fn laddu_expr::parameters::ParamValues::set_free(&mut self, laddu_expr::parameters::FreeParamId, f64) -> laddu_expr::ParamResult<()>
+pub fn laddu_expr::parameters::ParamValues::set_free_values(&mut self, &[f64]) -> laddu_expr::ParamResult<()>
+impl core::clone::Clone for laddu_expr::parameters::ParamValues
+pub fn laddu_expr::parameters::ParamValues::clone(&self) -> laddu_expr::parameters::ParamValues
+impl core::fmt::Debug for laddu_expr::parameters::ParamValues
+pub fn laddu_expr::parameters::ParamValues::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for laddu_expr::parameters::ParamValues
+pub fn laddu_expr::parameters::ParamValues::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for laddu_expr::parameters::ParamValues
+pub fn laddu_expr::parameters::ParamValues::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct laddu_expr::parameters::Parameter
+impl laddu_expr::parameters::Parameter
+pub fn laddu_expr::parameters::Parameter::bounds_spec(&self) -> &laddu_expr::parameters::Bounds
+pub fn laddu_expr::parameters::Parameter::description_text(&self) -> core::option::Option<&str>
+pub fn laddu_expr::parameters::Parameter::fixed(impl core::convert::Into<alloc::sync::Arc<str>>, f64) -> Self
+pub fn laddu_expr::parameters::Parameter::free(impl core::convert::Into<alloc::sync::Arc<str>>) -> Self
+pub fn laddu_expr::parameters::Parameter::initial_spec(&self) -> &laddu_expr::parameters::InitialSpec
+pub fn laddu_expr::parameters::Parameter::is_fixed(&self) -> bool
+pub fn laddu_expr::parameters::Parameter::is_free(&self) -> bool
+pub fn laddu_expr::parameters::Parameter::is_periodic(&self) -> bool
+pub fn laddu_expr::parameters::Parameter::latex_label(&self) -> core::option::Option<&str>
+pub fn laddu_expr::parameters::Parameter::name(&self) -> &str
+pub fn laddu_expr::parameters::Parameter::periodic_bounds(&self) -> core::option::Option<(f64, f64)>
+pub fn laddu_expr::parameters::Parameter::scale(&self) -> core::option::Option<f64>
+pub fn laddu_expr::parameters::Parameter::state(&self) -> &laddu_expr::parameters::ParamState
+pub fn laddu_expr::parameters::Parameter::unit_label(&self) -> core::option::Option<&str>
+pub fn laddu_expr::parameters::Parameter::with_bounds(self, impl core::convert::Into<core::option::Option<f64>>, impl core::convert::Into<core::option::Option<f64>>) -> Self
+pub fn laddu_expr::parameters::Parameter::with_description(self, impl core::convert::Into<alloc::sync::Arc<str>>) -> Self
+pub fn laddu_expr::parameters::Parameter::with_fixed_value(self, f64) -> Self
+pub fn laddu_expr::parameters::Parameter::with_free(self) -> Self
+pub fn laddu_expr::parameters::Parameter::with_initial(self, impl core::convert::Into<laddu_expr::parameters::InitialSpec>) -> Self
+pub fn laddu_expr::parameters::Parameter::with_latex(self, impl core::convert::Into<alloc::sync::Arc<str>>) -> Self
+pub fn laddu_expr::parameters::Parameter::with_periodic(self) -> Self
+pub fn laddu_expr::parameters::Parameter::with_periodicity(self, bool) -> Self
+pub fn laddu_expr::parameters::Parameter::with_scale(self, f64) -> Self
+pub fn laddu_expr::parameters::Parameter::with_unit(self, impl core::convert::Into<alloc::sync::Arc<str>>) -> Self
+impl core::clone::Clone for laddu_expr::parameters::Parameter
+pub fn laddu_expr::parameters::Parameter::clone(&self) -> laddu_expr::parameters::Parameter
+impl core::cmp::PartialEq for laddu_expr::parameters::Parameter
+pub fn laddu_expr::parameters::Parameter::eq(&self, &laddu_expr::parameters::Parameter) -> bool
+impl core::convert::From<&laddu_expr::parameters::Parameter> for laddu_expr::Expr
+pub fn laddu_expr::Expr::from(&laddu_expr::parameters::Parameter) -> Self
+impl core::convert::From<laddu_expr::parameters::Parameter> for laddu_expr::Expr
+pub fn laddu_expr::Expr::from(laddu_expr::parameters::Parameter) -> Self
+impl core::fmt::Debug for laddu_expr::parameters::Parameter
+pub fn laddu_expr::parameters::Parameter::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for laddu_expr::parameters::Parameter
+impl core::ops::arith::Add for laddu_expr::parameters::Parameter
+pub type laddu_expr::parameters::Parameter::Output = laddu_expr::Expr
+pub fn laddu_expr::parameters::Parameter::add(self, laddu_expr::parameters::Parameter) -> Self::Output
+impl core::ops::arith::Add<&f64> for &laddu_expr::parameters::Parameter
+pub type &laddu_expr::parameters::Parameter::Output = laddu_expr::Expr
+pub fn &laddu_expr::parameters::Parameter::add(self, &f64) -> Self::Output
+impl core::ops::arith::Add<&f64> for laddu_expr::parameters::Parameter
+pub type laddu_expr::parameters::Parameter::Output = laddu_expr::Expr
+pub fn laddu_expr::parameters::Parameter::add(self, &f64) -> Self::Output
+impl core::ops::arith::Add<&laddu_expr::Expr> for &laddu_expr::parameters::Parameter
+pub type &laddu_expr::parameters::Parameter::Output = laddu_expr::Expr
+pub fn &laddu_expr::parameters::Parameter::add(self, &laddu_expr::Expr) -> Self::Output
+impl core::ops::arith::Add<&laddu_expr::Expr> for laddu_expr::parameters::Parameter
+pub type laddu_expr::parameters::Parameter::Output = laddu_expr::Expr
+pub fn laddu_expr::parameters::Parameter::add(self, &laddu_expr::Expr) -> Self::Output
+impl core::ops::arith::Add<&laddu_expr::parameters::Parameter> for &f64
+pub type &f64::Output = laddu_expr::Expr
+pub fn &f64::add(self, &laddu_expr::parameters::Parameter) -> Self::Output
+impl core::ops::arith::Add<&laddu_expr::parameters::Parameter> for &laddu_expr::Expr
+pub type &laddu_expr::Expr::Output = laddu_expr::Expr
+pub fn &laddu_expr::Expr::add(self, &laddu_expr::parameters::Parameter) -> Self::Output
+impl core::ops::arith::Add<&laddu_expr::parameters::Parameter> for &laddu_expr::parameters::Parameter
+pub type &laddu_expr::parameters::Parameter::Output = laddu_expr::Expr
+pub fn &laddu_expr::parameters::Parameter::add(self, &laddu_expr::parameters::Parameter) -> Self::Output
+impl core::ops::arith::Add<&laddu_expr::parameters::Parameter> for &num_complex::Complex64
+pub type &num_complex::Complex64::Output = laddu_expr::Expr
+pub fn &num_complex::Complex64::add(self, &laddu_expr::parameters::Parameter) -> Self::Output
+impl core::ops::arith::Add<&laddu_expr::parameters::Parameter> for f64
+pub type f64::Output = laddu_expr::Expr
+pub fn f64::add(self, &laddu_expr::parameters::Parameter) -> Self::Output
+impl core::ops::arith::Add<&laddu_expr::parameters::Parameter> for laddu_expr::Expr
+pub type laddu_expr::Expr::Output = laddu_expr::Expr
+pub fn laddu_expr::Expr::add(self, &laddu_expr::parameters::Parameter) -> Self::Output
+impl core::ops::arith::Add<&laddu_expr::parameters::Parameter> for laddu_expr::parameters::Parameter
+pub type laddu_expr::parameters::Parameter::Output = laddu_expr::Expr
+pub fn laddu_expr::parameters::Parameter::add(self, &laddu_expr::parameters::Parameter) -> Self::Output
+impl core::ops::arith::Add<&laddu_expr::parameters::Parameter> for num_complex::Complex64
+pub type num_complex::Complex64::Output = laddu_expr::Expr
+pub fn num_complex::Complex64::add(self, &laddu_expr::parameters::Parameter) -> Self::Output
+impl core::ops::arith::Add<&num_complex::Complex<f64>> for &laddu_expr::parameters::Parameter
+pub type &laddu_expr::parameters::Parameter::Output = laddu_expr::Expr
+pub fn &laddu_expr::parameters::Parameter::add(self, &num_complex::Complex64) -> Self::Output
+impl core::ops::arith::Add<&num_complex::Complex<f64>> for laddu_expr::parameters::Parameter
+pub type laddu_expr::parameters::Parameter::Output = laddu_expr::Expr
+pub fn laddu_expr::parameters::Parameter::add(self, &num_complex::Complex64) -> Self::Output
+impl core::ops::arith::Add<f64> for &laddu_expr::parameters::Parameter
+pub type &laddu_expr::parameters::Parameter::Output = laddu_expr::Expr
+pub fn &laddu_expr::parameters::Parameter::add(self, f64) -> Self::Output
+impl core::ops::arith::Add<f64> for laddu_expr::parameters::Parameter
+pub type laddu_expr::parameters::Parameter::Output = laddu_expr::Expr
+pub fn laddu_expr::parameters::Parameter::add(self, f64) -> Self::Output
+impl core::ops::arith::Add<laddu_expr::Expr> for &laddu_expr::parameters::Parameter
+pub type &laddu_expr::parameters::Parameter::Output = laddu_expr::Expr
+pub fn &laddu_expr::parameters::Parameter::add(self, laddu_expr::Expr) -> Self::Output
+impl core::ops::arith::Add<laddu_expr::Expr> for laddu_expr::parameters::Parameter
+pub type laddu_expr::parameters::Parameter::Output = laddu_expr::Expr
+pub fn laddu_expr::parameters::Parameter::add(self, laddu_expr::Expr) -> Self::Output
+impl core::ops::arith::Add<laddu_expr::parameters::Parameter> for &f64
+pub type &f64::Output = laddu_expr::Expr
+pub fn &f64::add(self, laddu_expr::parameters::Parameter) -> Self::Output
+impl core::ops::arith::Add<laddu_expr::parameters::Parameter> for &laddu_expr::Expr
+pub type &laddu_expr::Expr::Output = laddu_expr::Expr
+pub fn &laddu_expr::Expr::add(self, laddu_expr::parameters::Parameter) -> Self::Output
+impl core::ops::arith::Add<laddu_expr::parameters::Parameter> for &laddu_expr::parameters::Parameter
+pub type &laddu_expr::parameters::Parameter::Output = laddu_expr::Expr
+pub fn &laddu_expr::parameters::Parameter::add(self, laddu_expr::parameters::Parameter) -> Self::Output
+impl core::ops::arith::Add<laddu_expr::parameters::Parameter> for &num_complex::Complex64
+pub type &num_complex::Complex64::Output = laddu_expr::Expr
+pub fn &num_complex::Complex64::add(self, laddu_expr::parameters::Parameter) -> Self::Output
+impl core::ops::arith::Add<laddu_expr::parameters::Parameter> for f64
+pub type f64::Output = laddu_expr::Expr
+pub fn f64::add(self, laddu_expr::parameters::Parameter) -> Self::Output
+impl core::ops::arith::Add<laddu_expr::parameters::Parameter> for laddu_expr::Expr
+pub type laddu_expr::Expr::Output = laddu_expr::Expr
+pub fn laddu_expr::Expr::add(self, laddu_expr::parameters::Parameter) -> Self::Output
+impl core::ops::arith::Add<laddu_expr::parameters::Parameter> for num_complex::Complex64
+pub type num_complex::Complex64::Output = laddu_expr::Expr
+pub fn num_complex::Complex64::add(self, laddu_expr::parameters::Parameter) -> Self::Output
+impl core::ops::arith::Add<num_complex::Complex<f64>> for &laddu_expr::parameters::Parameter
+pub type &laddu_expr::parameters::Parameter::Output = laddu_expr::Expr
+pub fn &laddu_expr::parameters::Parameter::add(self, num_complex::Complex64) -> Self::Output
+impl core::ops::arith::Add<num_complex::Complex<f64>> for laddu_expr::parameters::Parameter
+pub type laddu_expr::parameters::Parameter::Output = laddu_expr::Expr
+pub fn laddu_expr::parameters::Parameter::add(self, num_complex::Complex64) -> Self::Output
+impl core::ops::arith::AddAssign<&laddu_expr::parameters::Parameter> for laddu_expr::Expr
+pub fn laddu_expr::Expr::add_assign(&mut self, &laddu_expr::parameters::Parameter)
+impl core::ops::arith::AddAssign<laddu_expr::parameters::Parameter> for laddu_expr::Expr
+pub fn laddu_expr::Expr::add_assign(&mut self, laddu_expr::parameters::Parameter)
+impl core::ops::arith::Div for laddu_expr::parameters::Parameter
+pub type laddu_expr::parameters::Parameter::Output = laddu_expr::Expr
+pub fn laddu_expr::parameters::Parameter::div(self, laddu_expr::parameters::Parameter) -> Self::Output
+impl core::ops::arith::Div<&f64> for &laddu_expr::parameters::Parameter
+pub type &laddu_expr::parameters::Parameter::Output = laddu_expr::Expr
+pub fn &laddu_expr::parameters::Parameter::div(self, &f64) -> Self::Output
+impl core::ops::arith::Div<&f64> for laddu_expr::parameters::Parameter
+pub type laddu_expr::parameters::Parameter::Output = laddu_expr::Expr
+pub fn laddu_expr::parameters::Parameter::div(self, &f64) -> Self::Output
+impl core::ops::arith::Div<&laddu_expr::Expr> for &laddu_expr::parameters::Parameter
+pub type &laddu_expr::parameters::Parameter::Output = laddu_expr::Expr
+pub fn &laddu_expr::parameters::Parameter::div(self, &laddu_expr::Expr) -> Self::Output
+impl core::ops::arith::Div<&laddu_expr::Expr> for laddu_expr::parameters::Parameter
+pub type laddu_expr::parameters::Parameter::Output = laddu_expr::Expr
+pub fn laddu_expr::parameters::Parameter::div(self, &laddu_expr::Expr) -> Self::Output
+impl core::ops::arith::Div<&laddu_expr::parameters::Parameter> for &f64
+pub type &f64::Output = laddu_expr::Expr
+pub fn &f64::div(self, &laddu_expr::parameters::Parameter) -> Self::Output
+impl core::ops::arith::Div<&laddu_expr::parameters::Parameter> for &laddu_expr::Expr
+pub type &laddu_expr::Expr::Output = laddu_expr::Expr
+pub fn &laddu_expr::Expr::div(self, &laddu_expr::parameters::Parameter) -> Self::Output
+impl core::ops::arith::Div<&laddu_expr::parameters::Parameter> for &laddu_expr::parameters::Parameter
+pub type &laddu_expr::parameters::Parameter::Output = laddu_expr::Expr
+pub fn &laddu_expr::parameters::Parameter::div(self, &laddu_expr::parameters::Parameter) -> Self::Output
+impl core::ops::arith::Div<&laddu_expr::parameters::Parameter> for &num_complex::Complex64
+pub type &num_complex::Complex64::Output = laddu_expr::Expr
+pub fn &num_complex::Complex64::div(self, &laddu_expr::parameters::Parameter) -> Self::Output
+impl core::ops::arith::Div<&laddu_expr::parameters::Parameter> for f64
+pub type f64::Output = laddu_expr::Expr
+pub fn f64::div(self, &laddu_expr::parameters::Parameter) -> Self::Output
+impl core::ops::arith::Div<&laddu_expr::parameters::Parameter> for laddu_expr::Expr
+pub type laddu_expr::Expr::Output = laddu_expr::Expr
+pub fn laddu_expr::Expr::div(self, &laddu_expr::parameters::Parameter) -> Self::Output
+impl core::ops::arith::Div<&laddu_expr::parameters::Parameter> for laddu_expr::parameters::Parameter
+pub type laddu_expr::parameters::Parameter::Output = laddu_expr::Expr
+pub fn laddu_expr::parameters::Parameter::div(self, &laddu_expr::parameters::Parameter) -> Self::Output
+impl core::ops::arith::Div<&laddu_expr::parameters::Parameter> for num_complex::Complex64
+pub type num_complex::Complex64::Output = laddu_expr::Expr
+pub fn num_complex::Complex64::div(self, &laddu_expr::parameters::Parameter) -> Self::Output
+impl core::ops::arith::Div<&num_complex::Complex<f64>> for &laddu_expr::parameters::Parameter
+pub type &laddu_expr::parameters::Parameter::Output = laddu_expr::Expr
+pub fn &laddu_expr::parameters::Parameter::div(self, &num_complex::Complex64) -> Self::Output
+impl core::ops::arith::Div<&num_complex::Complex<f64>> for laddu_expr::parameters::Parameter
+pub type laddu_expr::parameters::Parameter::Output = laddu_expr::Expr
+pub fn laddu_expr::parameters::Parameter::div(self, &num_complex::Complex64) -> Self::Output
+impl core::ops::arith::Div<f64> for &laddu_expr::parameters::Parameter
+pub type &laddu_expr::parameters::Parameter::Output = laddu_expr::Expr
+pub fn &laddu_expr::parameters::Parameter::div(self, f64) -> Self::Output
+impl core::ops::arith::Div<f64> for laddu_expr::parameters::Parameter
+pub type laddu_expr::parameters::Parameter::Output = laddu_expr::Expr
+pub fn laddu_expr::parameters::Parameter::div(self, f64) -> Self::Output
+impl core::ops::arith::Div<laddu_expr::Expr> for &laddu_expr::parameters::Parameter
+pub type &laddu_expr::parameters::Parameter::Output = laddu_expr::Expr
+pub fn &laddu_expr::parameters::Parameter::div(self, laddu_expr::Expr) -> Self::Output
+impl core::ops::arith::Div<laddu_expr::Expr> for laddu_expr::parameters::Parameter
+pub type laddu_expr::parameters::Parameter::Output = laddu_expr::Expr
+pub fn laddu_expr::parameters::Parameter::div(self, laddu_expr::Expr) -> Self::Output
+impl core::ops::arith::Div<laddu_expr::parameters::Parameter> for &f64
+pub type &f64::Output = laddu_expr::Expr
+pub fn &f64::div(self, laddu_expr::parameters::Parameter) -> Self::Output
+impl core::ops::arith::Div<laddu_expr::parameters::Parameter> for &laddu_expr::Expr
+pub type &laddu_expr::Expr::Output = laddu_expr::Expr
+pub fn &laddu_expr::Expr::div(self, laddu_expr::parameters::Parameter) -> Self::Output
+impl core::ops::arith::Div<laddu_expr::parameters::Parameter> for &laddu_expr::parameters::Parameter
+pub type &laddu_expr::parameters::Parameter::Output = laddu_expr::Expr
+pub fn &laddu_expr::parameters::Parameter::div(self, laddu_expr::parameters::Parameter) -> Self::Output
+impl core::ops::arith::Div<laddu_expr::parameters::Parameter> for &num_complex::Complex64
+pub type &num_complex::Complex64::Output = laddu_expr::Expr
+pub fn &num_complex::Complex64::div(self, laddu_expr::parameters::Parameter) -> Self::Output
+impl core::ops::arith::Div<laddu_expr::parameters::Parameter> for f64
+pub type f64::Output = laddu_expr::Expr
+pub fn f64::div(self, laddu_expr::parameters::Parameter) -> Self::Output
+impl core::ops::arith::Div<laddu_expr::parameters::Parameter> for laddu_expr::Expr
+pub type laddu_expr::Expr::Output = laddu_expr::Expr
+pub fn laddu_expr::Expr::div(self, laddu_expr::parameters::Parameter) -> Self::Output
+impl core::ops::arith::Div<laddu_expr::parameters::Parameter> for num_complex::Complex64
+pub type num_complex::Complex64::Output = laddu_expr::Expr
+pub fn num_complex::Complex64::div(self, laddu_expr::parameters::Parameter) -> Self::Output
+impl core::ops::arith::Div<num_complex::Complex<f64>> for &laddu_expr::parameters::Parameter
+pub type &laddu_expr::parameters::Parameter::Output = laddu_expr::Expr
+pub fn &laddu_expr::parameters::Parameter::div(self, num_complex::Complex64) -> Self::Output
+impl core::ops::arith::Div<num_complex::Complex<f64>> for laddu_expr::parameters::Parameter
+pub type laddu_expr::parameters::Parameter::Output = laddu_expr::Expr
+pub fn laddu_expr::parameters::Parameter::div(self, num_complex::Complex64) -> Self::Output
+impl core::ops::arith::DivAssign<&laddu_expr::parameters::Parameter> for laddu_expr::Expr
+pub fn laddu_expr::Expr::div_assign(&mut self, &laddu_expr::parameters::Parameter)
+impl core::ops::arith::DivAssign<laddu_expr::parameters::Parameter> for laddu_expr::Expr
+pub fn laddu_expr::Expr::div_assign(&mut self, laddu_expr::parameters::Parameter)
+impl core::ops::arith::Mul for laddu_expr::parameters::Parameter
+pub type laddu_expr::parameters::Parameter::Output = laddu_expr::Expr
+pub fn laddu_expr::parameters::Parameter::mul(self, laddu_expr::parameters::Parameter) -> Self::Output
+impl core::ops::arith::Mul<&f64> for &laddu_expr::parameters::Parameter
+pub type &laddu_expr::parameters::Parameter::Output = laddu_expr::Expr
+pub fn &laddu_expr::parameters::Parameter::mul(self, &f64) -> Self::Output
+impl core::ops::arith::Mul<&f64> for laddu_expr::parameters::Parameter
+pub type laddu_expr::parameters::Parameter::Output = laddu_expr::Expr
+pub fn laddu_expr::parameters::Parameter::mul(self, &f64) -> Self::Output
+impl core::ops::arith::Mul<&laddu_expr::Expr> for &laddu_expr::parameters::Parameter
+pub type &laddu_expr::parameters::Parameter::Output = laddu_expr::Expr
+pub fn &laddu_expr::parameters::Parameter::mul(self, &laddu_expr::Expr) -> Self::Output
+impl core::ops::arith::Mul<&laddu_expr::Expr> for laddu_expr::parameters::Parameter
+pub type laddu_expr::parameters::Parameter::Output = laddu_expr::Expr
+pub fn laddu_expr::parameters::Parameter::mul(self, &laddu_expr::Expr) -> Self::Output
+impl core::ops::arith::Mul<&laddu_expr::parameters::Parameter> for &f64
+pub type &f64::Output = laddu_expr::Expr
+pub fn &f64::mul(self, &laddu_expr::parameters::Parameter) -> Self::Output
+impl core::ops::arith::Mul<&laddu_expr::parameters::Parameter> for &laddu_expr::Expr
+pub type &laddu_expr::Expr::Output = laddu_expr::Expr
+pub fn &laddu_expr::Expr::mul(self, &laddu_expr::parameters::Parameter) -> Self::Output
+impl core::ops::arith::Mul<&laddu_expr::parameters::Parameter> for &laddu_expr::parameters::Parameter
+pub type &laddu_expr::parameters::Parameter::Output = laddu_expr::Expr
+pub fn &laddu_expr::parameters::Parameter::mul(self, &laddu_expr::parameters::Parameter) -> Self::Output
+impl core::ops::arith::Mul<&laddu_expr::parameters::Parameter> for &num_complex::Complex64
+pub type &num_complex::Complex64::Output = laddu_expr::Expr
+pub fn &num_complex::Complex64::mul(self, &laddu_expr::parameters::Parameter) -> Self::Output
+impl core::ops::arith::Mul<&laddu_expr::parameters::Parameter> for f64
+pub type f64::Output = laddu_expr::Expr
+pub fn f64::mul(self, &laddu_expr::parameters::Parameter) -> Self::Output
+impl core::ops::arith::Mul<&laddu_expr::parameters::Parameter> for laddu_expr::Expr
+pub type laddu_expr::Expr::Output = laddu_expr::Expr
+pub fn laddu_expr::Expr::mul(self, &laddu_expr::parameters::Parameter) -> Self::Output
+impl core::ops::arith::Mul<&laddu_expr::parameters::Parameter> for laddu_expr::parameters::Parameter
+pub type laddu_expr::parameters::Parameter::Output = laddu_expr::Expr
+pub fn laddu_expr::parameters::Parameter::mul(self, &laddu_expr::parameters::Parameter) -> Self::Output
+impl core::ops::arith::Mul<&laddu_expr::parameters::Parameter> for num_complex::Complex64
+pub type num_complex::Complex64::Output = laddu_expr::Expr
+pub fn num_complex::Complex64::mul(self, &laddu_expr::parameters::Parameter) -> Self::Output
+impl core::ops::arith::Mul<&num_complex::Complex<f64>> for &laddu_expr::parameters::Parameter
+pub type &laddu_expr::parameters::Parameter::Output = laddu_expr::Expr
+pub fn &laddu_expr::parameters::Parameter::mul(self, &num_complex::Complex64) -> Self::Output
+impl core::ops::arith::Mul<&num_complex::Complex<f64>> for laddu_expr::parameters::Parameter
+pub type laddu_expr::parameters::Parameter::Output = laddu_expr::Expr
+pub fn laddu_expr::parameters::Parameter::mul(self, &num_complex::Complex64) -> Self::Output
+impl core::ops::arith::Mul<f64> for &laddu_expr::parameters::Parameter
+pub type &laddu_expr::parameters::Parameter::Output = laddu_expr::Expr
+pub fn &laddu_expr::parameters::Parameter::mul(self, f64) -> Self::Output
+impl core::ops::arith::Mul<f64> for laddu_expr::parameters::Parameter
+pub type laddu_expr::parameters::Parameter::Output = laddu_expr::Expr
+pub fn laddu_expr::parameters::Parameter::mul(self, f64) -> Self::Output
+impl core::ops::arith::Mul<laddu_expr::Expr> for &laddu_expr::parameters::Parameter
+pub type &laddu_expr::parameters::Parameter::Output = laddu_expr::Expr
+pub fn &laddu_expr::parameters::Parameter::mul(self, laddu_expr::Expr) -> Self::Output
+impl core::ops::arith::Mul<laddu_expr::Expr> for laddu_expr::parameters::Parameter
+pub type laddu_expr::parameters::Parameter::Output = laddu_expr::Expr
+pub fn laddu_expr::parameters::Parameter::mul(self, laddu_expr::Expr) -> Self::Output
+impl core::ops::arith::Mul<laddu_expr::parameters::Parameter> for &f64
+pub type &f64::Output = laddu_expr::Expr
+pub fn &f64::mul(self, laddu_expr::parameters::Parameter) -> Self::Output
+impl core::ops::arith::Mul<laddu_expr::parameters::Parameter> for &laddu_expr::Expr
+pub type &laddu_expr::Expr::Output = laddu_expr::Expr
+pub fn &laddu_expr::Expr::mul(self, laddu_expr::parameters::Parameter) -> Self::Output
+impl core::ops::arith::Mul<laddu_expr::parameters::Parameter> for &laddu_expr::parameters::Parameter
+pub type &laddu_expr::parameters::Parameter::Output = laddu_expr::Expr
+pub fn &laddu_expr::parameters::Parameter::mul(self, laddu_expr::parameters::Parameter) -> Self::Output
+impl core::ops::arith::Mul<laddu_expr::parameters::Parameter> for &num_complex::Complex64
+pub type &num_complex::Complex64::Output = laddu_expr::Expr
+pub fn &num_complex::Complex64::mul(self, laddu_expr::parameters::Parameter) -> Self::Output
+impl core::ops::arith::Mul<laddu_expr::parameters::Parameter> for f64
+pub type f64::Output = laddu_expr::Expr
+pub fn f64::mul(self, laddu_expr::parameters::Parameter) -> Self::Output
+impl core::ops::arith::Mul<laddu_expr::parameters::Parameter> for laddu_expr::Expr
+pub type laddu_expr::Expr::Output = laddu_expr::Expr
+pub fn laddu_expr::Expr::mul(self, laddu_expr::parameters::Parameter) -> Self::Output
+impl core::ops::arith::Mul<laddu_expr::parameters::Parameter> for num_complex::Complex64
+pub type num_complex::Complex64::Output = laddu_expr::Expr
+pub fn num_complex::Complex64::mul(self, laddu_expr::parameters::Parameter) -> Self::Output
+impl core::ops::arith::Mul<num_complex::Complex<f64>> for &laddu_expr::parameters::Parameter
+pub type &laddu_expr::parameters::Parameter::Output = laddu_expr::Expr
+pub fn &laddu_expr::parameters::Parameter::mul(self, num_complex::Complex64) -> Self::Output
+impl core::ops::arith::Mul<num_complex::Complex<f64>> for laddu_expr::parameters::Parameter
+pub type laddu_expr::parameters::Parameter::Output = laddu_expr::Expr
+pub fn laddu_expr::parameters::Parameter::mul(self, num_complex::Complex64) -> Self::Output
+impl core::ops::arith::MulAssign<&laddu_expr::parameters::Parameter> for laddu_expr::Expr
+pub fn laddu_expr::Expr::mul_assign(&mut self, &laddu_expr::parameters::Parameter)
+impl core::ops::arith::MulAssign<laddu_expr::parameters::Parameter> for laddu_expr::Expr
+pub fn laddu_expr::Expr::mul_assign(&mut self, laddu_expr::parameters::Parameter)
+impl core::ops::arith::Neg for &laddu_expr::parameters::Parameter
+pub type &laddu_expr::parameters::Parameter::Output = laddu_expr::Expr
+pub fn &laddu_expr::parameters::Parameter::neg(self) -> Self::Output
+impl core::ops::arith::Neg for laddu_expr::parameters::Parameter
+pub type laddu_expr::parameters::Parameter::Output = laddu_expr::Expr
+pub fn laddu_expr::parameters::Parameter::neg(self) -> Self::Output
+impl core::ops::arith::Sub for laddu_expr::parameters::Parameter
+pub type laddu_expr::parameters::Parameter::Output = laddu_expr::Expr
+pub fn laddu_expr::parameters::Parameter::sub(self, laddu_expr::parameters::Parameter) -> Self::Output
+impl core::ops::arith::Sub<&f64> for &laddu_expr::parameters::Parameter
+pub type &laddu_expr::parameters::Parameter::Output = laddu_expr::Expr
+pub fn &laddu_expr::parameters::Parameter::sub(self, &f64) -> Self::Output
+impl core::ops::arith::Sub<&f64> for laddu_expr::parameters::Parameter
+pub type laddu_expr::parameters::Parameter::Output = laddu_expr::Expr
+pub fn laddu_expr::parameters::Parameter::sub(self, &f64) -> Self::Output
+impl core::ops::arith::Sub<&laddu_expr::Expr> for &laddu_expr::parameters::Parameter
+pub type &laddu_expr::parameters::Parameter::Output = laddu_expr::Expr
+pub fn &laddu_expr::parameters::Parameter::sub(self, &laddu_expr::Expr) -> Self::Output
+impl core::ops::arith::Sub<&laddu_expr::Expr> for laddu_expr::parameters::Parameter
+pub type laddu_expr::parameters::Parameter::Output = laddu_expr::Expr
+pub fn laddu_expr::parameters::Parameter::sub(self, &laddu_expr::Expr) -> Self::Output
+impl core::ops::arith::Sub<&laddu_expr::parameters::Parameter> for &f64
+pub type &f64::Output = laddu_expr::Expr
+pub fn &f64::sub(self, &laddu_expr::parameters::Parameter) -> Self::Output
+impl core::ops::arith::Sub<&laddu_expr::parameters::Parameter> for &laddu_expr::Expr
+pub type &laddu_expr::Expr::Output = laddu_expr::Expr
+pub fn &laddu_expr::Expr::sub(self, &laddu_expr::parameters::Parameter) -> Self::Output
+impl core::ops::arith::Sub<&laddu_expr::parameters::Parameter> for &laddu_expr::parameters::Parameter
+pub type &laddu_expr::parameters::Parameter::Output = laddu_expr::Expr
+pub fn &laddu_expr::parameters::Parameter::sub(self, &laddu_expr::parameters::Parameter) -> Self::Output
+impl core::ops::arith::Sub<&laddu_expr::parameters::Parameter> for &num_complex::Complex64
+pub type &num_complex::Complex64::Output = laddu_expr::Expr
+pub fn &num_complex::Complex64::sub(self, &laddu_expr::parameters::Parameter) -> Self::Output
+impl core::ops::arith::Sub<&laddu_expr::parameters::Parameter> for f64
+pub type f64::Output = laddu_expr::Expr
+pub fn f64::sub(self, &laddu_expr::parameters::Parameter) -> Self::Output
+impl core::ops::arith::Sub<&laddu_expr::parameters::Parameter> for laddu_expr::Expr
+pub type laddu_expr::Expr::Output = laddu_expr::Expr
+pub fn laddu_expr::Expr::sub(self, &laddu_expr::parameters::Parameter) -> Self::Output
+impl core::ops::arith::Sub<&laddu_expr::parameters::Parameter> for laddu_expr::parameters::Parameter
+pub type laddu_expr::parameters::Parameter::Output = laddu_expr::Expr
+pub fn laddu_expr::parameters::Parameter::sub(self, &laddu_expr::parameters::Parameter) -> Self::Output
+impl core::ops::arith::Sub<&laddu_expr::parameters::Parameter> for num_complex::Complex64
+pub type num_complex::Complex64::Output = laddu_expr::Expr
+pub fn num_complex::Complex64::sub(self, &laddu_expr::parameters::Parameter) -> Self::Output
+impl core::ops::arith::Sub<&num_complex::Complex<f64>> for &laddu_expr::parameters::Parameter
+pub type &laddu_expr::parameters::Parameter::Output = laddu_expr::Expr
+pub fn &laddu_expr::parameters::Parameter::sub(self, &num_complex::Complex64) -> Self::Output
+impl core::ops::arith::Sub<&num_complex::Complex<f64>> for laddu_expr::parameters::Parameter
+pub type laddu_expr::parameters::Parameter::Output = laddu_expr::Expr
+pub fn laddu_expr::parameters::Parameter::sub(self, &num_complex::Complex64) -> Self::Output
+impl core::ops::arith::Sub<f64> for &laddu_expr::parameters::Parameter
+pub type &laddu_expr::parameters::Parameter::Output = laddu_expr::Expr
+pub fn &laddu_expr::parameters::Parameter::sub(self, f64) -> Self::Output
+impl core::ops::arith::Sub<f64> for laddu_expr::parameters::Parameter
+pub type laddu_expr::parameters::Parameter::Output = laddu_expr::Expr
+pub fn laddu_expr::parameters::Parameter::sub(self, f64) -> Self::Output
+impl core::ops::arith::Sub<laddu_expr::Expr> for &laddu_expr::parameters::Parameter
+pub type &laddu_expr::parameters::Parameter::Output = laddu_expr::Expr
+pub fn &laddu_expr::parameters::Parameter::sub(self, laddu_expr::Expr) -> Self::Output
+impl core::ops::arith::Sub<laddu_expr::Expr> for laddu_expr::parameters::Parameter
+pub type laddu_expr::parameters::Parameter::Output = laddu_expr::Expr
+pub fn laddu_expr::parameters::Parameter::sub(self, laddu_expr::Expr) -> Self::Output
+impl core::ops::arith::Sub<laddu_expr::parameters::Parameter> for &f64
+pub type &f64::Output = laddu_expr::Expr
+pub fn &f64::sub(self, laddu_expr::parameters::Parameter) -> Self::Output
+impl core::ops::arith::Sub<laddu_expr::parameters::Parameter> for &laddu_expr::Expr
+pub type &laddu_expr::Expr::Output = laddu_expr::Expr
+pub fn &laddu_expr::Expr::sub(self, laddu_expr::parameters::Parameter) -> Self::Output
+impl core::ops::arith::Sub<laddu_expr::parameters::Parameter> for &laddu_expr::parameters::Parameter
+pub type &laddu_expr::parameters::Parameter::Output = laddu_expr::Expr
+pub fn &laddu_expr::parameters::Parameter::sub(self, laddu_expr::parameters::Parameter) -> Self::Output
+impl core::ops::arith::Sub<laddu_expr::parameters::Parameter> for &num_complex::Complex64
+pub type &num_complex::Complex64::Output = laddu_expr::Expr
+pub fn &num_complex::Complex64::sub(self, laddu_expr::parameters::Parameter) -> Self::Output
+impl core::ops::arith::Sub<laddu_expr::parameters::Parameter> for f64
+pub type f64::Output = laddu_expr::Expr
+pub fn f64::sub(self, laddu_expr::parameters::Parameter) -> Self::Output
+impl core::ops::arith::Sub<laddu_expr::parameters::Parameter> for laddu_expr::Expr
+pub type laddu_expr::Expr::Output = laddu_expr::Expr
+pub fn laddu_expr::Expr::sub(self, laddu_expr::parameters::Parameter) -> Self::Output
+impl core::ops::arith::Sub<laddu_expr::parameters::Parameter> for num_complex::Complex64
+pub type num_complex::Complex64::Output = laddu_expr::Expr
+pub fn num_complex::Complex64::sub(self, laddu_expr::parameters::Parameter) -> Self::Output
+impl core::ops::arith::Sub<num_complex::Complex<f64>> for &laddu_expr::parameters::Parameter
+pub type &laddu_expr::parameters::Parameter::Output = laddu_expr::Expr
+pub fn &laddu_expr::parameters::Parameter::sub(self, num_complex::Complex64) -> Self::Output
+impl core::ops::arith::Sub<num_complex::Complex<f64>> for laddu_expr::parameters::Parameter
+pub type laddu_expr::parameters::Parameter::Output = laddu_expr::Expr
+pub fn laddu_expr::parameters::Parameter::sub(self, num_complex::Complex64) -> Self::Output
+impl core::ops::arith::SubAssign<&laddu_expr::parameters::Parameter> for laddu_expr::Expr
+pub fn laddu_expr::Expr::sub_assign(&mut self, &laddu_expr::parameters::Parameter)
+impl core::ops::arith::SubAssign<laddu_expr::parameters::Parameter> for laddu_expr::Expr
+pub fn laddu_expr::Expr::sub_assign(&mut self, laddu_expr::parameters::Parameter)
+impl serde_core::ser::Serialize for laddu_expr::parameters::Parameter
+pub fn laddu_expr::parameters::Parameter::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for laddu_expr::parameters::Parameter
+pub fn laddu_expr::parameters::Parameter::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub type laddu_expr::parameters::ParamResult<T> = core::result::Result<T, laddu_expr::ParamError>
+pub macro laddu_expr::parameter!
+pub enum laddu_expr::BinaryOp
+pub laddu_expr::BinaryOp::Add
+pub laddu_expr::BinaryOp::Atan2
+pub laddu_expr::BinaryOp::Div
+pub laddu_expr::BinaryOp::Mul
+pub laddu_expr::BinaryOp::Sub
+impl laddu_expr::BinaryOp
+pub fn laddu_expr::BinaryOp::evaluate(&self, num_complex::Complex64, num_complex::Complex64) -> num_complex::Complex64
+impl core::clone::Clone for laddu_expr::BinaryOp
+pub fn laddu_expr::BinaryOp::clone(&self) -> laddu_expr::BinaryOp
+impl core::cmp::Eq for laddu_expr::BinaryOp
+impl core::cmp::PartialEq for laddu_expr::BinaryOp
+pub fn laddu_expr::BinaryOp::eq(&self, &laddu_expr::BinaryOp) -> bool
+impl core::fmt::Debug for laddu_expr::BinaryOp
+pub fn laddu_expr::BinaryOp::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for laddu_expr::BinaryOp
+pub fn laddu_expr::BinaryOp::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for laddu_expr::BinaryOp
+impl core::marker::StructuralPartialEq for laddu_expr::BinaryOp
+impl serde_core::ser::Serialize for laddu_expr::BinaryOp
+pub fn laddu_expr::BinaryOp::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for laddu_expr::BinaryOp
+pub fn laddu_expr::BinaryOp::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub enum laddu_expr::ColorPreset
+pub laddu_expr::ColorPreset::Dark
+pub laddu_expr::ColorPreset::Light
+impl core::clone::Clone for laddu_expr::ColorPreset
+pub fn laddu_expr::ColorPreset::clone(&self) -> laddu_expr::ColorPreset
+impl core::cmp::Eq for laddu_expr::ColorPreset
+impl core::cmp::PartialEq for laddu_expr::ColorPreset
+pub fn laddu_expr::ColorPreset::eq(&self, &laddu_expr::ColorPreset) -> bool
+impl core::fmt::Debug for laddu_expr::ColorPreset
+pub fn laddu_expr::ColorPreset::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for laddu_expr::ColorPreset
+impl core::marker::StructuralPartialEq for laddu_expr::ColorPreset
+pub enum laddu_expr::ExprError
+pub laddu_expr::ExprError::Graph(laddu_expr::ExprGraphError)
+pub laddu_expr::ExprError::Params(laddu_expr::ParamError)
+pub laddu_expr::ExprError::Shape(laddu_expr::ExprShapeError)
+impl core::clone::Clone for laddu_expr::ExprError
+pub fn laddu_expr::ExprError::clone(&self) -> laddu_expr::ExprError
+impl core::cmp::PartialEq for laddu_expr::ExprError
+pub fn laddu_expr::ExprError::eq(&self, &laddu_expr::ExprError) -> bool
+impl core::convert::From<laddu_expr::ExprGraphError> for laddu_expr::ExprError
+pub fn laddu_expr::ExprError::from(laddu_expr::ExprGraphError) -> Self
+impl core::convert::From<laddu_expr::ExprShapeError> for laddu_expr::ExprError
+pub fn laddu_expr::ExprError::from(laddu_expr::ExprShapeError) -> Self
+impl core::convert::From<laddu_expr::ParamError> for laddu_expr::ExprError
+pub fn laddu_expr::ExprError::from(laddu_expr::ParamError) -> Self
+impl core::error::Error for laddu_expr::ExprError
+pub fn laddu_expr::ExprError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
+impl core::fmt::Debug for laddu_expr::ExprError
+pub fn laddu_expr::ExprError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for laddu_expr::ExprError
+pub fn laddu_expr::ExprError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for laddu_expr::ExprError
+pub enum laddu_expr::ExprGraphError
+pub laddu_expr::ExprGraphError::Empty
+pub laddu_expr::ExprGraphError::InvalidChild
+pub laddu_expr::ExprGraphError::InvalidChild::child: usize
+pub laddu_expr::ExprGraphError::InvalidChild::node: usize
+pub laddu_expr::ExprGraphError::InvalidChildOrder
+pub laddu_expr::ExprGraphError::InvalidChildOrder::child: usize
+pub laddu_expr::ExprGraphError::InvalidChildOrder::node: usize
+pub laddu_expr::ExprGraphError::InvalidRoot
+pub laddu_expr::ExprGraphError::InvalidRoot::node_len: usize
+pub laddu_expr::ExprGraphError::InvalidRoot::root: usize
+pub laddu_expr::ExprGraphError::MetadataLength
+pub laddu_expr::ExprGraphError::MetadataLength::metadata_len: usize
+pub laddu_expr::ExprGraphError::MetadataLength::node_len: usize
+impl core::clone::Clone for laddu_expr::ExprGraphError
+pub fn laddu_expr::ExprGraphError::clone(&self) -> laddu_expr::ExprGraphError
+impl core::cmp::Eq for laddu_expr::ExprGraphError
+impl core::cmp::PartialEq for laddu_expr::ExprGraphError
+pub fn laddu_expr::ExprGraphError::eq(&self, &laddu_expr::ExprGraphError) -> bool
+impl core::convert::From<laddu_expr::ExprGraphError> for laddu_expr::ExprError
+pub fn laddu_expr::ExprError::from(laddu_expr::ExprGraphError) -> Self
+impl core::error::Error for laddu_expr::ExprGraphError
+impl core::fmt::Debug for laddu_expr::ExprGraphError
+pub fn laddu_expr::ExprGraphError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for laddu_expr::ExprGraphError
+pub fn laddu_expr::ExprGraphError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for laddu_expr::ExprGraphError
+pub enum laddu_expr::ExprNode
+pub laddu_expr::ExprNode::Binary
+pub laddu_expr::ExprNode::Binary::lhs: laddu_expr::ExprId
+pub laddu_expr::ExprNode::Binary::op: laddu_expr::BinaryOp
+pub laddu_expr::ExprNode::Binary::rhs: laddu_expr::ExprId
+pub laddu_expr::ExprNode::Complex
+pub laddu_expr::ExprNode::Complex::im: laddu_expr::ExprId
+pub laddu_expr::ExprNode::Complex::re: laddu_expr::ExprId
+pub laddu_expr::ExprNode::ComplexConst(num_complex::Complex64)
+pub laddu_expr::ExprNode::Component
+pub laddu_expr::ExprNode::Component::index: usize
+pub laddu_expr::ExprNode::Component::input: laddu_expr::ExprId
+pub laddu_expr::ExprNode::Dot
+pub laddu_expr::ExprNode::Dot::lhs: laddu_expr::ExprId
+pub laddu_expr::ExprNode::Dot::rhs: laddu_expr::ExprId
+pub laddu_expr::ExprNode::EventP4Component
+pub laddu_expr::ExprNode::EventP4Component::component: laddu_expr::P4Component
+pub laddu_expr::ExprNode::EventP4Component::name: alloc::sync::Arc<str>
+pub laddu_expr::ExprNode::EventScalar(alloc::sync::Arc<str>)
+pub laddu_expr::ExprNode::MatMul
+pub laddu_expr::ExprNode::MatMul::lhs: laddu_expr::ExprId
+pub laddu_expr::ExprNode::MatMul::rhs: laddu_expr::ExprId
+pub laddu_expr::ExprNode::MatVec
+pub laddu_expr::ExprNode::MatVec::matrix: laddu_expr::ExprId
+pub laddu_expr::ExprNode::MatVec::vector: laddu_expr::ExprId
+pub laddu_expr::ExprNode::Matrix
+pub laddu_expr::ExprNode::Matrix::cols: usize
+pub laddu_expr::ExprNode::Matrix::elements: alloc::vec::Vec<laddu_expr::ExprId>
+pub laddu_expr::ExprNode::Matrix::rows: usize
+pub laddu_expr::ExprNode::MatrixElement
+pub laddu_expr::ExprNode::MatrixElement::col: usize
+pub laddu_expr::ExprNode::MatrixElement::input: laddu_expr::ExprId
+pub laddu_expr::ExprNode::MatrixElement::row: usize
+pub laddu_expr::ExprNode::NaryAdd
+pub laddu_expr::ExprNode::NaryAdd::terms: alloc::vec::Vec<laddu_expr::ExprId>
+pub laddu_expr::ExprNode::NaryMul
+pub laddu_expr::ExprNode::NaryMul::factors: alloc::vec::Vec<laddu_expr::ExprId>
+pub laddu_expr::ExprNode::RealConst(f64)
+pub laddu_expr::ExprNode::ScalarParam(laddu_expr::parameters::Parameter)
+pub laddu_expr::ExprNode::Solve
+pub laddu_expr::ExprNode::Solve::matrix: laddu_expr::ExprId
+pub laddu_expr::ExprNode::Solve::rhs: laddu_expr::ExprId
+pub laddu_expr::ExprNode::Unary
+pub laddu_expr::ExprNode::Unary::input: laddu_expr::ExprId
+pub laddu_expr::ExprNode::Unary::op: laddu_expr::UnaryOp
+pub laddu_expr::ExprNode::Vector
+pub laddu_expr::ExprNode::Vector::elements: alloc::vec::Vec<laddu_expr::ExprId>
+impl laddu_expr::ExprNode
+pub fn laddu_expr::ExprNode::child_ids(&self) -> alloc::vec::Vec<laddu_expr::ExprId>
+pub fn laddu_expr::ExprNode::const_value(&self) -> core::option::Option<num_complex::Complex64>
+pub fn laddu_expr::ExprNode::from_folded_const(num_complex::Complex64) -> Self
+pub fn laddu_expr::ExprNode::is_one(&laddu_expr::ExprNode) -> bool
+pub fn laddu_expr::ExprNode::is_zero(&laddu_expr::ExprNode) -> bool
+impl core::clone::Clone for laddu_expr::ExprNode
+pub fn laddu_expr::ExprNode::clone(&self) -> laddu_expr::ExprNode
+impl core::cmp::PartialEq for laddu_expr::ExprNode
+pub fn laddu_expr::ExprNode::eq(&self, &laddu_expr::ExprNode) -> bool
+impl core::convert::From<num_complex::Complex<f64>> for laddu_expr::ExprNode
+pub fn laddu_expr::ExprNode::from(num_complex::Complex64) -> Self
+impl core::fmt::Debug for laddu_expr::ExprNode
+pub fn laddu_expr::ExprNode::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for laddu_expr::ExprNode
+impl serde_core::ser::Serialize for laddu_expr::ExprNode
+pub fn laddu_expr::ExprNode::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for laddu_expr::ExprNode
+pub fn laddu_expr::ExprNode::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub enum laddu_expr::ExprNodeKind
+pub laddu_expr::ExprNodeKind::Binary
+pub laddu_expr::ExprNodeKind::Complex
+pub laddu_expr::ExprNodeKind::ComplexConst
+pub laddu_expr::ExprNodeKind::Component
+pub laddu_expr::ExprNodeKind::Dot
+pub laddu_expr::ExprNodeKind::EventP4Component
+pub laddu_expr::ExprNodeKind::EventScalar
+pub laddu_expr::ExprNodeKind::MatMul
+pub laddu_expr::ExprNodeKind::MatVec
+pub laddu_expr::ExprNodeKind::Matrix
+pub laddu_expr::ExprNodeKind::MatrixElement
+pub laddu_expr::ExprNodeKind::NaryAdd
+pub laddu_expr::ExprNodeKind::NaryMul
+pub laddu_expr::ExprNodeKind::RealConst
+pub laddu_expr::ExprNodeKind::ScalarParam
+pub laddu_expr::ExprNodeKind::Solve
+pub laddu_expr::ExprNodeKind::Unary
+pub laddu_expr::ExprNodeKind::Vector
+impl laddu_expr::ExprNodeKind
+pub fn laddu_expr::ExprNodeKind::of(&laddu_expr::ExprNode) -> Self
+impl core::clone::Clone for laddu_expr::ExprNodeKind
+pub fn laddu_expr::ExprNodeKind::clone(&self) -> laddu_expr::ExprNodeKind
+impl core::cmp::Eq for laddu_expr::ExprNodeKind
+impl core::cmp::PartialEq for laddu_expr::ExprNodeKind
+pub fn laddu_expr::ExprNodeKind::eq(&self, &laddu_expr::ExprNodeKind) -> bool
+impl core::fmt::Debug for laddu_expr::ExprNodeKind
+pub fn laddu_expr::ExprNodeKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for laddu_expr::ExprNodeKind
+pub fn laddu_expr::ExprNodeKind::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for laddu_expr::ExprNodeKind
+impl core::marker::StructuralPartialEq for laddu_expr::ExprNodeKind
+pub enum laddu_expr::ExprShape
+pub laddu_expr::ExprShape::Matrix
+pub laddu_expr::ExprShape::Matrix::cols: usize
+pub laddu_expr::ExprShape::Matrix::rows: usize
+pub laddu_expr::ExprShape::Scalar
+pub laddu_expr::ExprShape::Vector
+pub laddu_expr::ExprShape::Vector::len: usize
+impl core::clone::Clone for laddu_expr::ExprShape
+pub fn laddu_expr::ExprShape::clone(&self) -> laddu_expr::ExprShape
+impl core::cmp::Eq for laddu_expr::ExprShape
+impl core::cmp::PartialEq for laddu_expr::ExprShape
+pub fn laddu_expr::ExprShape::eq(&self, &laddu_expr::ExprShape) -> bool
+impl core::fmt::Debug for laddu_expr::ExprShape
+pub fn laddu_expr::ExprShape::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for laddu_expr::ExprShape
+pub fn laddu_expr::ExprShape::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for laddu_expr::ExprShape
+pub fn laddu_expr::ExprShape::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for laddu_expr::ExprShape
+impl core::marker::StructuralPartialEq for laddu_expr::ExprShape
+impl serde_core::ser::Serialize for laddu_expr::ExprShape
+pub fn laddu_expr::ExprShape::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for laddu_expr::ExprShape
+pub fn laddu_expr::ExprShape::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub enum laddu_expr::ExprSourceKind
+pub laddu_expr::ExprSourceKind::Binary
+pub laddu_expr::ExprSourceKind::Complex
+pub laddu_expr::ExprSourceKind::Const
+pub laddu_expr::ExprSourceKind::Event
+pub laddu_expr::ExprSourceKind::LinearAlgebra
+pub laddu_expr::ExprSourceKind::Matrix
+pub laddu_expr::ExprSourceKind::Param
+pub laddu_expr::ExprSourceKind::Unary
+pub laddu_expr::ExprSourceKind::Vector
+impl core::clone::Clone for laddu_expr::ExprSourceKind
+pub fn laddu_expr::ExprSourceKind::clone(&self) -> laddu_expr::ExprSourceKind
+impl core::cmp::Eq for laddu_expr::ExprSourceKind
+impl core::cmp::PartialEq for laddu_expr::ExprSourceKind
+pub fn laddu_expr::ExprSourceKind::eq(&self, &laddu_expr::ExprSourceKind) -> bool
+impl core::fmt::Debug for laddu_expr::ExprSourceKind
+pub fn laddu_expr::ExprSourceKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for laddu_expr::ExprSourceKind
+pub fn laddu_expr::ExprSourceKind::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for laddu_expr::ExprSourceKind
+impl core::marker::StructuralPartialEq for laddu_expr::ExprSourceKind
+impl serde_core::ser::Serialize for laddu_expr::ExprSourceKind
+pub fn laddu_expr::ExprSourceKind::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for laddu_expr::ExprSourceKind
+pub fn laddu_expr::ExprSourceKind::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub enum laddu_expr::GraphRenderError
+pub laddu_expr::GraphRenderError::Dot(alloc::string::String)
+impl core::clone::Clone for laddu_expr::GraphRenderError
+pub fn laddu_expr::GraphRenderError::clone(&self) -> laddu_expr::GraphRenderError
+impl core::cmp::Eq for laddu_expr::GraphRenderError
+impl core::cmp::PartialEq for laddu_expr::GraphRenderError
+pub fn laddu_expr::GraphRenderError::eq(&self, &laddu_expr::GraphRenderError) -> bool
+impl core::error::Error for laddu_expr::GraphRenderError
+impl core::fmt::Debug for laddu_expr::GraphRenderError
+pub fn laddu_expr::GraphRenderError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for laddu_expr::GraphRenderError
+pub fn laddu_expr::GraphRenderError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for laddu_expr::GraphRenderError
+pub enum laddu_expr::NodeSelector
+pub laddu_expr::NodeSelector::Any
+pub laddu_expr::NodeSelector::Kind(laddu_expr::ExprNodeKind)
+pub laddu_expr::NodeSelector::Name(alloc::string::String)
+pub laddu_expr::NodeSelector::Tag(alloc::string::String)
+impl core::clone::Clone for laddu_expr::NodeSelector
+pub fn laddu_expr::NodeSelector::clone(&self) -> laddu_expr::NodeSelector
+impl core::cmp::Eq for laddu_expr::NodeSelector
+impl core::cmp::PartialEq for laddu_expr::NodeSelector
+pub fn laddu_expr::NodeSelector::eq(&self, &laddu_expr::NodeSelector) -> bool
+impl core::fmt::Debug for laddu_expr::NodeSelector
+pub fn laddu_expr::NodeSelector::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for laddu_expr::NodeSelector
+pub enum laddu_expr::P4Component
+pub laddu_expr::P4Component::E
+pub laddu_expr::P4Component::Px
+pub laddu_expr::P4Component::Py
+pub laddu_expr::P4Component::Pz
+impl laddu_expr::P4Component
+pub fn laddu_expr::P4Component::index(self) -> usize
+pub fn laddu_expr::P4Component::label(self) -> &'static str
+impl core::clone::Clone for laddu_expr::P4Component
+pub fn laddu_expr::P4Component::clone(&self) -> laddu_expr::P4Component
+impl core::cmp::Eq for laddu_expr::P4Component
+impl core::cmp::PartialEq for laddu_expr::P4Component
+pub fn laddu_expr::P4Component::eq(&self, &laddu_expr::P4Component) -> bool
+impl core::fmt::Debug for laddu_expr::P4Component
+pub fn laddu_expr::P4Component::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for laddu_expr::P4Component
+pub fn laddu_expr::P4Component::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for laddu_expr::P4Component
+impl core::marker::StructuralPartialEq for laddu_expr::P4Component
+impl serde_core::ser::Serialize for laddu_expr::P4Component
+pub fn laddu_expr::P4Component::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for laddu_expr::P4Component
+pub fn laddu_expr::P4Component::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub enum laddu_expr::ParamError
+pub laddu_expr::ParamError::DuplicateName(alloc::string::String)
+pub laddu_expr::ParamError::EmptyName
+pub laddu_expr::ParamError::FixedValueOutOfBounds
+pub laddu_expr::ParamError::FixedValueOutOfBounds::name: alloc::string::String
+pub laddu_expr::ParamError::FixedValueOutOfBounds::value: f64
+pub laddu_expr::ParamError::FreeLengthMismatch
+pub laddu_expr::ParamError::FreeLengthMismatch::actual: usize
+pub laddu_expr::ParamError::FreeLengthMismatch::expected: usize
+pub laddu_expr::ParamError::InitialOutOfBounds
+pub laddu_expr::ParamError::InitialOutOfBounds::name: alloc::string::String
+pub laddu_expr::ParamError::InitialOutOfBounds::value: f64
+pub laddu_expr::ParamError::InitialRangeOutOfBounds
+pub laddu_expr::ParamError::InitialRangeOutOfBounds::max: f64
+pub laddu_expr::ParamError::InitialRangeOutOfBounds::min: f64
+pub laddu_expr::ParamError::InitialRangeOutOfBounds::name: alloc::string::String
+pub laddu_expr::ParamError::InvalidBounds
+pub laddu_expr::ParamError::InvalidBounds::max: f64
+pub laddu_expr::ParamError::InvalidBounds::min: f64
+pub laddu_expr::ParamError::InvalidBounds::name: alloc::string::String
+pub laddu_expr::ParamError::InvalidFreeParamId
+pub laddu_expr::ParamError::InvalidFreeParamId::id: usize
+pub laddu_expr::ParamError::InvalidFreeParamId::len: usize
+pub laddu_expr::ParamError::InvalidInitialRange
+pub laddu_expr::ParamError::InvalidInitialRange::max: f64
+pub laddu_expr::ParamError::InvalidInitialRange::min: f64
+pub laddu_expr::ParamError::InvalidInitialRange::name: alloc::string::String
+pub laddu_expr::ParamError::InvalidParamId
+pub laddu_expr::ParamError::InvalidParamId::id: usize
+pub laddu_expr::ParamError::InvalidParamId::len: usize
+pub laddu_expr::ParamError::InvalidScale
+pub laddu_expr::ParamError::InvalidScale::name: alloc::string::String
+pub laddu_expr::ParamError::InvalidScale::scale: f64
+pub laddu_expr::ParamError::ParameterConflict
+pub laddu_expr::ParamError::ParameterConflict::name: alloc::string::String
+pub laddu_expr::ParamError::ParameterConflict::reason: alloc::string::String
+pub laddu_expr::ParamError::PeriodicRequiresFiniteBounds
+pub laddu_expr::ParamError::PeriodicRequiresFiniteBounds::name: alloc::string::String
+pub laddu_expr::ParamError::UnknownName(alloc::string::String)
+pub laddu_expr::ParamError::ValueOutOfBounds
+pub laddu_expr::ParamError::ValueOutOfBounds::name: alloc::string::String
+pub laddu_expr::ParamError::ValueOutOfBounds::value: f64
+pub laddu_expr::ParamError::ValueOutsidePeriodicDomain
+pub laddu_expr::ParamError::ValueOutsidePeriodicDomain::max: f64
+pub laddu_expr::ParamError::ValueOutsidePeriodicDomain::min: f64
+pub laddu_expr::ParamError::ValueOutsidePeriodicDomain::name: alloc::string::String
+pub laddu_expr::ParamError::ValueOutsidePeriodicDomain::value: f64
+impl core::clone::Clone for laddu_expr::ParamError
+pub fn laddu_expr::ParamError::clone(&self) -> laddu_expr::ParamError
+impl core::cmp::PartialEq for laddu_expr::ParamError
+pub fn laddu_expr::ParamError::eq(&self, &laddu_expr::ParamError) -> bool
+impl core::convert::From<laddu_expr::ParamError> for laddu_expr::ExprError
+pub fn laddu_expr::ExprError::from(laddu_expr::ParamError) -> Self
+impl core::error::Error for laddu_expr::ParamError
+impl core::fmt::Debug for laddu_expr::ParamError
+pub fn laddu_expr::ParamError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for laddu_expr::ParamError
+pub fn laddu_expr::ParamError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for laddu_expr::ParamError
+pub enum laddu_expr::UnaryOp
+pub laddu_expr::UnaryOp::Conj
+pub laddu_expr::UnaryOp::Cos
+pub laddu_expr::UnaryOp::Exp
+pub laddu_expr::UnaryOp::Imag
+pub laddu_expr::UnaryOp::Log
+pub laddu_expr::UnaryOp::Neg
+pub laddu_expr::UnaryOp::NormSqr
+pub laddu_expr::UnaryOp::PowI(i32)
+pub laddu_expr::UnaryOp::Real
+pub laddu_expr::UnaryOp::Sin
+pub laddu_expr::UnaryOp::Sqrt
+impl laddu_expr::UnaryOp
+pub fn laddu_expr::UnaryOp::evaluate(&self, num_complex::Complex64) -> num_complex::Complex64
+impl core::clone::Clone for laddu_expr::UnaryOp
+pub fn laddu_expr::UnaryOp::clone(&self) -> laddu_expr::UnaryOp
+impl core::cmp::Eq for laddu_expr::UnaryOp
+impl core::cmp::PartialEq for laddu_expr::UnaryOp
+pub fn laddu_expr::UnaryOp::eq(&self, &laddu_expr::UnaryOp) -> bool
+impl core::fmt::Debug for laddu_expr::UnaryOp
+pub fn laddu_expr::UnaryOp::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for laddu_expr::UnaryOp
+pub fn laddu_expr::UnaryOp::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for laddu_expr::UnaryOp
+impl core::marker::StructuralPartialEq for laddu_expr::UnaryOp
+impl serde_core::ser::Serialize for laddu_expr::UnaryOp
+pub fn laddu_expr::UnaryOp::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for laddu_expr::UnaryOp
+pub fn laddu_expr::UnaryOp::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub enum laddu_expr::ValueKind
+pub laddu_expr::ValueKind::Complex
+pub laddu_expr::ValueKind::Matrix
+pub laddu_expr::ValueKind::Matrix::cols: usize
+pub laddu_expr::ValueKind::Matrix::rows: usize
+pub laddu_expr::ValueKind::Real
+pub laddu_expr::ValueKind::Vector
+pub laddu_expr::ValueKind::Vector::len: usize
+impl core::clone::Clone for laddu_expr::ValueKind
+pub fn laddu_expr::ValueKind::clone(&self) -> laddu_expr::ValueKind
+impl core::cmp::Eq for laddu_expr::ValueKind
+impl core::cmp::PartialEq for laddu_expr::ValueKind
+pub fn laddu_expr::ValueKind::eq(&self, &laddu_expr::ValueKind) -> bool
+impl core::fmt::Debug for laddu_expr::ValueKind
+pub fn laddu_expr::ValueKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for laddu_expr::ValueKind
+pub fn laddu_expr::ValueKind::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for laddu_expr::ValueKind
+impl core::marker::StructuralPartialEq for laddu_expr::ValueKind
+impl serde_core::ser::Serialize for laddu_expr::ValueKind
+pub fn laddu_expr::ValueKind::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for laddu_expr::ValueKind
+pub fn laddu_expr::ValueKind::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct laddu_expr::DisplayColor
+impl laddu_expr::DisplayColor
+pub const fn laddu_expr::DisplayColor::rgb(u8, u8, u8) -> Self
+impl core::clone::Clone for laddu_expr::DisplayColor
+pub fn laddu_expr::DisplayColor::clone(&self) -> laddu_expr::DisplayColor
+impl core::cmp::Eq for laddu_expr::DisplayColor
+impl core::cmp::PartialEq for laddu_expr::DisplayColor
+pub fn laddu_expr::DisplayColor::eq(&self, &laddu_expr::DisplayColor) -> bool
+impl core::fmt::Debug for laddu_expr::DisplayColor
+pub fn laddu_expr::DisplayColor::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for laddu_expr::DisplayColor
+impl core::marker::StructuralPartialEq for laddu_expr::DisplayColor
+pub struct laddu_expr::Expr
+impl laddu_expr::Expr
+pub fn laddu_expr::Expr::acos(&self) -> Self
+pub fn laddu_expr::Expr::component(&self, impl laddu_expr::ComponentIndex) -> Self
+pub fn laddu_expr::Expr::conj(&self) -> Self
+pub fn laddu_expr::Expr::cos(&self) -> Self
+pub fn laddu_expr::Expr::exp(&self) -> Self
+pub fn laddu_expr::Expr::from_graph(laddu_expr::ExprGraph) -> core::result::Result<Self, laddu_expr::ExprGraphError>
+pub fn laddu_expr::Expr::imag(&self) -> Self
+pub fn laddu_expr::Expr::log(&self) -> Self
+pub fn laddu_expr::Expr::matrix_element(&self, usize, usize) -> Self
+pub fn laddu_expr::Expr::named(self, impl core::convert::Into<alloc::sync::Arc<str>>) -> Self
+pub fn laddu_expr::Expr::norm_sqr(&self) -> Self
+pub fn laddu_expr::Expr::powi(&self, i32) -> Self
+pub fn laddu_expr::Expr::project_tags<'a>(&self, impl core::iter::traits::collect::IntoIterator<Item = &'a str>) -> Self
+pub fn laddu_expr::Expr::real(&self) -> Self
+pub fn laddu_expr::Expr::shape(&self) -> core::result::Result<laddu_expr::ExprShape, laddu_expr::ExprShapeError>
+pub fn laddu_expr::Expr::sin(&self) -> Self
+pub fn laddu_expr::Expr::sqrt(&self) -> Self
+pub fn laddu_expr::Expr::tagged(self, impl core::convert::Into<alloc::sync::Arc<str>>) -> Self
+pub fn laddu_expr::Expr::tagged_with(self, impl core::iter::traits::collect::IntoIterator<Item = impl core::convert::Into<alloc::sync::Arc<str>>>) -> Self
+pub fn laddu_expr::Expr::to_graph(&self) -> laddu_expr::ExprGraph
+impl core::clone::Clone for laddu_expr::Expr
+pub fn laddu_expr::Expr::clone(&self) -> laddu_expr::Expr
+impl core::convert::From<&f64> for laddu_expr::Expr
+pub fn laddu_expr::Expr::from(&f64) -> Self
+impl core::convert::From<&laddu_expr::Expr> for laddu_expr::Expr
+pub fn laddu_expr::Expr::from(&laddu_expr::Expr) -> Self
+impl core::convert::From<&laddu_expr::parameters::Parameter> for laddu_expr::Expr
+pub fn laddu_expr::Expr::from(&laddu_expr::parameters::Parameter) -> Self
+impl core::convert::From<&num_complex::Complex<f64>> for laddu_expr::Expr
+pub fn laddu_expr::Expr::from(&num_complex::Complex64) -> Self
+impl core::convert::From<f64> for laddu_expr::Expr
+pub fn laddu_expr::Expr::from(f64) -> Self
+impl core::convert::From<laddu_expr::parameters::Parameter> for laddu_expr::Expr
+pub fn laddu_expr::Expr::from(laddu_expr::parameters::Parameter) -> Self
+impl core::convert::From<num_complex::Complex<f64>> for laddu_expr::Expr
+pub fn laddu_expr::Expr::from(num_complex::Complex64) -> Self
+impl core::fmt::Debug for laddu_expr::Expr
+pub fn laddu_expr::Expr::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::ops::arith::Add for laddu_expr::Expr
+pub type laddu_expr::Expr::Output = laddu_expr::Expr
+pub fn laddu_expr::Expr::add(self, laddu_expr::Expr) -> Self::Output
+impl core::ops::arith::Add<&f64> for &laddu_expr::Expr
+pub type &laddu_expr::Expr::Output = laddu_expr::Expr
+pub fn &laddu_expr::Expr::add(self, &f64) -> Self::Output
+impl core::ops::arith::Add<&f64> for laddu_expr::Expr
+pub type laddu_expr::Expr::Output = laddu_expr::Expr
+pub fn laddu_expr::Expr::add(self, &f64) -> Self::Output
+impl core::ops::arith::Add<&laddu_expr::Expr> for &f64
+pub type &f64::Output = laddu_expr::Expr
+pub fn &f64::add(self, &laddu_expr::Expr) -> Self::Output
+impl core::ops::arith::Add<&laddu_expr::Expr> for &laddu_expr::Expr
+pub type &laddu_expr::Expr::Output = laddu_expr::Expr
+pub fn &laddu_expr::Expr::add(self, &laddu_expr::Expr) -> Self::Output
+impl core::ops::arith::Add<&laddu_expr::Expr> for &laddu_expr::parameters::Parameter
+pub type &laddu_expr::parameters::Parameter::Output = laddu_expr::Expr
+pub fn &laddu_expr::parameters::Parameter::add(self, &laddu_expr::Expr) -> Self::Output
+impl core::ops::arith::Add<&laddu_expr::Expr> for &num_complex::Complex64
+pub type &num_complex::Complex64::Output = laddu_expr::Expr
+pub fn &num_complex::Complex64::add(self, &laddu_expr::Expr) -> Self::Output
+impl core::ops::arith::Add<&laddu_expr::Expr> for f64
+pub type f64::Output = laddu_expr::Expr
+pub fn f64::add(self, &laddu_expr::Expr) -> Self::Output
+impl core::ops::arith::Add<&laddu_expr::Expr> for laddu_expr::Expr
+pub type laddu_expr::Expr::Output = laddu_expr::Expr
+pub fn laddu_expr::Expr::add(self, &laddu_expr::Expr) -> Self::Output
+impl core::ops::arith::Add<&laddu_expr::Expr> for laddu_expr::parameters::Parameter
+pub type laddu_expr::parameters::Parameter::Output = laddu_expr::Expr
+pub fn laddu_expr::parameters::Parameter::add(self, &laddu_expr::Expr) -> Self::Output
+impl core::ops::arith::Add<&laddu_expr::Expr> for num_complex::Complex64
+pub type num_complex::Complex64::Output = laddu_expr::Expr
+pub fn num_complex::Complex64::add(self, &laddu_expr::Expr) -> Self::Output
+impl core::ops::arith::Add<&laddu_expr::parameters::Parameter> for &laddu_expr::Expr
+pub type &laddu_expr::Expr::Output = laddu_expr::Expr
+pub fn &laddu_expr::Expr::add(self, &laddu_expr::parameters::Parameter) -> Self::Output
+impl core::ops::arith::Add<&laddu_expr::parameters::Parameter> for laddu_expr::Expr
+pub type laddu_expr::Expr::Output = laddu_expr::Expr
+pub fn laddu_expr::Expr::add(self, &laddu_expr::parameters::Parameter) -> Self::Output
+impl core::ops::arith::Add<&num_complex::Complex<f64>> for &laddu_expr::Expr
+pub type &laddu_expr::Expr::Output = laddu_expr::Expr
+pub fn &laddu_expr::Expr::add(self, &num_complex::Complex64) -> Self::Output
+impl core::ops::arith::Add<&num_complex::Complex<f64>> for laddu_expr::Expr
+pub type laddu_expr::Expr::Output = laddu_expr::Expr
+pub fn laddu_expr::Expr::add(self, &num_complex::Complex64) -> Self::Output
+impl core::ops::arith::Add<f64> for &laddu_expr::Expr
+pub type &laddu_expr::Expr::Output = laddu_expr::Expr
+pub fn &laddu_expr::Expr::add(self, f64) -> Self::Output
+impl core::ops::arith::Add<f64> for laddu_expr::Expr
+pub type laddu_expr::Expr::Output = laddu_expr::Expr
+pub fn laddu_expr::Expr::add(self, f64) -> Self::Output
+impl core::ops::arith::Add<laddu_expr::Expr> for &f64
+pub type &f64::Output = laddu_expr::Expr
+pub fn &f64::add(self, laddu_expr::Expr) -> Self::Output
+impl core::ops::arith::Add<laddu_expr::Expr> for &laddu_expr::Expr
+pub type &laddu_expr::Expr::Output = laddu_expr::Expr
+pub fn &laddu_expr::Expr::add(self, laddu_expr::Expr) -> Self::Output
+impl core::ops::arith::Add<laddu_expr::Expr> for &laddu_expr::parameters::Parameter
+pub type &laddu_expr::parameters::Parameter::Output = laddu_expr::Expr
+pub fn &laddu_expr::parameters::Parameter::add(self, laddu_expr::Expr) -> Self::Output
+impl core::ops::arith::Add<laddu_expr::Expr> for &num_complex::Complex64
+pub type &num_complex::Complex64::Output = laddu_expr::Expr
+pub fn &num_complex::Complex64::add(self, laddu_expr::Expr) -> Self::Output
+impl core::ops::arith::Add<laddu_expr::Expr> for f64
+pub type f64::Output = laddu_expr::Expr
+pub fn f64::add(self, laddu_expr::Expr) -> Self::Output
+impl core::ops::arith::Add<laddu_expr::Expr> for laddu_expr::parameters::Parameter
+pub type laddu_expr::parameters::Parameter::Output = laddu_expr::Expr
+pub fn laddu_expr::parameters::Parameter::add(self, laddu_expr::Expr) -> Self::Output
+impl core::ops::arith::Add<laddu_expr::Expr> for num_complex::Complex64
+pub type num_complex::Complex64::Output = laddu_expr::Expr
+pub fn num_complex::Complex64::add(self, laddu_expr::Expr) -> Self::Output
+impl core::ops::arith::Add<laddu_expr::parameters::Parameter> for &laddu_expr::Expr
+pub type &laddu_expr::Expr::Output = laddu_expr::Expr
+pub fn &laddu_expr::Expr::add(self, laddu_expr::parameters::Parameter) -> Self::Output
+impl core::ops::arith::Add<laddu_expr::parameters::Parameter> for laddu_expr::Expr
+pub type laddu_expr::Expr::Output = laddu_expr::Expr
+pub fn laddu_expr::Expr::add(self, laddu_expr::parameters::Parameter) -> Self::Output
+impl core::ops::arith::Add<num_complex::Complex<f64>> for &laddu_expr::Expr
+pub type &laddu_expr::Expr::Output = laddu_expr::Expr
+pub fn &laddu_expr::Expr::add(self, num_complex::Complex64) -> Self::Output
+impl core::ops::arith::Add<num_complex::Complex<f64>> for laddu_expr::Expr
+pub type laddu_expr::Expr::Output = laddu_expr::Expr
+pub fn laddu_expr::Expr::add(self, num_complex::Complex64) -> Self::Output
+impl core::ops::arith::AddAssign for laddu_expr::Expr
+pub fn laddu_expr::Expr::add_assign(&mut self, laddu_expr::Expr)
+impl core::ops::arith::AddAssign<&f64> for laddu_expr::Expr
+pub fn laddu_expr::Expr::add_assign(&mut self, &f64)
+impl core::ops::arith::AddAssign<&laddu_expr::Expr> for laddu_expr::Expr
+pub fn laddu_expr::Expr::add_assign(&mut self, &laddu_expr::Expr)
+impl core::ops::arith::AddAssign<&laddu_expr::parameters::Parameter> for laddu_expr::Expr
+pub fn laddu_expr::Expr::add_assign(&mut self, &laddu_expr::parameters::Parameter)
+impl core::ops::arith::AddAssign<&num_complex::Complex<f64>> for laddu_expr::Expr
+pub fn laddu_expr::Expr::add_assign(&mut self, &num_complex::Complex64)
+impl core::ops::arith::AddAssign<f64> for laddu_expr::Expr
+pub fn laddu_expr::Expr::add_assign(&mut self, f64)
+impl core::ops::arith::AddAssign<laddu_expr::parameters::Parameter> for laddu_expr::Expr
+pub fn laddu_expr::Expr::add_assign(&mut self, laddu_expr::parameters::Parameter)
+impl core::ops::arith::AddAssign<num_complex::Complex<f64>> for laddu_expr::Expr
+pub fn laddu_expr::Expr::add_assign(&mut self, num_complex::Complex64)
+impl core::ops::arith::Div for laddu_expr::Expr
+pub type laddu_expr::Expr::Output = laddu_expr::Expr
+pub fn laddu_expr::Expr::div(self, laddu_expr::Expr) -> Self::Output
+impl core::ops::arith::Div<&f64> for &laddu_expr::Expr
+pub type &laddu_expr::Expr::Output = laddu_expr::Expr
+pub fn &laddu_expr::Expr::div(self, &f64) -> Self::Output
+impl core::ops::arith::Div<&f64> for laddu_expr::Expr
+pub type laddu_expr::Expr::Output = laddu_expr::Expr
+pub fn laddu_expr::Expr::div(self, &f64) -> Self::Output
+impl core::ops::arith::Div<&laddu_expr::Expr> for &f64
+pub type &f64::Output = laddu_expr::Expr
+pub fn &f64::div(self, &laddu_expr::Expr) -> Self::Output
+impl core::ops::arith::Div<&laddu_expr::Expr> for &laddu_expr::Expr
+pub type &laddu_expr::Expr::Output = laddu_expr::Expr
+pub fn &laddu_expr::Expr::div(self, &laddu_expr::Expr) -> Self::Output
+impl core::ops::arith::Div<&laddu_expr::Expr> for &laddu_expr::parameters::Parameter
+pub type &laddu_expr::parameters::Parameter::Output = laddu_expr::Expr
+pub fn &laddu_expr::parameters::Parameter::div(self, &laddu_expr::Expr) -> Self::Output
+impl core::ops::arith::Div<&laddu_expr::Expr> for &num_complex::Complex64
+pub type &num_complex::Complex64::Output = laddu_expr::Expr
+pub fn &num_complex::Complex64::div(self, &laddu_expr::Expr) -> Self::Output
+impl core::ops::arith::Div<&laddu_expr::Expr> for f64
+pub type f64::Output = laddu_expr::Expr
+pub fn f64::div(self, &laddu_expr::Expr) -> Self::Output
+impl core::ops::arith::Div<&laddu_expr::Expr> for laddu_expr::Expr
+pub type laddu_expr::Expr::Output = laddu_expr::Expr
+pub fn laddu_expr::Expr::div(self, &laddu_expr::Expr) -> Self::Output
+impl core::ops::arith::Div<&laddu_expr::Expr> for laddu_expr::parameters::Parameter
+pub type laddu_expr::parameters::Parameter::Output = laddu_expr::Expr
+pub fn laddu_expr::parameters::Parameter::div(self, &laddu_expr::Expr) -> Self::Output
+impl core::ops::arith::Div<&laddu_expr::Expr> for num_complex::Complex64
+pub type num_complex::Complex64::Output = laddu_expr::Expr
+pub fn num_complex::Complex64::div(self, &laddu_expr::Expr) -> Self::Output
+impl core::ops::arith::Div<&laddu_expr::parameters::Parameter> for &laddu_expr::Expr
+pub type &laddu_expr::Expr::Output = laddu_expr::Expr
+pub fn &laddu_expr::Expr::div(self, &laddu_expr::parameters::Parameter) -> Self::Output
+impl core::ops::arith::Div<&laddu_expr::parameters::Parameter> for laddu_expr::Expr
+pub type laddu_expr::Expr::Output = laddu_expr::Expr
+pub fn laddu_expr::Expr::div(self, &laddu_expr::parameters::Parameter) -> Self::Output
+impl core::ops::arith::Div<&num_complex::Complex<f64>> for &laddu_expr::Expr
+pub type &laddu_expr::Expr::Output = laddu_expr::Expr
+pub fn &laddu_expr::Expr::div(self, &num_complex::Complex64) -> Self::Output
+impl core::ops::arith::Div<&num_complex::Complex<f64>> for laddu_expr::Expr
+pub type laddu_expr::Expr::Output = laddu_expr::Expr
+pub fn laddu_expr::Expr::div(self, &num_complex::Complex64) -> Self::Output
+impl core::ops::arith::Div<f64> for &laddu_expr::Expr
+pub type &laddu_expr::Expr::Output = laddu_expr::Expr
+pub fn &laddu_expr::Expr::div(self, f64) -> Self::Output
+impl core::ops::arith::Div<f64> for laddu_expr::Expr
+pub type laddu_expr::Expr::Output = laddu_expr::Expr
+pub fn laddu_expr::Expr::div(self, f64) -> Self::Output
+impl core::ops::arith::Div<laddu_expr::Expr> for &f64
+pub type &f64::Output = laddu_expr::Expr
+pub fn &f64::div(self, laddu_expr::Expr) -> Self::Output
+impl core::ops::arith::Div<laddu_expr::Expr> for &laddu_expr::Expr
+pub type &laddu_expr::Expr::Output = laddu_expr::Expr
+pub fn &laddu_expr::Expr::div(self, laddu_expr::Expr) -> Self::Output
+impl core::ops::arith::Div<laddu_expr::Expr> for &laddu_expr::parameters::Parameter
+pub type &laddu_expr::parameters::Parameter::Output = laddu_expr::Expr
+pub fn &laddu_expr::parameters::Parameter::div(self, laddu_expr::Expr) -> Self::Output
+impl core::ops::arith::Div<laddu_expr::Expr> for &num_complex::Complex64
+pub type &num_complex::Complex64::Output = laddu_expr::Expr
+pub fn &num_complex::Complex64::div(self, laddu_expr::Expr) -> Self::Output
+impl core::ops::arith::Div<laddu_expr::Expr> for f64
+pub type f64::Output = laddu_expr::Expr
+pub fn f64::div(self, laddu_expr::Expr) -> Self::Output
+impl core::ops::arith::Div<laddu_expr::Expr> for laddu_expr::parameters::Parameter
+pub type laddu_expr::parameters::Parameter::Output = laddu_expr::Expr
+pub fn laddu_expr::parameters::Parameter::div(self, laddu_expr::Expr) -> Self::Output
+impl core::ops::arith::Div<laddu_expr::Expr> for num_complex::Complex64
+pub type num_complex::Complex64::Output = laddu_expr::Expr
+pub fn num_complex::Complex64::div(self, laddu_expr::Expr) -> Self::Output
+impl core::ops::arith::Div<laddu_expr::parameters::Parameter> for &laddu_expr::Expr
+pub type &laddu_expr::Expr::Output = laddu_expr::Expr
+pub fn &laddu_expr::Expr::div(self, laddu_expr::parameters::Parameter) -> Self::Output
+impl core::ops::arith::Div<laddu_expr::parameters::Parameter> for laddu_expr::Expr
+pub type laddu_expr::Expr::Output = laddu_expr::Expr
+pub fn laddu_expr::Expr::div(self, laddu_expr::parameters::Parameter) -> Self::Output
+impl core::ops::arith::Div<num_complex::Complex<f64>> for &laddu_expr::Expr
+pub type &laddu_expr::Expr::Output = laddu_expr::Expr
+pub fn &laddu_expr::Expr::div(self, num_complex::Complex64) -> Self::Output
+impl core::ops::arith::Div<num_complex::Complex<f64>> for laddu_expr::Expr
+pub type laddu_expr::Expr::Output = laddu_expr::Expr
+pub fn laddu_expr::Expr::div(self, num_complex::Complex64) -> Self::Output
+impl core::ops::arith::DivAssign for laddu_expr::Expr
+pub fn laddu_expr::Expr::div_assign(&mut self, laddu_expr::Expr)
+impl core::ops::arith::DivAssign<&f64> for laddu_expr::Expr
+pub fn laddu_expr::Expr::div_assign(&mut self, &f64)
+impl core::ops::arith::DivAssign<&laddu_expr::Expr> for laddu_expr::Expr
+pub fn laddu_expr::Expr::div_assign(&mut self, &laddu_expr::Expr)
+impl core::ops::arith::DivAssign<&laddu_expr::parameters::Parameter> for laddu_expr::Expr
+pub fn laddu_expr::Expr::div_assign(&mut self, &laddu_expr::parameters::Parameter)
+impl core::ops::arith::DivAssign<&num_complex::Complex<f64>> for laddu_expr::Expr
+pub fn laddu_expr::Expr::div_assign(&mut self, &num_complex::Complex64)
+impl core::ops::arith::DivAssign<f64> for laddu_expr::Expr
+pub fn laddu_expr::Expr::div_assign(&mut self, f64)
+impl core::ops::arith::DivAssign<laddu_expr::parameters::Parameter> for laddu_expr::Expr
+pub fn laddu_expr::Expr::div_assign(&mut self, laddu_expr::parameters::Parameter)
+impl core::ops::arith::DivAssign<num_complex::Complex<f64>> for laddu_expr::Expr
+pub fn laddu_expr::Expr::div_assign(&mut self, num_complex::Complex64)
+impl core::ops::arith::Mul for laddu_expr::Expr
+pub type laddu_expr::Expr::Output = laddu_expr::Expr
+pub fn laddu_expr::Expr::mul(self, laddu_expr::Expr) -> Self::Output
+impl core::ops::arith::Mul<&f64> for &laddu_expr::Expr
+pub type &laddu_expr::Expr::Output = laddu_expr::Expr
+pub fn &laddu_expr::Expr::mul(self, &f64) -> Self::Output
+impl core::ops::arith::Mul<&f64> for laddu_expr::Expr
+pub type laddu_expr::Expr::Output = laddu_expr::Expr
+pub fn laddu_expr::Expr::mul(self, &f64) -> Self::Output
+impl core::ops::arith::Mul<&laddu_expr::Expr> for &f64
+pub type &f64::Output = laddu_expr::Expr
+pub fn &f64::mul(self, &laddu_expr::Expr) -> Self::Output
+impl core::ops::arith::Mul<&laddu_expr::Expr> for &laddu_expr::Expr
+pub type &laddu_expr::Expr::Output = laddu_expr::Expr
+pub fn &laddu_expr::Expr::mul(self, &laddu_expr::Expr) -> Self::Output
+impl core::ops::arith::Mul<&laddu_expr::Expr> for &laddu_expr::parameters::Parameter
+pub type &laddu_expr::parameters::Parameter::Output = laddu_expr::Expr
+pub fn &laddu_expr::parameters::Parameter::mul(self, &laddu_expr::Expr) -> Self::Output
+impl core::ops::arith::Mul<&laddu_expr::Expr> for &num_complex::Complex64
+pub type &num_complex::Complex64::Output = laddu_expr::Expr
+pub fn &num_complex::Complex64::mul(self, &laddu_expr::Expr) -> Self::Output
+impl core::ops::arith::Mul<&laddu_expr::Expr> for f64
+pub type f64::Output = laddu_expr::Expr
+pub fn f64::mul(self, &laddu_expr::Expr) -> Self::Output
+impl core::ops::arith::Mul<&laddu_expr::Expr> for laddu_expr::Expr
+pub type laddu_expr::Expr::Output = laddu_expr::Expr
+pub fn laddu_expr::Expr::mul(self, &laddu_expr::Expr) -> Self::Output
+impl core::ops::arith::Mul<&laddu_expr::Expr> for laddu_expr::parameters::Parameter
+pub type laddu_expr::parameters::Parameter::Output = laddu_expr::Expr
+pub fn laddu_expr::parameters::Parameter::mul(self, &laddu_expr::Expr) -> Self::Output
+impl core::ops::arith::Mul<&laddu_expr::Expr> for num_complex::Complex64
+pub type num_complex::Complex64::Output = laddu_expr::Expr
+pub fn num_complex::Complex64::mul(self, &laddu_expr::Expr) -> Self::Output
+impl core::ops::arith::Mul<&laddu_expr::parameters::Parameter> for &laddu_expr::Expr
+pub type &laddu_expr::Expr::Output = laddu_expr::Expr
+pub fn &laddu_expr::Expr::mul(self, &laddu_expr::parameters::Parameter) -> Self::Output
+impl core::ops::arith::Mul<&laddu_expr::parameters::Parameter> for laddu_expr::Expr
+pub type laddu_expr::Expr::Output = laddu_expr::Expr
+pub fn laddu_expr::Expr::mul(self, &laddu_expr::parameters::Parameter) -> Self::Output
+impl core::ops::arith::Mul<&num_complex::Complex<f64>> for &laddu_expr::Expr
+pub type &laddu_expr::Expr::Output = laddu_expr::Expr
+pub fn &laddu_expr::Expr::mul(self, &num_complex::Complex64) -> Self::Output
+impl core::ops::arith::Mul<&num_complex::Complex<f64>> for laddu_expr::Expr
+pub type laddu_expr::Expr::Output = laddu_expr::Expr
+pub fn laddu_expr::Expr::mul(self, &num_complex::Complex64) -> Self::Output
+impl core::ops::arith::Mul<f64> for &laddu_expr::Expr
+pub type &laddu_expr::Expr::Output = laddu_expr::Expr
+pub fn &laddu_expr::Expr::mul(self, f64) -> Self::Output
+impl core::ops::arith::Mul<f64> for laddu_expr::Expr
+pub type laddu_expr::Expr::Output = laddu_expr::Expr
+pub fn laddu_expr::Expr::mul(self, f64) -> Self::Output
+impl core::ops::arith::Mul<laddu_expr::Expr> for &f64
+pub type &f64::Output = laddu_expr::Expr
+pub fn &f64::mul(self, laddu_expr::Expr) -> Self::Output
+impl core::ops::arith::Mul<laddu_expr::Expr> for &laddu_expr::Expr
+pub type &laddu_expr::Expr::Output = laddu_expr::Expr
+pub fn &laddu_expr::Expr::mul(self, laddu_expr::Expr) -> Self::Output
+impl core::ops::arith::Mul<laddu_expr::Expr> for &laddu_expr::parameters::Parameter
+pub type &laddu_expr::parameters::Parameter::Output = laddu_expr::Expr
+pub fn &laddu_expr::parameters::Parameter::mul(self, laddu_expr::Expr) -> Self::Output
+impl core::ops::arith::Mul<laddu_expr::Expr> for &num_complex::Complex64
+pub type &num_complex::Complex64::Output = laddu_expr::Expr
+pub fn &num_complex::Complex64::mul(self, laddu_expr::Expr) -> Self::Output
+impl core::ops::arith::Mul<laddu_expr::Expr> for f64
+pub type f64::Output = laddu_expr::Expr
+pub fn f64::mul(self, laddu_expr::Expr) -> Self::Output
+impl core::ops::arith::Mul<laddu_expr::Expr> for laddu_expr::parameters::Parameter
+pub type laddu_expr::parameters::Parameter::Output = laddu_expr::Expr
+pub fn laddu_expr::parameters::Parameter::mul(self, laddu_expr::Expr) -> Self::Output
+impl core::ops::arith::Mul<laddu_expr::Expr> for num_complex::Complex64
+pub type num_complex::Complex64::Output = laddu_expr::Expr
+pub fn num_complex::Complex64::mul(self, laddu_expr::Expr) -> Self::Output
+impl core::ops::arith::Mul<laddu_expr::parameters::Parameter> for &laddu_expr::Expr
+pub type &laddu_expr::Expr::Output = laddu_expr::Expr
+pub fn &laddu_expr::Expr::mul(self, laddu_expr::parameters::Parameter) -> Self::Output
+impl core::ops::arith::Mul<laddu_expr::parameters::Parameter> for laddu_expr::Expr
+pub type laddu_expr::Expr::Output = laddu_expr::Expr
+pub fn laddu_expr::Expr::mul(self, laddu_expr::parameters::Parameter) -> Self::Output
+impl core::ops::arith::Mul<num_complex::Complex<f64>> for &laddu_expr::Expr
+pub type &laddu_expr::Expr::Output = laddu_expr::Expr
+pub fn &laddu_expr::Expr::mul(self, num_complex::Complex64) -> Self::Output
+impl core::ops::arith::Mul<num_complex::Complex<f64>> for laddu_expr::Expr
+pub type laddu_expr::Expr::Output = laddu_expr::Expr
+pub fn laddu_expr::Expr::mul(self, num_complex::Complex64) -> Self::Output
+impl core::ops::arith::MulAssign for laddu_expr::Expr
+pub fn laddu_expr::Expr::mul_assign(&mut self, laddu_expr::Expr)
+impl core::ops::arith::MulAssign<&f64> for laddu_expr::Expr
+pub fn laddu_expr::Expr::mul_assign(&mut self, &f64)
+impl core::ops::arith::MulAssign<&laddu_expr::Expr> for laddu_expr::Expr
+pub fn laddu_expr::Expr::mul_assign(&mut self, &laddu_expr::Expr)
+impl core::ops::arith::MulAssign<&laddu_expr::parameters::Parameter> for laddu_expr::Expr
+pub fn laddu_expr::Expr::mul_assign(&mut self, &laddu_expr::parameters::Parameter)
+impl core::ops::arith::MulAssign<&num_complex::Complex<f64>> for laddu_expr::Expr
+pub fn laddu_expr::Expr::mul_assign(&mut self, &num_complex::Complex64)
+impl core::ops::arith::MulAssign<f64> for laddu_expr::Expr
+pub fn laddu_expr::Expr::mul_assign(&mut self, f64)
+impl core::ops::arith::MulAssign<laddu_expr::parameters::Parameter> for laddu_expr::Expr
+pub fn laddu_expr::Expr::mul_assign(&mut self, laddu_expr::parameters::Parameter)
+impl core::ops::arith::MulAssign<num_complex::Complex<f64>> for laddu_expr::Expr
+pub fn laddu_expr::Expr::mul_assign(&mut self, num_complex::Complex64)
+impl core::ops::arith::Neg for &laddu_expr::Expr
+pub type &laddu_expr::Expr::Output = laddu_expr::Expr
+pub fn &laddu_expr::Expr::neg(self) -> Self::Output
+impl core::ops::arith::Neg for laddu_expr::Expr
+pub type laddu_expr::Expr::Output = laddu_expr::Expr
+pub fn laddu_expr::Expr::neg(self) -> Self::Output
+impl core::ops::arith::Sub for laddu_expr::Expr
+pub type laddu_expr::Expr::Output = laddu_expr::Expr
+pub fn laddu_expr::Expr::sub(self, laddu_expr::Expr) -> Self::Output
+impl core::ops::arith::Sub<&f64> for &laddu_expr::Expr
+pub type &laddu_expr::Expr::Output = laddu_expr::Expr
+pub fn &laddu_expr::Expr::sub(self, &f64) -> Self::Output
+impl core::ops::arith::Sub<&f64> for laddu_expr::Expr
+pub type laddu_expr::Expr::Output = laddu_expr::Expr
+pub fn laddu_expr::Expr::sub(self, &f64) -> Self::Output
+impl core::ops::arith::Sub<&laddu_expr::Expr> for &f64
+pub type &f64::Output = laddu_expr::Expr
+pub fn &f64::sub(self, &laddu_expr::Expr) -> Self::Output
+impl core::ops::arith::Sub<&laddu_expr::Expr> for &laddu_expr::Expr
+pub type &laddu_expr::Expr::Output = laddu_expr::Expr
+pub fn &laddu_expr::Expr::sub(self, &laddu_expr::Expr) -> Self::Output
+impl core::ops::arith::Sub<&laddu_expr::Expr> for &laddu_expr::parameters::Parameter
+pub type &laddu_expr::parameters::Parameter::Output = laddu_expr::Expr
+pub fn &laddu_expr::parameters::Parameter::sub(self, &laddu_expr::Expr) -> Self::Output
+impl core::ops::arith::Sub<&laddu_expr::Expr> for &num_complex::Complex64
+pub type &num_complex::Complex64::Output = laddu_expr::Expr
+pub fn &num_complex::Complex64::sub(self, &laddu_expr::Expr) -> Self::Output
+impl core::ops::arith::Sub<&laddu_expr::Expr> for f64
+pub type f64::Output = laddu_expr::Expr
+pub fn f64::sub(self, &laddu_expr::Expr) -> Self::Output
+impl core::ops::arith::Sub<&laddu_expr::Expr> for laddu_expr::Expr
+pub type laddu_expr::Expr::Output = laddu_expr::Expr
+pub fn laddu_expr::Expr::sub(self, &laddu_expr::Expr) -> Self::Output
+impl core::ops::arith::Sub<&laddu_expr::Expr> for laddu_expr::parameters::Parameter
+pub type laddu_expr::parameters::Parameter::Output = laddu_expr::Expr
+pub fn laddu_expr::parameters::Parameter::sub(self, &laddu_expr::Expr) -> Self::Output
+impl core::ops::arith::Sub<&laddu_expr::Expr> for num_complex::Complex64
+pub type num_complex::Complex64::Output = laddu_expr::Expr
+pub fn num_complex::Complex64::sub(self, &laddu_expr::Expr) -> Self::Output
+impl core::ops::arith::Sub<&laddu_expr::parameters::Parameter> for &laddu_expr::Expr
+pub type &laddu_expr::Expr::Output = laddu_expr::Expr
+pub fn &laddu_expr::Expr::sub(self, &laddu_expr::parameters::Parameter) -> Self::Output
+impl core::ops::arith::Sub<&laddu_expr::parameters::Parameter> for laddu_expr::Expr
+pub type laddu_expr::Expr::Output = laddu_expr::Expr
+pub fn laddu_expr::Expr::sub(self, &laddu_expr::parameters::Parameter) -> Self::Output
+impl core::ops::arith::Sub<&num_complex::Complex<f64>> for &laddu_expr::Expr
+pub type &laddu_expr::Expr::Output = laddu_expr::Expr
+pub fn &laddu_expr::Expr::sub(self, &num_complex::Complex64) -> Self::Output
+impl core::ops::arith::Sub<&num_complex::Complex<f64>> for laddu_expr::Expr
+pub type laddu_expr::Expr::Output = laddu_expr::Expr
+pub fn laddu_expr::Expr::sub(self, &num_complex::Complex64) -> Self::Output
+impl core::ops::arith::Sub<f64> for &laddu_expr::Expr
+pub type &laddu_expr::Expr::Output = laddu_expr::Expr
+pub fn &laddu_expr::Expr::sub(self, f64) -> Self::Output
+impl core::ops::arith::Sub<f64> for laddu_expr::Expr
+pub type laddu_expr::Expr::Output = laddu_expr::Expr
+pub fn laddu_expr::Expr::sub(self, f64) -> Self::Output
+impl core::ops::arith::Sub<laddu_expr::Expr> for &f64
+pub type &f64::Output = laddu_expr::Expr
+pub fn &f64::sub(self, laddu_expr::Expr) -> Self::Output
+impl core::ops::arith::Sub<laddu_expr::Expr> for &laddu_expr::Expr
+pub type &laddu_expr::Expr::Output = laddu_expr::Expr
+pub fn &laddu_expr::Expr::sub(self, laddu_expr::Expr) -> Self::Output
+impl core::ops::arith::Sub<laddu_expr::Expr> for &laddu_expr::parameters::Parameter
+pub type &laddu_expr::parameters::Parameter::Output = laddu_expr::Expr
+pub fn &laddu_expr::parameters::Parameter::sub(self, laddu_expr::Expr) -> Self::Output
+impl core::ops::arith::Sub<laddu_expr::Expr> for &num_complex::Complex64
+pub type &num_complex::Complex64::Output = laddu_expr::Expr
+pub fn &num_complex::Complex64::sub(self, laddu_expr::Expr) -> Self::Output
+impl core::ops::arith::Sub<laddu_expr::Expr> for f64
+pub type f64::Output = laddu_expr::Expr
+pub fn f64::sub(self, laddu_expr::Expr) -> Self::Output
+impl core::ops::arith::Sub<laddu_expr::Expr> for laddu_expr::parameters::Parameter
+pub type laddu_expr::parameters::Parameter::Output = laddu_expr::Expr
+pub fn laddu_expr::parameters::Parameter::sub(self, laddu_expr::Expr) -> Self::Output
+impl core::ops::arith::Sub<laddu_expr::Expr> for num_complex::Complex64
+pub type num_complex::Complex64::Output = laddu_expr::Expr
+pub fn num_complex::Complex64::sub(self, laddu_expr::Expr) -> Self::Output
+impl core::ops::arith::Sub<laddu_expr::parameters::Parameter> for &laddu_expr::Expr
+pub type &laddu_expr::Expr::Output = laddu_expr::Expr
+pub fn &laddu_expr::Expr::sub(self, laddu_expr::parameters::Parameter) -> Self::Output
+impl core::ops::arith::Sub<laddu_expr::parameters::Parameter> for laddu_expr::Expr
+pub type laddu_expr::Expr::Output = laddu_expr::Expr
+pub fn laddu_expr::Expr::sub(self, laddu_expr::parameters::Parameter) -> Self::Output
+impl core::ops::arith::Sub<num_complex::Complex<f64>> for &laddu_expr::Expr
+pub type &laddu_expr::Expr::Output = laddu_expr::Expr
+pub fn &laddu_expr::Expr::sub(self, num_complex::Complex64) -> Self::Output
+impl core::ops::arith::Sub<num_complex::Complex<f64>> for laddu_expr::Expr
+pub type laddu_expr::Expr::Output = laddu_expr::Expr
+pub fn laddu_expr::Expr::sub(self, num_complex::Complex64) -> Self::Output
+impl core::ops::arith::SubAssign for laddu_expr::Expr
+pub fn laddu_expr::Expr::sub_assign(&mut self, laddu_expr::Expr)
+impl core::ops::arith::SubAssign<&f64> for laddu_expr::Expr
+pub fn laddu_expr::Expr::sub_assign(&mut self, &f64)
+impl core::ops::arith::SubAssign<&laddu_expr::Expr> for laddu_expr::Expr
+pub fn laddu_expr::Expr::sub_assign(&mut self, &laddu_expr::Expr)
+impl core::ops::arith::SubAssign<&laddu_expr::parameters::Parameter> for laddu_expr::Expr
+pub fn laddu_expr::Expr::sub_assign(&mut self, &laddu_expr::parameters::Parameter)
+impl core::ops::arith::SubAssign<&num_complex::Complex<f64>> for laddu_expr::Expr
+pub fn laddu_expr::Expr::sub_assign(&mut self, &num_complex::Complex64)
+impl core::ops::arith::SubAssign<f64> for laddu_expr::Expr
+pub fn laddu_expr::Expr::sub_assign(&mut self, f64)
+impl core::ops::arith::SubAssign<laddu_expr::parameters::Parameter> for laddu_expr::Expr
+pub fn laddu_expr::Expr::sub_assign(&mut self, laddu_expr::parameters::Parameter)
+impl core::ops::arith::SubAssign<num_complex::Complex<f64>> for laddu_expr::Expr
+pub fn laddu_expr::Expr::sub_assign(&mut self, num_complex::Complex64)
+impl serde_core::ser::Serialize for laddu_expr::Expr
+pub fn laddu_expr::Expr::serialize<S>(&self, S) -> core::result::Result<<S as serde_core::ser::Serializer>::Ok, <S as serde_core::ser::Serializer>::Error> where S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for laddu_expr::Expr
+pub fn laddu_expr::Expr::deserialize<D>(D) -> core::result::Result<Self, <D as serde_core::de::Deserializer>::Error> where D: serde_core::de::Deserializer<'de>
+pub struct laddu_expr::ExprGraph
+impl laddu_expr::ExprGraph
+pub fn laddu_expr::ExprGraph::display_dot(&self) -> laddu_expr::ExprGraphDotDisplay<'_>
+pub fn laddu_expr::ExprGraph::display_equation(&self) -> laddu_expr::ExprGraphEquationDisplay<'_>
+pub fn laddu_expr::ExprGraph::display_latex(&self) -> laddu_expr::ExprGraphLatexDisplay<'_>
+pub fn laddu_expr::ExprGraph::display_tree(&self) -> laddu_expr::ExprGraphTreeDisplay<'_>
+impl laddu_expr::ExprGraph
+pub fn laddu_expr::ExprGraph::fix_parameter(&self, &str, f64) -> laddu_expr::ParamResult<Self>
+pub fn laddu_expr::ExprGraph::free_parameter(&self, &str) -> laddu_expr::ParamResult<Self>
+pub fn laddu_expr::ExprGraph::from_parts(laddu_expr::ExprId, alloc::vec::Vec<laddu_expr::ExprNode>, alloc::vec::Vec<laddu_expr::ExprMetadata>) -> core::result::Result<Self, laddu_expr::ExprGraphError>
+pub fn laddu_expr::ExprGraph::metadata(&self, laddu_expr::ExprId) -> core::option::Option<&laddu_expr::ExprMetadata>
+pub fn laddu_expr::ExprGraph::node(&self, laddu_expr::ExprId) -> core::option::Option<&laddu_expr::ExprNode>
+pub fn laddu_expr::ExprGraph::nodes(&self) -> &[laddu_expr::ExprNode]
+pub fn laddu_expr::ExprGraph::project_tags<'a>(&self, impl core::iter::traits::collect::IntoIterator<Item = &'a str>) -> Self
+pub fn laddu_expr::ExprGraph::root(&self) -> laddu_expr::ExprId
+impl core::clone::Clone for laddu_expr::ExprGraph
+pub fn laddu_expr::ExprGraph::clone(&self) -> laddu_expr::ExprGraph
+impl core::fmt::Debug for laddu_expr::ExprGraph
+pub fn laddu_expr::ExprGraph::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for laddu_expr::ExprGraph
+pub fn laddu_expr::ExprGraph::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for laddu_expr::ExprGraph
+pub fn laddu_expr::ExprGraph::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for laddu_expr::ExprGraph
+pub fn laddu_expr::ExprGraph::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct laddu_expr::ExprGraphDotDisplay<'a>
+impl<'a> laddu_expr::ExprGraphDotDisplay<'a>
+pub fn laddu_expr::ExprGraphDotDisplay<'a>::expand_repeated(self, bool) -> Self
+pub fn laddu_expr::ExprGraphDotDisplay<'a>::render_svg(&self) -> core::result::Result<alloc::string::String, laddu_expr::GraphRenderError>
+pub fn laddu_expr::ExprGraphDotDisplay<'a>::with_preset(self, laddu_expr::ColorPreset) -> Self
+pub fn laddu_expr::ExprGraphDotDisplay<'a>::with_style_rule(self, laddu_expr::NodeStyleRule) -> Self
+impl core::fmt::Display for laddu_expr::ExprGraphDotDisplay<'_>
+pub fn laddu_expr::ExprGraphDotDisplay<'_>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub struct laddu_expr::ExprGraphEquationDisplay<'a>
+impl<'a> laddu_expr::ExprGraphEquationDisplay<'a>
+pub fn laddu_expr::ExprGraphEquationDisplay<'a>::with_preset(self, laddu_expr::ColorPreset) -> Self
+pub fn laddu_expr::ExprGraphEquationDisplay<'a>::with_style_rule(self, laddu_expr::NodeStyleRule) -> Self
+impl core::fmt::Display for laddu_expr::ExprGraphEquationDisplay<'_>
+pub fn laddu_expr::ExprGraphEquationDisplay<'_>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub struct laddu_expr::ExprGraphLatexDisplay<'a>
+impl<'a> laddu_expr::ExprGraphLatexDisplay<'a>
+pub fn laddu_expr::ExprGraphLatexDisplay<'a>::with_preset(self, laddu_expr::ColorPreset) -> Self
+pub fn laddu_expr::ExprGraphLatexDisplay<'a>::with_style_rule(self, laddu_expr::NodeStyleRule) -> Self
+impl core::fmt::Display for laddu_expr::ExprGraphLatexDisplay<'_>
+pub fn laddu_expr::ExprGraphLatexDisplay<'_>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub struct laddu_expr::ExprGraphTreeDisplay<'a>
+impl<'a> laddu_expr::ExprGraphTreeDisplay<'a>
+pub fn laddu_expr::ExprGraphTreeDisplay<'a>::expand_repeated(self, bool) -> Self
+pub fn laddu_expr::ExprGraphTreeDisplay<'a>::with_preset(self, laddu_expr::ColorPreset) -> Self
+pub fn laddu_expr::ExprGraphTreeDisplay<'a>::with_style_rule(self, laddu_expr::NodeStyleRule) -> Self
+impl core::fmt::Display for laddu_expr::ExprGraphTreeDisplay<'_>
+pub fn laddu_expr::ExprGraphTreeDisplay<'_>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub struct laddu_expr::ExprId(_)
+impl laddu_expr::ExprId
+pub fn laddu_expr::ExprId::from_index(usize) -> Self
+pub fn laddu_expr::ExprId::index(self) -> usize
+impl core::clone::Clone for laddu_expr::ExprId
+pub fn laddu_expr::ExprId::clone(&self) -> laddu_expr::ExprId
+impl core::cmp::Eq for laddu_expr::ExprId
+impl core::cmp::PartialEq for laddu_expr::ExprId
+pub fn laddu_expr::ExprId::eq(&self, &laddu_expr::ExprId) -> bool
+impl core::fmt::Debug for laddu_expr::ExprId
+pub fn laddu_expr::ExprId::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for laddu_expr::ExprId
+pub fn laddu_expr::ExprId::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for laddu_expr::ExprId
+impl core::marker::StructuralPartialEq for laddu_expr::ExprId
+impl serde_core::ser::Serialize for laddu_expr::ExprId
+pub fn laddu_expr::ExprId::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for laddu_expr::ExprId
+pub fn laddu_expr::ExprId::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct laddu_expr::ExprMetadata
+impl laddu_expr::ExprMetadata
+pub fn laddu_expr::ExprMetadata::has_tag(&self, &str) -> bool
+pub fn laddu_expr::ExprMetadata::name(&self) -> core::option::Option<&str>
+pub fn laddu_expr::ExprMetadata::new(laddu_expr::ExprSourceKind) -> Self
+pub fn laddu_expr::ExprMetadata::source(&self) -> laddu_expr::ExprSourceKind
+pub fn laddu_expr::ExprMetadata::tags(&self) -> &[alloc::sync::Arc<str>]
+impl core::clone::Clone for laddu_expr::ExprMetadata
+pub fn laddu_expr::ExprMetadata::clone(&self) -> laddu_expr::ExprMetadata
+impl core::cmp::Eq for laddu_expr::ExprMetadata
+impl core::cmp::PartialEq for laddu_expr::ExprMetadata
+pub fn laddu_expr::ExprMetadata::eq(&self, &laddu_expr::ExprMetadata) -> bool
+impl core::fmt::Debug for laddu_expr::ExprMetadata
+pub fn laddu_expr::ExprMetadata::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for laddu_expr::ExprMetadata
+impl serde_core::ser::Serialize for laddu_expr::ExprMetadata
+pub fn laddu_expr::ExprMetadata::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for laddu_expr::ExprMetadata
+pub fn laddu_expr::ExprMetadata::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct laddu_expr::ExprShapeError
+impl core::clone::Clone for laddu_expr::ExprShapeError
+pub fn laddu_expr::ExprShapeError::clone(&self) -> laddu_expr::ExprShapeError
+impl core::cmp::Eq for laddu_expr::ExprShapeError
+impl core::cmp::PartialEq for laddu_expr::ExprShapeError
+pub fn laddu_expr::ExprShapeError::eq(&self, &laddu_expr::ExprShapeError) -> bool
+impl core::convert::From<laddu_expr::ExprShapeError> for laddu_expr::ExprError
+pub fn laddu_expr::ExprError::from(laddu_expr::ExprShapeError) -> Self
+impl core::error::Error for laddu_expr::ExprShapeError
+impl core::fmt::Debug for laddu_expr::ExprShapeError
+pub fn laddu_expr::ExprShapeError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for laddu_expr::ExprShapeError
+pub fn laddu_expr::ExprShapeError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for laddu_expr::ExprShapeError
+pub struct laddu_expr::NodeStyle
+pub laddu_expr::NodeStyle::border: core::option::Option<laddu_expr::DisplayColor>
+pub laddu_expr::NodeStyle::fill: core::option::Option<laddu_expr::DisplayColor>
+pub laddu_expr::NodeStyle::foreground: core::option::Option<laddu_expr::DisplayColor>
+impl laddu_expr::NodeStyle
+pub const fn laddu_expr::NodeStyle::new() -> Self
+pub const fn laddu_expr::NodeStyle::with_border(self, laddu_expr::DisplayColor) -> Self
+pub const fn laddu_expr::NodeStyle::with_fill(self, laddu_expr::DisplayColor) -> Self
+pub const fn laddu_expr::NodeStyle::with_foreground(self, laddu_expr::DisplayColor) -> Self
+impl core::clone::Clone for laddu_expr::NodeStyle
+pub fn laddu_expr::NodeStyle::clone(&self) -> laddu_expr::NodeStyle
+impl core::cmp::Eq for laddu_expr::NodeStyle
+impl core::cmp::PartialEq for laddu_expr::NodeStyle
+pub fn laddu_expr::NodeStyle::eq(&self, &laddu_expr::NodeStyle) -> bool
+impl core::default::Default for laddu_expr::NodeStyle
+pub fn laddu_expr::NodeStyle::default() -> laddu_expr::NodeStyle
+impl core::fmt::Debug for laddu_expr::NodeStyle
+pub fn laddu_expr::NodeStyle::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for laddu_expr::NodeStyle
+impl core::marker::StructuralPartialEq for laddu_expr::NodeStyle
+pub struct laddu_expr::NodeStyleRule
+pub laddu_expr::NodeStyleRule::selector: laddu_expr::NodeSelector
+pub laddu_expr::NodeStyleRule::style: laddu_expr::NodeStyle
+impl laddu_expr::NodeStyleRule
+pub fn laddu_expr::NodeStyleRule::new(laddu_expr::NodeSelector, laddu_expr::NodeStyle) -> Self
+impl core::clone::Clone for laddu_expr::NodeStyleRule
+pub fn laddu_expr::NodeStyleRule::clone(&self) -> laddu_expr::NodeStyleRule
+impl core::cmp::Eq for laddu_expr::NodeStyleRule
+impl core::cmp::PartialEq for laddu_expr::NodeStyleRule
+pub fn laddu_expr::NodeStyleRule::eq(&self, &laddu_expr::NodeStyleRule) -> bool
+impl core::fmt::Debug for laddu_expr::NodeStyleRule
+pub fn laddu_expr::NodeStyleRule::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for laddu_expr::NodeStyleRule
+pub trait laddu_expr::ComponentIndex
+pub fn laddu_expr::ComponentIndex::component_index(self) -> usize
+impl laddu_expr::ComponentIndex for i32
+pub fn i32::component_index(self) -> usize
+impl laddu_expr::ComponentIndex for usize
+pub fn usize::component_index(self) -> usize
+pub fn laddu_expr::acos(impl core::convert::Into<laddu_expr::Expr>) -> laddu_expr::Expr
+pub fn laddu_expr::atan2(impl core::convert::Into<laddu_expr::Expr>, impl core::convert::Into<laddu_expr::Expr>) -> laddu_expr::Expr
+pub fn laddu_expr::cis(laddu_expr::Expr) -> laddu_expr::Expr
+pub fn laddu_expr::complex(impl core::convert::Into<laddu_expr::Expr>, impl core::convert::Into<laddu_expr::Expr>) -> laddu_expr::Expr
+pub fn laddu_expr::dot(impl core::convert::Into<laddu_expr::Expr>, impl core::convert::Into<laddu_expr::Expr>) -> laddu_expr::Expr
+pub fn laddu_expr::event_p4_component(impl core::convert::Into<alloc::sync::Arc<str>>, laddu_expr::P4Component) -> laddu_expr::Expr
+pub fn laddu_expr::event_scalar(impl core::convert::Into<alloc::sync::Arc<str>>) -> laddu_expr::Expr
+pub fn laddu_expr::matmul(impl core::convert::Into<laddu_expr::Expr>, impl core::convert::Into<laddu_expr::Expr>) -> laddu_expr::Expr
+pub fn laddu_expr::matrix<const R: usize, const C: usize, E>([[E; C]; R]) -> laddu_expr::Expr where E: core::convert::Into<laddu_expr::Expr>, laddu_expr::Expr: core::convert::From<E>
+pub fn laddu_expr::matrix_from_flat<E>(usize, usize, impl core::iter::traits::collect::IntoIterator<Item = E>) -> core::result::Result<laddu_expr::Expr, laddu_expr::ExprShapeError> where E: core::convert::Into<laddu_expr::Expr>, laddu_expr::Expr: core::convert::From<E>
+pub fn laddu_expr::matvec(impl core::convert::Into<laddu_expr::Expr>, impl core::convert::Into<laddu_expr::Expr>) -> laddu_expr::Expr
+pub fn laddu_expr::polar_complex(impl core::convert::Into<laddu_expr::Expr>, impl core::convert::Into<laddu_expr::Expr>) -> laddu_expr::Expr
+pub fn laddu_expr::solve(impl core::convert::Into<laddu_expr::Expr>, impl core::convert::Into<laddu_expr::Expr>) -> laddu_expr::Expr
+pub fn laddu_expr::vector<E>(impl core::iter::traits::collect::IntoIterator<Item = E>) -> laddu_expr::Expr where E: core::convert::Into<laddu_expr::Expr>, laddu_expr::Expr: core::convert::From<E>
+pub type laddu_expr::ExprResult<T> = core::result::Result<T, laddu_expr::ExprError>
+pub type laddu_expr::ParamResult<T> = core::result::Result<T, laddu_expr::ParamError>

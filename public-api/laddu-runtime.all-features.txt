@@ -1,0 +1,606 @@
+pub mod laddu_runtime
+pub use laddu_runtime::CapacitySource
+pub use laddu_runtime::DeviceIdentity
+pub use laddu_runtime::MemoryBudget
+pub use laddu_runtime::MemoryDecision
+pub use laddu_runtime::MemoryError
+pub use laddu_runtime::MemoryLease
+pub use laddu_runtime::MemoryPlan
+pub use laddu_runtime::MemoryPool
+pub use laddu_runtime::MemoryPoolReport
+pub use laddu_runtime::MemoryReport
+pub use laddu_runtime::MemoryResource
+pub use laddu_runtime::MemoryResourceKind
+pub use laddu_runtime::MemoryState
+pub use laddu_runtime::ProcessMemoryReport
+pub enum laddu_runtime::Comparison
+pub laddu_runtime::Comparison::Eq
+pub laddu_runtime::Comparison::Ge
+pub laddu_runtime::Comparison::Gt
+pub laddu_runtime::Comparison::Le
+pub laddu_runtime::Comparison::Lt
+pub laddu_runtime::Comparison::Ne
+impl core::clone::Clone for laddu_runtime::Comparison
+pub fn laddu_runtime::Comparison::clone(&self) -> laddu_runtime::Comparison
+impl core::cmp::Eq for laddu_runtime::Comparison
+impl core::cmp::PartialEq for laddu_runtime::Comparison
+pub fn laddu_runtime::Comparison::eq(&self, &laddu_runtime::Comparison) -> bool
+impl core::fmt::Debug for laddu_runtime::Comparison
+pub fn laddu_runtime::Comparison::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for laddu_runtime::Comparison
+impl core::marker::StructuralPartialEq for laddu_runtime::Comparison
+impl serde_core::ser::Serialize for laddu_runtime::Comparison
+pub fn laddu_runtime::Comparison::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for laddu_runtime::Comparison
+pub fn laddu_runtime::Comparison::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub enum laddu_runtime::CpuExecutionMode
+pub laddu_runtime::CpuExecutionMode::Auto
+pub laddu_runtime::CpuExecutionMode::Interpreter
+impl core::clone::Clone for laddu_runtime::CpuExecutionMode
+pub fn laddu_runtime::CpuExecutionMode::clone(&self) -> laddu_runtime::CpuExecutionMode
+impl core::cmp::Eq for laddu_runtime::CpuExecutionMode
+impl core::cmp::PartialEq for laddu_runtime::CpuExecutionMode
+pub fn laddu_runtime::CpuExecutionMode::eq(&self, &laddu_runtime::CpuExecutionMode) -> bool
+impl core::default::Default for laddu_runtime::CpuExecutionMode
+pub fn laddu_runtime::CpuExecutionMode::default() -> laddu_runtime::CpuExecutionMode
+impl core::fmt::Debug for laddu_runtime::CpuExecutionMode
+pub fn laddu_runtime::CpuExecutionMode::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for laddu_runtime::CpuExecutionMode
+impl core::marker::StructuralPartialEq for laddu_runtime::CpuExecutionMode
+pub enum laddu_runtime::CpuPreparedDataset
+pub laddu_runtime::CpuPreparedDataset::Resident
+pub laddu_runtime::CpuPreparedDataset::Resident::dataset: alloc::sync::Arc<laddu_runtime::CpuCachedDataset>
+pub laddu_runtime::CpuPreparedDataset::Resident::memory_lease: laddu_memory::MemoryLease
+pub laddu_runtime::CpuPreparedDataset::Resident::stats: laddu_runtime::PreparedDatasetStats
+pub laddu_runtime::CpuPreparedDataset::Streaming
+pub laddu_runtime::CpuPreparedDataset::Streaming::dataset: laddu_data::data::dataset::Dataset
+pub laddu_runtime::CpuPreparedDataset::Streaming::read_plan: laddu_data::io::ReadPlan
+pub laddu_runtime::CpuPreparedDataset::Streaming::stats: laddu_runtime::PreparedDatasetStats
+pub laddu_runtime::CpuPreparedDataset::Streaming::transient_bytes: u64
+impl laddu_runtime::CpuPreparedDataset
+pub fn laddu_runtime::CpuPreparedDataset::stats(&self) -> &laddu_runtime::PreparedDatasetStats
+impl core::clone::Clone for laddu_runtime::CpuPreparedDataset
+pub fn laddu_runtime::CpuPreparedDataset::clone(&self) -> laddu_runtime::CpuPreparedDataset
+impl core::fmt::Debug for laddu_runtime::CpuPreparedDataset
+pub fn laddu_runtime::CpuPreparedDataset::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub enum laddu_runtime::Device
+pub laddu_runtime::Device::Auto
+pub laddu_runtime::Device::Cpu(laddu_runtime::CpuOptions)
+pub laddu_runtime::Device::Gpu(laddu_runtime::GpuOptions)
+impl core::clone::Clone for laddu_runtime::Device
+pub fn laddu_runtime::Device::clone(&self) -> laddu_runtime::Device
+impl core::cmp::Eq for laddu_runtime::Device
+impl core::cmp::PartialEq for laddu_runtime::Device
+pub fn laddu_runtime::Device::eq(&self, &laddu_runtime::Device) -> bool
+impl core::default::Default for laddu_runtime::Device
+pub fn laddu_runtime::Device::default() -> laddu_runtime::Device
+impl core::fmt::Debug for laddu_runtime::Device
+pub fn laddu_runtime::Device::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for laddu_runtime::Device
+impl serde_core::ser::Serialize for laddu_runtime::Device
+pub fn laddu_runtime::Device::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for laddu_runtime::Device
+pub fn laddu_runtime::Device::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub enum laddu_runtime::ExecutionError
+pub laddu_runtime::ExecutionError::GpuUnavailable(laddu_runtime::GpuBackend)
+pub laddu_runtime::ExecutionError::JitUnavailable
+pub laddu_runtime::ExecutionError::ThreadPool(alloc::string::String)
+pub laddu_runtime::ExecutionError::UnsupportedCpuF32Gradient
+pub laddu_runtime::ExecutionError::UnsupportedCpuF32Model
+pub laddu_runtime::ExecutionError::UnsupportedGpuGradient
+pub laddu_runtime::ExecutionError::UnsupportedReverseAutodiff
+pub laddu_runtime::ExecutionError::ZeroThreads
+impl core::clone::Clone for laddu_runtime::ExecutionError
+pub fn laddu_runtime::ExecutionError::clone(&self) -> laddu_runtime::ExecutionError
+impl core::cmp::Eq for laddu_runtime::ExecutionError
+impl core::cmp::PartialEq for laddu_runtime::ExecutionError
+pub fn laddu_runtime::ExecutionError::eq(&self, &laddu_runtime::ExecutionError) -> bool
+impl core::convert::From<laddu_runtime::ExecutionError> for laddu_runtime::RuntimeError
+pub fn laddu_runtime::RuntimeError::from(laddu_runtime::ExecutionError) -> Self
+impl core::error::Error for laddu_runtime::ExecutionError
+impl core::fmt::Debug for laddu_runtime::ExecutionError
+pub fn laddu_runtime::ExecutionError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for laddu_runtime::ExecutionError
+pub fn laddu_runtime::ExecutionError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for laddu_runtime::ExecutionError
+pub enum laddu_runtime::GpuBackend
+pub laddu_runtime::GpuBackend::Auto
+pub laddu_runtime::GpuBackend::Cuda
+pub laddu_runtime::GpuBackend::Wgpu
+impl core::clone::Clone for laddu_runtime::GpuBackend
+pub fn laddu_runtime::GpuBackend::clone(&self) -> laddu_runtime::GpuBackend
+impl core::cmp::Eq for laddu_runtime::GpuBackend
+impl core::cmp::PartialEq for laddu_runtime::GpuBackend
+pub fn laddu_runtime::GpuBackend::eq(&self, &laddu_runtime::GpuBackend) -> bool
+impl core::default::Default for laddu_runtime::GpuBackend
+pub fn laddu_runtime::GpuBackend::default() -> laddu_runtime::GpuBackend
+impl core::fmt::Debug for laddu_runtime::GpuBackend
+pub fn laddu_runtime::GpuBackend::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for laddu_runtime::GpuBackend
+impl core::marker::StructuralPartialEq for laddu_runtime::GpuBackend
+impl serde_core::ser::Serialize for laddu_runtime::GpuBackend
+pub fn laddu_runtime::GpuBackend::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for laddu_runtime::GpuBackend
+pub fn laddu_runtime::GpuBackend::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub enum laddu_runtime::GpuDeviceSelector
+pub laddu_runtime::GpuDeviceSelector::Auto
+pub laddu_runtime::GpuDeviceSelector::Index(usize)
+pub laddu_runtime::GpuDeviceSelector::Name(alloc::string::String)
+pub laddu_runtime::GpuDeviceSelector::PciBusId(alloc::string::String)
+impl core::clone::Clone for laddu_runtime::GpuDeviceSelector
+pub fn laddu_runtime::GpuDeviceSelector::clone(&self) -> laddu_runtime::GpuDeviceSelector
+impl core::cmp::Eq for laddu_runtime::GpuDeviceSelector
+impl core::cmp::PartialEq for laddu_runtime::GpuDeviceSelector
+pub fn laddu_runtime::GpuDeviceSelector::eq(&self, &laddu_runtime::GpuDeviceSelector) -> bool
+impl core::default::Default for laddu_runtime::GpuDeviceSelector
+pub fn laddu_runtime::GpuDeviceSelector::default() -> laddu_runtime::GpuDeviceSelector
+impl core::fmt::Debug for laddu_runtime::GpuDeviceSelector
+pub fn laddu_runtime::GpuDeviceSelector::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for laddu_runtime::GpuDeviceSelector
+impl serde_core::ser::Serialize for laddu_runtime::GpuDeviceSelector
+pub fn laddu_runtime::GpuDeviceSelector::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for laddu_runtime::GpuDeviceSelector
+pub fn laddu_runtime::GpuDeviceSelector::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub enum laddu_runtime::IntervalClosure
+pub laddu_runtime::IntervalClosure::Closed
+pub laddu_runtime::IntervalClosure::LeftClosed
+pub laddu_runtime::IntervalClosure::Open
+pub laddu_runtime::IntervalClosure::RightClosed
+impl core::clone::Clone for laddu_runtime::IntervalClosure
+pub fn laddu_runtime::IntervalClosure::clone(&self) -> laddu_runtime::IntervalClosure
+impl core::cmp::Eq for laddu_runtime::IntervalClosure
+impl core::cmp::PartialEq for laddu_runtime::IntervalClosure
+pub fn laddu_runtime::IntervalClosure::eq(&self, &laddu_runtime::IntervalClosure) -> bool
+impl core::default::Default for laddu_runtime::IntervalClosure
+pub fn laddu_runtime::IntervalClosure::default() -> laddu_runtime::IntervalClosure
+impl core::fmt::Debug for laddu_runtime::IntervalClosure
+pub fn laddu_runtime::IntervalClosure::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for laddu_runtime::IntervalClosure
+impl core::marker::StructuralPartialEq for laddu_runtime::IntervalClosure
+impl serde_core::ser::Serialize for laddu_runtime::IntervalClosure
+pub fn laddu_runtime::IntervalClosure::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for laddu_runtime::IntervalClosure
+pub fn laddu_runtime::IntervalClosure::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub enum laddu_runtime::JitPolicy
+pub laddu_runtime::JitPolicy::Auto
+pub laddu_runtime::JitPolicy::Disabled
+pub laddu_runtime::JitPolicy::Enabled
+impl core::clone::Clone for laddu_runtime::JitPolicy
+pub fn laddu_runtime::JitPolicy::clone(&self) -> laddu_runtime::JitPolicy
+impl core::cmp::Eq for laddu_runtime::JitPolicy
+impl core::cmp::PartialEq for laddu_runtime::JitPolicy
+pub fn laddu_runtime::JitPolicy::eq(&self, &laddu_runtime::JitPolicy) -> bool
+impl core::default::Default for laddu_runtime::JitPolicy
+pub fn laddu_runtime::JitPolicy::default() -> laddu_runtime::JitPolicy
+impl core::fmt::Debug for laddu_runtime::JitPolicy
+pub fn laddu_runtime::JitPolicy::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for laddu_runtime::JitPolicy
+impl core::marker::StructuralPartialEq for laddu_runtime::JitPolicy
+impl serde_core::ser::Serialize for laddu_runtime::JitPolicy
+pub fn laddu_runtime::JitPolicy::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for laddu_runtime::JitPolicy
+pub fn laddu_runtime::JitPolicy::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub enum laddu_runtime::NormalizationMode
+pub laddu_runtime::NormalizationMode::Auto
+pub laddu_runtime::NormalizationMode::General
+pub laddu_runtime::NormalizationMode::Verify
+impl core::clone::Clone for laddu_runtime::NormalizationMode
+pub fn laddu_runtime::NormalizationMode::clone(&self) -> laddu_runtime::NormalizationMode
+impl core::cmp::Eq for laddu_runtime::NormalizationMode
+impl core::cmp::PartialEq for laddu_runtime::NormalizationMode
+pub fn laddu_runtime::NormalizationMode::eq(&self, &laddu_runtime::NormalizationMode) -> bool
+impl core::default::Default for laddu_runtime::NormalizationMode
+pub fn laddu_runtime::NormalizationMode::default() -> laddu_runtime::NormalizationMode
+impl core::fmt::Debug for laddu_runtime::NormalizationMode
+pub fn laddu_runtime::NormalizationMode::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for laddu_runtime::NormalizationMode
+pub fn laddu_runtime::NormalizationMode::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for laddu_runtime::NormalizationMode
+impl core::marker::StructuralPartialEq for laddu_runtime::NormalizationMode
+impl serde_core::ser::Serialize for laddu_runtime::NormalizationMode
+pub fn laddu_runtime::NormalizationMode::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for laddu_runtime::NormalizationMode
+pub fn laddu_runtime::NormalizationMode::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub enum laddu_runtime::Precision
+pub laddu_runtime::Precision::Auto
+pub laddu_runtime::Precision::F32
+pub laddu_runtime::Precision::F64
+impl core::clone::Clone for laddu_runtime::Precision
+pub fn laddu_runtime::Precision::clone(&self) -> laddu_runtime::Precision
+impl core::cmp::Eq for laddu_runtime::Precision
+impl core::cmp::PartialEq for laddu_runtime::Precision
+pub fn laddu_runtime::Precision::eq(&self, &laddu_runtime::Precision) -> bool
+impl core::default::Default for laddu_runtime::Precision
+pub fn laddu_runtime::Precision::default() -> laddu_runtime::Precision
+impl core::fmt::Debug for laddu_runtime::Precision
+pub fn laddu_runtime::Precision::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for laddu_runtime::Precision
+impl core::marker::StructuralPartialEq for laddu_runtime::Precision
+impl serde_core::ser::Serialize for laddu_runtime::Precision
+pub fn laddu_runtime::Precision::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for laddu_runtime::Precision
+pub fn laddu_runtime::Precision::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub enum laddu_runtime::Predicate
+pub laddu_runtime::Predicate::And(alloc::boxed::Box<Self>, alloc::boxed::Box<Self>)
+pub laddu_runtime::Predicate::Between
+pub laddu_runtime::Predicate::Between::closure: laddu_runtime::IntervalClosure
+pub laddu_runtime::Predicate::Between::lower: laddu_expr::expression::Expr
+pub laddu_runtime::Predicate::Between::upper: laddu_expr::expression::Expr
+pub laddu_runtime::Predicate::Between::value: laddu_expr::expression::Expr
+pub laddu_runtime::Predicate::Compare
+pub laddu_runtime::Predicate::Compare::lhs: laddu_expr::expression::Expr
+pub laddu_runtime::Predicate::Compare::op: laddu_runtime::Comparison
+pub laddu_runtime::Predicate::Compare::rhs: laddu_expr::expression::Expr
+pub laddu_runtime::Predicate::Not(alloc::boxed::Box<Self>)
+pub laddu_runtime::Predicate::Or(alloc::boxed::Box<Self>, alloc::boxed::Box<Self>)
+impl laddu_runtime::Predicate
+pub fn laddu_runtime::Predicate::and(self, Self) -> Self
+pub fn laddu_runtime::Predicate::between(impl core::convert::Into<laddu_expr::expression::Expr>, impl core::convert::Into<laddu_expr::expression::Expr>, impl core::convert::Into<laddu_expr::expression::Expr>) -> Self
+pub fn laddu_runtime::Predicate::between_with(impl core::convert::Into<laddu_expr::expression::Expr>, impl core::convert::Into<laddu_expr::expression::Expr>, impl core::convert::Into<laddu_expr::expression::Expr>, laddu_runtime::IntervalClosure) -> Self
+pub fn laddu_runtime::Predicate::compare(impl core::convert::Into<laddu_expr::expression::Expr>, laddu_runtime::Comparison, impl core::convert::Into<laddu_expr::expression::Expr>) -> Self
+pub fn laddu_runtime::Predicate::eq(impl core::convert::Into<laddu_expr::expression::Expr>, impl core::convert::Into<laddu_expr::expression::Expr>) -> Self
+pub fn laddu_runtime::Predicate::ge(impl core::convert::Into<laddu_expr::expression::Expr>, impl core::convert::Into<laddu_expr::expression::Expr>) -> Self
+pub fn laddu_runtime::Predicate::gt(impl core::convert::Into<laddu_expr::expression::Expr>, impl core::convert::Into<laddu_expr::expression::Expr>) -> Self
+pub fn laddu_runtime::Predicate::le(impl core::convert::Into<laddu_expr::expression::Expr>, impl core::convert::Into<laddu_expr::expression::Expr>) -> Self
+pub fn laddu_runtime::Predicate::lt(impl core::convert::Into<laddu_expr::expression::Expr>, impl core::convert::Into<laddu_expr::expression::Expr>) -> Self
+pub fn laddu_runtime::Predicate::ne(impl core::convert::Into<laddu_expr::expression::Expr>, impl core::convert::Into<laddu_expr::expression::Expr>) -> Self
+pub fn laddu_runtime::Predicate::or(self, Self) -> Self
+impl core::clone::Clone for laddu_runtime::Predicate
+pub fn laddu_runtime::Predicate::clone(&self) -> laddu_runtime::Predicate
+impl core::fmt::Debug for laddu_runtime::Predicate
+pub fn laddu_runtime::Predicate::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::ops::bit::Not for laddu_runtime::Predicate
+pub type laddu_runtime::Predicate::Output = laddu_runtime::Predicate
+pub fn laddu_runtime::Predicate::not(self) -> Self::Output
+pub enum laddu_runtime::PreparedDataset
+pub laddu_runtime::PreparedDataset::Cpu(laddu_runtime::CpuPreparedDataset)
+pub laddu_runtime::PreparedDataset::Wgpu(laddu_runtime::backend::WgpuPreparedDataset)
+impl laddu_runtime::PreparedDataset
+pub fn laddu_runtime::PreparedDataset::stats(&self) -> &laddu_runtime::PreparedDatasetStats
+impl core::clone::Clone for laddu_runtime::PreparedDataset
+pub fn laddu_runtime::PreparedDataset::clone(&self) -> laddu_runtime::PreparedDataset
+impl core::fmt::Debug for laddu_runtime::PreparedDataset
+pub fn laddu_runtime::PreparedDataset::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub enum laddu_runtime::PreparedModel
+pub laddu_runtime::PreparedModel::Cpu(alloc::boxed::Box<laddu_runtime::CpuPlan>)
+pub laddu_runtime::PreparedModel::Wgpu(laddu_runtime::backend::WgpuPlan)
+impl laddu_runtime::PreparedModel
+pub fn laddu_runtime::PreparedModel::evaluate_batch(&self, &laddu_expr::parameters::ParamValues, &laddu_data::data::event::EventBatch) -> laddu_runtime::RuntimeResult<alloc::vec::Vec<num_complex::Complex64>>
+pub fn laddu_runtime::PreparedModel::evaluate_batch_with_gradient(&self, &laddu_expr::parameters::ParamValues, &laddu_data::data::event::EventBatch) -> laddu_runtime::RuntimeResult<alloc::vec::Vec<laddu_runtime::ValueGradient>>
+pub fn laddu_runtime::PreparedModel::prepare(&laddu_compile::model::CompiledModel, &laddu_runtime::Execution) -> laddu_runtime::RuntimeResult<Self>
+pub fn laddu_runtime::PreparedModel::prepare_dataset(&self, &laddu_runtime::Execution, &laddu_data::data::dataset::Dataset) -> laddu_runtime::RuntimeResult<laddu_runtime::PreparedDataset>
+pub fn laddu_runtime::PreparedModel::reduce(&self, &laddu_runtime::Execution, &laddu_expr::parameters::ParamValues, &laddu_runtime::PreparedDataset, laddu_compile::reduction::ReductionPlan) -> laddu_runtime::RuntimeResult<f64>
+pub fn laddu_runtime::PreparedModel::reduce_with_gradient(&self, &laddu_runtime::Execution, &laddu_expr::parameters::ParamValues, &laddu_runtime::PreparedDataset, laddu_compile::reduction::ReductionPlan) -> laddu_runtime::RuntimeResult<laddu_runtime::ReductionEvaluation>
+impl core::clone::Clone for laddu_runtime::PreparedModel
+pub fn laddu_runtime::PreparedModel::clone(&self) -> laddu_runtime::PreparedModel
+impl core::fmt::Debug for laddu_runtime::PreparedModel
+pub fn laddu_runtime::PreparedModel::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub enum laddu_runtime::RuntimeError
+pub laddu_runtime::RuntimeError::Data(alloc::string::String)
+pub laddu_runtime::RuntimeError::DistributedPeerFailure
+pub laddu_runtime::RuntimeError::Execution(laddu_runtime::ExecutionError)
+pub laddu_runtime::RuntimeError::InvalidCache
+pub laddu_runtime::RuntimeError::InvalidCache::actual: usize
+pub laddu_runtime::RuntimeError::InvalidCache::expected: usize
+pub laddu_runtime::RuntimeError::InvalidCacheLayout
+pub laddu_runtime::RuntimeError::InvalidShape
+pub laddu_runtime::RuntimeError::InvalidShape::index: usize
+pub laddu_runtime::RuntimeError::InvalidShape::message: alloc::string::String
+pub laddu_runtime::RuntimeError::JitExecution(i32)
+pub laddu_runtime::RuntimeError::Memory(laddu_memory::MemoryError)
+pub laddu_runtime::RuntimeError::MissingEventColumn(alloc::string::String)
+pub laddu_runtime::RuntimeError::MissingEventScalar(alloc::string::String)
+pub laddu_runtime::RuntimeError::Parameter(alloc::string::String)
+pub laddu_runtime::RuntimeError::Reduction(laddu_compile::reduction::ReductionError)
+pub laddu_runtime::RuntimeError::SingularMatrix(usize)
+pub laddu_runtime::RuntimeError::TypeMismatch
+pub laddu_runtime::RuntimeError::TypeMismatch::actual: &'static str
+pub laddu_runtime::RuntimeError::TypeMismatch::expected: &'static str
+pub laddu_runtime::RuntimeError::TypeMismatch::index: usize
+pub laddu_runtime::RuntimeError::Wgpu(alloc::string::String)
+impl core::clone::Clone for laddu_runtime::RuntimeError
+pub fn laddu_runtime::RuntimeError::clone(&self) -> laddu_runtime::RuntimeError
+impl core::cmp::PartialEq for laddu_runtime::RuntimeError
+pub fn laddu_runtime::RuntimeError::eq(&self, &laddu_runtime::RuntimeError) -> bool
+impl core::convert::From<laddu_compile::reduction::ReductionError> for laddu_runtime::RuntimeError
+pub fn laddu_runtime::RuntimeError::from(laddu_compile::reduction::ReductionError) -> Self
+impl core::convert::From<laddu_memory::MemoryError> for laddu_runtime::RuntimeError
+pub fn laddu_runtime::RuntimeError::from(laddu_memory::MemoryError) -> Self
+impl core::convert::From<laddu_runtime::ExecutionError> for laddu_runtime::RuntimeError
+pub fn laddu_runtime::RuntimeError::from(laddu_runtime::ExecutionError) -> Self
+impl core::error::Error for laddu_runtime::RuntimeError
+pub fn laddu_runtime::RuntimeError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
+impl core::fmt::Debug for laddu_runtime::RuntimeError
+pub fn laddu_runtime::RuntimeError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for laddu_runtime::RuntimeError
+pub fn laddu_runtime::RuntimeError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for laddu_runtime::RuntimeError
+pub enum laddu_runtime::ThreadPolicy
+pub laddu_runtime::ThreadPolicy::Auto
+pub laddu_runtime::ThreadPolicy::Fixed(usize)
+pub laddu_runtime::ThreadPolicy::Serial
+impl core::clone::Clone for laddu_runtime::ThreadPolicy
+pub fn laddu_runtime::ThreadPolicy::clone(&self) -> laddu_runtime::ThreadPolicy
+impl core::cmp::Eq for laddu_runtime::ThreadPolicy
+impl core::cmp::PartialEq for laddu_runtime::ThreadPolicy
+pub fn laddu_runtime::ThreadPolicy::eq(&self, &laddu_runtime::ThreadPolicy) -> bool
+impl core::default::Default for laddu_runtime::ThreadPolicy
+pub fn laddu_runtime::ThreadPolicy::default() -> laddu_runtime::ThreadPolicy
+impl core::fmt::Debug for laddu_runtime::ThreadPolicy
+pub fn laddu_runtime::ThreadPolicy::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for laddu_runtime::ThreadPolicy
+impl core::marker::StructuralPartialEq for laddu_runtime::ThreadPolicy
+impl serde_core::ser::Serialize for laddu_runtime::ThreadPolicy
+pub fn laddu_runtime::ThreadPolicy::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for laddu_runtime::ThreadPolicy
+pub fn laddu_runtime::ThreadPolicy::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct laddu_runtime::BinSpec
+impl laddu_runtime::BinSpec
+pub fn laddu_runtime::BinSpec::bin_count(&self) -> usize
+pub fn laddu_runtime::BinSpec::edges(impl core::iter::traits::collect::IntoIterator<Item = f64>) -> laddu_runtime::RuntimeResult<Self>
+pub fn laddu_runtime::BinSpec::edges_slice(&self) -> &[f64]
+pub fn laddu_runtime::BinSpec::uniform(usize, f64, f64) -> laddu_runtime::RuntimeResult<Self>
+impl core::clone::Clone for laddu_runtime::BinSpec
+pub fn laddu_runtime::BinSpec::clone(&self) -> laddu_runtime::BinSpec
+impl core::cmp::PartialEq for laddu_runtime::BinSpec
+pub fn laddu_runtime::BinSpec::eq(&self, &laddu_runtime::BinSpec) -> bool
+impl core::fmt::Debug for laddu_runtime::BinSpec
+pub fn laddu_runtime::BinSpec::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for laddu_runtime::BinSpec
+impl serde_core::ser::Serialize for laddu_runtime::BinSpec
+pub fn laddu_runtime::BinSpec::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for laddu_runtime::BinSpec
+pub fn laddu_runtime::BinSpec::deserialize<D>(D) -> core::result::Result<Self, <D as serde_core::de::Deserializer>::Error> where D: serde_core::de::Deserializer<'de>
+pub struct laddu_runtime::CpuBackend
+impl laddu_runtime::CpuBackend
+pub fn laddu_runtime::CpuBackend::prepare(&self, &laddu_compile::model::CompiledModel) -> laddu_runtime::CpuPlan
+pub fn laddu_runtime::CpuBackend::prepare_for_execution(&self, &laddu_compile::model::CompiledModel, &laddu_runtime::Execution) -> laddu_runtime::RuntimeResult<laddu_runtime::CpuPlan>
+pub fn laddu_runtime::CpuBackend::prepare_with_autodiff_mode(&self, &laddu_compile::model::CompiledModel, laddu_autodiff::plan::AutodiffMode) -> laddu_autodiff::error::AutodiffResult<laddu_runtime::CpuPlan>
+pub fn laddu_runtime::CpuBackend::prepare_with_execution_mode(&self, &laddu_compile::model::CompiledModel, laddu_runtime::CpuExecutionMode) -> laddu_runtime::CpuPlan
+pub fn laddu_runtime::CpuBackend::prepare_with_modes(&self, &laddu_compile::model::CompiledModel, laddu_autodiff::plan::AutodiffMode, laddu_runtime::CpuExecutionMode) -> laddu_autodiff::error::AutodiffResult<laddu_runtime::CpuPlan>
+impl core::clone::Clone for laddu_runtime::CpuBackend
+pub fn laddu_runtime::CpuBackend::clone(&self) -> laddu_runtime::CpuBackend
+impl core::default::Default for laddu_runtime::CpuBackend
+pub fn laddu_runtime::CpuBackend::default() -> laddu_runtime::CpuBackend
+impl core::fmt::Debug for laddu_runtime::CpuBackend
+pub fn laddu_runtime::CpuBackend::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub struct laddu_runtime::CpuBatchCache
+impl laddu_runtime::CpuBatchCache
+pub fn laddu_runtime::CpuBatchCache::is_empty(&self) -> bool
+pub fn laddu_runtime::CpuBatchCache::len(&self) -> usize
+pub fn laddu_runtime::CpuBatchCache::resident_bytes(&self) -> usize
+pub fn laddu_runtime::CpuBatchCache::sum_weights(&self) -> f64
+pub fn laddu_runtime::CpuBatchCache::weights(&self) -> &[f64]
+impl core::clone::Clone for laddu_runtime::CpuBatchCache
+pub fn laddu_runtime::CpuBatchCache::clone(&self) -> laddu_runtime::CpuBatchCache
+impl core::fmt::Debug for laddu_runtime::CpuBatchCache
+pub fn laddu_runtime::CpuBatchCache::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub struct laddu_runtime::CpuCachedBatch
+impl laddu_runtime::CpuCachedBatch
+pub fn laddu_runtime::CpuCachedBatch::cache(&self) -> &laddu_runtime::CpuBatchCache
+pub fn laddu_runtime::CpuCachedBatch::is_empty(&self) -> bool
+pub fn laddu_runtime::CpuCachedBatch::len(&self) -> usize
+pub fn laddu_runtime::CpuCachedBatch::resident_bytes(&self) -> usize
+pub fn laddu_runtime::CpuCachedBatch::sum_weights(&self) -> f64
+pub fn laddu_runtime::CpuCachedBatch::weights(&self) -> &[f64]
+impl core::clone::Clone for laddu_runtime::CpuCachedBatch
+pub fn laddu_runtime::CpuCachedBatch::clone(&self) -> laddu_runtime::CpuCachedBatch
+impl core::fmt::Debug for laddu_runtime::CpuCachedBatch
+pub fn laddu_runtime::CpuCachedBatch::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub struct laddu_runtime::CpuCachedDataset
+impl laddu_runtime::CpuCachedDataset
+pub fn laddu_runtime::CpuCachedDataset::batches(&self) -> &[laddu_runtime::CpuCachedBatch]
+pub fn laddu_runtime::CpuCachedDataset::is_empty(&self) -> bool
+pub fn laddu_runtime::CpuCachedDataset::len(&self) -> usize
+pub fn laddu_runtime::CpuCachedDataset::resident_bytes(&self) -> usize
+pub fn laddu_runtime::CpuCachedDataset::sum_weights(&self) -> f64
+impl core::clone::Clone for laddu_runtime::CpuCachedDataset
+pub fn laddu_runtime::CpuCachedDataset::clone(&self) -> laddu_runtime::CpuCachedDataset
+impl core::default::Default for laddu_runtime::CpuCachedDataset
+pub fn laddu_runtime::CpuCachedDataset::default() -> laddu_runtime::CpuCachedDataset
+impl core::fmt::Debug for laddu_runtime::CpuCachedDataset
+pub fn laddu_runtime::CpuCachedDataset::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub struct laddu_runtime::CpuOptions
+pub laddu_runtime::CpuOptions::jit: laddu_runtime::JitPolicy
+pub laddu_runtime::CpuOptions::threads: laddu_runtime::ThreadPolicy
+impl core::clone::Clone for laddu_runtime::CpuOptions
+pub fn laddu_runtime::CpuOptions::clone(&self) -> laddu_runtime::CpuOptions
+impl core::cmp::Eq for laddu_runtime::CpuOptions
+impl core::cmp::PartialEq for laddu_runtime::CpuOptions
+pub fn laddu_runtime::CpuOptions::eq(&self, &laddu_runtime::CpuOptions) -> bool
+impl core::default::Default for laddu_runtime::CpuOptions
+pub fn laddu_runtime::CpuOptions::default() -> laddu_runtime::CpuOptions
+impl core::fmt::Debug for laddu_runtime::CpuOptions
+pub fn laddu_runtime::CpuOptions::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for laddu_runtime::CpuOptions
+impl serde_core::ser::Serialize for laddu_runtime::CpuOptions
+pub fn laddu_runtime::CpuOptions::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for laddu_runtime::CpuOptions
+pub fn laddu_runtime::CpuOptions::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct laddu_runtime::CpuPlan
+impl laddu_runtime::CpuPlan
+pub fn laddu_runtime::CpuPlan::cache_dataset(&self, &laddu_data::data::dataset::Dataset) -> laddu_runtime::RuntimeResult<laddu_runtime::CpuCachedDataset>
+pub fn laddu_runtime::CpuPlan::cache_memory_estimate(&self, usize) -> usize
+pub fn laddu_runtime::CpuPlan::evaluate_batch(&self, &laddu_expr::parameters::ParamValues, &laddu_data::data::event::EventBatch) -> laddu_runtime::RuntimeResult<alloc::vec::Vec<num_complex::Complex64>>
+pub fn laddu_runtime::CpuPlan::evaluate_batch_with_gradient(&self, &laddu_expr::parameters::ParamValues, &laddu_data::data::event::EventBatch) -> laddu_runtime::RuntimeResult<alloc::vec::Vec<laddu_runtime::ValueGradient>>
+pub fn laddu_runtime::CpuPlan::evaluate_cache_row_with_gradient(&self, &laddu_expr::parameters::ParamValues, &laddu_runtime::CpuBatchCache, usize) -> laddu_runtime::RuntimeResult<laddu_runtime::ValueGradient>
+pub fn laddu_runtime::CpuPlan::evaluate_cache_with_gradient(&self, &laddu_expr::parameters::ParamValues, &laddu_runtime::CpuBatchCache) -> laddu_runtime::RuntimeResult<alloc::vec::Vec<laddu_runtime::ValueGradient>>
+pub fn laddu_runtime::CpuPlan::evaluate_cached_dataset(&self, &laddu_expr::parameters::ParamValues, &laddu_runtime::CpuCachedDataset) -> laddu_runtime::RuntimeResult<alloc::vec::Vec<num_complex::Complex64>>
+pub fn laddu_runtime::CpuPlan::evaluate_cached_dataset_with_gradient(&self, &laddu_expr::parameters::ParamValues, &laddu_runtime::CpuCachedDataset) -> laddu_runtime::RuntimeResult<alloc::vec::Vec<laddu_runtime::ValueGradient>>
+pub fn laddu_runtime::CpuPlan::prepare_dataset(&self, &laddu_runtime::Execution, &laddu_data::data::dataset::Dataset) -> laddu_runtime::RuntimeResult<laddu_runtime::CpuPreparedDataset>
+pub fn laddu_runtime::CpuPlan::reduce(&self, &laddu_runtime::Execution, &laddu_expr::parameters::ParamValues, &laddu_runtime::CpuPreparedDataset, laddu_compile::reduction::ReductionPlan) -> laddu_runtime::RuntimeResult<f64>
+pub fn laddu_runtime::CpuPlan::reduce_with_gradient(&self, &laddu_runtime::Execution, &laddu_expr::parameters::ParamValues, &laddu_runtime::CpuPreparedDataset, laddu_compile::reduction::ReductionPlan) -> laddu_runtime::RuntimeResult<laddu_runtime::ReductionEvaluation>
+impl laddu_runtime::CpuPlan
+pub fn laddu_runtime::CpuPlan::cache_event_batch(&self, &laddu_data::data::event::EventBatch) -> laddu_runtime::RuntimeResult<laddu_runtime::CpuBatchCache>
+pub fn laddu_runtime::CpuPlan::cache_plan(&self) -> &laddu_compile::model::CachePlan
+pub fn laddu_runtime::CpuPlan::evaluate(&self, &laddu_expr::parameters::ParamValues) -> laddu_runtime::RuntimeResult<num_complex::Complex64>
+pub fn laddu_runtime::CpuPlan::evaluate_cache(&self, &laddu_expr::parameters::ParamValues, &laddu_runtime::CpuBatchCache) -> laddu_runtime::RuntimeResult<alloc::vec::Vec<num_complex::Complex64>>
+pub fn laddu_runtime::CpuPlan::evaluate_cache_row(&self, &laddu_expr::parameters::ParamValues, &laddu_runtime::CpuBatchCache, usize) -> laddu_runtime::RuntimeResult<num_complex::Complex64>
+pub fn laddu_runtime::CpuPlan::evaluate_with_event(&self, &laddu_expr::parameters::ParamValues, &impl laddu_runtime::EventLookup) -> laddu_runtime::RuntimeResult<num_complex::Complex64>
+pub fn laddu_runtime::CpuPlan::evaluate_with_event_and_gradient(&self, &laddu_expr::parameters::ParamValues, &impl laddu_runtime::EventLookup) -> laddu_runtime::RuntimeResult<laddu_runtime::ValueGradient>
+pub fn laddu_runtime::CpuPlan::evaluate_with_gradient(&self, &laddu_expr::parameters::ParamValues) -> laddu_runtime::RuntimeResult<laddu_runtime::ValueGradient>
+pub fn laddu_runtime::CpuPlan::free_parameter_count(&self) -> usize
+pub fn laddu_runtime::CpuPlan::parameter_count(&self) -> usize
+impl core::clone::Clone for laddu_runtime::CpuPlan
+pub fn laddu_runtime::CpuPlan::clone(&self) -> laddu_runtime::CpuPlan
+impl core::fmt::Debug for laddu_runtime::CpuPlan
+pub fn laddu_runtime::CpuPlan::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub struct laddu_runtime::DatasetBin
+impl laddu_runtime::DatasetBin
+pub fn laddu_runtime::DatasetBin::dataset(&self) -> &laddu_data::data::dataset::Dataset
+pub fn laddu_runtime::DatasetBin::index(&self) -> usize
+pub fn laddu_runtime::DatasetBin::into_dataset(self) -> laddu_data::data::dataset::Dataset
+pub fn laddu_runtime::DatasetBin::lower(&self) -> f64
+pub fn laddu_runtime::DatasetBin::upper(&self) -> f64
+impl core::clone::Clone for laddu_runtime::DatasetBin
+pub fn laddu_runtime::DatasetBin::clone(&self) -> laddu_runtime::DatasetBin
+pub struct laddu_runtime::Execution
+impl laddu_runtime::Execution
+pub fn laddu_runtime::Execution::autodiff_mode(&self) -> laddu_autodiff::plan::AutodiffMode
+pub fn laddu_runtime::Execution::device_memory(&self) -> core::option::Option<&laddu_memory::MemoryPool>
+pub fn laddu_runtime::Execution::distributed<C>(laddu_runtime::ExecutionOptions, &C) -> laddu_runtime::RuntimeResult<Self> where C: mpi::topology::Communicator
+pub fn laddu_runtime::Execution::host_memory(&self) -> &laddu_memory::MemoryPool
+pub fn laddu_runtime::Execution::is_distributed(&self) -> bool
+pub fn laddu_runtime::Execution::jit_policy(&self) -> laddu_runtime::JitPolicy
+pub fn laddu_runtime::Execution::local(laddu_runtime::ExecutionOptions) -> laddu_runtime::RuntimeResult<Self>
+pub fn laddu_runtime::Execution::memory_decisions(&self) -> alloc::vec::Vec<laddu_memory::MemoryDecision>
+pub fn laddu_runtime::Execution::memory_pool_reports(&self) -> alloc::vec::Vec<laddu_memory::MemoryPoolReport>
+pub fn laddu_runtime::Execution::memory_report(&self) -> laddu_memory::MemoryReport
+pub fn laddu_runtime::Execution::memory_state(&self) -> &laddu_memory::MemoryState
+pub fn laddu_runtime::Execution::normalization_mode(&self) -> laddu_runtime::NormalizationMode
+pub fn laddu_runtime::Execution::nranks(&self) -> usize
+pub fn laddu_runtime::Execution::partitioning(&self) -> laddu_data::io::Partitioning
+pub fn laddu_runtime::Execution::precision(&self) -> laddu_runtime::Precision
+pub fn laddu_runtime::Execution::rank(&self) -> usize
+pub fn laddu_runtime::Execution::record_memory_decision(&self, laddu_memory::MemoryDecision)
+pub fn laddu_runtime::Execution::requested_device(&self) -> &laddu_runtime::Device
+pub fn laddu_runtime::Execution::thread_policy(&self) -> laddu_runtime::ThreadPolicy
+impl core::clone::Clone for laddu_runtime::Execution
+pub fn laddu_runtime::Execution::clone(&self) -> laddu_runtime::Execution
+impl core::default::Default for laddu_runtime::Execution
+pub fn laddu_runtime::Execution::default() -> Self
+impl core::fmt::Debug for laddu_runtime::Execution
+pub fn laddu_runtime::Execution::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub struct laddu_runtime::ExecutionOptions
+pub laddu_runtime::ExecutionOptions::autodiff: laddu_autodiff::plan::AutodiffMode
+pub laddu_runtime::ExecutionOptions::device: laddu_runtime::Device
+pub laddu_runtime::ExecutionOptions::memory: laddu_memory::MemoryPlan
+pub laddu_runtime::ExecutionOptions::normalization: laddu_runtime::NormalizationMode
+pub laddu_runtime::ExecutionOptions::partitioning: laddu_data::io::Partitioning
+pub laddu_runtime::ExecutionOptions::precision: laddu_runtime::Precision
+impl core::clone::Clone for laddu_runtime::ExecutionOptions
+pub fn laddu_runtime::ExecutionOptions::clone(&self) -> laddu_runtime::ExecutionOptions
+impl core::cmp::PartialEq for laddu_runtime::ExecutionOptions
+pub fn laddu_runtime::ExecutionOptions::eq(&self, &laddu_runtime::ExecutionOptions) -> bool
+impl core::default::Default for laddu_runtime::ExecutionOptions
+pub fn laddu_runtime::ExecutionOptions::default() -> laddu_runtime::ExecutionOptions
+impl core::fmt::Debug for laddu_runtime::ExecutionOptions
+pub fn laddu_runtime::ExecutionOptions::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for laddu_runtime::ExecutionOptions
+impl serde_core::ser::Serialize for laddu_runtime::ExecutionOptions
+pub fn laddu_runtime::ExecutionOptions::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for laddu_runtime::ExecutionOptions
+pub fn laddu_runtime::ExecutionOptions::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct laddu_runtime::GpuOptions
+pub laddu_runtime::GpuOptions::backend: laddu_runtime::GpuBackend
+pub laddu_runtime::GpuOptions::device: laddu_runtime::GpuDeviceSelector
+impl core::clone::Clone for laddu_runtime::GpuOptions
+pub fn laddu_runtime::GpuOptions::clone(&self) -> laddu_runtime::GpuOptions
+impl core::cmp::Eq for laddu_runtime::GpuOptions
+impl core::cmp::PartialEq for laddu_runtime::GpuOptions
+pub fn laddu_runtime::GpuOptions::eq(&self, &laddu_runtime::GpuOptions) -> bool
+impl core::default::Default for laddu_runtime::GpuOptions
+pub fn laddu_runtime::GpuOptions::default() -> laddu_runtime::GpuOptions
+impl core::fmt::Debug for laddu_runtime::GpuOptions
+pub fn laddu_runtime::GpuOptions::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for laddu_runtime::GpuOptions
+impl serde_core::ser::Serialize for laddu_runtime::GpuOptions
+pub fn laddu_runtime::GpuOptions::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for laddu_runtime::GpuOptions
+pub fn laddu_runtime::GpuOptions::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct laddu_runtime::PreparedDatasetStats
+impl laddu_runtime::PreparedDatasetStats
+pub fn laddu_runtime::PreparedDatasetStats::global_events(&self) -> usize
+pub fn laddu_runtime::PreparedDatasetStats::local_batches(&self) -> usize
+pub fn laddu_runtime::PreparedDatasetStats::local_events(&self) -> usize
+pub fn laddu_runtime::PreparedDatasetStats::resident_bytes(&self) -> usize
+pub fn laddu_runtime::PreparedDatasetStats::storage(&self) -> laddu_data::data::dataset::CacheStorage
+pub fn laddu_runtime::PreparedDatasetStats::sum_weights(&self) -> f64
+impl core::clone::Clone for laddu_runtime::PreparedDatasetStats
+pub fn laddu_runtime::PreparedDatasetStats::clone(&self) -> laddu_runtime::PreparedDatasetStats
+impl core::cmp::PartialEq for laddu_runtime::PreparedDatasetStats
+pub fn laddu_runtime::PreparedDatasetStats::eq(&self, &laddu_runtime::PreparedDatasetStats) -> bool
+impl core::fmt::Debug for laddu_runtime::PreparedDatasetStats
+pub fn laddu_runtime::PreparedDatasetStats::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for laddu_runtime::PreparedDatasetStats
+impl core::marker::StructuralPartialEq for laddu_runtime::PreparedDatasetStats
+pub struct laddu_runtime::PreparedNormalization
+impl laddu_runtime::PreparedNormalization
+pub fn laddu_runtime::PreparedNormalization::diagnostics(&self) -> laddu_runtime::PreparedNormalizationDiagnostics
+pub fn laddu_runtime::PreparedNormalization::prepare(&laddu_compile::model::CompiledModel, &laddu_runtime::PreparedModel, &laddu_data::data::dataset::Dataset, &laddu_runtime::Execution) -> laddu_runtime::RuntimeResult<core::option::Option<alloc::sync::Arc<Self>>>
+pub fn laddu_runtime::PreparedNormalization::resident_bytes(&self) -> usize
+pub fn laddu_runtime::PreparedNormalization::stats(&self) -> &laddu_runtime::PreparedDatasetStats
+pub fn laddu_runtime::PreparedNormalization::value(&self, &laddu_expr::parameters::ParamValues, &laddu_runtime::Execution) -> laddu_runtime::RuntimeResult<f64>
+pub fn laddu_runtime::PreparedNormalization::value_gradient(&self, &laddu_expr::parameters::ParamValues, &laddu_runtime::Execution) -> laddu_runtime::RuntimeResult<(f64, alloc::vec::Vec<f64>)>
+impl core::fmt::Debug for laddu_runtime::PreparedNormalization
+pub fn laddu_runtime::PreparedNormalization::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub struct laddu_runtime::PreparedNormalizationDiagnostics
+impl laddu_runtime::PreparedNormalizationDiagnostics
+pub fn laddu_runtime::PreparedNormalizationDiagnostics::cache_hit(&self) -> bool
+pub fn laddu_runtime::PreparedNormalizationDiagnostics::compiler(&self) -> &laddu_compile::normalization::NormalizationDiagnostics
+pub fn laddu_runtime::PreparedNormalizationDiagnostics::preparation_passes(&self) -> usize
+pub fn laddu_runtime::PreparedNormalizationDiagnostics::retained_bytes(&self) -> usize
+pub fn laddu_runtime::PreparedNormalizationDiagnostics::strategy(&self) -> laddu_compile::normalization::NormalizationStrategy
+pub fn laddu_runtime::PreparedNormalizationDiagnostics::tag_projection_reused_parent(&self) -> bool
+impl core::clone::Clone for laddu_runtime::PreparedNormalizationDiagnostics
+pub fn laddu_runtime::PreparedNormalizationDiagnostics::clone(&self) -> laddu_runtime::PreparedNormalizationDiagnostics
+impl core::cmp::Eq for laddu_runtime::PreparedNormalizationDiagnostics
+impl core::cmp::PartialEq for laddu_runtime::PreparedNormalizationDiagnostics
+pub fn laddu_runtime::PreparedNormalizationDiagnostics::eq(&self, &laddu_runtime::PreparedNormalizationDiagnostics) -> bool
+impl core::fmt::Debug for laddu_runtime::PreparedNormalizationDiagnostics
+pub fn laddu_runtime::PreparedNormalizationDiagnostics::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for laddu_runtime::PreparedNormalizationDiagnostics
+pub struct laddu_runtime::ReductionEvaluation
+impl laddu_runtime::ReductionEvaluation
+pub fn laddu_runtime::ReductionEvaluation::gradient(&self) -> &[f64]
+pub fn laddu_runtime::ReductionEvaluation::into_parts(self) -> (f64, alloc::vec::Vec<f64>)
+pub fn laddu_runtime::ReductionEvaluation::value(&self) -> f64
+impl core::clone::Clone for laddu_runtime::ReductionEvaluation
+pub fn laddu_runtime::ReductionEvaluation::clone(&self) -> laddu_runtime::ReductionEvaluation
+impl core::cmp::PartialEq for laddu_runtime::ReductionEvaluation
+pub fn laddu_runtime::ReductionEvaluation::eq(&self, &laddu_runtime::ReductionEvaluation) -> bool
+impl core::fmt::Debug for laddu_runtime::ReductionEvaluation
+pub fn laddu_runtime::ReductionEvaluation::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for laddu_runtime::ReductionEvaluation
+pub struct laddu_runtime::ValueGradient
+impl laddu_runtime::ValueGradient
+pub fn laddu_runtime::ValueGradient::gradient(&self) -> &[num_complex::Complex64]
+pub fn laddu_runtime::ValueGradient::into_parts(self) -> (num_complex::Complex64, alloc::vec::Vec<num_complex::Complex64>)
+pub fn laddu_runtime::ValueGradient::value(&self) -> num_complex::Complex64
+impl core::clone::Clone for laddu_runtime::ValueGradient
+pub fn laddu_runtime::ValueGradient::clone(&self) -> laddu_runtime::ValueGradient
+impl core::cmp::PartialEq for laddu_runtime::ValueGradient
+pub fn laddu_runtime::ValueGradient::eq(&self, &laddu_runtime::ValueGradient) -> bool
+impl core::fmt::Debug for laddu_runtime::ValueGradient
+pub fn laddu_runtime::ValueGradient::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for laddu_runtime::ValueGradient
+pub trait laddu_runtime::DatasetExprExt
+pub fn laddu_runtime::DatasetExprExt::bin_by(&self, &laddu_expr::expression::Expr, laddu_runtime::BinSpec, &laddu_runtime::Execution) -> laddu_runtime::RuntimeResult<alloc::vec::Vec<laddu_runtime::DatasetBin>>
+pub fn laddu_runtime::DatasetExprExt::evaluate_expr(&self, &laddu_expr::expression::Expr, &laddu_runtime::Execution) -> laddu_runtime::RuntimeResult<alloc::vec::Vec<num_complex::Complex64>>
+pub fn laddu_runtime::DatasetExprExt::evaluate_real(&self, &laddu_expr::expression::Expr, &laddu_runtime::Execution) -> laddu_runtime::RuntimeResult<alloc::vec::Vec<f64>>
+pub fn laddu_runtime::DatasetExprExt::select(&self, &laddu_runtime::Predicate, &laddu_runtime::Execution) -> laddu_runtime::RuntimeResult<laddu_data::data::dataset::Dataset>
+impl laddu_runtime::DatasetExprExt for laddu_data::data::dataset::Dataset
+pub fn laddu_data::data::dataset::Dataset::bin_by(&self, &laddu_expr::expression::Expr, laddu_runtime::BinSpec, &laddu_runtime::Execution) -> laddu_runtime::RuntimeResult<alloc::vec::Vec<laddu_runtime::DatasetBin>>
+pub fn laddu_data::data::dataset::Dataset::evaluate_expr(&self, &laddu_expr::expression::Expr, &laddu_runtime::Execution) -> laddu_runtime::RuntimeResult<alloc::vec::Vec<num_complex::Complex64>>
+pub fn laddu_data::data::dataset::Dataset::evaluate_real(&self, &laddu_expr::expression::Expr, &laddu_runtime::Execution) -> laddu_runtime::RuntimeResult<alloc::vec::Vec<f64>>
+pub fn laddu_data::data::dataset::Dataset::select(&self, &laddu_runtime::Predicate, &laddu_runtime::Execution) -> laddu_runtime::RuntimeResult<laddu_data::data::dataset::Dataset>
+pub trait laddu_runtime::EventLookup
+pub fn laddu_runtime::EventLookup::p4_component(&self, &str, laddu_expr::expression::P4Component) -> core::option::Option<f64>
+pub fn laddu_runtime::EventLookup::scalar(&self, &str) -> core::option::Option<f64>
+impl laddu_runtime::EventLookup for std::collections::hash::map::HashMap<alloc::string::String, f64>
+pub fn std::collections::hash::map::HashMap<alloc::string::String, f64>::p4_component(&self, &str, laddu_expr::expression::P4Component) -> core::option::Option<f64>
+pub fn std::collections::hash::map::HashMap<alloc::string::String, f64>::scalar(&self, &str) -> core::option::Option<f64>
+impl<F> laddu_runtime::EventLookup for F where F: for<'a> core::ops::function::Fn(&'a str) -> core::option::Option<f64>
+pub fn F::p4_component(&self, &str, laddu_expr::expression::P4Component) -> core::option::Option<f64>
+pub fn F::scalar(&self, &str) -> core::option::Option<f64>
+pub type laddu_runtime::RuntimeResult<T> = core::result::Result<T, laddu_runtime::RuntimeError>

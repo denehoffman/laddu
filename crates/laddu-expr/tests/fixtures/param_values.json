@@ -1,0 +1,33 @@
+{
+  "layout": {
+    "specs": [
+      {
+        "name": "mass",
+        "state": "Free",
+        "initial": { "Value": 1.25 },
+        "bounds": { "min": 0.0, "max": 2.0 },
+        "periodic": false,
+        "scale": 0.1,
+        "unit": "GeV",
+        "latex": "m",
+        "description": null
+      },
+      {
+        "name": "offset",
+        "state": { "Fixed": -0.5 },
+        "initial": { "Value": -0.5 },
+        "bounds": { "min": null, "max": null },
+        "periodic": false,
+        "scale": null,
+        "unit": null,
+        "latex": null,
+        "description": "fixed background offset"
+      }
+    ],
+    "names": { "mass": 0, "offset": 1 },
+    "free_params": [0],
+    "full_to_free": [0, null],
+    "defaults": [1.25, -0.5]
+  },
+  "values": [1.5, -0.5]
+}

@@ -1,0 +1,201 @@
+pub mod laddu_generation
+pub use laddu_generation::InitialMomentum
+pub use laddu_generation::InitialMomentumResult
+pub use laddu_generation::MassProposal
+pub use laddu_generation::MassProposalResult
+pub use laddu_generation::NamedMass
+pub use laddu_generation::NamedMomentum
+pub use laddu_generation::ProposalResult
+pub use laddu_generation::ProposalRng
+pub use laddu_generation::ScalarProposalResult
+pub use laddu_generation::ScalarSource
+pub use laddu_generation::TComponent
+pub use laddu_generation::TDistribution
+pub use laddu_generation::TwoBodyScattering
+pub use laddu_generation::VertexProposal
+pub enum laddu_generation::EnvelopeKind
+pub laddu_generation::EnvelopeKind::Pilot
+pub laddu_generation::EnvelopeKind::Strict
+impl core::clone::Clone for laddu_generation::EnvelopeKind
+pub fn laddu_generation::EnvelopeKind::clone(&self) -> laddu_generation::EnvelopeKind
+impl core::cmp::Eq for laddu_generation::EnvelopeKind
+impl core::cmp::PartialEq for laddu_generation::EnvelopeKind
+pub fn laddu_generation::EnvelopeKind::eq(&self, &laddu_generation::EnvelopeKind) -> bool
+impl core::fmt::Debug for laddu_generation::EnvelopeKind
+pub fn laddu_generation::EnvelopeKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for laddu_generation::EnvelopeKind
+impl core::marker::StructuralPartialEq for laddu_generation::EnvelopeKind
+impl serde_core::ser::Serialize for laddu_generation::EnvelopeKind
+pub fn laddu_generation::EnvelopeKind::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for laddu_generation::EnvelopeKind
+pub fn laddu_generation::EnvelopeKind::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub enum laddu_generation::EnvelopeMode
+pub laddu_generation::EnvelopeMode::Pilot
+pub laddu_generation::EnvelopeMode::Pilot::proposals: usize
+pub laddu_generation::EnvelopeMode::Pilot::safety_factor: f64
+pub laddu_generation::EnvelopeMode::Strict
+pub laddu_generation::EnvelopeMode::Strict::max_weight: f64
+impl core::clone::Clone for laddu_generation::EnvelopeMode
+pub fn laddu_generation::EnvelopeMode::clone(&self) -> laddu_generation::EnvelopeMode
+impl core::default::Default for laddu_generation::EnvelopeMode
+pub fn laddu_generation::EnvelopeMode::default() -> Self
+impl core::fmt::Debug for laddu_generation::EnvelopeMode
+pub fn laddu_generation::EnvelopeMode::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for laddu_generation::EnvelopeMode
+impl serde_core::ser::Serialize for laddu_generation::EnvelopeMode
+pub fn laddu_generation::EnvelopeMode::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for laddu_generation::EnvelopeMode
+pub fn laddu_generation::EnvelopeMode::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub enum laddu_generation::EnvelopeOverflow
+pub laddu_generation::EnvelopeOverflow::Error
+pub laddu_generation::EnvelopeOverflow::Grow
+pub laddu_generation::EnvelopeOverflow::Grow::safety_factor: f64
+impl core::clone::Clone for laddu_generation::EnvelopeOverflow
+pub fn laddu_generation::EnvelopeOverflow::clone(&self) -> laddu_generation::EnvelopeOverflow
+impl core::cmp::PartialEq for laddu_generation::EnvelopeOverflow
+pub fn laddu_generation::EnvelopeOverflow::eq(&self, &laddu_generation::EnvelopeOverflow) -> bool
+impl core::default::Default for laddu_generation::EnvelopeOverflow
+pub fn laddu_generation::EnvelopeOverflow::default() -> laddu_generation::EnvelopeOverflow
+impl core::fmt::Debug for laddu_generation::EnvelopeOverflow
+pub fn laddu_generation::EnvelopeOverflow::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for laddu_generation::EnvelopeOverflow
+impl core::marker::StructuralPartialEq for laddu_generation::EnvelopeOverflow
+impl serde_core::ser::Serialize for laddu_generation::EnvelopeOverflow
+pub fn laddu_generation::EnvelopeOverflow::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for laddu_generation::EnvelopeOverflow
+pub fn laddu_generation::EnvelopeOverflow::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub enum laddu_generation::GenerationError
+pub laddu_generation::GenerationError::ChannelValidation
+pub laddu_generation::GenerationError::ChannelValidation::source: laddu_physics::error::LadduPhysicsError
+pub laddu_generation::GenerationError::Data(laddu_data::error::LadduDataError)
+pub laddu_generation::GenerationError::EnvelopeOverflow
+pub laddu_generation::GenerationError::EnvelopeOverflow::envelope: f64
+pub laddu_generation::GenerationError::EnvelopeOverflow::index: u64
+pub laddu_generation::GenerationError::EnvelopeOverflow::weight: f64
+pub laddu_generation::GenerationError::Exhausted
+pub laddu_generation::GenerationError::Exhausted::accepted: usize
+pub laddu_generation::GenerationError::Exhausted::proposals: usize
+pub laddu_generation::GenerationError::Exhausted::requested: usize
+pub laddu_generation::GenerationError::InitialState
+pub laddu_generation::GenerationError::InitialState::index: u64
+pub laddu_generation::GenerationError::InitialState::source: laddu_physics::error::LadduPhysicsError
+pub laddu_generation::GenerationError::InvalidChannel(alloc::string::String)
+pub laddu_generation::GenerationError::InvalidConfiguration(alloc::string::String)
+pub laddu_generation::GenerationError::Kinematics
+pub laddu_generation::GenerationError::Kinematics::index: u64
+pub laddu_generation::GenerationError::Kinematics::source: laddu_physics::error::LadduPhysicsError
+pub laddu_generation::GenerationError::MassProposal
+pub laddu_generation::GenerationError::MassProposal::edge: alloc::string::String
+pub laddu_generation::GenerationError::MassProposal::index: u64
+pub laddu_generation::GenerationError::MassProposal::source: laddu_physics::error::LadduPhysicsError
+pub laddu_generation::GenerationError::Model(alloc::string::String)
+pub laddu_generation::GenerationError::Physics(laddu_physics::error::LadduPhysicsError)
+pub laddu_generation::GenerationError::Runtime(laddu_runtime::error::RuntimeError)
+pub laddu_generation::GenerationError::ScalarProposal
+pub laddu_generation::GenerationError::ScalarProposal::column: alloc::string::String
+pub laddu_generation::GenerationError::ScalarProposal::index: u64
+pub laddu_generation::GenerationError::ScalarProposal::source: laddu_physics::error::LadduPhysicsError
+pub laddu_generation::GenerationError::VertexProposal
+pub laddu_generation::GenerationError::VertexProposal::index: u64
+pub laddu_generation::GenerationError::VertexProposal::source: laddu_physics::error::LadduPhysicsError
+pub laddu_generation::GenerationError::VertexProposal::vertex: alloc::string::String
+impl core::convert::From<laddu_data::error::LadduDataError> for laddu_generation::GenerationError
+pub fn laddu_generation::GenerationError::from(laddu_data::error::LadduDataError) -> Self
+impl core::convert::From<laddu_physics::error::LadduPhysicsError> for laddu_generation::GenerationError
+pub fn laddu_generation::GenerationError::from(laddu_physics::error::LadduPhysicsError) -> Self
+impl core::convert::From<laddu_runtime::error::RuntimeError> for laddu_generation::GenerationError
+pub fn laddu_generation::GenerationError::from(laddu_runtime::error::RuntimeError) -> Self
+impl core::error::Error for laddu_generation::GenerationError
+pub fn laddu_generation::GenerationError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
+impl core::fmt::Debug for laddu_generation::GenerationError
+pub fn laddu_generation::GenerationError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for laddu_generation::GenerationError
+pub fn laddu_generation::GenerationError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub struct laddu_generation::ChannelGenerator
+impl laddu_generation::ChannelGenerator
+pub fn laddu_generation::ChannelGenerator::add_scalar(&mut self, impl core::convert::Into<alloc::string::String>, laddu_physics::generation::ScalarSource) -> laddu_generation::GenerationResult<&mut Self>
+pub fn laddu_generation::ChannelGenerator::generate_unweighted_dataset(&self, laddu_generation::UnweightedConfig, &laddu_generation::ModelEvaluator) -> laddu_generation::GenerationResult<(laddu_data::data::dataset::Dataset, laddu_generation::GenerationReport)>
+pub fn laddu_generation::ChannelGenerator::generate_unweighted_to(&self, laddu_generation::UnweightedConfig, &laddu_generation::ModelEvaluator, &mut dyn laddu_data::io::EventSink) -> laddu_generation::GenerationResult<laddu_generation::GenerationReport>
+pub fn laddu_generation::ChannelGenerator::generate_weighted_dataset(&self, laddu_generation::WeightedConfig, core::option::Option<&laddu_generation::ModelEvaluator>) -> laddu_generation::GenerationResult<(laddu_data::data::dataset::Dataset, laddu_generation::GenerationReport)>
+pub fn laddu_generation::ChannelGenerator::generate_weighted_to(&self, laddu_generation::WeightedConfig, core::option::Option<&laddu_generation::ModelEvaluator>, &mut dyn laddu_data::io::EventSink) -> laddu_generation::GenerationResult<laddu_generation::GenerationReport>
+pub fn laddu_generation::ChannelGenerator::new(laddu_physics::channel::Channel) -> laddu_generation::GenerationResult<Self>
+pub fn laddu_generation::ChannelGenerator::with_scalar(self, impl core::convert::Into<alloc::string::String>, laddu_physics::generation::ScalarSource) -> laddu_generation::GenerationResult<Self>
+impl core::convert::TryFrom<laddu_physics::channel::Channel> for laddu_generation::ChannelGenerator
+pub type laddu_generation::ChannelGenerator::Error = laddu_generation::GenerationError
+pub fn laddu_generation::ChannelGenerator::try_from(laddu_physics::channel::Channel) -> core::result::Result<Self, Self::Error>
+impl core::fmt::Debug for laddu_generation::ChannelGenerator
+pub fn laddu_generation::ChannelGenerator::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub struct laddu_generation::GenerationReport
+pub laddu_generation::GenerationReport::actual_high_water_bytes: core::option::Option<u64>
+pub laddu_generation::GenerationReport::chunk_events: usize
+pub laddu_generation::GenerationReport::envelope: core::option::Option<f64>
+pub laddu_generation::GenerationReport::envelope_kind: core::option::Option<laddu_generation::EnvelopeKind>
+pub laddu_generation::GenerationReport::envelope_updates: usize
+pub laddu_generation::GenerationReport::estimated_peak_bytes: u64
+pub laddu_generation::GenerationReport::maximum_weight: f64
+pub laddu_generation::GenerationReport::minimum_weight: f64
+pub laddu_generation::GenerationReport::pilot_proposals: usize
+pub laddu_generation::GenerationReport::produced: usize
+pub laddu_generation::GenerationReport::proposals: usize
+pub laddu_generation::GenerationReport::rejected: usize
+pub laddu_generation::GenerationReport::requested: usize
+pub laddu_generation::GenerationReport::seed: u64
+pub laddu_generation::GenerationReport::sum_squared_weights: f64
+pub laddu_generation::GenerationReport::sum_weights: f64
+impl laddu_generation::GenerationReport
+pub fn laddu_generation::GenerationReport::acceptance_rate(&self) -> f64
+impl core::clone::Clone for laddu_generation::GenerationReport
+pub fn laddu_generation::GenerationReport::clone(&self) -> laddu_generation::GenerationReport
+impl core::default::Default for laddu_generation::GenerationReport
+pub fn laddu_generation::GenerationReport::default() -> laddu_generation::GenerationReport
+impl core::fmt::Debug for laddu_generation::GenerationReport
+pub fn laddu_generation::GenerationReport::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for laddu_generation::GenerationReport
+pub fn laddu_generation::GenerationReport::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for laddu_generation::GenerationReport
+pub fn laddu_generation::GenerationReport::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct laddu_generation::ModelEvaluator
+impl laddu_generation::ModelEvaluator
+pub fn laddu_generation::ModelEvaluator::evaluate_batch(&self, &laddu_data::data::event::EventBatch) -> laddu_generation::GenerationResult<alloc::vec::Vec<f64>>
+pub fn laddu_generation::ModelEvaluator::prepare(&laddu_compile::model::CompiledModel, laddu_expr::parameters::ParamValues, &laddu_runtime::execution::Execution) -> laddu_generation::GenerationResult<Self>
+impl core::clone::Clone for laddu_generation::ModelEvaluator
+pub fn laddu_generation::ModelEvaluator::clone(&self) -> laddu_generation::ModelEvaluator
+impl core::fmt::Debug for laddu_generation::ModelEvaluator
+pub fn laddu_generation::ModelEvaluator::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub struct laddu_generation::UnweightedConfig
+pub laddu_generation::UnweightedConfig::diagnostics: bool
+pub laddu_generation::UnweightedConfig::envelope: laddu_generation::EnvelopeMode
+pub laddu_generation::UnweightedConfig::envelope_overflow: laddu_generation::EnvelopeOverflow
+pub laddu_generation::UnweightedConfig::events: usize
+pub laddu_generation::UnweightedConfig::max_proposals: core::option::Option<usize>
+pub laddu_generation::UnweightedConfig::memory: laddu_memory::MemoryBudget
+pub laddu_generation::UnweightedConfig::seed: u64
+impl laddu_generation::UnweightedConfig
+pub fn laddu_generation::UnweightedConfig::new(usize) -> Self
+pub fn laddu_generation::UnweightedConfig::with_max_proposals(self, usize) -> Self
+impl core::clone::Clone for laddu_generation::UnweightedConfig
+pub fn laddu_generation::UnweightedConfig::clone(&self) -> laddu_generation::UnweightedConfig
+impl core::fmt::Debug for laddu_generation::UnweightedConfig
+pub fn laddu_generation::UnweightedConfig::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for laddu_generation::UnweightedConfig
+impl serde_core::ser::Serialize for laddu_generation::UnweightedConfig
+pub fn laddu_generation::UnweightedConfig::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for laddu_generation::UnweightedConfig
+pub fn laddu_generation::UnweightedConfig::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct laddu_generation::WeightedConfig
+pub laddu_generation::WeightedConfig::diagnostics: bool
+pub laddu_generation::WeightedConfig::events: usize
+pub laddu_generation::WeightedConfig::memory: laddu_memory::MemoryBudget
+pub laddu_generation::WeightedConfig::seed: u64
+impl laddu_generation::WeightedConfig
+pub fn laddu_generation::WeightedConfig::new(usize) -> Self
+impl core::clone::Clone for laddu_generation::WeightedConfig
+pub fn laddu_generation::WeightedConfig::clone(&self) -> laddu_generation::WeightedConfig
+impl core::fmt::Debug for laddu_generation::WeightedConfig
+pub fn laddu_generation::WeightedConfig::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for laddu_generation::WeightedConfig
+impl serde_core::ser::Serialize for laddu_generation::WeightedConfig
+pub fn laddu_generation::WeightedConfig::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for laddu_generation::WeightedConfig
+pub fn laddu_generation::WeightedConfig::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub type laddu_generation::GenerationResult<T> = core::result::Result<T, laddu_generation::GenerationError>

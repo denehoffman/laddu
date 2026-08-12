@@ -1,0 +1,382 @@
+pub mod laddu
+pub use laddu::AmplitudeError
+pub use laddu::AutodiffError
+pub use laddu::BinSpec
+pub use laddu::BinaryOp
+pub use laddu::ColorPreset
+pub use laddu::Comparison
+pub use laddu::CompileError
+pub use laddu::ComponentIndex
+pub use laddu::DatasetBin
+pub use laddu::DatasetExprExt
+pub use laddu::DeviceIdentity
+pub use laddu::DisplayColor
+pub use laddu::Expr
+pub use laddu::ExprError
+pub use laddu::ExprGraph
+pub use laddu::ExprGraphDotDisplay
+pub use laddu::ExprGraphTreeDisplay
+pub use laddu::ExprId
+pub use laddu::ExprMetadata
+pub use laddu::ExprNode
+pub use laddu::ExprNodeKind
+pub use laddu::ExprShape
+pub use laddu::ExprShapeError
+pub use laddu::ExprSourceKind
+pub use laddu::IntervalClosure
+pub use laddu::KernelError
+pub use laddu::LadduDataError
+pub use laddu::LadduPhysicsError
+pub use laddu::LikelihoodError
+pub use laddu::MemoryBudget
+pub use laddu::MemoryDecision
+pub use laddu::MemoryPlan
+pub use laddu::MemoryPoolReport
+pub use laddu::MemoryReport
+pub use laddu::MemoryResource
+pub use laddu::MemoryResourceKind
+pub use laddu::MemoryState
+pub use laddu::NodeSelector
+pub use laddu::NodeStyle
+pub use laddu::NodeStyleRule
+pub use laddu::P4Component
+pub use laddu::Parameter
+pub use laddu::Predicate
+pub use laddu::ProcessMemoryReport
+pub use laddu::RuntimeError
+pub use laddu::UnaryOp
+pub use laddu::acos
+pub use laddu::amplitudes
+pub use laddu::atan2
+pub use laddu::autodiff
+pub use laddu::cis
+pub use laddu::compile
+pub use laddu::complex
+pub use laddu::data
+pub use laddu::dot
+pub use laddu::event_p4_component
+pub use laddu::event_scalar
+pub use laddu::expr
+pub use laddu::fit
+pub use laddu::generation
+pub use laddu::kernel
+pub use laddu::likelihood
+pub use laddu::matmul
+pub use laddu::matrix
+pub use laddu::matrix_from_flat
+pub use laddu::matvec
+pub use laddu::parameter
+pub use laddu::params
+pub use laddu::physics
+pub use laddu::polar_complex
+pub use laddu::runtime
+pub use laddu::solve
+pub use laddu::vector
+pub mod laddu::error
+pub use laddu::error::AmplitudeError
+pub use laddu::error::AutodiffError
+pub use laddu::error::CompileError
+pub use laddu::error::ExprError
+pub use laddu::error::KernelError
+pub use laddu::error::LadduDataError
+pub use laddu::error::LadduPhysicsError
+pub use laddu::error::LikelihoodError
+pub use laddu::error::RuntimeError
+pub enum laddu::error::LadduError
+pub laddu::error::LadduError::Amplitude(laddu_amplitudes::error::AmplitudeError)
+pub laddu::error::LadduError::Autodiff(laddu_autodiff::error::AutodiffError)
+pub laddu::error::LadduError::Compile(laddu_compile::error::CompileError)
+pub laddu::error::LadduError::Data(laddu_data::error::LadduDataError)
+pub laddu::error::LadduError::Expression(laddu_expr::error::ExprError)
+pub laddu::error::LadduError::Kernel(laddu_kernel::error::KernelError)
+pub laddu::error::LadduError::Likelihood(laddu_likelihood::error::LikelihoodError)
+pub laddu::error::LadduError::Physics(laddu_physics::error::LadduPhysicsError)
+pub laddu::error::LadduError::Runtime(laddu_runtime::error::RuntimeError)
+impl core::clone::Clone for laddu::LadduError
+pub fn laddu::LadduError::clone(&self) -> laddu::LadduError
+impl core::convert::From<laddu_amplitudes::error::AmplitudeError> for laddu::LadduError
+pub fn laddu::LadduError::from(laddu_amplitudes::error::AmplitudeError) -> Self
+impl core::convert::From<laddu_autodiff::error::AutodiffError> for laddu::LadduError
+pub fn laddu::LadduError::from(laddu_autodiff::error::AutodiffError) -> Self
+impl core::convert::From<laddu_compile::error::CompileError> for laddu::LadduError
+pub fn laddu::LadduError::from(laddu_compile::error::CompileError) -> Self
+impl core::convert::From<laddu_data::error::LadduDataError> for laddu::LadduError
+pub fn laddu::LadduError::from(laddu_data::error::LadduDataError) -> Self
+impl core::convert::From<laddu_expr::error::ExprError> for laddu::LadduError
+pub fn laddu::LadduError::from(laddu_expr::error::ExprError) -> Self
+impl core::convert::From<laddu_kernel::error::KernelError> for laddu::LadduError
+pub fn laddu::LadduError::from(laddu_kernel::error::KernelError) -> Self
+impl core::convert::From<laddu_likelihood::error::LikelihoodError> for laddu::LadduError
+pub fn laddu::LadduError::from(laddu_likelihood::error::LikelihoodError) -> Self
+impl core::convert::From<laddu_physics::error::LadduPhysicsError> for laddu::LadduError
+pub fn laddu::LadduError::from(laddu_physics::error::LadduPhysicsError) -> Self
+impl core::convert::From<laddu_runtime::error::RuntimeError> for laddu::LadduError
+pub fn laddu::LadduError::from(laddu_runtime::error::RuntimeError) -> Self
+impl core::error::Error for laddu::LadduError
+pub fn laddu::LadduError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
+impl core::fmt::Debug for laddu::LadduError
+pub fn laddu::LadduError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for laddu::LadduError
+pub fn laddu::LadduError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub type laddu::error::LadduResult<T> = core::result::Result<T, laddu::LadduError>
+pub mod laddu::prelude
+pub use laddu::prelude::<<laddu_physics::math::*>>
+pub use laddu::prelude::<<laddu_physics::quantum::*>>
+pub use laddu::prelude::AmplitudeError
+pub use laddu::prelude::AmplitudeResult
+pub use laddu::prelude::AutodiffMode
+pub use laddu::prelude::Axis
+pub use laddu::prelude::BinSpec
+pub use laddu::prelude::BinaryOp
+pub use laddu::prelude::BinnedEstimate
+pub use laddu::prelude::BootstrapFitError
+pub use laddu::prelude::Bounds
+pub use laddu::prelude::CacheStorage
+pub use laddu::prelude::Channel
+pub use laddu::prelude::ChannelGenerator
+pub use laddu::prelude::ColorPreset
+pub use laddu::prelude::ColumnType
+pub use laddu::prelude::Comparison
+pub use laddu::prelude::CompileError
+pub use laddu::prelude::CompileOptions
+pub use laddu::prelude::CompileResult
+pub use laddu::prelude::CompiledModel
+pub use laddu::prelude::ComponentIndex
+pub use laddu::prelude::CpuOptions
+pub use laddu::prelude::CrossSection
+pub use laddu::prelude::CrossSectionDiagnostics
+pub use laddu::prelude::CrossSectionIntegrals
+pub use laddu::prelude::Dataset
+pub use laddu::prelude::DatasetBin
+pub use laddu::prelude::DatasetExprExt
+pub use laddu::prelude::Device
+pub use laddu::prelude::DeviceIdentity
+pub use laddu::prelude::DifferentialCrossSection
+pub use laddu::prelude::DisplayColor
+pub use laddu::prelude::Edge
+pub use laddu::prelude::EdgeHandle
+pub use laddu::prelude::Ensemble
+pub use laddu::prelude::EnvelopeKind
+pub use laddu::prelude::EnvelopeMode
+pub use laddu::prelude::EnvelopeOverflow
+pub use laddu::prelude::Estimate
+pub use laddu::prelude::EventBatch
+pub use laddu::prelude::EventBatchBuilder
+pub use laddu::prelude::EventSink
+pub use laddu::prelude::EventSource
+pub use laddu::prelude::Execution
+pub use laddu::prelude::ExecutionError
+pub use laddu::prelude::ExecutionOptions
+pub use laddu::prelude::Expr
+pub use laddu::prelude::ExprGraph
+pub use laddu::prelude::ExprGraphDotDisplay
+pub use laddu::prelude::ExprGraphTreeDisplay
+pub use laddu::prelude::ExprId
+pub use laddu::prelude::ExprMetadata
+pub use laddu::prelude::ExprNode
+pub use laddu::prelude::ExprNodeKind
+pub use laddu::prelude::ExprShape
+pub use laddu::prelude::ExprShapeError
+pub use laddu::prelude::ExprSourceKind
+pub use laddu::prelude::ExtendedNllTerm
+pub use laddu::prelude::FitError
+pub use laddu::prelude::FitProblem
+pub use laddu::prelude::FitResult
+pub use laddu::prelude::FreeParamId
+pub use laddu::prelude::GenerationError
+pub use laddu::prelude::GenerationReport
+pub use laddu::prelude::GenerationResult
+pub use laddu::prelude::GpuBackend
+pub use laddu::prelude::GpuDeviceSelector
+pub use laddu::prelude::GpuOptions
+pub use laddu::prelude::Histogram
+pub use laddu::prelude::InitialMomentum
+pub use laddu::prelude::InitialMomentumResult
+pub use laddu::prelude::InitialSpec
+pub use laddu::prelude::IntervalClosure
+pub use laddu::prelude::JitPolicy
+pub use laddu::prelude::KMatrixError
+pub use laddu::prelude::KMatrixResult
+pub use laddu::prelude::LadduDataError
+pub use laddu::prelude::LadduDataResult
+pub use laddu::prelude::LadduPhysicsError
+pub use laddu::prelude::LadduPhysicsResult
+pub use laddu::prelude::LassoPenalty
+pub use laddu::prelude::Likelihood
+pub use laddu::prelude::LikelihoodError
+pub use laddu::prelude::LikelihoodEvaluation
+pub use laddu::prelude::LikelihoodName
+pub use laddu::prelude::LikelihoodProjection
+pub use laddu::prelude::LikelihoodResult
+pub use laddu::prelude::LikelihoodTerm
+pub use laddu::prelude::MassProposal
+pub use laddu::prelude::MemoryBudget
+pub use laddu::prelude::MemoryDecision
+pub use laddu::prelude::MemoryPlan
+pub use laddu::prelude::MemoryPolicy
+pub use laddu::prelude::MemoryPoolReport
+pub use laddu::prelude::MemoryReport
+pub use laddu::prelude::MemoryResource
+pub use laddu::prelude::MemoryResourceKind
+pub use laddu::prelude::MemorySink
+pub use laddu::prelude::MemorySource
+pub use laddu::prelude::MemoryState
+pub use laddu::prelude::ModelEvaluator
+pub use laddu::prelude::NamedMass
+pub use laddu::prelude::NamedMomentum
+pub use laddu::prelude::NllTerm
+pub use laddu::prelude::NodeSelector
+pub use laddu::prelude::NodeStyle
+pub use laddu::prelude::NodeStyleRule
+pub use laddu::prelude::Objective
+pub use laddu::prelude::OwnedEvent
+pub use laddu::prelude::P4Component
+pub use laddu::prelude::ParamError
+pub use laddu::prelude::ParamId
+pub use laddu::prelude::ParamLayout
+pub use laddu::prelude::ParamRegistry
+pub use laddu::prelude::ParamState
+pub use laddu::prelude::ParamValues
+pub use laddu::prelude::Parameter
+pub use laddu::prelude::ParquetSink
+pub use laddu::prelude::ParquetSource
+pub use laddu::prelude::Partitioning
+pub use laddu::prelude::Precision
+pub use laddu::prelude::Predicate
+pub use laddu::prelude::ProcessMemoryReport
+pub use laddu::prelude::ProposalResult
+pub use laddu::prelude::ProposalRng
+pub use laddu::prelude::ReadPlan
+pub use laddu::prelude::RealVec3
+pub use laddu::prelude::RealVec4
+pub use laddu::prelude::RidgePenalty
+pub use laddu::prelude::RootSink
+pub use laddu::prelude::RootSource
+pub use laddu::prelude::RuntimeError
+pub use laddu::prelude::RuntimeResult
+pub use laddu::prelude::ScalarProposalResult
+pub use laddu::prelude::ScalarSource
+pub use laddu::prelude::Schema
+pub use laddu::prelude::SourceCapabilities
+pub use laddu::prelude::StochasticFitProblem
+pub use laddu::prelude::StochasticObjective
+pub use laddu::prelude::TComponent
+pub use laddu::prelude::TDistribution
+pub use laddu::prelude::ThreadPolicy
+pub use laddu::prelude::TwoBodyScattering
+pub use laddu::prelude::UnaryOp
+pub use laddu::prelude::UnweightedConfig
+pub use laddu::prelude::Vec3
+pub use laddu::prelude::Vec4
+pub use laddu::prelude::Vertex
+pub use laddu::prelude::VertexHandle
+pub use laddu::prelude::VertexProposal
+pub use laddu::prelude::VertexView
+pub use laddu::prelude::WeightedConfig
+pub use laddu::prelude::WritePlan
+pub use laddu::prelude::acos
+pub use laddu::prelude::atan2
+pub use laddu::prelude::blatt_weisskopf_barriers
+pub use laddu::prelude::breit_wigner
+pub use laddu::prelude::cis
+pub use laddu::prelude::clebsch_gordan
+pub use laddu::prelude::complex
+pub use laddu::prelude::dot
+pub use laddu::prelude::event_p4_component
+pub use laddu::prelude::event_scalar
+pub use laddu::prelude::f_vector
+pub use laddu::prelude::ganesh
+pub use laddu::prelude::j
+pub use laddu::prelude::k_matrix
+pub use laddu::prelude::k_matrix_with_background
+pub use laddu::prelude::l
+pub use laddu::prelude::m
+pub use laddu::prelude::matmul
+pub use laddu::prelude::matrix
+pub use laddu::prelude::matrix_from_flat
+pub use laddu::prelude::matvec
+pub use laddu::prelude::next_uncertainty_source_id
+pub use laddu::prelude::p_vector
+pub use laddu::prelude::p_vector_with_background
+pub use laddu::prelude::parameter
+pub use laddu::prelude::particles
+pub use laddu::prelude::polar_complex
+pub use laddu::prelude::relativistic_breit_wigner
+pub use laddu::prelude::relativistic_breit_wigner_custom
+pub use laddu::prelude::s
+pub use laddu::prelude::solve
+pub use laddu::prelude::vector
+pub enum laddu::prelude::LadduError
+pub laddu::prelude::LadduError::Amplitude(laddu_amplitudes::error::AmplitudeError)
+pub laddu::prelude::LadduError::Autodiff(laddu_autodiff::error::AutodiffError)
+pub laddu::prelude::LadduError::Compile(laddu_compile::error::CompileError)
+pub laddu::prelude::LadduError::Data(laddu_data::error::LadduDataError)
+pub laddu::prelude::LadduError::Expression(laddu_expr::error::ExprError)
+pub laddu::prelude::LadduError::Kernel(laddu_kernel::error::KernelError)
+pub laddu::prelude::LadduError::Likelihood(laddu_likelihood::error::LikelihoodError)
+pub laddu::prelude::LadduError::Physics(laddu_physics::error::LadduPhysicsError)
+pub laddu::prelude::LadduError::Runtime(laddu_runtime::error::RuntimeError)
+impl core::clone::Clone for laddu::LadduError
+pub fn laddu::LadduError::clone(&self) -> laddu::LadduError
+impl core::convert::From<laddu_amplitudes::error::AmplitudeError> for laddu::LadduError
+pub fn laddu::LadduError::from(laddu_amplitudes::error::AmplitudeError) -> Self
+impl core::convert::From<laddu_autodiff::error::AutodiffError> for laddu::LadduError
+pub fn laddu::LadduError::from(laddu_autodiff::error::AutodiffError) -> Self
+impl core::convert::From<laddu_compile::error::CompileError> for laddu::LadduError
+pub fn laddu::LadduError::from(laddu_compile::error::CompileError) -> Self
+impl core::convert::From<laddu_data::error::LadduDataError> for laddu::LadduError
+pub fn laddu::LadduError::from(laddu_data::error::LadduDataError) -> Self
+impl core::convert::From<laddu_expr::error::ExprError> for laddu::LadduError
+pub fn laddu::LadduError::from(laddu_expr::error::ExprError) -> Self
+impl core::convert::From<laddu_kernel::error::KernelError> for laddu::LadduError
+pub fn laddu::LadduError::from(laddu_kernel::error::KernelError) -> Self
+impl core::convert::From<laddu_likelihood::error::LikelihoodError> for laddu::LadduError
+pub fn laddu::LadduError::from(laddu_likelihood::error::LikelihoodError) -> Self
+impl core::convert::From<laddu_physics::error::LadduPhysicsError> for laddu::LadduError
+pub fn laddu::LadduError::from(laddu_physics::error::LadduPhysicsError) -> Self
+impl core::convert::From<laddu_runtime::error::RuntimeError> for laddu::LadduError
+pub fn laddu::LadduError::from(laddu_runtime::error::RuntimeError) -> Self
+impl core::error::Error for laddu::LadduError
+pub fn laddu::LadduError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
+impl core::fmt::Debug for laddu::LadduError
+pub fn laddu::LadduError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for laddu::LadduError
+pub fn laddu::LadduError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub type laddu::prelude::LadduResult<T> = core::result::Result<T, laddu::LadduError>
+pub enum laddu::LadduError
+pub laddu::LadduError::Amplitude(laddu_amplitudes::error::AmplitudeError)
+pub laddu::LadduError::Autodiff(laddu_autodiff::error::AutodiffError)
+pub laddu::LadduError::Compile(laddu_compile::error::CompileError)
+pub laddu::LadduError::Data(laddu_data::error::LadduDataError)
+pub laddu::LadduError::Expression(laddu_expr::error::ExprError)
+pub laddu::LadduError::Kernel(laddu_kernel::error::KernelError)
+pub laddu::LadduError::Likelihood(laddu_likelihood::error::LikelihoodError)
+pub laddu::LadduError::Physics(laddu_physics::error::LadduPhysicsError)
+pub laddu::LadduError::Runtime(laddu_runtime::error::RuntimeError)
+impl core::clone::Clone for laddu::LadduError
+pub fn laddu::LadduError::clone(&self) -> laddu::LadduError
+impl core::convert::From<laddu_amplitudes::error::AmplitudeError> for laddu::LadduError
+pub fn laddu::LadduError::from(laddu_amplitudes::error::AmplitudeError) -> Self
+impl core::convert::From<laddu_autodiff::error::AutodiffError> for laddu::LadduError
+pub fn laddu::LadduError::from(laddu_autodiff::error::AutodiffError) -> Self
+impl core::convert::From<laddu_compile::error::CompileError> for laddu::LadduError
+pub fn laddu::LadduError::from(laddu_compile::error::CompileError) -> Self
+impl core::convert::From<laddu_data::error::LadduDataError> for laddu::LadduError
+pub fn laddu::LadduError::from(laddu_data::error::LadduDataError) -> Self
+impl core::convert::From<laddu_expr::error::ExprError> for laddu::LadduError
+pub fn laddu::LadduError::from(laddu_expr::error::ExprError) -> Self
+impl core::convert::From<laddu_kernel::error::KernelError> for laddu::LadduError
+pub fn laddu::LadduError::from(laddu_kernel::error::KernelError) -> Self
+impl core::convert::From<laddu_likelihood::error::LikelihoodError> for laddu::LadduError
+pub fn laddu::LadduError::from(laddu_likelihood::error::LikelihoodError) -> Self
+impl core::convert::From<laddu_physics::error::LadduPhysicsError> for laddu::LadduError
+pub fn laddu::LadduError::from(laddu_physics::error::LadduPhysicsError) -> Self
+impl core::convert::From<laddu_runtime::error::RuntimeError> for laddu::LadduError
+pub fn laddu::LadduError::from(laddu_runtime::error::RuntimeError) -> Self
+impl core::error::Error for laddu::LadduError
+pub fn laddu::LadduError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
+impl core::fmt::Debug for laddu::LadduError
+pub fn laddu::LadduError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for laddu::LadduError
+pub fn laddu::LadduError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub type laddu::LadduResult<T> = core::result::Result<T, laddu::LadduError>

@@ -1,0 +1,264 @@
+pub mod laddu_kernel
+pub mod laddu_kernel::ir
+pub enum laddu_kernel::ir::KernelInstruction
+pub laddu_kernel::ir::KernelInstruction::Add(alloc::vec::Vec<laddu_kernel::ir::KernelValueId>)
+pub laddu_kernel::ir::KernelInstruction::Binary
+pub laddu_kernel::ir::KernelInstruction::Binary::lhs: laddu_kernel::ir::KernelValueId
+pub laddu_kernel::ir::KernelInstruction::Binary::op: laddu_expr::expression::BinaryOp
+pub laddu_kernel::ir::KernelInstruction::Binary::rhs: laddu_kernel::ir::KernelValueId
+pub laddu_kernel::ir::KernelInstruction::Cached(usize)
+pub laddu_kernel::ir::KernelInstruction::Complex
+pub laddu_kernel::ir::KernelInstruction::Complex::im: laddu_kernel::ir::KernelValueId
+pub laddu_kernel::ir::KernelInstruction::Complex::re: laddu_kernel::ir::KernelValueId
+pub laddu_kernel::ir::KernelInstruction::ComplexConstant(num_complex::Complex64)
+pub laddu_kernel::ir::KernelInstruction::Component
+pub laddu_kernel::ir::KernelInstruction::Component::index: usize
+pub laddu_kernel::ir::KernelInstruction::Component::input: laddu_kernel::ir::KernelValueId
+pub laddu_kernel::ir::KernelInstruction::Dot
+pub laddu_kernel::ir::KernelInstruction::Dot::lhs: laddu_kernel::ir::KernelValueId
+pub laddu_kernel::ir::KernelInstruction::Dot::rhs: laddu_kernel::ir::KernelValueId
+pub laddu_kernel::ir::KernelInstruction::MatMul
+pub laddu_kernel::ir::KernelInstruction::MatMul::lhs: laddu_kernel::ir::KernelValueId
+pub laddu_kernel::ir::KernelInstruction::MatMul::rhs: laddu_kernel::ir::KernelValueId
+pub laddu_kernel::ir::KernelInstruction::MatVec
+pub laddu_kernel::ir::KernelInstruction::MatVec::matrix: laddu_kernel::ir::KernelValueId
+pub laddu_kernel::ir::KernelInstruction::MatVec::vector: laddu_kernel::ir::KernelValueId
+pub laddu_kernel::ir::KernelInstruction::Matrix
+pub laddu_kernel::ir::KernelInstruction::Matrix::cols: usize
+pub laddu_kernel::ir::KernelInstruction::Matrix::elements: alloc::vec::Vec<laddu_kernel::ir::KernelValueId>
+pub laddu_kernel::ir::KernelInstruction::Matrix::rows: usize
+pub laddu_kernel::ir::KernelInstruction::MatrixElement
+pub laddu_kernel::ir::KernelInstruction::MatrixElement::col: usize
+pub laddu_kernel::ir::KernelInstruction::MatrixElement::input: laddu_kernel::ir::KernelValueId
+pub laddu_kernel::ir::KernelInstruction::MatrixElement::row: usize
+pub laddu_kernel::ir::KernelInstruction::Mul(alloc::vec::Vec<laddu_kernel::ir::KernelValueId>)
+pub laddu_kernel::ir::KernelInstruction::Parameter(laddu_expr::parameters::ParamId)
+pub laddu_kernel::ir::KernelInstruction::RealConstant(f64)
+pub laddu_kernel::ir::KernelInstruction::Solve
+pub laddu_kernel::ir::KernelInstruction::Solve::matrix: laddu_kernel::ir::KernelValueId
+pub laddu_kernel::ir::KernelInstruction::Solve::rhs: laddu_kernel::ir::KernelValueId
+pub laddu_kernel::ir::KernelInstruction::SolveRow
+pub laddu_kernel::ir::KernelInstruction::SolveRow::rhs: alloc::vec::Vec<laddu_kernel::ir::KernelValueId>
+pub laddu_kernel::ir::KernelInstruction::SolveRow::row_slot: usize
+pub laddu_kernel::ir::KernelInstruction::SolveRowAdjointElement
+pub laddu_kernel::ir::KernelInstruction::SolveRowAdjointElement::adjoint: laddu_kernel::ir::KernelValueId
+pub laddu_kernel::ir::KernelInstruction::SolveRowAdjointElement::index: usize
+pub laddu_kernel::ir::KernelInstruction::SolveRowAdjointElement::len: usize
+pub laddu_kernel::ir::KernelInstruction::SolveRowAdjointElement::row_slot: usize
+pub laddu_kernel::ir::KernelInstruction::Unary
+pub laddu_kernel::ir::KernelInstruction::Unary::input: laddu_kernel::ir::KernelValueId
+pub laddu_kernel::ir::KernelInstruction::Unary::op: laddu_expr::expression::UnaryOp
+pub laddu_kernel::ir::KernelInstruction::Vector(alloc::vec::Vec<laddu_kernel::ir::KernelValueId>)
+impl laddu_kernel::ir::KernelInstruction
+pub fn laddu_kernel::ir::KernelInstruction::operands(&self) -> alloc::vec::Vec<laddu_kernel::ir::KernelValueId>
+impl core::clone::Clone for laddu_kernel::ir::KernelInstruction
+pub fn laddu_kernel::ir::KernelInstruction::clone(&self) -> laddu_kernel::ir::KernelInstruction
+impl core::fmt::Debug for laddu_kernel::ir::KernelInstruction
+pub fn laddu_kernel::ir::KernelInstruction::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub enum laddu_kernel::ir::KernelValueClass
+pub laddu_kernel::ir::KernelValueClass::Event
+pub laddu_kernel::ir::KernelValueClass::Invariant
+impl core::clone::Clone for laddu_kernel::ir::KernelValueClass
+pub fn laddu_kernel::ir::KernelValueClass::clone(&self) -> laddu_kernel::ir::KernelValueClass
+impl core::cmp::Eq for laddu_kernel::ir::KernelValueClass
+impl core::cmp::PartialEq for laddu_kernel::ir::KernelValueClass
+pub fn laddu_kernel::ir::KernelValueClass::eq(&self, &laddu_kernel::ir::KernelValueClass) -> bool
+impl core::fmt::Debug for laddu_kernel::ir::KernelValueClass
+pub fn laddu_kernel::ir::KernelValueClass::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for laddu_kernel::ir::KernelValueClass
+impl core::marker::StructuralPartialEq for laddu_kernel::ir::KernelValueClass
+pub enum laddu_kernel::ir::KernelValueKind
+pub laddu_kernel::ir::KernelValueKind::Complex
+pub laddu_kernel::ir::KernelValueKind::Matrix
+pub laddu_kernel::ir::KernelValueKind::Matrix::cols: usize
+pub laddu_kernel::ir::KernelValueKind::Matrix::rows: usize
+pub laddu_kernel::ir::KernelValueKind::Real
+pub laddu_kernel::ir::KernelValueKind::Vector
+pub laddu_kernel::ir::KernelValueKind::Vector::len: usize
+impl laddu_kernel::ir::KernelValueKind
+pub fn laddu_kernel::ir::KernelValueKind::width(self) -> usize
+impl core::clone::Clone for laddu_kernel::ir::KernelValueKind
+pub fn laddu_kernel::ir::KernelValueKind::clone(&self) -> laddu_kernel::ir::KernelValueKind
+impl core::cmp::Eq for laddu_kernel::ir::KernelValueKind
+impl core::cmp::PartialEq for laddu_kernel::ir::KernelValueKind
+pub fn laddu_kernel::ir::KernelValueKind::eq(&self, &laddu_kernel::ir::KernelValueKind) -> bool
+impl core::fmt::Debug for laddu_kernel::ir::KernelValueKind
+pub fn laddu_kernel::ir::KernelValueKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for laddu_kernel::ir::KernelValueKind
+impl core::marker::StructuralPartialEq for laddu_kernel::ir::KernelValueKind
+pub enum laddu_kernel::ir::OutputComponent
+pub laddu_kernel::ir::OutputComponent::Imag
+pub laddu_kernel::ir::OutputComponent::Real
+impl core::clone::Clone for laddu_kernel::ir::OutputComponent
+pub fn laddu_kernel::ir::OutputComponent::clone(&self) -> laddu_kernel::ir::OutputComponent
+impl core::cmp::Eq for laddu_kernel::ir::OutputComponent
+impl core::cmp::PartialEq for laddu_kernel::ir::OutputComponent
+pub fn laddu_kernel::ir::OutputComponent::eq(&self, &laddu_kernel::ir::OutputComponent) -> bool
+impl core::fmt::Debug for laddu_kernel::ir::OutputComponent
+pub fn laddu_kernel::ir::OutputComponent::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for laddu_kernel::ir::OutputComponent
+pub fn laddu_kernel::ir::OutputComponent::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for laddu_kernel::ir::OutputComponent
+impl core::marker::StructuralPartialEq for laddu_kernel::ir::OutputComponent
+pub struct laddu_kernel::ir::CacheKernelIr
+impl laddu_kernel::ir::CacheKernelIr
+pub fn laddu_kernel::ir::CacheKernelIr::new(alloc::vec::Vec<laddu_kernel::ir::KernelValue>, alloc::vec::Vec<laddu_kernel::ir::KernelValueId>) -> core::result::Result<Self, laddu_kernel::KernelIrError>
+pub fn laddu_kernel::ir::CacheKernelIr::outputs(&self) -> &[laddu_kernel::ir::KernelValueId]
+pub fn laddu_kernel::ir::CacheKernelIr::values(&self) -> &[laddu_kernel::ir::KernelValue]
+impl core::clone::Clone for laddu_kernel::ir::CacheKernelIr
+pub fn laddu_kernel::ir::CacheKernelIr::clone(&self) -> laddu_kernel::ir::CacheKernelIr
+impl core::fmt::Debug for laddu_kernel::ir::CacheKernelIr
+pub fn laddu_kernel::ir::CacheKernelIr::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub struct laddu_kernel::ir::GradientKernelIr
+impl laddu_kernel::ir::GradientKernelIr
+pub fn laddu_kernel::ir::GradientKernelIr::component(&self) -> laddu_kernel::ir::OutputComponent
+pub fn laddu_kernel::ir::GradientKernelIr::new(alloc::vec::Vec<laddu_kernel::ir::KernelValue>, laddu_kernel::ir::KernelValueId, alloc::vec::Vec<laddu_kernel::ir::KernelValueId>, laddu_kernel::ir::OutputComponent) -> core::result::Result<Self, laddu_kernel::KernelIrError>
+pub fn laddu_kernel::ir::GradientKernelIr::outputs(&self) -> &[laddu_kernel::ir::KernelValueId]
+pub fn laddu_kernel::ir::GradientKernelIr::primal_root(&self) -> laddu_kernel::ir::KernelValueId
+pub fn laddu_kernel::ir::GradientKernelIr::validate(&self) -> core::result::Result<(), laddu_kernel::KernelIrError>
+pub fn laddu_kernel::ir::GradientKernelIr::values(&self) -> &[laddu_kernel::ir::KernelValue]
+impl core::clone::Clone for laddu_kernel::ir::GradientKernelIr
+pub fn laddu_kernel::ir::GradientKernelIr::clone(&self) -> laddu_kernel::ir::GradientKernelIr
+impl core::fmt::Debug for laddu_kernel::ir::GradientKernelIr
+pub fn laddu_kernel::ir::GradientKernelIr::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub struct laddu_kernel::ir::KernelIrBuilder
+impl laddu_kernel::ir::KernelIrBuilder
+pub fn laddu_kernel::ir::KernelIrBuilder::finish_gradient(self, laddu_kernel::ir::KernelValueId, alloc::vec::Vec<laddu_kernel::ir::KernelValueId>, laddu_kernel::ir::OutputComponent) -> core::result::Result<laddu_kernel::ir::GradientKernelIr, laddu_kernel::KernelIrError>
+pub fn laddu_kernel::ir::KernelIrBuilder::from_scalar(&laddu_kernel::ir::ScalarKernelIr) -> Self
+pub fn laddu_kernel::ir::KernelIrBuilder::push(&mut self, laddu_kernel::ir::KernelInstruction) -> core::result::Result<laddu_kernel::ir::KernelValueId, laddu_kernel::KernelIrError>
+pub fn laddu_kernel::ir::KernelIrBuilder::values(&self) -> &[laddu_kernel::ir::KernelValue]
+impl core::clone::Clone for laddu_kernel::ir::KernelIrBuilder
+pub fn laddu_kernel::ir::KernelIrBuilder::clone(&self) -> laddu_kernel::ir::KernelIrBuilder
+impl core::fmt::Debug for laddu_kernel::ir::KernelIrBuilder
+pub fn laddu_kernel::ir::KernelIrBuilder::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub struct laddu_kernel::ir::KernelValue
+pub laddu_kernel::ir::KernelValue::class: laddu_kernel::ir::KernelValueClass
+pub laddu_kernel::ir::KernelValue::instruction: laddu_kernel::ir::KernelInstruction
+pub laddu_kernel::ir::KernelValue::kind: laddu_kernel::ir::KernelValueKind
+impl core::clone::Clone for laddu_kernel::ir::KernelValue
+pub fn laddu_kernel::ir::KernelValue::clone(&self) -> laddu_kernel::ir::KernelValue
+impl core::fmt::Debug for laddu_kernel::ir::KernelValue
+pub fn laddu_kernel::ir::KernelValue::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub struct laddu_kernel::ir::KernelValueId(_)
+impl laddu_kernel::ir::KernelValueId
+pub fn laddu_kernel::ir::KernelValueId::from_index(usize) -> Self
+pub fn laddu_kernel::ir::KernelValueId::index(self) -> usize
+impl core::clone::Clone for laddu_kernel::ir::KernelValueId
+pub fn laddu_kernel::ir::KernelValueId::clone(&self) -> laddu_kernel::ir::KernelValueId
+impl core::cmp::Eq for laddu_kernel::ir::KernelValueId
+impl core::cmp::PartialEq for laddu_kernel::ir::KernelValueId
+pub fn laddu_kernel::ir::KernelValueId::eq(&self, &laddu_kernel::ir::KernelValueId) -> bool
+impl core::fmt::Debug for laddu_kernel::ir::KernelValueId
+pub fn laddu_kernel::ir::KernelValueId::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for laddu_kernel::ir::KernelValueId
+impl core::marker::StructuralPartialEq for laddu_kernel::ir::KernelValueId
+pub struct laddu_kernel::ir::ScalarKernelIr
+impl laddu_kernel::ir::ScalarKernelIr
+pub fn laddu_kernel::ir::ScalarKernelIr::new(alloc::vec::Vec<laddu_kernel::ir::KernelValue>, laddu_kernel::ir::KernelValueId) -> core::result::Result<Self, laddu_kernel::KernelIrError>
+pub fn laddu_kernel::ir::ScalarKernelIr::root(&self) -> laddu_kernel::ir::KernelValueId
+pub fn laddu_kernel::ir::ScalarKernelIr::validate(&self) -> core::result::Result<(), laddu_kernel::KernelIrError>
+pub fn laddu_kernel::ir::ScalarKernelIr::values(&self) -> &[laddu_kernel::ir::KernelValue]
+impl core::clone::Clone for laddu_kernel::ir::ScalarKernelIr
+pub fn laddu_kernel::ir::ScalarKernelIr::clone(&self) -> laddu_kernel::ir::ScalarKernelIr
+impl core::fmt::Debug for laddu_kernel::ir::ScalarKernelIr
+pub fn laddu_kernel::ir::ScalarKernelIr::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub type laddu_kernel::ir::KernelIrError = laddu_kernel::KernelError
+pub enum laddu_kernel::KernelError
+pub laddu_kernel::KernelError::CacheOutputOutOfBounds
+pub laddu_kernel::KernelError::CacheOutputOutOfBounds::len: usize
+pub laddu_kernel::KernelError::CacheOutputOutOfBounds::output: usize
+pub laddu_kernel::KernelError::ClassMismatch
+pub laddu_kernel::KernelError::ClassMismatch::actual: laddu_kernel::ir::KernelValueClass
+pub laddu_kernel::KernelError::ClassMismatch::expected: laddu_kernel::ir::KernelValueClass
+pub laddu_kernel::KernelError::ClassMismatch::value: usize
+pub laddu_kernel::KernelError::Empty
+pub laddu_kernel::KernelError::EmptyCacheOutputs
+pub laddu_kernel::KernelError::EmptyOperands
+pub laddu_kernel::KernelError::EmptyOperands::operation: &'static str
+pub laddu_kernel::KernelError::EmptyOperands::value: usize
+pub laddu_kernel::KernelError::GradientKindMismatch
+pub laddu_kernel::KernelError::GradientKindMismatch::actual: laddu_kernel::ir::KernelValueKind
+pub laddu_kernel::KernelError::GradientKindMismatch::output: usize
+pub laddu_kernel::KernelError::GradientOutOfBounds
+pub laddu_kernel::KernelError::GradientOutOfBounds::len: usize
+pub laddu_kernel::KernelError::GradientOutOfBounds::output: usize
+pub laddu_kernel::KernelError::InvalidOperand
+pub laddu_kernel::KernelError::InvalidOperand::operand: usize
+pub laddu_kernel::KernelError::InvalidOperand::value: usize
+pub laddu_kernel::KernelError::InvalidShape
+pub laddu_kernel::KernelError::InvalidShape::message: alloc::string::String
+pub laddu_kernel::KernelError::InvalidShape::operation: &'static str
+pub laddu_kernel::KernelError::InvalidShape::value: usize
+pub laddu_kernel::KernelError::KindMismatch
+pub laddu_kernel::KernelError::KindMismatch::actual: laddu_kernel::ir::KernelValueKind
+pub laddu_kernel::KernelError::KindMismatch::expected: laddu_kernel::ir::KernelValueKind
+pub laddu_kernel::KernelError::KindMismatch::value: usize
+pub laddu_kernel::KernelError::RootOutOfBounds
+pub laddu_kernel::KernelError::RootOutOfBounds::len: usize
+pub laddu_kernel::KernelError::RootOutOfBounds::root: usize
+impl core::clone::Clone for laddu_kernel::KernelError
+pub fn laddu_kernel::KernelError::clone(&self) -> laddu_kernel::KernelError
+impl core::cmp::Eq for laddu_kernel::KernelError
+impl core::cmp::PartialEq for laddu_kernel::KernelError
+pub fn laddu_kernel::KernelError::eq(&self, &laddu_kernel::KernelError) -> bool
+impl core::error::Error for laddu_kernel::KernelError
+impl core::fmt::Debug for laddu_kernel::KernelError
+pub fn laddu_kernel::KernelError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for laddu_kernel::KernelError
+pub fn laddu_kernel::KernelError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for laddu_kernel::KernelError
+pub struct laddu_kernel::CacheName(_)
+impl laddu_kernel::CacheName
+pub fn laddu_kernel::CacheName::as_str(&self) -> &str
+pub fn laddu_kernel::CacheName::new(impl core::convert::Into<alloc::sync::Arc<str>>) -> Self
+impl core::clone::Clone for laddu_kernel::CacheName
+pub fn laddu_kernel::CacheName::clone(&self) -> laddu_kernel::CacheName
+impl core::cmp::Eq for laddu_kernel::CacheName
+impl core::cmp::PartialEq for laddu_kernel::CacheName
+pub fn laddu_kernel::CacheName::eq(&self, &laddu_kernel::CacheName) -> bool
+impl core::fmt::Debug for laddu_kernel::CacheName
+pub fn laddu_kernel::CacheName::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for laddu_kernel::CacheName
+pub fn laddu_kernel::CacheName::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::StructuralPartialEq for laddu_kernel::CacheName
+impl serde_core::ser::Serialize for laddu_kernel::CacheName
+pub fn laddu_kernel::CacheName::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for laddu_kernel::CacheName
+pub fn laddu_kernel::CacheName::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct laddu_kernel::KernelName(_)
+impl laddu_kernel::KernelName
+pub fn laddu_kernel::KernelName::as_str(&self) -> &str
+pub fn laddu_kernel::KernelName::new(impl core::convert::Into<alloc::sync::Arc<str>>) -> Self
+impl core::clone::Clone for laddu_kernel::KernelName
+pub fn laddu_kernel::KernelName::clone(&self) -> laddu_kernel::KernelName
+impl core::cmp::Eq for laddu_kernel::KernelName
+impl core::cmp::PartialEq for laddu_kernel::KernelName
+pub fn laddu_kernel::KernelName::eq(&self, &laddu_kernel::KernelName) -> bool
+impl core::fmt::Debug for laddu_kernel::KernelName
+pub fn laddu_kernel::KernelName::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for laddu_kernel::KernelName
+pub fn laddu_kernel::KernelName::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::StructuralPartialEq for laddu_kernel::KernelName
+impl serde_core::ser::Serialize for laddu_kernel::KernelName
+pub fn laddu_kernel::KernelName::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for laddu_kernel::KernelName
+pub fn laddu_kernel::KernelName::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct laddu_kernel::KernelSpec
+impl laddu_kernel::KernelSpec
+pub fn laddu_kernel::KernelSpec::name(&self) -> &laddu_kernel::KernelName
+pub fn laddu_kernel::KernelSpec::new(impl core::convert::Into<alloc::sync::Arc<str>>) -> Self
+impl core::clone::Clone for laddu_kernel::KernelSpec
+pub fn laddu_kernel::KernelSpec::clone(&self) -> laddu_kernel::KernelSpec
+impl core::cmp::Eq for laddu_kernel::KernelSpec
+impl core::cmp::PartialEq for laddu_kernel::KernelSpec
+pub fn laddu_kernel::KernelSpec::eq(&self, &laddu_kernel::KernelSpec) -> bool
+impl core::fmt::Debug for laddu_kernel::KernelSpec
+pub fn laddu_kernel::KernelSpec::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for laddu_kernel::KernelSpec
+impl serde_core::ser::Serialize for laddu_kernel::KernelSpec
+pub fn laddu_kernel::KernelSpec::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for laddu_kernel::KernelSpec
+pub fn laddu_kernel::KernelSpec::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub fn laddu_kernel::kernel(impl core::convert::Into<alloc::sync::Arc<str>>) -> laddu_kernel::KernelSpec
+pub type laddu_kernel::KernelIrError = laddu_kernel::KernelError
+pub type laddu_kernel::KernelResult<T> = core::result::Result<T, laddu_kernel::KernelError>

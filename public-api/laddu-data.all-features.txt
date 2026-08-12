@@ -1,0 +1,945 @@
+pub mod laddu_data
+pub use laddu_data::RealVec4
+pub mod laddu_data::data
+pub mod laddu_data::data::accurate
+pub struct laddu_data::data::accurate::AccurateComplex64
+impl laddu_data::data::dataset::accurate::AccurateComplex64
+pub fn laddu_data::data::dataset::accurate::AccurateComplex64::finish(self) -> num_complex::Complex64
+pub fn laddu_data::data::dataset::accurate::AccurateComplex64::merge(&mut self, Self)
+pub fn laddu_data::data::dataset::accurate::AccurateComplex64::push(&mut self, num_complex::Complex64)
+pub fn laddu_data::data::dataset::accurate::AccurateComplex64::zero() -> Self
+impl core::clone::Clone for laddu_data::data::dataset::accurate::AccurateComplex64
+pub fn laddu_data::data::dataset::accurate::AccurateComplex64::clone(&self) -> laddu_data::data::dataset::accurate::AccurateComplex64
+pub struct laddu_data::data::accurate::AccurateF64
+impl laddu_data::data::dataset::accurate::AccurateF64
+pub fn laddu_data::data::dataset::accurate::AccurateF64::finish(self) -> f64
+pub fn laddu_data::data::dataset::accurate::AccurateF64::merge(&mut self, Self)
+pub fn laddu_data::data::dataset::accurate::AccurateF64::push(&mut self, f64)
+pub fn laddu_data::data::dataset::accurate::AccurateF64::zero() -> Self
+impl core::clone::Clone for laddu_data::data::dataset::accurate::AccurateF64
+pub fn laddu_data::data::dataset::accurate::AccurateF64::clone(&self) -> laddu_data::data::dataset::accurate::AccurateF64
+pub mod laddu_data::data::dataset
+pub mod laddu_data::data::dataset::accurate
+pub struct laddu_data::data::dataset::accurate::AccurateComplex64
+impl laddu_data::data::dataset::accurate::AccurateComplex64
+pub fn laddu_data::data::dataset::accurate::AccurateComplex64::finish(self) -> num_complex::Complex64
+pub fn laddu_data::data::dataset::accurate::AccurateComplex64::merge(&mut self, Self)
+pub fn laddu_data::data::dataset::accurate::AccurateComplex64::push(&mut self, num_complex::Complex64)
+pub fn laddu_data::data::dataset::accurate::AccurateComplex64::zero() -> Self
+impl core::clone::Clone for laddu_data::data::dataset::accurate::AccurateComplex64
+pub fn laddu_data::data::dataset::accurate::AccurateComplex64::clone(&self) -> laddu_data::data::dataset::accurate::AccurateComplex64
+pub struct laddu_data::data::dataset::accurate::AccurateF64
+impl laddu_data::data::dataset::accurate::AccurateF64
+pub fn laddu_data::data::dataset::accurate::AccurateF64::finish(self) -> f64
+pub fn laddu_data::data::dataset::accurate::AccurateF64::merge(&mut self, Self)
+pub fn laddu_data::data::dataset::accurate::AccurateF64::push(&mut self, f64)
+pub fn laddu_data::data::dataset::accurate::AccurateF64::zero() -> Self
+impl core::clone::Clone for laddu_data::data::dataset::accurate::AccurateF64
+pub fn laddu_data::data::dataset::accurate::AccurateF64::clone(&self) -> laddu_data::data::dataset::accurate::AccurateF64
+pub enum laddu_data::data::dataset::CacheStorage
+pub laddu_data::data::dataset::CacheStorage::Resident
+pub laddu_data::data::dataset::CacheStorage::Streaming
+impl core::clone::Clone for laddu_data::data::dataset::CacheStorage
+pub fn laddu_data::data::dataset::CacheStorage::clone(&self) -> laddu_data::data::dataset::CacheStorage
+impl core::cmp::Eq for laddu_data::data::dataset::CacheStorage
+impl core::cmp::PartialEq for laddu_data::data::dataset::CacheStorage
+pub fn laddu_data::data::dataset::CacheStorage::eq(&self, &laddu_data::data::dataset::CacheStorage) -> bool
+impl core::default::Default for laddu_data::data::dataset::CacheStorage
+pub fn laddu_data::data::dataset::CacheStorage::default() -> laddu_data::data::dataset::CacheStorage
+impl core::fmt::Debug for laddu_data::data::dataset::CacheStorage
+pub fn laddu_data::data::dataset::CacheStorage::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for laddu_data::data::dataset::CacheStorage
+impl core::marker::StructuralPartialEq for laddu_data::data::dataset::CacheStorage
+pub enum laddu_data::data::dataset::MemoryPolicy
+pub laddu_data::data::dataset::MemoryPolicy::Fastest
+pub laddu_data::data::dataset::MemoryPolicy::Resident
+pub laddu_data::data::dataset::MemoryPolicy::Streaming
+impl core::clone::Clone for laddu_data::data::dataset::MemoryPolicy
+pub fn laddu_data::data::dataset::MemoryPolicy::clone(&self) -> laddu_data::data::dataset::MemoryPolicy
+impl core::cmp::Eq for laddu_data::data::dataset::MemoryPolicy
+impl core::cmp::PartialEq for laddu_data::data::dataset::MemoryPolicy
+pub fn laddu_data::data::dataset::MemoryPolicy::eq(&self, &laddu_data::data::dataset::MemoryPolicy) -> bool
+impl core::default::Default for laddu_data::data::dataset::MemoryPolicy
+pub fn laddu_data::data::dataset::MemoryPolicy::default() -> laddu_data::data::dataset::MemoryPolicy
+impl core::fmt::Debug for laddu_data::data::dataset::MemoryPolicy
+pub fn laddu_data::data::dataset::MemoryPolicy::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for laddu_data::data::dataset::MemoryPolicy
+impl core::marker::StructuralPartialEq for laddu_data::data::dataset::MemoryPolicy
+pub struct laddu_data::data::dataset::Dataset
+impl laddu_data::data::dataset::Dataset
+pub fn laddu_data::data::dataset::Dataset::accumulate_events<T, F>(&self, T, F) -> laddu_data::LadduDataResult<T> where F: core::ops::function::FnMut(&mut T, laddu_data::data::event::Event<'_>)
+pub fn laddu_data::data::dataset::Dataset::batches(&self) -> laddu_data::LadduDataResult<alloc::boxed::Box<(dyn core::iter::traits::iterator::Iterator<Item = laddu_data::LadduDataResult<laddu_data::data::event::EventBatch>> + core::marker::Send)>>
+pub fn laddu_data::data::dataset::Dataset::bootstrap(self, u64) -> Self
+pub fn laddu_data::data::dataset::Dataset::cache_storage(&self) -> laddu_data::data::dataset::CacheStorage
+pub fn laddu_data::data::dataset::Dataset::capabilities(&self) -> laddu_data::io::SourceCapabilities
+pub fn laddu_data::data::dataset::Dataset::chunked(self, usize) -> laddu_data::LadduDataResult<Self>
+pub fn laddu_data::data::dataset::Dataset::fastest(self) -> Self
+pub fn laddu_data::data::dataset::Dataset::filter<F>(self, F) -> Self where F: core::ops::function::Fn(laddu_data::data::event::Event<'_>) -> bool + core::marker::Send + core::marker::Sync + 'static
+pub fn laddu_data::data::dataset::Dataset::fold_events<T, F>(&self, T, F) -> laddu_data::LadduDataResult<T> where F: core::ops::function::FnMut(T, laddu_data::data::event::Event<'_>) -> T
+pub fn laddu_data::data::dataset::Dataset::for_each_event<F>(&self, F) -> laddu_data::LadduDataResult<()> where F: core::ops::function::FnMut(laddu_data::data::event::Event<'_>)
+pub fn laddu_data::data::dataset::Dataset::from_arc(alloc::sync::Arc<dyn laddu_data::io::EventSource>) -> Self
+pub fn laddu_data::data::dataset::Dataset::from_batch(laddu_data::data::event::EventBatch) -> Self
+pub fn laddu_data::data::dataset::Dataset::from_batches(alloc::vec::Vec<laddu_data::data::event::EventBatch>) -> laddu_data::LadduDataResult<Self>
+pub fn laddu_data::data::dataset::Dataset::from_events<I>(alloc::sync::Arc<laddu_data::schema::Schema>, I) -> laddu_data::LadduDataResult<Self> where I: core::iter::traits::collect::IntoIterator<Item = laddu_data::data::event::OwnedEvent>
+pub fn laddu_data::data::dataset::Dataset::last_memory_decision(&self) -> core::option::Option<laddu_memory::MemoryDecision>
+pub fn laddu_data::data::dataset::Dataset::map_batches<T, F>(&self, F) -> laddu_data::LadduDataResult<alloc::vec::Vec<T>> where F: core::ops::function::FnMut(laddu_data::data::event::EventBatch) -> T
+pub fn laddu_data::data::dataset::Dataset::map_events<T, F>(&self, F) -> laddu_data::LadduDataResult<alloc::vec::Vec<T>> where F: core::ops::function::FnMut(laddu_data::data::event::Event<'_>) -> T
+pub fn laddu_data::data::dataset::Dataset::memory_budget(&self) -> laddu_memory::MemoryBudget
+pub fn laddu_data::data::dataset::Dataset::memory_policy(&self) -> laddu_data::data::dataset::MemoryPolicy
+pub fn laddu_data::data::dataset::Dataset::new<S>(S) -> Self where S: laddu_data::io::EventSource + 'static
+pub fn laddu_data::data::dataset::Dataset::num_events(&self) -> laddu_data::LadduDataResult<core::option::Option<u64>>
+pub fn laddu_data::data::dataset::Dataset::read_plan(&self) -> laddu_data::io::ReadPlan
+pub fn laddu_data::data::dataset::Dataset::resident(self) -> Self
+pub fn laddu_data::data::dataset::Dataset::schema(&self) -> laddu_data::LadduDataResult<alloc::sync::Arc<laddu_data::schema::Schema>>
+pub fn laddu_data::data::dataset::Dataset::source_traversals(&self) -> u64
+pub fn laddu_data::data::dataset::Dataset::stats(&self) -> laddu_data::LadduDataResult<laddu_data::data::dataset::DatasetStats>
+pub fn laddu_data::data::dataset::Dataset::streaming(self) -> Self
+pub fn laddu_data::data::dataset::Dataset::subsample(self, f64, u64) -> laddu_data::LadduDataResult<Self>
+pub fn laddu_data::data::dataset::Dataset::sum_weights(&self) -> laddu_data::LadduDataResult<f64>
+pub fn laddu_data::data::dataset::Dataset::try_accumulate_events<T, F>(&self, T, F) -> laddu_data::LadduDataResult<T> where F: core::ops::function::FnMut(&mut T, laddu_data::data::event::Event<'_>) -> laddu_data::LadduDataResult<()>
+pub fn laddu_data::data::dataset::Dataset::try_fold_events<T, F>(&self, T, F) -> laddu_data::LadduDataResult<T> where F: core::ops::function::FnMut(T, laddu_data::data::event::Event<'_>) -> laddu_data::LadduDataResult<T>
+pub fn laddu_data::data::dataset::Dataset::try_for_each_batch<F>(&self, F) -> laddu_data::LadduDataResult<()> where F: core::ops::function::FnMut(laddu_data::data::event::EventBatch) -> laddu_data::LadduDataResult<()>
+pub fn laddu_data::data::dataset::Dataset::try_for_each_event<F>(&self, F) -> laddu_data::LadduDataResult<()> where F: core::ops::function::FnMut(laddu_data::data::event::Event<'_>) -> laddu_data::LadduDataResult<()>
+pub fn laddu_data::data::dataset::Dataset::try_map_events<T, F>(&self, F) -> laddu_data::LadduDataResult<alloc::vec::Vec<T>> where F: core::ops::function::FnMut(laddu_data::data::event::Event<'_>) -> laddu_data::LadduDataResult<T>
+pub fn laddu_data::data::dataset::Dataset::unchunked(self) -> Self
+pub fn laddu_data::data::dataset::Dataset::weighted_complex_sum<F>(&self, F) -> laddu_data::LadduDataResult<num_complex::Complex64> where F: core::ops::function::FnMut(laddu_data::data::event::Event<'_>) -> num_complex::Complex64
+pub fn laddu_data::data::dataset::Dataset::weighted_sum<F>(&self, F) -> laddu_data::LadduDataResult<f64> where F: core::ops::function::FnMut(laddu_data::data::event::Event<'_>) -> f64
+pub fn laddu_data::data::dataset::Dataset::with_memory_budget(self, laddu_memory::MemoryBudget) -> Self
+pub fn laddu_data::data::dataset::Dataset::write_to<S: laddu_data::io::EventSink>(&self, &mut S) -> laddu_data::LadduDataResult<()>
+impl core::clone::Clone for laddu_data::data::dataset::Dataset
+pub fn laddu_data::data::dataset::Dataset::clone(&self) -> laddu_data::data::dataset::Dataset
+pub struct laddu_data::data::dataset::DatasetStats
+impl laddu_data::data::dataset::DatasetStats
+pub fn laddu_data::data::dataset::DatasetStats::events(&self) -> u64
+pub fn laddu_data::data::dataset::DatasetStats::sum_weights(&self) -> f64
+impl core::clone::Clone for laddu_data::data::dataset::DatasetStats
+pub fn laddu_data::data::dataset::DatasetStats::clone(&self) -> laddu_data::data::dataset::DatasetStats
+impl core::cmp::PartialEq for laddu_data::data::dataset::DatasetStats
+pub fn laddu_data::data::dataset::DatasetStats::eq(&self, &laddu_data::data::dataset::DatasetStats) -> bool
+impl core::fmt::Debug for laddu_data::data::dataset::DatasetStats
+pub fn laddu_data::data::dataset::DatasetStats::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for laddu_data::data::dataset::DatasetStats
+impl core::marker::StructuralPartialEq for laddu_data::data::dataset::DatasetStats
+pub mod laddu_data::data::event
+pub struct laddu_data::data::event::BatchEvent<'a>
+impl<'a> laddu_data::data::event::BatchEvent<'a>
+pub fn laddu_data::data::event::BatchEvent<'a>::batch(&self) -> &'a laddu_data::data::event::EventBatch
+pub fn laddu_data::data::event::BatchEvent<'a>::p4(&self, usize) -> laddu_physics::vectors::RealVec4
+pub fn laddu_data::data::event::BatchEvent<'a>::p4_named(&self, &str) -> core::option::Option<laddu_physics::vectors::RealVec4>
+pub fn laddu_data::data::event::BatchEvent<'a>::row(&self) -> usize
+pub fn laddu_data::data::event::BatchEvent<'a>::scalar(&self, usize) -> f64
+pub fn laddu_data::data::event::BatchEvent<'a>::scalar_named(&self, &str) -> core::option::Option<f64>
+pub fn laddu_data::data::event::BatchEvent<'a>::weight(&self) -> f64
+impl<'a> core::clone::Clone for laddu_data::data::event::BatchEvent<'a>
+pub fn laddu_data::data::event::BatchEvent<'a>::clone(&self) -> laddu_data::data::event::BatchEvent<'a>
+impl<'a> core::fmt::Debug for laddu_data::data::event::BatchEvent<'a>
+pub fn laddu_data::data::event::BatchEvent<'a>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'a> core::marker::Copy for laddu_data::data::event::BatchEvent<'a>
+pub struct laddu_data::data::event::Event<'a>
+impl<'a> laddu_data::data::event::Event<'a>
+pub fn laddu_data::data::event::Event<'a>::p4(&self, usize) -> laddu_physics::vectors::RealVec4
+pub fn laddu_data::data::event::Event<'a>::p4_named(&self, &str) -> core::option::Option<laddu_physics::vectors::RealVec4>
+pub fn laddu_data::data::event::Event<'a>::row(&self) -> usize
+pub fn laddu_data::data::event::Event<'a>::scalar(&self, usize) -> f64
+pub fn laddu_data::data::event::Event<'a>::scalar_named(&self, &str) -> core::option::Option<f64>
+pub fn laddu_data::data::event::Event<'a>::weight(&self) -> f64
+impl<'a> core::clone::Clone for laddu_data::data::event::Event<'a>
+pub fn laddu_data::data::event::Event<'a>::clone(&self) -> laddu_data::data::event::Event<'a>
+impl<'a> core::fmt::Debug for laddu_data::data::event::Event<'a>
+pub fn laddu_data::data::event::Event<'a>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'a> core::marker::Copy for laddu_data::data::event::Event<'a>
+pub struct laddu_data::data::event::EventBatch
+impl laddu_data::data::event::EventBatch
+pub fn laddu_data::data::event::EventBatch::bytes_per_event(&self) -> usize
+pub fn laddu_data::data::event::EventBatch::concat(&[Self]) -> laddu_data::LadduDataResult<Self>
+pub fn laddu_data::data::event::EventBatch::event(&self, usize) -> laddu_data::data::event::BatchEvent<'_>
+pub fn laddu_data::data::event::EventBatch::filter<F>(&self, F) -> Self where F: core::ops::function::Fn(laddu_data::data::event::BatchEvent<'_>) -> bool
+pub fn laddu_data::data::event::EventBatch::from_events<I>(alloc::sync::Arc<laddu_data::schema::Schema>, I) -> laddu_data::LadduDataResult<Self> where I: core::iter::traits::collect::IntoIterator<Item = laddu_data::data::event::OwnedEvent>
+pub fn laddu_data::data::event::EventBatch::is_empty(&self) -> bool
+pub fn laddu_data::data::event::EventBatch::iter(&self) -> impl core::iter::traits::iterator::Iterator<Item = laddu_data::data::event::BatchEvent<'_>>
+pub fn laddu_data::data::event::EventBatch::len(&self) -> usize
+pub fn laddu_data::data::event::EventBatch::new(alloc::sync::Arc<laddu_data::schema::Schema>, alloc::vec::Vec<alloc::sync::Arc<[laddu_physics::vectors::RealVec4]>>, alloc::vec::Vec<alloc::sync::Arc<[f64]>>, core::option::Option<alloc::sync::Arc<[f64]>>) -> laddu_data::LadduDataResult<Self>
+pub fn laddu_data::data::event::EventBatch::p4_at(&self, usize, usize) -> laddu_physics::vectors::RealVec4
+pub fn laddu_data::data::event::EventBatch::resident_bytes(&self) -> usize
+pub fn laddu_data::data::event::EventBatch::reweight<F>(&self, F) -> Self where F: core::ops::function::Fn(usize, f64) -> f64
+pub fn laddu_data::data::event::EventBatch::scalar_at(&self, usize, usize) -> f64
+pub fn laddu_data::data::event::EventBatch::scalar_column(&self, usize) -> &[f64]
+pub fn laddu_data::data::event::EventBatch::scalar_column_named(&self, &str) -> core::option::Option<&[f64]>
+pub fn laddu_data::data::event::EventBatch::schema(&self) -> &alloc::sync::Arc<laddu_data::schema::Schema>
+pub fn laddu_data::data::event::EventBatch::select(&self, &[usize]) -> Self
+pub fn laddu_data::data::event::EventBatch::slice(&self, usize, usize) -> Self
+pub fn laddu_data::data::event::EventBatch::vec4_column(&self, usize) -> &[laddu_physics::vectors::RealVec4]
+pub fn laddu_data::data::event::EventBatch::vec4_column_named(&self, &str) -> core::option::Option<&[laddu_physics::vectors::RealVec4]>
+pub fn laddu_data::data::event::EventBatch::weights_at(&self, usize) -> f64
+pub fn laddu_data::data::event::EventBatch::weights_column(&self) -> core::option::Option<&[f64]>
+impl core::clone::Clone for laddu_data::data::event::EventBatch
+pub fn laddu_data::data::event::EventBatch::clone(&self) -> laddu_data::data::event::EventBatch
+impl core::fmt::Debug for laddu_data::data::event::EventBatch
+pub fn laddu_data::data::event::EventBatch::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub struct laddu_data::data::event::EventBatchBuilder
+impl laddu_data::data::event::EventBatchBuilder
+pub fn laddu_data::data::event::EventBatchBuilder::extend<I>(&mut self, I) -> laddu_data::LadduDataResult<&mut Self> where I: core::iter::traits::collect::IntoIterator<Item = laddu_data::data::event::OwnedEvent>
+pub fn laddu_data::data::event::EventBatchBuilder::finish(self) -> laddu_data::LadduDataResult<laddu_data::data::event::EventBatch>
+pub fn laddu_data::data::event::EventBatchBuilder::new(alloc::sync::Arc<laddu_data::schema::Schema>) -> Self
+pub fn laddu_data::data::event::EventBatchBuilder::push<P, S>(&mut self, P, S) -> laddu_data::LadduDataResult<&mut Self> where P: core::iter::traits::collect::IntoIterator<Item = laddu_physics::vectors::RealVec4>, S: core::iter::traits::collect::IntoIterator<Item = f64>
+pub fn laddu_data::data::event::EventBatchBuilder::push_event(&mut self, laddu_data::data::event::OwnedEvent) -> laddu_data::LadduDataResult<&mut Self>
+pub fn laddu_data::data::event::EventBatchBuilder::push_weighted<P, S>(&mut self, P, S, f64) -> laddu_data::LadduDataResult<&mut Self> where P: core::iter::traits::collect::IntoIterator<Item = laddu_physics::vectors::RealVec4>, S: core::iter::traits::collect::IntoIterator<Item = f64>
+pub fn laddu_data::data::event::EventBatchBuilder::with_capacity(alloc::sync::Arc<laddu_data::schema::Schema>, usize) -> Self
+pub struct laddu_data::data::event::OwnedEvent
+pub laddu_data::data::event::OwnedEvent::p4s: alloc::vec::Vec<laddu_physics::vectors::RealVec4>
+pub laddu_data::data::event::OwnedEvent::scalars: alloc::vec::Vec<f64>
+pub laddu_data::data::event::OwnedEvent::weight: core::option::Option<f64>
+impl laddu_data::data::event::OwnedEvent
+pub fn laddu_data::data::event::OwnedEvent::new(alloc::vec::Vec<laddu_physics::vectors::RealVec4>, alloc::vec::Vec<f64>) -> Self
+pub fn laddu_data::data::event::OwnedEvent::weighted(alloc::vec::Vec<laddu_physics::vectors::RealVec4>, alloc::vec::Vec<f64>, f64) -> Self
+impl core::clone::Clone for laddu_data::data::event::OwnedEvent
+pub fn laddu_data::data::event::OwnedEvent::clone(&self) -> laddu_data::data::event::OwnedEvent
+impl core::fmt::Debug for laddu_data::data::event::OwnedEvent
+pub fn laddu_data::data::event::OwnedEvent::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub enum laddu_data::data::CacheStorage
+pub laddu_data::data::CacheStorage::Resident
+pub laddu_data::data::CacheStorage::Streaming
+impl core::clone::Clone for laddu_data::data::dataset::CacheStorage
+pub fn laddu_data::data::dataset::CacheStorage::clone(&self) -> laddu_data::data::dataset::CacheStorage
+impl core::cmp::Eq for laddu_data::data::dataset::CacheStorage
+impl core::cmp::PartialEq for laddu_data::data::dataset::CacheStorage
+pub fn laddu_data::data::dataset::CacheStorage::eq(&self, &laddu_data::data::dataset::CacheStorage) -> bool
+impl core::default::Default for laddu_data::data::dataset::CacheStorage
+pub fn laddu_data::data::dataset::CacheStorage::default() -> laddu_data::data::dataset::CacheStorage
+impl core::fmt::Debug for laddu_data::data::dataset::CacheStorage
+pub fn laddu_data::data::dataset::CacheStorage::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for laddu_data::data::dataset::CacheStorage
+impl core::marker::StructuralPartialEq for laddu_data::data::dataset::CacheStorage
+pub enum laddu_data::data::MemoryPolicy
+pub laddu_data::data::MemoryPolicy::Fastest
+pub laddu_data::data::MemoryPolicy::Resident
+pub laddu_data::data::MemoryPolicy::Streaming
+impl core::clone::Clone for laddu_data::data::dataset::MemoryPolicy
+pub fn laddu_data::data::dataset::MemoryPolicy::clone(&self) -> laddu_data::data::dataset::MemoryPolicy
+impl core::cmp::Eq for laddu_data::data::dataset::MemoryPolicy
+impl core::cmp::PartialEq for laddu_data::data::dataset::MemoryPolicy
+pub fn laddu_data::data::dataset::MemoryPolicy::eq(&self, &laddu_data::data::dataset::MemoryPolicy) -> bool
+impl core::default::Default for laddu_data::data::dataset::MemoryPolicy
+pub fn laddu_data::data::dataset::MemoryPolicy::default() -> laddu_data::data::dataset::MemoryPolicy
+impl core::fmt::Debug for laddu_data::data::dataset::MemoryPolicy
+pub fn laddu_data::data::dataset::MemoryPolicy::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for laddu_data::data::dataset::MemoryPolicy
+impl core::marker::StructuralPartialEq for laddu_data::data::dataset::MemoryPolicy
+pub struct laddu_data::data::BatchEvent<'a>
+impl<'a> laddu_data::data::event::BatchEvent<'a>
+pub fn laddu_data::data::event::BatchEvent<'a>::batch(&self) -> &'a laddu_data::data::event::EventBatch
+pub fn laddu_data::data::event::BatchEvent<'a>::p4(&self, usize) -> laddu_physics::vectors::RealVec4
+pub fn laddu_data::data::event::BatchEvent<'a>::p4_named(&self, &str) -> core::option::Option<laddu_physics::vectors::RealVec4>
+pub fn laddu_data::data::event::BatchEvent<'a>::row(&self) -> usize
+pub fn laddu_data::data::event::BatchEvent<'a>::scalar(&self, usize) -> f64
+pub fn laddu_data::data::event::BatchEvent<'a>::scalar_named(&self, &str) -> core::option::Option<f64>
+pub fn laddu_data::data::event::BatchEvent<'a>::weight(&self) -> f64
+impl<'a> core::clone::Clone for laddu_data::data::event::BatchEvent<'a>
+pub fn laddu_data::data::event::BatchEvent<'a>::clone(&self) -> laddu_data::data::event::BatchEvent<'a>
+impl<'a> core::fmt::Debug for laddu_data::data::event::BatchEvent<'a>
+pub fn laddu_data::data::event::BatchEvent<'a>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'a> core::marker::Copy for laddu_data::data::event::BatchEvent<'a>
+pub struct laddu_data::data::Dataset
+impl laddu_data::data::dataset::Dataset
+pub fn laddu_data::data::dataset::Dataset::accumulate_events<T, F>(&self, T, F) -> laddu_data::LadduDataResult<T> where F: core::ops::function::FnMut(&mut T, laddu_data::data::event::Event<'_>)
+pub fn laddu_data::data::dataset::Dataset::batches(&self) -> laddu_data::LadduDataResult<alloc::boxed::Box<(dyn core::iter::traits::iterator::Iterator<Item = laddu_data::LadduDataResult<laddu_data::data::event::EventBatch>> + core::marker::Send)>>
+pub fn laddu_data::data::dataset::Dataset::bootstrap(self, u64) -> Self
+pub fn laddu_data::data::dataset::Dataset::cache_storage(&self) -> laddu_data::data::dataset::CacheStorage
+pub fn laddu_data::data::dataset::Dataset::capabilities(&self) -> laddu_data::io::SourceCapabilities
+pub fn laddu_data::data::dataset::Dataset::chunked(self, usize) -> laddu_data::LadduDataResult<Self>
+pub fn laddu_data::data::dataset::Dataset::fastest(self) -> Self
+pub fn laddu_data::data::dataset::Dataset::filter<F>(self, F) -> Self where F: core::ops::function::Fn(laddu_data::data::event::Event<'_>) -> bool + core::marker::Send + core::marker::Sync + 'static
+pub fn laddu_data::data::dataset::Dataset::fold_events<T, F>(&self, T, F) -> laddu_data::LadduDataResult<T> where F: core::ops::function::FnMut(T, laddu_data::data::event::Event<'_>) -> T
+pub fn laddu_data::data::dataset::Dataset::for_each_event<F>(&self, F) -> laddu_data::LadduDataResult<()> where F: core::ops::function::FnMut(laddu_data::data::event::Event<'_>)
+pub fn laddu_data::data::dataset::Dataset::from_arc(alloc::sync::Arc<dyn laddu_data::io::EventSource>) -> Self
+pub fn laddu_data::data::dataset::Dataset::from_batch(laddu_data::data::event::EventBatch) -> Self
+pub fn laddu_data::data::dataset::Dataset::from_batches(alloc::vec::Vec<laddu_data::data::event::EventBatch>) -> laddu_data::LadduDataResult<Self>
+pub fn laddu_data::data::dataset::Dataset::from_events<I>(alloc::sync::Arc<laddu_data::schema::Schema>, I) -> laddu_data::LadduDataResult<Self> where I: core::iter::traits::collect::IntoIterator<Item = laddu_data::data::event::OwnedEvent>
+pub fn laddu_data::data::dataset::Dataset::last_memory_decision(&self) -> core::option::Option<laddu_memory::MemoryDecision>
+pub fn laddu_data::data::dataset::Dataset::map_batches<T, F>(&self, F) -> laddu_data::LadduDataResult<alloc::vec::Vec<T>> where F: core::ops::function::FnMut(laddu_data::data::event::EventBatch) -> T
+pub fn laddu_data::data::dataset::Dataset::map_events<T, F>(&self, F) -> laddu_data::LadduDataResult<alloc::vec::Vec<T>> where F: core::ops::function::FnMut(laddu_data::data::event::Event<'_>) -> T
+pub fn laddu_data::data::dataset::Dataset::memory_budget(&self) -> laddu_memory::MemoryBudget
+pub fn laddu_data::data::dataset::Dataset::memory_policy(&self) -> laddu_data::data::dataset::MemoryPolicy
+pub fn laddu_data::data::dataset::Dataset::new<S>(S) -> Self where S: laddu_data::io::EventSource + 'static
+pub fn laddu_data::data::dataset::Dataset::num_events(&self) -> laddu_data::LadduDataResult<core::option::Option<u64>>
+pub fn laddu_data::data::dataset::Dataset::read_plan(&self) -> laddu_data::io::ReadPlan
+pub fn laddu_data::data::dataset::Dataset::resident(self) -> Self
+pub fn laddu_data::data::dataset::Dataset::schema(&self) -> laddu_data::LadduDataResult<alloc::sync::Arc<laddu_data::schema::Schema>>
+pub fn laddu_data::data::dataset::Dataset::source_traversals(&self) -> u64
+pub fn laddu_data::data::dataset::Dataset::stats(&self) -> laddu_data::LadduDataResult<laddu_data::data::dataset::DatasetStats>
+pub fn laddu_data::data::dataset::Dataset::streaming(self) -> Self
+pub fn laddu_data::data::dataset::Dataset::subsample(self, f64, u64) -> laddu_data::LadduDataResult<Self>
+pub fn laddu_data::data::dataset::Dataset::sum_weights(&self) -> laddu_data::LadduDataResult<f64>
+pub fn laddu_data::data::dataset::Dataset::try_accumulate_events<T, F>(&self, T, F) -> laddu_data::LadduDataResult<T> where F: core::ops::function::FnMut(&mut T, laddu_data::data::event::Event<'_>) -> laddu_data::LadduDataResult<()>
+pub fn laddu_data::data::dataset::Dataset::try_fold_events<T, F>(&self, T, F) -> laddu_data::LadduDataResult<T> where F: core::ops::function::FnMut(T, laddu_data::data::event::Event<'_>) -> laddu_data::LadduDataResult<T>
+pub fn laddu_data::data::dataset::Dataset::try_for_each_batch<F>(&self, F) -> laddu_data::LadduDataResult<()> where F: core::ops::function::FnMut(laddu_data::data::event::EventBatch) -> laddu_data::LadduDataResult<()>
+pub fn laddu_data::data::dataset::Dataset::try_for_each_event<F>(&self, F) -> laddu_data::LadduDataResult<()> where F: core::ops::function::FnMut(laddu_data::data::event::Event<'_>) -> laddu_data::LadduDataResult<()>
+pub fn laddu_data::data::dataset::Dataset::try_map_events<T, F>(&self, F) -> laddu_data::LadduDataResult<alloc::vec::Vec<T>> where F: core::ops::function::FnMut(laddu_data::data::event::Event<'_>) -> laddu_data::LadduDataResult<T>
+pub fn laddu_data::data::dataset::Dataset::unchunked(self) -> Self
+pub fn laddu_data::data::dataset::Dataset::weighted_complex_sum<F>(&self, F) -> laddu_data::LadduDataResult<num_complex::Complex64> where F: core::ops::function::FnMut(laddu_data::data::event::Event<'_>) -> num_complex::Complex64
+pub fn laddu_data::data::dataset::Dataset::weighted_sum<F>(&self, F) -> laddu_data::LadduDataResult<f64> where F: core::ops::function::FnMut(laddu_data::data::event::Event<'_>) -> f64
+pub fn laddu_data::data::dataset::Dataset::with_memory_budget(self, laddu_memory::MemoryBudget) -> Self
+pub fn laddu_data::data::dataset::Dataset::write_to<S: laddu_data::io::EventSink>(&self, &mut S) -> laddu_data::LadduDataResult<()>
+impl core::clone::Clone for laddu_data::data::dataset::Dataset
+pub fn laddu_data::data::dataset::Dataset::clone(&self) -> laddu_data::data::dataset::Dataset
+pub struct laddu_data::data::Event<'a>
+impl<'a> laddu_data::data::event::Event<'a>
+pub fn laddu_data::data::event::Event<'a>::p4(&self, usize) -> laddu_physics::vectors::RealVec4
+pub fn laddu_data::data::event::Event<'a>::p4_named(&self, &str) -> core::option::Option<laddu_physics::vectors::RealVec4>
+pub fn laddu_data::data::event::Event<'a>::row(&self) -> usize
+pub fn laddu_data::data::event::Event<'a>::scalar(&self, usize) -> f64
+pub fn laddu_data::data::event::Event<'a>::scalar_named(&self, &str) -> core::option::Option<f64>
+pub fn laddu_data::data::event::Event<'a>::weight(&self) -> f64
+impl<'a> core::clone::Clone for laddu_data::data::event::Event<'a>
+pub fn laddu_data::data::event::Event<'a>::clone(&self) -> laddu_data::data::event::Event<'a>
+impl<'a> core::fmt::Debug for laddu_data::data::event::Event<'a>
+pub fn laddu_data::data::event::Event<'a>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'a> core::marker::Copy for laddu_data::data::event::Event<'a>
+pub struct laddu_data::data::EventBatch
+impl laddu_data::data::event::EventBatch
+pub fn laddu_data::data::event::EventBatch::bytes_per_event(&self) -> usize
+pub fn laddu_data::data::event::EventBatch::concat(&[Self]) -> laddu_data::LadduDataResult<Self>
+pub fn laddu_data::data::event::EventBatch::event(&self, usize) -> laddu_data::data::event::BatchEvent<'_>
+pub fn laddu_data::data::event::EventBatch::filter<F>(&self, F) -> Self where F: core::ops::function::Fn(laddu_data::data::event::BatchEvent<'_>) -> bool
+pub fn laddu_data::data::event::EventBatch::from_events<I>(alloc::sync::Arc<laddu_data::schema::Schema>, I) -> laddu_data::LadduDataResult<Self> where I: core::iter::traits::collect::IntoIterator<Item = laddu_data::data::event::OwnedEvent>
+pub fn laddu_data::data::event::EventBatch::is_empty(&self) -> bool
+pub fn laddu_data::data::event::EventBatch::iter(&self) -> impl core::iter::traits::iterator::Iterator<Item = laddu_data::data::event::BatchEvent<'_>>
+pub fn laddu_data::data::event::EventBatch::len(&self) -> usize
+pub fn laddu_data::data::event::EventBatch::new(alloc::sync::Arc<laddu_data::schema::Schema>, alloc::vec::Vec<alloc::sync::Arc<[laddu_physics::vectors::RealVec4]>>, alloc::vec::Vec<alloc::sync::Arc<[f64]>>, core::option::Option<alloc::sync::Arc<[f64]>>) -> laddu_data::LadduDataResult<Self>
+pub fn laddu_data::data::event::EventBatch::p4_at(&self, usize, usize) -> laddu_physics::vectors::RealVec4
+pub fn laddu_data::data::event::EventBatch::resident_bytes(&self) -> usize
+pub fn laddu_data::data::event::EventBatch::reweight<F>(&self, F) -> Self where F: core::ops::function::Fn(usize, f64) -> f64
+pub fn laddu_data::data::event::EventBatch::scalar_at(&self, usize, usize) -> f64
+pub fn laddu_data::data::event::EventBatch::scalar_column(&self, usize) -> &[f64]
+pub fn laddu_data::data::event::EventBatch::scalar_column_named(&self, &str) -> core::option::Option<&[f64]>
+pub fn laddu_data::data::event::EventBatch::schema(&self) -> &alloc::sync::Arc<laddu_data::schema::Schema>
+pub fn laddu_data::data::event::EventBatch::select(&self, &[usize]) -> Self
+pub fn laddu_data::data::event::EventBatch::slice(&self, usize, usize) -> Self
+pub fn laddu_data::data::event::EventBatch::vec4_column(&self, usize) -> &[laddu_physics::vectors::RealVec4]
+pub fn laddu_data::data::event::EventBatch::vec4_column_named(&self, &str) -> core::option::Option<&[laddu_physics::vectors::RealVec4]>
+pub fn laddu_data::data::event::EventBatch::weights_at(&self, usize) -> f64
+pub fn laddu_data::data::event::EventBatch::weights_column(&self) -> core::option::Option<&[f64]>
+impl core::clone::Clone for laddu_data::data::event::EventBatch
+pub fn laddu_data::data::event::EventBatch::clone(&self) -> laddu_data::data::event::EventBatch
+impl core::fmt::Debug for laddu_data::data::event::EventBatch
+pub fn laddu_data::data::event::EventBatch::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub struct laddu_data::data::EventBatchBuilder
+impl laddu_data::data::event::EventBatchBuilder
+pub fn laddu_data::data::event::EventBatchBuilder::extend<I>(&mut self, I) -> laddu_data::LadduDataResult<&mut Self> where I: core::iter::traits::collect::IntoIterator<Item = laddu_data::data::event::OwnedEvent>
+pub fn laddu_data::data::event::EventBatchBuilder::finish(self) -> laddu_data::LadduDataResult<laddu_data::data::event::EventBatch>
+pub fn laddu_data::data::event::EventBatchBuilder::new(alloc::sync::Arc<laddu_data::schema::Schema>) -> Self
+pub fn laddu_data::data::event::EventBatchBuilder::push<P, S>(&mut self, P, S) -> laddu_data::LadduDataResult<&mut Self> where P: core::iter::traits::collect::IntoIterator<Item = laddu_physics::vectors::RealVec4>, S: core::iter::traits::collect::IntoIterator<Item = f64>
+pub fn laddu_data::data::event::EventBatchBuilder::push_event(&mut self, laddu_data::data::event::OwnedEvent) -> laddu_data::LadduDataResult<&mut Self>
+pub fn laddu_data::data::event::EventBatchBuilder::push_weighted<P, S>(&mut self, P, S, f64) -> laddu_data::LadduDataResult<&mut Self> where P: core::iter::traits::collect::IntoIterator<Item = laddu_physics::vectors::RealVec4>, S: core::iter::traits::collect::IntoIterator<Item = f64>
+pub fn laddu_data::data::event::EventBatchBuilder::with_capacity(alloc::sync::Arc<laddu_data::schema::Schema>, usize) -> Self
+pub struct laddu_data::data::OwnedEvent
+pub laddu_data::data::OwnedEvent::p4s: alloc::vec::Vec<laddu_physics::vectors::RealVec4>
+pub laddu_data::data::OwnedEvent::scalars: alloc::vec::Vec<f64>
+pub laddu_data::data::OwnedEvent::weight: core::option::Option<f64>
+impl laddu_data::data::event::OwnedEvent
+pub fn laddu_data::data::event::OwnedEvent::new(alloc::vec::Vec<laddu_physics::vectors::RealVec4>, alloc::vec::Vec<f64>) -> Self
+pub fn laddu_data::data::event::OwnedEvent::weighted(alloc::vec::Vec<laddu_physics::vectors::RealVec4>, alloc::vec::Vec<f64>, f64) -> Self
+impl core::clone::Clone for laddu_data::data::event::OwnedEvent
+pub fn laddu_data::data::event::OwnedEvent::clone(&self) -> laddu_data::data::event::OwnedEvent
+impl core::fmt::Debug for laddu_data::data::event::OwnedEvent
+pub fn laddu_data::data::event::OwnedEvent::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub mod laddu_data::io
+pub mod laddu_data::io::memory
+pub struct laddu_data::io::memory::MemoryFragmentKey
+impl core::clone::Clone for laddu_data::io::memory::MemoryFragmentKey
+pub fn laddu_data::io::memory::MemoryFragmentKey::clone(&self) -> laddu_data::io::memory::MemoryFragmentKey
+impl core::fmt::Debug for laddu_data::io::memory::MemoryFragmentKey
+pub fn laddu_data::io::memory::MemoryFragmentKey::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for laddu_data::io::memory::MemoryFragmentKey
+pub struct laddu_data::io::memory::MemorySink
+impl laddu_data::io::memory::MemorySink
+pub fn laddu_data::io::memory::MemorySink::batches(&self) -> &[laddu_data::data::event::EventBatch]
+pub fn laddu_data::io::memory::MemorySink::clear(&mut self)
+pub fn laddu_data::io::memory::MemorySink::into_batch(self) -> laddu_data::LadduDataResult<laddu_data::data::event::EventBatch>
+pub fn laddu_data::io::memory::MemorySink::into_batches(self) -> alloc::vec::Vec<laddu_data::data::event::EventBatch>
+pub fn laddu_data::io::memory::MemorySink::into_source(self) -> laddu_data::LadduDataResult<laddu_data::io::memory::MemorySource>
+pub fn laddu_data::io::memory::MemorySink::new() -> Self
+pub fn laddu_data::io::memory::MemorySink::schema(&self) -> core::option::Option<&alloc::sync::Arc<laddu_data::schema::Schema>>
+impl core::clone::Clone for laddu_data::io::memory::MemorySink
+pub fn laddu_data::io::memory::MemorySink::clone(&self) -> laddu_data::io::memory::MemorySink
+impl core::default::Default for laddu_data::io::memory::MemorySink
+pub fn laddu_data::io::memory::MemorySink::default() -> laddu_data::io::memory::MemorySink
+impl core::fmt::Debug for laddu_data::io::memory::MemorySink
+pub fn laddu_data::io::memory::MemorySink::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl laddu_data::io::EventSink for laddu_data::io::memory::MemorySink
+pub fn laddu_data::io::memory::MemorySink::begin(&mut self, alloc::sync::Arc<laddu_data::schema::Schema>, laddu_data::io::WritePlan) -> laddu_data::LadduDataResult<()>
+pub fn laddu_data::io::memory::MemorySink::finish(&mut self) -> laddu_data::LadduDataResult<()>
+pub fn laddu_data::io::memory::MemorySink::retains_batches(&self) -> bool
+pub fn laddu_data::io::memory::MemorySink::write_batch(&mut self, &laddu_data::data::event::EventBatch) -> laddu_data::LadduDataResult<()>
+pub struct laddu_data::io::memory::MemorySource
+impl laddu_data::io::memory::MemorySource
+pub fn laddu_data::io::memory::MemorySource::batches_slice(&self) -> &[laddu_data::data::event::EventBatch]
+pub fn laddu_data::io::memory::MemorySource::from_batches(alloc::vec::Vec<laddu_data::data::event::EventBatch>) -> laddu_data::LadduDataResult<Self>
+pub fn laddu_data::io::memory::MemorySource::from_events<I>(alloc::sync::Arc<laddu_data::schema::Schema>, I) -> laddu_data::LadduDataResult<Self> where I: core::iter::traits::collect::IntoIterator<Item = laddu_data::data::event::OwnedEvent>
+pub fn laddu_data::io::memory::MemorySource::into_batch(self) -> laddu_data::LadduDataResult<laddu_data::data::event::EventBatch>
+pub fn laddu_data::io::memory::MemorySource::into_batches(self) -> alloc::sync::Arc<[laddu_data::data::event::EventBatch]>
+pub fn laddu_data::io::memory::MemorySource::new(laddu_data::data::event::EventBatch) -> Self
+pub fn laddu_data::io::memory::MemorySource::schema_arc(&self) -> &alloc::sync::Arc<laddu_data::schema::Schema>
+impl core::clone::Clone for laddu_data::io::memory::MemorySource
+pub fn laddu_data::io::memory::MemorySource::clone(&self) -> laddu_data::io::memory::MemorySource
+impl core::fmt::Debug for laddu_data::io::memory::MemorySource
+pub fn laddu_data::io::memory::MemorySource::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl laddu_data::io::EventSource for laddu_data::io::memory::MemorySource
+pub fn laddu_data::io::memory::MemorySource::batches(&self, laddu_data::io::ReadPlan) -> laddu_data::LadduDataResult<alloc::boxed::Box<(dyn core::iter::traits::iterator::Iterator<Item = laddu_data::LadduDataResult<laddu_data::data::event::EventBatch>> + core::marker::Send)>>
+pub fn laddu_data::io::memory::MemorySource::capabilities(&self) -> laddu_data::io::SourceCapabilities
+pub fn laddu_data::io::memory::MemorySource::num_events(&self) -> laddu_data::LadduDataResult<core::option::Option<u64>>
+pub fn laddu_data::io::memory::MemorySource::schema(&self) -> laddu_data::LadduDataResult<alloc::sync::Arc<laddu_data::schema::Schema>>
+pub fn laddu_data::io::memory::MemorySource::weighted_total(&self) -> laddu_data::LadduDataResult<core::option::Option<f64>>
+impl laddu_data::io::FragmentedSource for laddu_data::io::memory::MemorySource
+pub type laddu_data::io::memory::MemorySource::Key = laddu_data::io::memory::MemoryFragmentKey
+pub fn laddu_data::io::memory::MemorySource::fragments(&self) -> laddu_data::LadduDataResult<alloc::vec::Vec<laddu_data::io::DataFragment<Self::Key>>>
+pub fn laddu_data::io::memory::MemorySource::read_fragment_range(&self, &Self::Key, usize, usize, core::option::Option<usize>) -> laddu_data::LadduDataResult<alloc::boxed::Box<(dyn core::iter::traits::iterator::Iterator<Item = laddu_data::LadduDataResult<laddu_data::data::event::EventBatch>> + core::marker::Send)>>
+pub mod laddu_data::io::parquet
+pub enum laddu_data::io::parquet::NullHandling
+pub laddu_data::io::parquet::NullHandling::Error
+pub laddu_data::io::parquet::NullHandling::NaN
+impl core::clone::Clone for laddu_data::io::parquet::NullHandling
+pub fn laddu_data::io::parquet::NullHandling::clone(&self) -> laddu_data::io::parquet::NullHandling
+impl core::fmt::Debug for laddu_data::io::parquet::NullHandling
+pub fn laddu_data::io::parquet::NullHandling::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for laddu_data::io::parquet::NullHandling
+pub struct laddu_data::io::parquet::ParquetFragmentKey
+pub laddu_data::io::parquet::ParquetFragmentKey::file: alloc::sync::Arc<std::path::PathBuf>
+pub laddu_data::io::parquet::ParquetFragmentKey::row_group: usize
+impl core::clone::Clone for laddu_data::io::parquet::ParquetFragmentKey
+pub fn laddu_data::io::parquet::ParquetFragmentKey::clone(&self) -> laddu_data::io::parquet::ParquetFragmentKey
+impl core::fmt::Debug for laddu_data::io::parquet::ParquetFragmentKey
+pub fn laddu_data::io::parquet::ParquetFragmentKey::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub struct laddu_data::io::parquet::ParquetReadOptions
+pub laddu_data::io::parquet::ParquetReadOptions::infer_schema: bool
+pub laddu_data::io::parquet::ParquetReadOptions::null_handling: laddu_data::io::parquet::NullHandling
+pub laddu_data::io::parquet::ParquetReadOptions::schema_inference: laddu_data::schema::SchemaInferenceOptions
+pub laddu_data::io::parquet::ParquetReadOptions::sort_glob: bool
+pub laddu_data::io::parquet::ParquetReadOptions::validate_all_files: bool
+impl core::clone::Clone for laddu_data::io::parquet::ParquetReadOptions
+pub fn laddu_data::io::parquet::ParquetReadOptions::clone(&self) -> laddu_data::io::parquet::ParquetReadOptions
+impl core::default::Default for laddu_data::io::parquet::ParquetReadOptions
+pub fn laddu_data::io::parquet::ParquetReadOptions::default() -> Self
+impl core::fmt::Debug for laddu_data::io::parquet::ParquetReadOptions
+pub fn laddu_data::io::parquet::ParquetReadOptions::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub struct laddu_data::io::parquet::ParquetSink
+impl laddu_data::io::parquet::ParquetSink
+pub fn laddu_data::io::parquet::ParquetSink::builder(impl core::convert::Into<std::path::PathBuf>) -> laddu_data::io::parquet::ParquetSinkBuilder
+pub fn laddu_data::io::parquet::ParquetSink::create(impl core::convert::Into<std::path::PathBuf>) -> Self
+pub fn laddu_data::io::parquet::ParquetSink::resolved_path(&self) -> core::option::Option<&std::path::Path>
+impl laddu_data::io::EventSink for laddu_data::io::parquet::ParquetSink
+pub fn laddu_data::io::parquet::ParquetSink::begin(&mut self, alloc::sync::Arc<laddu_data::schema::Schema>, laddu_data::io::WritePlan) -> laddu_data::LadduDataResult<()>
+pub fn laddu_data::io::parquet::ParquetSink::finish(&mut self) -> laddu_data::LadduDataResult<()>
+pub fn laddu_data::io::parquet::ParquetSink::retains_batches(&self) -> bool
+pub fn laddu_data::io::parquet::ParquetSink::write_batch(&mut self, &laddu_data::data::event::EventBatch) -> laddu_data::LadduDataResult<()>
+pub struct laddu_data::io::parquet::ParquetSinkBuilder
+impl laddu_data::io::parquet::ParquetSinkBuilder
+pub fn laddu_data::io::parquet::ParquetSinkBuilder::auto_output(self) -> Self
+pub fn laddu_data::io::parquet::ParquetSinkBuilder::build(self) -> laddu_data::io::parquet::ParquetSink
+pub fn laddu_data::io::parquet::ParquetSinkBuilder::column_names(self, laddu_data::schema::SchemaColumnNames) -> Self
+pub fn laddu_data::io::parquet::ParquetSinkBuilder::output_mode(self, laddu_data::io::OutputMode) -> Self
+pub fn laddu_data::io::parquet::ParquetSinkBuilder::per_rank_files(self) -> Self
+pub fn laddu_data::io::parquet::ParquetSinkBuilder::precision(self, laddu_data::schema::Precision) -> Self
+pub fn laddu_data::io::parquet::ParquetSinkBuilder::schema_write(self, laddu_data::schema::SchemaWriteOptions) -> Self
+pub fn laddu_data::io::parquet::ParquetSinkBuilder::single_file(self) -> Self
+pub fn laddu_data::io::parquet::ParquetSinkBuilder::write_weight_column(self, laddu_data::schema::WriteWeightColumn) -> Self
+pub fn laddu_data::io::parquet::ParquetSinkBuilder::writer_properties(self, parquet::file::properties::WriterProperties) -> Self
+pub struct laddu_data::io::parquet::ParquetSource
+impl laddu_data::io::parquet::ParquetSource
+pub fn laddu_data::io::parquet::ParquetSource::builder(impl core::convert::AsRef<str>) -> laddu_data::io::parquet::ParquetSourceBuilder
+pub fn laddu_data::io::parquet::ParquetSource::files(&self) -> &[alloc::sync::Arc<std::path::PathBuf>]
+pub fn laddu_data::io::parquet::ParquetSource::open(impl core::convert::AsRef<str>) -> laddu_data::LadduDataResult<Self>
+impl core::clone::Clone for laddu_data::io::parquet::ParquetSource
+pub fn laddu_data::io::parquet::ParquetSource::clone(&self) -> laddu_data::io::parquet::ParquetSource
+impl core::fmt::Debug for laddu_data::io::parquet::ParquetSource
+pub fn laddu_data::io::parquet::ParquetSource::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl laddu_data::io::EventSource for laddu_data::io::parquet::ParquetSource
+pub fn laddu_data::io::parquet::ParquetSource::batches(&self, laddu_data::io::ReadPlan) -> laddu_data::LadduDataResult<alloc::boxed::Box<(dyn core::iter::traits::iterator::Iterator<Item = laddu_data::LadduDataResult<laddu_data::data::event::EventBatch>> + core::marker::Send)>>
+pub fn laddu_data::io::parquet::ParquetSource::capabilities(&self) -> laddu_data::io::SourceCapabilities
+pub fn laddu_data::io::parquet::ParquetSource::num_events(&self) -> laddu_data::LadduDataResult<core::option::Option<u64>>
+pub fn laddu_data::io::parquet::ParquetSource::schema(&self) -> laddu_data::LadduDataResult<alloc::sync::Arc<laddu_data::schema::Schema>>
+pub fn laddu_data::io::parquet::ParquetSource::weighted_total(&self) -> laddu_data::LadduDataResult<core::option::Option<f64>>
+impl laddu_data::io::FragmentedSource for laddu_data::io::parquet::ParquetSource
+pub type laddu_data::io::parquet::ParquetSource::Key = laddu_data::io::parquet::ParquetFragmentKey
+pub fn laddu_data::io::parquet::ParquetSource::fragments(&self) -> laddu_data::LadduDataResult<alloc::vec::Vec<laddu_data::io::DataFragment<Self::Key>>>
+pub fn laddu_data::io::parquet::ParquetSource::read_fragment_range(&self, &Self::Key, usize, usize, core::option::Option<usize>) -> laddu_data::LadduDataResult<alloc::boxed::Box<(dyn core::iter::traits::iterator::Iterator<Item = laddu_data::LadduDataResult<laddu_data::data::event::EventBatch>> + core::marker::Send)>>
+pub struct laddu_data::io::parquet::ParquetSourceBuilder
+impl laddu_data::io::parquet::ParquetSourceBuilder
+pub fn laddu_data::io::parquet::ParquetSourceBuilder::build(self) -> laddu_data::LadduDataResult<laddu_data::io::parquet::ParquetSource>
+pub fn laddu_data::io::parquet::ParquetSourceBuilder::error_on_nulls(self) -> Self
+pub fn laddu_data::io::parquet::ParquetSourceBuilder::infer_schema(self, bool) -> Self
+pub fn laddu_data::io::parquet::ParquetSourceBuilder::nulls_as_nan(self) -> Self
+pub fn laddu_data::io::parquet::ParquetSourceBuilder::require_weight(self, bool) -> Self
+pub fn laddu_data::io::parquet::ParquetSourceBuilder::schema(self, alloc::sync::Arc<laddu_data::schema::Schema>) -> Self
+pub fn laddu_data::io::parquet::ParquetSourceBuilder::schema_inference(self, laddu_data::schema::SchemaInferenceOptions) -> Self
+pub fn laddu_data::io::parquet::ParquetSourceBuilder::sort_glob(self, bool) -> Self
+pub fn laddu_data::io::parquet::ParquetSourceBuilder::validate_all_files(self, bool) -> Self
+pub struct laddu_data::io::parquet::ParquetWriteOptions
+pub laddu_data::io::parquet::ParquetWriteOptions::schema_write: laddu_data::schema::SchemaWriteOptions
+pub laddu_data::io::parquet::ParquetWriteOptions::writer_properties: core::option::Option<parquet::file::properties::WriterProperties>
+impl core::clone::Clone for laddu_data::io::parquet::ParquetWriteOptions
+pub fn laddu_data::io::parquet::ParquetWriteOptions::clone(&self) -> laddu_data::io::parquet::ParquetWriteOptions
+impl core::default::Default for laddu_data::io::parquet::ParquetWriteOptions
+pub fn laddu_data::io::parquet::ParquetWriteOptions::default() -> laddu_data::io::parquet::ParquetWriteOptions
+impl core::fmt::Debug for laddu_data::io::parquet::ParquetWriteOptions
+pub fn laddu_data::io::parquet::ParquetWriteOptions::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub mod laddu_data::io::root
+pub enum laddu_data::io::root::RootTreeSelection
+pub laddu_data::io::root::RootTreeSelection::First
+pub laddu_data::io::root::RootTreeSelection::Named(laddu_data::Name)
+impl core::clone::Clone for laddu_data::io::root::RootTreeSelection
+pub fn laddu_data::io::root::RootTreeSelection::clone(&self) -> laddu_data::io::root::RootTreeSelection
+impl core::default::Default for laddu_data::io::root::RootTreeSelection
+pub fn laddu_data::io::root::RootTreeSelection::default() -> laddu_data::io::root::RootTreeSelection
+impl core::fmt::Debug for laddu_data::io::root::RootTreeSelection
+pub fn laddu_data::io::root::RootTreeSelection::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub struct laddu_data::io::root::RootColumnInfo
+pub laddu_data::io::root::RootColumnInfo::entries: i64
+pub laddu_data::io::root::RootColumnInfo::interpretation: alloc::string::String
+pub laddu_data::io::root::RootColumnInfo::item_type_name: alloc::string::String
+pub laddu_data::io::root::RootColumnInfo::name: laddu_data::Name
+impl core::clone::Clone for laddu_data::io::root::RootColumnInfo
+pub fn laddu_data::io::root::RootColumnInfo::clone(&self) -> laddu_data::io::root::RootColumnInfo
+impl core::fmt::Debug for laddu_data::io::root::RootColumnInfo
+pub fn laddu_data::io::root::RootColumnInfo::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub struct laddu_data::io::root::RootFragmentKey
+pub laddu_data::io::root::RootFragmentKey::file: alloc::sync::Arc<std::path::PathBuf>
+pub laddu_data::io::root::RootFragmentKey::tree_name: laddu_data::Name
+impl core::clone::Clone for laddu_data::io::root::RootFragmentKey
+pub fn laddu_data::io::root::RootFragmentKey::clone(&self) -> laddu_data::io::root::RootFragmentKey
+impl core::fmt::Debug for laddu_data::io::root::RootFragmentKey
+pub fn laddu_data::io::root::RootFragmentKey::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub struct laddu_data::io::root::RootReadOptions
+pub laddu_data::io::root::RootReadOptions::infer_schema: bool
+pub laddu_data::io::root::RootReadOptions::schema_inference: laddu_data::schema::SchemaInferenceOptions
+pub laddu_data::io::root::RootReadOptions::sort_glob: bool
+pub laddu_data::io::root::RootReadOptions::tree: laddu_data::io::root::RootTreeSelection
+pub laddu_data::io::root::RootReadOptions::validate_all_files: bool
+impl core::clone::Clone for laddu_data::io::root::RootReadOptions
+pub fn laddu_data::io::root::RootReadOptions::clone(&self) -> laddu_data::io::root::RootReadOptions
+impl core::default::Default for laddu_data::io::root::RootReadOptions
+pub fn laddu_data::io::root::RootReadOptions::default() -> Self
+impl core::fmt::Debug for laddu_data::io::root::RootReadOptions
+pub fn laddu_data::io::root::RootReadOptions::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub struct laddu_data::io::root::RootSink
+impl laddu_data::io::root::RootSink
+pub fn laddu_data::io::root::RootSink::builder(impl core::convert::Into<std::path::PathBuf>) -> laddu_data::io::root::RootSinkBuilder
+pub fn laddu_data::io::root::RootSink::create(impl core::convert::Into<std::path::PathBuf>) -> Self
+pub fn laddu_data::io::root::RootSink::resolved_path(&self) -> core::option::Option<&std::path::Path>
+impl core::ops::drop::Drop for laddu_data::io::root::RootSink
+pub fn laddu_data::io::root::RootSink::drop(&mut self)
+impl laddu_data::io::EventSink for laddu_data::io::root::RootSink
+pub fn laddu_data::io::root::RootSink::begin(&mut self, alloc::sync::Arc<laddu_data::schema::Schema>, laddu_data::io::WritePlan) -> laddu_data::LadduDataResult<()>
+pub fn laddu_data::io::root::RootSink::finish(&mut self) -> laddu_data::LadduDataResult<()>
+pub fn laddu_data::io::root::RootSink::retains_batches(&self) -> bool
+pub fn laddu_data::io::root::RootSink::write_batch(&mut self, &laddu_data::data::event::EventBatch) -> laddu_data::LadduDataResult<()>
+pub struct laddu_data::io::root::RootSinkBuilder
+impl laddu_data::io::root::RootSinkBuilder
+pub fn laddu_data::io::root::RootSinkBuilder::auto_output(self) -> Self
+pub fn laddu_data::io::root::RootSinkBuilder::build(self) -> laddu_data::io::root::RootSink
+pub fn laddu_data::io::root::RootSinkBuilder::column_names(self, laddu_data::schema::SchemaColumnNames) -> Self
+pub fn laddu_data::io::root::RootSinkBuilder::output_mode(self, laddu_data::io::OutputMode) -> Self
+pub fn laddu_data::io::root::RootSinkBuilder::per_rank_files(self) -> Self
+pub fn laddu_data::io::root::RootSinkBuilder::precision(self, laddu_data::schema::Precision) -> Self
+pub fn laddu_data::io::root::RootSinkBuilder::schema_write(self, laddu_data::schema::SchemaWriteOptions) -> Self
+pub fn laddu_data::io::root::RootSinkBuilder::single_file(self) -> Self
+pub fn laddu_data::io::root::RootSinkBuilder::tree(self, impl core::convert::Into<laddu_data::Name>) -> Self
+pub fn laddu_data::io::root::RootSinkBuilder::write_weight_column(self, laddu_data::schema::WriteWeightColumn) -> Self
+pub struct laddu_data::io::root::RootSource
+impl laddu_data::io::root::RootSource
+pub fn laddu_data::io::root::RootSource::builder(impl core::convert::AsRef<str>) -> laddu_data::io::root::RootSourceBuilder
+pub fn laddu_data::io::root::RootSource::columns(impl core::convert::AsRef<std::path::Path>, core::option::Option<&str>) -> laddu_data::LadduDataResult<alloc::vec::Vec<laddu_data::io::root::RootColumnInfo>>
+pub fn laddu_data::io::root::RootSource::files(&self) -> &[alloc::sync::Arc<std::path::PathBuf>]
+pub fn laddu_data::io::root::RootSource::open(impl core::convert::AsRef<str>) -> laddu_data::LadduDataResult<Self>
+pub fn laddu_data::io::root::RootSource::tree_name(&self) -> &str
+pub fn laddu_data::io::root::RootSource::tree_names(impl core::convert::AsRef<std::path::Path>) -> laddu_data::LadduDataResult<alloc::vec::Vec<laddu_data::Name>>
+impl core::clone::Clone for laddu_data::io::root::RootSource
+pub fn laddu_data::io::root::RootSource::clone(&self) -> laddu_data::io::root::RootSource
+impl core::fmt::Debug for laddu_data::io::root::RootSource
+pub fn laddu_data::io::root::RootSource::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl laddu_data::io::EventSource for laddu_data::io::root::RootSource
+pub fn laddu_data::io::root::RootSource::batches(&self, laddu_data::io::ReadPlan) -> laddu_data::LadduDataResult<alloc::boxed::Box<(dyn core::iter::traits::iterator::Iterator<Item = laddu_data::LadduDataResult<laddu_data::data::event::EventBatch>> + core::marker::Send)>>
+pub fn laddu_data::io::root::RootSource::capabilities(&self) -> laddu_data::io::SourceCapabilities
+pub fn laddu_data::io::root::RootSource::num_events(&self) -> laddu_data::LadduDataResult<core::option::Option<u64>>
+pub fn laddu_data::io::root::RootSource::schema(&self) -> laddu_data::LadduDataResult<alloc::sync::Arc<laddu_data::schema::Schema>>
+pub fn laddu_data::io::root::RootSource::weighted_total(&self) -> laddu_data::LadduDataResult<core::option::Option<f64>>
+impl laddu_data::io::FragmentedSource for laddu_data::io::root::RootSource
+pub type laddu_data::io::root::RootSource::Key = laddu_data::io::root::RootFragmentKey
+pub fn laddu_data::io::root::RootSource::fragments(&self) -> laddu_data::LadduDataResult<alloc::vec::Vec<laddu_data::io::DataFragment<Self::Key>>>
+pub fn laddu_data::io::root::RootSource::read_fragment_range(&self, &Self::Key, usize, usize, core::option::Option<usize>) -> laddu_data::LadduDataResult<alloc::boxed::Box<(dyn core::iter::traits::iterator::Iterator<Item = laddu_data::LadduDataResult<laddu_data::data::event::EventBatch>> + core::marker::Send)>>
+pub struct laddu_data::io::root::RootSourceBuilder
+impl laddu_data::io::root::RootSourceBuilder
+pub fn laddu_data::io::root::RootSourceBuilder::build(self) -> laddu_data::LadduDataResult<laddu_data::io::root::RootSource>
+pub fn laddu_data::io::root::RootSourceBuilder::first_tree(self) -> Self
+pub fn laddu_data::io::root::RootSourceBuilder::infer_schema(self, bool) -> Self
+pub fn laddu_data::io::root::RootSourceBuilder::require_weight(self, bool) -> Self
+pub fn laddu_data::io::root::RootSourceBuilder::schema(self, alloc::sync::Arc<laddu_data::schema::Schema>) -> Self
+pub fn laddu_data::io::root::RootSourceBuilder::schema_inference(self, laddu_data::schema::SchemaInferenceOptions) -> Self
+pub fn laddu_data::io::root::RootSourceBuilder::sort_glob(self, bool) -> Self
+pub fn laddu_data::io::root::RootSourceBuilder::tree(self, impl core::convert::Into<laddu_data::Name>) -> Self
+pub fn laddu_data::io::root::RootSourceBuilder::validate_all_files(self, bool) -> Self
+pub struct laddu_data::io::root::RootWriteOptions
+pub laddu_data::io::root::RootWriteOptions::schema_write: laddu_data::schema::SchemaWriteOptions
+pub laddu_data::io::root::RootWriteOptions::tree_name: laddu_data::Name
+impl core::clone::Clone for laddu_data::io::root::RootWriteOptions
+pub fn laddu_data::io::root::RootWriteOptions::clone(&self) -> laddu_data::io::root::RootWriteOptions
+impl core::default::Default for laddu_data::io::root::RootWriteOptions
+pub fn laddu_data::io::root::RootWriteOptions::default() -> Self
+impl core::fmt::Debug for laddu_data::io::root::RootWriteOptions
+pub fn laddu_data::io::root::RootWriteOptions::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub enum laddu_data::io::Distribution
+pub laddu_data::io::Distribution::Mpi
+pub laddu_data::io::Distribution::Mpi::nranks: usize
+pub laddu_data::io::Distribution::Mpi::partitioning: laddu_data::io::Partitioning
+pub laddu_data::io::Distribution::Mpi::rank: usize
+pub laddu_data::io::Distribution::Serial
+impl laddu_data::io::Distribution
+pub fn laddu_data::io::Distribution::from_world<C>(&C) -> Self where C: mpi::topology::Communicator
+pub fn laddu_data::io::Distribution::nranks(self) -> usize
+pub fn laddu_data::io::Distribution::partitioning(self) -> laddu_data::io::Partitioning
+pub fn laddu_data::io::Distribution::rank(self) -> usize
+pub fn laddu_data::io::Distribution::serial() -> Self
+pub fn laddu_data::io::Distribution::with_partitioning(self, laddu_data::io::Partitioning) -> Self
+impl core::clone::Clone for laddu_data::io::Distribution
+pub fn laddu_data::io::Distribution::clone(&self) -> laddu_data::io::Distribution
+impl core::default::Default for laddu_data::io::Distribution
+pub fn laddu_data::io::Distribution::default() -> laddu_data::io::Distribution
+impl core::fmt::Debug for laddu_data::io::Distribution
+pub fn laddu_data::io::Distribution::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for laddu_data::io::Distribution
+impl serde_core::ser::Serialize for laddu_data::io::Distribution
+pub fn laddu_data::io::Distribution::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for laddu_data::io::Distribution
+pub fn laddu_data::io::Distribution::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub enum laddu_data::io::FragmentPartitioning
+pub laddu_data::io::FragmentPartitioning::Contiguous
+pub laddu_data::io::FragmentPartitioning::RoundRobinFragments
+pub laddu_data::io::FragmentPartitioning::StridedRows
+impl core::clone::Clone for laddu_data::io::FragmentPartitioning
+pub fn laddu_data::io::FragmentPartitioning::clone(&self) -> laddu_data::io::FragmentPartitioning
+impl core::fmt::Debug for laddu_data::io::FragmentPartitioning
+pub fn laddu_data::io::FragmentPartitioning::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for laddu_data::io::FragmentPartitioning
+impl serde_core::ser::Serialize for laddu_data::io::FragmentPartitioning
+pub fn laddu_data::io::FragmentPartitioning::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for laddu_data::io::FragmentPartitioning
+pub fn laddu_data::io::FragmentPartitioning::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub enum laddu_data::io::FragmentSelection
+pub laddu_data::io::FragmentSelection::Range
+pub laddu_data::io::FragmentSelection::Range::local_len: usize
+pub laddu_data::io::FragmentSelection::Range::local_start: usize
+pub laddu_data::io::FragmentSelection::StridedRows
+pub laddu_data::io::FragmentSelection::StridedRows::global_start: u64
+pub laddu_data::io::FragmentSelection::StridedRows::nranks: usize
+pub laddu_data::io::FragmentSelection::StridedRows::rank: usize
+pub laddu_data::io::FragmentSelection::StridedRows::rows: usize
+impl core::clone::Clone for laddu_data::io::FragmentSelection
+pub fn laddu_data::io::FragmentSelection::clone(&self) -> laddu_data::io::FragmentSelection
+impl core::fmt::Debug for laddu_data::io::FragmentSelection
+pub fn laddu_data::io::FragmentSelection::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for laddu_data::io::FragmentSelection
+pub enum laddu_data::io::OutputMode
+pub laddu_data::io::OutputMode::Auto
+pub laddu_data::io::OutputMode::PerRankFiles
+pub laddu_data::io::OutputMode::SingleFile
+impl core::clone::Clone for laddu_data::io::OutputMode
+pub fn laddu_data::io::OutputMode::clone(&self) -> laddu_data::io::OutputMode
+impl core::default::Default for laddu_data::io::OutputMode
+pub fn laddu_data::io::OutputMode::default() -> laddu_data::io::OutputMode
+impl core::fmt::Debug for laddu_data::io::OutputMode
+pub fn laddu_data::io::OutputMode::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for laddu_data::io::OutputMode
+pub enum laddu_data::io::Partitioning
+pub laddu_data::io::Partitioning::Contiguous
+pub laddu_data::io::Partitioning::FileGroups
+pub laddu_data::io::Partitioning::Rows
+impl core::clone::Clone for laddu_data::io::Partitioning
+pub fn laddu_data::io::Partitioning::clone(&self) -> laddu_data::io::Partitioning
+impl core::cmp::Eq for laddu_data::io::Partitioning
+impl core::cmp::PartialEq for laddu_data::io::Partitioning
+pub fn laddu_data::io::Partitioning::eq(&self, &laddu_data::io::Partitioning) -> bool
+impl core::default::Default for laddu_data::io::Partitioning
+pub fn laddu_data::io::Partitioning::default() -> laddu_data::io::Partitioning
+impl core::fmt::Debug for laddu_data::io::Partitioning
+pub fn laddu_data::io::Partitioning::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for laddu_data::io::Partitioning
+impl core::marker::StructuralPartialEq for laddu_data::io::Partitioning
+impl serde_core::ser::Serialize for laddu_data::io::Partitioning
+pub fn laddu_data::io::Partitioning::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for laddu_data::io::Partitioning
+pub fn laddu_data::io::Partitioning::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct laddu_data::io::DataFragment<K>
+pub laddu_data::io::DataFragment::global_start: u64
+pub laddu_data::io::DataFragment::key: K
+pub laddu_data::io::DataFragment::rows: u64
+impl<K: core::clone::Clone> core::clone::Clone for laddu_data::io::DataFragment<K>
+pub fn laddu_data::io::DataFragment<K>::clone(&self) -> laddu_data::io::DataFragment<K>
+impl<K: core::fmt::Debug> core::fmt::Debug for laddu_data::io::DataFragment<K>
+pub fn laddu_data::io::DataFragment<K>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub struct laddu_data::io::FragmentRead<K>
+pub laddu_data::io::FragmentRead::key: K
+pub laddu_data::io::FragmentRead::selection: laddu_data::io::FragmentSelection
+impl<K: core::clone::Clone> core::clone::Clone for laddu_data::io::FragmentRead<K>
+pub fn laddu_data::io::FragmentRead<K>::clone(&self) -> laddu_data::io::FragmentRead<K>
+impl<K: core::fmt::Debug> core::fmt::Debug for laddu_data::io::FragmentRead<K>
+pub fn laddu_data::io::FragmentRead<K>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub struct laddu_data::io::OutputPath
+impl laddu_data::io::OutputPath
+pub fn laddu_data::io::OutputPath::base(&self) -> &std::path::Path
+pub fn laddu_data::io::OutputPath::create_parent_dirs(&std::path::Path) -> laddu_data::LadduDataResult<()>
+pub fn laddu_data::io::OutputPath::mode(&self) -> laddu_data::io::OutputMode
+pub fn laddu_data::io::OutputPath::new(impl core::convert::Into<std::path::PathBuf>) -> Self
+pub fn laddu_data::io::OutputPath::resolve(&self, laddu_data::io::WritePlan, &str) -> laddu_data::LadduDataResult<std::path::PathBuf>
+pub fn laddu_data::io::OutputPath::with_mode(self, laddu_data::io::OutputMode) -> Self
+impl core::clone::Clone for laddu_data::io::OutputPath
+pub fn laddu_data::io::OutputPath::clone(&self) -> laddu_data::io::OutputPath
+impl core::fmt::Debug for laddu_data::io::OutputPath
+pub fn laddu_data::io::OutputPath::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub struct laddu_data::io::ReadPlan
+pub laddu_data::io::ReadPlan::chunk_size: core::option::Option<usize>
+pub laddu_data::io::ReadPlan::distribution: laddu_data::io::Distribution
+impl laddu_data::io::ReadPlan
+pub fn laddu_data::io::ReadPlan::fragment_partitioning(&self) -> laddu_data::io::FragmentPartitioning
+pub fn laddu_data::io::ReadPlan::is_distributed(&self) -> bool
+pub fn laddu_data::io::ReadPlan::nranks(&self) -> usize
+pub fn laddu_data::io::ReadPlan::rank(&self) -> usize
+pub fn laddu_data::io::ReadPlan::serial() -> Self
+impl core::clone::Clone for laddu_data::io::ReadPlan
+pub fn laddu_data::io::ReadPlan::clone(&self) -> laddu_data::io::ReadPlan
+impl core::convert::From<laddu_data::io::ReadPlan> for laddu_data::io::WritePlan
+pub fn laddu_data::io::WritePlan::from(laddu_data::io::ReadPlan) -> Self
+impl core::default::Default for laddu_data::io::ReadPlan
+pub fn laddu_data::io::ReadPlan::default() -> laddu_data::io::ReadPlan
+impl core::fmt::Debug for laddu_data::io::ReadPlan
+pub fn laddu_data::io::ReadPlan::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for laddu_data::io::ReadPlan
+impl serde_core::ser::Serialize for laddu_data::io::ReadPlan
+pub fn laddu_data::io::ReadPlan::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for laddu_data::io::ReadPlan
+pub fn laddu_data::io::ReadPlan::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct laddu_data::io::SourceCapabilities
+pub laddu_data::io::SourceCapabilities::deterministic_partitioning: bool
+pub laddu_data::io::SourceCapabilities::exact_len: bool
+pub laddu_data::io::SourceCapabilities::exact_weighted_total: bool
+pub laddu_data::io::SourceCapabilities::predicate_pushdown: bool
+pub laddu_data::io::SourceCapabilities::projection_pushdown: bool
+pub laddu_data::io::SourceCapabilities::random_access: bool
+pub laddu_data::io::SourceCapabilities::streaming: bool
+impl core::clone::Clone for laddu_data::io::SourceCapabilities
+pub fn laddu_data::io::SourceCapabilities::clone(&self) -> laddu_data::io::SourceCapabilities
+impl core::default::Default for laddu_data::io::SourceCapabilities
+pub fn laddu_data::io::SourceCapabilities::default() -> laddu_data::io::SourceCapabilities
+impl core::fmt::Debug for laddu_data::io::SourceCapabilities
+pub fn laddu_data::io::SourceCapabilities::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for laddu_data::io::SourceCapabilities
+impl serde_core::ser::Serialize for laddu_data::io::SourceCapabilities
+pub fn laddu_data::io::SourceCapabilities::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for laddu_data::io::SourceCapabilities
+pub fn laddu_data::io::SourceCapabilities::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct laddu_data::io::WritePlan
+pub laddu_data::io::WritePlan::distribution: laddu_data::io::Distribution
+impl laddu_data::io::WritePlan
+pub fn laddu_data::io::WritePlan::is_distributed(&self) -> bool
+pub fn laddu_data::io::WritePlan::nranks(&self) -> usize
+pub fn laddu_data::io::WritePlan::rank(&self) -> usize
+impl core::clone::Clone for laddu_data::io::WritePlan
+pub fn laddu_data::io::WritePlan::clone(&self) -> laddu_data::io::WritePlan
+impl core::convert::From<laddu_data::io::ReadPlan> for laddu_data::io::WritePlan
+pub fn laddu_data::io::WritePlan::from(laddu_data::io::ReadPlan) -> Self
+impl core::default::Default for laddu_data::io::WritePlan
+pub fn laddu_data::io::WritePlan::default() -> laddu_data::io::WritePlan
+impl core::fmt::Debug for laddu_data::io::WritePlan
+pub fn laddu_data::io::WritePlan::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for laddu_data::io::WritePlan
+impl serde_core::ser::Serialize for laddu_data::io::WritePlan
+pub fn laddu_data::io::WritePlan::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for laddu_data::io::WritePlan
+pub fn laddu_data::io::WritePlan::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub trait laddu_data::io::EventSink: core::marker::Send
+pub fn laddu_data::io::EventSink::begin(&mut self, alloc::sync::Arc<laddu_data::schema::Schema>, laddu_data::io::WritePlan) -> laddu_data::LadduDataResult<()>
+pub fn laddu_data::io::EventSink::finish(&mut self) -> laddu_data::LadduDataResult<()>
+pub fn laddu_data::io::EventSink::retains_batches(&self) -> bool
+pub fn laddu_data::io::EventSink::write_batch(&mut self, &laddu_data::data::event::EventBatch) -> laddu_data::LadduDataResult<()>
+impl laddu_data::io::EventSink for laddu_data::io::memory::MemorySink
+pub fn laddu_data::io::memory::MemorySink::begin(&mut self, alloc::sync::Arc<laddu_data::schema::Schema>, laddu_data::io::WritePlan) -> laddu_data::LadduDataResult<()>
+pub fn laddu_data::io::memory::MemorySink::finish(&mut self) -> laddu_data::LadduDataResult<()>
+pub fn laddu_data::io::memory::MemorySink::retains_batches(&self) -> bool
+pub fn laddu_data::io::memory::MemorySink::write_batch(&mut self, &laddu_data::data::event::EventBatch) -> laddu_data::LadduDataResult<()>
+impl laddu_data::io::EventSink for laddu_data::io::parquet::ParquetSink
+pub fn laddu_data::io::parquet::ParquetSink::begin(&mut self, alloc::sync::Arc<laddu_data::schema::Schema>, laddu_data::io::WritePlan) -> laddu_data::LadduDataResult<()>
+pub fn laddu_data::io::parquet::ParquetSink::finish(&mut self) -> laddu_data::LadduDataResult<()>
+pub fn laddu_data::io::parquet::ParquetSink::retains_batches(&self) -> bool
+pub fn laddu_data::io::parquet::ParquetSink::write_batch(&mut self, &laddu_data::data::event::EventBatch) -> laddu_data::LadduDataResult<()>
+impl laddu_data::io::EventSink for laddu_data::io::root::RootSink
+pub fn laddu_data::io::root::RootSink::begin(&mut self, alloc::sync::Arc<laddu_data::schema::Schema>, laddu_data::io::WritePlan) -> laddu_data::LadduDataResult<()>
+pub fn laddu_data::io::root::RootSink::finish(&mut self) -> laddu_data::LadduDataResult<()>
+pub fn laddu_data::io::root::RootSink::retains_batches(&self) -> bool
+pub fn laddu_data::io::root::RootSink::write_batch(&mut self, &laddu_data::data::event::EventBatch) -> laddu_data::LadduDataResult<()>
+pub trait laddu_data::io::EventSource: core::marker::Send + core::marker::Sync
+pub fn laddu_data::io::EventSource::batches(&self, laddu_data::io::ReadPlan) -> laddu_data::LadduDataResult<laddu_data::io::EventBatchIter>
+pub fn laddu_data::io::EventSource::capabilities(&self) -> laddu_data::io::SourceCapabilities
+pub fn laddu_data::io::EventSource::num_events(&self) -> laddu_data::LadduDataResult<core::option::Option<u64>>
+pub fn laddu_data::io::EventSource::schema(&self) -> laddu_data::LadduDataResult<alloc::sync::Arc<laddu_data::schema::Schema>>
+pub fn laddu_data::io::EventSource::weighted_total(&self) -> laddu_data::LadduDataResult<core::option::Option<f64>>
+impl laddu_data::io::EventSource for laddu_data::io::memory::MemorySource
+pub fn laddu_data::io::memory::MemorySource::batches(&self, laddu_data::io::ReadPlan) -> laddu_data::LadduDataResult<alloc::boxed::Box<(dyn core::iter::traits::iterator::Iterator<Item = laddu_data::LadduDataResult<laddu_data::data::event::EventBatch>> + core::marker::Send)>>
+pub fn laddu_data::io::memory::MemorySource::capabilities(&self) -> laddu_data::io::SourceCapabilities
+pub fn laddu_data::io::memory::MemorySource::num_events(&self) -> laddu_data::LadduDataResult<core::option::Option<u64>>
+pub fn laddu_data::io::memory::MemorySource::schema(&self) -> laddu_data::LadduDataResult<alloc::sync::Arc<laddu_data::schema::Schema>>
+pub fn laddu_data::io::memory::MemorySource::weighted_total(&self) -> laddu_data::LadduDataResult<core::option::Option<f64>>
+impl laddu_data::io::EventSource for laddu_data::io::parquet::ParquetSource
+pub fn laddu_data::io::parquet::ParquetSource::batches(&self, laddu_data::io::ReadPlan) -> laddu_data::LadduDataResult<alloc::boxed::Box<(dyn core::iter::traits::iterator::Iterator<Item = laddu_data::LadduDataResult<laddu_data::data::event::EventBatch>> + core::marker::Send)>>
+pub fn laddu_data::io::parquet::ParquetSource::capabilities(&self) -> laddu_data::io::SourceCapabilities
+pub fn laddu_data::io::parquet::ParquetSource::num_events(&self) -> laddu_data::LadduDataResult<core::option::Option<u64>>
+pub fn laddu_data::io::parquet::ParquetSource::schema(&self) -> laddu_data::LadduDataResult<alloc::sync::Arc<laddu_data::schema::Schema>>
+pub fn laddu_data::io::parquet::ParquetSource::weighted_total(&self) -> laddu_data::LadduDataResult<core::option::Option<f64>>
+impl laddu_data::io::EventSource for laddu_data::io::root::RootSource
+pub fn laddu_data::io::root::RootSource::batches(&self, laddu_data::io::ReadPlan) -> laddu_data::LadduDataResult<alloc::boxed::Box<(dyn core::iter::traits::iterator::Iterator<Item = laddu_data::LadduDataResult<laddu_data::data::event::EventBatch>> + core::marker::Send)>>
+pub fn laddu_data::io::root::RootSource::capabilities(&self) -> laddu_data::io::SourceCapabilities
+pub fn laddu_data::io::root::RootSource::num_events(&self) -> laddu_data::LadduDataResult<core::option::Option<u64>>
+pub fn laddu_data::io::root::RootSource::schema(&self) -> laddu_data::LadduDataResult<alloc::sync::Arc<laddu_data::schema::Schema>>
+pub fn laddu_data::io::root::RootSource::weighted_total(&self) -> laddu_data::LadduDataResult<core::option::Option<f64>>
+pub trait laddu_data::io::FragmentedSource: core::marker::Send + core::marker::Sync
+pub type laddu_data::io::FragmentedSource::Key: core::clone::Clone + core::marker::Send + core::marker::Sync + 'static
+pub fn laddu_data::io::FragmentedSource::fragments(&self) -> laddu_data::LadduDataResult<alloc::vec::Vec<laddu_data::io::DataFragment<Self::Key>>>
+pub fn laddu_data::io::FragmentedSource::read_fragment_range(&self, &Self::Key, usize, usize, core::option::Option<usize>) -> laddu_data::LadduDataResult<laddu_data::io::EventBatchIter>
+impl laddu_data::io::FragmentedSource for laddu_data::io::memory::MemorySource
+pub type laddu_data::io::memory::MemorySource::Key = laddu_data::io::memory::MemoryFragmentKey
+pub fn laddu_data::io::memory::MemorySource::fragments(&self) -> laddu_data::LadduDataResult<alloc::vec::Vec<laddu_data::io::DataFragment<Self::Key>>>
+pub fn laddu_data::io::memory::MemorySource::read_fragment_range(&self, &Self::Key, usize, usize, core::option::Option<usize>) -> laddu_data::LadduDataResult<alloc::boxed::Box<(dyn core::iter::traits::iterator::Iterator<Item = laddu_data::LadduDataResult<laddu_data::data::event::EventBatch>> + core::marker::Send)>>
+impl laddu_data::io::FragmentedSource for laddu_data::io::parquet::ParquetSource
+pub type laddu_data::io::parquet::ParquetSource::Key = laddu_data::io::parquet::ParquetFragmentKey
+pub fn laddu_data::io::parquet::ParquetSource::fragments(&self) -> laddu_data::LadduDataResult<alloc::vec::Vec<laddu_data::io::DataFragment<Self::Key>>>
+pub fn laddu_data::io::parquet::ParquetSource::read_fragment_range(&self, &Self::Key, usize, usize, core::option::Option<usize>) -> laddu_data::LadduDataResult<alloc::boxed::Box<(dyn core::iter::traits::iterator::Iterator<Item = laddu_data::LadduDataResult<laddu_data::data::event::EventBatch>> + core::marker::Send)>>
+impl laddu_data::io::FragmentedSource for laddu_data::io::root::RootSource
+pub type laddu_data::io::root::RootSource::Key = laddu_data::io::root::RootFragmentKey
+pub fn laddu_data::io::root::RootSource::fragments(&self) -> laddu_data::LadduDataResult<alloc::vec::Vec<laddu_data::io::DataFragment<Self::Key>>>
+pub fn laddu_data::io::root::RootSource::read_fragment_range(&self, &Self::Key, usize, usize, core::option::Option<usize>) -> laddu_data::LadduDataResult<alloc::boxed::Box<(dyn core::iter::traits::iterator::Iterator<Item = laddu_data::LadduDataResult<laddu_data::data::event::EventBatch>> + core::marker::Send)>>
+pub fn laddu_data::io::fragmented_batches<S>(alloc::sync::Arc<S>, laddu_data::io::ReadPlan) -> laddu_data::LadduDataResult<laddu_data::io::EventBatchIter> where S: laddu_data::io::FragmentedSource + 'static
+pub fn laddu_data::io::plan_fragments<K: core::clone::Clone>(&[laddu_data::io::DataFragment<K>], laddu_data::io::ReadPlan) -> laddu_data::LadduDataResult<alloc::vec::Vec<laddu_data::io::FragmentRead<K>>>
+pub type laddu_data::io::EventBatchIter = alloc::boxed::Box<(dyn core::iter::traits::iterator::Iterator<Item = laddu_data::LadduDataResult<laddu_data::data::event::EventBatch>> + core::marker::Send)>
+pub mod laddu_data::schema
+pub enum laddu_data::schema::ColumnType
+pub laddu_data::schema::ColumnType::F32
+pub laddu_data::schema::ColumnType::F64
+pub laddu_data::schema::ColumnType::Other
+impl laddu_data::schema::ColumnType
+pub fn laddu_data::schema::ColumnType::is_supported_float(self) -> bool
+impl core::clone::Clone for laddu_data::schema::ColumnType
+pub fn laddu_data::schema::ColumnType::clone(&self) -> laddu_data::schema::ColumnType
+impl core::cmp::Eq for laddu_data::schema::ColumnType
+impl core::cmp::PartialEq for laddu_data::schema::ColumnType
+pub fn laddu_data::schema::ColumnType::eq(&self, &laddu_data::schema::ColumnType) -> bool
+impl core::fmt::Debug for laddu_data::schema::ColumnType
+pub fn laddu_data::schema::ColumnType::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for laddu_data::schema::ColumnType
+impl core::marker::StructuralPartialEq for laddu_data::schema::ColumnType
+pub enum laddu_data::schema::Precision
+pub laddu_data::schema::Precision::F32
+pub laddu_data::schema::Precision::F64
+impl core::clone::Clone for laddu_data::schema::Precision
+pub fn laddu_data::schema::Precision::clone(&self) -> laddu_data::schema::Precision
+impl core::default::Default for laddu_data::schema::Precision
+pub fn laddu_data::schema::Precision::default() -> laddu_data::schema::Precision
+impl core::fmt::Debug for laddu_data::schema::Precision
+pub fn laddu_data::schema::Precision::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for laddu_data::schema::Precision
+pub enum laddu_data::schema::WriteWeightColumn
+pub laddu_data::schema::WriteWeightColumn::Always
+pub laddu_data::schema::WriteWeightColumn::OnlyIfPresent
+impl core::clone::Clone for laddu_data::schema::WriteWeightColumn
+pub fn laddu_data::schema::WriteWeightColumn::clone(&self) -> laddu_data::schema::WriteWeightColumn
+impl core::default::Default for laddu_data::schema::WriteWeightColumn
+pub fn laddu_data::schema::WriteWeightColumn::default() -> laddu_data::schema::WriteWeightColumn
+impl core::fmt::Debug for laddu_data::schema::WriteWeightColumn
+pub fn laddu_data::schema::WriteWeightColumn::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for laddu_data::schema::WriteWeightColumn
+pub struct laddu_data::schema::ColumnInfo<'a>
+pub laddu_data::schema::ColumnInfo::dtype: laddu_data::schema::ColumnType
+pub laddu_data::schema::ColumnInfo::name: &'a str
+impl<'a> core::clone::Clone for laddu_data::schema::ColumnInfo<'a>
+pub fn laddu_data::schema::ColumnInfo<'a>::clone(&self) -> laddu_data::schema::ColumnInfo<'a>
+impl<'a> core::fmt::Debug for laddu_data::schema::ColumnInfo<'a>
+pub fn laddu_data::schema::ColumnInfo<'a>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'a> core::marker::Copy for laddu_data::schema::ColumnInfo<'a>
+pub struct laddu_data::schema::P4Suffixes
+pub laddu_data::schema::P4Suffixes::e: &'static str
+pub laddu_data::schema::P4Suffixes::px: &'static str
+pub laddu_data::schema::P4Suffixes::py: &'static str
+pub laddu_data::schema::P4Suffixes::pz: &'static str
+impl laddu_data::schema::P4Suffixes
+pub fn laddu_data::schema::P4Suffixes::component<'a>(&'a self, &'a str) -> core::option::Option<(&'a str, usize)>
+pub fn laddu_data::schema::P4Suffixes::physical_p4_names(&self, &str) -> [alloc::string::String; 4]
+impl core::clone::Clone for laddu_data::schema::P4Suffixes
+pub fn laddu_data::schema::P4Suffixes::clone(&self) -> laddu_data::schema::P4Suffixes
+impl core::default::Default for laddu_data::schema::P4Suffixes
+pub fn laddu_data::schema::P4Suffixes::default() -> Self
+impl core::fmt::Debug for laddu_data::schema::P4Suffixes
+pub fn laddu_data::schema::P4Suffixes::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub struct laddu_data::schema::Schema
+impl laddu_data::schema::Schema
+pub fn laddu_data::schema::Schema::has_weight(&self) -> bool
+pub fn laddu_data::schema::Schema::n_p4s(&self) -> usize
+pub fn laddu_data::schema::Schema::n_scalars(&self) -> usize
+pub fn laddu_data::schema::Schema::new(impl core::iter::traits::collect::IntoIterator<Item = impl core::convert::Into<laddu_data::Name>>, impl core::iter::traits::collect::IntoIterator<Item = impl core::convert::Into<laddu_data::Name>>, bool) -> laddu_data::LadduDataResult<Self>
+pub fn laddu_data::schema::Schema::p4_index(&self, &str) -> core::option::Option<usize>
+pub fn laddu_data::schema::Schema::p4s(&self) -> &[laddu_data::Name]
+pub fn laddu_data::schema::Schema::require_p4(&self, &str) -> laddu_data::LadduDataResult<usize>
+pub fn laddu_data::schema::Schema::require_scalar(&self, &str) -> laddu_data::LadduDataResult<usize>
+pub fn laddu_data::schema::Schema::scalar_index(&self, &str) -> core::option::Option<usize>
+pub fn laddu_data::schema::Schema::scalars(&self) -> &[laddu_data::Name]
+impl laddu_data::schema::Schema
+pub fn laddu_data::schema::Schema::infer_from_columns<'a>(impl core::iter::traits::collect::IntoIterator<Item = laddu_data::schema::ColumnInfo<'a>>, &laddu_data::schema::SchemaInferenceOptions) -> laddu_data::LadduDataResult<Self>
+pub fn laddu_data::schema::Schema::physical_columns(&self, &laddu_data::schema::SchemaColumnNames) -> alloc::vec::Vec<laddu_data::Name>
+pub fn laddu_data::schema::Schema::validate_required_columns<'a>(&self, impl core::iter::traits::collect::IntoIterator<Item = laddu_data::schema::ColumnInfo<'a>>, &laddu_data::schema::SchemaInferenceOptions) -> laddu_data::LadduDataResult<()>
+impl core::clone::Clone for laddu_data::schema::Schema
+pub fn laddu_data::schema::Schema::clone(&self) -> laddu_data::schema::Schema
+impl core::cmp::PartialEq for laddu_data::schema::Schema
+pub fn laddu_data::schema::Schema::eq(&self, &Self) -> bool
+impl core::fmt::Debug for laddu_data::schema::Schema
+pub fn laddu_data::schema::Schema::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub struct laddu_data::schema::SchemaColumnNames
+pub laddu_data::schema::SchemaColumnNames::p4_suffixes: laddu_data::schema::P4Suffixes
+pub laddu_data::schema::SchemaColumnNames::weight_column: laddu_data::Name
+impl core::clone::Clone for laddu_data::schema::SchemaColumnNames
+pub fn laddu_data::schema::SchemaColumnNames::clone(&self) -> laddu_data::schema::SchemaColumnNames
+impl core::default::Default for laddu_data::schema::SchemaColumnNames
+pub fn laddu_data::schema::SchemaColumnNames::default() -> Self
+impl core::fmt::Debug for laddu_data::schema::SchemaColumnNames
+pub fn laddu_data::schema::SchemaColumnNames::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub struct laddu_data::schema::SchemaInferenceOptions
+pub laddu_data::schema::SchemaInferenceOptions::column_names: laddu_data::schema::SchemaColumnNames
+pub laddu_data::schema::SchemaInferenceOptions::incomplete_p4_components_are_scalars: bool
+pub laddu_data::schema::SchemaInferenceOptions::require_weight: bool
+impl core::clone::Clone for laddu_data::schema::SchemaInferenceOptions
+pub fn laddu_data::schema::SchemaInferenceOptions::clone(&self) -> laddu_data::schema::SchemaInferenceOptions
+impl core::default::Default for laddu_data::schema::SchemaInferenceOptions
+pub fn laddu_data::schema::SchemaInferenceOptions::default() -> Self
+impl core::fmt::Debug for laddu_data::schema::SchemaInferenceOptions
+pub fn laddu_data::schema::SchemaInferenceOptions::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub struct laddu_data::schema::SchemaWriteOptions
+pub laddu_data::schema::SchemaWriteOptions::column_names: laddu_data::schema::SchemaColumnNames
+pub laddu_data::schema::SchemaWriteOptions::precision: laddu_data::schema::Precision
+pub laddu_data::schema::SchemaWriteOptions::write_weight_column: laddu_data::schema::WriteWeightColumn
+impl core::clone::Clone for laddu_data::schema::SchemaWriteOptions
+pub fn laddu_data::schema::SchemaWriteOptions::clone(&self) -> laddu_data::schema::SchemaWriteOptions
+impl core::default::Default for laddu_data::schema::SchemaWriteOptions
+pub fn laddu_data::schema::SchemaWriteOptions::default() -> laddu_data::schema::SchemaWriteOptions
+impl core::fmt::Debug for laddu_data::schema::SchemaWriteOptions
+pub fn laddu_data::schema::SchemaWriteOptions::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub enum laddu_data::LadduDataError
+pub laddu_data::LadduDataError::InvalidArgument(&'static str)
+pub laddu_data::LadduDataError::MissingColumn(laddu_data::Name)
+pub laddu_data::LadduDataError::Schema(alloc::string::String)
+pub laddu_data::LadduDataError::Sink(alloc::string::String)
+pub laddu_data::LadduDataError::Source(alloc::string::String)
+pub laddu_data::LadduDataError::Unsupported(&'static str)
+impl core::clone::Clone for laddu_data::LadduDataError
+pub fn laddu_data::LadduDataError::clone(&self) -> laddu_data::LadduDataError
+impl core::error::Error for laddu_data::LadduDataError
+impl core::fmt::Debug for laddu_data::LadduDataError
+pub fn laddu_data::LadduDataError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for laddu_data::LadduDataError
+pub fn laddu_data::LadduDataError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub type laddu_data::LadduDataResult<T> = core::result::Result<T, laddu_data::LadduDataError>
+pub type laddu_data::Name = alloc::sync::Arc<str>

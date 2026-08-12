@@ -1,0 +1,52 @@
+pub mod laddu_autodiff
+pub enum laddu_autodiff::AutodiffError
+pub laddu_autodiff::AutodiffError::InvalidKernel(alloc::string::String)
+pub laddu_autodiff::AutodiffError::Kernel(laddu_kernel::error::KernelError)
+pub laddu_autodiff::AutodiffError::UnsupportedMode(laddu_autodiff::AutodiffMode)
+impl core::clone::Clone for laddu_autodiff::AutodiffError
+pub fn laddu_autodiff::AutodiffError::clone(&self) -> laddu_autodiff::AutodiffError
+impl core::cmp::Eq for laddu_autodiff::AutodiffError
+impl core::cmp::PartialEq for laddu_autodiff::AutodiffError
+pub fn laddu_autodiff::AutodiffError::eq(&self, &laddu_autodiff::AutodiffError) -> bool
+impl core::convert::From<laddu_kernel::error::KernelError> for laddu_autodiff::AutodiffError
+pub fn laddu_autodiff::AutodiffError::from(laddu_kernel::error::KernelError) -> Self
+impl core::error::Error for laddu_autodiff::AutodiffError
+pub fn laddu_autodiff::AutodiffError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
+impl core::fmt::Debug for laddu_autodiff::AutodiffError
+pub fn laddu_autodiff::AutodiffError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for laddu_autodiff::AutodiffError
+pub fn laddu_autodiff::AutodiffError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for laddu_autodiff::AutodiffError
+pub enum laddu_autodiff::AutodiffMode
+pub laddu_autodiff::AutodiffMode::Auto
+pub laddu_autodiff::AutodiffMode::Forward
+pub laddu_autodiff::AutodiffMode::Reverse
+impl core::clone::Clone for laddu_autodiff::AutodiffMode
+pub fn laddu_autodiff::AutodiffMode::clone(&self) -> laddu_autodiff::AutodiffMode
+impl core::cmp::Eq for laddu_autodiff::AutodiffMode
+impl core::cmp::PartialEq for laddu_autodiff::AutodiffMode
+pub fn laddu_autodiff::AutodiffMode::eq(&self, &laddu_autodiff::AutodiffMode) -> bool
+impl core::default::Default for laddu_autodiff::AutodiffMode
+pub fn laddu_autodiff::AutodiffMode::default() -> laddu_autodiff::AutodiffMode
+impl core::fmt::Debug for laddu_autodiff::AutodiffMode
+pub fn laddu_autodiff::AutodiffMode::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for laddu_autodiff::AutodiffMode
+pub fn laddu_autodiff::AutodiffMode::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for laddu_autodiff::AutodiffMode
+impl core::marker::StructuralPartialEq for laddu_autodiff::AutodiffMode
+impl serde_core::ser::Serialize for laddu_autodiff::AutodiffMode
+pub fn laddu_autodiff::AutodiffMode::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for laddu_autodiff::AutodiffMode
+pub fn laddu_autodiff::AutodiffMode::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct laddu_autodiff::AutodiffPlan
+impl laddu_autodiff::AutodiffPlan
+pub fn laddu_autodiff::AutodiffPlan::active_nodes(&self, usize) -> core::option::Option<&[laddu_expr::expression::ExprId]>
+pub fn laddu_autodiff::AutodiffPlan::from_model(&laddu_compile::model::CompiledModel, laddu_autodiff::AutodiffMode) -> laddu_autodiff::AutodiffResult<Self>
+pub fn laddu_autodiff::AutodiffPlan::mode(&self) -> laddu_autodiff::AutodiffMode
+pub fn laddu_autodiff::AutodiffPlan::parameter_count(&self) -> usize
+impl core::clone::Clone for laddu_autodiff::AutodiffPlan
+pub fn laddu_autodiff::AutodiffPlan::clone(&self) -> laddu_autodiff::AutodiffPlan
+impl core::fmt::Debug for laddu_autodiff::AutodiffPlan
+pub fn laddu_autodiff::AutodiffPlan::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub fn laddu_autodiff::gradient_ir(&laddu_kernel::ir::ScalarKernelIr, &[laddu_expr::parameters::ParamId], laddu_kernel::ir::OutputComponent) -> laddu_autodiff::AutodiffResult<laddu_kernel::ir::GradientKernelIr>
+pub type laddu_autodiff::AutodiffResult<T> = core::result::Result<T, laddu_autodiff::AutodiffError>

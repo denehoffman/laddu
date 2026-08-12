@@ -1,0 +1,575 @@
+pub mod laddu_likelihood
+pub enum laddu_likelihood::BootstrapFitError<E>
+pub laddu_likelihood::BootstrapFitError::Fit
+pub laddu_likelihood::BootstrapFitError::Fit::index: usize
+pub laddu_likelihood::BootstrapFitError::Fit::source: E
+pub laddu_likelihood::BootstrapFitError::Likelihood(laddu_likelihood::LikelihoodError)
+impl<E: core::fmt::Debug> core::fmt::Debug for laddu_likelihood::BootstrapFitError<E>
+pub fn laddu_likelihood::BootstrapFitError<E>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<E> core::convert::From<laddu_likelihood::LikelihoodError> for laddu_likelihood::BootstrapFitError<E>
+pub fn laddu_likelihood::BootstrapFitError<E>::from(laddu_likelihood::LikelihoodError) -> Self
+impl<E> core::error::Error for laddu_likelihood::BootstrapFitError<E> where E: core::error::Error + 'static, Self: core::fmt::Debug + core::fmt::Display
+pub fn laddu_likelihood::BootstrapFitError<E>::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
+impl<E> core::fmt::Display for laddu_likelihood::BootstrapFitError<E> where E: core::fmt::Display
+pub fn laddu_likelihood::BootstrapFitError<E>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub enum laddu_likelihood::DatasetRole
+pub laddu_likelihood::DatasetRole::AcceptedMc
+pub laddu_likelihood::DatasetRole::Observed
+impl core::clone::Clone for laddu_likelihood::DatasetRole
+pub fn laddu_likelihood::DatasetRole::clone(&self) -> laddu_likelihood::DatasetRole
+impl core::cmp::Eq for laddu_likelihood::DatasetRole
+impl core::cmp::PartialEq for laddu_likelihood::DatasetRole
+pub fn laddu_likelihood::DatasetRole::eq(&self, &laddu_likelihood::DatasetRole) -> bool
+impl core::fmt::Debug for laddu_likelihood::DatasetRole
+pub fn laddu_likelihood::DatasetRole::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for laddu_likelihood::DatasetRole
+impl core::marker::StructuralPartialEq for laddu_likelihood::DatasetRole
+pub enum laddu_likelihood::LikelihoodError
+pub laddu_likelihood::LikelihoodError::AbsoluteRateUnavailable(alloc::string::String)
+pub laddu_likelihood::LikelihoodError::Data(laddu_data::error::LadduDataError)
+pub laddu_likelihood::LikelihoodError::DuplicateTermName(alloc::string::String)
+pub laddu_likelihood::LikelihoodError::GradientLengthMismatch
+pub laddu_likelihood::LikelihoodError::GradientLengthMismatch::actual: usize
+pub laddu_likelihood::LikelihoodError::GradientLengthMismatch::expected: usize
+pub laddu_likelihood::LikelihoodError::InvalidBatchFraction(f64)
+pub laddu_likelihood::LikelihoodError::InvalidCrossSection(alloc::string::String)
+pub laddu_likelihood::LikelihoodError::InvalidPenaltyWeight
+pub laddu_likelihood::LikelihoodError::InvalidPenaltyWeight::lambda: f64
+pub laddu_likelihood::LikelihoodError::InvalidPenaltyWeight::term: alloc::string::String
+pub laddu_likelihood::LikelihoodError::MissingParameter
+pub laddu_likelihood::LikelihoodError::MissingParameter::parameter: alloc::string::String
+pub laddu_likelihood::LikelihoodError::MissingParameter::term: alloc::string::String
+pub laddu_likelihood::LikelihoodError::MissingTerm(alloc::string::String)
+pub laddu_likelihood::LikelihoodError::NonPositiveAcceptedIntegral(f64)
+pub laddu_likelihood::LikelihoodError::NonPositiveIntensity
+pub laddu_likelihood::LikelihoodError::NonPositiveIntensity::dataset: &'static str
+pub laddu_likelihood::LikelihoodError::NonPositiveIntensity::value: f64
+pub laddu_likelihood::LikelihoodError::NonPositiveLuminosity(f64)
+pub laddu_likelihood::LikelihoodError::NotIntensityTerm(alloc::string::String)
+pub laddu_likelihood::LikelihoodError::ParameterLayoutMismatch
+pub laddu_likelihood::LikelihoodError::Params(laddu_expr::error::ParamError)
+pub laddu_likelihood::LikelihoodError::Runtime(laddu_runtime::error::RuntimeError)
+pub laddu_likelihood::LikelihoodError::UnresolvedTerm(alloc::string::String)
+impl core::clone::Clone for laddu_likelihood::LikelihoodError
+pub fn laddu_likelihood::LikelihoodError::clone(&self) -> laddu_likelihood::LikelihoodError
+impl core::convert::From<laddu_data::error::LadduDataError> for laddu_likelihood::LikelihoodError
+pub fn laddu_likelihood::LikelihoodError::from(laddu_data::error::LadduDataError) -> Self
+impl core::convert::From<laddu_expr::error::ParamError> for laddu_likelihood::LikelihoodError
+pub fn laddu_likelihood::LikelihoodError::from(laddu_expr::error::ParamError) -> Self
+impl core::convert::From<laddu_runtime::error::RuntimeError> for laddu_likelihood::LikelihoodError
+pub fn laddu_likelihood::LikelihoodError::from(laddu_runtime::error::RuntimeError) -> Self
+impl core::error::Error for laddu_likelihood::LikelihoodError
+pub fn laddu_likelihood::LikelihoodError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
+impl core::fmt::Debug for laddu_likelihood::LikelihoodError
+pub fn laddu_likelihood::LikelihoodError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for laddu_likelihood::LikelihoodError
+pub fn laddu_likelihood::LikelihoodError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<E> core::convert::From<laddu_likelihood::LikelihoodError> for laddu_likelihood::BootstrapFitError<E>
+pub fn laddu_likelihood::BootstrapFitError<E>::from(laddu_likelihood::LikelihoodError) -> Self
+pub enum laddu_likelihood::Parameters<'a>
+pub laddu_likelihood::Parameters::ParamValues(&'a laddu_expr::parameters::ParamValues)
+pub laddu_likelihood::Parameters::Slice(&'a [f64])
+impl<'a, const N: usize> core::convert::From<&'a [f64; N]> for laddu_likelihood::Parameters<'a>
+pub fn laddu_likelihood::Parameters<'a>::from(&'a [f64; N]) -> Self
+impl<'a> core::convert::From<&'a [f64]> for laddu_likelihood::Parameters<'a>
+pub fn laddu_likelihood::Parameters<'a>::from(&'a [f64]) -> Self
+impl<'a> core::convert::From<&'a alloc::vec::Vec<f64>> for laddu_likelihood::Parameters<'a>
+pub fn laddu_likelihood::Parameters<'a>::from(&'a alloc::vec::Vec<f64>) -> Self
+impl<'a> core::convert::From<&'a laddu_expr::parameters::ParamValues> for laddu_likelihood::Parameters<'a>
+pub fn laddu_likelihood::Parameters<'a>::from(&'a laddu_expr::parameters::ParamValues) -> Self
+pub struct laddu_likelihood::Axis
+impl laddu_likelihood::Axis
+pub fn laddu_likelihood::Axis::bins(&self) -> usize
+pub fn laddu_likelihood::Axis::edges(&self) -> &[f64]
+pub fn laddu_likelihood::Axis::expression(&self) -> &laddu_expr::expression::Expr
+pub fn laddu_likelihood::Axis::new(laddu_expr::expression::Expr, alloc::vec::Vec<f64>) -> laddu_likelihood::LikelihoodResult<Self>
+impl core::clone::Clone for laddu_likelihood::Axis
+pub fn laddu_likelihood::Axis::clone(&self) -> laddu_likelihood::Axis
+impl core::fmt::Debug for laddu_likelihood::Axis
+pub fn laddu_likelihood::Axis::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub struct laddu_likelihood::BinnedEstimate
+impl laddu_likelihood::BinnedEstimate
+pub fn laddu_likelihood::BinnedEstimate::covariance(&self) -> laddu_likelihood::LikelihoodResult<alloc::vec::Vec<alloc::vec::Vec<f64>>>
+pub fn laddu_likelihood::BinnedEstimate::draws(&self) -> &[alloc::vec::Vec<f64>]
+pub fn laddu_likelihood::BinnedEstimate::interval(&self, f64) -> laddu_likelihood::LikelihoodResult<(alloc::vec::Vec<f64>, alloc::vec::Vec<f64>)>
+pub fn laddu_likelihood::BinnedEstimate::values(&self) -> &[f64]
+impl core::clone::Clone for laddu_likelihood::BinnedEstimate
+pub fn laddu_likelihood::BinnedEstimate::clone(&self) -> laddu_likelihood::BinnedEstimate
+impl core::cmp::PartialEq for laddu_likelihood::BinnedEstimate
+pub fn laddu_likelihood::BinnedEstimate::eq(&self, &laddu_likelihood::BinnedEstimate) -> bool
+impl core::fmt::Debug for laddu_likelihood::BinnedEstimate
+pub fn laddu_likelihood::BinnedEstimate::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for laddu_likelihood::BinnedEstimate
+pub struct laddu_likelihood::CrossSection
+impl laddu_likelihood::CrossSection
+pub fn laddu_likelihood::CrossSection::acceptance(&self) -> laddu_likelihood::LikelihoodResult<laddu_likelihood::Estimate>
+pub fn laddu_likelihood::CrossSection::acceptance_with_tags(&self, &[alloc::string::String]) -> laddu_likelihood::LikelihoodResult<laddu_likelihood::Estimate>
+pub fn laddu_likelihood::CrossSection::combine(alloc::vec::Vec<laddu_likelihood::CrossSection>) -> laddu_likelihood::LikelihoodResult<Self>
+pub fn laddu_likelihood::CrossSection::combine_with_factors(alloc::vec::Vec<laddu_likelihood::CrossSection>, alloc::vec::Vec<laddu_likelihood::Estimate>) -> laddu_likelihood::LikelihoodResult<Self>
+pub fn laddu_likelihood::CrossSection::corrected_yield(&self) -> laddu_likelihood::LikelihoodResult<laddu_likelihood::Estimate>
+pub fn laddu_likelihood::CrossSection::corrected_yield_with_tags(&self, &[alloc::string::String]) -> laddu_likelihood::LikelihoodResult<laddu_likelihood::Estimate>
+pub fn laddu_likelihood::CrossSection::diagnostics(&self) -> laddu_likelihood::CrossSectionDiagnostics
+pub fn laddu_likelihood::CrossSection::differential(&self, &[laddu_likelihood::Axis], &std::collections::hash::map::HashMap<alloc::string::String, alloc::vec::Vec<alloc::string::String>>) -> laddu_likelihood::LikelihoodResult<laddu_likelihood::DifferentialCrossSection>
+pub fn laddu_likelihood::CrossSection::fitted_total(&self) -> laddu_likelihood::LikelihoodResult<laddu_likelihood::Estimate>
+pub fn laddu_likelihood::CrossSection::fitted_total_with_tags(&self, &[alloc::string::String]) -> laddu_likelihood::LikelihoodResult<laddu_likelihood::Estimate>
+pub fn laddu_likelihood::CrossSection::new(alloc::sync::Arc<laddu_likelihood::Likelihood>, impl core::convert::Into<alloc::string::String>, laddu_data::data::dataset::Dataset, f64, alloc::vec::Vec<f64>) -> laddu_likelihood::LikelihoodResult<Self>
+pub fn laddu_likelihood::CrossSection::observed_total(&self) -> laddu_likelihood::LikelihoodResult<laddu_likelihood::Estimate>
+pub fn laddu_likelihood::CrossSection::observed_total_with_tags(&self, &[alloc::string::String]) -> laddu_likelihood::LikelihoodResult<laddu_likelihood::Estimate>
+pub fn laddu_likelihood::CrossSection::total(&self) -> laddu_likelihood::LikelihoodResult<laddu_likelihood::Estimate>
+pub fn laddu_likelihood::CrossSection::total_with_tags(&self, &[alloc::string::String]) -> laddu_likelihood::LikelihoodResult<laddu_likelihood::Estimate>
+pub fn laddu_likelihood::CrossSection::with_ensemble(alloc::sync::Arc<laddu_likelihood::Likelihood>, impl core::convert::Into<alloc::string::String>, laddu_data::data::dataset::Dataset, f64, alloc::vec::Vec<f64>, core::option::Option<laddu_likelihood::Ensemble>) -> laddu_likelihood::LikelihoodResult<Self>
+impl core::clone::Clone for laddu_likelihood::CrossSection
+pub fn laddu_likelihood::CrossSection::clone(&self) -> laddu_likelihood::CrossSection
+impl core::fmt::Debug for laddu_likelihood::CrossSection
+pub fn laddu_likelihood::CrossSection::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub struct laddu_likelihood::CrossSectionDiagnostics
+impl laddu_likelihood::CrossSectionDiagnostics
+pub fn laddu_likelihood::CrossSectionDiagnostics::cache_hits(&self) -> u64
+pub fn laddu_likelihood::CrossSectionDiagnostics::cache_misses(&self) -> u64
+pub fn laddu_likelihood::CrossSectionDiagnostics::cached_integrals(&self) -> usize
+pub fn laddu_likelihood::CrossSectionDiagnostics::prepared_bytes(&self) -> usize
+impl core::clone::Clone for laddu_likelihood::CrossSectionDiagnostics
+pub fn laddu_likelihood::CrossSectionDiagnostics::clone(&self) -> laddu_likelihood::CrossSectionDiagnostics
+impl core::cmp::Eq for laddu_likelihood::CrossSectionDiagnostics
+impl core::cmp::PartialEq for laddu_likelihood::CrossSectionDiagnostics
+pub fn laddu_likelihood::CrossSectionDiagnostics::eq(&self, &laddu_likelihood::CrossSectionDiagnostics) -> bool
+impl core::fmt::Debug for laddu_likelihood::CrossSectionDiagnostics
+pub fn laddu_likelihood::CrossSectionDiagnostics::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for laddu_likelihood::CrossSectionDiagnostics
+impl core::marker::StructuralPartialEq for laddu_likelihood::CrossSectionDiagnostics
+pub struct laddu_likelihood::CrossSectionIntegrals
+impl laddu_likelihood::CrossSectionIntegrals
+pub fn laddu_likelihood::CrossSectionIntegrals::acceptance(&self, &[f64]) -> laddu_likelihood::LikelihoodResult<f64>
+pub fn laddu_likelihood::CrossSectionIntegrals::acceptance_corrected_yield(&self, &[f64], f64) -> laddu_likelihood::LikelihoodResult<f64>
+pub fn laddu_likelihood::CrossSectionIntegrals::accepted_integral(&self, &[f64]) -> laddu_likelihood::LikelihoodResult<f64>
+pub fn laddu_likelihood::CrossSectionIntegrals::accepted_intensities(&self, &[f64]) -> laddu_likelihood::LikelihoodResult<alloc::vec::Vec<f64>>
+pub fn laddu_likelihood::CrossSectionIntegrals::accepted_mc(&self) -> &laddu_runtime::backend::PreparedDataset
+pub fn laddu_likelihood::CrossSectionIntegrals::accepted_mc_source(&self) -> &laddu_data::data::dataset::Dataset
+pub fn laddu_likelihood::CrossSectionIntegrals::cross_section(&self, &[f64], f64) -> laddu_likelihood::LikelihoodResult<f64>
+pub fn laddu_likelihood::CrossSectionIntegrals::data_weight_sum(&self) -> f64
+pub fn laddu_likelihood::CrossSectionIntegrals::fitted_cross_section(&self, &[f64], f64) -> laddu_likelihood::LikelihoodResult<f64>
+pub fn laddu_likelihood::CrossSectionIntegrals::full_accepted_integral(&self, &[f64]) -> laddu_likelihood::LikelihoodResult<f64>
+pub fn laddu_likelihood::CrossSectionIntegrals::generated_integral(&self, &[f64]) -> laddu_likelihood::LikelihoodResult<f64>
+pub fn laddu_likelihood::CrossSectionIntegrals::generated_intensities(&self, &[f64]) -> laddu_likelihood::LikelihoodResult<alloc::vec::Vec<f64>>
+pub fn laddu_likelihood::CrossSectionIntegrals::generated_mc(&self) -> &laddu_runtime::backend::PreparedDataset
+pub fn laddu_likelihood::CrossSectionIntegrals::generated_mc_source(&self) -> &laddu_data::data::dataset::Dataset
+pub fn laddu_likelihood::CrossSectionIntegrals::name(&self) -> &str
+pub fn laddu_likelihood::CrossSectionIntegrals::observed_cross_section(&self, &[f64], f64) -> laddu_likelihood::LikelihoodResult<f64>
+pub fn laddu_likelihood::CrossSectionIntegrals::resident_bytes(&self) -> usize
+impl core::clone::Clone for laddu_likelihood::CrossSectionIntegrals
+pub fn laddu_likelihood::CrossSectionIntegrals::clone(&self) -> laddu_likelihood::CrossSectionIntegrals
+impl core::fmt::Debug for laddu_likelihood::CrossSectionIntegrals
+pub fn laddu_likelihood::CrossSectionIntegrals::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub struct laddu_likelihood::DatasetDiagnostics
+impl laddu_likelihood::DatasetDiagnostics
+pub fn laddu_likelihood::DatasetDiagnostics::normalization(&self) -> core::option::Option<&laddu_runtime::normalization::PreparedNormalizationDiagnostics>
+pub fn laddu_likelihood::DatasetDiagnostics::role(&self) -> laddu_likelihood::DatasetRole
+pub fn laddu_likelihood::DatasetDiagnostics::source_traversals(&self) -> u64
+pub fn laddu_likelihood::DatasetDiagnostics::stats(&self) -> &laddu_runtime::cpu::PreparedDatasetStats
+pub fn laddu_likelihood::DatasetDiagnostics::term(&self) -> &str
+pub fn laddu_likelihood::DatasetDiagnostics::uses_quadratic_normalization(&self) -> bool
+impl core::clone::Clone for laddu_likelihood::DatasetDiagnostics
+pub fn laddu_likelihood::DatasetDiagnostics::clone(&self) -> laddu_likelihood::DatasetDiagnostics
+impl core::cmp::PartialEq for laddu_likelihood::DatasetDiagnostics
+pub fn laddu_likelihood::DatasetDiagnostics::eq(&self, &laddu_likelihood::DatasetDiagnostics) -> bool
+impl core::fmt::Debug for laddu_likelihood::DatasetDiagnostics
+pub fn laddu_likelihood::DatasetDiagnostics::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for laddu_likelihood::DatasetDiagnostics
+pub struct laddu_likelihood::DifferentialCrossSection
+impl laddu_likelihood::DifferentialCrossSection
+pub fn laddu_likelihood::DifferentialCrossSection::axes(&self) -> &[alloc::vec::Vec<f64>]
+pub fn laddu_likelihood::DifferentialCrossSection::components(&self) -> &std::collections::hash::map::HashMap<alloc::string::String, laddu_likelihood::BinnedEstimate>
+pub fn laddu_likelihood::DifferentialCrossSection::data(&self) -> &laddu_likelihood::BinnedEstimate
+pub fn laddu_likelihood::DifferentialCrossSection::model(&self) -> &laddu_likelihood::BinnedEstimate
+pub fn laddu_likelihood::DifferentialCrossSection::shape(&self) -> &[usize]
+impl core::clone::Clone for laddu_likelihood::DifferentialCrossSection
+pub fn laddu_likelihood::DifferentialCrossSection::clone(&self) -> laddu_likelihood::DifferentialCrossSection
+impl core::fmt::Debug for laddu_likelihood::DifferentialCrossSection
+pub fn laddu_likelihood::DifferentialCrossSection::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub struct laddu_likelihood::Ensemble
+impl laddu_likelihood::Ensemble
+pub fn laddu_likelihood::Ensemble::bootstrap_fit<E>(&alloc::sync::Arc<laddu_likelihood::Likelihood>, usize, u64, impl core::ops::function::FnMut(&alloc::sync::Arc<laddu_likelihood::Likelihood>, usize) -> core::result::Result<alloc::vec::Vec<f64>, E>) -> core::result::Result<Self, laddu_likelihood::BootstrapFitError<E>>
+pub fn laddu_likelihood::Ensemble::draws(&self) -> &[alloc::vec::Vec<f64>]
+pub fn laddu_likelihood::Ensemble::from_chain(alloc::vec::Vec<alloc::string::String>, &[alloc::vec::Vec<alloc::vec::Vec<f64>>], usize, usize) -> laddu_likelihood::LikelihoodResult<Self>
+pub fn laddu_likelihood::Ensemble::is_empty(&self) -> bool
+pub fn laddu_likelihood::Ensemble::len(&self) -> usize
+pub fn laddu_likelihood::Ensemble::new(alloc::vec::Vec<alloc::string::String>, alloc::vec::Vec<alloc::vec::Vec<f64>>) -> laddu_likelihood::LikelihoodResult<Self>
+pub fn laddu_likelihood::Ensemble::parameter_names(&self) -> &[alloc::string::String]
+pub fn laddu_likelihood::Ensemble::replicas(&self) -> &[alloc::sync::Arc<laddu_likelihood::Likelihood>]
+pub fn laddu_likelihood::Ensemble::source_id(&self) -> u64
+pub fn laddu_likelihood::Ensemble::with_replicas(alloc::vec::Vec<alloc::string::String>, alloc::vec::Vec<alloc::vec::Vec<f64>>, alloc::vec::Vec<alloc::sync::Arc<laddu_likelihood::Likelihood>>) -> laddu_likelihood::LikelihoodResult<Self>
+pub fn laddu_likelihood::Ensemble::with_source_id(alloc::vec::Vec<alloc::string::String>, alloc::vec::Vec<alloc::vec::Vec<f64>>, u64) -> laddu_likelihood::LikelihoodResult<Self>
+impl core::clone::Clone for laddu_likelihood::Ensemble
+pub fn laddu_likelihood::Ensemble::clone(&self) -> laddu_likelihood::Ensemble
+impl core::fmt::Debug for laddu_likelihood::Ensemble
+pub fn laddu_likelihood::Ensemble::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub struct laddu_likelihood::Estimate
+impl laddu_likelihood::Estimate
+pub fn laddu_likelihood::Estimate::central(f64) -> laddu_likelihood::LikelihoodResult<Self>
+pub fn laddu_likelihood::Estimate::draws(&self) -> &[f64]
+pub fn laddu_likelihood::Estimate::interval(&self, f64) -> laddu_likelihood::LikelihoodResult<(f64, f64)>
+pub fn laddu_likelihood::Estimate::mean(&self) -> laddu_likelihood::LikelihoodResult<f64>
+pub fn laddu_likelihood::Estimate::median(&self) -> laddu_likelihood::LikelihoodResult<f64>
+pub fn laddu_likelihood::Estimate::new(f64, alloc::vec::Vec<f64>) -> laddu_likelihood::LikelihoodResult<Self>
+pub fn laddu_likelihood::Estimate::quantile(&self, f64) -> laddu_likelihood::LikelihoodResult<f64>
+pub fn laddu_likelihood::Estimate::source_id(&self) -> core::option::Option<u64>
+pub fn laddu_likelihood::Estimate::std(&self) -> laddu_likelihood::LikelihoodResult<f64>
+pub fn laddu_likelihood::Estimate::value(&self) -> f64
+pub fn laddu_likelihood::Estimate::with_source_id(f64, alloc::vec::Vec<f64>, core::option::Option<u64>) -> laddu_likelihood::LikelihoodResult<Self>
+impl core::clone::Clone for laddu_likelihood::Estimate
+pub fn laddu_likelihood::Estimate::clone(&self) -> laddu_likelihood::Estimate
+impl core::cmp::PartialEq for laddu_likelihood::Estimate
+pub fn laddu_likelihood::Estimate::eq(&self, &laddu_likelihood::Estimate) -> bool
+impl core::fmt::Debug for laddu_likelihood::Estimate
+pub fn laddu_likelihood::Estimate::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for laddu_likelihood::Estimate
+impl core::ops::arith::Add for laddu_likelihood::Estimate
+pub type laddu_likelihood::Estimate::Output = laddu_likelihood::Estimate
+pub fn laddu_likelihood::Estimate::add(self, laddu_likelihood::Estimate) -> Self::Output
+impl core::ops::arith::Add<&f64> for &laddu_likelihood::Estimate
+pub type &laddu_likelihood::Estimate::Output = laddu_likelihood::Estimate
+pub fn &laddu_likelihood::Estimate::add(self, &f64) -> Self::Output
+impl core::ops::arith::Add<&f64> for laddu_likelihood::Estimate
+pub type laddu_likelihood::Estimate::Output = laddu_likelihood::Estimate
+pub fn laddu_likelihood::Estimate::add(self, &f64) -> Self::Output
+impl core::ops::arith::Add<&laddu_likelihood::Estimate> for &laddu_likelihood::Estimate
+pub type &laddu_likelihood::Estimate::Output = laddu_likelihood::Estimate
+pub fn &laddu_likelihood::Estimate::add(self, &laddu_likelihood::Estimate) -> Self::Output
+impl core::ops::arith::Add<&laddu_likelihood::Estimate> for laddu_likelihood::Estimate
+pub type laddu_likelihood::Estimate::Output = laddu_likelihood::Estimate
+pub fn laddu_likelihood::Estimate::add(self, &laddu_likelihood::Estimate) -> Self::Output
+impl core::ops::arith::Add<f64> for &laddu_likelihood::Estimate
+pub type &laddu_likelihood::Estimate::Output = laddu_likelihood::Estimate
+pub fn &laddu_likelihood::Estimate::add(self, f64) -> Self::Output
+impl core::ops::arith::Add<f64> for laddu_likelihood::Estimate
+pub type laddu_likelihood::Estimate::Output = laddu_likelihood::Estimate
+pub fn laddu_likelihood::Estimate::add(self, f64) -> Self::Output
+impl core::ops::arith::Add<laddu_likelihood::Estimate> for &laddu_likelihood::Estimate
+pub type &laddu_likelihood::Estimate::Output = laddu_likelihood::Estimate
+pub fn &laddu_likelihood::Estimate::add(self, laddu_likelihood::Estimate) -> Self::Output
+impl core::ops::arith::Div for laddu_likelihood::Estimate
+pub type laddu_likelihood::Estimate::Output = laddu_likelihood::Estimate
+pub fn laddu_likelihood::Estimate::div(self, laddu_likelihood::Estimate) -> Self::Output
+impl core::ops::arith::Div<&f64> for &laddu_likelihood::Estimate
+pub type &laddu_likelihood::Estimate::Output = laddu_likelihood::Estimate
+pub fn &laddu_likelihood::Estimate::div(self, &f64) -> Self::Output
+impl core::ops::arith::Div<&f64> for laddu_likelihood::Estimate
+pub type laddu_likelihood::Estimate::Output = laddu_likelihood::Estimate
+pub fn laddu_likelihood::Estimate::div(self, &f64) -> Self::Output
+impl core::ops::arith::Div<&laddu_likelihood::Estimate> for &laddu_likelihood::Estimate
+pub type &laddu_likelihood::Estimate::Output = laddu_likelihood::Estimate
+pub fn &laddu_likelihood::Estimate::div(self, &laddu_likelihood::Estimate) -> Self::Output
+impl core::ops::arith::Div<&laddu_likelihood::Estimate> for laddu_likelihood::Estimate
+pub type laddu_likelihood::Estimate::Output = laddu_likelihood::Estimate
+pub fn laddu_likelihood::Estimate::div(self, &laddu_likelihood::Estimate) -> Self::Output
+impl core::ops::arith::Div<f64> for &laddu_likelihood::Estimate
+pub type &laddu_likelihood::Estimate::Output = laddu_likelihood::Estimate
+pub fn &laddu_likelihood::Estimate::div(self, f64) -> Self::Output
+impl core::ops::arith::Div<f64> for laddu_likelihood::Estimate
+pub type laddu_likelihood::Estimate::Output = laddu_likelihood::Estimate
+pub fn laddu_likelihood::Estimate::div(self, f64) -> Self::Output
+impl core::ops::arith::Div<laddu_likelihood::Estimate> for &laddu_likelihood::Estimate
+pub type &laddu_likelihood::Estimate::Output = laddu_likelihood::Estimate
+pub fn &laddu_likelihood::Estimate::div(self, laddu_likelihood::Estimate) -> Self::Output
+impl core::ops::arith::Mul for laddu_likelihood::Estimate
+pub type laddu_likelihood::Estimate::Output = laddu_likelihood::Estimate
+pub fn laddu_likelihood::Estimate::mul(self, laddu_likelihood::Estimate) -> Self::Output
+impl core::ops::arith::Mul<&f64> for &laddu_likelihood::Estimate
+pub type &laddu_likelihood::Estimate::Output = laddu_likelihood::Estimate
+pub fn &laddu_likelihood::Estimate::mul(self, &f64) -> Self::Output
+impl core::ops::arith::Mul<&f64> for laddu_likelihood::Estimate
+pub type laddu_likelihood::Estimate::Output = laddu_likelihood::Estimate
+pub fn laddu_likelihood::Estimate::mul(self, &f64) -> Self::Output
+impl core::ops::arith::Mul<&laddu_likelihood::Estimate> for &laddu_likelihood::Estimate
+pub type &laddu_likelihood::Estimate::Output = laddu_likelihood::Estimate
+pub fn &laddu_likelihood::Estimate::mul(self, &laddu_likelihood::Estimate) -> Self::Output
+impl core::ops::arith::Mul<&laddu_likelihood::Estimate> for laddu_likelihood::Estimate
+pub type laddu_likelihood::Estimate::Output = laddu_likelihood::Estimate
+pub fn laddu_likelihood::Estimate::mul(self, &laddu_likelihood::Estimate) -> Self::Output
+impl core::ops::arith::Mul<f64> for &laddu_likelihood::Estimate
+pub type &laddu_likelihood::Estimate::Output = laddu_likelihood::Estimate
+pub fn &laddu_likelihood::Estimate::mul(self, f64) -> Self::Output
+impl core::ops::arith::Mul<f64> for laddu_likelihood::Estimate
+pub type laddu_likelihood::Estimate::Output = laddu_likelihood::Estimate
+pub fn laddu_likelihood::Estimate::mul(self, f64) -> Self::Output
+impl core::ops::arith::Mul<laddu_likelihood::Estimate> for &laddu_likelihood::Estimate
+pub type &laddu_likelihood::Estimate::Output = laddu_likelihood::Estimate
+pub fn &laddu_likelihood::Estimate::mul(self, laddu_likelihood::Estimate) -> Self::Output
+impl core::ops::arith::Sub for laddu_likelihood::Estimate
+pub type laddu_likelihood::Estimate::Output = laddu_likelihood::Estimate
+pub fn laddu_likelihood::Estimate::sub(self, laddu_likelihood::Estimate) -> Self::Output
+impl core::ops::arith::Sub<&f64> for &laddu_likelihood::Estimate
+pub type &laddu_likelihood::Estimate::Output = laddu_likelihood::Estimate
+pub fn &laddu_likelihood::Estimate::sub(self, &f64) -> Self::Output
+impl core::ops::arith::Sub<&f64> for laddu_likelihood::Estimate
+pub type laddu_likelihood::Estimate::Output = laddu_likelihood::Estimate
+pub fn laddu_likelihood::Estimate::sub(self, &f64) -> Self::Output
+impl core::ops::arith::Sub<&laddu_likelihood::Estimate> for &laddu_likelihood::Estimate
+pub type &laddu_likelihood::Estimate::Output = laddu_likelihood::Estimate
+pub fn &laddu_likelihood::Estimate::sub(self, &laddu_likelihood::Estimate) -> Self::Output
+impl core::ops::arith::Sub<&laddu_likelihood::Estimate> for laddu_likelihood::Estimate
+pub type laddu_likelihood::Estimate::Output = laddu_likelihood::Estimate
+pub fn laddu_likelihood::Estimate::sub(self, &laddu_likelihood::Estimate) -> Self::Output
+impl core::ops::arith::Sub<f64> for &laddu_likelihood::Estimate
+pub type &laddu_likelihood::Estimate::Output = laddu_likelihood::Estimate
+pub fn &laddu_likelihood::Estimate::sub(self, f64) -> Self::Output
+impl core::ops::arith::Sub<f64> for laddu_likelihood::Estimate
+pub type laddu_likelihood::Estimate::Output = laddu_likelihood::Estimate
+pub fn laddu_likelihood::Estimate::sub(self, f64) -> Self::Output
+impl core::ops::arith::Sub<laddu_likelihood::Estimate> for &laddu_likelihood::Estimate
+pub type &laddu_likelihood::Estimate::Output = laddu_likelihood::Estimate
+pub fn &laddu_likelihood::Estimate::sub(self, laddu_likelihood::Estimate) -> Self::Output
+pub struct laddu_likelihood::ExtendedNllTerm
+impl laddu_likelihood::ExtendedNllTerm
+pub fn laddu_likelihood::ExtendedNllTerm::accepted_mc(&self) -> laddu_likelihood::LikelihoodResult<&laddu_runtime::backend::PreparedDataset>
+pub fn laddu_likelihood::ExtendedNllTerm::accepted_normalization(&self, &[f64]) -> laddu_likelihood::LikelihoodResult<f64>
+pub fn laddu_likelihood::ExtendedNllTerm::data(&self) -> laddu_likelihood::LikelihoodResult<&laddu_runtime::backend::PreparedDataset>
+pub fn laddu_likelihood::ExtendedNllTerm::data_log_intensity_sum(&self, &[f64]) -> laddu_likelihood::LikelihoodResult<f64>
+pub fn laddu_likelihood::ExtendedNllTerm::data_weight_sum(&self) -> laddu_likelihood::LikelihoodResult<f64>
+pub fn laddu_likelihood::ExtendedNllTerm::new(impl core::convert::Into<alloc::string::String>, &laddu_compile::model::CompiledModel, &laddu_data::data::dataset::Dataset, &laddu_data::data::dataset::Dataset) -> laddu_likelihood::LikelihoodResult<Self>
+impl core::clone::Clone for laddu_likelihood::ExtendedNllTerm
+pub fn laddu_likelihood::ExtendedNllTerm::clone(&self) -> laddu_likelihood::ExtendedNllTerm
+impl core::fmt::Debug for laddu_likelihood::ExtendedNllTerm
+pub fn laddu_likelihood::ExtendedNllTerm::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl laddu_likelihood::LikelihoodTerm for laddu_likelihood::ExtendedNllTerm
+pub fn laddu_likelihood::ExtendedNllTerm::append_diagnostics(&self, &mut alloc::vec::Vec<laddu_likelihood::DatasetDiagnostics>)
+pub fn laddu_likelihood::ExtendedNllTerm::as_intensity(&self) -> core::option::Option<&laddu_likelihood::NllTerm>
+pub fn laddu_likelihood::ExtendedNllTerm::bootstrap_clone(&self, u64) -> laddu_likelihood::LikelihoodResult<alloc::boxed::Box<dyn laddu_likelihood::LikelihoodTerm>>
+pub fn laddu_likelihood::ExtendedNllTerm::bootstrap_clone_is_prepared(&self) -> bool
+pub fn laddu_likelihood::ExtendedNllTerm::boxed(self) -> alloc::boxed::Box<dyn laddu_likelihood::LikelihoodTerm> where Self: core::marker::Sized + 'static
+pub fn laddu_likelihood::ExtendedNllTerm::has_absolute_rate(&self) -> bool
+pub fn laddu_likelihood::ExtendedNllTerm::name(&self) -> &str
+pub fn laddu_likelihood::ExtendedNllTerm::nll(&self, &laddu_expr::parameters::ParamValues, &laddu_runtime::execution::Execution) -> laddu_likelihood::LikelihoodResult<f64>
+pub fn laddu_likelihood::ExtendedNllTerm::nll_with_gradient(&self, &laddu_expr::parameters::ParamValues, &mut [f64], &laddu_runtime::execution::Execution) -> laddu_likelihood::LikelihoodResult<f64>
+pub fn laddu_likelihood::ExtendedNllTerm::register_params(&self, &mut laddu_expr::parameters::ParamRegistry) -> laddu_likelihood::LikelihoodResult<()>
+pub fn laddu_likelihood::ExtendedNllTerm::resolve(&mut self, alloc::sync::Arc<laddu_expr::parameters::ParamLayout>, &laddu_runtime::execution::Execution) -> laddu_likelihood::LikelihoodResult<()>
+pub fn laddu_likelihood::ExtendedNllTerm::stochastic_nll_with_gradient(&self, &laddu_expr::parameters::ParamValues, &mut [f64], &laddu_runtime::execution::Execution, f64, u64) -> laddu_likelihood::LikelihoodResult<f64>
+pub struct laddu_likelihood::LassoPenalty
+impl laddu_likelihood::LassoPenalty
+pub fn laddu_likelihood::LassoPenalty::new(impl core::convert::Into<alloc::string::String>, impl core::iter::traits::collect::IntoIterator<Item = impl core::convert::Into<alloc::string::String>>, f64) -> laddu_likelihood::LikelihoodResult<Self>
+impl core::clone::Clone for laddu_likelihood::LassoPenalty
+pub fn laddu_likelihood::LassoPenalty::clone(&self) -> laddu_likelihood::LassoPenalty
+impl core::fmt::Debug for laddu_likelihood::LassoPenalty
+pub fn laddu_likelihood::LassoPenalty::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl laddu_likelihood::LikelihoodTerm for laddu_likelihood::LassoPenalty
+pub fn laddu_likelihood::LassoPenalty::append_diagnostics(&self, &mut alloc::vec::Vec<laddu_likelihood::DatasetDiagnostics>)
+pub fn laddu_likelihood::LassoPenalty::as_intensity(&self) -> core::option::Option<&laddu_likelihood::NllTerm>
+pub fn laddu_likelihood::LassoPenalty::bootstrap_clone(&self, u64) -> laddu_likelihood::LikelihoodResult<alloc::boxed::Box<dyn laddu_likelihood::LikelihoodTerm>>
+pub fn laddu_likelihood::LassoPenalty::bootstrap_clone_is_prepared(&self) -> bool
+pub fn laddu_likelihood::LassoPenalty::boxed(self) -> alloc::boxed::Box<dyn laddu_likelihood::LikelihoodTerm> where Self: core::marker::Sized + 'static
+pub fn laddu_likelihood::LassoPenalty::has_absolute_rate(&self) -> bool
+pub fn laddu_likelihood::LassoPenalty::name(&self) -> &str
+pub fn laddu_likelihood::LassoPenalty::nll(&self, &laddu_expr::parameters::ParamValues, &laddu_runtime::execution::Execution) -> laddu_likelihood::LikelihoodResult<f64>
+pub fn laddu_likelihood::LassoPenalty::nll_with_gradient(&self, &laddu_expr::parameters::ParamValues, &mut [f64], &laddu_runtime::execution::Execution) -> laddu_likelihood::LikelihoodResult<f64>
+pub fn laddu_likelihood::LassoPenalty::register_params(&self, &mut laddu_expr::parameters::ParamRegistry) -> laddu_likelihood::LikelihoodResult<()>
+pub fn laddu_likelihood::LassoPenalty::resolve(&mut self, alloc::sync::Arc<laddu_expr::parameters::ParamLayout>, &laddu_runtime::execution::Execution) -> laddu_likelihood::LikelihoodResult<()>
+pub fn laddu_likelihood::LassoPenalty::stochastic_nll_with_gradient(&self, &laddu_expr::parameters::ParamValues, &mut [f64], &laddu_runtime::execution::Execution, f64, u64) -> laddu_likelihood::LikelihoodResult<f64>
+pub struct laddu_likelihood::Likelihood
+impl laddu_likelihood::Likelihood
+pub fn laddu_likelihood::Likelihood::bootstrap(&self, u64) -> laddu_likelihood::LikelihoodResult<Self>
+pub fn laddu_likelihood::Likelihood::cross_section_integrals(&self, &str, &laddu_data::data::dataset::Dataset) -> laddu_likelihood::LikelihoodResult<laddu_likelihood::CrossSectionIntegrals>
+pub fn laddu_likelihood::Likelihood::cross_section_integrals_with_tags<'a>(&self, &str, &laddu_data::data::dataset::Dataset, impl core::iter::traits::collect::IntoIterator<Item = &'a str>) -> laddu_likelihood::LikelihoodResult<laddu_likelihood::CrossSectionIntegrals>
+pub fn laddu_likelihood::Likelihood::default_params(&self) -> alloc::vec::Vec<f64>
+pub fn laddu_likelihood::Likelihood::diagnostics(&self) -> laddu_likelihood::LikelihoodDiagnostics
+pub fn laddu_likelihood::Likelihood::execution(&self) -> &laddu_runtime::execution::Execution
+pub fn laddu_likelihood::Likelihood::intensity_datasets(&self, &str) -> laddu_likelihood::LikelihoodResult<(&laddu_data::data::dataset::Dataset, &laddu_data::data::dataset::Dataset)>
+pub fn laddu_likelihood::Likelihood::new<T>(impl core::iter::traits::collect::IntoIterator<Item = T>) -> laddu_likelihood::LikelihoodResult<Self> where T: laddu_likelihood::LikelihoodTerm + 'static
+pub fn laddu_likelihood::Likelihood::new_boxed(impl core::iter::traits::collect::IntoIterator<Item = alloc::boxed::Box<dyn laddu_likelihood::LikelihoodTerm>>) -> laddu_likelihood::LikelihoodResult<Self>
+pub fn laddu_likelihood::Likelihood::nll<'a>(&self, impl core::convert::Into<laddu_likelihood::Parameters<'a>>) -> laddu_likelihood::LikelihoodResult<f64>
+pub fn laddu_likelihood::Likelihood::nll_with_gradient<'a>(&self, impl core::convert::Into<laddu_likelihood::Parameters<'a>>) -> laddu_likelihood::LikelihoodResult<laddu_likelihood::LikelihoodEvaluation>
+pub fn laddu_likelihood::Likelihood::params(&self) -> &laddu_expr::parameters::ParamLayout
+pub fn laddu_likelihood::Likelihood::params_with(&self, impl core::ops::function::FnMut(&laddu_expr::parameters::Parameter) -> f64) -> alloc::vec::Vec<f64>
+pub fn laddu_likelihood::Likelihood::projection<'a>(&self, &str, &laddu_data::data::dataset::Dataset, impl core::iter::traits::collect::IntoIterator<Item = &'a str>) -> laddu_likelihood::LikelihoodResult<laddu_likelihood::LikelihoodProjection>
+pub fn laddu_likelihood::Likelihood::sample_initial(&self, u64) -> alloc::vec::Vec<f64>
+pub fn laddu_likelihood::Likelihood::stochastic_nll_with_gradient(&self, &[f64], f64, u64) -> laddu_likelihood::LikelihoodResult<laddu_likelihood::LikelihoodEvaluation>
+pub fn laddu_likelihood::Likelihood::terms(&self) -> &[alloc::boxed::Box<dyn laddu_likelihood::LikelihoodTerm>]
+pub fn laddu_likelihood::Likelihood::with_execution<T>(impl core::iter::traits::collect::IntoIterator<Item = T>, &laddu_runtime::execution::Execution) -> laddu_likelihood::LikelihoodResult<Self> where T: laddu_likelihood::LikelihoodTerm + 'static
+pub fn laddu_likelihood::Likelihood::with_execution_boxed(impl core::iter::traits::collect::IntoIterator<Item = alloc::boxed::Box<dyn laddu_likelihood::LikelihoodTerm>>, &laddu_runtime::execution::Execution) -> laddu_likelihood::LikelihoodResult<Self>
+impl laddu_likelihood::Likelihood
+pub fn laddu_likelihood::Likelihood::cross_section(&alloc::sync::Arc<Self>, impl core::convert::Into<alloc::string::String>, laddu_data::data::dataset::Dataset, f64, alloc::vec::Vec<f64>) -> laddu_likelihood::LikelihoodResult<laddu_likelihood::CrossSection>
+pub fn laddu_likelihood::Likelihood::cross_section_with_ensemble(&alloc::sync::Arc<Self>, impl core::convert::Into<alloc::string::String>, laddu_data::data::dataset::Dataset, f64, alloc::vec::Vec<f64>, laddu_likelihood::Ensemble) -> laddu_likelihood::LikelihoodResult<laddu_likelihood::CrossSection>
+impl core::fmt::Debug for laddu_likelihood::Likelihood
+pub fn laddu_likelihood::Likelihood::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl laddu_likelihood::Objective for laddu_likelihood::Likelihood
+pub fn laddu_likelihood::Likelihood::parameter_layout(&self) -> &laddu_expr::parameters::ParamLayout
+pub fn laddu_likelihood::Likelihood::value(&self, &[f64]) -> laddu_likelihood::LikelihoodResult<f64>
+pub fn laddu_likelihood::Likelihood::value_gradient(&self, &[f64]) -> laddu_likelihood::LikelihoodResult<laddu_likelihood::LikelihoodEvaluation>
+impl laddu_likelihood::StochasticObjective for laddu_likelihood::Likelihood
+pub fn laddu_likelihood::Likelihood::stochastic_value_gradient(&self, &[f64], f64, u64) -> laddu_likelihood::LikelihoodResult<laddu_likelihood::LikelihoodEvaluation>
+pub struct laddu_likelihood::LikelihoodDiagnostics
+impl laddu_likelihood::LikelihoodDiagnostics
+pub fn laddu_likelihood::LikelihoodDiagnostics::datasets(&self) -> &[laddu_likelihood::DatasetDiagnostics]
+pub fn laddu_likelihood::LikelihoodDiagnostics::gradient_evaluations(&self) -> u64
+pub fn laddu_likelihood::LikelihoodDiagnostics::memory_decisions(&self) -> &[laddu_memory::MemoryDecision]
+pub fn laddu_likelihood::LikelihoodDiagnostics::objective_evaluations(&self) -> u64
+impl core::clone::Clone for laddu_likelihood::LikelihoodDiagnostics
+pub fn laddu_likelihood::LikelihoodDiagnostics::clone(&self) -> laddu_likelihood::LikelihoodDiagnostics
+impl core::cmp::PartialEq for laddu_likelihood::LikelihoodDiagnostics
+pub fn laddu_likelihood::LikelihoodDiagnostics::eq(&self, &laddu_likelihood::LikelihoodDiagnostics) -> bool
+impl core::fmt::Debug for laddu_likelihood::LikelihoodDiagnostics
+pub fn laddu_likelihood::LikelihoodDiagnostics::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for laddu_likelihood::LikelihoodDiagnostics
+pub struct laddu_likelihood::LikelihoodEvaluation
+impl laddu_likelihood::LikelihoodEvaluation
+pub fn laddu_likelihood::LikelihoodEvaluation::gradient(&self) -> &[f64]
+pub fn laddu_likelihood::LikelihoodEvaluation::into_parts(self) -> (f64, alloc::vec::Vec<f64>)
+pub fn laddu_likelihood::LikelihoodEvaluation::new(f64, alloc::vec::Vec<f64>) -> Self
+pub fn laddu_likelihood::LikelihoodEvaluation::value(&self) -> f64
+impl core::clone::Clone for laddu_likelihood::LikelihoodEvaluation
+pub fn laddu_likelihood::LikelihoodEvaluation::clone(&self) -> laddu_likelihood::LikelihoodEvaluation
+impl core::cmp::PartialEq for laddu_likelihood::LikelihoodEvaluation
+pub fn laddu_likelihood::LikelihoodEvaluation::eq(&self, &laddu_likelihood::LikelihoodEvaluation) -> bool
+impl core::fmt::Debug for laddu_likelihood::LikelihoodEvaluation
+pub fn laddu_likelihood::LikelihoodEvaluation::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for laddu_likelihood::LikelihoodEvaluation
+pub struct laddu_likelihood::LikelihoodName(_)
+impl laddu_likelihood::LikelihoodName
+pub fn laddu_likelihood::LikelihoodName::as_str(&self) -> &str
+pub fn laddu_likelihood::LikelihoodName::new(impl core::convert::Into<alloc::string::String>) -> Self
+impl core::clone::Clone for laddu_likelihood::LikelihoodName
+pub fn laddu_likelihood::LikelihoodName::clone(&self) -> laddu_likelihood::LikelihoodName
+impl core::cmp::Eq for laddu_likelihood::LikelihoodName
+impl core::cmp::PartialEq for laddu_likelihood::LikelihoodName
+pub fn laddu_likelihood::LikelihoodName::eq(&self, &laddu_likelihood::LikelihoodName) -> bool
+impl core::fmt::Debug for laddu_likelihood::LikelihoodName
+pub fn laddu_likelihood::LikelihoodName::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for laddu_likelihood::LikelihoodName
+pub struct laddu_likelihood::LikelihoodProjection
+impl laddu_likelihood::LikelihoodProjection
+pub fn laddu_likelihood::LikelihoodProjection::acceptance(&self, &[f64]) -> laddu_likelihood::LikelihoodResult<f64>
+pub fn laddu_likelihood::LikelihoodProjection::acceptance_corrected_yield(&self, &[f64]) -> laddu_likelihood::LikelihoodResult<f64>
+pub fn laddu_likelihood::LikelihoodProjection::accepted_integral(&self, &[f64]) -> laddu_likelihood::LikelihoodResult<f64>
+pub fn laddu_likelihood::LikelihoodProjection::cross_section(&self, &[f64], f64) -> laddu_likelihood::LikelihoodResult<f64>
+pub fn laddu_likelihood::LikelihoodProjection::fitted_cross_section(&self, &[f64], f64) -> laddu_likelihood::LikelihoodResult<f64>
+pub fn laddu_likelihood::LikelihoodProjection::full_accepted_integral(&self, &[f64]) -> laddu_likelihood::LikelihoodResult<f64>
+pub fn laddu_likelihood::LikelihoodProjection::generated_integral(&self, &[f64]) -> laddu_likelihood::LikelihoodResult<f64>
+pub fn laddu_likelihood::LikelihoodProjection::intensities(&self, &[f64]) -> laddu_likelihood::LikelihoodResult<alloc::vec::Vec<f64>>
+pub fn laddu_likelihood::LikelihoodProjection::name(&self) -> &str
+pub fn laddu_likelihood::LikelihoodProjection::observed_cross_section(&self, &[f64], f64) -> laddu_likelihood::LikelihoodResult<f64>
+pub fn laddu_likelihood::LikelihoodProjection::weights(&self, &[f64], bool) -> laddu_likelihood::LikelihoodResult<alloc::vec::Vec<f64>>
+impl core::clone::Clone for laddu_likelihood::LikelihoodProjection
+pub fn laddu_likelihood::LikelihoodProjection::clone(&self) -> laddu_likelihood::LikelihoodProjection
+pub struct laddu_likelihood::NllTerm
+impl laddu_likelihood::NllTerm
+pub fn laddu_likelihood::NllTerm::accepted_mc(&self) -> laddu_likelihood::LikelihoodResult<&laddu_runtime::backend::PreparedDataset>
+pub fn laddu_likelihood::NllTerm::accepted_normalization(&self, &[f64]) -> laddu_likelihood::LikelihoodResult<f64>
+pub fn laddu_likelihood::NllTerm::data(&self) -> laddu_likelihood::LikelihoodResult<&laddu_runtime::backend::PreparedDataset>
+pub fn laddu_likelihood::NllTerm::data_log_intensity_sum(&self, &[f64]) -> laddu_likelihood::LikelihoodResult<f64>
+pub fn laddu_likelihood::NllTerm::data_weight_sum(&self) -> laddu_likelihood::LikelihoodResult<f64>
+pub fn laddu_likelihood::NllTerm::new(impl core::convert::Into<alloc::string::String>, &laddu_compile::model::CompiledModel, &laddu_data::data::dataset::Dataset, &laddu_data::data::dataset::Dataset) -> laddu_likelihood::LikelihoodResult<Self>
+impl core::clone::Clone for laddu_likelihood::NllTerm
+pub fn laddu_likelihood::NllTerm::clone(&self) -> laddu_likelihood::NllTerm
+impl core::fmt::Debug for laddu_likelihood::NllTerm
+pub fn laddu_likelihood::NllTerm::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl laddu_likelihood::LikelihoodTerm for laddu_likelihood::NllTerm
+pub fn laddu_likelihood::NllTerm::append_diagnostics(&self, &mut alloc::vec::Vec<laddu_likelihood::DatasetDiagnostics>)
+pub fn laddu_likelihood::NllTerm::as_intensity(&self) -> core::option::Option<&laddu_likelihood::NllTerm>
+pub fn laddu_likelihood::NllTerm::bootstrap_clone(&self, u64) -> laddu_likelihood::LikelihoodResult<alloc::boxed::Box<dyn laddu_likelihood::LikelihoodTerm>>
+pub fn laddu_likelihood::NllTerm::bootstrap_clone_is_prepared(&self) -> bool
+pub fn laddu_likelihood::NllTerm::boxed(self) -> alloc::boxed::Box<dyn laddu_likelihood::LikelihoodTerm> where Self: core::marker::Sized + 'static
+pub fn laddu_likelihood::NllTerm::has_absolute_rate(&self) -> bool
+pub fn laddu_likelihood::NllTerm::name(&self) -> &str
+pub fn laddu_likelihood::NllTerm::nll(&self, &laddu_expr::parameters::ParamValues, &laddu_runtime::execution::Execution) -> laddu_likelihood::LikelihoodResult<f64>
+pub fn laddu_likelihood::NllTerm::nll_with_gradient(&self, &laddu_expr::parameters::ParamValues, &mut [f64], &laddu_runtime::execution::Execution) -> laddu_likelihood::LikelihoodResult<f64>
+pub fn laddu_likelihood::NllTerm::register_params(&self, &mut laddu_expr::parameters::ParamRegistry) -> laddu_likelihood::LikelihoodResult<()>
+pub fn laddu_likelihood::NllTerm::resolve(&mut self, alloc::sync::Arc<laddu_expr::parameters::ParamLayout>, &laddu_runtime::execution::Execution) -> laddu_likelihood::LikelihoodResult<()>
+pub fn laddu_likelihood::NllTerm::stochastic_nll_with_gradient(&self, &laddu_expr::parameters::ParamValues, &mut [f64], &laddu_runtime::execution::Execution, f64, u64) -> laddu_likelihood::LikelihoodResult<f64>
+pub struct laddu_likelihood::RidgePenalty
+impl laddu_likelihood::RidgePenalty
+pub fn laddu_likelihood::RidgePenalty::new(impl core::convert::Into<alloc::string::String>, impl core::iter::traits::collect::IntoIterator<Item = impl core::convert::Into<alloc::string::String>>, f64) -> laddu_likelihood::LikelihoodResult<Self>
+impl core::clone::Clone for laddu_likelihood::RidgePenalty
+pub fn laddu_likelihood::RidgePenalty::clone(&self) -> laddu_likelihood::RidgePenalty
+impl core::fmt::Debug for laddu_likelihood::RidgePenalty
+pub fn laddu_likelihood::RidgePenalty::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl laddu_likelihood::LikelihoodTerm for laddu_likelihood::RidgePenalty
+pub fn laddu_likelihood::RidgePenalty::append_diagnostics(&self, &mut alloc::vec::Vec<laddu_likelihood::DatasetDiagnostics>)
+pub fn laddu_likelihood::RidgePenalty::as_intensity(&self) -> core::option::Option<&laddu_likelihood::NllTerm>
+pub fn laddu_likelihood::RidgePenalty::bootstrap_clone(&self, u64) -> laddu_likelihood::LikelihoodResult<alloc::boxed::Box<dyn laddu_likelihood::LikelihoodTerm>>
+pub fn laddu_likelihood::RidgePenalty::bootstrap_clone_is_prepared(&self) -> bool
+pub fn laddu_likelihood::RidgePenalty::boxed(self) -> alloc::boxed::Box<dyn laddu_likelihood::LikelihoodTerm> where Self: core::marker::Sized + 'static
+pub fn laddu_likelihood::RidgePenalty::has_absolute_rate(&self) -> bool
+pub fn laddu_likelihood::RidgePenalty::name(&self) -> &str
+pub fn laddu_likelihood::RidgePenalty::nll(&self, &laddu_expr::parameters::ParamValues, &laddu_runtime::execution::Execution) -> laddu_likelihood::LikelihoodResult<f64>
+pub fn laddu_likelihood::RidgePenalty::nll_with_gradient(&self, &laddu_expr::parameters::ParamValues, &mut [f64], &laddu_runtime::execution::Execution) -> laddu_likelihood::LikelihoodResult<f64>
+pub fn laddu_likelihood::RidgePenalty::register_params(&self, &mut laddu_expr::parameters::ParamRegistry) -> laddu_likelihood::LikelihoodResult<()>
+pub fn laddu_likelihood::RidgePenalty::resolve(&mut self, alloc::sync::Arc<laddu_expr::parameters::ParamLayout>, &laddu_runtime::execution::Execution) -> laddu_likelihood::LikelihoodResult<()>
+pub fn laddu_likelihood::RidgePenalty::stochastic_nll_with_gradient(&self, &laddu_expr::parameters::ParamValues, &mut [f64], &laddu_runtime::execution::Execution, f64, u64) -> laddu_likelihood::LikelihoodResult<f64>
+pub trait laddu_likelihood::LikelihoodTerm: core::fmt::Debug + core::marker::Send + core::marker::Sync
+pub fn laddu_likelihood::LikelihoodTerm::append_diagnostics(&self, &mut alloc::vec::Vec<laddu_likelihood::DatasetDiagnostics>)
+pub fn laddu_likelihood::LikelihoodTerm::as_intensity(&self) -> core::option::Option<&laddu_likelihood::NllTerm>
+pub fn laddu_likelihood::LikelihoodTerm::bootstrap_clone(&self, u64) -> laddu_likelihood::LikelihoodResult<alloc::boxed::Box<dyn laddu_likelihood::LikelihoodTerm>>
+pub fn laddu_likelihood::LikelihoodTerm::bootstrap_clone_is_prepared(&self) -> bool
+pub fn laddu_likelihood::LikelihoodTerm::boxed(self) -> alloc::boxed::Box<dyn laddu_likelihood::LikelihoodTerm> where Self: core::marker::Sized + 'static
+pub fn laddu_likelihood::LikelihoodTerm::has_absolute_rate(&self) -> bool
+pub fn laddu_likelihood::LikelihoodTerm::name(&self) -> &str
+pub fn laddu_likelihood::LikelihoodTerm::nll(&self, &laddu_expr::parameters::ParamValues, &laddu_runtime::execution::Execution) -> laddu_likelihood::LikelihoodResult<f64>
+pub fn laddu_likelihood::LikelihoodTerm::nll_with_gradient(&self, &laddu_expr::parameters::ParamValues, &mut [f64], &laddu_runtime::execution::Execution) -> laddu_likelihood::LikelihoodResult<f64>
+pub fn laddu_likelihood::LikelihoodTerm::register_params(&self, &mut laddu_expr::parameters::ParamRegistry) -> laddu_likelihood::LikelihoodResult<()>
+pub fn laddu_likelihood::LikelihoodTerm::resolve(&mut self, alloc::sync::Arc<laddu_expr::parameters::ParamLayout>, &laddu_runtime::execution::Execution) -> laddu_likelihood::LikelihoodResult<()>
+pub fn laddu_likelihood::LikelihoodTerm::stochastic_nll_with_gradient(&self, &laddu_expr::parameters::ParamValues, &mut [f64], &laddu_runtime::execution::Execution, f64, u64) -> laddu_likelihood::LikelihoodResult<f64>
+impl laddu_likelihood::LikelihoodTerm for laddu_likelihood::ExtendedNllTerm
+pub fn laddu_likelihood::ExtendedNllTerm::append_diagnostics(&self, &mut alloc::vec::Vec<laddu_likelihood::DatasetDiagnostics>)
+pub fn laddu_likelihood::ExtendedNllTerm::as_intensity(&self) -> core::option::Option<&laddu_likelihood::NllTerm>
+pub fn laddu_likelihood::ExtendedNllTerm::bootstrap_clone(&self, u64) -> laddu_likelihood::LikelihoodResult<alloc::boxed::Box<dyn laddu_likelihood::LikelihoodTerm>>
+pub fn laddu_likelihood::ExtendedNllTerm::bootstrap_clone_is_prepared(&self) -> bool
+pub fn laddu_likelihood::ExtendedNllTerm::boxed(self) -> alloc::boxed::Box<dyn laddu_likelihood::LikelihoodTerm> where Self: core::marker::Sized + 'static
+pub fn laddu_likelihood::ExtendedNllTerm::has_absolute_rate(&self) -> bool
+pub fn laddu_likelihood::ExtendedNllTerm::name(&self) -> &str
+pub fn laddu_likelihood::ExtendedNllTerm::nll(&self, &laddu_expr::parameters::ParamValues, &laddu_runtime::execution::Execution) -> laddu_likelihood::LikelihoodResult<f64>
+pub fn laddu_likelihood::ExtendedNllTerm::nll_with_gradient(&self, &laddu_expr::parameters::ParamValues, &mut [f64], &laddu_runtime::execution::Execution) -> laddu_likelihood::LikelihoodResult<f64>
+pub fn laddu_likelihood::ExtendedNllTerm::register_params(&self, &mut laddu_expr::parameters::ParamRegistry) -> laddu_likelihood::LikelihoodResult<()>
+pub fn laddu_likelihood::ExtendedNllTerm::resolve(&mut self, alloc::sync::Arc<laddu_expr::parameters::ParamLayout>, &laddu_runtime::execution::Execution) -> laddu_likelihood::LikelihoodResult<()>
+pub fn laddu_likelihood::ExtendedNllTerm::stochastic_nll_with_gradient(&self, &laddu_expr::parameters::ParamValues, &mut [f64], &laddu_runtime::execution::Execution, f64, u64) -> laddu_likelihood::LikelihoodResult<f64>
+impl laddu_likelihood::LikelihoodTerm for laddu_likelihood::LassoPenalty
+pub fn laddu_likelihood::LassoPenalty::append_diagnostics(&self, &mut alloc::vec::Vec<laddu_likelihood::DatasetDiagnostics>)
+pub fn laddu_likelihood::LassoPenalty::as_intensity(&self) -> core::option::Option<&laddu_likelihood::NllTerm>
+pub fn laddu_likelihood::LassoPenalty::bootstrap_clone(&self, u64) -> laddu_likelihood::LikelihoodResult<alloc::boxed::Box<dyn laddu_likelihood::LikelihoodTerm>>
+pub fn laddu_likelihood::LassoPenalty::bootstrap_clone_is_prepared(&self) -> bool
+pub fn laddu_likelihood::LassoPenalty::boxed(self) -> alloc::boxed::Box<dyn laddu_likelihood::LikelihoodTerm> where Self: core::marker::Sized + 'static
+pub fn laddu_likelihood::LassoPenalty::has_absolute_rate(&self) -> bool
+pub fn laddu_likelihood::LassoPenalty::name(&self) -> &str
+pub fn laddu_likelihood::LassoPenalty::nll(&self, &laddu_expr::parameters::ParamValues, &laddu_runtime::execution::Execution) -> laddu_likelihood::LikelihoodResult<f64>
+pub fn laddu_likelihood::LassoPenalty::nll_with_gradient(&self, &laddu_expr::parameters::ParamValues, &mut [f64], &laddu_runtime::execution::Execution) -> laddu_likelihood::LikelihoodResult<f64>
+pub fn laddu_likelihood::LassoPenalty::register_params(&self, &mut laddu_expr::parameters::ParamRegistry) -> laddu_likelihood::LikelihoodResult<()>
+pub fn laddu_likelihood::LassoPenalty::resolve(&mut self, alloc::sync::Arc<laddu_expr::parameters::ParamLayout>, &laddu_runtime::execution::Execution) -> laddu_likelihood::LikelihoodResult<()>
+pub fn laddu_likelihood::LassoPenalty::stochastic_nll_with_gradient(&self, &laddu_expr::parameters::ParamValues, &mut [f64], &laddu_runtime::execution::Execution, f64, u64) -> laddu_likelihood::LikelihoodResult<f64>
+impl laddu_likelihood::LikelihoodTerm for laddu_likelihood::NllTerm
+pub fn laddu_likelihood::NllTerm::append_diagnostics(&self, &mut alloc::vec::Vec<laddu_likelihood::DatasetDiagnostics>)
+pub fn laddu_likelihood::NllTerm::as_intensity(&self) -> core::option::Option<&laddu_likelihood::NllTerm>
+pub fn laddu_likelihood::NllTerm::bootstrap_clone(&self, u64) -> laddu_likelihood::LikelihoodResult<alloc::boxed::Box<dyn laddu_likelihood::LikelihoodTerm>>
+pub fn laddu_likelihood::NllTerm::bootstrap_clone_is_prepared(&self) -> bool
+pub fn laddu_likelihood::NllTerm::boxed(self) -> alloc::boxed::Box<dyn laddu_likelihood::LikelihoodTerm> where Self: core::marker::Sized + 'static
+pub fn laddu_likelihood::NllTerm::has_absolute_rate(&self) -> bool
+pub fn laddu_likelihood::NllTerm::name(&self) -> &str
+pub fn laddu_likelihood::NllTerm::nll(&self, &laddu_expr::parameters::ParamValues, &laddu_runtime::execution::Execution) -> laddu_likelihood::LikelihoodResult<f64>
+pub fn laddu_likelihood::NllTerm::nll_with_gradient(&self, &laddu_expr::parameters::ParamValues, &mut [f64], &laddu_runtime::execution::Execution) -> laddu_likelihood::LikelihoodResult<f64>
+pub fn laddu_likelihood::NllTerm::register_params(&self, &mut laddu_expr::parameters::ParamRegistry) -> laddu_likelihood::LikelihoodResult<()>
+pub fn laddu_likelihood::NllTerm::resolve(&mut self, alloc::sync::Arc<laddu_expr::parameters::ParamLayout>, &laddu_runtime::execution::Execution) -> laddu_likelihood::LikelihoodResult<()>
+pub fn laddu_likelihood::NllTerm::stochastic_nll_with_gradient(&self, &laddu_expr::parameters::ParamValues, &mut [f64], &laddu_runtime::execution::Execution, f64, u64) -> laddu_likelihood::LikelihoodResult<f64>
+impl laddu_likelihood::LikelihoodTerm for laddu_likelihood::RidgePenalty
+pub fn laddu_likelihood::RidgePenalty::append_diagnostics(&self, &mut alloc::vec::Vec<laddu_likelihood::DatasetDiagnostics>)
+pub fn laddu_likelihood::RidgePenalty::as_intensity(&self) -> core::option::Option<&laddu_likelihood::NllTerm>
+pub fn laddu_likelihood::RidgePenalty::bootstrap_clone(&self, u64) -> laddu_likelihood::LikelihoodResult<alloc::boxed::Box<dyn laddu_likelihood::LikelihoodTerm>>
+pub fn laddu_likelihood::RidgePenalty::bootstrap_clone_is_prepared(&self) -> bool
+pub fn laddu_likelihood::RidgePenalty::boxed(self) -> alloc::boxed::Box<dyn laddu_likelihood::LikelihoodTerm> where Self: core::marker::Sized + 'static
+pub fn laddu_likelihood::RidgePenalty::has_absolute_rate(&self) -> bool
+pub fn laddu_likelihood::RidgePenalty::name(&self) -> &str
+pub fn laddu_likelihood::RidgePenalty::nll(&self, &laddu_expr::parameters::ParamValues, &laddu_runtime::execution::Execution) -> laddu_likelihood::LikelihoodResult<f64>
+pub fn laddu_likelihood::RidgePenalty::nll_with_gradient(&self, &laddu_expr::parameters::ParamValues, &mut [f64], &laddu_runtime::execution::Execution) -> laddu_likelihood::LikelihoodResult<f64>
+pub fn laddu_likelihood::RidgePenalty::register_params(&self, &mut laddu_expr::parameters::ParamRegistry) -> laddu_likelihood::LikelihoodResult<()>
+pub fn laddu_likelihood::RidgePenalty::resolve(&mut self, alloc::sync::Arc<laddu_expr::parameters::ParamLayout>, &laddu_runtime::execution::Execution) -> laddu_likelihood::LikelihoodResult<()>
+pub fn laddu_likelihood::RidgePenalty::stochastic_nll_with_gradient(&self, &laddu_expr::parameters::ParamValues, &mut [f64], &laddu_runtime::execution::Execution, f64, u64) -> laddu_likelihood::LikelihoodResult<f64>
+pub trait laddu_likelihood::Objective: core::fmt::Debug + core::marker::Send + core::marker::Sync
+pub fn laddu_likelihood::Objective::parameter_layout(&self) -> &laddu_expr::parameters::ParamLayout
+pub fn laddu_likelihood::Objective::value(&self, &[f64]) -> laddu_likelihood::LikelihoodResult<f64>
+pub fn laddu_likelihood::Objective::value_gradient(&self, &[f64]) -> laddu_likelihood::LikelihoodResult<laddu_likelihood::LikelihoodEvaluation>
+impl laddu_likelihood::Objective for laddu_likelihood::Likelihood
+pub fn laddu_likelihood::Likelihood::parameter_layout(&self) -> &laddu_expr::parameters::ParamLayout
+pub fn laddu_likelihood::Likelihood::value(&self, &[f64]) -> laddu_likelihood::LikelihoodResult<f64>
+pub fn laddu_likelihood::Likelihood::value_gradient(&self, &[f64]) -> laddu_likelihood::LikelihoodResult<laddu_likelihood::LikelihoodEvaluation>
+pub trait laddu_likelihood::StochasticObjective: laddu_likelihood::Objective
+pub fn laddu_likelihood::StochasticObjective::stochastic_value_gradient(&self, &[f64], f64, u64) -> laddu_likelihood::LikelihoodResult<laddu_likelihood::LikelihoodEvaluation>
+impl laddu_likelihood::StochasticObjective for laddu_likelihood::Likelihood
+pub fn laddu_likelihood::Likelihood::stochastic_value_gradient(&self, &[f64], f64, u64) -> laddu_likelihood::LikelihoodResult<laddu_likelihood::LikelihoodEvaluation>
+pub fn laddu_likelihood::next_uncertainty_source_id() -> u64
+pub type laddu_likelihood::LikelihoodResult<T> = core::result::Result<T, laddu_likelihood::LikelihoodError>
