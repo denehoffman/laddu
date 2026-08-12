@@ -3,9 +3,7 @@
 use std::error::Error;
 
 use laddu::compile::CompiledModel;
-use laddu::{
-    ColorPreset, DisplayColor, NodeSelector, NodeStyle, NodeStyleRule, RepeatedSubtrees, parameter,
-};
+use laddu::{ColorPreset, DisplayColor, NodeSelector, NodeStyle, NodeStyleRule, parameter};
 use laddu_physics::math::{WignerDMatrix, spherical_harmonic};
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -30,7 +28,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     );
     let dot = compiled
         .display_dot()
-        .repeated_subtrees(RepeatedSubtrees::Reference)
+        .expand_repeated(false)
         .with_preset(ColorPreset::Light)
         .with_style_rule(highlighted);
     println!("Optimized graph as compact, colored DOT:\n{dot}");

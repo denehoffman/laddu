@@ -67,6 +67,7 @@ python = [
   "amplitudes",
   "fit",
   "generation",
+  "svg",
   "laddu-fit/python",
   "dep:fastrand",
   "dep:num",

@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use num::complex::Complex64;
 use pyo3::{
     class::basic::CompareOp,
@@ -14,8 +16,14 @@ use laddu_expr::{
     solve as expr_solve, vector as expr_vector,
 };
 
-use super::error::to_py_err;
 use super::query::PyPredicate;
+use super::{
+    error::to_py_err,
+    visualization::{
+        PyNodeStyleRule, expression_dot, expression_equation, expression_latex, expression_svg,
+        expression_tree,
+    },
+};
 
 #[pyclass(name = "Expr", module = "laddu", frozen, skip_from_py_object)]
 #[derive(Clone)]
@@ -133,6 +141,117 @@ impl PyExpr {
 
     fn __str__(&self) -> String {
         self.inner.to_graph().to_string()
+    }
+
+    /// Return the expression as a compact mathematical equation.
+    ///
+    /// Parameters
+    /// ----------
+    /// colors : {'light', 'dark', 'none'}, optional
+    ///     Built-in ANSI color palette. The default emits no color.
+    /// style_rules : sequence of NodeStyleRule, optional
+    ///     Custom rules applied after the preset; later rules take precedence.
+    #[pyo3(signature = (*, colors=None, style_rules=None))]
+    fn equation(
+        &self,
+        colors: Option<&Bound<'_, PyAny>>,
+        style_rules: Option<Vec<PyNodeStyleRule>>,
+    ) -> PyResult<String> {
+        expression_equation(&self.inner.to_graph(), colors, style_rules)
+    }
+
+    /// Return the expression as a LaTeX math-mode fragment.
+    ///
+    /// Parameters
+    /// ----------
+    /// colors : {'light', 'dark', 'none'}, optional
+    ///     Built-in ``\\color[RGB]`` palette. Colored output requires the
+    ///     LaTeX ``xcolor`` package. The default emits no color commands.
+    /// style_rules : sequence of NodeStyleRule, optional
+    ///     Custom foreground-color rules applied after the preset.
+    #[pyo3(signature = (*, colors=None, style_rules=None))]
+    fn latex(
+        &self,
+        colors: Option<&Bound<'_, PyAny>>,
+        style_rules: Option<Vec<PyNodeStyleRule>>,
+    ) -> PyResult<String> {
+        expression_latex(&self.inner.to_graph(), colors, style_rules)
+    }
+
+    /// Return an indented tree representation of the expression graph.
+    ///
+    /// Parameters
+    /// ----------
+    /// colors : {'light', 'dark', 'none'}, optional
+    ///     Color palette for ANSI terminal output. The default emits no color.
+    /// expand_repeated : bool, default=True
+    ///     Expand shared subtrees at every occurrence. If false, later
+    ///     occurrences are printed as references.
+    /// style_rules : sequence of NodeStyleRule, optional
+    ///     Custom rules applied after the preset; later rules take precedence.
+    #[pyo3(signature = (*, colors=None, expand_repeated=true, style_rules=None))]
+    fn tree(
+        &self,
+        colors: Option<&Bound<'_, PyAny>>,
+        expand_repeated: bool,
+        style_rules: Option<Vec<PyNodeStyleRule>>,
+    ) -> PyResult<String> {
+        expression_tree(&self.inner.to_graph(), colors, expand_repeated, style_rules)
+    }
+
+    /// Return the expression graph as Graphviz DOT source.
+    ///
+    /// Parameters
+    /// ----------
+    /// colors : {'light', 'dark', 'none'}, optional
+    ///     Color palette for graph text, fills, and borders.
+    /// expand_repeated : bool, default=True
+    ///     Duplicate shared subtrees at every occurrence. If false, emit a
+    ///     shared directed acyclic graph.
+    /// style_rules : sequence of NodeStyleRule, optional
+    ///     Custom rules applied after the preset; later rules take precedence.
+    #[pyo3(signature = (*, colors=None, expand_repeated=true, style_rules=None))]
+    fn dot(
+        &self,
+        colors: Option<&Bound<'_, PyAny>>,
+        expand_repeated: bool,
+        style_rules: Option<Vec<PyNodeStyleRule>>,
+    ) -> PyResult<String> {
+        expression_dot(&self.inner.to_graph(), colors, expand_repeated, style_rules)
+    }
+
+    /// Render the expression graph to an SVG file.
+    ///
+    /// Parameters
+    /// ----------
+    /// path : str or os.PathLike
+    ///     Destination SVG path. An existing file is replaced.
+    /// colors : {'light', 'dark', 'none'}, optional
+    ///     Color palette for graph text, fills, and borders.
+    /// expand_repeated : bool, default=True
+    ///     Duplicate shared subtrees at every occurrence. If false, render a
+    ///     shared directed acyclic graph.
+    /// style_rules : sequence of NodeStyleRule, optional
+    ///     Custom rules applied after the preset; later rules take precedence.
+    ///
+    /// Returns
+    /// -------
+    /// None
+    #[pyo3(signature = (path, *, colors=None, expand_repeated=true, style_rules=None))]
+    fn svg(
+        &self,
+        path: PathBuf,
+        colors: Option<&Bound<'_, PyAny>>,
+        expand_repeated: bool,
+        style_rules: Option<Vec<PyNodeStyleRule>>,
+    ) -> PyResult<()> {
+        expression_svg(
+            &self.inner.to_graph(),
+            &path,
+            colors,
+            expand_repeated,
+            style_rules,
+        )
     }
 
     fn __add__(&self, other: &Bound<'_, PyAny>) -> PyResult<Self> {
@@ -663,3 +782,38 @@ binary_function!(
 );
 
 impl_json_methods!(PyExpr);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn visualization_methods_render_all_formats() {
+        let shared = event_scalar("x");
+        let expression = PyExpr::from((shared.clone() + 1.0) * (shared + 2.0));
+
+        assert!(expression.equation(None, None).unwrap().contains('x'));
+        assert!(expression.latex(None, None).unwrap().contains('x'));
+
+        let expanded = expression.tree(None, true, None).unwrap();
+        assert_eq!(expanded.matches("EventScalar(x)").count(), 2);
+
+        let referenced = expression.tree(None, false, None).unwrap();
+        assert_eq!(referenced.matches("EventScalar(x)").count(), 1);
+        assert!(referenced.contains("<reference to #"));
+
+        let dot = expression.dot(None, false, None).unwrap();
+        assert!(dot.starts_with("digraph ExprGraph"));
+        assert_eq!(dot.matches("EventScalar(x)").count(), 1);
+
+        let path = std::env::temp_dir().join(format!(
+            "laddu-expression-visualization-{}.svg",
+            std::process::id()
+        ));
+        expression.svg(path.clone(), None, false, None).unwrap();
+        let svg = std::fs::read_to_string(&path).unwrap();
+        std::fs::remove_file(path).unwrap();
+        assert!(svg.contains("<svg"));
+        assert!(svg.contains("</svg>"));
+    }
+}

@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use laddu_compile::CompiledModel;
 use laddu_runtime::PreparedModel;
 use numpy::{PyArray1, PyArray2};
@@ -7,7 +9,17 @@ use pyo3::{
     types::{PyAny, PyDict},
 };
 
-use super::{data::PyDataset, error::to_py_err, expr::PyExpr, float_vec, runtime::PyExecution};
+use super::{
+    data::PyDataset,
+    error::to_py_err,
+    expr::PyExpr,
+    float_vec,
+    runtime::PyExecution,
+    visualization::{
+        PyNodeStyleRule, expression_dot, expression_equation, expression_latex, expression_svg,
+        expression_tree,
+    },
+};
 
 /// Resolve Python parameter values into the model's free-parameter order.
 ///
@@ -78,6 +90,121 @@ impl PyModel {
 
     fn __repr__(&self) -> String {
         format!("Model(parameters={:?})", self.parameter_names())
+    }
+
+    fn __str__(&self) -> String {
+        self.inner.graph().to_string()
+    }
+
+    /// Return the optimized model as a compact mathematical equation.
+    ///
+    /// Parameters
+    /// ----------
+    /// colors : {'light', 'dark', 'none'}, optional
+    ///     Built-in ANSI color palette. The default emits no color.
+    /// style_rules : sequence of NodeStyleRule, optional
+    ///     Custom rules applied after the preset; later rules take precedence.
+    #[pyo3(signature = (*, colors=None, style_rules=None))]
+    fn equation(
+        &self,
+        colors: Option<&Bound<'_, PyAny>>,
+        style_rules: Option<Vec<PyNodeStyleRule>>,
+    ) -> PyResult<String> {
+        expression_equation(self.inner.graph(), colors, style_rules)
+    }
+
+    /// Return the optimized model as a LaTeX math-mode fragment.
+    ///
+    /// Parameters
+    /// ----------
+    /// colors : {'light', 'dark', 'none'}, optional
+    ///     Built-in ``\\color[RGB]`` palette. Colored output requires the
+    ///     LaTeX ``xcolor`` package. The default emits no color commands.
+    /// style_rules : sequence of NodeStyleRule, optional
+    ///     Custom foreground-color rules applied after the preset.
+    #[pyo3(signature = (*, colors=None, style_rules=None))]
+    fn latex(
+        &self,
+        colors: Option<&Bound<'_, PyAny>>,
+        style_rules: Option<Vec<PyNodeStyleRule>>,
+    ) -> PyResult<String> {
+        expression_latex(self.inner.graph(), colors, style_rules)
+    }
+
+    /// Return an indented tree representation of the optimized model graph.
+    ///
+    /// Parameters
+    /// ----------
+    /// colors : {'light', 'dark', 'none'}, optional
+    ///     Color palette for ANSI terminal output. The default emits no color.
+    /// expand_repeated : bool, default=True
+    ///     Expand shared subtrees at every occurrence. If false, later
+    ///     occurrences are printed as references.
+    /// style_rules : sequence of NodeStyleRule, optional
+    ///     Custom rules applied after the preset; later rules take precedence.
+    #[pyo3(signature = (*, colors=None, expand_repeated=true, style_rules=None))]
+    fn tree(
+        &self,
+        colors: Option<&Bound<'_, PyAny>>,
+        expand_repeated: bool,
+        style_rules: Option<Vec<PyNodeStyleRule>>,
+    ) -> PyResult<String> {
+        expression_tree(self.inner.graph(), colors, expand_repeated, style_rules)
+    }
+
+    /// Return the optimized model graph as Graphviz DOT source.
+    ///
+    /// Parameters
+    /// ----------
+    /// colors : {'light', 'dark', 'none'}, optional
+    ///     Color palette for graph text, fills, and borders.
+    /// expand_repeated : bool, default=True
+    ///     Duplicate shared subtrees at every occurrence. If false, emit a
+    ///     shared directed acyclic graph.
+    /// style_rules : sequence of NodeStyleRule, optional
+    ///     Custom rules applied after the preset; later rules take precedence.
+    #[pyo3(signature = (*, colors=None, expand_repeated=true, style_rules=None))]
+    fn dot(
+        &self,
+        colors: Option<&Bound<'_, PyAny>>,
+        expand_repeated: bool,
+        style_rules: Option<Vec<PyNodeStyleRule>>,
+    ) -> PyResult<String> {
+        expression_dot(self.inner.graph(), colors, expand_repeated, style_rules)
+    }
+
+    /// Render the optimized model graph to an SVG file.
+    ///
+    /// Parameters
+    /// ----------
+    /// path : str or os.PathLike
+    ///     Destination SVG path. An existing file is replaced.
+    /// colors : {'light', 'dark', 'none'}, optional
+    ///     Color palette for graph text, fills, and borders.
+    /// expand_repeated : bool, default=True
+    ///     Duplicate shared subtrees at every occurrence. If false, render a
+    ///     shared directed acyclic graph.
+    /// style_rules : sequence of NodeStyleRule, optional
+    ///     Custom rules applied after the preset; later rules take precedence.
+    ///
+    /// Returns
+    /// -------
+    /// None
+    #[pyo3(signature = (path, *, colors=None, expand_repeated=true, style_rules=None))]
+    fn svg(
+        &self,
+        path: PathBuf,
+        colors: Option<&Bound<'_, PyAny>>,
+        expand_repeated: bool,
+        style_rules: Option<Vec<PyNodeStyleRule>>,
+    ) -> PyResult<()> {
+        expression_svg(
+            self.inner.graph(),
+            &path,
+            colors,
+            expand_repeated,
+            style_rules,
+        )
     }
 
     #[getter]
@@ -333,3 +460,39 @@ impl PyModel {
 }
 
 impl_json_methods!(PyModel);
+
+#[cfg(test)]
+mod tests {
+    use laddu_expr::event_scalar;
+
+    use super::*;
+
+    #[test]
+    fn visualization_methods_render_the_optimized_model_graph() {
+        let expression = PyExpr::from(event_scalar("mass") + 1.0);
+        let model = PyModel::new(&expression).unwrap();
+
+        assert!(model.equation(None, None).unwrap().contains("mass"));
+        assert!(model.latex(None, None).unwrap().contains("mass"));
+        assert!(
+            model
+                .tree(None, true, None)
+                .unwrap()
+                .contains("ExprGraph(root=#")
+        );
+        assert!(
+            model
+                .dot(None, false, None)
+                .unwrap()
+                .contains("digraph ExprGraph")
+        );
+        let path = std::env::temp_dir().join(format!(
+            "laddu-model-visualization-{}.svg",
+            std::process::id()
+        ));
+        model.svg(path.clone(), None, false, None).unwrap();
+        assert!(std::fs::read_to_string(&path).unwrap().contains("<svg"));
+        std::fs::remove_file(path).unwrap();
+        assert_eq!(model.__str__(), model.equation(None, None).unwrap());
+    }
+}
