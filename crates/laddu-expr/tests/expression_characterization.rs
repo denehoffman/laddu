@@ -148,7 +148,28 @@ fn every_node_variant_reports_children_in_semantic_order() {
     ];
 
     for (description, node, expected) in cases {
-        assert_eq!(node.child_ids(), expected, "{description}");
+        assert_eq!(
+            node.children().collect::<Vec<_>>(),
+            expected,
+            "{description}"
+        );
+        assert_eq!(node.child_ids(), expected, "compatibility: {description}");
+        assert_eq!(node.map_children(|child| child), node, "{description}");
+
+        let mut visited = Vec::new();
+        let mapped = node.map_children(|child| {
+            visited.push(child);
+            id(child.index() + 10)
+        });
+        assert_eq!(visited, expected, "mapping order: {description}");
+        assert_eq!(
+            mapped.children().collect::<Vec<_>>(),
+            expected
+                .iter()
+                .map(|child| id(child.index() + 10))
+                .collect::<Vec<_>>(),
+            "mapped children: {description}"
+        );
     }
 }
 

@@ -774,7 +774,7 @@ impl ExecutablePlan {
             return;
         }
         if let Some(node) = graph.node(id) {
-            for child in node.child_ids() {
+            for child in node.children() {
                 Self::mark_evaluation_node(
                     graph,
                     child,
@@ -793,7 +793,7 @@ impl ExecutablePlan {
         }
         required[id.index()] = true;
         if let Some(node) = graph.node(id) {
-            for child in node.child_ids() {
+            for child in node.children() {
                 Self::mark_required(graph, child, required);
             }
         }

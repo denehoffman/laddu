@@ -356,7 +356,7 @@ impl<'a> Analyzer<'a> {
         if id.index() < self.facts.nodes().len() {
             return self.facts.get(id).expect("facts are complete").dependency;
         }
-        self.nodes[id.index()].child_ids().into_iter().fold(
+        self.nodes[id.index()].children().fold(
             crate::DependencyFacts::per_compile(),
             |dependency, child| dependency.union(self.dependency(child)),
         )
@@ -709,80 +709,14 @@ fn mark_required(graph: &ExprGraph, id: ExprId, required: &mut [bool]) {
     for child in graph
         .node(id)
         .expect("normalization node exists")
-        .child_ids()
+        .children()
     {
         mark_required(graph, child, required);
     }
 }
 
 fn remap_node(node: &ExprNode, remap: &[Option<ExprId>]) -> ExprNode {
-    let id = |id: ExprId| remap[id.index()].expect("children precede normalization nodes");
-    match node {
-        ExprNode::RealConst(value) => ExprNode::RealConst(*value),
-        ExprNode::ComplexConst(value) => ExprNode::ComplexConst(*value),
-        ExprNode::ScalarParam(parameter) => ExprNode::ScalarParam(parameter.clone()),
-        ExprNode::EventScalar(name) => ExprNode::EventScalar(name.clone()),
-        ExprNode::EventP4Component { name, component } => ExprNode::EventP4Component {
-            name: name.clone(),
-            component: *component,
-        },
-        ExprNode::Unary { op, input } => ExprNode::Unary {
-            op: *op,
-            input: id(*input),
-        },
-        ExprNode::Binary { op, lhs, rhs } => ExprNode::Binary {
-            op: *op,
-            lhs: id(*lhs),
-            rhs: id(*rhs),
-        },
-        ExprNode::NaryAdd { terms } => ExprNode::NaryAdd {
-            terms: terms.iter().map(|term| id(*term)).collect(),
-        },
-        ExprNode::NaryMul { factors } => ExprNode::NaryMul {
-            factors: factors.iter().map(|factor| id(*factor)).collect(),
-        },
-        ExprNode::Complex { re, im } => ExprNode::Complex {
-            re: id(*re),
-            im: id(*im),
-        },
-        ExprNode::Vector { elements } => ExprNode::Vector {
-            elements: elements.iter().map(|element| id(*element)).collect(),
-        },
-        ExprNode::Matrix {
-            rows,
-            cols,
-            elements,
-        } => ExprNode::Matrix {
-            rows: *rows,
-            cols: *cols,
-            elements: elements.iter().map(|element| id(*element)).collect(),
-        },
-        ExprNode::Component { input, index } => ExprNode::Component {
-            input: id(*input),
-            index: *index,
-        },
-        ExprNode::MatrixElement { input, row, col } => ExprNode::MatrixElement {
-            input: id(*input),
-            row: *row,
-            col: *col,
-        },
-        ExprNode::MatMul { lhs, rhs } => ExprNode::MatMul {
-            lhs: id(*lhs),
-            rhs: id(*rhs),
-        },
-        ExprNode::MatVec { matrix, vector } => ExprNode::MatVec {
-            matrix: id(*matrix),
-            vector: id(*vector),
-        },
-        ExprNode::Dot { lhs, rhs } => ExprNode::Dot {
-            lhs: id(*lhs),
-            rhs: id(*rhs),
-        },
-        ExprNode::Solve { matrix, rhs } => ExprNode::Solve {
-            matrix: id(*matrix),
-            rhs: id(*rhs),
-        },
-    }
+    node.map_children(|id| remap[id.index()].expect("children precede normalization nodes"))
 }
 
 #[cfg(test)]

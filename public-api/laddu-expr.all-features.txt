@@ -738,10 +738,12 @@ pub laddu_expr::ExprNode::Vector
 pub laddu_expr::ExprNode::Vector::elements: alloc::vec::Vec<laddu_expr::ExprId>
 impl laddu_expr::ExprNode
 pub fn laddu_expr::ExprNode::child_ids(&self) -> alloc::vec::Vec<laddu_expr::ExprId>
+pub fn laddu_expr::ExprNode::children(&self) -> impl core::iter::traits::exact_size::ExactSizeIterator<Item = laddu_expr::ExprId> + core::iter::traits::double_ended::DoubleEndedIterator + '_
 pub fn laddu_expr::ExprNode::const_value(&self) -> core::option::Option<num_complex::Complex64>
 pub fn laddu_expr::ExprNode::from_folded_const(num_complex::Complex64) -> Self
 pub fn laddu_expr::ExprNode::is_one(&laddu_expr::ExprNode) -> bool
 pub fn laddu_expr::ExprNode::is_zero(&laddu_expr::ExprNode) -> bool
+pub fn laddu_expr::ExprNode::map_children(&self, impl core::ops::function::FnMut(laddu_expr::ExprId) -> laddu_expr::ExprId) -> Self
 impl core::clone::Clone for laddu_expr::ExprNode
 pub fn laddu_expr::ExprNode::clone(&self) -> laddu_expr::ExprNode
 impl core::cmp::PartialEq for laddu_expr::ExprNode

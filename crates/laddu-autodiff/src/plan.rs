@@ -51,7 +51,7 @@ impl AutodiffPlan {
                 }
                 _ => {
                     let mut dependencies = Vec::new();
-                    for child in Self::children(node) {
+                    for child in node.children() {
                         dependencies =
                             merge_sorted_unique(&dependencies, &node_dependencies[child.index()]);
                     }
@@ -112,28 +112,6 @@ impl AutodiffPlan {
             return None;
         };
         Some(free_id.index())
-    }
-
-    fn children(node: &ExprNode) -> Vec<ExprId> {
-        match node {
-            ExprNode::Unary { input, .. }
-            | ExprNode::Component { input, .. }
-            | ExprNode::MatrixElement { input, .. } => vec![*input],
-            ExprNode::Binary { lhs, rhs, .. }
-            | ExprNode::MatMul { lhs, rhs }
-            | ExprNode::Dot { lhs, rhs } => vec![*lhs, *rhs],
-            ExprNode::NaryAdd { terms } => terms.clone(),
-            ExprNode::NaryMul { factors } => factors.clone(),
-            ExprNode::Complex { re, im } => vec![*re, *im],
-            ExprNode::Vector { elements } | ExprNode::Matrix { elements, .. } => elements.clone(),
-            ExprNode::MatVec { matrix, vector } => vec![*matrix, *vector],
-            ExprNode::Solve { matrix, rhs } => vec![*matrix, *rhs],
-            ExprNode::RealConst(_)
-            | ExprNode::ComplexConst(_)
-            | ExprNode::ScalarParam(_)
-            | ExprNode::EventScalar(_)
-            | ExprNode::EventP4Component { .. } => Vec::new(),
-        }
     }
 }
 
