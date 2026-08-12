@@ -44,6 +44,30 @@ pub struct SolveRowMatrixPlan {
     rows: Vec<(usize, usize)>,
 }
 
+#[derive(Clone, Debug)]
+struct NodeBindings {
+    parameter_slots: Vec<Option<ParamId>>,
+    cache_slots: Vec<Option<usize>>,
+    evaluation_nodes: Vec<ExprId>,
+    value_slots: Vec<Option<usize>>,
+}
+
+#[derive(Clone, Debug)]
+struct SolvePlan {
+    components: Vec<Option<SolveComponentPlan>>,
+    rhs_elements: Vec<Option<Vec<ExprId>>>,
+    row_matrices: Vec<SolveRowMatrixPlan>,
+    row_keys: Vec<(ExprId, usize, usize)>,
+}
+
+#[derive(Clone, Debug)]
+struct FactorizationPlan {
+    event_slots: Vec<Option<usize>>,
+    event_matrices: Vec<(ExprId, usize)>,
+    constant_slots: Vec<Option<usize>>,
+    constant_matrices: Vec<(ExprId, usize)>,
+}
+
 impl SolveRowMatrixPlan {
     /// Returns the matrix graph node.
     pub fn matrix(&self) -> ExprId {
@@ -66,23 +90,14 @@ impl SolveRowMatrixPlan {
 pub struct ExecutablePlan {
     graph: ExprGraph,
     params: ParamLayout,
-    parameter_slots: Vec<Option<ParamId>>,
     cache_plan: CachePlan,
-    cache_slots: Vec<Option<usize>>,
-    evaluation_nodes: Vec<ExprId>,
-    value_slots: Vec<Option<usize>>,
+    bindings: NodeBindings,
     scalar_kernel: Option<ScalarKernelIr>,
     cache_kernel: Option<CacheKernelIr>,
     cache_input_nodes: Vec<ExprId>,
     cache_materialization_nodes: Vec<ExprId>,
-    solve_components: Vec<Option<SolveComponentPlan>>,
-    solve_rhs_elements: Vec<Option<Vec<ExprId>>>,
-    solve_row_matrices: Vec<SolveRowMatrixPlan>,
-    solve_row_keys: Vec<(ExprId, usize, usize)>,
-    factor_matrix_slots: Vec<Option<usize>>,
-    factor_matrices: Vec<(ExprId, usize)>,
-    constant_factor_slots: Vec<Option<usize>>,
-    constant_factor_matrices: Vec<(ExprId, usize)>,
+    solve: SolvePlan,
+    factorization: FactorizationPlan,
 }
 
 impl ExecutablePlan {
@@ -113,118 +128,7 @@ impl ExecutablePlan {
         model: &CompiledModel,
         specialize_solve_rows: bool,
     ) -> CompileResult<Self> {
-        let graph = model.graph().clone();
-        let params = model.params().clone();
-        let cache_plan = model.cache_plan().clone();
-        let parameter_slots = graph
-            .nodes()
-            .iter()
-            .map(|node| match node {
-                ExprNode::ScalarParam(parameter) => params.id(parameter.name()),
-                _ => None,
-            })
-            .collect::<Vec<_>>();
-        let mut cache_slots = vec![None; graph.nodes().len()];
-        for (slot, entry) in cache_plan.entries().iter().enumerate() {
-            cache_slots[entry.node().index()] = Some(slot);
-        }
-        let (solve_components, solve_rhs_elements, solve_row_matrices, solve_row_keys) =
-            if specialize_solve_rows {
-                Self::solve_component_plans(model)
-            } else {
-                (
-                    vec![None; graph.nodes().len()],
-                    vec![None; graph.nodes().len()],
-                    Vec::new(),
-                    Vec::new(),
-                )
-            };
-        let (evaluation_nodes, value_slots) = Self::evaluation_schedule(
-            &graph,
-            &cache_slots,
-            &solve_components,
-            &solve_rhs_elements,
-        )?;
-        let scalar_kernel = Self::scalar_kernel_ir(
-            model,
-            &evaluation_nodes,
-            &cache_slots,
-            &parameter_slots,
-            &solve_components,
-            &solve_rhs_elements,
-        )?;
-
-        let mut cache_required_nodes = vec![false; graph.nodes().len()];
-        mark_reachable(
-            &graph,
-            cache_plan
-                .materialization_nodes()
-                .iter()
-                .copied()
-                .chain(solve_row_matrices.iter().map(|plan| plan.matrix)),
-            &mut cache_required_nodes,
-        );
-        let cache_materialization_nodes = Self::ids_from_flags(cache_required_nodes)?;
-        let (cache_kernel, cache_input_nodes) =
-            Self::cache_kernel_ir(model, &cache_materialization_nodes)?;
-
-        let mut factor_matrix_slots = vec![None; graph.nodes().len()];
-        let mut factor_matrices = Vec::new();
-        let mut constant_factor_slots = vec![None; graph.nodes().len()];
-        let mut constant_factor_matrices = Vec::new();
-        for (index, node) in graph.nodes().iter().enumerate() {
-            let ExprNode::Solve { matrix, .. } = node else {
-                continue;
-            };
-            if value_slots[index].is_none() {
-                continue;
-            }
-            let Some(facts) = model.node_facts(*matrix) else {
-                continue;
-            };
-            if facts.dependency.depends_on_free_params || facts.dependency.depends_on_fixed_params {
-                continue;
-            }
-            let ValueKind::Matrix { rows, cols } = facts.value_kind else {
-                continue;
-            };
-            if rows != cols {
-                continue;
-            }
-            if facts.dependency.depends_on_event {
-                if factor_matrix_slots[matrix.index()].is_none() {
-                    let slot = factor_matrices.len();
-                    factor_matrix_slots[matrix.index()] = Some(slot);
-                    factor_matrices.push((*matrix, rows));
-                }
-            } else if constant_factor_slots[matrix.index()].is_none() {
-                let slot = constant_factor_matrices.len();
-                constant_factor_slots[matrix.index()] = Some(slot);
-                constant_factor_matrices.push((*matrix, rows));
-            }
-        }
-
-        Ok(Self {
-            graph,
-            params,
-            parameter_slots,
-            cache_plan,
-            cache_slots,
-            evaluation_nodes,
-            value_slots,
-            scalar_kernel,
-            cache_kernel,
-            cache_input_nodes,
-            cache_materialization_nodes,
-            solve_components,
-            solve_rhs_elements,
-            solve_row_matrices,
-            solve_row_keys,
-            factor_matrix_slots,
-            factor_matrices,
-            constant_factor_slots,
-            constant_factor_matrices,
-        })
+        PlanBuilder::new(model, specialize_solve_rows).build()
     }
 
     /// Returns the optimized expression graph.
@@ -239,7 +143,7 @@ impl ExecutablePlan {
 
     /// Maps graph nodes to parameter identifiers.
     pub fn parameter_slots(&self) -> &[Option<ParamId>] {
-        &self.parameter_slots
+        &self.bindings.parameter_slots
     }
 
     /// Returns the ordinary event-cache plan.
@@ -249,17 +153,17 @@ impl ExecutablePlan {
 
     /// Maps graph nodes to ordinary cache slots.
     pub fn cache_slots(&self) -> &[Option<usize>] {
-        &self.cache_slots
+        &self.bindings.cache_slots
     }
 
     /// Returns nodes evaluated by the scalar schedule.
     pub fn evaluation_nodes(&self) -> &[ExprId] {
-        &self.evaluation_nodes
+        &self.bindings.evaluation_nodes
     }
 
     /// Maps graph nodes to scalar schedule value slots.
     pub fn value_slots(&self) -> &[Option<usize>] {
-        &self.value_slots
+        &self.bindings.value_slots
     }
 
     /// Returns lowered scalar kernel IR, if the plan has scalar work.
@@ -284,55 +188,48 @@ impl ExecutablePlan {
 
     /// Maps graph nodes to specialized solve-component plans.
     pub fn solve_components(&self) -> &[Option<SolveComponentPlan>] {
-        &self.solve_components
+        &self.solve.components
     }
 
     /// Maps solve nodes to flattened right-hand-side element nodes.
     pub fn solve_rhs_elements(&self) -> &[Option<Vec<ExprId>>] {
-        &self.solve_rhs_elements
+        &self.solve.rhs_elements
     }
 
     /// Returns event-dependent matrices using cached solve rows.
     pub fn solve_row_matrices(&self) -> &[SolveRowMatrixPlan] {
-        &self.solve_row_matrices
+        &self.solve.row_matrices
     }
 
     /// Returns keys identifying specialized matrix rows.
     pub fn solve_row_keys(&self) -> &[(ExprId, usize, usize)] {
-        &self.solve_row_keys
+        &self.solve.row_keys
     }
 
     /// Maps event-dependent matrix nodes to factorization slots.
     pub fn factor_matrix_slots(&self) -> &[Option<usize>] {
-        &self.factor_matrix_slots
+        &self.factorization.event_slots
     }
 
     /// Returns event-dependent matrices to factor per event.
     pub fn factor_matrices(&self) -> &[(ExprId, usize)] {
-        &self.factor_matrices
+        &self.factorization.event_matrices
     }
 
     /// Maps invariant matrix nodes to constant factorization slots.
     pub fn constant_factor_slots(&self) -> &[Option<usize>] {
-        &self.constant_factor_slots
+        &self.factorization.constant_slots
     }
 
     /// Returns invariant matrices to factor once.
     pub fn constant_factor_matrices(&self) -> &[(ExprId, usize)] {
-        &self.constant_factor_matrices
+        &self.factorization.constant_matrices
     }
 
-    #[allow(clippy::type_complexity)]
-    fn solve_component_plans(
-        model: &CompiledModel,
-    ) -> (
-        Vec<Option<SolveComponentPlan>>,
-        Vec<Option<Vec<ExprId>>>,
-        Vec<SolveRowMatrixPlan>,
-        Vec<(ExprId, usize, usize)>,
-    ) {
-        let mut components = vec![None; model.graph().nodes().len()];
-        let mut rhs_elements = vec![None; model.graph().nodes().len()];
+    fn solve_component_plans(model: &CompiledModel) -> CompileResult<SolvePlan> {
+        let node_count = model.graph().nodes().len();
+        let mut components = vec![None; node_count];
+        let mut rhs_elements = vec![None; node_count];
         let mut row_slots = HashMap::<(ExprId, usize), usize>::new();
         let mut row_keys = Vec::new();
         let mut matrix_slots = HashMap::<ExprId, usize>::new();
@@ -403,7 +300,7 @@ impl ExecutablePlan {
             }
         }
 
-        (components, rhs_elements, matrices, row_keys)
+        SolvePlan::new(node_count, components, rhs_elements, matrices, row_keys)
     }
 
     fn scalar_kernel_ir(
@@ -414,159 +311,20 @@ impl ExecutablePlan {
         solve_components: &[Option<SolveComponentPlan>],
         solve_rhs_elements: &[Option<Vec<ExprId>>],
     ) -> CompileResult<Option<ScalarKernelIr>> {
-        let mut value_ids = vec![None; model.graph().nodes().len()];
-        let mut values = Vec::with_capacity(evaluation_nodes.len());
-
-        for id in evaluation_nodes {
-            let index = id.index();
-            let value_id = |id: ExprId| {
-                value_ids[id.index()].ok_or_else(|| {
-                    crate::CompileError::InvalidExecutablePlan(format!(
-                        "node {index} depends on unscheduled node {}",
-                        id.index()
-                    ))
-                })
-            };
-            let instruction = if let Some(cache_slot) = cache_slots[index] {
-                KernelInstruction::Cached(cache_slot)
-            } else {
-                match model.graph().node(*id).ok_or_else(|| {
-                    crate::CompileError::InvalidExecutablePlan(format!(
-                        "scheduled node {index} is out of bounds"
-                    ))
-                })? {
-                    ExprNode::RealConst(value) => KernelInstruction::RealConstant(*value),
-                    ExprNode::ComplexConst(value) => KernelInstruction::ComplexConstant(*value),
-                    ExprNode::ScalarParam(_) => {
-                        KernelInstruction::Parameter(parameter_slots[index].ok_or_else(|| {
-                            crate::CompileError::InvalidExecutablePlan(format!(
-                                "parameter node {index} is not bound"
-                            ))
-                        })?)
-                    }
-                    ExprNode::Unary { op, input } => KernelInstruction::Unary {
-                        op: *op,
-                        input: value_id(*input)?,
-                    },
-                    ExprNode::Binary { op, lhs, rhs } => KernelInstruction::Binary {
-                        op: *op,
-                        lhs: value_id(*lhs)?,
-                        rhs: value_id(*rhs)?,
-                    },
-                    ExprNode::NaryAdd { terms } => KernelInstruction::Add(
-                        terms
-                            .iter()
-                            .map(|term| value_id(*term))
-                            .collect::<CompileResult<_>>()?,
-                    ),
-                    ExprNode::NaryMul { factors } => KernelInstruction::Mul(
-                        factors
-                            .iter()
-                            .map(|factor| value_id(*factor))
-                            .collect::<CompileResult<_>>()?,
-                    ),
-                    ExprNode::Complex { re, im } => KernelInstruction::Complex {
-                        re: value_id(*re)?,
-                        im: value_id(*im)?,
-                    },
-                    ExprNode::Vector { elements } => KernelInstruction::Vector(
-                        elements
-                            .iter()
-                            .map(|element| value_id(*element))
-                            .collect::<CompileResult<_>>()?,
-                    ),
-                    ExprNode::Matrix {
-                        rows,
-                        cols,
-                        elements,
-                    } => KernelInstruction::Matrix {
-                        rows: *rows,
-                        cols: *cols,
-                        elements: elements
-                            .iter()
-                            .map(|element| value_id(*element))
-                            .collect::<CompileResult<_>>()?,
-                    },
-                    ExprNode::Component {
-                        input,
-                        index: component,
-                    } => {
-                        if let Some(solve) = solve_components[index]
-                            && let Some(elements) = solve_rhs_elements[solve.rhs.index()].as_ref()
-                        {
-                            KernelInstruction::SolveRow {
-                                row_slot: solve.row_slot,
-                                rhs: elements
-                                    .iter()
-                                    .map(|element| value_id(*element))
-                                    .collect::<CompileResult<_>>()?,
-                            }
-                        } else {
-                            KernelInstruction::Component {
-                                input: value_id(*input)?,
-                                index: *component,
-                            }
-                        }
-                    }
-                    ExprNode::MatrixElement { input, row, col } => {
-                        KernelInstruction::MatrixElement {
-                            input: value_id(*input)?,
-                            row: *row,
-                            col: *col,
-                        }
-                    }
-                    ExprNode::MatMul { lhs, rhs } => KernelInstruction::MatMul {
-                        lhs: value_id(*lhs)?,
-                        rhs: value_id(*rhs)?,
-                    },
-                    ExprNode::MatVec { matrix, vector } => KernelInstruction::MatVec {
-                        matrix: value_id(*matrix)?,
-                        vector: value_id(*vector)?,
-                    },
-                    ExprNode::Dot { lhs, rhs } => KernelInstruction::Dot {
-                        lhs: value_id(*lhs)?,
-                        rhs: value_id(*rhs)?,
-                    },
-                    ExprNode::Solve { matrix, rhs } => KernelInstruction::Solve {
-                        matrix: value_id(*matrix)?,
-                        rhs: value_id(*rhs)?,
-                    },
-                    ExprNode::EventScalar(_) | ExprNode::EventP4Component { .. } => {
-                        return Ok(None);
-                    }
-                }
-            };
-            let facts = model.node_facts(*id).ok_or_else(|| {
-                crate::CompileError::InvalidExecutablePlan(format!(
-                    "facts for scheduled node {index} are missing"
-                ))
-            })?;
-            let kind = match facts.value_kind {
-                ValueKind::Real => KernelValueKind::Real,
-                ValueKind::Complex => KernelValueKind::Complex,
-                ValueKind::Vector { len } => KernelValueKind::Vector { len },
-                ValueKind::Matrix { rows, cols } => KernelValueKind::Matrix { rows, cols },
-            };
-            let class = if facts.dependency.depends_on_event {
-                KernelValueClass::Event
-            } else {
-                KernelValueClass::Invariant
-            };
-            let kernel_id = KernelValueId::from_index(values.len());
-            values.push(KernelValue {
-                kind,
-                class,
-                instruction,
-            });
-            value_ids[index] = Some(kernel_id);
-        }
-
-        Ok(Some(ScalarKernelIr::new(
-            values,
-            value_ids[model.graph().root().index()].ok_or_else(|| {
-                crate::CompileError::InvalidExecutablePlan("graph root is not scheduled".into())
-            })?,
-        )?))
+        let mut boundary = ScalarBoundary {
+            cache_slots,
+            parameter_slots,
+            solve_components,
+            solve_rhs_elements,
+        };
+        let lowered = KernelLowerer::new(model, evaluation_nodes).lower(&mut boundary)?;
+        let LoweringOutcome::Lowered(lowered) = lowered else {
+            return Ok(None);
+        };
+        let root = lowered.value_ids[model.graph().root().index()].ok_or_else(|| {
+            crate::CompileError::InvalidExecutablePlan("graph root is not scheduled".into())
+        })?;
+        Ok(Some(ScalarKernelIr::new(lowered.values, root)?))
     }
 
     fn cache_kernel_ir(
@@ -576,134 +334,17 @@ impl ExecutablePlan {
         if model.cache_plan().is_empty() {
             return Ok((None, Vec::new()));
         }
-        let mut value_ids = vec![None; model.graph().nodes().len()];
-        let mut values = Vec::with_capacity(nodes.len());
-        let mut inputs = Vec::new();
-        for id in nodes {
-            let index = id.index();
-            let operand = |child: ExprId| {
-                value_ids[child.index()].ok_or_else(|| {
-                    crate::CompileError::InvalidExecutablePlan(format!(
-                        "cache node {index} depends on unscheduled node {}",
-                        child.index()
-                    ))
-                })
-            };
-            let node = model.graph().node(*id).ok_or_else(|| {
-                crate::CompileError::InvalidExecutablePlan(format!(
-                    "cache node {index} is out of bounds"
-                ))
-            })?;
-            let instruction = match node {
-                ExprNode::EventScalar(_) | ExprNode::EventP4Component { .. } => {
-                    let slot = inputs.len();
-                    inputs.push(*id);
-                    KernelInstruction::Cached(slot)
-                }
-                ExprNode::RealConst(value) => KernelInstruction::RealConstant(*value),
-                ExprNode::ComplexConst(value) => KernelInstruction::ComplexConstant(*value),
-                ExprNode::Unary { op, input } => KernelInstruction::Unary {
-                    op: *op,
-                    input: operand(*input)?,
-                },
-                ExprNode::Binary { op, lhs, rhs } => KernelInstruction::Binary {
-                    op: *op,
-                    lhs: operand(*lhs)?,
-                    rhs: operand(*rhs)?,
-                },
-                ExprNode::NaryAdd { terms } => KernelInstruction::Add(
-                    terms
-                        .iter()
-                        .map(|term| operand(*term))
-                        .collect::<CompileResult<_>>()?,
-                ),
-                ExprNode::NaryMul { factors } => KernelInstruction::Mul(
-                    factors
-                        .iter()
-                        .map(|factor| operand(*factor))
-                        .collect::<CompileResult<_>>()?,
-                ),
-                ExprNode::Complex { re, im } => KernelInstruction::Complex {
-                    re: operand(*re)?,
-                    im: operand(*im)?,
-                },
-                ExprNode::Vector { elements } => KernelInstruction::Vector(
-                    elements
-                        .iter()
-                        .map(|element| operand(*element))
-                        .collect::<CompileResult<_>>()?,
-                ),
-                ExprNode::Matrix {
-                    rows,
-                    cols,
-                    elements,
-                } => KernelInstruction::Matrix {
-                    rows: *rows,
-                    cols: *cols,
-                    elements: elements
-                        .iter()
-                        .map(|element| operand(*element))
-                        .collect::<CompileResult<_>>()?,
-                },
-                ExprNode::Component { input, index } => KernelInstruction::Component {
-                    input: operand(*input)?,
-                    index: *index,
-                },
-                ExprNode::MatrixElement { input, row, col } => KernelInstruction::MatrixElement {
-                    input: operand(*input)?,
-                    row: *row,
-                    col: *col,
-                },
-                ExprNode::MatMul { lhs, rhs } => KernelInstruction::MatMul {
-                    lhs: operand(*lhs)?,
-                    rhs: operand(*rhs)?,
-                },
-                ExprNode::MatVec { matrix, vector } => KernelInstruction::MatVec {
-                    matrix: operand(*matrix)?,
-                    vector: operand(*vector)?,
-                },
-                ExprNode::Dot { lhs, rhs } => KernelInstruction::Dot {
-                    lhs: operand(*lhs)?,
-                    rhs: operand(*rhs)?,
-                },
-                ExprNode::Solve { matrix, rhs } => KernelInstruction::Solve {
-                    matrix: operand(*matrix)?,
-                    rhs: operand(*rhs)?,
-                },
-                unsupported => {
-                    let _ = unsupported;
-                    return Ok((None, Vec::new()));
-                }
-            };
-            let facts = model.node_facts(*id).ok_or_else(|| {
-                crate::CompileError::InvalidExecutablePlan(format!(
-                    "facts for cache node {index} are missing"
-                ))
-            })?;
-            let kind = match facts.value_kind {
-                ValueKind::Real => KernelValueKind::Real,
-                ValueKind::Complex => KernelValueKind::Complex,
-                ValueKind::Vector { len } => KernelValueKind::Vector { len },
-                ValueKind::Matrix { rows, cols } => KernelValueKind::Matrix { rows, cols },
-            };
-            let kernel_id = KernelValueId::from_index(values.len());
-            values.push(KernelValue {
-                kind,
-                class: if facts.dependency.depends_on_event {
-                    KernelValueClass::Event
-                } else {
-                    KernelValueClass::Invariant
-                },
-                instruction,
-            });
-            value_ids[index] = Some(kernel_id);
-        }
+        let mut boundary = CacheBoundary::default();
+        let lowered = KernelLowerer::new(model, nodes).lower(&mut boundary)?;
+        let LoweringOutcome::Lowered(lowered) = lowered else {
+            return Ok((None, Vec::new()));
+        };
         let outputs = model
             .cache_plan()
             .entries()
             .iter()
             .map(|entry| {
-                value_ids[entry.node().index()].ok_or_else(|| {
+                lowered.value_ids[entry.node().index()].ok_or_else(|| {
                     crate::CompileError::InvalidExecutablePlan(format!(
                         "cache output node {} is not scheduled",
                         entry.node().index()
@@ -711,7 +352,10 @@ impl ExecutablePlan {
                 })
             })
             .collect::<CompileResult<Vec<_>>>()?;
-        Ok((Some(CacheKernelIr::new(values, outputs)?), inputs))
+        Ok((
+            Some(CacheKernelIr::new(lowered.values, outputs)?),
+            boundary.inputs,
+        ))
     }
 
     fn evaluation_schedule(
@@ -778,9 +422,584 @@ impl ExecutablePlan {
     }
 }
 
+struct PlanBuilder<'a> {
+    model: &'a CompiledModel,
+    specialize_solve_rows: bool,
+}
+
+impl<'a> PlanBuilder<'a> {
+    fn new(model: &'a CompiledModel, specialize_solve_rows: bool) -> Self {
+        Self {
+            model,
+            specialize_solve_rows,
+        }
+    }
+
+    fn build(self) -> CompileResult<ExecutablePlan> {
+        let graph = self.model.graph().clone();
+        let params = self.model.params().clone();
+        let cache_plan = self.model.cache_plan().clone();
+        let solve = if self.specialize_solve_rows {
+            ExecutablePlan::solve_component_plans(self.model)?
+        } else {
+            SolvePlan::empty(graph.nodes().len())
+        };
+        let bindings = NodeBindings::build(self.model, &solve)?;
+        let scalar_kernel = ExecutablePlan::scalar_kernel_ir(
+            self.model,
+            &bindings.evaluation_nodes,
+            &bindings.cache_slots,
+            &bindings.parameter_slots,
+            &solve.components,
+            &solve.rhs_elements,
+        )?;
+
+        let mut cache_required_nodes = vec![false; graph.nodes().len()];
+        mark_reachable(
+            &graph,
+            cache_plan
+                .materialization_nodes()
+                .iter()
+                .copied()
+                .chain(solve.row_matrices.iter().map(|plan| plan.matrix)),
+            &mut cache_required_nodes,
+        );
+        let cache_materialization_nodes = ExecutablePlan::ids_from_flags(cache_required_nodes)?;
+        let (cache_kernel, cache_input_nodes) =
+            ExecutablePlan::cache_kernel_ir(self.model, &cache_materialization_nodes)?;
+        let factorization = FactorizationPlan::build(self.model, &bindings.value_slots)?;
+
+        Ok(ExecutablePlan {
+            graph,
+            params,
+            cache_plan,
+            bindings,
+            scalar_kernel,
+            cache_kernel,
+            cache_input_nodes,
+            cache_materialization_nodes,
+            solve,
+            factorization,
+        })
+    }
+}
+
+impl NodeBindings {
+    fn build(model: &CompiledModel, solve: &SolvePlan) -> CompileResult<Self> {
+        let graph = model.graph();
+        let node_count = graph.nodes().len();
+        let parameter_slots = graph
+            .nodes()
+            .iter()
+            .map(|node| match node {
+                ExprNode::ScalarParam(parameter) => model.params().id(parameter.name()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        let mut cache_slots = vec![None; node_count];
+        for (slot, entry) in model.cache_plan().entries().iter().enumerate() {
+            let entry_slot = cache_slots.get_mut(entry.node().index()).ok_or_else(|| {
+                crate::CompileError::InvalidExecutablePlan(format!(
+                    "cache entry node {} is out of bounds for {node_count} nodes",
+                    entry.node().index()
+                ))
+            })?;
+            *entry_slot = Some(slot);
+        }
+        let (evaluation_nodes, value_slots) = ExecutablePlan::evaluation_schedule(
+            graph,
+            &cache_slots,
+            &solve.components,
+            &solve.rhs_elements,
+        )?;
+        let bindings = Self {
+            parameter_slots,
+            cache_slots,
+            evaluation_nodes,
+            value_slots,
+        };
+        bindings.validate(node_count)?;
+        Ok(bindings)
+    }
+
+    fn validate(&self, node_count: usize) -> CompileResult<()> {
+        for (name, len) in [
+            ("parameter slots", self.parameter_slots.len()),
+            ("cache slots", self.cache_slots.len()),
+            ("value slots", self.value_slots.len()),
+        ] {
+            if len != node_count {
+                return Err(crate::CompileError::InvalidExecutablePlan(format!(
+                    "{name} length {len} does not match graph length {node_count}"
+                )));
+            }
+        }
+        for (expected_slot, id) in self.evaluation_nodes.iter().enumerate() {
+            if self.value_slots.get(id.index()).copied().flatten() != Some(expected_slot) {
+                return Err(crate::CompileError::InvalidExecutablePlan(format!(
+                    "evaluation node {} is not bound to value slot {expected_slot}",
+                    id.index()
+                )));
+            }
+        }
+        Ok(())
+    }
+}
+
+impl SolvePlan {
+    fn empty(node_count: usize) -> Self {
+        Self {
+            components: vec![None; node_count],
+            rhs_elements: vec![None; node_count],
+            row_matrices: Vec::new(),
+            row_keys: Vec::new(),
+        }
+    }
+
+    fn new(
+        node_count: usize,
+        components: Vec<Option<SolveComponentPlan>>,
+        rhs_elements: Vec<Option<Vec<ExprId>>>,
+        row_matrices: Vec<SolveRowMatrixPlan>,
+        row_keys: Vec<(ExprId, usize, usize)>,
+    ) -> CompileResult<Self> {
+        if components.len() != node_count || rhs_elements.len() != node_count {
+            return Err(crate::CompileError::InvalidExecutablePlan(
+                "solve plan node maps do not match the graph length".into(),
+            ));
+        }
+        for component in components.iter().flatten() {
+            if component.rhs.index() >= node_count
+                || component.row_slot >= row_keys.len()
+                || row_keys[component.row_slot].2 != component.dimension
+            {
+                return Err(crate::CompileError::InvalidExecutablePlan(
+                    "solve component references an invalid RHS node or row slot".into(),
+                ));
+            }
+        }
+        if rhs_elements
+            .iter()
+            .flatten()
+            .flatten()
+            .any(|id| id.index() >= node_count)
+            || row_keys.iter().any(|(matrix, row, dimension)| {
+                matrix.index() >= node_count || *dimension == 0 || *row >= *dimension
+            })
+        {
+            return Err(crate::CompileError::InvalidExecutablePlan(
+                "solve plan contains an invalid graph node or row key".into(),
+            ));
+        }
+        for matrix in &row_matrices {
+            if matrix.matrix.index() >= node_count
+                || matrix.rows.iter().any(|(slot, row)| {
+                    *slot >= row_keys.len()
+                        || *row >= matrix.dimension
+                        || row_keys[*slot] != (matrix.matrix, *row, matrix.dimension)
+                })
+            {
+                return Err(crate::CompileError::InvalidExecutablePlan(
+                    "solve row matrix contains an invalid node, row, or slot".into(),
+                ));
+            }
+        }
+        Ok(Self {
+            components,
+            rhs_elements,
+            row_matrices,
+            row_keys,
+        })
+    }
+}
+
+impl FactorizationPlan {
+    fn build(model: &CompiledModel, value_slots: &[Option<usize>]) -> CompileResult<Self> {
+        let node_count = model.graph().nodes().len();
+        if value_slots.len() != node_count {
+            return Err(crate::CompileError::InvalidExecutablePlan(
+                "factorization value slots do not match the graph length".into(),
+            ));
+        }
+        let mut plan = Self {
+            event_slots: vec![None; node_count],
+            event_matrices: Vec::new(),
+            constant_slots: vec![None; node_count],
+            constant_matrices: Vec::new(),
+        };
+        for (index, node) in model.graph().nodes().iter().enumerate() {
+            let ExprNode::Solve { matrix, .. } = node else {
+                continue;
+            };
+            if value_slots[index].is_none() {
+                continue;
+            }
+            let Some(facts) = model.node_facts(*matrix) else {
+                continue;
+            };
+            if facts.dependency.depends_on_free_params || facts.dependency.depends_on_fixed_params {
+                continue;
+            }
+            let ValueKind::Matrix { rows, cols } = facts.value_kind else {
+                continue;
+            };
+            if rows != cols {
+                continue;
+            }
+            let (slots, matrices) = if facts.dependency.depends_on_event {
+                (&mut plan.event_slots, &mut plan.event_matrices)
+            } else {
+                (&mut plan.constant_slots, &mut plan.constant_matrices)
+            };
+            if slots[matrix.index()].is_none() {
+                let slot = matrices.len();
+                slots[matrix.index()] = Some(slot);
+                matrices.push((*matrix, rows));
+            }
+        }
+        plan.validate(node_count)?;
+        Ok(plan)
+    }
+
+    fn validate(&self, node_count: usize) -> CompileResult<()> {
+        for (slots, matrices, name) in [
+            (&self.event_slots, &self.event_matrices, "event"),
+            (&self.constant_slots, &self.constant_matrices, "constant"),
+        ] {
+            if slots.len() != node_count {
+                return Err(crate::CompileError::InvalidExecutablePlan(format!(
+                    "{name} factor slots do not match the graph length"
+                )));
+            }
+            if slots.iter().flatten().any(|slot| *slot >= matrices.len()) {
+                return Err(crate::CompileError::InvalidExecutablePlan(format!(
+                    "{name} factor slots contain an invalid matrix slot"
+                )));
+            }
+            for (slot, (matrix, _dimension)) in matrices.iter().enumerate() {
+                if slots.get(matrix.index()).copied().flatten() != Some(slot) {
+                    return Err(crate::CompileError::InvalidExecutablePlan(format!(
+                        "{name} factor matrix {} is not bound to slot {slot}",
+                        matrix.index()
+                    )));
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Copy, Clone, Debug)]
+enum LoweringFailure {
+    EventLeaf,
+    ParameterLeaf,
+}
+
+enum LoweringOutcome<T> {
+    Lowered(T),
+    Unsupported(LoweringFailure),
+}
+
+struct LoweredKernel {
+    values: Vec<KernelValue>,
+    value_ids: Vec<Option<KernelValueId>>,
+}
+
+trait LoweringBoundary {
+    fn context(&self) -> &'static str;
+
+    fn scheduled_context(&self) -> &'static str {
+        self.context()
+    }
+
+    fn cached(&self, _id: ExprId) -> Option<KernelInstruction> {
+        None
+    }
+
+    fn parameter(&mut self, id: ExprId) -> CompileResult<LoweringOutcome<KernelInstruction>>;
+
+    fn event(&mut self, id: ExprId) -> LoweringOutcome<KernelInstruction>;
+
+    fn component(
+        &mut self,
+        id: ExprId,
+        input: ExprId,
+        index: usize,
+        operand: &dyn Fn(ExprId) -> CompileResult<KernelValueId>,
+    ) -> CompileResult<LoweringOutcome<KernelInstruction>>;
+}
+
+struct ScalarBoundary<'a> {
+    cache_slots: &'a [Option<usize>],
+    parameter_slots: &'a [Option<ParamId>],
+    solve_components: &'a [Option<SolveComponentPlan>],
+    solve_rhs_elements: &'a [Option<Vec<ExprId>>],
+}
+
+impl LoweringBoundary for ScalarBoundary<'_> {
+    fn context(&self) -> &'static str {
+        "node"
+    }
+
+    fn scheduled_context(&self) -> &'static str {
+        "scheduled node"
+    }
+
+    fn cached(&self, id: ExprId) -> Option<KernelInstruction> {
+        self.cache_slots[id.index()].map(KernelInstruction::Cached)
+    }
+
+    fn parameter(&mut self, id: ExprId) -> CompileResult<LoweringOutcome<KernelInstruction>> {
+        let parameter = self.parameter_slots[id.index()].ok_or_else(|| {
+            crate::CompileError::InvalidExecutablePlan(format!(
+                "parameter node {} is not bound",
+                id.index()
+            ))
+        })?;
+        Ok(LoweringOutcome::Lowered(KernelInstruction::Parameter(
+            parameter,
+        )))
+    }
+
+    fn event(&mut self, _id: ExprId) -> LoweringOutcome<KernelInstruction> {
+        LoweringOutcome::Unsupported(LoweringFailure::EventLeaf)
+    }
+
+    fn component(
+        &mut self,
+        id: ExprId,
+        input: ExprId,
+        index: usize,
+        operand: &dyn Fn(ExprId) -> CompileResult<KernelValueId>,
+    ) -> CompileResult<LoweringOutcome<KernelInstruction>> {
+        let instruction = if let Some(solve) = self.solve_components[id.index()]
+            && let Some(elements) = self.solve_rhs_elements[solve.rhs.index()].as_ref()
+        {
+            KernelInstruction::SolveRow {
+                row_slot: solve.row_slot,
+                rhs: elements
+                    .iter()
+                    .map(|element| operand(*element))
+                    .collect::<CompileResult<_>>()?,
+            }
+        } else {
+            KernelInstruction::Component {
+                input: operand(input)?,
+                index,
+            }
+        };
+        Ok(LoweringOutcome::Lowered(instruction))
+    }
+}
+
+#[derive(Default)]
+struct CacheBoundary {
+    inputs: Vec<ExprId>,
+}
+
+impl LoweringBoundary for CacheBoundary {
+    fn context(&self) -> &'static str {
+        "cache node"
+    }
+
+    fn parameter(&mut self, _id: ExprId) -> CompileResult<LoweringOutcome<KernelInstruction>> {
+        Ok(LoweringOutcome::Unsupported(LoweringFailure::ParameterLeaf))
+    }
+
+    fn event(&mut self, id: ExprId) -> LoweringOutcome<KernelInstruction> {
+        let slot = self.inputs.len();
+        self.inputs.push(id);
+        LoweringOutcome::Lowered(KernelInstruction::Cached(slot))
+    }
+
+    fn component(
+        &mut self,
+        _id: ExprId,
+        input: ExprId,
+        index: usize,
+        operand: &dyn Fn(ExprId) -> CompileResult<KernelValueId>,
+    ) -> CompileResult<LoweringOutcome<KernelInstruction>> {
+        Ok(LoweringOutcome::Lowered(KernelInstruction::Component {
+            input: operand(input)?,
+            index,
+        }))
+    }
+}
+
+struct KernelLowerer<'a> {
+    model: &'a CompiledModel,
+    nodes: &'a [ExprId],
+}
+
+impl<'a> KernelLowerer<'a> {
+    fn new(model: &'a CompiledModel, nodes: &'a [ExprId]) -> Self {
+        Self { model, nodes }
+    }
+
+    fn lower(
+        self,
+        boundary: &mut impl LoweringBoundary,
+    ) -> CompileResult<LoweringOutcome<LoweredKernel>> {
+        let mut value_ids = vec![None; self.model.graph().nodes().len()];
+        let mut values = Vec::with_capacity(self.nodes.len());
+        for id in self.nodes {
+            let index = id.index();
+            let context = boundary.context();
+            let scheduled_context = boundary.scheduled_context();
+            let operand = |child: ExprId| {
+                value_ids
+                    .get(child.index())
+                    .copied()
+                    .flatten()
+                    .ok_or_else(|| {
+                        crate::CompileError::InvalidExecutablePlan(format!(
+                            "{} {index} depends on unscheduled node {}",
+                            context,
+                            child.index()
+                        ))
+                    })
+            };
+            let instruction = if let Some(instruction) = boundary.cached(*id) {
+                LoweringOutcome::Lowered(instruction)
+            } else {
+                let node = self.model.graph().node(*id).ok_or_else(|| {
+                    crate::CompileError::InvalidExecutablePlan(format!(
+                        "{} {index} is out of bounds",
+                        scheduled_context
+                    ))
+                })?;
+                match node {
+                    ExprNode::RealConst(value) => {
+                        LoweringOutcome::Lowered(KernelInstruction::RealConstant(*value))
+                    }
+                    ExprNode::ComplexConst(value) => {
+                        LoweringOutcome::Lowered(KernelInstruction::ComplexConstant(*value))
+                    }
+                    ExprNode::ScalarParam(_) => boundary.parameter(*id)?,
+                    ExprNode::EventScalar(_) | ExprNode::EventP4Component { .. } => {
+                        boundary.event(*id)
+                    }
+                    ExprNode::Unary { op, input } => {
+                        LoweringOutcome::Lowered(KernelInstruction::Unary {
+                            op: *op,
+                            input: operand(*input)?,
+                        })
+                    }
+                    ExprNode::Binary { op, lhs, rhs } => {
+                        LoweringOutcome::Lowered(KernelInstruction::Binary {
+                            op: *op,
+                            lhs: operand(*lhs)?,
+                            rhs: operand(*rhs)?,
+                        })
+                    }
+                    ExprNode::NaryAdd { terms } => LoweringOutcome::Lowered(
+                        KernelInstruction::Add(Self::operands(terms, &operand)?),
+                    ),
+                    ExprNode::NaryMul { factors } => LoweringOutcome::Lowered(
+                        KernelInstruction::Mul(Self::operands(factors, &operand)?),
+                    ),
+                    ExprNode::Complex { re, im } => {
+                        LoweringOutcome::Lowered(KernelInstruction::Complex {
+                            re: operand(*re)?,
+                            im: operand(*im)?,
+                        })
+                    }
+                    ExprNode::Vector { elements } => LoweringOutcome::Lowered(
+                        KernelInstruction::Vector(Self::operands(elements, &operand)?),
+                    ),
+                    ExprNode::Matrix {
+                        rows,
+                        cols,
+                        elements,
+                    } => LoweringOutcome::Lowered(KernelInstruction::Matrix {
+                        rows: *rows,
+                        cols: *cols,
+                        elements: Self::operands(elements, &operand)?,
+                    }),
+                    ExprNode::Component { input, index } => {
+                        boundary.component(*id, *input, *index, &operand)?
+                    }
+                    ExprNode::MatrixElement { input, row, col } => {
+                        LoweringOutcome::Lowered(KernelInstruction::MatrixElement {
+                            input: operand(*input)?,
+                            row: *row,
+                            col: *col,
+                        })
+                    }
+                    ExprNode::MatMul { lhs, rhs } => {
+                        LoweringOutcome::Lowered(KernelInstruction::MatMul {
+                            lhs: operand(*lhs)?,
+                            rhs: operand(*rhs)?,
+                        })
+                    }
+                    ExprNode::MatVec { matrix, vector } => {
+                        LoweringOutcome::Lowered(KernelInstruction::MatVec {
+                            matrix: operand(*matrix)?,
+                            vector: operand(*vector)?,
+                        })
+                    }
+                    ExprNode::Dot { lhs, rhs } => {
+                        LoweringOutcome::Lowered(KernelInstruction::Dot {
+                            lhs: operand(*lhs)?,
+                            rhs: operand(*rhs)?,
+                        })
+                    }
+                    ExprNode::Solve { matrix, rhs } => {
+                        LoweringOutcome::Lowered(KernelInstruction::Solve {
+                            matrix: operand(*matrix)?,
+                            rhs: operand(*rhs)?,
+                        })
+                    }
+                }
+            };
+            let instruction = match instruction {
+                LoweringOutcome::Lowered(instruction) => instruction,
+                LoweringOutcome::Unsupported(reason) => {
+                    return Ok(LoweringOutcome::Unsupported(reason));
+                }
+            };
+            let facts = self.model.node_facts(*id).ok_or_else(|| {
+                crate::CompileError::InvalidExecutablePlan(format!(
+                    "facts for {} {index} are missing",
+                    scheduled_context
+                ))
+            })?;
+            let kind = match facts.value_kind {
+                ValueKind::Real => KernelValueKind::Real,
+                ValueKind::Complex => KernelValueKind::Complex,
+                ValueKind::Vector { len } => KernelValueKind::Vector { len },
+                ValueKind::Matrix { rows, cols } => KernelValueKind::Matrix { rows, cols },
+            };
+            let class = if facts.dependency.depends_on_event {
+                KernelValueClass::Event
+            } else {
+                KernelValueClass::Invariant
+            };
+            let kernel_id = KernelValueId::from_index(values.len());
+            values.push(KernelValue {
+                kind,
+                class,
+                instruction,
+            });
+            value_ids[index] = Some(kernel_id);
+        }
+        Ok(LoweringOutcome::Lowered(LoweredKernel {
+            values,
+            value_ids,
+        }))
+    }
+
+    fn operands(
+        ids: &[ExprId],
+        operand: &dyn Fn(ExprId) -> CompileResult<KernelValueId>,
+    ) -> CompileResult<Vec<KernelValueId>> {
+        ids.iter().map(|id| operand(*id)).collect()
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use laddu_expr::{event_scalar, matrix, matvec, parameter, solve, vector};
+    use laddu_expr::{Expr, event_scalar, matrix, matvec, parameter, solve, vector};
 
     use super::*;
 
@@ -899,5 +1118,54 @@ mod tests {
         let plan = ExecutablePlan::from_model(&model).unwrap();
 
         assert!(plan.scalar_kernel().is_none());
+    }
+
+    #[test]
+    fn scalar_and_cache_boundaries_share_common_node_lowering() {
+        let expression = (vector([Expr::from(1.0), Expr::from(2.0)]).component(1) + 3.0).sin();
+        let model = CompiledModel::from_expr_with_options(
+            &expression,
+            &crate::CompileOptions::without_optimizations()
+                .with_cache_policy(crate::CachePolicy::Off),
+        )
+        .unwrap();
+        let nodes = (0..model.graph().nodes().len())
+            .map(ExprId::from_index)
+            .collect::<Vec<_>>();
+        let cache_slots = vec![None; nodes.len()];
+        let parameter_slots = vec![None; nodes.len()];
+        let solve = SolvePlan::empty(nodes.len());
+
+        let mut scalar_boundary = ScalarBoundary {
+            cache_slots: &cache_slots,
+            parameter_slots: &parameter_slots,
+            solve_components: &solve.components,
+            solve_rhs_elements: &solve.rhs_elements,
+        };
+        let LoweringOutcome::Lowered(scalar) = KernelLowerer::new(&model, &nodes)
+            .lower(&mut scalar_boundary)
+            .unwrap()
+        else {
+            panic!("common scalar lowering should be supported");
+        };
+
+        let mut cache_boundary = CacheBoundary::default();
+        let LoweringOutcome::Lowered(cache) = KernelLowerer::new(&model, &nodes)
+            .lower(&mut cache_boundary)
+            .unwrap()
+        else {
+            panic!("common cache lowering should be supported");
+        };
+
+        assert!(cache_boundary.inputs.is_empty());
+        assert_eq!(scalar.values.len(), cache.values.len());
+        for (scalar, cache) in scalar.values.iter().zip(&cache.values) {
+            assert_eq!(scalar.kind, cache.kind);
+            assert_eq!(scalar.class, cache.class);
+            assert_eq!(
+                format!("{:?}", scalar.instruction),
+                format!("{:?}", cache.instruction)
+            );
+        }
     }
 }
