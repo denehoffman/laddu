@@ -1,9 +1,9 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, fmt, sync::Arc};
 
 pub use crate::{ParamError, ParamResult};
 use fastrand::Rng;
 use fastrand_contrib::RngExt;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use thiserror::Error;
 
 /// Stable identifier for a parameter in a [`ParamLayout`].
@@ -60,14 +60,9 @@ pub enum ParamState {
 /// values that are finite but outside the parameter support.
 #[derive(Clone, Debug, Error, PartialEq)]
 pub enum FreeValueValidationError {
-    /// The value vector did not match the layout's free-parameter dimension.
-    #[error("expected {expected} free parameters, got {actual}")]
-    DimensionMismatch {
-        /// Required number of values.
-        expected: usize,
-        /// Supplied number of values.
-        actual: usize,
-    },
+    /// Parameter-layout validation failed before individual values were classified.
+    #[error(transparent)]
+    Parameter(#[from] ParamError),
     /// A free parameter was assigned a non-finite value.
     #[error("non-finite value {value} for free parameter {name} ({id:?})")]
     NonFiniteValue {
@@ -480,13 +475,128 @@ impl From<(f64, f64)> for InitialSpec {
 }
 
 /// Validated parameter ordering and mapping between full and free values.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone)]
 pub struct ParamLayout {
+    specs: Arc<[Parameter]>,
+    names: Arc<HashMap<Arc<str>, ParamId>>,
+    projection: ParamProjection,
+}
+
+impl fmt::Debug for ParamLayout {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ParamLayout")
+            .field("specs", &self.specs)
+            .field("names", &self.names)
+            .field("free_params", &self.projection.free_params)
+            .field("full_to_free", &self.projection.full_to_free)
+            .field("defaults", &self.projection.defaults)
+            .finish()
+    }
+}
+
+#[derive(Clone, Debug)]
+// Owns the stable mappings and defaults that define full/free projection.
+struct ParamProjection {
+    free_params: Arc<[ParamId]>,
+    full_to_free: Arc<[Option<FreeParamId>]>,
+    defaults: Arc<[f64]>,
+}
+
+impl ParamProjection {
+    fn n_free(&self) -> usize {
+        self.free_params.len()
+    }
+
+    fn free_params(&self) -> &[ParamId] {
+        &self.free_params
+    }
+
+    fn free_id(&self, id: ParamId) -> Option<FreeParamId> {
+        self.full_to_free[id.index()]
+    }
+
+    fn full_id(&self, id: FreeParamId) -> ParamId {
+        self.free_params[id.index()]
+    }
+
+    fn validate_free_dimension<T>(&self, values: &[T]) -> ParamResult<()> {
+        if values.len() == self.n_free() {
+            Ok(())
+        } else {
+            Err(ParamError::FreeLengthMismatch {
+                expected: self.n_free(),
+                actual: values.len(),
+            })
+        }
+    }
+
+    fn initial_free_values(&self) -> Vec<f64> {
+        self.free_params
+            .iter()
+            .map(|id| self.defaults[id.index()])
+            .collect()
+    }
+
+    fn fill_full_from_free(&self, free: &[f64], full: &mut [f64]) -> ParamResult<()> {
+        self.validate_free_dimension(free)?;
+        debug_assert_eq!(full.len(), self.defaults.len());
+        full.copy_from_slice(&self.defaults);
+        for (value, id) in free.iter().zip(self.free_params.iter()) {
+            full[id.index()] = *value;
+        }
+        Ok(())
+    }
+
+    fn free_values_from_full(&self, full: &[f64]) -> Vec<f64> {
+        debug_assert_eq!(full.len(), self.defaults.len());
+        self.free_params.iter().map(|id| full[id.index()]).collect()
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+// Keep ParamLayout's established flat serialized representation while its
+// projection fields are grouped behind one internal artifact.
+struct ParamLayoutSerde {
     specs: Arc<[Parameter]>,
     names: Arc<HashMap<Arc<str>, ParamId>>,
     free_params: Arc<[ParamId]>,
     full_to_free: Arc<[Option<FreeParamId>]>,
     defaults: Arc<[f64]>,
+}
+
+impl Serialize for ParamLayout {
+    fn serialize<__S>(&self, serializer: __S) -> Result<__S::Ok, __S::Error>
+    where
+        __S: Serializer,
+    {
+        ParamLayoutSerde {
+            specs: Arc::clone(&self.specs),
+            names: Arc::clone(&self.names),
+            free_params: Arc::clone(&self.projection.free_params),
+            full_to_free: Arc::clone(&self.projection.full_to_free),
+            defaults: Arc::clone(&self.projection.defaults),
+        }
+        .serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for ParamLayout {
+    fn deserialize<__D>(deserializer: __D) -> Result<Self, __D::Error>
+    where
+        __D: Deserializer<'de>,
+    {
+        let serialized = ParamLayoutSerde::deserialize(deserializer)?;
+        Ok(Self {
+            specs: serialized.specs,
+            names: serialized.names,
+            projection: ParamProjection {
+                free_params: serialized.free_params,
+                full_to_free: serialized.full_to_free,
+                defaults: serialized.defaults,
+            },
+        })
+    }
 }
 
 struct LayoutBuilder {
@@ -531,9 +641,11 @@ impl LayoutBuilder {
         ParamLayout {
             specs: self.specs.into(),
             names: Arc::new(self.names),
-            free_params: self.free_params.into(),
-            full_to_free: self.full_to_free.into(),
-            defaults: self.defaults.into(),
+            projection: ParamProjection {
+                free_params: self.free_params.into(),
+                full_to_free: self.full_to_free.into(),
+                defaults: self.defaults.into(),
+            },
         }
     }
 }
@@ -575,7 +687,7 @@ impl ParamLayout {
 
     /// Returns the number of free parameters.
     pub fn n_free(&self) -> usize {
-        self.free_params.len()
+        self.projection.n_free()
     }
 
     /// Looks up a full-layout identifier by parameter name.
@@ -615,31 +727,31 @@ impl ParamLayout {
     /// layout.
     pub fn free_id(&self, id: ParamId) -> ParamResult<Option<FreeParamId>> {
         self.check_id(id)?;
-        Ok(self.full_to_free[id.index()])
+        Ok(self.projection.free_id(id))
     }
 
     fn free_param(&self, id: FreeParamId) -> ParamResult<ParamId> {
         self.check_free_id(id)?;
-        Ok(self.free_params[id.index()])
+        Ok(self.projection.full_id(id))
     }
 
     /// Returns full-layout identifiers in free-parameter order.
     pub fn free_params(&self) -> &[ParamId] {
-        &self.free_params
+        self.projection.free_params()
     }
 
     /// Iterates parameter definitions in stable free-parameter order.
     pub fn free_parameters(
         &self,
     ) -> impl ExactSizeIterator<Item = &Parameter> + DoubleEndedIterator {
-        self.free_params.iter().map(|id| &self.specs[id.index()])
+        self.free_params().iter().map(|id| &self.specs[id.index()])
     }
 
     /// Creates a full value set using fixed and deterministic initial values.
     pub fn default_values(&self) -> ParamValues {
         ParamValues {
             layout: Arc::new(self.clone()),
-            values: self.defaults.to_vec(),
+            values: self.projection.defaults.to_vec(),
         }
     }
 
@@ -647,10 +759,7 @@ impl ParamLayout {
     ///
     /// Uniform initial ranges use their midpoint.
     pub fn initial_free_values(&self) -> Vec<f64> {
-        self.free_params
-            .iter()
-            .map(|id| self.defaults[id.index()])
-            .collect()
+        self.projection.initial_free_values()
     }
 
     /// Expand a free-parameter slice while restoring fixed values from the layout.
@@ -660,7 +769,7 @@ impl ParamLayout {
     /// Returns [`ParamError::FreeLengthMismatch`] when `free` does not contain
     /// exactly one value per free parameter.
     pub fn values(&self, free: &[f64]) -> ParamResult<ParamValues> {
-        let mut values = self.defaults.to_vec();
+        let mut values = self.projection.defaults.to_vec();
         self.fill_full_from_free(free, &mut values)?;
         Ok(ParamValues {
             layout: Arc::new(self.clone()),
@@ -687,12 +796,7 @@ impl ParamLayout {
     /// length, or a value-related [`ParamError`] when a value lies outside its
     /// parameter's bounds or canonical periodic domain.
     pub fn validate_free_values(&self, free: &[f64]) -> ParamResult<()> {
-        if free.len() != self.n_free() {
-            return Err(ParamError::FreeLengthMismatch {
-                expected: self.n_free(),
-                actual: free.len(),
-            });
-        }
+        self.projection.validate_free_dimension(free)?;
         for (value, parameter) in free.iter().zip(self.free_parameters()) {
             parameter.validate_value(*value)?;
         }
@@ -706,20 +810,16 @@ impl ParamLayout {
     ///
     /// # Errors
     ///
-    /// Returns [`FreeValueValidationError::DimensionMismatch`] for the wrong
-    /// number of values, [`FreeValueValidationError::NonFiniteValue`] for NaN
-    /// or infinity, and [`FreeValueValidationError::OutsideSupport`] for a
-    /// finite value outside ordinary bounds or a canonical periodic domain.
+    /// Returns [`FreeValueValidationError::Parameter`] for layout-level
+    /// validation failures such as the wrong number of values,
+    /// [`FreeValueValidationError::NonFiniteValue`] for NaN or infinity, and
+    /// [`FreeValueValidationError::OutsideSupport`] for a finite value outside
+    /// ordinary bounds or a canonical periodic domain.
     pub fn validate_free_values_classified(
         &self,
         free: &[f64],
     ) -> Result<(), FreeValueValidationError> {
-        if free.len() != self.n_free() {
-            return Err(FreeValueValidationError::DimensionMismatch {
-                expected: self.n_free(),
-                actual: free.len(),
-            });
-        }
+        self.projection.validate_free_dimension(free)?;
         for (index, (value, parameter)) in free.iter().zip(self.free_parameters()).enumerate() {
             let id = FreeParamId(index as u32);
             if !value.is_finite() {
@@ -748,15 +848,10 @@ impl ParamLayout {
     /// Returns [`ParamError::FreeLengthMismatch`] when `free` does not contain
     /// exactly one value per free parameter.
     pub fn wrap_periodic_free_values(&self, free: &[f64]) -> ParamResult<Vec<f64>> {
-        if free.len() != self.n_free() {
-            return Err(ParamError::FreeLengthMismatch {
-                expected: self.n_free(),
-                actual: free.len(),
-            });
-        }
+        self.projection.validate_free_dimension(free)?;
         Ok(free
             .iter()
-            .zip(self.free_params.iter())
+            .zip(self.free_params().iter())
             .map(|(value, id)| {
                 let parameter = &self.specs[id.index()];
                 parameter.periodic_bounds().map_or(*value, |(min, max)| {
@@ -767,18 +862,7 @@ impl ParamLayout {
     }
 
     fn fill_full_from_free(&self, free: &[f64], full: &mut [f64]) -> ParamResult<()> {
-        if free.len() != self.n_free() {
-            return Err(ParamError::FreeLengthMismatch {
-                expected: self.n_free(),
-                actual: free.len(),
-            });
-        }
-        debug_assert_eq!(full.len(), self.len());
-        full.copy_from_slice(&self.defaults);
-        for (free_index, id) in self.free_params.iter().enumerate() {
-            full[id.index()] = free[free_index];
-        }
-        Ok(())
+        self.projection.fill_full_from_free(free, full)
     }
 
     fn check_id(&self, id: ParamId) -> ParamResult<()> {
@@ -894,11 +978,7 @@ impl ParamValues {
 
     /// Copies the values of free parameters in free-parameter order.
     pub fn free_values(&self) -> Vec<f64> {
-        self.layout
-            .free_params()
-            .iter()
-            .map(|id| self.values[id.index()])
-            .collect()
+        self.layout.projection.free_values_from_full(&self.values)
     }
 
     /// Assigns one value by its free-parameter identifier.
@@ -1108,10 +1188,12 @@ mod tests {
 
         assert_eq!(
             layout.validate_free_values_classified(&[0.0]),
-            Err(FreeValueValidationError::DimensionMismatch {
-                expected: 2,
-                actual: 1,
-            })
+            Err(FreeValueValidationError::Parameter(
+                ParamError::FreeLengthMismatch {
+                    expected: 2,
+                    actual: 1,
+                }
+            ))
         );
         assert!(matches!(
             layout.validate_free_values_classified(&[f64::NAN, 0.0]),
@@ -1332,6 +1414,40 @@ mod tests {
                 expected: 2,
                 actual: 1
             }
+        );
+    }
+
+    #[test]
+    fn free_dimension_contract_is_shared_by_projection_operations() {
+        let layout = ParamLayout::new([
+            Parameter::fixed("fixed", 4.0),
+            Parameter::free("x"),
+            Parameter::free("y"),
+        ])
+        .unwrap();
+        let expected = ParamError::FreeLengthMismatch {
+            expected: 2,
+            actual: 1,
+        };
+
+        assert_eq!(layout.values(&[1.0]).unwrap_err(), expected);
+        assert_eq!(layout.validate_free_values(&[1.0]).unwrap_err(), expected);
+        assert_eq!(
+            layout.wrap_periodic_free_values(&[1.0]).unwrap_err(),
+            expected
+        );
+
+        let mut values = layout.default_values();
+        assert_eq!(values.set_free_values(&[1.0]).unwrap_err(), expected);
+        assert_eq!(values.as_slice(), &[4.0, 0.0, 0.0]);
+        assert_eq!(
+            layout.validate_free_values_classified(&[1.0]),
+            Err(FreeValueValidationError::Parameter(
+                ParamError::FreeLengthMismatch {
+                    expected: 2,
+                    actual: 1,
+                }
+            ))
         );
     }
 
