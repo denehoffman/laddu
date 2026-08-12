@@ -6,6 +6,7 @@ mod error;
 mod executable;
 /// Per-node value, number, and dependency analysis.
 pub mod facts;
+mod graph_utils;
 mod model;
 mod normalization;
 /// Extensible expression-graph optimization passes and rewrite rules.

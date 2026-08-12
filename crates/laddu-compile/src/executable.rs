@@ -9,7 +9,7 @@ use laddu_kernel::ir::{
     KernelValueKind, ScalarKernelIr,
 };
 
-use crate::{CachePlan, CompileResult, CompiledModel};
+use crate::{CachePlan, CompileResult, CompiledModel, graph_utils::mark_reachable};
 
 /// Specialized plan for reading one component of an event-dependent linear solve.
 #[derive(Copy, Clone, Debug)]
@@ -155,12 +155,15 @@ impl ExecutablePlan {
         )?;
 
         let mut cache_required_nodes = vec![false; graph.nodes().len()];
-        for node in cache_plan.materialization_nodes() {
-            Self::mark_required(&graph, *node, &mut cache_required_nodes);
-        }
-        for plan in &solve_row_matrices {
-            Self::mark_required(&graph, plan.matrix, &mut cache_required_nodes);
-        }
+        mark_reachable(
+            &graph,
+            cache_plan
+                .materialization_nodes()
+                .iter()
+                .copied()
+                .chain(solve_row_matrices.iter().map(|plan| plan.matrix)),
+            &mut cache_required_nodes,
+        );
         let cache_materialization_nodes = Self::ids_from_flags(cache_required_nodes)?;
         let (cache_kernel, cache_input_nodes) =
             Self::cache_kernel_ir(model, &cache_materialization_nodes)?;
@@ -762,12 +765,6 @@ impl ExecutablePlan {
             if let Some(node) = graph.node(id) {
                 stack.extend(node.children().rev());
             }
-        }
-    }
-
-    fn mark_required(graph: &ExprGraph, id: ExprId, required: &mut [bool]) {
-        for id in graph.reachable_post_order([id]) {
-            required[id.index()] = true;
         }
     }
 

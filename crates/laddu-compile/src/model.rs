@@ -20,6 +20,7 @@ use crate::{
     NormalizationDiagnostics, NormalizationPlan,
     cost::OptimizationCost,
     facts::{DependencyFacts, EvaluationClass, GraphFacts, NodeFacts},
+    graph_utils::mark_reachable,
     optimize::*,
 };
 
@@ -170,9 +171,7 @@ impl CachePlan {
             })
             .collect::<Vec<_>>();
         let mut required = vec![false; graph.nodes().len()];
-        for id in graph.reachable_post_order(entries.iter().map(|entry| entry.node)) {
-            required[id.index()] = true;
-        }
+        mark_reachable(graph, entries.iter().map(|entry| entry.node), &mut required);
         let materialization_nodes = required
             .into_iter()
             .enumerate()

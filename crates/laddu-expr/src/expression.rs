@@ -2068,24 +2068,67 @@ where
         self.remapped.get(key).copied()
     }
 
-    /// Emits one node and its aligned metadata after all of its children.
+    /// Returns the nodes emitted so far in child-before-parent order.
+    pub fn nodes(&self) -> &[ExprNode] {
+        &self.nodes
+    }
+
+    /// Returns the metadata emitted so far, aligned with [`Self::nodes`].
+    pub fn metadata(&self) -> &[ExprMetadata] {
+        &self.metadata
+    }
+
+    /// Associates `key` with an already emitted node.
+    ///
+    /// This supports graph transforms that remove a source node by aliasing it
+    /// to an existing result.
     ///
     /// # Panics
     ///
-    /// Panics if `key` was emitted previously or if the node references a
-    /// child that has not already been emitted.
-    pub fn emit(&mut self, key: K, node: ExprNode, metadata: ExprMetadata) -> ExprId {
-        let id = ExprId::from_index(self.nodes.len());
+    /// Panics if `key` was mapped previously or `id` has not been emitted.
+    pub fn alias(&mut self, key: K, id: ExprId) {
         assert!(
             !self.remapped.contains_key(&key),
-            "a rebuild key may only be emitted once"
+            "a rebuild key may only be mapped once"
         );
+        assert!(
+            id.index() < self.nodes.len(),
+            "a rebuild alias must reference an emitted node"
+        );
+        self.remapped.insert(key, id);
+    }
+
+    /// Emits one node and its aligned metadata without assigning a remap key.
+    ///
+    /// This supports replacement fragments whose intermediate nodes do not
+    /// correspond one-to-one with source nodes.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the node references a child that has not already been emitted.
+    pub fn emit_anonymous(&mut self, node: ExprNode, metadata: ExprMetadata) -> ExprId {
+        let id = ExprId::from_index(self.nodes.len());
         assert!(
             node.children().all(|child| child.index() < id.index()),
             "rebuilt expression children must be emitted before their parent"
         );
         self.nodes.push(node);
         self.metadata.push(metadata);
+        id
+    }
+
+    /// Emits one node and its aligned metadata after all of its children.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `key` was mapped previously or if the node references a
+    /// child that has not already been emitted.
+    pub fn emit(&mut self, key: K, node: ExprNode, metadata: ExprMetadata) -> ExprId {
+        assert!(
+            !self.remapped.contains_key(&key),
+            "a rebuild key may only be mapped once"
+        );
+        let id = self.emit_anonymous(node, metadata);
         self.remapped.insert(key, id);
         id
     }

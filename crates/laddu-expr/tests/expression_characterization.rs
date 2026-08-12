@@ -200,6 +200,8 @@ fn graph_rebuilder_keeps_remaps_and_metadata_aligned() {
     assert_eq!(rebuild.remapped(&"lhs"), Some(lhs));
     assert_eq!(rebuild.remapped(&"rhs"), Some(rhs));
     assert_eq!(rebuild.remapped(&"root"), Some(root));
+    assert_eq!(rebuild.nodes().len(), 3);
+    assert_eq!(rebuild.metadata().len(), rebuild.nodes().len());
 
     let graph = rebuild.finish(root).unwrap();
     assert_eq!(graph.root(), root);
@@ -214,6 +216,24 @@ fn graph_rebuilder_keeps_remaps_and_metadata_aligned() {
             ExprSourceKind::Event,
             ExprSourceKind::Binary,
         ]
+    );
+}
+
+#[test]
+fn graph_rebuilder_supports_aliases_and_anonymous_fragments() {
+    let mut rebuild = ExprGraphRebuilder::with_capacity(2);
+    let value = rebuild.emit_anonymous(
+        ExprNode::RealConst(1.0),
+        ExprMetadata::new(ExprSourceKind::Const),
+    );
+    rebuild.alias("source", value);
+
+    assert_eq!(rebuild.remapped(&"source"), Some(value));
+    let graph = rebuild.finish(value).unwrap();
+    assert_eq!(graph.nodes(), [ExprNode::RealConst(1.0)]);
+    assert_eq!(
+        graph.metadata(value).unwrap().source(),
+        ExprSourceKind::Const
     );
 }
 
