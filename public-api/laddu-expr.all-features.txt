@@ -1,5 +1,27 @@
 pub mod laddu_expr
 pub mod laddu_expr::parameters
+pub enum laddu_expr::parameters::FreeValueValidationError
+pub laddu_expr::parameters::FreeValueValidationError::DimensionMismatch
+pub laddu_expr::parameters::FreeValueValidationError::DimensionMismatch::actual: usize
+pub laddu_expr::parameters::FreeValueValidationError::DimensionMismatch::expected: usize
+pub laddu_expr::parameters::FreeValueValidationError::NonFiniteValue
+pub laddu_expr::parameters::FreeValueValidationError::NonFiniteValue::id: laddu_expr::parameters::FreeParamId
+pub laddu_expr::parameters::FreeValueValidationError::NonFiniteValue::name: alloc::string::String
+pub laddu_expr::parameters::FreeValueValidationError::NonFiniteValue::value: f64
+pub laddu_expr::parameters::FreeValueValidationError::OutsideSupport
+pub laddu_expr::parameters::FreeValueValidationError::OutsideSupport::id: laddu_expr::parameters::FreeParamId
+pub laddu_expr::parameters::FreeValueValidationError::OutsideSupport::name: alloc::string::String
+pub laddu_expr::parameters::FreeValueValidationError::OutsideSupport::value: f64
+impl core::clone::Clone for laddu_expr::parameters::FreeValueValidationError
+pub fn laddu_expr::parameters::FreeValueValidationError::clone(&self) -> laddu_expr::parameters::FreeValueValidationError
+impl core::cmp::PartialEq for laddu_expr::parameters::FreeValueValidationError
+pub fn laddu_expr::parameters::FreeValueValidationError::eq(&self, &laddu_expr::parameters::FreeValueValidationError) -> bool
+impl core::error::Error for laddu_expr::parameters::FreeValueValidationError
+impl core::fmt::Debug for laddu_expr::parameters::FreeValueValidationError
+pub fn laddu_expr::parameters::FreeValueValidationError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for laddu_expr::parameters::FreeValueValidationError
+pub fn laddu_expr::parameters::FreeValueValidationError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for laddu_expr::parameters::FreeValueValidationError
 pub enum laddu_expr::parameters::InitialSpec
 pub laddu_expr::parameters::InitialSpec::Default
 pub laddu_expr::parameters::InitialSpec::Uniform
@@ -155,6 +177,7 @@ pub struct laddu_expr::parameters::ParamLayout
 impl laddu_expr::parameters::ParamLayout
 pub fn laddu_expr::parameters::ParamLayout::default_values(&self) -> laddu_expr::parameters::ParamValues
 pub fn laddu_expr::parameters::ParamLayout::free_id(&self, laddu_expr::parameters::ParamId) -> laddu_expr::ParamResult<core::option::Option<laddu_expr::parameters::FreeParamId>>
+pub fn laddu_expr::parameters::ParamLayout::free_parameters(&self) -> impl core::iter::traits::exact_size::ExactSizeIterator<Item = &laddu_expr::parameters::Parameter> + core::iter::traits::double_ended::DoubleEndedIterator
 pub fn laddu_expr::parameters::ParamLayout::free_params(&self) -> &[laddu_expr::parameters::ParamId]
 pub fn laddu_expr::parameters::ParamLayout::free_values_with(&self, impl core::ops::function::FnMut(&laddu_expr::parameters::Parameter) -> f64) -> alloc::vec::Vec<f64>
 pub fn laddu_expr::parameters::ParamLayout::id(&self, &str) -> core::option::Option<laddu_expr::parameters::ParamId>
@@ -168,6 +191,7 @@ pub fn laddu_expr::parameters::ParamLayout::sample_initial(&self, u64) -> alloc:
 pub fn laddu_expr::parameters::ParamLayout::spec(&self, laddu_expr::parameters::ParamId) -> laddu_expr::ParamResult<&laddu_expr::parameters::Parameter>
 pub fn laddu_expr::parameters::ParamLayout::specs(&self) -> &[laddu_expr::parameters::Parameter]
 pub fn laddu_expr::parameters::ParamLayout::validate_free_values(&self, &[f64]) -> laddu_expr::ParamResult<()>
+pub fn laddu_expr::parameters::ParamLayout::validate_free_values_classified(&self, &[f64]) -> core::result::Result<(), laddu_expr::parameters::FreeValueValidationError>
 pub fn laddu_expr::parameters::ParamLayout::values(&self, &[f64]) -> laddu_expr::ParamResult<laddu_expr::parameters::ParamValues>
 pub fn laddu_expr::parameters::ParamLayout::wrap_periodic_free_values(&self, &[f64]) -> laddu_expr::ParamResult<alloc::vec::Vec<f64>>
 impl core::clone::Clone for laddu_expr::parameters::ParamLayout

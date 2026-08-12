@@ -4,6 +4,7 @@ pub use crate::{ParamError, ParamResult};
 use fastrand::Rng;
 use fastrand_contrib::RngExt;
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
 
 /// Stable identifier for a parameter in a [`ParamLayout`].
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -51,6 +52,42 @@ pub enum ParamState {
     Free,
     /// The parameter is fixed at the contained value.
     Fixed(f64),
+}
+
+/// Classified failure from validating a free-parameter value vector.
+///
+/// This separates structural input errors from invalid numeric input and
+/// values that are finite but outside the parameter support.
+#[derive(Clone, Debug, Error, PartialEq)]
+pub enum FreeValueValidationError {
+    /// The value vector did not match the layout's free-parameter dimension.
+    #[error("expected {expected} free parameters, got {actual}")]
+    DimensionMismatch {
+        /// Required number of values.
+        expected: usize,
+        /// Supplied number of values.
+        actual: usize,
+    },
+    /// A free parameter was assigned a non-finite value.
+    #[error("non-finite value {value} for free parameter {name} ({id:?})")]
+    NonFiniteValue {
+        /// Identifier in free-parameter order.
+        id: FreeParamId,
+        /// Parameter name.
+        name: String,
+        /// Invalid value.
+        value: f64,
+    },
+    /// A finite free-parameter value was outside its declared support.
+    #[error("value {value} for free parameter {name} ({id:?}) is outside its support")]
+    OutsideSupport {
+        /// Identifier in free-parameter order.
+        id: FreeParamId,
+        /// Parameter name.
+        name: String,
+        /// Unsupported value.
+        value: f64,
+    },
 }
 
 /// Optional inclusive lower and upper bounds for a parameter.
@@ -293,6 +330,141 @@ impl Parameter {
     pub fn description_text(&self) -> Option<&str> {
         self.description.as_deref()
     }
+
+    fn validate(&self) -> ParamResult<()> {
+        if self.name().is_empty() {
+            return Err(ParamError::EmptyName);
+        }
+        self.bounds.validate(self.name())?;
+        if self.periodic && self.periodic_bounds().is_none() {
+            return Err(ParamError::PeriodicRequiresFiniteBounds {
+                name: self.name().to_owned(),
+            });
+        }
+        if let Some(scale) = self.scale
+            && (!scale.is_finite() || scale <= 0.0)
+        {
+            return Err(ParamError::InvalidScale {
+                name: self.name().to_owned(),
+                scale,
+            });
+        }
+        self.validate_initial()
+    }
+
+    fn validate_initial(&self) -> ParamResult<()> {
+        match self.state {
+            ParamState::Fixed(value) => {
+                if !self.bounds.contains(value) {
+                    return Err(ParamError::FixedValueOutOfBounds {
+                        name: self.name().to_owned(),
+                        value,
+                    });
+                }
+                self.validate_periodic_value(value)
+            }
+            ParamState::Free => self.validate_free_initial(),
+        }
+    }
+
+    fn validate_free_initial(&self) -> ParamResult<()> {
+        match self.initial {
+            InitialSpec::Default | InitialSpec::Value(_) => {
+                let value = self.initial.representative_value();
+                if !self.bounds.contains(value) {
+                    return Err(ParamError::InitialOutOfBounds {
+                        name: self.name().to_owned(),
+                        value,
+                    });
+                }
+                self.validate_periodic_value(value)
+            }
+            InitialSpec::Uniform { min, max } => {
+                if min > max {
+                    return Err(ParamError::InvalidInitialRange {
+                        name: self.name().to_owned(),
+                        min,
+                        max,
+                    });
+                }
+                if !self.bounds.contains(min) || !self.bounds.contains(max) {
+                    return Err(ParamError::InitialRangeOutOfBounds {
+                        name: self.name().to_owned(),
+                        min,
+                        max,
+                    });
+                }
+                if let Some((domain_min, domain_max)) = self.periodic_bounds()
+                    && (min < domain_min || max > domain_max)
+                {
+                    let value = if min < domain_min { min } else { max };
+                    return Err(ParamError::ValueOutsidePeriodicDomain {
+                        name: self.name().to_owned(),
+                        value,
+                        min: domain_min,
+                        max: domain_max,
+                    });
+                }
+                Ok(())
+            }
+        }
+    }
+
+    fn default_value(&self) -> f64 {
+        match self.state {
+            ParamState::Fixed(value) => value,
+            ParamState::Free => self.initial.representative_value(),
+        }
+    }
+
+    fn validate_periodic_value(&self, value: f64) -> ParamResult<()> {
+        if let Some((min, max)) = self.periodic_bounds()
+            && !(value.is_finite() && value >= min && value < max)
+        {
+            return Err(ParamError::ValueOutsidePeriodicDomain {
+                name: self.name().to_owned(),
+                value,
+                min,
+                max,
+            });
+        }
+        Ok(())
+    }
+
+    fn validate_value(&self, value: f64) -> ParamResult<()> {
+        if !self.bounds.contains(value) {
+            return Err(ParamError::ValueOutOfBounds {
+                name: self.name().to_owned(),
+                value,
+            });
+        }
+        self.validate_periodic_value(value)
+    }
+
+    fn contains_in_support(&self, value: f64) -> bool {
+        self.bounds.contains(value)
+            && self
+                .periodic_bounds()
+                .is_none_or(|(min, max)| value >= min && value < max)
+    }
+}
+
+impl InitialSpec {
+    fn representative_value(&self) -> f64 {
+        match *self {
+            Self::Default => 0.0,
+            Self::Value(value) => value,
+            Self::Uniform { min, max } => 0.5 * (min + max),
+        }
+    }
+
+    fn sample_with(&self, rng: &mut Rng) -> f64 {
+        match *self {
+            Self::Default => 0.0,
+            Self::Value(value) => value,
+            Self::Uniform { min, max } => rng.f64_range(min..max),
+        }
+    }
 }
 
 impl From<f64> for InitialSpec {
@@ -317,6 +489,55 @@ pub struct ParamLayout {
     defaults: Arc<[f64]>,
 }
 
+struct LayoutBuilder {
+    specs: Vec<Parameter>,
+    names: HashMap<Arc<str>, ParamId>,
+    free_params: Vec<ParamId>,
+    full_to_free: Vec<Option<FreeParamId>>,
+    defaults: Vec<f64>,
+}
+
+impl LayoutBuilder {
+    fn with_capacity(capacity: usize) -> Self {
+        Self {
+            specs: Vec::with_capacity(capacity),
+            names: HashMap::with_capacity(capacity),
+            free_params: Vec::new(),
+            full_to_free: Vec::with_capacity(capacity),
+            defaults: Vec::with_capacity(capacity),
+        }
+    }
+
+    fn push_validated(&mut self, spec: Parameter) -> ParamResult<()> {
+        spec.validate()?;
+        let id = ParamId(self.specs.len() as u32);
+        if self.names.insert(Arc::clone(&spec.name), id).is_some() {
+            return Err(ParamError::DuplicateName(spec.name().to_owned()));
+        }
+        self.defaults.push(spec.default_value());
+        match spec.state {
+            ParamState::Free => {
+                let free_id = FreeParamId(self.free_params.len() as u32);
+                self.free_params.push(id);
+                self.full_to_free.push(Some(free_id));
+            }
+            ParamState::Fixed(_) => self.full_to_free.push(None),
+        }
+        self.specs.push(spec);
+        Ok(())
+    }
+
+    fn finish(self) -> ParamLayout {
+        ParamLayout {
+            specs: self.specs.into(),
+            names: Arc::new(self.names),
+            free_params: self.free_params.into(),
+            full_to_free: self.full_to_free.into(),
+            defaults: self.defaults.into(),
+        }
+    }
+}
+
 impl ParamLayout {
     /// Validates parameter definitions and constructs a layout.
     ///
@@ -330,57 +551,11 @@ impl ParamLayout {
         S: Into<Parameter>,
     {
         let specs: Vec<_> = specs.into_iter().map(Into::into).collect();
-        let mut names = HashMap::with_capacity(specs.len());
-        let mut free_params = Vec::new();
-        let mut full_to_free = Vec::with_capacity(specs.len());
-        let mut defaults = Vec::with_capacity(specs.len());
-
-        for (index, spec) in specs.iter().enumerate() {
-            if spec.name().is_empty() {
-                return Err(ParamError::EmptyName);
-            }
-            spec.bounds.validate(spec.name())?;
-            if spec.periodic
-                && !matches!(
-                    (spec.bounds.min, spec.bounds.max),
-                    (Some(min), Some(max)) if min.is_finite() && max.is_finite() && min < max
-                )
-            {
-                return Err(ParamError::PeriodicRequiresFiniteBounds {
-                    name: spec.name().to_owned(),
-                });
-            }
-            if let Some(scale) = spec.scale
-                && (!scale.is_finite() || scale <= 0.0)
-            {
-                return Err(ParamError::InvalidScale {
-                    name: spec.name().to_owned(),
-                    scale,
-                });
-            }
-            validate_initial(spec)?;
-            let id = ParamId(index as u32);
-            if names.insert(Arc::clone(&spec.name), id).is_some() {
-                return Err(ParamError::DuplicateName(spec.name().to_owned()));
-            }
-            defaults.push(default_value(spec));
-            match spec.state {
-                ParamState::Free => {
-                    let free_id = FreeParamId(free_params.len() as u32);
-                    free_params.push(id);
-                    full_to_free.push(Some(free_id));
-                }
-                ParamState::Fixed(_) => full_to_free.push(None),
-            }
+        let mut builder = LayoutBuilder::with_capacity(specs.len());
+        for spec in specs {
+            builder.push_validated(spec)?;
         }
-
-        Ok(Self {
-            specs: specs.into(),
-            names: Arc::new(names),
-            free_params: free_params.into(),
-            full_to_free: full_to_free.into(),
-            defaults: defaults.into(),
-        })
+        Ok(builder.finish())
     }
 
     /// Returns all parameter definitions in full-layout order.
@@ -453,6 +628,13 @@ impl ParamLayout {
         &self.free_params
     }
 
+    /// Iterates parameter definitions in stable free-parameter order.
+    pub fn free_parameters(
+        &self,
+    ) -> impl ExactSizeIterator<Item = &Parameter> + DoubleEndedIterator {
+        self.free_params.iter().map(|id| &self.specs[id.index()])
+    }
+
     /// Creates a full value set using fixed and deterministic initial values.
     pub fn default_values(&self) -> ParamValues {
         ParamValues {
@@ -488,20 +670,13 @@ impl ParamLayout {
 
     /// Generate one value per free parameter in layout order.
     pub fn free_values_with(&self, mut value: impl FnMut(&Parameter) -> f64) -> Vec<f64> {
-        self.free_params
-            .iter()
-            .map(|id| value(&self.specs[id.index()]))
-            .collect()
+        self.free_parameters().map(&mut value).collect()
     }
 
     /// Generate initial free values, invoking `uniform` only for uniform initial ranges.
     pub fn sample_initial(&self, seed: u64) -> Vec<f64> {
         let mut rng = Rng::with_seed(seed);
-        self.free_values_with(|parameter| match parameter.initial {
-            InitialSpec::Default => 0.0,
-            InitialSpec::Value(value) => value,
-            InitialSpec::Uniform { min, max } => rng.f64_range(min..max),
-        })
+        self.free_values_with(|parameter| parameter.initial.sample_with(&mut rng))
     }
 
     /// Validate free values against ordinary bounds and canonical periodic domains.
@@ -518,8 +693,49 @@ impl ParamLayout {
                 actual: free.len(),
             });
         }
-        for (value, id) in free.iter().zip(self.free_params.iter()) {
-            validate_value(&self.specs[id.index()], *value)?;
+        for (value, parameter) in free.iter().zip(self.free_parameters()) {
+            parameter.validate_value(*value)?;
+        }
+        Ok(())
+    }
+
+    /// Validate free values while classifying structural, numeric, and support failures.
+    ///
+    /// Unlike [`Self::validate_free_values`], this method treats every non-finite
+    /// value as invalid input, including for an otherwise unbounded parameter.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FreeValueValidationError::DimensionMismatch`] for the wrong
+    /// number of values, [`FreeValueValidationError::NonFiniteValue`] for NaN
+    /// or infinity, and [`FreeValueValidationError::OutsideSupport`] for a
+    /// finite value outside ordinary bounds or a canonical periodic domain.
+    pub fn validate_free_values_classified(
+        &self,
+        free: &[f64],
+    ) -> Result<(), FreeValueValidationError> {
+        if free.len() != self.n_free() {
+            return Err(FreeValueValidationError::DimensionMismatch {
+                expected: self.n_free(),
+                actual: free.len(),
+            });
+        }
+        for (index, (value, parameter)) in free.iter().zip(self.free_parameters()).enumerate() {
+            let id = FreeParamId(index as u32);
+            if !value.is_finite() {
+                return Err(FreeValueValidationError::NonFiniteValue {
+                    id,
+                    name: parameter.name().to_owned(),
+                    value: *value,
+                });
+            }
+            if !parameter.contains_in_support(*value) {
+                return Err(FreeValueValidationError::OutsideSupport {
+                    id,
+                    name: parameter.name().to_owned(),
+                    value: *value,
+                });
+            }
         }
         Ok(())
     }
@@ -709,113 +925,6 @@ impl ParamValues {
     }
 }
 
-fn default_value(spec: &Parameter) -> f64 {
-    match spec.state {
-        ParamState::Fixed(value) => value,
-        ParamState::Free => match spec.initial {
-            InitialSpec::Default => 0.0,
-            InitialSpec::Value(value) => value,
-            InitialSpec::Uniform { min, max } => 0.5 * (min + max),
-        },
-    }
-}
-
-fn validate_initial(spec: &Parameter) -> ParamResult<()> {
-    match spec.state {
-        ParamState::Fixed(value) => {
-            if !spec.bounds.contains(value) {
-                return Err(ParamError::FixedValueOutOfBounds {
-                    name: spec.name().to_owned(),
-                    value,
-                });
-            }
-            validate_periodic_value(spec, value)?;
-        }
-        ParamState::Free => match spec.initial {
-            InitialSpec::Default => {
-                if !spec.bounds.contains(0.0) {
-                    return Err(ParamError::InitialOutOfBounds {
-                        name: spec.name().to_owned(),
-                        value: 0.0,
-                    });
-                }
-                validate_periodic_value(spec, 0.0)?;
-            }
-            InitialSpec::Value(value) => {
-                if !spec.bounds.contains(value) {
-                    return Err(ParamError::InitialOutOfBounds {
-                        name: spec.name().to_owned(),
-                        value,
-                    });
-                }
-                validate_periodic_value(spec, value)?;
-            }
-            InitialSpec::Uniform { min, max } => {
-                if min > max {
-                    return Err(ParamError::InvalidInitialRange {
-                        name: spec.name().to_owned(),
-                        min,
-                        max,
-                    });
-                }
-                if !spec.bounds.contains(min) || !spec.bounds.contains(max) {
-                    return Err(ParamError::InitialRangeOutOfBounds {
-                        name: spec.name().to_owned(),
-                        min,
-                        max,
-                    });
-                }
-                if let Some((domain_min, domain_max)) = spec.periodic_bounds()
-                    && (min < domain_min || max > domain_max)
-                {
-                    let value = if min < domain_min { min } else { max };
-                    return Err(ParamError::ValueOutsidePeriodicDomain {
-                        name: spec.name().to_owned(),
-                        value,
-                        min: domain_min,
-                        max: domain_max,
-                    });
-                }
-            }
-        },
-    }
-    Ok(())
-}
-
-fn validate_periodic_value(spec: &Parameter, value: f64) -> ParamResult<()> {
-    if let Some((min, max)) = spec.periodic_bounds()
-        && !(value.is_finite() && value >= min && value < max)
-    {
-        return Err(ParamError::ValueOutsidePeriodicDomain {
-            name: spec.name().to_owned(),
-            value,
-            min,
-            max,
-        });
-    }
-    Ok(())
-}
-
-fn validate_value(spec: &Parameter, value: f64) -> ParamResult<()> {
-    if !spec.bounds.contains(value) {
-        return Err(ParamError::ValueOutOfBounds {
-            name: spec.name().to_owned(),
-            value,
-        });
-    }
-    if let Some((min, max)) = spec.periodic_bounds()
-        && !(value.is_finite() && value >= min && value < max)
-    {
-        return Err(ParamError::ValueOutsidePeriodicDomain {
-            name: spec.name().to_owned(),
-            value,
-            min,
-            max,
-        });
-    }
-    Ok(())
-}
-
 /// Convenience macro for creating parameters. Usage:
 /// `parameter!("name")` for a free parameter, or `parameter!("name", 1.0)` for a fixed one.
 #[macro_export]
@@ -960,6 +1069,72 @@ mod tests {
             layout.free_values_with(|parameter| parameter.name().len() as f64),
             vec![7.0, 5.0, 7.0]
         );
+        assert_eq!(
+            layout
+                .free_parameters()
+                .map(Parameter::name)
+                .collect::<Vec<_>>(),
+            vec!["uniform", "value", "default"]
+        );
+    }
+
+    #[test]
+    fn deterministic_and_sampled_initial_values_share_initial_spec_semantics() {
+        let layout = ParamLayout::new([
+            Parameter::free("default"),
+            Parameter::free("value").with_initial(2.5),
+            Parameter::free("uniform").with_initial((-4.0, 6.0)),
+        ])
+        .unwrap();
+
+        assert_eq!(layout.initial_free_values(), vec![0.0, 2.5, 1.0]);
+        for seed in 0..32 {
+            let sampled = layout.sample_initial(seed);
+            assert_eq!(sampled[0], 0.0);
+            assert_eq!(sampled[1], 2.5);
+            assert!((-4.0..6.0).contains(&sampled[2]));
+        }
+    }
+
+    #[test]
+    fn classified_free_value_validation_separates_failure_kinds() {
+        let layout = ParamLayout::new([
+            Parameter::free("bounded").with_bounds(-1.0, 1.0),
+            Parameter::free("phase")
+                .with_bounds(0.0, std::f64::consts::TAU)
+                .with_periodic(),
+        ])
+        .unwrap();
+
+        assert_eq!(
+            layout.validate_free_values_classified(&[0.0]),
+            Err(FreeValueValidationError::DimensionMismatch {
+                expected: 2,
+                actual: 1,
+            })
+        );
+        assert!(matches!(
+            layout.validate_free_values_classified(&[f64::NAN, 0.0]),
+            Err(FreeValueValidationError::NonFiniteValue { id, name, value })
+                if id.index() == 0 && name == "bounded" && value.is_nan()
+        ));
+        assert_eq!(
+            layout.validate_free_values_classified(&[2.0, 0.0]),
+            Err(FreeValueValidationError::OutsideSupport {
+                id: FreeParamId(0),
+                name: "bounded".into(),
+                value: 2.0,
+            })
+        );
+        assert_eq!(
+            layout.validate_free_values_classified(&[0.0, std::f64::consts::TAU]),
+            Err(FreeValueValidationError::OutsideSupport {
+                id: FreeParamId(1),
+                name: "phase".into(),
+                value: std::f64::consts::TAU,
+            })
+        );
+        assert!(layout.validate_free_values_classified(&[1.0, 0.0]).is_ok());
     }
 
     #[test]
@@ -1113,6 +1288,31 @@ mod tests {
                 value: 3.0
             }
         );
+    }
+
+    #[test]
+    fn direct_and_registry_layouts_report_the_same_invalid_spec_errors() {
+        let invalid = [
+            Parameter::fixed("fixed", 2.0).with_bounds(0.0, 1.0),
+            Parameter::free("default").with_bounds(1.0, 2.0),
+            Parameter::free("value")
+                .with_initial(2.0)
+                .with_bounds(0.0, 1.0),
+            Parameter::free("range")
+                .with_initial((-1.0, 0.5))
+                .with_bounds(0.0, 1.0),
+            Parameter::free("periodic-value")
+                .with_initial(std::f64::consts::TAU)
+                .with_bounds(0.0, std::f64::consts::TAU)
+                .with_periodic(),
+        ];
+
+        for parameter in invalid {
+            let direct = ParamLayout::new([parameter.clone()]).unwrap_err();
+            let mut registry = ParamRegistry::new();
+            registry.register(parameter).unwrap();
+            assert_eq!(registry.layout().unwrap_err(), direct);
+        }
     }
 
     #[test]
