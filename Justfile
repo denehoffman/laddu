@@ -65,6 +65,20 @@ wheels: sync-python
     uv build --wheel --config-setting maturin.build-args=--generate-stubs python/laddu-local
     uv build --wheel --config-setting maturin.build-args=--generate-stubs python/laddu-mpi
 
+# Build, install, and verify the primary, local, and MPI distribution artifacts.
+test-python-artifacts: wheels
+    #!/usr/bin/env zsh
+    set -euo pipefail
+    contract_venv="$(mktemp -d)"
+    trap 'rm -rf "$contract_venv"' EXIT
+    uv venv "$contract_venv"
+    uv pip install --python "$contract_venv/bin/python" python/laddu/dist/*.whl python/laddu-local/dist/*.whl
+    "$contract_venv/bin/python" python/tests/installed_artifact_contract.py --module laddu --backend local --distribution laddu
+    "$contract_venv/bin/python" python/tests/installed_artifact_contract.py --module _laddu_local --backend local --distribution laddu-local
+    uv pip install --python "$contract_venv/bin/python" python/laddu-mpi/dist/*.whl
+    "$contract_venv/bin/python" python/tests/installed_artifact_contract.py --module _laddu_mpi --backend mpi --distribution laddu-mpi
+    "$contract_venv/bin/python" python/tests/installed_artifact_contract.py --module laddu --backend mpi --distribution laddu
+
 # Install the Sphinx documentation dependencies in the development environment.
 docs-install: sync-python
     uv pip install --python "{{python_venv}}/bin/python" -r docs/requirements.txt

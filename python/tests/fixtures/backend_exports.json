@@ -1,0 +1,10 @@
+{
+  "amplitudes": ["breit_wigner", "f_vector", "k_matrix"],
+  "data": ["Dataset", "ParquetSource", "RootSource"],
+  "expressions": ["Expr", "complex", "matrix", "parameter", "solve"],
+  "fit": ["ganesh"],
+  "generation": ["Generator", "MassProposal", "VertexProposal"],
+  "likelihood": ["ExtendedNLL", "Likelihood", "NLL"],
+  "physics": ["Channel", "Particle", "Vec3", "Vec4"],
+  "runtime": ["Execution", "MemoryBudget", "MemoryState", "backend", "capabilities"]
+}
