@@ -113,3 +113,7 @@ required-features = ["generation", "fit"]
 [[test]]
 name = "generation_fit"
 required-features = ["generation", "fit"]
+
+[[test]]
+name = "backend_policy_matrix"
+required-features = ["likelihood"]
