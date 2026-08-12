@@ -1,5 +1,6 @@
 use laddu_expr::{
-    BinaryOp, ExprGraph, ExprId, ExprMetadata, ExprNode, ExprSourceKind, UnaryOp, ValueKind,
+    BinaryOp, ExprGraph, ExprGraphRebuilder, ExprId, ExprMetadata, ExprNode, ExprSourceKind,
+    UnaryOp, ValueKind,
 };
 use num::complex::Complex64;
 
@@ -112,23 +113,13 @@ impl NormalizationPlan {
             return Self::general(graph, NormalizationFallbackReason::NonScalarIntensity);
         }
 
-        let mut analyzer = Analyzer::new(graph, facts, DEFAULT_EXPANSION_BUDGET);
-        let mut terms = Vec::new();
-        let mut residuals = Vec::new();
-        for root in analyzer.additive_roots(graph.root()) {
-            match analyzer.decompose(root) {
-                Ok(mut extracted) => terms.append(&mut extracted),
-                Err(reason) => {
-                    analyzer.last_reason = Some(reason);
-                    residuals.push(root);
-                }
-            }
-        }
+        let decomposition = NormalizationAnalyzer::new(graph, facts, DEFAULT_EXPANSION_BUDGET)
+            .analyze(graph.root());
 
-        if terms.is_empty() {
+        if decomposition.terms.is_empty() {
             return Self::general(
                 graph,
-                analyzer.last_reason.unwrap_or(
+                decomposition.last_failure().cloned().unwrap_or(
                     NormalizationFallbackReason::UnsupportedMixedOperation {
                         node: graph.root(),
                         operation: "root",
@@ -137,10 +128,14 @@ impl NormalizationPlan {
             );
         }
 
-        let residual = analyzer.sum_roots(&residuals);
+        let built = decomposition
+            .build(graph)
+            .expect("normalization decomposition emits a valid graph");
+        let terms = built.terms;
+        let residual = built.residual;
         let strategy = if residual.is_some() {
             NormalizationStrategy::Hybrid
-        } else if analyzer.coherent_groups > 0 {
+        } else if built.coherent_groups > 0 {
             NormalizationStrategy::Hermitian
         } else {
             NormalizationStrategy::LinearStatistics
@@ -148,12 +143,12 @@ impl NormalizationPlan {
         let diagnostics = NormalizationDiagnostics {
             strategy,
             basis_count: terms.len(),
-            coherent_group_count: analyzer.coherent_groups,
+            coherent_group_count: built.coherent_groups,
             has_residual: residual.is_some(),
-            fallback_reason: analyzer.last_reason.clone(),
+            fallback_reason: built.last_failure,
         };
         Self {
-            graph: analyzer.finish(),
+            graph: built.graph,
             terms,
             residual,
             diagnostics,
@@ -218,41 +213,16 @@ impl NormalizationPlan {
                 statistics.len()
             )));
         }
-        let mut nodes = self.graph.nodes().to_vec();
-        let mut metadata = graph_metadata(&self.graph);
+        let mut builder = NormalizationGraphBuilder::new(&self.graph);
         let mut products = Vec::with_capacity(self.terms.len());
         for (term, statistic) in self.terms.iter().zip(statistics) {
-            let constant = push_node(
-                &mut nodes,
-                &mut metadata,
-                ExprNode::from_folded_const(*statistic),
-                ExprSourceKind::Const,
-            );
-            products.push(push_node(
-                &mut nodes,
-                &mut metadata,
-                ExprNode::NaryMul {
-                    factors: vec![constant, term.coefficient],
-                },
-                ExprSourceKind::Binary,
-            ));
+            let constant = builder.constant(*statistic);
+            let coefficient = builder.source(term.coefficient);
+            products.push(builder.product(&[constant, coefficient]));
         }
-        let sum = push_node(
-            &mut nodes,
-            &mut metadata,
-            ExprNode::NaryAdd { terms: products },
-            ExprSourceKind::Binary,
-        );
-        let root = push_node(
-            &mut nodes,
-            &mut metadata,
-            ExprNode::Unary {
-                op: UnaryOp::Real,
-                input: sum,
-            },
-            ExprSourceKind::Unary,
-        );
-        let graph = ExprGraph::from_parts(root, nodes, metadata)?;
+        let sum = builder.sum(&products);
+        let root = builder.unary(UnaryOp::Real, sum);
+        let graph = builder.finish(root)?;
         CompiledModel::from_graph_without_normalization(compact_to_root(&graph, root)?)
     }
 
@@ -312,58 +282,192 @@ fn proves_nonnegative(graph: &ExprGraph, facts: &GraphFacts, id: ExprId) -> bool
     }
 }
 
-struct Analyzer<'a> {
-    facts: &'a GraphFacts,
-    nodes: Vec<ExprNode>,
-    metadata: Vec<ExprMetadata>,
-    one: ExprId,
-    budget: usize,
-    coherent_groups: usize,
-    last_reason: Option<NormalizationFallbackReason>,
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+enum DecompositionNode {
+    Source(ExprId),
+    Generated(usize),
 }
 
-impl<'a> Analyzer<'a> {
-    fn new(graph: &ExprGraph, facts: &'a GraphFacts, budget: usize) -> Self {
-        let mut nodes = graph.nodes().to_vec();
-        let mut metadata = graph_metadata(graph);
-        let one = push_node(
-            &mut nodes,
-            &mut metadata,
-            ExprNode::RealConst(1.0),
-            ExprSourceKind::Const,
-        );
-        Self {
-            facts,
-            nodes,
-            metadata,
-            one,
-            budget,
-            coherent_groups: 0,
-            last_reason: None,
+#[derive(Clone, Debug)]
+enum GraphOperation {
+    Constant(Complex64),
+    Unary {
+        op: UnaryOp,
+        input: DecompositionNode,
+    },
+    Binary {
+        op: BinaryOp,
+        lhs: DecompositionNode,
+        rhs: DecompositionNode,
+    },
+    Product(Vec<DecompositionNode>),
+    Sum(Vec<DecompositionNode>),
+}
+
+#[derive(Clone, Debug)]
+struct AnalyzedTerm {
+    coefficient: DecompositionNode,
+    basis: DecompositionNode,
+}
+
+#[derive(Clone, Debug)]
+struct Decomposition {
+    operations: Vec<GraphOperation>,
+    terms: Vec<AnalyzedTerm>,
+    residual: Option<DecompositionNode>,
+    coherent_groups: usize,
+    failures: Vec<NormalizationFallbackReason>,
+}
+
+impl Decomposition {
+    fn last_failure(&self) -> Option<&NormalizationFallbackReason> {
+        self.failures.last()
+    }
+
+    fn build(self, graph: &ExprGraph) -> CompileResult<BuiltDecomposition> {
+        let mut builder = NormalizationGraphBuilder::new(graph);
+        let mut generated = Vec::with_capacity(self.operations.len());
+        for operation in self.operations {
+            let resolve = |node: DecompositionNode| match node {
+                DecompositionNode::Source(id) => builder.source(id),
+                DecompositionNode::Generated(index) => generated[index],
+            };
+            let id = match operation {
+                GraphOperation::Constant(value) => builder.constant(value),
+                GraphOperation::Unary { op, input } => {
+                    let input = resolve(input);
+                    builder.unary(op, input)
+                }
+                GraphOperation::Binary { op, lhs, rhs } => {
+                    let lhs = resolve(lhs);
+                    let rhs = resolve(rhs);
+                    builder.binary(op, lhs, rhs)
+                }
+                GraphOperation::Product(factors) => {
+                    let factors = factors.into_iter().map(resolve).collect::<Vec<_>>();
+                    builder.product(&factors)
+                }
+                GraphOperation::Sum(terms) => {
+                    let terms = terms.into_iter().map(resolve).collect::<Vec<_>>();
+                    builder.sum(&terms)
+                }
+            };
+            generated.push(id);
+        }
+        let resolve = |node: DecompositionNode| match node {
+            DecompositionNode::Source(id) => builder.source(id),
+            DecompositionNode::Generated(index) => generated[index],
+        };
+        let terms = self
+            .terms
+            .into_iter()
+            .map(|term| SeparableTerm {
+                coefficient: resolve(term.coefficient),
+                basis: resolve(term.basis),
+            })
+            .collect();
+        let residual = self.residual.map(resolve);
+        let root = builder.source(ExprId::from_index(0));
+        Ok(BuiltDecomposition {
+            graph: builder.finish(root)?,
+            terms,
+            residual,
+            coherent_groups: self.coherent_groups,
+            last_failure: self.failures.last().cloned(),
+        })
+    }
+}
+
+struct BuiltDecomposition {
+    graph: ExprGraph,
+    terms: Vec<SeparableTerm>,
+    residual: Option<ExprId>,
+    coherent_groups: usize,
+    last_failure: Option<NormalizationFallbackReason>,
+}
+
+#[derive(Copy, Clone, Debug)]
+struct ExpansionBudget(usize);
+
+impl ExpansionBudget {
+    fn ensure(self, count: usize) -> Result<(), NormalizationFallbackReason> {
+        if count <= self.0 {
+            Ok(())
+        } else {
+            Err(self.exceeded())
         }
     }
 
-    fn finish(&self) -> ExprGraph {
-        ExprGraph::from_parts(
-            ExprId::from_index(0),
-            self.nodes.clone(),
-            self.metadata.clone(),
-        )
-        .expect("augmented normalization graph is valid")
+    fn product_count(self, lhs: usize, rhs: usize) -> Result<usize, NormalizationFallbackReason> {
+        let count = lhs.checked_mul(rhs).ok_or_else(|| self.exceeded())?;
+        self.ensure(count)?;
+        Ok(count)
+    }
+
+    fn packed_triangle_count(self, count: usize) -> Result<usize, NormalizationFallbackReason> {
+        let next = count.checked_add(1).ok_or_else(|| self.exceeded())?;
+        let packed = count.checked_mul(next).ok_or_else(|| self.exceeded())? / 2;
+        self.ensure(packed)?;
+        Ok(packed)
+    }
+
+    fn exceeded(self) -> NormalizationFallbackReason {
+        NormalizationFallbackReason::ExpansionBudgetExceeded { budget: self.0 }
+    }
+}
+
+struct NormalizationAnalyzer<'a> {
+    graph: &'a ExprGraph,
+    facts: &'a GraphFacts,
+    operations: Vec<GraphOperation>,
+    one: DecompositionNode,
+    budget: ExpansionBudget,
+    coherent_groups: usize,
+}
+
+impl<'a> NormalizationAnalyzer<'a> {
+    fn new(graph: &'a ExprGraph, facts: &'a GraphFacts, budget: usize) -> Self {
+        let mut analyzer = Self {
+            graph,
+            facts,
+            operations: Vec::new(),
+            one: DecompositionNode::Source(graph.root()),
+            budget: ExpansionBudget(budget),
+            coherent_groups: 0,
+        };
+        analyzer.one = analyzer.constant(Complex64::new(1.0, 0.0));
+        analyzer
+    }
+
+    fn analyze(mut self, root: ExprId) -> Decomposition {
+        let mut terms = Vec::new();
+        let mut residuals = Vec::new();
+        let mut failures = Vec::new();
+        for root in self.additive_roots(root) {
+            match self.decompose(root) {
+                Ok(mut extracted) => terms.append(&mut extracted),
+                Err(reason) => {
+                    failures.push(reason);
+                    residuals.push(DecompositionNode::Source(root));
+                }
+            }
+        }
+        let residual = self.sum(&residuals);
+        Decomposition {
+            operations: self.operations,
+            terms,
+            residual,
+            coherent_groups: self.coherent_groups,
+            failures,
+        }
     }
 
     fn dependency(&self, id: ExprId) -> crate::DependencyFacts {
-        if id.index() < self.facts.nodes().len() {
-            return self.facts.get(id).expect("facts are complete").dependency;
-        }
-        self.nodes[id.index()].children().fold(
-            crate::DependencyFacts::per_compile(),
-            |dependency, child| dependency.union(self.dependency(child)),
-        )
+        self.facts.get(id).expect("facts are complete").dependency
     }
 
     fn additive_roots(&self, root: ExprId) -> Vec<ExprId> {
-        match &self.nodes[root.index()] {
+        match self.graph.node(root).expect("normalization node exists") {
             ExprNode::NaryAdd { terms } => terms.clone(),
             ExprNode::Binary {
                 op: BinaryOp::Add,
@@ -378,22 +482,27 @@ impl<'a> Analyzer<'a> {
         }
     }
 
-    fn decompose(&mut self, id: ExprId) -> Result<Vec<SeparableTerm>, NormalizationFallbackReason> {
+    fn decompose(&mut self, id: ExprId) -> Result<Vec<AnalyzedTerm>, NormalizationFallbackReason> {
         let dependency = self.dependency(id);
         if !dependency.depends_on_event {
-            return Ok(vec![SeparableTerm {
-                coefficient: id,
+            return Ok(vec![AnalyzedTerm {
+                coefficient: DecompositionNode::Source(id),
                 basis: self.one,
             }]);
         }
         if !dependency.depends_on_free_params {
-            return Ok(vec![SeparableTerm {
+            return Ok(vec![AnalyzedTerm {
                 coefficient: self.one,
-                basis: id,
+                basis: DecompositionNode::Source(id),
             }]);
         }
 
-        match self.nodes[id.index()].clone() {
+        match self
+            .graph
+            .node(id)
+            .expect("normalization node exists")
+            .clone()
+        {
             ExprNode::Binary { op, lhs, rhs } => self.decompose_binary(id, op, lhs, rhs),
             ExprNode::NaryAdd { terms } => {
                 let mut result = Vec::new();
@@ -404,7 +513,7 @@ impl<'a> Analyzer<'a> {
                 Ok(result)
             }
             ExprNode::NaryMul { factors } => {
-                let mut result = vec![SeparableTerm {
+                let mut result = vec![AnalyzedTerm {
                     coefficient: self.one,
                     basis: self.one,
                 }];
@@ -425,7 +534,7 @@ impl<'a> Analyzer<'a> {
         op: BinaryOp,
         lhs: ExprId,
         rhs: ExprId,
-    ) -> Result<Vec<SeparableTerm>, NormalizationFallbackReason> {
+    ) -> Result<Vec<AnalyzedTerm>, NormalizationFallbackReason> {
         match op {
             BinaryOp::Add => {
                 let mut terms = self.decompose(lhs)?;
@@ -452,12 +561,17 @@ impl<'a> Analyzer<'a> {
                 let mut terms = self.decompose(lhs)?;
                 if !denominator.depends_on_event {
                     for term in &mut terms {
-                        term.coefficient = self.binary(BinaryOp::Div, term.coefficient, rhs);
+                        term.coefficient = self.binary(
+                            BinaryOp::Div,
+                            term.coefficient,
+                            DecompositionNode::Source(rhs),
+                        );
                     }
                     Ok(terms)
                 } else if !denominator.depends_on_free_params {
                     for term in &mut terms {
-                        term.basis = self.binary(BinaryOp::Div, term.basis, rhs);
+                        term.basis =
+                            self.binary(BinaryOp::Div, term.basis, DecompositionNode::Source(rhs));
                     }
                     Ok(terms)
                 } else {
@@ -473,7 +587,7 @@ impl<'a> Analyzer<'a> {
         id: ExprId,
         op: UnaryOp,
         input: ExprId,
-    ) -> Result<Vec<SeparableTerm>, NormalizationFallbackReason> {
+    ) -> Result<Vec<AnalyzedTerm>, NormalizationFallbackReason> {
         match op {
             UnaryOp::Neg => {
                 let mut terms = self.decompose(input)?;
@@ -493,12 +607,7 @@ impl<'a> Analyzer<'a> {
             UnaryOp::NormSqr => {
                 self.coherent_groups += 1;
                 let terms = self.decompose(input)?;
-                let packed_len = terms.len().saturating_mul(terms.len().saturating_add(1)) / 2;
-                if packed_len > self.budget {
-                    return Err(NormalizationFallbackReason::ExpansionBudgetExceeded {
-                        budget: self.budget,
-                    });
-                }
+                let packed_len = self.budget.packed_triangle_count(terms.len())?;
                 let two = self.constant(Complex64::new(2.0, 0.0));
                 let mut packed = Vec::with_capacity(packed_len);
                 for (row, left) in terms.iter().enumerate() {
@@ -509,7 +618,7 @@ impl<'a> Analyzer<'a> {
                         if column != row {
                             coefficient = self.product(&[two, coefficient]);
                         }
-                        packed.push(SeparableTerm {
+                        packed.push(AnalyzedTerm {
                             coefficient,
                             basis: self.product(&[left.basis, right_basis]),
                         });
@@ -519,7 +628,7 @@ impl<'a> Analyzer<'a> {
             }
             UnaryOp::PowI(power) if power >= 0 => {
                 let base = self.decompose(input)?;
-                let mut result = vec![SeparableTerm {
+                let mut result = vec![AnalyzedTerm {
                     coefficient: self.one,
                     basis: self.one,
                 }];
@@ -542,7 +651,7 @@ impl<'a> Analyzer<'a> {
         &mut self,
         op: UnaryOp,
         input: ExprId,
-    ) -> Result<Vec<SeparableTerm>, NormalizationFallbackReason> {
+    ) -> Result<Vec<AnalyzedTerm>, NormalizationFallbackReason> {
         let terms = self.decompose(input)?;
         let mut result = Vec::with_capacity(terms.len() * 2);
         let factor = if op == UnaryOp::Real {
@@ -555,14 +664,14 @@ impl<'a> Analyzer<'a> {
         let conjugate_factor = self.constant(conjugate_factor);
         for term in terms {
             let coefficient = self.product(&[factor, term.coefficient]);
-            result.push(SeparableTerm {
+            result.push(AnalyzedTerm {
                 coefficient,
                 basis: term.basis,
             });
             let conjugated_coefficient = self.unary(UnaryOp::Conj, term.coefficient);
             let conjugated_basis = self.unary(UnaryOp::Conj, term.basis);
             let coefficient = self.product(&[conjugate_factor, conjugated_coefficient]);
-            result.push(SeparableTerm {
+            result.push(AnalyzedTerm {
                 coefficient,
                 basis: conjugated_basis,
             });
@@ -573,57 +682,118 @@ impl<'a> Analyzer<'a> {
 
     fn multiply_terms(
         &mut self,
-        lhs: &[SeparableTerm],
-        rhs: &[SeparableTerm],
-    ) -> Result<Vec<SeparableTerm>, NormalizationFallbackReason> {
-        let count = lhs.len().saturating_mul(rhs.len());
-        if count > self.budget {
-            return Err(NormalizationFallbackReason::ExpansionBudgetExceeded {
-                budget: self.budget,
-            });
-        }
+        lhs: &[AnalyzedTerm],
+        rhs: &[AnalyzedTerm],
+    ) -> Result<Vec<AnalyzedTerm>, NormalizationFallbackReason> {
+        let count = self.budget.product_count(lhs.len(), rhs.len())?;
         let mut result = Vec::with_capacity(count);
         for lhs in lhs {
             for rhs in rhs {
                 let coefficient = self.product(&[lhs.coefficient, rhs.coefficient]);
                 let basis = self.product(&[lhs.basis, rhs.basis]);
-                result.push(SeparableTerm { coefficient, basis });
+                result.push(AnalyzedTerm { coefficient, basis });
             }
         }
         Ok(result)
     }
 
-    fn ensure_budget(&self, terms: &[SeparableTerm]) -> Result<(), NormalizationFallbackReason> {
-        if terms.len() > self.budget {
-            Err(NormalizationFallbackReason::ExpansionBudgetExceeded {
-                budget: self.budget,
-            })
-        } else {
-            Ok(())
-        }
+    fn ensure_budget(&self, terms: &[AnalyzedTerm]) -> Result<(), NormalizationFallbackReason> {
+        self.budget.ensure(terms.len())
     }
 
     fn unsupported(&self, node: ExprId, operation: &'static str) -> NormalizationFallbackReason {
         NormalizationFallbackReason::UnsupportedMixedOperation { node, operation }
     }
 
+    fn constant(&mut self, value: Complex64) -> DecompositionNode {
+        self.push(GraphOperation::Constant(value))
+    }
+
+    fn unary(&mut self, op: UnaryOp, input: DecompositionNode) -> DecompositionNode {
+        self.push(GraphOperation::Unary { op, input })
+    }
+
+    fn binary(
+        &mut self,
+        op: BinaryOp,
+        lhs: DecompositionNode,
+        rhs: DecompositionNode,
+    ) -> DecompositionNode {
+        self.push(GraphOperation::Binary { op, lhs, rhs })
+    }
+
+    fn product(&mut self, factors: &[DecompositionNode]) -> DecompositionNode {
+        match factors {
+            [] => self.one,
+            [only] => *only,
+            _ => self.push(GraphOperation::Product(factors.to_vec())),
+        }
+    }
+
+    fn sum(&mut self, roots: &[DecompositionNode]) -> Option<DecompositionNode> {
+        match roots {
+            [] => None,
+            [only] => Some(*only),
+            _ => Some(self.push(GraphOperation::Sum(roots.to_vec()))),
+        }
+    }
+
+    fn push(&mut self, operation: GraphOperation) -> DecompositionNode {
+        let id = DecompositionNode::Generated(self.operations.len());
+        self.operations.push(operation);
+        id
+    }
+}
+
+struct NormalizationGraphBuilder {
+    rebuild: ExprGraphRebuilder<ExprId>,
+}
+
+impl NormalizationGraphBuilder {
+    fn new(graph: &ExprGraph) -> Self {
+        let mut rebuild = ExprGraphRebuilder::with_capacity(graph.nodes().len());
+        for index in 0..graph.nodes().len() {
+            let old_id = ExprId::from_index(index);
+            let node = graph
+                .node(old_id)
+                .expect("normalization graph node exists")
+                .map_children(|child| {
+                    rebuild
+                        .remapped(&child)
+                        .expect("validated expression graphs emit children before parents")
+                });
+            let metadata = graph
+                .metadata(old_id)
+                .expect("normalization graph metadata is complete")
+                .clone();
+            rebuild.emit(old_id, node, metadata);
+        }
+        Self { rebuild }
+    }
+
+    fn source(&self, id: ExprId) -> ExprId {
+        self.rebuild
+            .remapped(&id)
+            .expect("normalization source node was copied")
+    }
+
     fn constant(&mut self, value: Complex64) -> ExprId {
-        self.push(ExprNode::from_folded_const(value), ExprSourceKind::Const)
+        self.emit(ExprNode::from_folded_const(value), ExprSourceKind::Const)
     }
 
     fn unary(&mut self, op: UnaryOp, input: ExprId) -> ExprId {
-        self.push(ExprNode::Unary { op, input }, ExprSourceKind::Unary)
+        self.emit(ExprNode::Unary { op, input }, ExprSourceKind::Unary)
     }
 
     fn binary(&mut self, op: BinaryOp, lhs: ExprId, rhs: ExprId) -> ExprId {
-        self.push(ExprNode::Binary { op, lhs, rhs }, ExprSourceKind::Binary)
+        self.emit(ExprNode::Binary { op, lhs, rhs }, ExprSourceKind::Binary)
     }
 
     fn product(&mut self, factors: &[ExprId]) -> ExprId {
         match factors {
-            [] => self.one,
+            [] => self.constant(Complex64::new(1.0, 0.0)),
             [only] => *only,
-            _ => self.push(
+            _ => self.emit(
                 ExprNode::NaryMul {
                     factors: factors.to_vec(),
                 },
@@ -632,45 +802,26 @@ impl<'a> Analyzer<'a> {
         }
     }
 
-    fn sum_roots(&mut self, roots: &[ExprId]) -> Option<ExprId> {
-        match roots {
-            [] => None,
-            [only] => Some(*only),
-            _ => Some(self.push(
+    fn sum(&mut self, terms: &[ExprId]) -> ExprId {
+        match terms {
+            [] => self.constant(Complex64::new(0.0, 0.0)),
+            [only] => *only,
+            _ => self.emit(
                 ExprNode::NaryAdd {
-                    terms: roots.to_vec(),
+                    terms: terms.to_vec(),
                 },
                 ExprSourceKind::Binary,
-            )),
+            ),
         }
     }
 
-    fn push(&mut self, node: ExprNode, source: ExprSourceKind) -> ExprId {
-        push_node(&mut self.nodes, &mut self.metadata, node, source)
+    fn emit(&mut self, node: ExprNode, source: ExprSourceKind) -> ExprId {
+        self.rebuild.emit_anonymous(node, ExprMetadata::new(source))
     }
-}
 
-fn graph_metadata(graph: &ExprGraph) -> Vec<ExprMetadata> {
-    (0..graph.nodes().len())
-        .map(|index| {
-            graph
-                .metadata(ExprId::from_index(index))
-                .expect("normalization graph metadata is complete")
-                .clone()
-        })
-        .collect()
-}
-
-fn push_node(
-    nodes: &mut Vec<ExprNode>,
-    metadata: &mut Vec<ExprMetadata>,
-    node: ExprNode,
-    source: ExprSourceKind,
-) -> ExprId {
-    let id = ExprId::from_index(nodes.len());
-    nodes.push(node);
-    metadata.push(ExprMetadata::new(source));
-    id
+    fn finish(self, root: ExprId) -> CompileResult<ExprGraph> {
+        Ok(self.rebuild.finish(root)?)
+    }
 }
 
 #[cfg(test)]
@@ -684,6 +835,12 @@ mod tests {
             .unwrap()
             .normalization_diagnostics()
             .clone()
+    }
+
+    fn decomposition(expression: &Expr, budget: usize) -> Decomposition {
+        let graph = expression.to_graph();
+        let facts = GraphFacts::analyze(&graph);
+        NormalizationAnalyzer::new(&graph, &facts, budget).analyze(graph.root())
     }
 
     #[test]
@@ -711,5 +868,102 @@ mod tests {
         let diagnostics = diagnostics(&expression);
         assert_eq!(diagnostics.strategy(), NormalizationStrategy::Hybrid);
         assert!(diagnostics.has_residual());
+    }
+
+    #[test]
+    fn classifies_binary_operations_before_building_a_graph() {
+        let parameter = Expr::from(parameter!("scale"));
+        let event = event_scalar("x");
+        let mixed = parameter.clone() * event.clone();
+        let cases = [
+            ("add", parameter.clone() + event.clone(), 2, false),
+            ("sub", parameter.clone() - event.clone(), 2, false),
+            ("mul", mixed.clone() * mixed.clone(), 1, false),
+            (
+                "parameter divisor",
+                mixed.clone() / parameter.clone(),
+                1,
+                false,
+            ),
+            ("event divisor", mixed.clone() / event.clone(), 1, false),
+            (
+                "mixed divisor",
+                mixed.clone() / (parameter + event),
+                0,
+                true,
+            ),
+        ];
+
+        for (name, expression, expected_terms, has_failure) in cases {
+            let decomposition = decomposition(&expression, DEFAULT_EXPANSION_BUDGET);
+            assert_eq!(decomposition.terms.len(), expected_terms, "{name}");
+            assert_eq!(!decomposition.failures.is_empty(), has_failure, "{name}");
+        }
+    }
+
+    #[test]
+    fn classifies_unary_operations_before_building_a_graph() {
+        let mixed = Expr::from(parameter!("scale")) * event_scalar("x");
+        let cases = [
+            ("neg", -mixed.clone(), 1, 0),
+            ("conj", mixed.clone().conj(), 1, 0),
+            ("norm_sqr", mixed.clone().norm_sqr(), 1, 1),
+            ("powi", mixed.clone().powi(2), 1, 0),
+            ("real", mixed.clone().real(), 2, 0),
+            ("imag", mixed.clone().imag(), 2, 0),
+            ("sin", mixed.sin(), 0, 0),
+        ];
+
+        for (name, expression, expected_terms, coherent_groups) in cases {
+            let decomposition = decomposition(&expression, DEFAULT_EXPANSION_BUDGET);
+            assert_eq!(decomposition.terms.len(), expected_terms, "{name}");
+            assert_eq!(decomposition.coherent_groups, coherent_groups, "{name}");
+            assert_eq!(
+                decomposition.failures.is_empty(),
+                expected_terms > 0,
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
+    fn expansion_budget_checks_exact_boundaries_and_overflow() {
+        let budget = ExpansionBudget(6);
+        assert_eq!(budget.product_count(2, 3).unwrap(), 6);
+        assert_eq!(budget.packed_triangle_count(3).unwrap(), 6);
+        assert_eq!(budget.ensure(6), Ok(()));
+
+        for result in [
+            budget.product_count(2, 4),
+            budget.packed_triangle_count(4),
+            budget.product_count(usize::MAX, 2),
+            budget.packed_triangle_count(usize::MAX),
+        ] {
+            assert_eq!(
+                result,
+                Err(NormalizationFallbackReason::ExpansionBudgetExceeded { budget: 6 })
+            );
+        }
+    }
+
+    #[test]
+    fn fallback_diagnostics_preserve_the_last_unsupported_root() {
+        let mixed = Expr::from(parameter!("scale")) * event_scalar("x");
+        let expression = mixed.clone().sin() + mixed.cos();
+        let graph = expression.to_graph();
+        let facts = GraphFacts::analyze(&graph);
+        let roots = NormalizationAnalyzer::new(&graph, &facts, DEFAULT_EXPANSION_BUDGET)
+            .additive_roots(graph.root());
+        let decomposition = NormalizationAnalyzer::new(&graph, &facts, DEFAULT_EXPANSION_BUDGET)
+            .analyze(graph.root());
+
+        assert_eq!(decomposition.failures.len(), 2);
+        assert_eq!(
+            decomposition.last_failure(),
+            Some(&NormalizationFallbackReason::UnsupportedMixedOperation {
+                node: roots[1],
+                operation: "nonlinear unary operation",
+            })
+        );
     }
 }
