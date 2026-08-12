@@ -14,6 +14,9 @@ pub mod parquet;
 /// ROOT event sources.
 pub mod root;
 
+#[cfg(test)]
+mod contract_tests;
+
 #[cfg(feature = "mpi")]
 /// Distribution of event I/O across MPI ranks.
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
