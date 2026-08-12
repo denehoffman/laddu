@@ -1,0 +1,67 @@
+pub mod laddu_fit
+pub use laddu_fit::ganesh
+pub enum laddu_fit::FitError
+pub laddu_fit::FitError::Likelihood(laddu_likelihood::error::LikelihoodError)
+pub laddu_fit::FitError::Optimizer(ganesh::error::GaneshError)
+pub laddu_fit::FitError::ScalarConversion
+impl core::convert::From<ganesh::error::GaneshError> for laddu_fit::FitError
+pub fn laddu_fit::FitError::from(ganesh::error::GaneshError) -> Self
+impl core::convert::From<laddu_likelihood::error::LikelihoodError> for laddu_fit::FitError
+pub fn laddu_fit::FitError::from(laddu_likelihood::error::LikelihoodError) -> Self
+impl core::error::Error for laddu_fit::FitError
+pub fn laddu_fit::FitError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
+impl core::fmt::Debug for laddu_fit::FitError
+pub fn laddu_fit::FitError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for laddu_fit::FitError
+pub fn laddu_fit::FitError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<O, T, B> ganesh::traits::numeric_problem::ScalarCostFunction<T, B, (), laddu_fit::FitError> for laddu_fit::FitProblem<'_, O, T, B> where O: laddu_likelihood::likelihood::Objective + ?core::marker::Sized, T: ganesh::core::scalar::RealScalar, B: ganesh::core::linalg::LinearAlgebra<T>
+pub fn laddu_fit::FitProblem<'_, O, T, B>::evaluate(&self, &ganesh::core::linalg::Vector<T, B>, &()) -> laddu_fit::FitResult<T>
+impl<O, T, B> ganesh::traits::numeric_problem::ScalarCostFunction<T, B, (), laddu_fit::FitError> for laddu_fit::StochasticFitProblem<'_, O, T, B> where O: laddu_likelihood::likelihood::StochasticObjective + ?core::marker::Sized, T: ganesh::core::scalar::RealScalar, B: ganesh::core::linalg::LinearAlgebra<T>
+pub fn laddu_fit::StochasticFitProblem<'_, O, T, B>::evaluate(&self, &ganesh::core::linalg::Vector<T, B>, &()) -> laddu_fit::FitResult<T>
+impl<O, T, B> ganesh::traits::numeric_problem::ScalarGradient<T, B, (), laddu_fit::FitError> for laddu_fit::FitProblem<'_, O, T, B> where O: laddu_likelihood::likelihood::Objective + ?core::marker::Sized, T: ganesh::core::scalar::RealScalar, B: ganesh::core::linalg::LinearAlgebra<T>
+pub fn laddu_fit::FitProblem<'_, O, T, B>::evaluate_with_gradient(&self, &ganesh::core::linalg::Vector<T, B>, &()) -> laddu_fit::FitResult<(T, ganesh::core::linalg::Vector<T, B>)>
+pub fn laddu_fit::FitProblem<'_, O, T, B>::gradient(&self, &ganesh::core::linalg::Vector<T, B>, &()) -> laddu_fit::FitResult<ganesh::core::linalg::Vector<T, B>>
+impl<O, T, B> ganesh::traits::numeric_problem::ScalarGradient<T, B, (), laddu_fit::FitError> for laddu_fit::StochasticFitProblem<'_, O, T, B> where O: laddu_likelihood::likelihood::StochasticObjective + ?core::marker::Sized, T: ganesh::core::scalar::RealScalar, B: ganesh::core::linalg::LinearAlgebra<T>
+pub fn laddu_fit::StochasticFitProblem<'_, O, T, B>::evaluate_with_gradient(&self, &ganesh::core::linalg::Vector<T, B>, &()) -> laddu_fit::FitResult<(T, ganesh::core::linalg::Vector<T, B>)>
+pub fn laddu_fit::StochasticFitProblem<'_, O, T, B>::gradient(&self, &ganesh::core::linalg::Vector<T, B>, &()) -> laddu_fit::FitResult<ganesh::core::linalg::Vector<T, B>>
+impl<O, T, B> ganesh::traits::numeric_problem::ScalarLogDensity<T, B, (), laddu_fit::FitError> for laddu_fit::FitProblem<'_, O, T, B> where O: laddu_likelihood::likelihood::Objective + ?core::marker::Sized, T: ganesh::core::scalar::RealScalar, B: ganesh::core::linalg::LinearAlgebra<T>
+pub fn laddu_fit::FitProblem<'_, O, T, B>::log_density(&self, &ganesh::core::linalg::Vector<T, B>, &()) -> laddu_fit::FitResult<T>
+pub struct laddu_fit::FitProblem<'a, O: ?core::marker::Sized, T, B>
+impl<'a, O: laddu_likelihood::likelihood::Objective + ?core::marker::Sized, T, B> laddu_fit::FitProblem<'a, O, T, B>
+pub fn laddu_fit::FitProblem<'a, O, T, B>::minimizer_transform(&self) -> laddu_fit::FitResult<alloc::boxed::Box<dyn ganesh::traits::transform::Transform<T, B>>> where T: ganesh::core::scalar::RealScalar, B: ganesh::core::linalg::LinearAlgebra<T>
+pub fn laddu_fit::FitProblem<'a, O, T, B>::native_bounds(&self) -> alloc::vec::Vec<(T, T)> where T: ganesh::core::scalar::RealScalar, B: ganesh::core::linalg::LinearAlgebra<T>
+pub fn laddu_fit::FitProblem<'a, O, T, B>::native_transform(&self) -> laddu_fit::FitResult<alloc::boxed::Box<dyn ganesh::traits::transform::Transform<T, B>>> where T: ganesh::core::scalar::RealScalar, B: ganesh::core::linalg::LinearAlgebra<T>
+pub const fn laddu_fit::FitProblem<'a, O, T, B>::new(&'a O) -> Self
+pub const fn laddu_fit::FitProblem<'a, O, T, B>::objective(&self) -> &'a O
+pub fn laddu_fit::FitProblem<'a, O, T, B>::parameter_names(&self) -> alloc::vec::Vec<alloc::string::String>
+pub fn laddu_fit::FitProblem<'a, O, T, B>::sampler_transform(&self) -> laddu_fit::FitResult<alloc::boxed::Box<dyn ganesh::traits::transform::Transform<T, B>>> where T: ganesh::core::scalar::RealScalar, B: ganesh::core::linalg::LinearAlgebra<T>
+pub fn laddu_fit::FitProblem<'a, O, T, B>::vector(&self, &[f64]) -> ganesh::core::linalg::Vector<T, B> where T: ganesh::core::scalar::RealScalar, B: ganesh::core::linalg::LinearAlgebra<T>
+impl<'a, O: core::clone::Clone + ?core::marker::Sized, T: core::clone::Clone, B: core::clone::Clone> core::clone::Clone for laddu_fit::FitProblem<'a, O, T, B>
+pub fn laddu_fit::FitProblem<'a, O, T, B>::clone(&self) -> laddu_fit::FitProblem<'a, O, T, B>
+impl<'a, O: core::fmt::Debug + ?core::marker::Sized, T: core::fmt::Debug, B: core::fmt::Debug> core::fmt::Debug for laddu_fit::FitProblem<'a, O, T, B>
+pub fn laddu_fit::FitProblem<'a, O, T, B>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'a, O: core::marker::Copy + ?core::marker::Sized, T: core::marker::Copy, B: core::marker::Copy> core::marker::Copy for laddu_fit::FitProblem<'a, O, T, B>
+impl<O, T, B> ganesh::traits::numeric_problem::ScalarCostFunction<T, B, (), laddu_fit::FitError> for laddu_fit::FitProblem<'_, O, T, B> where O: laddu_likelihood::likelihood::Objective + ?core::marker::Sized, T: ganesh::core::scalar::RealScalar, B: ganesh::core::linalg::LinearAlgebra<T>
+pub fn laddu_fit::FitProblem<'_, O, T, B>::evaluate(&self, &ganesh::core::linalg::Vector<T, B>, &()) -> laddu_fit::FitResult<T>
+impl<O, T, B> ganesh::traits::numeric_problem::ScalarGradient<T, B, (), laddu_fit::FitError> for laddu_fit::FitProblem<'_, O, T, B> where O: laddu_likelihood::likelihood::Objective + ?core::marker::Sized, T: ganesh::core::scalar::RealScalar, B: ganesh::core::linalg::LinearAlgebra<T>
+pub fn laddu_fit::FitProblem<'_, O, T, B>::evaluate_with_gradient(&self, &ganesh::core::linalg::Vector<T, B>, &()) -> laddu_fit::FitResult<(T, ganesh::core::linalg::Vector<T, B>)>
+pub fn laddu_fit::FitProblem<'_, O, T, B>::gradient(&self, &ganesh::core::linalg::Vector<T, B>, &()) -> laddu_fit::FitResult<ganesh::core::linalg::Vector<T, B>>
+impl<O, T, B> ganesh::traits::numeric_problem::ScalarLogDensity<T, B, (), laddu_fit::FitError> for laddu_fit::FitProblem<'_, O, T, B> where O: laddu_likelihood::likelihood::Objective + ?core::marker::Sized, T: ganesh::core::scalar::RealScalar, B: ganesh::core::linalg::LinearAlgebra<T>
+pub fn laddu_fit::FitProblem<'_, O, T, B>::log_density(&self, &ganesh::core::linalg::Vector<T, B>, &()) -> laddu_fit::FitResult<T>
+pub struct laddu_fit::StochasticFitProblem<'a, O: ?core::marker::Sized, T, B>
+impl<'a, O: laddu_likelihood::likelihood::StochasticObjective + ?core::marker::Sized, T, B> laddu_fit::StochasticFitProblem<'a, O, T, B>
+pub fn laddu_fit::StochasticFitProblem<'a, O, T, B>::minimizer_transform(&self) -> laddu_fit::FitResult<alloc::boxed::Box<dyn ganesh::traits::transform::Transform<T, B>>> where T: ganesh::core::scalar::RealScalar, B: ganesh::core::linalg::LinearAlgebra<T>
+pub fn laddu_fit::StochasticFitProblem<'a, O, T, B>::native_bounds(&self) -> alloc::vec::Vec<(T, T)> where T: ganesh::core::scalar::RealScalar, B: ganesh::core::linalg::LinearAlgebra<T>
+pub fn laddu_fit::StochasticFitProblem<'a, O, T, B>::native_transform(&self) -> laddu_fit::FitResult<alloc::boxed::Box<dyn ganesh::traits::transform::Transform<T, B>>> where T: ganesh::core::scalar::RealScalar, B: ganesh::core::linalg::LinearAlgebra<T>
+pub fn laddu_fit::StochasticFitProblem<'a, O, T, B>::new(&'a O, f64, u64) -> laddu_fit::FitResult<Self>
+pub const fn laddu_fit::StochasticFitProblem<'a, O, T, B>::objective(&self) -> &'a O
+pub fn laddu_fit::StochasticFitProblem<'a, O, T, B>::parameter_names(&self) -> alloc::vec::Vec<alloc::string::String>
+pub fn laddu_fit::StochasticFitProblem<'a, O, T, B>::vector(&self, &[f64]) -> ganesh::core::linalg::Vector<T, B> where T: ganesh::core::scalar::RealScalar, B: ganesh::core::linalg::LinearAlgebra<T>
+impl<'a, O: core::fmt::Debug + ?core::marker::Sized, T: core::fmt::Debug, B: core::fmt::Debug> core::fmt::Debug for laddu_fit::StochasticFitProblem<'a, O, T, B>
+pub fn laddu_fit::StochasticFitProblem<'a, O, T, B>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<O, T, B> ganesh::traits::numeric_problem::ScalarCostFunction<T, B, (), laddu_fit::FitError> for laddu_fit::StochasticFitProblem<'_, O, T, B> where O: laddu_likelihood::likelihood::StochasticObjective + ?core::marker::Sized, T: ganesh::core::scalar::RealScalar, B: ganesh::core::linalg::LinearAlgebra<T>
+pub fn laddu_fit::StochasticFitProblem<'_, O, T, B>::evaluate(&self, &ganesh::core::linalg::Vector<T, B>, &()) -> laddu_fit::FitResult<T>
+impl<O, T, B> ganesh::traits::numeric_problem::ScalarGradient<T, B, (), laddu_fit::FitError> for laddu_fit::StochasticFitProblem<'_, O, T, B> where O: laddu_likelihood::likelihood::StochasticObjective + ?core::marker::Sized, T: ganesh::core::scalar::RealScalar, B: ganesh::core::linalg::LinearAlgebra<T>
+pub fn laddu_fit::StochasticFitProblem<'_, O, T, B>::evaluate_with_gradient(&self, &ganesh::core::linalg::Vector<T, B>, &()) -> laddu_fit::FitResult<(T, ganesh::core::linalg::Vector<T, B>)>
+pub fn laddu_fit::StochasticFitProblem<'_, O, T, B>::gradient(&self, &ganesh::core::linalg::Vector<T, B>, &()) -> laddu_fit::FitResult<ganesh::core::linalg::Vector<T, B>>
+pub type laddu_fit::FitResult<T> = core::result::Result<T, laddu_fit::FitError>

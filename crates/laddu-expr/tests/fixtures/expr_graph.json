@@ -1,0 +1,29 @@
+{
+  "root": 4,
+  "nodes": [
+    {
+      "ScalarParam": {
+        "name": "mass",
+        "state": "Free",
+        "initial": { "Value": 1.25 },
+        "bounds": { "min": null, "max": null },
+        "periodic": false,
+        "scale": null,
+        "unit": null,
+        "latex": null,
+        "description": null
+      }
+    },
+    { "RealConst": 2.0 },
+    { "Binary": { "op": "Add", "lhs": 0, "rhs": 1 } },
+    { "EventScalar": "weight" },
+    { "Binary": { "op": "Mul", "lhs": 2, "rhs": 3 } }
+  ],
+  "metadata": [
+    { "source": "Param", "name": null, "tags": [] },
+    { "source": "Const", "name": null, "tags": [] },
+    { "source": "Binary", "name": "offset", "tags": [] },
+    { "source": "Event", "name": null, "tags": ["data"] },
+    { "source": "Binary", "name": null, "tags": ["model"] }
+  ]
+}

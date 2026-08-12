@@ -1,0 +1,166 @@
+pub mod laddu_amplitudes
+pub enum laddu_amplitudes::AmplitudeError
+pub laddu_amplitudes::AmplitudeError::ExpressionShape(laddu_expr::error::ExprShapeError)
+pub laddu_amplitudes::AmplitudeError::InvalidShape(alloc::string::String)
+pub laddu_amplitudes::AmplitudeError::Physics(laddu_physics::error::LadduPhysicsError)
+impl core::clone::Clone for laddu_amplitudes::AmplitudeError
+pub fn laddu_amplitudes::AmplitudeError::clone(&self) -> laddu_amplitudes::AmplitudeError
+impl core::convert::From<laddu_expr::error::ExprShapeError> for laddu_amplitudes::AmplitudeError
+pub fn laddu_amplitudes::AmplitudeError::from(laddu_expr::error::ExprShapeError) -> Self
+impl core::convert::From<laddu_physics::error::LadduPhysicsError> for laddu_amplitudes::AmplitudeError
+pub fn laddu_amplitudes::AmplitudeError::from(laddu_physics::error::LadduPhysicsError) -> Self
+impl core::error::Error for laddu_amplitudes::AmplitudeError
+pub fn laddu_amplitudes::AmplitudeError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
+impl core::fmt::Debug for laddu_amplitudes::AmplitudeError
+pub fn laddu_amplitudes::AmplitudeError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for laddu_amplitudes::AmplitudeError
+pub fn laddu_amplitudes::AmplitudeError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub enum laddu_amplitudes::KopfA0Channel
+pub laddu_amplitudes::KopfA0Channel::KKbar
+pub laddu_amplitudes::KopfA0Channel::PiEta
+impl laddu_amplitudes::KopfA0Channel
+pub const fn laddu_amplitudes::KopfA0Channel::index(self) -> usize
+impl core::clone::Clone for laddu_amplitudes::KopfA0Channel
+pub fn laddu_amplitudes::KopfA0Channel::clone(&self) -> laddu_amplitudes::KopfA0Channel
+impl core::cmp::Eq for laddu_amplitudes::KopfA0Channel
+impl core::cmp::PartialEq for laddu_amplitudes::KopfA0Channel
+pub fn laddu_amplitudes::KopfA0Channel::eq(&self, &laddu_amplitudes::KopfA0Channel) -> bool
+impl core::convert::From<laddu_amplitudes::KopfA0Channel> for usize
+pub fn usize::from(laddu_amplitudes::KopfA0Channel) -> Self
+impl core::fmt::Debug for laddu_amplitudes::KopfA0Channel
+pub fn laddu_amplitudes::KopfA0Channel::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for laddu_amplitudes::KopfA0Channel
+pub fn laddu_amplitudes::KopfA0Channel::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for laddu_amplitudes::KopfA0Channel
+impl core::marker::StructuralPartialEq for laddu_amplitudes::KopfA0Channel
+impl laddu_expr::expression::ComponentIndex for laddu_amplitudes::KopfA0Channel
+pub fn laddu_amplitudes::KopfA0Channel::component_index(self) -> usize
+pub enum laddu_amplitudes::KopfA2Channel
+pub laddu_amplitudes::KopfA2Channel::KKbar
+pub laddu_amplitudes::KopfA2Channel::PiEta
+pub laddu_amplitudes::KopfA2Channel::PiEtaPrime
+impl laddu_amplitudes::KopfA2Channel
+pub const fn laddu_amplitudes::KopfA2Channel::index(self) -> usize
+impl core::clone::Clone for laddu_amplitudes::KopfA2Channel
+pub fn laddu_amplitudes::KopfA2Channel::clone(&self) -> laddu_amplitudes::KopfA2Channel
+impl core::cmp::Eq for laddu_amplitudes::KopfA2Channel
+impl core::cmp::PartialEq for laddu_amplitudes::KopfA2Channel
+pub fn laddu_amplitudes::KopfA2Channel::eq(&self, &laddu_amplitudes::KopfA2Channel) -> bool
+impl core::convert::From<laddu_amplitudes::KopfA2Channel> for usize
+pub fn usize::from(laddu_amplitudes::KopfA2Channel) -> Self
+impl core::fmt::Debug for laddu_amplitudes::KopfA2Channel
+pub fn laddu_amplitudes::KopfA2Channel::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for laddu_amplitudes::KopfA2Channel
+pub fn laddu_amplitudes::KopfA2Channel::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for laddu_amplitudes::KopfA2Channel
+impl core::marker::StructuralPartialEq for laddu_amplitudes::KopfA2Channel
+impl laddu_expr::expression::ComponentIndex for laddu_amplitudes::KopfA2Channel
+pub fn laddu_amplitudes::KopfA2Channel::component_index(self) -> usize
+pub enum laddu_amplitudes::KopfF0Channel
+pub laddu_amplitudes::KopfF0Channel::EtaEta
+pub laddu_amplitudes::KopfF0Channel::EtaEtaPrime
+pub laddu_amplitudes::KopfF0Channel::FourPi
+pub laddu_amplitudes::KopfF0Channel::KKbar
+pub laddu_amplitudes::KopfF0Channel::PiPi
+impl laddu_amplitudes::KopfF0Channel
+pub const fn laddu_amplitudes::KopfF0Channel::index(self) -> usize
+impl core::clone::Clone for laddu_amplitudes::KopfF0Channel
+pub fn laddu_amplitudes::KopfF0Channel::clone(&self) -> laddu_amplitudes::KopfF0Channel
+impl core::cmp::Eq for laddu_amplitudes::KopfF0Channel
+impl core::cmp::PartialEq for laddu_amplitudes::KopfF0Channel
+pub fn laddu_amplitudes::KopfF0Channel::eq(&self, &laddu_amplitudes::KopfF0Channel) -> bool
+impl core::convert::From<laddu_amplitudes::KopfF0Channel> for usize
+pub fn usize::from(laddu_amplitudes::KopfF0Channel) -> Self
+impl core::fmt::Debug for laddu_amplitudes::KopfF0Channel
+pub fn laddu_amplitudes::KopfF0Channel::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for laddu_amplitudes::KopfF0Channel
+pub fn laddu_amplitudes::KopfF0Channel::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for laddu_amplitudes::KopfF0Channel
+impl core::marker::StructuralPartialEq for laddu_amplitudes::KopfF0Channel
+impl laddu_expr::expression::ComponentIndex for laddu_amplitudes::KopfF0Channel
+pub fn laddu_amplitudes::KopfF0Channel::component_index(self) -> usize
+pub enum laddu_amplitudes::KopfF2Channel
+pub laddu_amplitudes::KopfF2Channel::EtaEta
+pub laddu_amplitudes::KopfF2Channel::FourPi
+pub laddu_amplitudes::KopfF2Channel::KKbar
+pub laddu_amplitudes::KopfF2Channel::PiPi
+impl laddu_amplitudes::KopfF2Channel
+pub const fn laddu_amplitudes::KopfF2Channel::index(self) -> usize
+impl core::clone::Clone for laddu_amplitudes::KopfF2Channel
+pub fn laddu_amplitudes::KopfF2Channel::clone(&self) -> laddu_amplitudes::KopfF2Channel
+impl core::cmp::Eq for laddu_amplitudes::KopfF2Channel
+impl core::cmp::PartialEq for laddu_amplitudes::KopfF2Channel
+pub fn laddu_amplitudes::KopfF2Channel::eq(&self, &laddu_amplitudes::KopfF2Channel) -> bool
+impl core::convert::From<laddu_amplitudes::KopfF2Channel> for usize
+pub fn usize::from(laddu_amplitudes::KopfF2Channel) -> Self
+impl core::fmt::Debug for laddu_amplitudes::KopfF2Channel
+pub fn laddu_amplitudes::KopfF2Channel::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for laddu_amplitudes::KopfF2Channel
+pub fn laddu_amplitudes::KopfF2Channel::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for laddu_amplitudes::KopfF2Channel
+impl core::marker::StructuralPartialEq for laddu_amplitudes::KopfF2Channel
+impl laddu_expr::expression::ComponentIndex for laddu_amplitudes::KopfF2Channel
+pub fn laddu_amplitudes::KopfF2Channel::component_index(self) -> usize
+pub enum laddu_amplitudes::KopfPi1Channel
+pub laddu_amplitudes::KopfPi1Channel::PiEta
+pub laddu_amplitudes::KopfPi1Channel::PiEtaPrime
+impl laddu_amplitudes::KopfPi1Channel
+pub const fn laddu_amplitudes::KopfPi1Channel::index(self) -> usize
+impl core::clone::Clone for laddu_amplitudes::KopfPi1Channel
+pub fn laddu_amplitudes::KopfPi1Channel::clone(&self) -> laddu_amplitudes::KopfPi1Channel
+impl core::cmp::Eq for laddu_amplitudes::KopfPi1Channel
+impl core::cmp::PartialEq for laddu_amplitudes::KopfPi1Channel
+pub fn laddu_amplitudes::KopfPi1Channel::eq(&self, &laddu_amplitudes::KopfPi1Channel) -> bool
+impl core::convert::From<laddu_amplitudes::KopfPi1Channel> for usize
+pub fn usize::from(laddu_amplitudes::KopfPi1Channel) -> Self
+impl core::fmt::Debug for laddu_amplitudes::KopfPi1Channel
+pub fn laddu_amplitudes::KopfPi1Channel::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for laddu_amplitudes::KopfPi1Channel
+pub fn laddu_amplitudes::KopfPi1Channel::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for laddu_amplitudes::KopfPi1Channel
+impl core::marker::StructuralPartialEq for laddu_amplitudes::KopfPi1Channel
+impl laddu_expr::expression::ComponentIndex for laddu_amplitudes::KopfPi1Channel
+pub fn laddu_amplitudes::KopfPi1Channel::component_index(self) -> usize
+pub enum laddu_amplitudes::KopfRhoChannel
+pub laddu_amplitudes::KopfRhoChannel::FourPi
+pub laddu_amplitudes::KopfRhoChannel::KKbar
+pub laddu_amplitudes::KopfRhoChannel::PiPi
+impl laddu_amplitudes::KopfRhoChannel
+pub const fn laddu_amplitudes::KopfRhoChannel::index(self) -> usize
+impl core::clone::Clone for laddu_amplitudes::KopfRhoChannel
+pub fn laddu_amplitudes::KopfRhoChannel::clone(&self) -> laddu_amplitudes::KopfRhoChannel
+impl core::cmp::Eq for laddu_amplitudes::KopfRhoChannel
+impl core::cmp::PartialEq for laddu_amplitudes::KopfRhoChannel
+pub fn laddu_amplitudes::KopfRhoChannel::eq(&self, &laddu_amplitudes::KopfRhoChannel) -> bool
+impl core::convert::From<laddu_amplitudes::KopfRhoChannel> for usize
+pub fn usize::from(laddu_amplitudes::KopfRhoChannel) -> Self
+impl core::fmt::Debug for laddu_amplitudes::KopfRhoChannel
+pub fn laddu_amplitudes::KopfRhoChannel::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for laddu_amplitudes::KopfRhoChannel
+pub fn laddu_amplitudes::KopfRhoChannel::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for laddu_amplitudes::KopfRhoChannel
+impl core::marker::StructuralPartialEq for laddu_amplitudes::KopfRhoChannel
+impl laddu_expr::expression::ComponentIndex for laddu_amplitudes::KopfRhoChannel
+pub fn laddu_amplitudes::KopfRhoChannel::component_index(self) -> usize
+pub fn laddu_amplitudes::blatt_weisskopf_barriers(impl core::convert::Into<laddu_expr::expression::Expr>, impl core::convert::Into<laddu_expr::expression::Expr>, impl core::convert::Into<laddu_expr::expression::Expr>, impl core::convert::Into<laddu_expr::expression::Expr>, impl core::convert::TryInto<laddu_physics::quantum::types::L>, f64) -> laddu_amplitudes::KMatrixResult<laddu_expr::expression::Expr>
+pub fn laddu_amplitudes::breit_wigner(impl core::convert::Into<laddu_expr::expression::Expr>, impl core::convert::Into<laddu_expr::expression::Expr>, impl core::convert::Into<laddu_expr::expression::Expr>) -> laddu_expr::expression::Expr
+pub fn laddu_amplitudes::f_vector(impl core::convert::Into<laddu_expr::expression::Expr>, impl core::convert::Into<laddu_expr::expression::Expr>, impl core::convert::Into<laddu_expr::expression::Expr>, impl core::convert::Into<laddu_expr::expression::Expr>, impl core::convert::Into<laddu_expr::expression::Expr>) -> laddu_amplitudes::KMatrixResult<laddu_expr::expression::Expr>
+pub fn laddu_amplitudes::k_matrix(impl core::convert::Into<laddu_expr::expression::Expr>, impl core::convert::Into<laddu_expr::expression::Expr>, impl core::convert::Into<laddu_expr::expression::Expr>, impl core::convert::Into<laddu_expr::expression::Expr>) -> laddu_amplitudes::KMatrixResult<laddu_expr::expression::Expr>
+pub fn laddu_amplitudes::k_matrix_with_background(impl core::convert::Into<laddu_expr::expression::Expr>, impl core::convert::Into<laddu_expr::expression::Expr>, impl core::convert::Into<laddu_expr::expression::Expr>, impl core::convert::Into<laddu_expr::expression::Expr>, impl core::convert::Into<laddu_expr::expression::Expr>) -> laddu_amplitudes::KMatrixResult<laddu_expr::expression::Expr>
+pub fn laddu_amplitudes::kopf_a0<E: core::convert::Into<laddu_expr::expression::Expr>>(impl core::convert::Into<laddu_expr::expression::Expr>, [E; 2]) -> laddu_amplitudes::KMatrixResult<laddu_expr::expression::Expr>
+pub fn laddu_amplitudes::kopf_a0_resampled<E: core::convert::Into<laddu_expr::expression::Expr>>(impl core::convert::Into<laddu_expr::expression::Expr>, [E; 2], u64) -> laddu_amplitudes::KMatrixResult<laddu_expr::expression::Expr>
+pub fn laddu_amplitudes::kopf_a2<E: core::convert::Into<laddu_expr::expression::Expr>>(impl core::convert::Into<laddu_expr::expression::Expr>, [E; 2]) -> laddu_amplitudes::KMatrixResult<laddu_expr::expression::Expr>
+pub fn laddu_amplitudes::kopf_a2_resampled<E: core::convert::Into<laddu_expr::expression::Expr>>(impl core::convert::Into<laddu_expr::expression::Expr>, [E; 2], u64) -> laddu_amplitudes::KMatrixResult<laddu_expr::expression::Expr>
+pub fn laddu_amplitudes::kopf_f0<E: core::convert::Into<laddu_expr::expression::Expr>>(impl core::convert::Into<laddu_expr::expression::Expr>, [E; 5]) -> laddu_amplitudes::KMatrixResult<laddu_expr::expression::Expr>
+pub fn laddu_amplitudes::kopf_f0_resampled<E: core::convert::Into<laddu_expr::expression::Expr>>(impl core::convert::Into<laddu_expr::expression::Expr>, [E; 5], u64) -> laddu_amplitudes::KMatrixResult<laddu_expr::expression::Expr>
+pub fn laddu_amplitudes::kopf_f2<E: core::convert::Into<laddu_expr::expression::Expr>>(impl core::convert::Into<laddu_expr::expression::Expr>, [E; 4]) -> laddu_amplitudes::KMatrixResult<laddu_expr::expression::Expr>
+pub fn laddu_amplitudes::kopf_f2_resampled<E: core::convert::Into<laddu_expr::expression::Expr>>(impl core::convert::Into<laddu_expr::expression::Expr>, [E; 4], u64) -> laddu_amplitudes::KMatrixResult<laddu_expr::expression::Expr>
+pub fn laddu_amplitudes::kopf_pi1<E: core::convert::Into<laddu_expr::expression::Expr>>(impl core::convert::Into<laddu_expr::expression::Expr>, [E; 1]) -> laddu_amplitudes::KMatrixResult<laddu_expr::expression::Expr>
+pub fn laddu_amplitudes::kopf_rho<E: core::convert::Into<laddu_expr::expression::Expr>>(impl core::convert::Into<laddu_expr::expression::Expr>, [E; 2]) -> laddu_amplitudes::KMatrixResult<laddu_expr::expression::Expr>
+pub fn laddu_amplitudes::p_vector(impl core::convert::Into<laddu_expr::expression::Expr>, impl core::convert::Into<laddu_expr::expression::Expr>, impl core::convert::Into<laddu_expr::expression::Expr>, impl core::convert::Into<laddu_expr::expression::Expr>, impl core::convert::Into<laddu_expr::expression::Expr>) -> laddu_amplitudes::KMatrixResult<laddu_expr::expression::Expr>
+pub fn laddu_amplitudes::p_vector_with_background(impl core::convert::Into<laddu_expr::expression::Expr>, impl core::convert::Into<laddu_expr::expression::Expr>, impl core::convert::Into<laddu_expr::expression::Expr>, impl core::convert::Into<laddu_expr::expression::Expr>, impl core::convert::Into<laddu_expr::expression::Expr>, impl core::convert::Into<laddu_expr::expression::Expr>) -> laddu_amplitudes::KMatrixResult<laddu_expr::expression::Expr>
+pub fn laddu_amplitudes::relativistic_breit_wigner(impl core::convert::Into<laddu_expr::expression::Expr>, impl core::convert::Into<laddu_expr::expression::Expr>, impl core::convert::Into<laddu_expr::expression::Expr>, impl core::convert::Into<laddu_expr::expression::Expr>, impl core::convert::Into<laddu_expr::expression::Expr>, impl core::convert::TryInto<laddu_physics::quantum::types::L>) -> laddu_physics::error::LadduPhysicsResult<laddu_expr::expression::Expr>
+pub fn laddu_amplitudes::relativistic_breit_wigner_custom(impl core::convert::Into<laddu_expr::expression::Expr>, impl core::convert::Into<laddu_expr::expression::Expr>, impl core::convert::Into<laddu_expr::expression::Expr>, impl core::convert::Into<laddu_expr::expression::Expr>, impl core::convert::Into<laddu_expr::expression::Expr>, impl core::convert::TryInto<laddu_physics::quantum::types::L>, bool, f64) -> laddu_physics::error::LadduPhysicsResult<laddu_expr::expression::Expr>
+pub type laddu_amplitudes::AmplitudeResult<T> = core::result::Result<T, laddu_amplitudes::AmplitudeError>
+pub type laddu_amplitudes::KMatrixError = laddu_amplitudes::AmplitudeError
+pub type laddu_amplitudes::KMatrixResult<T> = laddu_amplitudes::AmplitudeResult<T>

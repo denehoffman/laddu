@@ -311,9 +311,37 @@ coverage_workflow = Workflow(
     },
 )
 
+api_workflow = Workflow(
+    name='Rust API compatibility',
+    on=Events(pull_request=PullRequestEvent()),
+    jobs={
+        'api-compatibility': Job(
+            name='Public API and semver',
+            runs_on='ubuntu-latest',
+            steps=[
+                Checkout(fetch_depth=0),
+                SetupRust(toolchain='nightly-2026-07-21'),
+                SetupMPI(),
+                InstallRustTool(tool=['cargo-public-api@0.52.0', 'cargo-semver-checks@0.50.0']),
+                script('scripts/public-api.sh --check', name='Check public API snapshots'),
+                script(
+                    'cargo semver-checks --workspace '
+                    '--exclude laddu-python '
+                    '--exclude laddu-python-local '
+                    '--exclude laddu-python-mpi '
+                    '--baseline-rev "origin/${{ github.base_ref }}" '
+                    '--all-features',
+                    name='Check semantic version compatibility',
+                ),
+            ],
+        )
+    },
+)
+
 if __name__ == '__main__':
     sync(
         {
+            'api.yml': api_workflow,
             'benchmark.yml': benchmark_workflow,
             'coverage.yml': coverage_workflow,
             'python-release.yml': python_release_workflow,

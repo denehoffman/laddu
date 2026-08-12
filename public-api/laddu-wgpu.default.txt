@@ -1,0 +1,154 @@
+pub mod laddu_wgpu
+pub enum laddu_wgpu::WgpuDeviceSelector
+pub laddu_wgpu::WgpuDeviceSelector::Auto
+pub laddu_wgpu::WgpuDeviceSelector::Index(usize)
+pub laddu_wgpu::WgpuDeviceSelector::Name(alloc::string::String)
+pub laddu_wgpu::WgpuDeviceSelector::PciBusId(alloc::string::String)
+impl core::clone::Clone for laddu_wgpu::WgpuDeviceSelector
+pub fn laddu_wgpu::WgpuDeviceSelector::clone(&self) -> laddu_wgpu::WgpuDeviceSelector
+impl core::cmp::Eq for laddu_wgpu::WgpuDeviceSelector
+impl core::cmp::PartialEq for laddu_wgpu::WgpuDeviceSelector
+pub fn laddu_wgpu::WgpuDeviceSelector::eq(&self, &laddu_wgpu::WgpuDeviceSelector) -> bool
+impl core::default::Default for laddu_wgpu::WgpuDeviceSelector
+pub fn laddu_wgpu::WgpuDeviceSelector::default() -> laddu_wgpu::WgpuDeviceSelector
+impl core::fmt::Debug for laddu_wgpu::WgpuDeviceSelector
+pub fn laddu_wgpu::WgpuDeviceSelector::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for laddu_wgpu::WgpuDeviceSelector
+impl serde_core::ser::Serialize for laddu_wgpu::WgpuDeviceSelector
+pub fn laddu_wgpu::WgpuDeviceSelector::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for laddu_wgpu::WgpuDeviceSelector
+pub fn laddu_wgpu::WgpuDeviceSelector::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub enum laddu_wgpu::WgpuError
+pub laddu_wgpu::WgpuError::AdapterNotFound(laddu_wgpu::WgpuDeviceSelector)
+pub laddu_wgpu::WgpuError::BufferMap(alloc::string::String)
+pub laddu_wgpu::WgpuError::DevicePoll(alloc::string::String)
+pub laddu_wgpu::WgpuError::InvalidMemoryBudget
+pub laddu_wgpu::WgpuError::MemoryBudgetTooSmall
+pub laddu_wgpu::WgpuError::MemoryBudgetTooSmall::available: usize
+pub laddu_wgpu::WgpuError::MemoryBudgetTooSmall::required: usize
+pub laddu_wgpu::WgpuError::MissingEventColumn(alloc::string::String)
+pub laddu_wgpu::WgpuError::MissingScalarKernel
+pub laddu_wgpu::WgpuError::NoAdapters
+pub laddu_wgpu::WgpuError::NonPositiveEvent(usize)
+pub laddu_wgpu::WgpuError::Parameter(alloc::string::String)
+pub laddu_wgpu::WgpuError::RequestDevice(alloc::string::String)
+pub laddu_wgpu::WgpuError::SingularMatrixEvent(usize)
+pub laddu_wgpu::WgpuError::SolveDimensionTooLarge
+pub laddu_wgpu::WgpuError::SolveDimensionTooLarge::dimension: usize
+pub laddu_wgpu::WgpuError::UnsupportedInstruction(alloc::string::String)
+pub laddu_wgpu::WgpuError::UnsupportedKernelPrecision(laddu_wgpu::WgpuPrecision)
+pub laddu_wgpu::WgpuError::UnsupportedPrecision
+pub laddu_wgpu::WgpuError::UnsupportedPrecision::adapter: alloc::string::String
+pub laddu_wgpu::WgpuError::UnsupportedPrecision::precision: laddu_wgpu::WgpuPrecision
+impl core::clone::Clone for laddu_wgpu::WgpuError
+pub fn laddu_wgpu::WgpuError::clone(&self) -> laddu_wgpu::WgpuError
+impl core::error::Error for laddu_wgpu::WgpuError
+impl core::fmt::Debug for laddu_wgpu::WgpuError
+pub fn laddu_wgpu::WgpuError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for laddu_wgpu::WgpuError
+pub fn laddu_wgpu::WgpuError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub enum laddu_wgpu::WgpuPrecision
+pub laddu_wgpu::WgpuPrecision::Auto
+pub laddu_wgpu::WgpuPrecision::F32
+pub laddu_wgpu::WgpuPrecision::F64
+impl core::clone::Clone for laddu_wgpu::WgpuPrecision
+pub fn laddu_wgpu::WgpuPrecision::clone(&self) -> laddu_wgpu::WgpuPrecision
+impl core::cmp::Eq for laddu_wgpu::WgpuPrecision
+impl core::cmp::PartialEq for laddu_wgpu::WgpuPrecision
+pub fn laddu_wgpu::WgpuPrecision::eq(&self, &laddu_wgpu::WgpuPrecision) -> bool
+impl core::default::Default for laddu_wgpu::WgpuPrecision
+pub fn laddu_wgpu::WgpuPrecision::default() -> laddu_wgpu::WgpuPrecision
+impl core::fmt::Debug for laddu_wgpu::WgpuPrecision
+pub fn laddu_wgpu::WgpuPrecision::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for laddu_wgpu::WgpuPrecision
+impl core::marker::StructuralPartialEq for laddu_wgpu::WgpuPrecision
+impl serde_core::ser::Serialize for laddu_wgpu::WgpuPrecision
+pub fn laddu_wgpu::WgpuPrecision::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for laddu_wgpu::WgpuPrecision
+pub fn laddu_wgpu::WgpuPrecision::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct laddu_wgpu::WgpuAdapterInfo
+pub laddu_wgpu::WgpuAdapterInfo::backend: alloc::string::String
+pub laddu_wgpu::WgpuAdapterInfo::device: u32
+pub laddu_wgpu::WgpuAdapterInfo::device_type: alloc::string::String
+pub laddu_wgpu::WgpuAdapterInfo::driver: alloc::string::String
+pub laddu_wgpu::WgpuAdapterInfo::driver_info: alloc::string::String
+pub laddu_wgpu::WgpuAdapterInfo::index: usize
+pub laddu_wgpu::WgpuAdapterInfo::max_buffer_size: u64
+pub laddu_wgpu::WgpuAdapterInfo::max_compute_workgroup_size_x: u32
+pub laddu_wgpu::WgpuAdapterInfo::max_storage_buffer_binding_size: u64
+pub laddu_wgpu::WgpuAdapterInfo::name: alloc::string::String
+pub laddu_wgpu::WgpuAdapterInfo::pci_bus_id: alloc::string::String
+pub laddu_wgpu::WgpuAdapterInfo::supports_f64: bool
+pub laddu_wgpu::WgpuAdapterInfo::vendor: u32
+impl core::clone::Clone for laddu_wgpu::WgpuAdapterInfo
+pub fn laddu_wgpu::WgpuAdapterInfo::clone(&self) -> laddu_wgpu::WgpuAdapterInfo
+impl core::cmp::Eq for laddu_wgpu::WgpuAdapterInfo
+impl core::cmp::PartialEq for laddu_wgpu::WgpuAdapterInfo
+pub fn laddu_wgpu::WgpuAdapterInfo::eq(&self, &laddu_wgpu::WgpuAdapterInfo) -> bool
+impl core::fmt::Debug for laddu_wgpu::WgpuAdapterInfo
+pub fn laddu_wgpu::WgpuAdapterInfo::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for laddu_wgpu::WgpuAdapterInfo
+impl serde_core::ser::Serialize for laddu_wgpu::WgpuAdapterInfo
+pub fn laddu_wgpu::WgpuAdapterInfo::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for laddu_wgpu::WgpuAdapterInfo
+pub fn laddu_wgpu::WgpuAdapterInfo::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct laddu_wgpu::WgpuBackend
+impl laddu_wgpu::WgpuBackend
+pub fn laddu_wgpu::WgpuBackend::adapters(&self) -> alloc::vec::Vec<laddu_wgpu::WgpuAdapterInfo>
+pub fn laddu_wgpu::WgpuBackend::open(&self, &laddu_wgpu::WgpuOptions, laddu_wgpu::WgpuPrecision) -> laddu_wgpu::WgpuResult<laddu_wgpu::WgpuContext>
+impl core::clone::Clone for laddu_wgpu::WgpuBackend
+pub fn laddu_wgpu::WgpuBackend::clone(&self) -> laddu_wgpu::WgpuBackend
+impl core::default::Default for laddu_wgpu::WgpuBackend
+pub fn laddu_wgpu::WgpuBackend::default() -> Self
+impl core::fmt::Debug for laddu_wgpu::WgpuBackend
+pub fn laddu_wgpu::WgpuBackend::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub struct laddu_wgpu::WgpuContext
+impl laddu_wgpu::WgpuContext
+pub fn laddu_wgpu::WgpuContext::device(&self) -> &wgpu::api::device::Device
+pub fn laddu_wgpu::WgpuContext::info(&self) -> &laddu_wgpu::WgpuAdapterInfo
+pub fn laddu_wgpu::WgpuContext::memory_budget(&self) -> core::option::Option<usize>
+pub fn laddu_wgpu::WgpuContext::precision(&self) -> laddu_wgpu::WgpuPrecision
+pub fn laddu_wgpu::WgpuContext::queue(&self) -> &wgpu::api::queue::Queue
+pub fn laddu_wgpu::WgpuContext::set_memory_budget(&mut self, usize)
+impl core::fmt::Debug for laddu_wgpu::WgpuContext
+pub fn laddu_wgpu::WgpuContext::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub struct laddu_wgpu::WgpuOptions
+pub laddu_wgpu::WgpuOptions::device: laddu_wgpu::WgpuDeviceSelector
+pub laddu_wgpu::WgpuOptions::memory_budget: core::option::Option<usize>
+impl core::clone::Clone for laddu_wgpu::WgpuOptions
+pub fn laddu_wgpu::WgpuOptions::clone(&self) -> laddu_wgpu::WgpuOptions
+impl core::cmp::Eq for laddu_wgpu::WgpuOptions
+impl core::cmp::PartialEq for laddu_wgpu::WgpuOptions
+pub fn laddu_wgpu::WgpuOptions::eq(&self, &laddu_wgpu::WgpuOptions) -> bool
+impl core::default::Default for laddu_wgpu::WgpuOptions
+pub fn laddu_wgpu::WgpuOptions::default() -> laddu_wgpu::WgpuOptions
+impl core::fmt::Debug for laddu_wgpu::WgpuOptions
+pub fn laddu_wgpu::WgpuOptions::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for laddu_wgpu::WgpuOptions
+impl serde_core::ser::Serialize for laddu_wgpu::WgpuOptions
+pub fn laddu_wgpu::WgpuOptions::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for laddu_wgpu::WgpuOptions
+pub fn laddu_wgpu::WgpuOptions::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct laddu_wgpu::WgpuPreparedBatch
+impl laddu_wgpu::WgpuPreparedBatch
+pub fn laddu_wgpu::WgpuPreparedBatch::is_empty(&self) -> bool
+pub fn laddu_wgpu::WgpuPreparedBatch::len(&self) -> usize
+pub fn laddu_wgpu::WgpuPreparedBatch::resident_bytes(&self) -> usize
+impl core::clone::Clone for laddu_wgpu::WgpuPreparedBatch
+pub fn laddu_wgpu::WgpuPreparedBatch::clone(&self) -> laddu_wgpu::WgpuPreparedBatch
+impl core::fmt::Debug for laddu_wgpu::WgpuPreparedBatch
+pub fn laddu_wgpu::WgpuPreparedBatch::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub struct laddu_wgpu::WgpuScalarKernel
+impl laddu_wgpu::WgpuScalarKernel
+pub fn laddu_wgpu::WgpuScalarKernel::compile(&laddu_wgpu::WgpuContext, &laddu_compile::model::CompiledModel) -> laddu_wgpu::WgpuResult<Self>
+pub fn laddu_wgpu::WgpuScalarKernel::evaluate(&self, &laddu_wgpu::WgpuContext, &laddu_expr::parameters::ParamValues) -> laddu_wgpu::WgpuResult<(f64, f64)>
+pub fn laddu_wgpu::WgpuScalarKernel::evaluate_batch(&self, &laddu_wgpu::WgpuContext, &laddu_expr::parameters::ParamValues, &laddu_data::data::event::EventBatch) -> laddu_wgpu::WgpuResult<alloc::vec::Vec<(f64, f64)>>
+pub fn laddu_wgpu::WgpuScalarKernel::prepare_batch(&self, &laddu_wgpu::WgpuContext, &laddu_expr::parameters::ParamValues, &laddu_data::data::event::EventBatch) -> laddu_wgpu::WgpuResult<laddu_wgpu::WgpuPreparedBatch>
+pub fn laddu_wgpu::WgpuScalarKernel::prepared_memory_estimate(&self, &laddu_expr::parameters::ParamValues, usize) -> usize
+pub fn laddu_wgpu::WgpuScalarKernel::reduce_batch(&self, &laddu_wgpu::WgpuContext, &laddu_expr::parameters::ParamValues, &laddu_data::data::event::EventBatch, laddu_compile::reduction::ReductionPlan) -> laddu_wgpu::WgpuResult<f64>
+pub fn laddu_wgpu::WgpuScalarKernel::reduce_prepared_batch(&self, &laddu_wgpu::WgpuContext, &laddu_expr::parameters::ParamValues, &laddu_wgpu::WgpuPreparedBatch, laddu_compile::reduction::ReductionPlan) -> laddu_wgpu::WgpuResult<f64>
+pub fn laddu_wgpu::WgpuScalarKernel::reduce_prepared_batch_with_gradient(&self, &laddu_wgpu::WgpuContext, &laddu_expr::parameters::ParamValues, &laddu_wgpu::WgpuPreparedBatch, laddu_compile::reduction::ReductionPlan) -> laddu_wgpu::WgpuResult<(f64, alloc::vec::Vec<f64>)>
+pub fn laddu_wgpu::WgpuScalarKernel::refresh_batch(&self, &laddu_wgpu::WgpuContext, &laddu_expr::parameters::ParamValues, &laddu_data::data::event::EventBatch, &mut laddu_wgpu::WgpuPreparedBatch) -> laddu_wgpu::WgpuResult<bool>
+impl core::fmt::Debug for laddu_wgpu::WgpuScalarKernel
+pub fn laddu_wgpu::WgpuScalarKernel::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub type laddu_wgpu::WgpuResult<T> = core::result::Result<T, laddu_wgpu::WgpuError>

@@ -1,0 +1,272 @@
+pub mod laddu_memory
+pub enum laddu_memory::CapacitySource
+pub laddu_memory::CapacitySource::Adaptive
+pub laddu_memory::CapacitySource::Cgroup
+pub laddu_memory::CapacitySource::Drm
+pub laddu_memory::CapacitySource::Dxgi
+pub laddu_memory::CapacitySource::Metal
+pub laddu_memory::CapacitySource::Nvml
+pub laddu_memory::CapacitySource::OperatingSystem
+pub laddu_memory::CapacitySource::User
+impl core::clone::Clone for laddu_memory::CapacitySource
+pub fn laddu_memory::CapacitySource::clone(&self) -> laddu_memory::CapacitySource
+impl core::cmp::Eq for laddu_memory::CapacitySource
+impl core::cmp::PartialEq for laddu_memory::CapacitySource
+pub fn laddu_memory::CapacitySource::eq(&self, &laddu_memory::CapacitySource) -> bool
+impl core::fmt::Debug for laddu_memory::CapacitySource
+pub fn laddu_memory::CapacitySource::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for laddu_memory::CapacitySource
+impl core::marker::StructuralPartialEq for laddu_memory::CapacitySource
+impl serde_core::ser::Serialize for laddu_memory::CapacitySource
+pub fn laddu_memory::CapacitySource::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for laddu_memory::CapacitySource
+pub fn laddu_memory::CapacitySource::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub enum laddu_memory::MemoryBudget
+pub laddu_memory::MemoryBudget::Auto
+pub laddu_memory::MemoryBudget::Bytes(u64)
+pub laddu_memory::MemoryBudget::PercentAvailable(f64)
+pub laddu_memory::MemoryBudget::PercentTotal(f64)
+impl laddu_memory::MemoryBudget
+pub const fn laddu_memory::MemoryBudget::bytes(u64) -> Self
+pub fn laddu_memory::MemoryBudget::percent_available(f64) -> laddu_memory::MemoryResult<Self>
+pub fn laddu_memory::MemoryBudget::percent_total(f64) -> laddu_memory::MemoryResult<Self>
+pub fn laddu_memory::MemoryBudget::resolve(self, &laddu_memory::MemoryResource) -> laddu_memory::MemoryResult<u64>
+impl core::clone::Clone for laddu_memory::MemoryBudget
+pub fn laddu_memory::MemoryBudget::clone(&self) -> laddu_memory::MemoryBudget
+impl core::cmp::PartialEq for laddu_memory::MemoryBudget
+pub fn laddu_memory::MemoryBudget::eq(&self, &laddu_memory::MemoryBudget) -> bool
+impl core::default::Default for laddu_memory::MemoryBudget
+pub fn laddu_memory::MemoryBudget::default() -> laddu_memory::MemoryBudget
+impl core::fmt::Debug for laddu_memory::MemoryBudget
+pub fn laddu_memory::MemoryBudget::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for laddu_memory::MemoryBudget
+pub fn laddu_memory::MemoryBudget::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for laddu_memory::MemoryBudget
+impl core::marker::StructuralPartialEq for laddu_memory::MemoryBudget
+impl core::str::traits::FromStr for laddu_memory::MemoryBudget
+pub type laddu_memory::MemoryBudget::Err = laddu_memory::MemoryError
+pub fn laddu_memory::MemoryBudget::from_str(&str) -> core::result::Result<Self, Self::Err>
+impl serde_core::ser::Serialize for laddu_memory::MemoryBudget
+pub fn laddu_memory::MemoryBudget::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for laddu_memory::MemoryBudget
+pub fn laddu_memory::MemoryBudget::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub enum laddu_memory::MemoryError
+pub laddu_memory::MemoryError::BudgetExceeded
+pub laddu_memory::MemoryError::BudgetExceeded::remaining: u64
+pub laddu_memory::MemoryError::BudgetExceeded::requested: u64
+pub laddu_memory::MemoryError::BudgetExceeded::resource: alloc::string::String
+pub laddu_memory::MemoryError::InvalidBudget(alloc::string::String)
+pub laddu_memory::MemoryError::UnknownCapacity
+pub laddu_memory::MemoryError::UnknownCapacity::basis: &'static str
+pub laddu_memory::MemoryError::UnknownCapacity::budget: laddu_memory::MemoryBudget
+pub laddu_memory::MemoryError::UnknownCapacity::resource: alloc::string::String
+impl core::clone::Clone for laddu_memory::MemoryError
+pub fn laddu_memory::MemoryError::clone(&self) -> laddu_memory::MemoryError
+impl core::cmp::PartialEq for laddu_memory::MemoryError
+pub fn laddu_memory::MemoryError::eq(&self, &laddu_memory::MemoryError) -> bool
+impl core::error::Error for laddu_memory::MemoryError
+impl core::fmt::Debug for laddu_memory::MemoryError
+pub fn laddu_memory::MemoryError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for laddu_memory::MemoryError
+pub fn laddu_memory::MemoryError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for laddu_memory::MemoryError
+pub enum laddu_memory::MemoryResourceKind
+pub laddu_memory::MemoryResourceKind::Device
+pub laddu_memory::MemoryResourceKind::Host
+impl core::clone::Clone for laddu_memory::MemoryResourceKind
+pub fn laddu_memory::MemoryResourceKind::clone(&self) -> laddu_memory::MemoryResourceKind
+impl core::cmp::Eq for laddu_memory::MemoryResourceKind
+impl core::cmp::PartialEq for laddu_memory::MemoryResourceKind
+pub fn laddu_memory::MemoryResourceKind::eq(&self, &laddu_memory::MemoryResourceKind) -> bool
+impl core::fmt::Debug for laddu_memory::MemoryResourceKind
+pub fn laddu_memory::MemoryResourceKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for laddu_memory::MemoryResourceKind
+impl serde_core::ser::Serialize for laddu_memory::MemoryResourceKind
+pub fn laddu_memory::MemoryResourceKind::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for laddu_memory::MemoryResourceKind
+pub fn laddu_memory::MemoryResourceKind::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct laddu_memory::DeviceIdentity
+pub laddu_memory::DeviceIdentity::adapter_index: usize
+pub laddu_memory::DeviceIdentity::device_id: u32
+pub laddu_memory::DeviceIdentity::pci_bus_id: alloc::string::String
+pub laddu_memory::DeviceIdentity::vendor_id: u32
+impl core::clone::Clone for laddu_memory::DeviceIdentity
+pub fn laddu_memory::DeviceIdentity::clone(&self) -> laddu_memory::DeviceIdentity
+impl core::cmp::Eq for laddu_memory::DeviceIdentity
+impl core::cmp::PartialEq for laddu_memory::DeviceIdentity
+pub fn laddu_memory::DeviceIdentity::eq(&self, &laddu_memory::DeviceIdentity) -> bool
+impl core::fmt::Debug for laddu_memory::DeviceIdentity
+pub fn laddu_memory::DeviceIdentity::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for laddu_memory::DeviceIdentity
+impl serde_core::ser::Serialize for laddu_memory::DeviceIdentity
+pub fn laddu_memory::DeviceIdentity::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for laddu_memory::DeviceIdentity
+pub fn laddu_memory::DeviceIdentity::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct laddu_memory::MemoryDecision
+pub laddu_memory::MemoryDecision::actual_high_water_bytes: core::option::Option<u64>
+pub laddu_memory::MemoryDecision::bytes_per_event: u64
+pub laddu_memory::MemoryDecision::chunk_events: usize
+pub laddu_memory::MemoryDecision::estimated_peak_bytes: u64
+pub laddu_memory::MemoryDecision::fixed_bytes: u64
+pub laddu_memory::MemoryDecision::label: alloc::string::String
+pub laddu_memory::MemoryDecision::strategy: alloc::string::String
+impl laddu_memory::MemoryDecision
+pub fn laddu_memory::MemoryDecision::fit(impl core::convert::Into<alloc::string::String>, u64, u64, u64, usize, impl core::convert::Into<alloc::string::String>) -> laddu_memory::MemoryResult<Self>
+impl core::clone::Clone for laddu_memory::MemoryDecision
+pub fn laddu_memory::MemoryDecision::clone(&self) -> laddu_memory::MemoryDecision
+impl core::cmp::Eq for laddu_memory::MemoryDecision
+impl core::cmp::PartialEq for laddu_memory::MemoryDecision
+pub fn laddu_memory::MemoryDecision::eq(&self, &laddu_memory::MemoryDecision) -> bool
+impl core::fmt::Debug for laddu_memory::MemoryDecision
+pub fn laddu_memory::MemoryDecision::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for laddu_memory::MemoryDecision
+impl serde_core::ser::Serialize for laddu_memory::MemoryDecision
+pub fn laddu_memory::MemoryDecision::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for laddu_memory::MemoryDecision
+pub fn laddu_memory::MemoryDecision::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct laddu_memory::MemoryLease
+impl laddu_memory::MemoryLease
+pub fn laddu_memory::MemoryLease::bytes(&self) -> u64
+impl core::clone::Clone for laddu_memory::MemoryLease
+pub fn laddu_memory::MemoryLease::clone(&self) -> laddu_memory::MemoryLease
+impl core::fmt::Debug for laddu_memory::MemoryLease
+pub fn laddu_memory::MemoryLease::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub struct laddu_memory::MemoryPlan
+pub laddu_memory::MemoryPlan::device: core::option::Option<laddu_memory::MemoryBudget>
+pub laddu_memory::MemoryPlan::host: laddu_memory::MemoryBudget
+impl laddu_memory::MemoryPlan
+pub const fn laddu_memory::MemoryPlan::host(laddu_memory::MemoryBudget) -> Self
+pub const fn laddu_memory::MemoryPlan::host_device(laddu_memory::MemoryBudget, laddu_memory::MemoryBudget) -> Self
+impl core::clone::Clone for laddu_memory::MemoryPlan
+pub fn laddu_memory::MemoryPlan::clone(&self) -> laddu_memory::MemoryPlan
+impl core::cmp::PartialEq for laddu_memory::MemoryPlan
+pub fn laddu_memory::MemoryPlan::eq(&self, &laddu_memory::MemoryPlan) -> bool
+impl core::default::Default for laddu_memory::MemoryPlan
+pub fn laddu_memory::MemoryPlan::default() -> Self
+impl core::fmt::Debug for laddu_memory::MemoryPlan
+pub fn laddu_memory::MemoryPlan::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for laddu_memory::MemoryPlan
+impl core::marker::StructuralPartialEq for laddu_memory::MemoryPlan
+impl serde_core::ser::Serialize for laddu_memory::MemoryPlan
+pub fn laddu_memory::MemoryPlan::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for laddu_memory::MemoryPlan
+pub fn laddu_memory::MemoryPlan::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct laddu_memory::MemoryPool
+impl laddu_memory::MemoryPool
+pub fn laddu_memory::MemoryPool::capacity(&self) -> u64
+pub fn laddu_memory::MemoryPool::high_water(&self) -> u64
+pub fn laddu_memory::MemoryPool::remaining(&self) -> u64
+pub fn laddu_memory::MemoryPool::report(&self) -> laddu_memory::MemoryPoolReport
+pub fn laddu_memory::MemoryPool::requested(&self) -> laddu_memory::MemoryBudget
+pub fn laddu_memory::MemoryPool::reserve(&self, u64) -> laddu_memory::MemoryResult<laddu_memory::MemoryLease>
+pub fn laddu_memory::MemoryPool::reserved(&self) -> u64
+impl core::clone::Clone for laddu_memory::MemoryPool
+pub fn laddu_memory::MemoryPool::clone(&self) -> laddu_memory::MemoryPool
+impl core::fmt::Debug for laddu_memory::MemoryPool
+pub fn laddu_memory::MemoryPool::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub struct laddu_memory::MemoryPoolReport
+pub laddu_memory::MemoryPoolReport::effective_bytes: u64
+pub laddu_memory::MemoryPoolReport::high_water_bytes: u64
+pub laddu_memory::MemoryPoolReport::remaining_bytes: u64
+pub laddu_memory::MemoryPoolReport::requested: laddu_memory::MemoryBudget
+pub laddu_memory::MemoryPoolReport::reserved_bytes: u64
+pub laddu_memory::MemoryPoolReport::resource_id: alloc::string::String
+impl core::clone::Clone for laddu_memory::MemoryPoolReport
+pub fn laddu_memory::MemoryPoolReport::clone(&self) -> laddu_memory::MemoryPoolReport
+impl core::cmp::PartialEq for laddu_memory::MemoryPoolReport
+pub fn laddu_memory::MemoryPoolReport::eq(&self, &laddu_memory::MemoryPoolReport) -> bool
+impl core::fmt::Debug for laddu_memory::MemoryPoolReport
+pub fn laddu_memory::MemoryPoolReport::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for laddu_memory::MemoryPoolReport
+impl serde_core::ser::Serialize for laddu_memory::MemoryPoolReport
+pub fn laddu_memory::MemoryPoolReport::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for laddu_memory::MemoryPoolReport
+pub fn laddu_memory::MemoryPoolReport::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct laddu_memory::MemoryReport
+pub laddu_memory::MemoryReport::process: core::option::Option<laddu_memory::ProcessMemoryReport>
+pub laddu_memory::MemoryReport::resources: alloc::vec::Vec<laddu_memory::MemoryResourceReport>
+impl core::clone::Clone for laddu_memory::MemoryReport
+pub fn laddu_memory::MemoryReport::clone(&self) -> laddu_memory::MemoryReport
+impl core::cmp::Eq for laddu_memory::MemoryReport
+impl core::cmp::PartialEq for laddu_memory::MemoryReport
+pub fn laddu_memory::MemoryReport::eq(&self, &laddu_memory::MemoryReport) -> bool
+impl core::fmt::Debug for laddu_memory::MemoryReport
+pub fn laddu_memory::MemoryReport::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for laddu_memory::MemoryReport
+impl serde_core::ser::Serialize for laddu_memory::MemoryReport
+pub fn laddu_memory::MemoryReport::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for laddu_memory::MemoryReport
+pub fn laddu_memory::MemoryReport::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct laddu_memory::MemoryResource
+pub laddu_memory::MemoryResource::available_bytes: core::option::Option<u64>
+pub laddu_memory::MemoryResource::capacity_source: laddu_memory::CapacitySource
+pub laddu_memory::MemoryResource::device_identity: core::option::Option<laddu_memory::DeviceIdentity>
+pub laddu_memory::MemoryResource::id: alloc::string::String
+pub laddu_memory::MemoryResource::kind: laddu_memory::MemoryResourceKind
+pub laddu_memory::MemoryResource::name: alloc::string::String
+pub laddu_memory::MemoryResource::total_bytes: core::option::Option<u64>
+impl laddu_memory::MemoryResource
+pub fn laddu_memory::MemoryResource::adaptive_device(impl core::convert::Into<alloc::string::String>, impl core::convert::Into<alloc::string::String>) -> Self
+pub const fn laddu_memory::MemoryResource::budget(&self, laddu_memory::MemoryBudget) -> laddu_memory::MemoryBudget
+pub fn laddu_memory::MemoryResource::discover_device(impl core::convert::Into<alloc::string::String>, impl core::convert::Into<alloc::string::String>, laddu_memory::DeviceIdentity, u64) -> Self
+pub fn laddu_memory::MemoryResource::with_capacity(self, u64, core::option::Option<u64>) -> Self
+impl core::clone::Clone for laddu_memory::MemoryResource
+pub fn laddu_memory::MemoryResource::clone(&self) -> laddu_memory::MemoryResource
+impl core::cmp::Eq for laddu_memory::MemoryResource
+impl core::cmp::PartialEq for laddu_memory::MemoryResource
+pub fn laddu_memory::MemoryResource::eq(&self, &laddu_memory::MemoryResource) -> bool
+impl core::fmt::Debug for laddu_memory::MemoryResource
+pub fn laddu_memory::MemoryResource::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for laddu_memory::MemoryResource
+impl serde_core::ser::Serialize for laddu_memory::MemoryResource
+pub fn laddu_memory::MemoryResource::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for laddu_memory::MemoryResource
+pub fn laddu_memory::MemoryResource::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct laddu_memory::MemoryResourceReport
+pub laddu_memory::MemoryResourceReport::laddu_high_water_bytes: u64
+pub laddu_memory::MemoryResourceReport::laddu_reserved_bytes: u64
+pub laddu_memory::MemoryResourceReport::resource: laddu_memory::MemoryResource
+impl core::clone::Clone for laddu_memory::MemoryResourceReport
+pub fn laddu_memory::MemoryResourceReport::clone(&self) -> laddu_memory::MemoryResourceReport
+impl core::cmp::Eq for laddu_memory::MemoryResourceReport
+impl core::cmp::PartialEq for laddu_memory::MemoryResourceReport
+pub fn laddu_memory::MemoryResourceReport::eq(&self, &laddu_memory::MemoryResourceReport) -> bool
+impl core::fmt::Debug for laddu_memory::MemoryResourceReport
+pub fn laddu_memory::MemoryResourceReport::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for laddu_memory::MemoryResourceReport
+impl serde_core::ser::Serialize for laddu_memory::MemoryResourceReport
+pub fn laddu_memory::MemoryResourceReport::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for laddu_memory::MemoryResourceReport
+pub fn laddu_memory::MemoryResourceReport::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct laddu_memory::MemoryState
+impl laddu_memory::MemoryState
+pub fn laddu_memory::MemoryState::current() -> Self
+pub fn laddu_memory::MemoryState::devices(&self) -> alloc::vec::Vec<laddu_memory::MemoryResource>
+pub fn laddu_memory::MemoryState::discover() -> Self
+pub fn laddu_memory::MemoryState::host(&self) -> laddu_memory::MemoryResource
+pub fn laddu_memory::MemoryState::pool(&self, &str, laddu_memory::MemoryBudget) -> laddu_memory::MemoryResult<laddu_memory::MemoryPool>
+pub fn laddu_memory::MemoryState::refresh(&self)
+pub fn laddu_memory::MemoryState::register_device(&self, laddu_memory::MemoryResource)
+pub fn laddu_memory::MemoryState::report(&self) -> laddu_memory::MemoryReport
+pub fn laddu_memory::MemoryState::resource(&self, &str) -> core::option::Option<laddu_memory::MemoryResource>
+impl core::clone::Clone for laddu_memory::MemoryState
+pub fn laddu_memory::MemoryState::clone(&self) -> laddu_memory::MemoryState
+impl core::fmt::Debug for laddu_memory::MemoryState
+pub fn laddu_memory::MemoryState::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub struct laddu_memory::ProcessMemoryReport
+pub laddu_memory::ProcessMemoryReport::resident_bytes: u64
+pub laddu_memory::ProcessMemoryReport::sampled_high_water_bytes: u64
+pub laddu_memory::ProcessMemoryReport::virtual_bytes: u64
+impl core::clone::Clone for laddu_memory::ProcessMemoryReport
+pub fn laddu_memory::ProcessMemoryReport::clone(&self) -> laddu_memory::ProcessMemoryReport
+impl core::cmp::Eq for laddu_memory::ProcessMemoryReport
+impl core::cmp::PartialEq for laddu_memory::ProcessMemoryReport
+pub fn laddu_memory::ProcessMemoryReport::eq(&self, &laddu_memory::ProcessMemoryReport) -> bool
+impl core::fmt::Debug for laddu_memory::ProcessMemoryReport
+pub fn laddu_memory::ProcessMemoryReport::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for laddu_memory::ProcessMemoryReport
+impl serde_core::ser::Serialize for laddu_memory::ProcessMemoryReport
+pub fn laddu_memory::ProcessMemoryReport::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for laddu_memory::ProcessMemoryReport
+pub fn laddu_memory::ProcessMemoryReport::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub type laddu_memory::MemoryResult<T> = core::result::Result<T, laddu_memory::MemoryError>
