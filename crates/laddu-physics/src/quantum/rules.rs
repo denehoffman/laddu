@@ -1,11 +1,10 @@
-use std::{collections::BTreeMap, fmt::Display};
+use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    LadduPhysicsError, LadduPhysicsResult,
-    quantum::{J, L, Parity, ParticleProperties, S, Statistics},
-};
+use crate::quantum::{L, ParticleProperties, S};
+
+mod evaluators;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
 /// A conservation, symmetry, or classification rule that can be applied to a
@@ -433,14 +432,12 @@ impl RuleSet {
 
     /// Enable a rule in place using permissive missing-input handling.
     pub fn enforce_mut(&mut self, rule: RuleKind) -> &mut Self {
-        self.policies.insert(rule, RulePolicy::enforce());
-        self
+        self.set_policy_mut(rule, RulePolicy::enforce())
     }
 
     /// Enable a rule in place and reject candidates with missing inputs.
     pub fn enforce_strict_mut(&mut self, rule: RuleKind) -> &mut Self {
-        self.policies.insert(rule, RulePolicy::enforce_strict());
-        self
+        self.set_policy_mut(rule, RulePolicy::enforce_strict())
     }
 
     /// Assign an explicit policy to a rule in place.
@@ -451,29 +448,22 @@ impl RuleSet {
 
     /// Ignore a rule in place and record the supplied reason.
     pub fn ignore_mut(&mut self, rule: RuleKind, reason: impl Into<String>) -> &mut Self {
-        self.policies.insert(rule, RulePolicy::ignore(reason));
-        self
+        self.set_policy_mut(rule, RulePolicy::ignore(reason))
     }
 
     /// Ignore a rule in place without recording a reason.
     pub fn ignore_without_reason_mut(&mut self, rule: RuleKind) -> &mut Self {
-        self.policies
-            .insert(rule, RulePolicy::ignore_without_reason());
-        self
+        self.set_policy_mut(rule, RulePolicy::ignore_without_reason())
     }
 
     /// Make a rule diagnostic-only in place and record the supplied reason.
     pub fn diagnose_only_mut(&mut self, rule: RuleKind, reason: impl Into<String>) -> &mut Self {
-        self.policies
-            .insert(rule, RulePolicy::diagnose_only(reason));
-        self
+        self.set_policy_mut(rule, RulePolicy::diagnose_only(reason))
     }
 
     /// Make a rule diagnostic-only in place without recording a reason.
     pub fn diagnose_only_without_reason_mut(&mut self, rule: RuleKind) -> &mut Self {
-        self.policies
-            .insert(rule, RulePolicy::diagnose_only_without_reason());
-        self
+        self.set_policy_mut(rule, RulePolicy::diagnose_only_without_reason())
     }
 
     /// Remove a rule from this set in place.
@@ -577,97 +567,17 @@ impl RuleSet {
         l: L,
         s: S,
     ) -> RuleReport {
-        let mut checks = Vec::new();
-
-        for (&rule, policy) in &self.policies {
-            let raw = match rule {
-                RuleKind::Parity => check_parity_raw(parent, daughters, l),
-                RuleKind::Isospin => check_isospin_raw(parent, daughters),
-                RuleKind::IsospinProjection => check_isospin_projection_raw(parent, daughters),
-                RuleKind::CParity => check_c_parity_raw(parent, daughters, l, s),
-                RuleKind::GParity => check_g_parity_raw(parent, daughters),
-                RuleKind::Charge => check_additive_raw(
-                    "charge",
-                    "charge",
-                    "Q",
-                    parent.charge,
-                    daughters.0.charge,
-                    daughters.1.charge,
-                ),
-                RuleKind::Strangeness => check_additive_raw(
-                    "strangeness",
-                    "strangeness",
-                    "S",
-                    parent.strangeness,
-                    daughters.0.strangeness,
-                    daughters.1.strangeness,
-                ),
-                RuleKind::Charm => check_additive_raw(
-                    "charm",
-                    "charm",
-                    "C",
-                    parent.charm,
-                    daughters.0.charm,
-                    daughters.1.charm,
-                ),
-                RuleKind::Bottomness => check_additive_raw(
-                    "bottomness",
-                    "bottomness",
-                    "B'",
-                    parent.bottomness,
-                    daughters.0.bottomness,
-                    daughters.1.bottomness,
-                ),
-                RuleKind::Topness => check_additive_raw(
-                    "topness",
-                    "topness",
-                    "T",
-                    parent.topness,
-                    daughters.0.topness,
-                    daughters.1.topness,
-                ),
-                RuleKind::BaryonNumber => check_additive_raw(
-                    "baryon_number",
-                    "baryon number",
-                    "B",
-                    parent.baryon_number,
-                    daughters.0.baryon_number,
-                    daughters.1.baryon_number,
-                ),
-                RuleKind::ElectronLeptonNumber => check_additive_raw(
-                    "electron_lepton_number",
-                    "electron-family lepton number",
-                    "L_e",
-                    parent.electron_lepton_number,
-                    daughters.0.electron_lepton_number,
-                    daughters.1.electron_lepton_number,
-                ),
-                RuleKind::MuonLeptonNumber => check_additive_raw(
-                    "muon_lepton_number",
-                    "muon-family lepton number",
-                    "L_mu",
-                    parent.muon_lepton_number,
-                    daughters.0.muon_lepton_number,
-                    daughters.1.muon_lepton_number,
-                ),
-                RuleKind::TauLeptonNumber => check_additive_raw(
-                    "tau_lepton_number",
-                    "tau-family lepton number",
-                    "L_tau",
-                    parent.tau_lepton_number,
-                    daughters.0.tau_lepton_number,
-                    daughters.1.tau_lepton_number,
-                ),
-                RuleKind::LeptonNumber => check_total_lepton_number_raw(parent, daughters),
-                RuleKind::IdenticalParticleSymmetry => {
-                    check_identical_particle_symmetry_raw(daughters, l, s)
-                }
-                RuleKind::ConventionalMesonJpc => check_conventional_meson_jpc_raw(parent),
-            };
-
-            checks.push(apply_policy(rule, policy, raw));
-        }
-
+        let input = evaluators::RuleInput {
+            parent,
+            daughters,
+            l,
+            s,
+        };
+        let checks = self
+            .policies
+            .iter()
+            .map(|(&rule, policy)| apply_policy(rule, policy, evaluators::evaluate(rule, input)))
+            .collect();
         RuleReport { checks }
     }
 }
@@ -757,799 +667,17 @@ fn apply_policy(rule: RuleKind, policy: &RulePolicy, raw: RawRuleOutcome) -> Rul
     RuleCheck { rule, outcome }
 }
 
-fn check_parity_raw(
-    parent: &ParticleProperties,
-    daughters: (&ParticleProperties, &ParticleProperties),
-    l: L,
-) -> RawRuleOutcome {
-    let Some(p_parent) = parent.parity else {
-        return RawRuleOutcome::unknown(missing(&["parent.parity"]), "parent parity is unknown");
-    };
-
-    let mut missing_fields = Vec::new();
-
-    if daughters.0.parity.is_none() {
-        missing_fields.push("daughter_a.parity".to_string());
-    }
-
-    if daughters.1.parity.is_none() {
-        missing_fields.push("daughter_b.parity".to_string());
-    }
-
-    if !missing_fields.is_empty() {
-        return RawRuleOutcome::unknown(
-            missing_fields,
-            "final-state parity cannot be inferred because one or both daughter parities are unknown",
-        );
-    }
-
-    let p_final = infer_parity(daughters, l).expect("daughter parities were checked above");
-
-    if p_parent == p_final {
-        RawRuleOutcome::pass(format!(
-            "parity is conserved for L = {} with final parity {:?}",
-            l.value(),
-            p_final,
-        ))
-    } else {
-        RawRuleOutcome::fail(format!(
-            "parity is not conserved for L = {}: parent parity is {:?}, final parity is {:?}",
-            l.value(),
-            p_parent,
-            p_final,
-        ))
-    }
-}
-
-fn check_isospin_raw(
-    parent: &ParticleProperties,
-    daughters: (&ParticleProperties, &ParticleProperties),
-) -> RawRuleOutcome {
-    let Some(i_parent) = parent.isospin else {
-        return RawRuleOutcome::unknown(missing(&["parent.isospin"]), "parent isospin is unknown");
-    };
-
-    let Some(i_a) = daughters.0.isospin else {
-        return RawRuleOutcome::unknown(
-            missing(&["daughter_a.isospin"]),
-            "first daughter isospin is unknown",
-        );
-    };
-
-    let Some(i_b) = daughters.1.isospin else {
-        return RawRuleOutcome::unknown(
-            missing(&["daughter_b.isospin"]),
-            "second daughter isospin is unknown",
-        );
-    };
-
-    if i_parent
-        .isospin()
-        .can_couple_to(i_a.isospin(), i_b.isospin())
-    {
-        RawRuleOutcome::pass("daughter isospins can couple to parent isospin")
-    } else {
-        RawRuleOutcome::fail("daughter isospins cannot couple to parent isospin")
-    }
-}
-
-fn check_isospin_projection_raw(
-    parent: &ParticleProperties,
-    daughters: (&ParticleProperties, &ParticleProperties),
-) -> RawRuleOutcome {
-    let Some(i_parent) = parent.isospin else {
-        return RawRuleOutcome::unknown(missing(&["parent.isospin"]), "parent isospin is unknown");
-    };
-
-    let Some(i_a) = daughters.0.isospin else {
-        return RawRuleOutcome::unknown(
-            missing(&["daughter_a.isospin"]),
-            "first daughter isospin is unknown",
-        );
-    };
-
-    let Some(i_b) = daughters.1.isospin else {
-        return RawRuleOutcome::unknown(
-            missing(&["daughter_b.isospin"]),
-            "second daughter isospin is unknown",
-        );
-    };
-
-    let Some(i3_parent) = i_parent.projection else {
-        return RawRuleOutcome::unknown(
-            missing(&["parent.isospin.projection"]),
-            "parent isospin projection is unknown",
-        );
-    };
-
-    let Some(i3_a) = i_a.projection else {
-        return RawRuleOutcome::unknown(
-            missing(&["daughter_a.isospin.projection"]),
-            "first daughter isospin projection is unknown",
-        );
-    };
-
-    let Some(i3_b) = i_b.projection else {
-        return RawRuleOutcome::unknown(
-            missing(&["daughter_b.isospin.projection"]),
-            "second daughter isospin projection is unknown",
-        );
-    };
-
-    if i3_parent.doubled() == i3_a.doubled() + i3_b.doubled() {
-        RawRuleOutcome::pass("isospin projection is conserved")
-    } else {
-        RawRuleOutcome::fail("isospin projection is not conserved")
-    }
-}
-
-fn check_c_parity_raw(
-    parent: &ParticleProperties,
-    daughters: (&ParticleProperties, &ParticleProperties),
-    l: L,
-    s: S,
-) -> RawRuleOutcome {
-    let Some(c_parent) = parent.c_parity else {
-        return RawRuleOutcome::unknown(
-            missing(&["parent.c_parity"]),
-            "parent C-parity is unknown or not applicable",
-        );
-    };
-
-    let Some(c_final) = infer_c_parity(daughters, l, s) else {
-        return RawRuleOutcome::unknown(
-            missing(&[
-                "daughter_a.species",
-                "daughter_a.antiparticle_species",
-                "daughter_b.species",
-                "daughter_b.antiparticle_species",
-            ]),
-            "final-state C-parity cannot be inferred; this check currently assumes a C-eigenstate particle-antiparticle combination",
-        );
-    };
-
-    if c_parent == c_final {
-        RawRuleOutcome::pass(format!(
-            "C-parity is conserved with inferred C_final = {:?}; assumes a C-eigenstate particle-antiparticle combination",
-            c_final,
-        ))
-    } else {
-        RawRuleOutcome::fail(format!(
-            "C-parity is not conserved: parent C = {:?}, inferred final C = {:?}; assumes a C-eigenstate particle-antiparticle combination",
-            c_parent, c_final,
-        ))
-    }
-}
-
-fn check_g_parity_raw(
-    parent: &ParticleProperties,
-    daughters: (&ParticleProperties, &ParticleProperties),
-) -> RawRuleOutcome {
-    let Some(g_parent) = parent.g_parity else {
-        return RawRuleOutcome::unknown(
-            missing(&["parent.g_parity"]),
-            "parent G-parity is unknown or not applicable",
-        );
-    };
-
-    let Some(g_a) = daughters.0.g_parity else {
-        return RawRuleOutcome::unknown(
-            missing(&["daughter_a.g_parity"]),
-            "first daughter G-parity is unknown or not applicable",
-        );
-    };
-
-    let Some(g_b) = daughters.1.g_parity else {
-        return RawRuleOutcome::unknown(
-            missing(&["daughter_b.g_parity"]),
-            "second daughter G-parity is unknown or not applicable",
-        );
-    };
-
-    let g_final = g_a.value() * g_b.value();
-
-    if g_parent.value() == g_final {
-        RawRuleOutcome::pass("G-parity product check passes")
-    } else {
-        RawRuleOutcome::fail(format!(
-            "G-parity product check fails: parent G = {:?}, daughter product = {}",
-            g_parent, g_final
-        ))
-    }
-}
-
-fn check_additive_raw(
-    field: &'static str,
-    display_name: &'static str,
-    symbol: &'static str,
-    parent: Option<i32>,
-    a: Option<i32>,
-    b: Option<i32>,
-) -> RawRuleOutcome {
-    match (parent, a, b) {
-        (Some(parent), Some(a), Some(b)) => {
-            let final_value = a + b;
-
-            if parent == final_value {
-                RawRuleOutcome::pass(format!("{display_name} is conserved"))
-            } else {
-                RawRuleOutcome::fail(format!(
-                    "{display_name} is not conserved: parent {symbol} = {parent}, final {symbol} = {final_value}",
-                ))
-            }
-        }
-
-        _ => {
-            let mut missing_fields = Vec::new();
-
-            if parent.is_none() {
-                missing_fields.push(format!("parent.{field}"));
-            }
-            if a.is_none() {
-                missing_fields.push(format!("daughter_a.{field}"));
-            }
-            if b.is_none() {
-                missing_fields.push(format!("daughter_b.{field}"));
-            }
-
-            RawRuleOutcome::unknown(
-                missing_fields,
-                format!("{display_name} cannot be checked because required values are unknown"),
-            )
-        }
-    }
-}
-
-fn check_total_lepton_number_raw(
-    parent: &ParticleProperties,
-    daughters: (&ParticleProperties, &ParticleProperties),
-) -> RawRuleOutcome {
-    let values = [
-        (
-            "parent.electron_lepton_number",
-            parent.electron_lepton_number,
-        ),
-        ("parent.muon_lepton_number", parent.muon_lepton_number),
-        ("parent.tau_lepton_number", parent.tau_lepton_number),
-        (
-            "daughter_a.electron_lepton_number",
-            daughters.0.electron_lepton_number,
-        ),
-        (
-            "daughter_a.muon_lepton_number",
-            daughters.0.muon_lepton_number,
-        ),
-        (
-            "daughter_a.tau_lepton_number",
-            daughters.0.tau_lepton_number,
-        ),
-        (
-            "daughter_b.electron_lepton_number",
-            daughters.1.electron_lepton_number,
-        ),
-        (
-            "daughter_b.muon_lepton_number",
-            daughters.1.muon_lepton_number,
-        ),
-        (
-            "daughter_b.tau_lepton_number",
-            daughters.1.tau_lepton_number,
-        ),
-    ];
-
-    let missing_fields: Vec<String> = values
-        .iter()
-        .filter_map(|(name, value)| {
-            if value.is_none() {
-                Some((*name).to_string())
-            } else {
-                None
-            }
-        })
-        .collect();
-
-    if !missing_fields.is_empty() {
-        return RawRuleOutcome::unknown(
-            missing_fields,
-            "total lepton number cannot be checked because required values are unknown",
-        );
-    }
-
-    let parent_total = parent.electron_lepton_number.unwrap()
-        + parent.muon_lepton_number.unwrap()
-        + parent.tau_lepton_number.unwrap();
-
-    let daughter_total = daughters.0.electron_lepton_number.unwrap()
-        + daughters.0.muon_lepton_number.unwrap()
-        + daughters.0.tau_lepton_number.unwrap()
-        + daughters.1.electron_lepton_number.unwrap()
-        + daughters.1.muon_lepton_number.unwrap()
-        + daughters.1.tau_lepton_number.unwrap();
-
-    if parent_total == daughter_total {
-        RawRuleOutcome::pass("total lepton number is conserved")
-    } else {
-        RawRuleOutcome::fail(format!(
-            "total lepton number is not conserved: parent L = {parent_total}, final L = {daughter_total}",
-        ))
-    }
-}
-
-fn check_identical_particle_symmetry_raw(
-    daughters: (&ParticleProperties, &ParticleProperties),
-    l: L,
-    s: S,
-) -> RawRuleOutcome {
-    let Some(species_a) = daughters.0.species.as_ref() else {
-        return RawRuleOutcome::unknown(
-            missing(&["daughter_a.species"]),
-            "first daughter species is unknown",
-        );
-    };
-
-    let Some(species_b) = daughters.1.species.as_ref() else {
-        return RawRuleOutcome::unknown(
-            missing(&["daughter_b.species"]),
-            "second daughter species is unknown",
-        );
-    };
-
-    if species_a != species_b {
-        return RawRuleOutcome::pass("daughters are not identical particles");
-    }
-
-    let Some(stats_a) = daughters.0.statistics else {
-        return RawRuleOutcome::unknown(
-            missing(&["daughter_a.statistics"]),
-            "first daughter statistics are unknown",
-        );
-    };
-
-    let Some(stats_b) = daughters.1.statistics else {
-        return RawRuleOutcome::unknown(
-            missing(&["daughter_b.statistics"]),
-            "second daughter statistics are unknown",
-        );
-    };
-
-    if stats_a != stats_b {
-        return RawRuleOutcome::fail(
-            "identical particles have inconsistent statistics assignments",
-        );
-    }
-
-    let Some(ja) = daughters.0.spin else {
-        return RawRuleOutcome::unknown(
-            missing(&["daughter_a.spin"]),
-            "first daughter spin is unknown",
-        );
-    };
-
-    let Some(jb) = daughters.1.spin else {
-        return RawRuleOutcome::unknown(
-            missing(&["daughter_b.spin"]),
-            "second daughter spin is unknown",
-        );
-    };
-
-    if ja != jb {
-        return RawRuleOutcome::fail("identical particles have inconsistent spin assignments");
-    }
-
-    if !s.doubled().is_multiple_of(2) {
-        return RawRuleOutcome::fail(
-            "two identical particles cannot couple to half-integer total spin",
-        );
-    }
-
-    let s_integer = s.doubled() / 2;
-
-    if s_integer > ja.doubled() {
-        return RawRuleOutcome::fail(
-            "coupled spin is incompatible with two identical daughter spins",
-        );
-    }
-
-    // For two identical spin-j particles, the spin-coupled state has exchange
-    // phase (-1)^(2j - S). The spatial wave contributes (-1)^L.
-    //
-    // Total exchange phase must be +1 for bosons and -1 for fermions.
-    let exchange_exponent = l.value() + ja.doubled() - s_integer;
-    let exchange_is_symmetric = exchange_exponent.is_multiple_of(2);
-
-    let allowed = match stats_a {
-        Statistics::Boson => exchange_is_symmetric,
-        Statistics::Fermion => !exchange_is_symmetric,
-    };
-
-    if allowed {
-        RawRuleOutcome::pass("identical-particle exchange symmetry is satisfied")
-    } else {
-        RawRuleOutcome::fail("identical-particle exchange symmetry is violated")
-    }
-}
-
-fn check_conventional_meson_jpc_raw(parent: &ParticleProperties) -> RawRuleOutcome {
-    let Some(j) = parent.spin else {
-        return RawRuleOutcome::unknown(missing(&["parent.spin"]), "parent spin is unknown");
-    };
-
-    let Some(p) = parent.parity else {
-        return RawRuleOutcome::unknown(missing(&["parent.parity"]), "parent parity is unknown");
-    };
-
-    let Some(c) = parent.c_parity else {
-        return RawRuleOutcome::unknown(
-            missing(&["parent.c_parity"]),
-            "parent C-parity is unknown or not applicable",
-        );
-    };
-
-    if !j.doubled().is_multiple_of(2) {
-        return RawRuleOutcome::fail(
-            "half-integer J is not compatible with a conventional meson assignment",
-        );
-    }
-
-    let target_j = j.doubled();
-
-    // Conventional q qbar mesons have quark spin S = 0 or S = 1.
-    //
-    // P = (-1)^(L + 1)
-    // C = (-1)^(L + S)
-    //
-    // For a fixed J and S:
-    // - S = 0 implies J = L.
-    // - S = 1 implies J in {|L - 1|, ..., L + 1}.
-    //
-    // Searching up to J + 1 is enough for S = 1.
-    let max_l = target_j / 2 + 1;
-
-    for l_raw in 0..=max_l {
-        for s_raw in [0u32, 1u32] {
-            let l_doubled = 2 * l_raw;
-            let s_doubled = 2 * s_raw;
-
-            let min_j = l_doubled.abs_diff(s_doubled);
-            let max_j = l_doubled + s_doubled;
-
-            let angular_ok = target_j >= min_j && target_j <= max_j;
-            let parity_ok = p == L::int(l_raw + 1).orbital_parity();
-            let c_ok = c == L::int(l_raw + s_raw).orbital_parity();
-
-            if angular_ok && parity_ok && c_ok {
-                return RawRuleOutcome::pass(
-                    "J^PC is compatible with a conventional q qbar meson assignment",
-                );
-            }
-        }
-    }
-
-    RawRuleOutcome::fail(format!(
-        "J^PC = {}{:?}{:?} is exotic for a conventional q qbar meson assignment",
-        j, p, c,
-    ))
-}
-
-/// A partial wave defined by a total angular momentum, `J`, an orbital angular momentum, `L`, and
-/// and intrinsic spin, `S`.
-#[derive(Copy, Clone, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
-pub struct PartialWave {
-    /// The total angular momentum of the wave
-    pub j: J,
-    /// The orbital angular momentum of the wave
-    pub l: L,
-    /// The spin of the wave
-    pub s: S,
-}
-impl PartialWave {
-    /// Construct a new partial wave from the given angular momentum quantum numbers.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`LadduPhysicsError`] when `j`, `l`, and `s` violate angular
-    /// momentum coupling rules.
-    pub fn new(j: J, l: L, s: S) -> LadduPhysicsResult<Self> {
-        PartialWave::validate_coupling(j, l, s)?;
-        Ok(Self { j, l, s })
-    }
-    /// Get the spectroscopic label for the wave in the form {2s+1}{l}{j} where l is represented by
-    /// its spectroscopic letter equivalent (`S` for `0`, `P` for `1`, etc.).
-    pub fn label(&self) -> String {
-        let multiplicity = self.s.doubled() + 1;
-        format!("{}{}{}", multiplicity, self.l, self.j)
-    }
-    /// Validate the set of angular momentum quantum numbers which define a partial wave.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`LadduPhysicsError`] when `j` lies outside the range permitted
-    /// by `l` and `s` or has incompatible integer/half-integer parity.
-    pub fn validate_coupling(j: J, l: L, s: S) -> LadduPhysicsResult<()> {
-        let l_twice = 2 * l.value();
-        let s_twice = s.doubled();
-        let j_twice = j.doubled();
-        let min = l_twice.abs_diff(s_twice);
-        let max = l_twice + s_twice;
-        if j_twice >= min && j_twice <= max && (j_twice - min).is_multiple_of(2) {
-            Ok(())
-        } else {
-            Err(LadduPhysicsError::invalid_relation(
-                "j, l, and s must be compatible",
-            ))
-        }
-    }
-}
-
-impl Display for PartialWave {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.label())
-    }
-}
-
-/// A partial wave together with allowed parity and C-parity, if applicable.
-#[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
-pub struct AllowedPartialWave {
-    /// The angular quantum numbers of the wave
-    pub wave: PartialWave,
-    /// The allowed parity, if applicable
-    pub parity: Option<Parity>,
-    /// The allowed C-parity, if applicable
-    pub c_parity: Option<Parity>,
-}
-
-impl AllowedPartialWave {
-    /// Take an existing [`PartialWave`] and infer parity and C-parity from its decay products.
-    pub fn new(wave: PartialWave, daughters: (&ParticleProperties, &ParticleProperties)) -> Self {
-        Self {
-            parity: infer_parity(daughters, wave.l),
-            c_parity: infer_c_parity(daughters, wave.l, wave.s),
-            wave,
-        }
-    }
-}
-
-fn infer_parity(daughters: (&ParticleProperties, &ParticleProperties), l: L) -> Option<Parity> {
-    Some(daughters.0.parity? * daughters.1.parity? * l.orbital_parity())
-}
-
-fn infer_c_parity(
-    daughters: (&ParticleProperties, &ParticleProperties),
-    l: L,
-    s: S,
-) -> Option<Parity> {
-    daughters.0.is_antiparticle_of(daughters.1).then_some(())?;
-    let s_doubled = s.doubled();
-    if !s_doubled.is_multiple_of(2) {
-        return None;
-    }
-    Some(L::int(l.value() + (s_doubled / 2)).orbital_parity())
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-/// A generated partial-wave candidate together with its inferred properties and
-/// selection-rule report.
-pub struct PartialWaveCandidate {
-    /// Angular quantum numbers of the candidate.
-    pub wave: PartialWave,
-    /// Candidate wave plus its channel-dependent inferred parity values.
-    pub inferred: AllowedPartialWave,
-    /// Detailed outcomes from the configured rules.
-    pub report: RuleReport,
-}
-
-impl PartialWaveCandidate {
-    /// Return whether the candidate passed every enforced rule.
-    pub fn is_allowed(&self) -> bool {
-        self.report.is_allowed()
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Default)]
-/// Complete result of scanning a two-body channel for partial waves.
-pub struct PartialWaveScan {
-    /// All generated candidates, including rejected waves.
-    pub candidates: Vec<PartialWaveCandidate>,
-    /// Required properties which prevented candidate generation.
-    pub missing_inputs: Vec<String>,
-}
-
-impl PartialWaveScan {
-    /// Iterate over the inferred properties of accepted waves.
-    pub fn allowed(&self) -> impl Iterator<Item = &AllowedPartialWave> {
-        self.candidates
-            .iter()
-            .filter(|candidate| candidate.is_allowed())
-            .map(|candidate| &candidate.inferred)
-    }
-
-    /// Iterate over candidates rejected by at least one enforced rule.
-    pub fn rejected(&self) -> impl Iterator<Item = &PartialWaveCandidate> {
-        self.candidates
-            .iter()
-            .filter(|candidate| !candidate.is_allowed())
-    }
-
-    /// Consume the scan and collect its accepted waves.
-    pub fn into_allowed(self) -> Vec<AllowedPartialWave> {
-        self.candidates
-            .into_iter()
-            .filter_map(|candidate| {
-                if candidate.is_allowed() {
-                    Some(candidate.inferred)
-                } else {
-                    None
-                }
-            })
-            .collect()
-    }
-}
-
-/// Configuration for generating and filtering allowed two-body partial waves.
-///
-/// `SelectionRules` combines a maximum orbital angular momentum with a
-/// [`RuleSet`]. Candidate waves are generated from angular-momentum coupling
-/// and are then filtered by the enabled rules.
-///
-/// The generated waves satisfy
-/// $`S \in |j_a - j_b|, \ldots, j_a + j_b`$
-/// and
-/// $`J \in |L - S|, \ldots, L + S`$,
-/// with $`0 \le L \le L_\text{max}`$.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub struct SelectionRules {
-    /// Conservation and symmetry rules used to filter candidate waves.
-    ///
-    /// Angular-momentum compatibility is handled by
-    /// [`SelectionRules::allowed_partial_waves`]. The [`RuleSet`] applies
-    /// additional checks such as parity, charge, isospin, flavor quantum
-    /// numbers, $`C`$-parity, $`G`$-parity, and identical-particle symmetry.
-    pub rules: RuleSet,
-    /// Maximum orbital angular momentum $`L_\text{max}`$ considered when
-    /// generating candidate partial waves.
-    ///
-    /// The solver scans all integer values
-    /// $`L = 0, 1, \ldots, L_\text{max}`$.
-    pub max_l: L,
-}
-
-impl Default for SelectionRules {
-    fn default() -> Self {
-        Self::strong(L::int(6))
-    }
-}
-
-impl SelectionRules {
-    /// Construct a partial-wave scanner from a rule set and maximum orbital
-    /// angular momentum.
-    pub fn new(rules: RuleSet, max_l: L) -> Self {
-        Self { rules, max_l }
-    }
-
-    /// Construct a scanner which applies only angular-momentum coupling.
-    pub fn angular(max_l: L) -> Self {
-        Self::new(RuleSet::angular(), max_l)
-    }
-
-    /// Construct a scanner configured for electromagnetic decays.
-    pub fn electromagnetic(max_l: L) -> Self {
-        Self::new(RuleSet::electromagnetic(), max_l)
-    }
-
-    /// Construct a scanner configured for weak decays.
-    pub fn weak(max_l: L) -> Self {
-        Self::new(RuleSet::weak(), max_l)
-    }
-
-    /// Construct a scanner configured for strong decays.
-    pub fn strong(max_l: L) -> Self {
-        Self::new(RuleSet::strong(), max_l)
-    }
-    /// Return all possible coupled total spins from two daughter spins.
-    ///
-    /// Given daughter spins $`j_a`$ and $`j_b`$, this returns
-    /// $`S = |j_a - j_b|, |j_a - j_b| + 1, \ldots, j_a + j_b`$.
-    ///
-    /// Internally angular momenta are stored as doubled values, so the returned
-    /// sequence advances by two in the doubled representation.
-    pub fn coupled_spins(a: J, b: J) -> Vec<S> {
-        a.coupled_with(b)
-    }
-
-    /// Generate all candidates and retain detailed reports for accepted and
-    /// rejected waves.
-    pub fn scan_partial_waves(
-        &self,
-        parent: &ParticleProperties,
-        daughters: (&ParticleProperties, &ParticleProperties),
-    ) -> PartialWaveScan {
-        let mut missing_inputs = Vec::new();
-
-        let Some(parent_j) = parent.spin else {
-            missing_inputs.push("parent.spin".to_string());
-            return PartialWaveScan {
-                candidates: Vec::new(),
-                missing_inputs,
-            };
-        };
-
-        let Some(ja) = daughters.0.spin else {
-            missing_inputs.push("daughter_a.spin".to_string());
-            return PartialWaveScan {
-                candidates: Vec::new(),
-                missing_inputs,
-            };
-        };
-
-        let Some(jb) = daughters.1.spin else {
-            missing_inputs.push("daughter_b.spin".to_string());
-            return PartialWaveScan {
-                candidates: Vec::new(),
-                missing_inputs,
-            };
-        };
-
-        let mut candidates = Vec::new();
-
-        for s in Self::coupled_spins(ja, jb) {
-            for l_raw in 0..=self.max_l.value() {
-                let l = L::int(l_raw);
-
-                let Ok(wave) = PartialWave::new(parent_j, l, s) else {
-                    continue;
-                };
-
-                let report = self.rules.evaluate(parent, daughters, l, s);
-                let inferred = AllowedPartialWave::new(wave, daughters);
-
-                candidates.push(PartialWaveCandidate {
-                    wave,
-                    inferred,
-                    report,
-                });
-            }
-        }
-
-        PartialWaveScan {
-            candidates,
-            missing_inputs,
-        }
-    }
-
-    /// Generate all allowed two-body partial waves for a parent and two
-    /// daughters.
-    ///
-    /// The parent spin is interpreted as the total angular momentum $`J`$ of
-    /// the resonance. The daughter spins are coupled to possible total-spin
-    /// values $`S`$, and each $`S`$ is combined with orbital angular momenta
-    /// $`L = 0, 1, \ldots, L_\text{max}`$.
-    ///
-    /// A candidate wave is kept when:
-    ///
-    /// 1. $`L`$ and $`S`$ can couple to the parent $`J`$.
-    /// 2. The enabled [`RuleSet`] checks do not reject it.
-    ///
-    /// Returns an empty vector if the parent spin or either daughter spin is
-    /// unknown.
-    ///
-    /// The returned [`AllowedPartialWave`] includes the underlying
-    /// [`PartialWave`] together with channel-dependent inferred quantum numbers,
-    /// such as final-state parity and, when meaningful, $`C`$-parity.
-    pub fn allowed_partial_waves(
-        &self,
-        parent: &ParticleProperties,
-        daughters: (&ParticleProperties, &ParticleProperties),
-    ) -> Vec<AllowedPartialWave> {
-        self.scan_partial_waves(parent, daughters).into_allowed()
-    }
-}
-
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
+
     use super::*;
     use crate::{
         j, l, m,
-        quantum::{Isospin, M},
+        quantum::{
+            AllowedPartialWave, Isospin, J, M, Parity, PartialWave, PartialWaveCandidate,
+            SelectionRules, Statistics,
+        },
     };
 
     fn labels(waves: &[AllowedPartialWave]) -> Vec<String> {
@@ -1737,6 +865,207 @@ mod tests {
             .unwrap()
             .with_statistics(Statistics::Fermion)
             .unwrap()
+    }
+
+    const ALL_RULES: [RuleKind; 17] = [
+        RuleKind::Parity,
+        RuleKind::Isospin,
+        RuleKind::IsospinProjection,
+        RuleKind::CParity,
+        RuleKind::GParity,
+        RuleKind::Charge,
+        RuleKind::Strangeness,
+        RuleKind::Charm,
+        RuleKind::Bottomness,
+        RuleKind::Topness,
+        RuleKind::BaryonNumber,
+        RuleKind::ElectronLeptonNumber,
+        RuleKind::MuonLeptonNumber,
+        RuleKind::TauLeptonNumber,
+        RuleKind::LeptonNumber,
+        RuleKind::IdenticalParticleSymmetry,
+        RuleKind::ConventionalMesonJpc,
+    ];
+
+    #[test]
+    fn rule_registry_is_complete_unique_and_named() {
+        let registered: Vec<_> = evaluators::registered_rules().collect();
+        assert_eq!(
+            registered.iter().map(|(rule, _)| *rule).collect::<Vec<_>>(),
+            ALL_RULES,
+        );
+        assert!(registered.iter().all(|(_, name)| !name.is_empty()));
+        assert_eq!(
+            registered
+                .iter()
+                .map(|(rule, _)| *rule)
+                .collect::<BTreeSet<_>>()
+                .len(),
+            ALL_RULES.len(),
+        );
+    }
+
+    #[test]
+    fn every_rule_outcome_obeys_every_policy_state() {
+        let raw_outcomes = [
+            RawRuleOutcome::pass("passed"),
+            RawRuleOutcome::fail("failed"),
+            RawRuleOutcome::unknown(vec!["missing.field".to_string()], "unknown"),
+        ];
+        let modes = [
+            RuleMode::Enforce,
+            RuleMode::Ignore { reason: None },
+            RuleMode::DiagnoseOnly { reason: None },
+        ];
+        let unknown_policies = [
+            UnknownPolicy::Allow,
+            UnknownPolicy::Warn,
+            UnknownPolicy::Reject,
+        ];
+
+        for rule in ALL_RULES {
+            for mode in &modes {
+                for unknown in unknown_policies {
+                    for raw in &raw_outcomes {
+                        let check = apply_policy(
+                            rule,
+                            &RulePolicy {
+                                mode: mode.clone(),
+                                unknown,
+                            },
+                            raw.clone(),
+                        );
+                        assert_eq!(check.rule, rule);
+                        match (mode, raw, unknown, check.outcome) {
+                            (RuleMode::Ignore { .. }, _, _, RuleOutcome::Ignored { .. })
+                            | (
+                                RuleMode::DiagnoseOnly { .. },
+                                _,
+                                _,
+                                RuleOutcome::Diagnostic { .. },
+                            )
+                            | (
+                                RuleMode::Enforce,
+                                RawRuleOutcome::Pass { .. },
+                                _,
+                                RuleOutcome::Pass { .. },
+                            )
+                            | (
+                                RuleMode::Enforce,
+                                RawRuleOutcome::Fail { .. },
+                                _,
+                                RuleOutcome::Fail { .. },
+                            )
+                            | (
+                                RuleMode::Enforce,
+                                RawRuleOutcome::Unknown { .. },
+                                UnknownPolicy::Allow,
+                                RuleOutcome::UnknownAllowed { .. },
+                            )
+                            | (
+                                RuleMode::Enforce,
+                                RawRuleOutcome::Unknown { .. },
+                                UnknownPolicy::Warn,
+                                RuleOutcome::Warning { .. },
+                            )
+                            | (
+                                RuleMode::Enforce,
+                                RawRuleOutcome::Unknown { .. },
+                                UnknownPolicy::Reject,
+                                RuleOutcome::Fail { .. },
+                            ) => {}
+                            combination => panic!("unexpected policy result: {combination:?}"),
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn rule_presets_preserve_exact_membership_and_order() {
+        let assert_rules = |actual: RuleSet, expected: &[RuleKind]| {
+            assert_eq!(actual.enabled_rules().collect::<Vec<_>>(), expected);
+        };
+        assert_rules(
+            RuleSet::strong(),
+            &[
+                RuleKind::Parity,
+                RuleKind::Isospin,
+                RuleKind::IsospinProjection,
+                RuleKind::Charge,
+                RuleKind::Strangeness,
+                RuleKind::Charm,
+                RuleKind::Bottomness,
+                RuleKind::Topness,
+                RuleKind::BaryonNumber,
+                RuleKind::IdenticalParticleSymmetry,
+            ],
+        );
+        assert_rules(
+            RuleSet::electromagnetic(),
+            &[
+                RuleKind::Parity,
+                RuleKind::IsospinProjection,
+                RuleKind::Charge,
+                RuleKind::Strangeness,
+                RuleKind::Charm,
+                RuleKind::Bottomness,
+                RuleKind::Topness,
+                RuleKind::BaryonNumber,
+                RuleKind::IdenticalParticleSymmetry,
+            ],
+        );
+        assert_rules(
+            RuleSet::weak(),
+            &[
+                RuleKind::Charge,
+                RuleKind::BaryonNumber,
+                RuleKind::ElectronLeptonNumber,
+                RuleKind::MuonLeptonNumber,
+                RuleKind::TauLeptonNumber,
+                RuleKind::LeptonNumber,
+                RuleKind::IdenticalParticleSymmetry,
+            ],
+        );
+    }
+
+    #[test]
+    fn representative_rule_policy_and_report_serde_stay_stable() {
+        let policy = RulePolicy {
+            mode: RuleMode::DiagnoseOnly {
+                reason: Some("classification only".to_string()),
+            },
+            unknown: UnknownPolicy::Warn,
+        };
+        let policy_json = serde_json::to_string(&policy).unwrap();
+        assert_eq!(
+            policy_json,
+            r#"{"mode":{"DiagnoseOnly":{"reason":"classification only"}},"unknown":"Warn"}"#,
+        );
+        assert_eq!(
+            serde_json::from_str::<RulePolicy>(&policy_json).unwrap(),
+            policy
+        );
+
+        let report = RuleReport {
+            checks: vec![RuleCheck {
+                rule: RuleKind::Charge,
+                outcome: RuleOutcome::Warning {
+                    missing: vec!["daughter_b.charge".to_string()],
+                    message: "charge cannot be checked".to_string(),
+                },
+            }],
+        };
+        let report_json = serde_json::to_string(&report).unwrap();
+        assert_eq!(
+            report_json,
+            r#"{"checks":[{"rule":"Charge","outcome":{"Warning":{"missing":["daughter_b.charge"],"message":"charge cannot be checked"}}}]}"#,
+        );
+        assert_eq!(
+            serde_json::from_str::<RuleReport>(&report_json).unwrap(),
+            report
+        );
     }
 
     #[test]

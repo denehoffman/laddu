@@ -9,6 +9,9 @@ pub use state::*;
 mod rules;
 pub use rules::*;
 
+mod partial_waves;
+pub use partial_waves::*;
+
 /// Curated particle-property definitions for commonly used particles.
 pub mod builtin;
 
