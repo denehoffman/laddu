@@ -1,25 +1,32 @@
 use laddu_expr::{BinaryOp, UnaryOp};
-use laddu_kernel::ir::{KernelInstruction, KernelValueId, KernelValueKind};
+use laddu_kernel::ir::{KernelInstruction, KernelValueId};
 use num::complex::Complex64;
 
 use super::ReverseState;
 use crate::AutodiffResult;
 
 impl ReverseState<'_> {
-    pub(super) fn kind(&self, id: KernelValueId) -> KernelValueKind {
-        self.primal.values()[id.index()].kind
-    }
-
-    pub(super) fn push(&mut self, instruction: KernelInstruction) -> AutodiffResult<KernelValueId> {
+    fn emit_instruction(
+        &mut self,
+        instruction: KernelInstruction,
+    ) -> AutodiffResult<KernelValueId> {
         self.builder.push(instruction).map_err(Into::into)
     }
 
     pub(super) fn real(&mut self, value: f64) -> AutodiffResult<KernelValueId> {
-        self.push(KernelInstruction::RealConstant(value))
+        self.emit_instruction(KernelInstruction::RealConstant(value))
     }
 
     pub(super) fn complex(&mut self, re: f64, im: f64) -> AutodiffResult<KernelValueId> {
-        self.push(KernelInstruction::ComplexConstant(Complex64::new(re, im)))
+        self.emit_instruction(KernelInstruction::ComplexConstant(Complex64::new(re, im)))
+    }
+
+    pub(super) fn complex_value(
+        &mut self,
+        re: KernelValueId,
+        im: KernelValueId,
+    ) -> AutodiffResult<KernelValueId> {
+        self.emit_instruction(KernelInstruction::Complex { re, im })
     }
 
     pub(super) fn unary(
@@ -27,7 +34,7 @@ impl ReverseState<'_> {
         op: UnaryOp,
         input: KernelValueId,
     ) -> AutodiffResult<KernelValueId> {
-        self.push(KernelInstruction::Unary { op, input })
+        self.emit_instruction(KernelInstruction::Unary { op, input })
     }
 
     pub(super) fn binary(
@@ -36,7 +43,7 @@ impl ReverseState<'_> {
         lhs: KernelValueId,
         rhs: KernelValueId,
     ) -> AutodiffResult<KernelValueId> {
-        self.push(KernelInstruction::Binary { op, lhs, rhs })
+        self.emit_instruction(KernelInstruction::Binary { op, lhs, rhs })
     }
 
     pub(super) fn add(
@@ -44,7 +51,7 @@ impl ReverseState<'_> {
         lhs: KernelValueId,
         rhs: KernelValueId,
     ) -> AutodiffResult<KernelValueId> {
-        self.push(KernelInstruction::Add(vec![lhs, rhs]))
+        self.emit_instruction(KernelInstruction::Add(vec![lhs, rhs]))
     }
 
     pub(super) fn mul(
@@ -52,7 +59,7 @@ impl ReverseState<'_> {
         lhs: KernelValueId,
         rhs: KernelValueId,
     ) -> AutodiffResult<KernelValueId> {
-        self.push(KernelInstruction::Mul(vec![lhs, rhs]))
+        self.emit_instruction(KernelInstruction::Mul(vec![lhs, rhs]))
     }
 
     pub(super) fn mul_conj(
@@ -69,7 +76,7 @@ impl ReverseState<'_> {
         input: KernelValueId,
         index: usize,
     ) -> AutodiffResult<KernelValueId> {
-        self.push(KernelInstruction::Component { input, index })
+        self.emit_instruction(KernelInstruction::Component { input, index })
     }
 
     pub(super) fn matrix_element(
@@ -78,7 +85,47 @@ impl ReverseState<'_> {
         row: usize,
         col: usize,
     ) -> AutodiffResult<KernelValueId> {
-        self.push(KernelInstruction::MatrixElement { input, row, col })
+        self.emit_instruction(KernelInstruction::MatrixElement { input, row, col })
+    }
+
+    pub(super) fn vector(&mut self, elements: Vec<KernelValueId>) -> AutodiffResult<KernelValueId> {
+        self.emit_instruction(KernelInstruction::Vector(elements))
+    }
+
+    pub(super) fn matrix(
+        &mut self,
+        rows: usize,
+        cols: usize,
+        elements: Vec<KernelValueId>,
+    ) -> AutodiffResult<KernelValueId> {
+        self.emit_instruction(KernelInstruction::Matrix {
+            rows,
+            cols,
+            elements,
+        })
+    }
+
+    pub(super) fn solve(
+        &mut self,
+        matrix: KernelValueId,
+        rhs: KernelValueId,
+    ) -> AutodiffResult<KernelValueId> {
+        self.emit_instruction(KernelInstruction::Solve { matrix, rhs })
+    }
+
+    pub(super) fn solve_row_adjoint_element(
+        &mut self,
+        row_slot: usize,
+        index: usize,
+        len: usize,
+        adjoint: KernelValueId,
+    ) -> AutodiffResult<KernelValueId> {
+        self.emit_instruction(KernelInstruction::SolveRowAdjointElement {
+            row_slot,
+            index,
+            len,
+            adjoint,
+        })
     }
 
     pub(super) fn sum_or_zero(
@@ -88,7 +135,7 @@ impl ReverseState<'_> {
         match terms.len() {
             0 => self.real(0.0),
             1 => Ok(terms[0]),
-            _ => self.push(KernelInstruction::Add(terms)),
+            _ => self.emit_instruction(KernelInstruction::Add(terms)),
         }
     }
 }

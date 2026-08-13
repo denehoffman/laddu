@@ -1,6 +1,9 @@
 mod adjoint;
 mod emit;
 mod rules;
+mod validate;
+
+use std::collections::HashMap;
 
 use laddu_expr::{UnaryOp, parameters::ParamId};
 use laddu_kernel::ir::{
@@ -29,15 +32,26 @@ struct ReverseState<'a> {
     pub(super) primal: &'a ScalarKernelIr,
     pub(super) builder: KernelIrBuilder,
     adjoints: AdjointStore,
+    parameter_nodes: HashMap<ParamId, Vec<KernelValueId>>,
     pub(super) component: OutputComponent,
 }
 
 impl<'a> ReverseState<'a> {
     fn new(primal: &'a ScalarKernelIr, component: OutputComponent) -> Self {
+        let mut parameter_nodes: HashMap<ParamId, Vec<KernelValueId>> = HashMap::new();
+        for (index, value) in primal.values().iter().enumerate() {
+            if let KernelInstruction::Parameter(parameter) = value.instruction {
+                parameter_nodes
+                    .entry(parameter)
+                    .or_default()
+                    .push(KernelValueId::from_index(index));
+            }
+        }
         Self {
             primal,
             builder: KernelIrBuilder::from_scalar(primal),
             adjoints: AdjointStore::new(primal.values()),
+            parameter_nodes,
             component,
         }
     }
@@ -52,7 +66,7 @@ impl<'a> ReverseState<'a> {
                 continue;
             };
             self.propagate_instruction(primal, &adjoint)?;
-            self.adjoints.set_resolved(primal, adjoint);
+            self.adjoints.set_resolved(primal, adjoint)?;
         }
 
         let outputs = self.collect_parameter_outputs(free_params)?;
@@ -64,7 +78,16 @@ impl<'a> ReverseState<'a> {
     fn seed_root_adjoint(&mut self) -> AutodiffResult<()> {
         let root = self.primal.root();
         let root_kind = self.primal.values()[root.index()].kind;
-        let seed = match (root_kind, self.component) {
+        let seed = self.seed_for(root_kind, self.component)?;
+        self.adjoints.add_element(root, 0, seed)
+    }
+
+    fn seed_for(
+        &mut self,
+        root_kind: KernelValueKind,
+        component: OutputComponent,
+    ) -> AutodiffResult<KernelValueId> {
+        let seed = match (root_kind, component) {
             (KernelValueKind::Real, OutputComponent::Real) => self.real(1.0)?,
             (KernelValueKind::Real, OutputComponent::Imag) => self.real(0.0)?,
             (KernelValueKind::Complex, OutputComponent::Real) => self.real(1.0)?,
@@ -75,7 +98,7 @@ impl<'a> ReverseState<'a> {
                 ));
             }
         };
-        self.adjoints.add_element(root, 0, seed)
+        Ok(seed)
     }
 
     fn collect_parameter_outputs(
@@ -85,10 +108,13 @@ impl<'a> ReverseState<'a> {
         let mut outputs = Vec::with_capacity(free_params.len());
         for parameter in free_params {
             let mut terms = Vec::new();
-            for (index, value) in self.primal.values().iter().enumerate() {
-                if matches!(value.instruction, KernelInstruction::Parameter(id) if id == *parameter)
-                    && let Some(adjoint) = self.adjoints.resolved(KernelValueId::from_index(index))
-                {
+            let parameter_nodes = self
+                .parameter_nodes
+                .get(parameter)
+                .cloned()
+                .unwrap_or_default();
+            for node in parameter_nodes {
+                if let Some(adjoint) = self.adjoints.resolved(node) {
                     terms.push(self.unary(UnaryOp::Real, adjoint[0])?);
                 }
             }
@@ -101,7 +127,7 @@ impl<'a> ReverseState<'a> {
         &mut self,
         primal: KernelValueId,
     ) -> AutodiffResult<Option<Vec<KernelValueId>>> {
-        let Some(pending) = self.adjoints.take_pending(primal) else {
+        let Some(pending) = self.adjoints.take_pending(primal)? else {
             return Ok(None);
         };
         let mut values = Vec::with_capacity(pending.len());
@@ -151,10 +177,9 @@ impl<'a> ReverseState<'a> {
                 self.accumulate_element(*input, *index, adjoint[0])?;
             }
             KernelInstruction::MatrixElement { input, row, col } => {
-                let KernelValueKind::Matrix { cols, .. } = self.kind(*input) else {
-                    unreachable!()
-                };
-                self.accumulate_element(*input, row * cols + col, adjoint[0])?;
+                let (_, cols) = self.expect_matrix_kind(*input, "matrix-element pullback")?;
+                let element = Self::flat_index(*row, cols, *col, "matrix-element pullback")?;
+                self.accumulate_element(*input, element, adjoint[0])?;
             }
             KernelInstruction::MatMul { lhs, rhs } => {
                 self.matmul_pullback(*lhs, *rhs, adjoint)?;
@@ -672,6 +697,35 @@ mod tests {
         assert_eq!(
             error.to_string(),
             "cannot differentiate kernel instruction: cannot differentiate derivative-only solve-row adjoint instruction"
+        );
+    }
+
+    #[test]
+    fn structured_pullback_shape_assumptions_report_invalid_kernels() {
+        let primal = ScalarKernelIr::new(
+            vec![value(
+                KernelValueKind::Real,
+                KernelInstruction::RealConstant(1.0),
+            )],
+            KernelValueId::from_index(0),
+        )
+        .unwrap();
+        let state = ReverseState::new(&primal, OutputComponent::Real);
+
+        let matrix_error = state
+            .expect_matrix_kind(KernelValueId::from_index(0), "matrix test")
+            .unwrap_err();
+        assert_eq!(
+            matrix_error.to_string(),
+            "cannot differentiate kernel instruction: matrix test expected matrix value 0, found Real"
+        );
+
+        let vector_error = state
+            .expect_vector_kind(KernelValueId::from_index(0), "vector test")
+            .unwrap_err();
+        assert_eq!(
+            vector_error.to_string(),
+            "cannot differentiate kernel instruction: vector test expected vector value 0, found Real"
         );
     }
 

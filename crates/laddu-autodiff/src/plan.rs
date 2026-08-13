@@ -1,6 +1,6 @@
 use crate::AutodiffResult;
 use laddu_compile::CompiledModel;
-use laddu_expr::{ExprId, ExprNode};
+use laddu_expr::{ExprId, ExprNode, parameters::FreeParamId};
 use serde::{Deserialize, Serialize};
 
 /// Algorithm selected for automatic differentiation.
@@ -35,10 +35,10 @@ struct WorkEstimate {
 }
 
 #[derive(Clone, Debug, Default)]
-struct ParameterDependencies(Vec<usize>);
+struct ParameterDependencies(Vec<FreeParamId>);
 
 impl ParameterDependencies {
-    fn one(parameter: Option<usize>) -> Self {
+    fn one(parameter: Option<FreeParamId>) -> Self {
         Self(parameter.into_iter().collect())
     }
 
@@ -139,7 +139,7 @@ impl AutodiffPlan {
         for (index, dependencies) in node_dependencies.iter().enumerate() {
             let id = ExprId::from_index(index);
             for parameter in &dependencies.0 {
-                active_nodes[*parameter].push(id);
+                active_nodes[parameter.index()].push(id);
             }
         }
         active_nodes
@@ -168,25 +168,31 @@ impl AutodiffPlan {
         }
     }
 
-    fn parameter_dependency(model: &CompiledModel, name: &str) -> Option<usize> {
+    fn parameter_dependency(model: &CompiledModel, name: &str) -> Option<FreeParamId> {
         let id = model.params().id(name)?;
-        let Ok(Some(free_id)) = model.params().free_id(id) else {
-            return None;
-        };
-        Some(free_id.index())
+        // `id` came from this same validated layout, so lookup failure is an
+        // internal invariant violation. A fixed parameter is the only normal
+        // reason for there to be no free-parameter dependency.
+        match model.params().free_id(id) {
+            Ok(free_id) => free_id,
+            Err(error) => {
+                debug_assert!(false, "parameter registry returned an invalid id: {error}");
+                None
+            }
+        }
     }
 }
 
-fn merge_sorted_unique(lhs: &[usize], rhs: &[usize]) -> Vec<usize> {
+fn merge_sorted_unique(lhs: &[FreeParamId], rhs: &[FreeParamId]) -> Vec<FreeParamId> {
     let mut merged = Vec::with_capacity(lhs.len() + rhs.len());
     let (mut left, mut right) = (0, 0);
     while left < lhs.len() || right < rhs.len() {
         let next = match (lhs.get(left), rhs.get(right)) {
-            (Some(lhs), Some(rhs)) if lhs < rhs => {
+            (Some(lhs), Some(rhs)) if lhs.index() < rhs.index() => {
                 left += 1;
                 *lhs
             }
-            (Some(lhs), Some(rhs)) if rhs < lhs => {
+            (Some(lhs), Some(rhs)) if rhs.index() < lhs.index() => {
                 right += 1;
                 *rhs
             }
