@@ -1,4 +1,4 @@
-use std::collections::{HashSet, VecDeque};
+use std::collections::HashSet;
 
 use indexmap::IndexMap;
 use laddu_expr::Expr;
@@ -10,6 +10,10 @@ use crate::{
     quantum::{MandelstamChannel, ParticleProperties},
     vectors::{RealVec3, RealVec4, Vec3, Vec4},
 };
+
+mod frame;
+mod resolution;
+mod topology;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 /// A named reaction graph whose edges are particles and whose vertices are
@@ -114,8 +118,9 @@ impl Channel {
     /// duplicate edges, the reaction graph is inconsistent, or an initial edge
     /// lacks a valid momentum source.
     pub fn validate(&self) -> LadduPhysicsResult<()> {
+        let topology = topology::TopologyIndex::new(self);
         for name in self.vertices.keys() {
-            self.validate_vertex(name)?;
+            topology.validate_vertex(name)?;
         }
         for edge in self.initial_edges() {
             edge.initial_momentum
@@ -162,7 +167,7 @@ impl Channel {
     /// Returns [`LadduPhysicsError`] when the edge is unknown or its momentum
     /// cannot be uniquely resolved from the channel.
     pub fn p4(&self, edge: &str) -> LadduPhysicsResult<Vec4> {
-        self.resolve_p4(edge, &mut Vec::new())
+        self.resolved_p4(edge)
     }
 
     /// Construct the symbolic three-momentum of an edge.
@@ -206,201 +211,6 @@ impl Channel {
             .get(name)
             .ok_or_else(|| LadduPhysicsError::invalid_relation(format!("unknown vertex `{name}`")))
     }
-
-    fn resolve_p4(&self, edge: &str, stack: &mut Vec<String>) -> LadduPhysicsResult<Vec4> {
-        let edge_def = self.require_edge(edge)?;
-        if let Some(p4) = &edge_def.p4 {
-            return Ok(p4.clone());
-        }
-        if stack.iter().any(|candidate| candidate == edge) {
-            return Err(LadduPhysicsError::invalid_relation(format!(
-                "cyclic p4 inference involving `{edge}`"
-            )));
-        }
-        stack.push(edge.to_owned());
-
-        for priority in [
-            InferencePriority::ParentFromDaughters,
-            InferencePriority::ChildFromParents,
-            InferencePriority::AnySingleMissing,
-        ] {
-            let candidates = self.inference_candidates(edge, priority, stack)?;
-            if candidates.len() == 1 {
-                stack.pop();
-                return Ok(candidates[0].clone());
-            }
-            if candidates.len() > 1 {
-                stack.pop();
-                return Err(LadduPhysicsError::invalid_relation(format!(
-                    "ambiguous p4 inference for edge `{edge}`"
-                )));
-            }
-        }
-
-        stack.pop();
-        Err(LadduPhysicsError::invalid_relation(format!(
-            "edge `{edge}` has no p4 and could not be inferred"
-        )))
-    }
-
-    fn inference_candidates(
-        &self,
-        edge: &str,
-        priority: InferencePriority,
-        stack: &mut Vec<String>,
-    ) -> LadduPhysicsResult<Vec<Vec4>> {
-        let mut out = Vec::new();
-        for vertex in self.vertices.values() {
-            if !vertex.contains(edge) || !vertex.matches_priority(edge, priority) {
-                continue;
-            }
-            if let Some(p4) = self.infer_from_vertex(edge, vertex, stack)? {
-                out.push(p4);
-            }
-        }
-        Ok(out)
-    }
-
-    fn infer_from_vertex(
-        &self,
-        edge: &str,
-        vertex: &Vertex,
-        stack: &mut Vec<String>,
-    ) -> LadduPhysicsResult<Option<Vec4>> {
-        if !vertex.contains(edge) {
-            return Ok(None);
-        }
-
-        let incoming = match self.sum_known_except(&vertex.incoming, edge, stack) {
-            Ok(incoming) => incoming,
-            Err(err) if is_unresolved_inference(&err) => return Ok(None),
-            Err(err) => return Err(err),
-        };
-        let outgoing = match self.sum_known_except(&vertex.outgoing, edge, stack) {
-            Ok(outgoing) => outgoing,
-            Err(err) if is_unresolved_inference(&err) => return Ok(None),
-            Err(err) => return Err(err),
-        };
-        if vertex.incoming.iter().any(|candidate| candidate == edge) {
-            Ok(Some(outgoing - incoming))
-        } else {
-            Ok(Some(incoming - outgoing))
-        }
-    }
-
-    fn sum_known_except(
-        &self,
-        edges: &[String],
-        except: &str,
-        stack: &mut Vec<String>,
-    ) -> LadduPhysicsResult<Vec4> {
-        let mut sum = Vec4::new(0.0, 0.0, 0.0, 0.0);
-        for edge in edges {
-            if edge == except {
-                continue;
-            }
-            sum = sum + self.resolve_p4(edge, stack)?;
-        }
-        Ok(sum)
-    }
-
-    fn frame_path_to_vertex(&self, target: &str) -> LadduPhysicsResult<FramePath> {
-        self.require_vertex(target)?;
-        let roots = self.root_vertices();
-        if roots.is_empty() {
-            return Err(LadduPhysicsError::invalid_relation(format!(
-                "could not find a root vertex for `{target}`"
-            )));
-        }
-
-        let mut matches = Vec::new();
-        for root in roots {
-            if let Some(path) = self.frame_path_from_root(&root, target) {
-                matches.push(FramePath { root, edges: path });
-            }
-        }
-
-        match matches.len() {
-            0 => Err(LadduPhysicsError::invalid_relation(format!(
-                "vertex `{target}` is not reachable from a root vertex"
-            ))),
-            1 => Ok(matches.remove(0)),
-            _ => Err(LadduPhysicsError::invalid_relation(format!(
-                "ambiguous frame path to vertex `{target}`"
-            ))),
-        }
-    }
-
-    fn root_vertices(&self) -> Vec<String> {
-        let produced_edges = self
-            .vertices
-            .values()
-            .flat_map(|vertex| vertex.outgoing.iter())
-            .collect::<HashSet<_>>();
-
-        self.vertices
-            .values()
-            .filter(|vertex| {
-                !vertex.incoming.is_empty()
-                    && vertex
-                        .incoming
-                        .iter()
-                        .all(|edge| !produced_edges.contains(edge))
-            })
-            .map(|vertex| vertex.name.clone())
-            .collect()
-    }
-
-    fn frame_path_from_root(&self, root: &str, target: &str) -> Option<Vec<String>> {
-        let mut queue = VecDeque::from([(root.to_owned(), Vec::new())]);
-        let mut seen = HashSet::new();
-        let mut matches = Vec::new();
-
-        while let Some((vertex_name, path)) = queue.pop_front() {
-            if !seen.insert(vertex_name.clone()) {
-                continue;
-            }
-            if vertex_name == target {
-                matches.push(path);
-                continue;
-            }
-            let vertex = self.vertices.get(&vertex_name)?;
-            for edge in &vertex.outgoing {
-                for child in self
-                    .vertices
-                    .values()
-                    .filter(|candidate| candidate.incoming.iter().any(|incoming| incoming == edge))
-                {
-                    let mut child_path = path.clone();
-                    child_path.push(edge.clone());
-                    queue.push_back((child.name.clone(), child_path));
-                }
-            }
-        }
-
-        if matches.len() == 1 {
-            matches.pop()
-        } else {
-            None
-        }
-    }
-
-    fn vertex_incoming_p4(&self, vertex: &str) -> LadduPhysicsResult<Vec4> {
-        let vertex = self.require_vertex(vertex)?;
-        if vertex.incoming.is_empty() {
-            return Err(LadduPhysicsError::invalid_relation(format!(
-                "vertex `{}` has no incoming edges",
-                vertex.name()
-            )));
-        }
-        self.sum_known_except(&vertex.incoming, "", &mut Vec::new())
-    }
-}
-
-#[derive(Clone, Debug)]
-struct FramePath {
-    root: String,
-    edges: Vec<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -567,11 +377,6 @@ impl Vertex {
         self.generation.as_ref()
     }
 
-    fn contains(&self, edge: &str) -> bool {
-        self.incoming.iter().any(|candidate| candidate == edge)
-            || self.outgoing.iter().any(|candidate| candidate == edge)
-    }
-
     fn all_edges(&self) -> impl Iterator<Item = &String> {
         self.incoming.iter().chain(&self.outgoing)
     }
@@ -695,25 +500,7 @@ impl<'a> VertexView<'a> {
     /// Returns [`LadduPhysicsError`] when the edge, frame path, or required
     /// momenta cannot be resolved.
     pub fn p4(&self, edge: &str) -> LadduPhysicsResult<Vec4> {
-        let frame_path = self.channel.frame_path_to_vertex(&self.name)?;
-        let overall = self.channel.vertex_incoming_p4(&frame_path.root)?;
-        let mut boosts = vec![-&overall.beta()];
-        let mut p4 = self.channel.p4(edge)?;
-        for beta in &boosts {
-            p4 = p4.boost(beta);
-        }
-
-        for frame_edge in frame_path.edges {
-            let mut frame_p4 = self.channel.p4(&frame_edge)?;
-            for beta in &boosts {
-                frame_p4 = frame_p4.boost(beta);
-            }
-            let beta = -&frame_p4.beta();
-            p4 = p4.boost(&beta);
-            boosts.push(beta);
-        }
-
-        Ok(p4)
+        self.channel.p4_in_frame(&self.name, edge)
     }
 
     /// Construct an edge three-momentum in this vertex's rest frame.
@@ -859,23 +646,9 @@ enum PairOp {
     Difference,
 }
 
-fn is_unresolved_inference(err: &LadduPhysicsError) -> bool {
-    matches!(err, LadduPhysicsError::InvalidRelation { relation } if relation.contains("could not be inferred"))
-}
-
 impl Channel {
     fn validate_vertex(&self, name: &str) -> LadduPhysicsResult<()> {
-        let vertex = self.require_vertex(name)?;
-        let mut seen = HashSet::new();
-        for edge in vertex.all_edges() {
-            self.require_edge(edge)?;
-            if !seen.insert(edge) {
-                return Err(LadduPhysicsError::invalid_relation(format!(
-                    "edge `{edge}` appears more than once in vertex `{name}`"
-                )));
-            }
-        }
-        Ok(())
+        topology::TopologyIndex::new(self).validate_vertex(name)
     }
 
     fn edge_is_explicit(&self, edge: &str) -> bool {
@@ -1085,6 +858,218 @@ mod tests {
             ambiguous.p4("x"),
             Err(LadduPhysicsError::InvalidRelation { relation })
                 if relation.contains("ambiguous p4 inference")
+        ));
+    }
+
+    #[test]
+    fn p4_resolution_uses_typed_internal_failures_and_preserves_messages() {
+        use super::resolution::ResolveFailure;
+        use super::topology::TopologyIndex;
+
+        let empty = Channel::new("empty");
+        let topology = TopologyIndex::new(&empty);
+        assert!(matches!(
+            empty.resolve_p4(&topology, "missing", &mut Vec::new()),
+            Err(ResolveFailure::UnknownEdge(edge)) if edge == "missing"
+        ));
+        assert!(matches!(
+            empty.p4("missing"),
+            Err(LadduPhysicsError::InvalidRelation { relation })
+                if relation == "unknown edge `missing`"
+        ));
+
+        let mut unavailable = Channel::new("unavailable");
+        unavailable.edge("x");
+        let topology = TopologyIndex::new(&unavailable);
+        assert!(matches!(
+            unavailable.resolve_p4(&topology, "x", &mut Vec::new()),
+            Err(ResolveFailure::Unavailable(edge)) if edge == "x"
+        ));
+        assert!(matches!(
+            unavailable.p4("x"),
+            Err(LadduPhysicsError::InvalidRelation { relation })
+                if relation == "edge `x` has no p4 and could not be inferred"
+        ));
+
+        let mut cyclic = Channel::new("cyclic");
+        cyclic.edge("a");
+        cyclic.edge("b");
+        cyclic.vertex("ab").incoming(["a"]).outgoing(["b"]);
+        cyclic.vertex("ba").incoming(["b"]).outgoing(["a"]);
+        let topology = TopologyIndex::new(&cyclic);
+        assert!(matches!(
+            cyclic.resolve_p4(&topology, "a", &mut Vec::new()),
+            Err(ResolveFailure::Cycle(edge)) if edge == "a"
+        ));
+        assert!(matches!(
+            cyclic.p4("a"),
+            Err(LadduPhysicsError::InvalidRelation { relation })
+                if relation == "cyclic p4 inference involving `a`"
+        ));
+
+        let mut ambiguous = Channel::new("ambiguous");
+        ambiguous.edge("x");
+        for (edge, px) in [("a", 1.0), ("b", -1.0), ("c", 2.0), ("d", -2.0)] {
+            ambiguous.edge(edge).p4(p4(px, 0.0, 0.0, 2.0));
+        }
+        ambiguous.vertex("ab").incoming(["x"]).outgoing(["a", "b"]);
+        ambiguous.vertex("cd").incoming(["x"]).outgoing(["c", "d"]);
+        let topology = TopologyIndex::new(&ambiguous);
+        assert!(matches!(
+            ambiguous.resolve_p4(&topology, "x", &mut Vec::new()),
+            Err(ResolveFailure::Ambiguous(edge)) if edge == "x"
+        ));
+        assert!(matches!(
+            ambiguous.p4("x"),
+            Err(LadduPhysicsError::InvalidRelation { relation })
+                if relation == "ambiguous p4 inference for edge `x`"
+        ));
+    }
+
+    #[test]
+    fn frame_paths_distinguish_no_root_unreachable_and_ambiguous_topologies() {
+        let mut no_root = Channel::new("no-root");
+        no_root.edge("x");
+        no_root.vertex("source").outgoing(["x"]);
+        assert!(matches!(
+            no_root.frame_path_to_vertex("source"),
+            Err(LadduPhysicsError::InvalidRelation { relation })
+                if relation == "could not find a root vertex for `source`"
+        ));
+
+        let mut unreachable = Channel::new("unreachable");
+        for edge in ["initial", "root_out", "cycle_a", "cycle_b"] {
+            unreachable.edge(edge);
+        }
+        unreachable
+            .vertex("root")
+            .incoming(["initial"])
+            .outgoing(["root_out"]);
+        unreachable
+            .vertex("cycle_a")
+            .incoming(["cycle_b"])
+            .outgoing(["cycle_a"]);
+        unreachable
+            .vertex("cycle_b")
+            .incoming(["cycle_a"])
+            .outgoing(["cycle_b"]);
+        assert!(matches!(
+            unreachable.frame_path_to_vertex("cycle_a"),
+            Err(LadduPhysicsError::InvalidRelation { relation })
+                if relation == "vertex `cycle_a` is not reachable from a root vertex"
+        ));
+
+        let mut multi_root = Channel::new("multi-root");
+        for edge in ["a", "b", "left", "right", "out"] {
+            multi_root.edge(edge);
+        }
+        multi_root
+            .vertex("left_root")
+            .incoming(["a"])
+            .outgoing(["left"]);
+        multi_root
+            .vertex("right_root")
+            .incoming(["b"])
+            .outgoing(["right"]);
+        multi_root
+            .vertex("target")
+            .incoming(["left", "right"])
+            .outgoing(["out"]);
+        assert!(matches!(
+            multi_root.frame_path_to_vertex("target"),
+            Err(LadduPhysicsError::InvalidRelation { relation })
+                if relation == "ambiguous frame path to vertex `target`"
+        ));
+
+        let mut diamond = Channel::new("diamond");
+        for edge in ["initial", "left", "right", "join_left", "join_right", "out"] {
+            diamond.edge(edge);
+        }
+        diamond
+            .vertex("root")
+            .incoming(["initial"])
+            .outgoing(["left", "right"]);
+        diamond
+            .vertex("left_branch")
+            .incoming(["left"])
+            .outgoing(["join_left"]);
+        diamond
+            .vertex("right_branch")
+            .incoming(["right"])
+            .outgoing(["join_right"]);
+        diamond
+            .vertex("target")
+            .incoming(["join_left", "join_right"])
+            .outgoing(["out"]);
+        assert!(matches!(
+            diamond.frame_path_to_vertex("target"),
+            Err(LadduPhysicsError::InvalidRelation { relation })
+                if relation == "ambiguous frame path to vertex `target`"
+        ));
+    }
+
+    #[test]
+    fn frame_path_records_the_unique_root_and_ordered_edges() {
+        let mut channel = Channel::new("chain");
+        for edge in ["initial", "middle", "final"] {
+            channel.edge(edge);
+        }
+        channel
+            .vertex("root")
+            .incoming(["initial"])
+            .outgoing(["middle"]);
+        channel
+            .vertex("target")
+            .incoming(["middle"])
+            .outgoing(["final"]);
+
+        assert_eq!(
+            channel.frame_path_to_vertex("target").unwrap(),
+            topology::FramePath {
+                root: "root".to_owned(),
+                edges: vec!["middle".to_owned()],
+            }
+        );
+        assert!(matches!(
+            channel.frame_path_to_vertex("missing"),
+            Err(LadduPhysicsError::InvalidRelation { relation })
+                if relation == "unknown vertex `missing`"
+        ));
+    }
+
+    #[test]
+    fn topology_validation_preserves_boundary_error_messages() {
+        let channel = Channel::new("empty");
+        assert!(matches!(
+            channel.get_vertex("missing"),
+            Err(LadduPhysicsError::InvalidRelation { relation })
+                if relation == "unknown vertex `missing`"
+        ));
+
+        let mut unknown_edge = Channel::new("unknown-edge");
+        unknown_edge.vertex("decay").incoming(["missing"]);
+        assert!(matches!(
+            unknown_edge.validate_vertex("decay"),
+            Err(LadduPhysicsError::InvalidRelation { relation })
+                if relation == "unknown edge `missing`"
+        ));
+
+        let mut duplicate = Channel::new("duplicate");
+        duplicate.edge("x");
+        duplicate.vertex("decay").incoming(["x"]).outgoing(["x"]);
+        assert!(matches!(
+            duplicate.validate_vertex("decay"),
+            Err(LadduPhysicsError::InvalidRelation { relation })
+                if relation == "edge `x` appears more than once in vertex `decay`"
+        ));
+
+        let mut no_incoming = Channel::new("no-incoming");
+        no_incoming.edge("x");
+        no_incoming.vertex("source").outgoing(["x"]);
+        assert!(matches!(
+            no_incoming.vertex_incoming_p4("source"),
+            Err(LadduPhysicsError::InvalidRelation { relation })
+                if relation == "vertex `source` has no incoming edges"
         ));
     }
 
