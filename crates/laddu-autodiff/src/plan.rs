@@ -18,9 +18,33 @@ pub enum AutodiffMode {
 /// Per-parameter graph dependency plan for automatic differentiation.
 #[derive(Clone, Debug)]
 pub struct AutodiffPlan {
-    mode: AutodiffMode,
     parameter_count: usize,
-    active_nodes: Vec<Vec<ExprId>>,
+    strategy: PlanStrategy,
+}
+
+#[derive(Clone, Debug)]
+enum PlanStrategy {
+    Forward { active_nodes: Vec<Vec<ExprId>> },
+    Reverse,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+struct WorkEstimate {
+    forward: usize,
+    reverse: usize,
+}
+
+#[derive(Clone, Debug, Default)]
+struct ParameterDependencies(Vec<usize>);
+
+impl ParameterDependencies {
+    fn one(parameter: Option<usize>) -> Self {
+        Self(parameter.into_iter().collect())
+    }
+
+    fn union_assign(&mut self, other: &Self) {
+        self.0 = merge_sorted_unique(&self.0, &other.0);
+    }
 }
 
 impl AutodiffPlan {
@@ -32,68 +56,101 @@ impl AutodiffPlan {
     /// result type is retained so future dependency analyses can report an
     /// error without changing this API.
     pub fn from_model(model: &CompiledModel, mode: AutodiffMode) -> AutodiffResult<Self> {
-        let parameter_count = model.params().n_free();
-        if mode == AutodiffMode::Reverse {
-            return Ok(Self {
-                mode,
-                parameter_count,
-                active_nodes: Vec::new(),
-            });
-        }
-        let mut node_dependencies = Vec::<Vec<usize>>::with_capacity(model.graph().nodes().len());
+        Ok(Self::analyze(model, mode))
+    }
 
+    fn analyze(model: &CompiledModel, requested: AutodiffMode) -> Self {
+        let parameter_count = model.params().n_free();
+        if requested == AutodiffMode::Reverse {
+            return Self {
+                parameter_count,
+                strategy: PlanStrategy::Reverse,
+            };
+        }
+
+        let node_dependencies = Self::analyze_dependencies(model);
+        let estimate = Self::estimate_work(
+            &node_dependencies,
+            model.graph().nodes().len(),
+            parameter_count,
+        );
+        let strategy = match Self::select_strategy(requested, estimate) {
+            AutodiffMode::Forward => PlanStrategy::Forward {
+                active_nodes: Self::invert_dependencies(&node_dependencies, parameter_count),
+            },
+            AutodiffMode::Reverse => PlanStrategy::Reverse,
+            AutodiffMode::Auto => unreachable!("strategy selection always resolves auto mode"),
+        };
+        Self {
+            parameter_count,
+            strategy,
+        }
+    }
+
+    fn analyze_dependencies(model: &CompiledModel) -> Vec<ParameterDependencies> {
+        let mut node_dependencies = Vec::with_capacity(model.graph().nodes().len());
         for node in model.graph().nodes() {
             let dependencies = match node {
                 ExprNode::ScalarParam(parameter) => {
-                    Self::parameter_dependency(model, parameter.name())
-                        .into_iter()
-                        .collect()
+                    ParameterDependencies::one(Self::parameter_dependency(model, parameter.name()))
                 }
                 _ => {
-                    let mut dependencies = Vec::new();
+                    let mut dependencies = ParameterDependencies::default();
                     for child in node.children() {
-                        dependencies =
-                            merge_sorted_unique(&dependencies, &node_dependencies[child.index()]);
+                        dependencies.union_assign(&node_dependencies[child.index()]);
                     }
                     dependencies
                 }
             };
             node_dependencies.push(dependencies);
         }
+        node_dependencies
+    }
 
-        let forward_work = node_dependencies.iter().map(Vec::len).sum::<usize>();
-        let reverse_work = model
-            .graph()
-            .nodes()
-            .len()
-            .saturating_mul(2)
-            .saturating_add(parameter_count);
-        if mode == AutodiffMode::Auto && reverse_work < forward_work {
-            return Ok(Self {
-                mode: AutodiffMode::Reverse,
-                parameter_count,
-                active_nodes: Vec::new(),
-            });
+    fn estimate_work(
+        dependencies: &[ParameterDependencies],
+        node_count: usize,
+        parameter_count: usize,
+    ) -> WorkEstimate {
+        WorkEstimate {
+            forward: dependencies
+                .iter()
+                .map(|dependencies| dependencies.0.len())
+                .sum(),
+            // Reverse mode is modeled as a primal and reverse graph pass plus
+            // one output collection step per free parameter.
+            reverse: node_count.saturating_mul(2).saturating_add(parameter_count),
         }
+    }
 
+    fn select_strategy(requested: AutodiffMode, estimate: WorkEstimate) -> AutodiffMode {
+        match requested {
+            AutodiffMode::Auto if estimate.reverse < estimate.forward => AutodiffMode::Reverse,
+            AutodiffMode::Auto | AutodiffMode::Forward => AutodiffMode::Forward,
+            AutodiffMode::Reverse => AutodiffMode::Reverse,
+        }
+    }
+
+    fn invert_dependencies(
+        node_dependencies: &[ParameterDependencies],
+        parameter_count: usize,
+    ) -> Vec<Vec<ExprId>> {
         let mut active_nodes = vec![Vec::new(); parameter_count];
         for (index, dependencies) in node_dependencies.iter().enumerate() {
             let id = ExprId::from_index(index);
-            for parameter in dependencies {
+            for parameter in &dependencies.0 {
                 active_nodes[*parameter].push(id);
             }
         }
-
-        Ok(Self {
-            mode: AutodiffMode::Forward,
-            parameter_count,
-            active_nodes,
-        })
+        active_nodes
     }
 
     /// Returns the selected differentiation mode.
     pub fn mode(&self) -> AutodiffMode {
-        self.mode
+        match self.strategy {
+            PlanStrategy::Forward { .. } => AutodiffMode::Forward,
+            PlanStrategy::Reverse => AutodiffMode::Reverse,
+        }
     }
 
     /// Returns the number of free parameters.
@@ -103,7 +160,12 @@ impl AutodiffPlan {
 
     /// Returns graph nodes depending on one free parameter.
     pub fn active_nodes(&self, free_parameter: usize) -> Option<&[ExprId]> {
-        self.active_nodes.get(free_parameter).map(Vec::as_slice)
+        match &self.strategy {
+            PlanStrategy::Forward { active_nodes } => {
+                active_nodes.get(free_parameter).map(Vec::as_slice)
+            }
+            PlanStrategy::Reverse => None,
+        }
     }
 
     fn parameter_dependency(model: &CompiledModel, name: &str) -> Option<usize> {
@@ -201,5 +263,41 @@ mod tests {
         assert_eq!(plan.mode(), AutodiffMode::Reverse);
         assert_eq!(plan.parameter_count(), 6);
         assert!(plan.active_nodes(0).is_none());
+    }
+
+    #[test]
+    fn auto_selection_uses_forward_at_equality() {
+        let estimate = WorkEstimate {
+            forward: 10,
+            reverse: 10,
+        };
+        assert_eq!(
+            AutodiffPlan::select_strategy(AutodiffMode::Auto, estimate),
+            AutodiffMode::Forward
+        );
+    }
+
+    #[test]
+    fn auto_selection_covers_both_sides_of_threshold() {
+        assert_eq!(
+            AutodiffPlan::select_strategy(
+                AutodiffMode::Auto,
+                WorkEstimate {
+                    forward: 11,
+                    reverse: 10,
+                },
+            ),
+            AutodiffMode::Reverse
+        );
+        assert_eq!(
+            AutodiffPlan::select_strategy(
+                AutodiffMode::Auto,
+                WorkEstimate {
+                    forward: 9,
+                    reverse: 10,
+                },
+            ),
+            AutodiffMode::Forward
+        );
     }
 }
