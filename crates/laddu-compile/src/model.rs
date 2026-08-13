@@ -3,11 +3,7 @@ use std::{
     mem::size_of,
 };
 
-#[cfg(test)]
-use crate::CompileError;
 use crate::CompileResult;
-#[cfg(test)]
-use laddu_expr::parameters::ParamError;
 use laddu_expr::{
     BinaryOp, Expr, ExprGraph, ExprId, ExprNode, ParameterStructuralKey, UnaryOp, ValueKind,
     parameters::{ParamLayout, ParamRegistry},
