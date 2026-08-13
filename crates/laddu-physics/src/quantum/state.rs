@@ -156,6 +156,10 @@ impl From<J> for Isospin {
 }
 
 /// The set of properties which define the quantum state of a particle.
+///
+/// Direct assignments to public fields are not validated. Fallible `with_*`
+/// methods validate relationships between particle properties; infallible
+/// setters update only the named property.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct ParticleProperties {
     /// The name of the particle, if known.
@@ -200,6 +204,89 @@ pub struct ParticleProperties {
     pub mass: Option<f64>,
     /// External identifiers for this particle.
     pub ids: IndexMap<String, ExternalId>,
+}
+
+/// A set of particle properties to apply together.
+///
+/// Fields set to `None` are left unchanged.
+#[doc(hidden)]
+#[derive(Clone, Debug, Default)]
+pub struct ParticlePropertiesPatch {
+    pub name: Option<String>,
+    pub species: Option<String>,
+    pub antiparticle_species: Option<String>,
+    pub self_conjugate: Option<bool>,
+    pub spin: Option<J>,
+    pub parity: Option<Parity>,
+    pub c_parity: Option<Parity>,
+    pub g_parity: Option<Parity>,
+    pub charge: Option<i32>,
+    pub isospin: Option<Isospin>,
+    pub strangeness: Option<i32>,
+    pub charm: Option<i32>,
+    pub bottomness: Option<i32>,
+    pub topness: Option<i32>,
+    pub baryon_number: Option<i32>,
+    pub electron_lepton_number: Option<i32>,
+    pub muon_lepton_number: Option<i32>,
+    pub tau_lepton_number: Option<i32>,
+    pub statistics: Option<Statistics>,
+    pub mass: Option<f64>,
+    pub ids: Option<IndexMap<String, ExternalId>>,
+}
+
+#[derive(Clone, Copy)]
+enum AdditiveQuantumNumber {
+    Charge,
+    Strangeness,
+    Charm,
+    Bottomness,
+    Topness,
+    BaryonNumber,
+    ElectronLeptonNumber,
+    MuonLeptonNumber,
+    TauLeptonNumber,
+}
+
+impl AdditiveQuantumNumber {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Charge => "charge",
+            Self::Strangeness => "strangeness",
+            Self::Charm => "charm",
+            Self::Bottomness => "bottomness",
+            Self::Topness => "topness",
+            Self::BaryonNumber => "baryon_number",
+            Self::ElectronLeptonNumber => "electron_lepton_number",
+            Self::MuonLeptonNumber => "muon_lepton_number",
+            Self::TauLeptonNumber => "tau_lepton_number",
+        }
+    }
+
+    fn field(self, particle: &mut ParticleProperties) -> &mut Option<i32> {
+        match self {
+            Self::Charge => &mut particle.charge,
+            Self::Strangeness => &mut particle.strangeness,
+            Self::Charm => &mut particle.charm,
+            Self::Bottomness => &mut particle.bottomness,
+            Self::Topness => &mut particle.topness,
+            Self::BaryonNumber => &mut particle.baryon_number,
+            Self::ElectronLeptonNumber => &mut particle.electron_lepton_number,
+            Self::MuonLeptonNumber => &mut particle.muon_lepton_number,
+            Self::TauLeptonNumber => &mut particle.tau_lepton_number,
+        }
+    }
+}
+
+enum ParticleUpdate {
+    Species(String),
+    AntiparticleSpecies(String),
+    SpeciesNames(String, String),
+    SelfConjugate(bool),
+    SelfConjugateSpecies(String),
+    CParity(Parity),
+    Additive(AdditiveQuantumNumber, i32),
+    Statistics(Statistics),
 }
 
 impl ParticleProperties {
@@ -459,6 +546,112 @@ impl ParticleProperties {
         Self::default()
     }
 
+    /// Apply the provided properties and validate relationships between them.
+    #[doc(hidden)]
+    pub fn apply_patch(mut self, patch: ParticlePropertiesPatch) -> LadduPhysicsResult<Self> {
+        let ParticlePropertiesPatch {
+            name,
+            species,
+            antiparticle_species,
+            self_conjugate,
+            spin,
+            parity,
+            c_parity,
+            g_parity,
+            charge,
+            isospin,
+            strangeness,
+            charm,
+            bottomness,
+            topness,
+            baryon_number,
+            electron_lepton_number,
+            muon_lepton_number,
+            tau_lepton_number,
+            statistics,
+            mass,
+            ids,
+        } = patch;
+
+        if let Some(name) = name {
+            self = self.with_name(name);
+        }
+        self = match (species, antiparticle_species) {
+            (Some(species), Some(antiparticle)) => {
+                self.with_species_names(species, antiparticle)?
+            }
+            (Some(species), None) => self.with_species(species)?,
+            (None, Some(antiparticle)) => self.with_antiparticle_species(antiparticle)?,
+            (None, None) => self,
+        };
+        if let Some(value) = self_conjugate {
+            self = self.with_self_conjugate(value)?;
+        }
+        if let Some(value) = spin {
+            self = self.with_spin(value);
+        }
+        if let Some(value) = parity {
+            self = self.with_parity(value);
+        }
+        if let Some(value) = c_parity {
+            self = self.with_c_parity(value)?;
+        }
+        if let Some(value) = g_parity {
+            self = self.with_g_parity(value);
+        }
+        if let Some(value) = charge {
+            self = self.apply_update(ParticleUpdate::Additive(
+                AdditiveQuantumNumber::Charge,
+                value,
+            ))?;
+        }
+        if let Some(value) = isospin {
+            self = self.with_isospin(value);
+        }
+        if let Some(value) = strangeness {
+            self = self.with_strangeness(value)?;
+        }
+        if let Some(value) = charm {
+            self = self.with_charm(value)?;
+        }
+        if let Some(value) = bottomness {
+            self = self.with_bottomness(value)?;
+        }
+        if let Some(value) = topness {
+            self = self.with_topness(value)?;
+        }
+        if let Some(value) = baryon_number {
+            self = self.with_baryon_number(value)?;
+        }
+        if let Some(value) = electron_lepton_number {
+            self = self.with_electron_lepton_number(value)?;
+        }
+        if let Some(value) = muon_lepton_number {
+            self = self.with_muon_lepton_number(value)?;
+        }
+        if let Some(value) = tau_lepton_number {
+            self = self.with_tau_lepton_number(value)?;
+        }
+        if let Some(value) = statistics {
+            self = self.with_statistics(value)?;
+        }
+        if let Some(value) = mass {
+            if !value.is_finite() || value < 0.0 {
+                return Err(LadduPhysicsError::invalid_value(
+                    "particle mass",
+                    "finite and non-negative",
+                    value,
+                ));
+            }
+            self = self.with_mass(value);
+        }
+        if let Some(value) = ids {
+            self.ids = value;
+        }
+
+        Ok(self)
+    }
+
     /// Construct a particle with the given spin and parity.
     /// Construct a particle with the given spin and intrinsic parity.
     pub fn jp(j: J, p: Parity) -> Self {
@@ -533,24 +726,8 @@ impl ParticleProperties {
     ///
     /// Returns [`LadduPhysicsError`] when the species conflicts with existing
     /// self-conjugacy or antiparticle metadata.
-    pub fn with_species(mut self, species: impl Into<String>) -> LadduPhysicsResult<Self> {
-        let species = species.into();
-
-        if self.self_conjugate == Some(true) {
-            match &self.antiparticle_species {
-                Some(anti) if anti != &species => {
-                    return Err(LadduPhysicsError::invalid_relation(
-                        "self-conjugate particle cannot have distinct species and antiparticle_species",
-                    ));
-                }
-                None => self.antiparticle_species = Some(species.clone()),
-                _ => {}
-            }
-        }
-
-        self.species = Some(species);
-        self.check_invariants()?;
-        Ok(self)
+    pub fn with_species(self, species: impl Into<String>) -> LadduPhysicsResult<Self> {
+        self.apply_update(ParticleUpdate::Species(species.into()))
     }
     /// Set the particle's antiparticle species.
     ///
@@ -559,26 +736,12 @@ impl ParticleProperties {
     /// Returns [`LadduPhysicsError`] when the antiparticle species conflicts
     /// with existing self-conjugacy or species metadata.
     pub fn with_antiparticle_species(
-        mut self,
+        self,
         antiparticle_species: impl Into<String>,
     ) -> LadduPhysicsResult<Self> {
-        let antiparticle_species = antiparticle_species.into();
-
-        if self.self_conjugate == Some(true) {
-            match &self.species {
-                Some(species) if species != &antiparticle_species => {
-                    return Err(LadduPhysicsError::invalid_relation(
-                        "self-conjugate particle cannot have distinct species and antiparticle_species",
-                    ));
-                }
-                None => self.species = Some(antiparticle_species.clone()),
-                _ => {}
-            }
-        }
-
-        self.antiparticle_species = Some(antiparticle_species);
-        self.check_invariants()?;
-        Ok(self)
+        self.apply_update(ParticleUpdate::AntiparticleSpecies(
+            antiparticle_species.into(),
+        ))
     }
 
     /// Set both particle and antiparticle species names.
@@ -590,21 +753,14 @@ impl ParticleProperties {
     /// Returns [`LadduPhysicsError`] when the resulting species and quantum
     /// number metadata violate particle invariants.
     pub fn with_species_names(
-        mut self,
+        self,
         species: impl Into<String>,
         antiparticle_species: impl Into<String>,
     ) -> LadduPhysicsResult<Self> {
-        let species = species.into();
-        let antiparticle_species = antiparticle_species.into();
-
-        self.species = Some(species.clone());
-        self.antiparticle_species = Some(antiparticle_species.clone());
-        self.self_conjugate = Some(species == antiparticle_species);
-
-        self.fill_zero_additive_qns_if_self_conjugate();
-        self.check_invariants()?;
-
-        Ok(self)
+        self.apply_update(ParticleUpdate::SpeciesNames(
+            species.into(),
+            antiparticle_species.into(),
+        ))
     }
 
     /// Set whether the particle is its own antiparticle.
@@ -613,32 +769,8 @@ impl ParticleProperties {
     ///
     /// Returns [`LadduPhysicsError`] when `value` conflicts with species names,
     /// C-parity, or nonzero additive quantum numbers.
-    pub fn with_self_conjugate(mut self, value: bool) -> LadduPhysicsResult<Self> {
-        if value {
-            if let (Some(species), Some(anti)) = (&self.species, &self.antiparticle_species)
-                && species != anti
-            {
-                return Err(LadduPhysicsError::invalid_relation(
-                    "self-conjugate particle cannot have distinct species and antiparticle_species",
-                ));
-            }
-            match (&self.species, &self.antiparticle_species) {
-                (Some(species), None) => self.antiparticle_species = Some(species.clone()),
-                (None, Some(anti)) => self.species = Some(anti.clone()),
-                _ => {}
-            }
-            self.fill_zero_additive_qns_if_self_conjugate();
-        } else {
-            if self.c_parity.is_some() {
-                return Err(LadduPhysicsError::invalid_relation(
-                    "non-self-conjugate particles cannot have C-parity",
-                ));
-            }
-        }
-        self.self_conjugate = Some(value);
-
-        self.check_invariants()?;
-        Ok(self)
+    pub fn with_self_conjugate(self, value: bool) -> LadduPhysicsResult<Self> {
+        self.apply_update(ParticleUpdate::SelfConjugate(value))
     }
 
     /// Set one species name and mark the particle as self-conjugate.
@@ -648,19 +780,10 @@ impl ParticleProperties {
     /// Returns [`LadduPhysicsError`] when existing particle metadata is
     /// inconsistent with self-conjugacy.
     pub fn with_self_conjugate_species(
-        mut self,
+        self,
         species: impl Into<String>,
     ) -> LadduPhysicsResult<Self> {
-        let species = species.into();
-
-        self.species = Some(species.clone());
-        self.antiparticle_species = Some(species);
-        self.self_conjugate = Some(true);
-
-        self.fill_zero_additive_qns_if_self_conjugate();
-        self.check_invariants()?;
-
-        Ok(self)
+        self.apply_update(ParticleUpdate::SelfConjugateSpecies(species.into()))
     }
 
     /// Set the particle's spin.
@@ -680,21 +803,8 @@ impl ParticleProperties {
     ///
     /// Returns [`LadduPhysicsError`] when C-parity conflicts with the
     /// particle's self-conjugacy or additive quantum numbers.
-    pub fn with_c_parity(mut self, c: Parity) -> LadduPhysicsResult<Self> {
-        if self.self_conjugate == Some(false) {
-            return Err(LadduPhysicsError::invalid_relation(
-                "C-parity is only applicable to self-conjugate particles",
-            ));
-        }
-
-        self.c_parity = Some(c);
-
-        if self.self_conjugate.is_none() {
-            self = self.with_self_conjugate(true)?;
-        }
-
-        self.check_invariants()?;
-        Ok(self)
+    pub fn with_c_parity(self, c: Parity) -> LadduPhysicsResult<Self> {
+        self.apply_update(ParticleUpdate::CParity(c))
     }
     /// Set the particle's intrinsic G-parity.
     pub fn with_g_parity(mut self, g: Parity) -> Self {
@@ -718,7 +828,10 @@ impl ParticleProperties {
     /// Returns [`LadduPhysicsError`] when nonzero strangeness conflicts with
     /// self-conjugacy.
     pub fn with_strangeness(self, s: i32) -> LadduPhysicsResult<Self> {
-        self.with_additive_qn("strangeness", |p| &mut p.strangeness, s)
+        self.apply_update(ParticleUpdate::Additive(
+            AdditiveQuantumNumber::Strangeness,
+            s,
+        ))
     }
     /// Set the particle's total charm.
     ///
@@ -727,7 +840,7 @@ impl ParticleProperties {
     /// Returns [`LadduPhysicsError`] when nonzero charm conflicts with
     /// self-conjugacy.
     pub fn with_charm(self, c: i32) -> LadduPhysicsResult<Self> {
-        self.with_additive_qn("charm", |p| &mut p.charm, c)
+        self.apply_update(ParticleUpdate::Additive(AdditiveQuantumNumber::Charm, c))
     }
     /// Set the particle's total bottomness.
     ///
@@ -736,7 +849,10 @@ impl ParticleProperties {
     /// Returns [`LadduPhysicsError`] when nonzero bottomness conflicts with
     /// self-conjugacy.
     pub fn with_bottomness(self, b: i32) -> LadduPhysicsResult<Self> {
-        self.with_additive_qn("bottomness", |p| &mut p.bottomness, b)
+        self.apply_update(ParticleUpdate::Additive(
+            AdditiveQuantumNumber::Bottomness,
+            b,
+        ))
     }
     /// Set the particle's total topness.
     ///
@@ -745,7 +861,7 @@ impl ParticleProperties {
     /// Returns [`LadduPhysicsError`] when nonzero topness conflicts with
     /// self-conjugacy.
     pub fn with_topness(self, t: i32) -> LadduPhysicsResult<Self> {
-        self.with_additive_qn("topness", |p| &mut p.topness, t)
+        self.apply_update(ParticleUpdate::Additive(AdditiveQuantumNumber::Topness, t))
     }
     /// Set strangeness, charm, bottomness, and topness together.
     ///
@@ -766,7 +882,10 @@ impl ParticleProperties {
     /// Returns [`LadduPhysicsError`] when a nonzero baryon number conflicts
     /// with self-conjugacy.
     pub fn with_baryon_number(self, b: i32) -> LadduPhysicsResult<Self> {
-        self.with_additive_qn("baryon_number", |p| &mut p.baryon_number, b)
+        self.apply_update(ParticleUpdate::Additive(
+            AdditiveQuantumNumber::BaryonNumber,
+            b,
+        ))
     }
     /// Set the particle's electron lepton number.
     ///
@@ -775,11 +894,10 @@ impl ParticleProperties {
     /// Returns [`LadduPhysicsError`] when a nonzero electron lepton number
     /// conflicts with self-conjugacy.
     pub fn with_electron_lepton_number(self, e: i32) -> LadduPhysicsResult<Self> {
-        self.with_additive_qn(
-            "electron_lepton_number",
-            |p| &mut p.electron_lepton_number,
+        self.apply_update(ParticleUpdate::Additive(
+            AdditiveQuantumNumber::ElectronLeptonNumber,
             e,
-        )
+        ))
     }
     /// Set the particle's muon lepton number.
     ///
@@ -788,7 +906,10 @@ impl ParticleProperties {
     /// Returns [`LadduPhysicsError`] when a nonzero muon lepton number
     /// conflicts with self-conjugacy.
     pub fn with_muon_lepton_number(self, m: i32) -> LadduPhysicsResult<Self> {
-        self.with_additive_qn("muon_lepton_number", |p| &mut p.muon_lepton_number, m)
+        self.apply_update(ParticleUpdate::Additive(
+            AdditiveQuantumNumber::MuonLeptonNumber,
+            m,
+        ))
     }
     /// Set the particle's tau lepton number.
     ///
@@ -797,7 +918,10 @@ impl ParticleProperties {
     /// Returns [`LadduPhysicsError`] when a nonzero tau lepton number
     /// conflicts with self-conjugacy.
     pub fn with_tau_lepton_number(self, t: i32) -> LadduPhysicsResult<Self> {
-        self.with_additive_qn("tau_lepton_number", |p| &mut p.tau_lepton_number, t)
+        self.apply_update(ParticleUpdate::Additive(
+            AdditiveQuantumNumber::TauLeptonNumber,
+            t,
+        ))
     }
 
     /// Set electron-, muon-, and tau-family lepton numbers together.
@@ -817,16 +941,8 @@ impl ParticleProperties {
     /// # Errors
     ///
     /// Returns [`LadduPhysicsError`] if the spin and statistics do not match.
-    pub fn with_statistics(mut self, s: Statistics) -> LadduPhysicsResult<Self> {
-        if let Some(spin) = self.spin
-            && Statistics::from_spin(spin) != s
-        {
-            return Err(LadduPhysicsError::invalid_relation(
-                "spin and statistics must be consistent",
-            ));
-        }
-        self.statistics = Some(s);
-        Ok(self)
+    pub fn with_statistics(self, s: Statistics) -> LadduPhysicsResult<Self> {
+        self.apply_update(ParticleUpdate::Statistics(s))
     }
     /// Set the particle's mass.
     pub fn with_mass(mut self, mass: f64) -> Self {
@@ -976,21 +1092,109 @@ impl ParticleProperties {
         Ok(())
     }
 
-    fn with_additive_qn(
-        mut self,
-        property: &'static str,
-        field: fn(&mut Self) -> &mut Option<i32>,
-        value: i32,
-    ) -> LadduPhysicsResult<Self> {
-        if self.self_conjugate == Some(true) && value != 0 {
-            return Err(LadduPhysicsError::invalid_value(
-                property,
-                "0 for self-conjugate particles",
-                value,
-            ));
+    fn apply_update(mut self, update: ParticleUpdate) -> LadduPhysicsResult<Self> {
+        match update {
+            ParticleUpdate::Species(species) => {
+                if self.self_conjugate == Some(true) {
+                    match &self.antiparticle_species {
+                        Some(anti) if anti != &species => {
+                            return Err(LadduPhysicsError::invalid_relation(
+                                "self-conjugate particle cannot have distinct species and antiparticle_species",
+                            ));
+                        }
+                        None => self.antiparticle_species = Some(species.clone()),
+                        _ => {}
+                    }
+                }
+                self.species = Some(species);
+            }
+            ParticleUpdate::AntiparticleSpecies(antiparticle_species) => {
+                if self.self_conjugate == Some(true) {
+                    match &self.species {
+                        Some(species) if species != &antiparticle_species => {
+                            return Err(LadduPhysicsError::invalid_relation(
+                                "self-conjugate particle cannot have distinct species and antiparticle_species",
+                            ));
+                        }
+                        None => self.species = Some(antiparticle_species.clone()),
+                        _ => {}
+                    }
+                }
+                self.antiparticle_species = Some(antiparticle_species);
+            }
+            ParticleUpdate::SpeciesNames(species, antiparticle_species) => {
+                self.self_conjugate = Some(species == antiparticle_species);
+                self.species = Some(species);
+                self.antiparticle_species = Some(antiparticle_species);
+                self.fill_zero_additive_qns_if_self_conjugate();
+            }
+            ParticleUpdate::SelfConjugate(value) => {
+                if value {
+                    if let (Some(species), Some(anti)) = (&self.species, &self.antiparticle_species)
+                        && species != anti
+                    {
+                        return Err(LadduPhysicsError::invalid_relation(
+                            "self-conjugate particle cannot have distinct species and antiparticle_species",
+                        ));
+                    }
+                    match (&self.species, &self.antiparticle_species) {
+                        (Some(species), None) => {
+                            self.antiparticle_species = Some(species.clone());
+                        }
+                        (None, Some(anti)) => self.species = Some(anti.clone()),
+                        _ => {}
+                    }
+                    self.self_conjugate = Some(true);
+                    self.fill_zero_additive_qns_if_self_conjugate();
+                } else {
+                    if self.c_parity.is_some() {
+                        return Err(LadduPhysicsError::invalid_relation(
+                            "non-self-conjugate particles cannot have C-parity",
+                        ));
+                    }
+                    self.self_conjugate = Some(false);
+                }
+            }
+            ParticleUpdate::SelfConjugateSpecies(species) => {
+                self.species = Some(species.clone());
+                self.antiparticle_species = Some(species);
+                self.self_conjugate = Some(true);
+                self.fill_zero_additive_qns_if_self_conjugate();
+            }
+            ParticleUpdate::CParity(c) => {
+                if self.self_conjugate == Some(false) {
+                    return Err(LadduPhysicsError::invalid_relation(
+                        "C-parity is only applicable to self-conjugate particles",
+                    ));
+                }
+                self.c_parity = Some(c);
+                if self.self_conjugate.is_none() {
+                    self = self.apply_update(ParticleUpdate::SelfConjugate(true))?;
+                }
+            }
+            ParticleUpdate::Additive(property, value) => {
+                if self.self_conjugate == Some(true) && value != 0 {
+                    return Err(LadduPhysicsError::invalid_value(
+                        property.name(),
+                        "0 for self-conjugate particles",
+                        value,
+                    ));
+                }
+                *property.field(&mut self) = Some(value);
+            }
+            ParticleUpdate::Statistics(statistics) => {
+                if let Some(spin) = self.spin
+                    && Statistics::from_spin(spin) != statistics
+                {
+                    return Err(LadduPhysicsError::invalid_relation(
+                        "spin and statistics must be consistent",
+                    ));
+                }
+                self.statistics = Some(statistics);
+                return Ok(self);
+            }
         }
 
-        *field(&mut self) = Some(value);
         self.check_invariants()?;
         Ok(self)
     }
@@ -1012,7 +1216,8 @@ fn validate_projection(spin: J, projection: M) -> LadduPhysicsResult<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{ExternalId, ParticleProperties};
+    use super::{ExternalId, ParticleProperties, ParticlePropertiesPatch};
+    use crate::quantum::{J, Parity, Statistics};
 
     #[test]
     fn particle_properties_store_external_ids() {
@@ -1037,5 +1242,138 @@ mod tests {
             replaced.id("geant").and_then(ExternalId::code_value),
             Some(16)
         );
+    }
+
+    #[test]
+    fn self_conjugate_identity_updates_are_order_independent() {
+        let species_first = ParticleProperties::unknown()
+            .with_species("gamma")
+            .unwrap()
+            .with_self_conjugate(true)
+            .unwrap();
+        let conjugacy_first = ParticleProperties::unknown()
+            .with_self_conjugate(true)
+            .unwrap()
+            .with_species("gamma")
+            .unwrap();
+
+        assert_eq!(species_first, conjugacy_first);
+        assert_eq!(species_first.species.as_deref(), Some("gamma"));
+        assert_eq!(species_first.antiparticle_species.as_deref(), Some("gamma"));
+    }
+
+    #[test]
+    fn bulk_update_checks_every_self_conjugate_additive_quantum_number() {
+        let cases = [
+            (
+                "charge",
+                ParticlePropertiesPatch {
+                    charge: Some(1),
+                    ..Default::default()
+                },
+            ),
+            (
+                "strangeness",
+                ParticlePropertiesPatch {
+                    strangeness: Some(1),
+                    ..Default::default()
+                },
+            ),
+            (
+                "charm",
+                ParticlePropertiesPatch {
+                    charm: Some(1),
+                    ..Default::default()
+                },
+            ),
+            (
+                "bottomness",
+                ParticlePropertiesPatch {
+                    bottomness: Some(1),
+                    ..Default::default()
+                },
+            ),
+            (
+                "topness",
+                ParticlePropertiesPatch {
+                    topness: Some(1),
+                    ..Default::default()
+                },
+            ),
+            (
+                "baryon_number",
+                ParticlePropertiesPatch {
+                    baryon_number: Some(1),
+                    ..Default::default()
+                },
+            ),
+            (
+                "electron_lepton_number",
+                ParticlePropertiesPatch {
+                    electron_lepton_number: Some(1),
+                    ..Default::default()
+                },
+            ),
+            (
+                "muon_lepton_number",
+                ParticlePropertiesPatch {
+                    muon_lepton_number: Some(1),
+                    ..Default::default()
+                },
+            ),
+            (
+                "tau_lepton_number",
+                ParticlePropertiesPatch {
+                    tau_lepton_number: Some(1),
+                    ..Default::default()
+                },
+            ),
+        ];
+
+        for (property, patch) in cases {
+            let error = ParticleProperties::unknown()
+                .with_self_conjugate(true)
+                .unwrap()
+                .apply_patch(patch)
+                .unwrap_err();
+            assert!(error.to_string().contains(property));
+        }
+    }
+
+    #[test]
+    fn bulk_update_validates_spin_statistics_and_normalizes_c_parity() {
+        let mismatch = ParticleProperties::unknown().apply_patch(ParticlePropertiesPatch {
+            spin: Some(J::int(1)),
+            statistics: Some(Statistics::Fermion),
+            ..Default::default()
+        });
+        assert_eq!(
+            mismatch.unwrap_err().to_string(),
+            "Invalid relation: spin and statistics must be consistent"
+        );
+
+        let particle = ParticleProperties::unknown()
+            .apply_patch(ParticlePropertiesPatch {
+                species: Some("pi0".into()),
+                c_parity: Some(Parity::Positive),
+                spin: Some(J::int(0)),
+                statistics: Some(Statistics::Boson),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(particle.self_conjugate, Some(true));
+        assert_eq!(particle.antiparticle_species.as_deref(), Some("pi0"));
+        assert!(
+            particle
+                .additive_quantum_number_fields()
+                .into_iter()
+                .all(|(_, value)| value == Some(0))
+        );
+
+        let invalid_mass = ParticleProperties::unknown().apply_patch(ParticlePropertiesPatch {
+            mass: Some(f64::NAN),
+            ..Default::default()
+        });
+        assert!(invalid_mass.is_err());
     }
 }
