@@ -28,7 +28,7 @@ impl AdjointStore {
         target: KernelValueId,
         contribution: &[KernelValueId],
     ) -> AutodiffResult<()> {
-        let pending = &mut self.pending[target.index()].0;
+        let pending = self.pending_mut(target)?;
         if pending.len() != contribution.len() {
             return Err(AutodiffError::InvalidKernel(format!(
                 "gradient contribution width {} does not match value {} width {}",
@@ -49,7 +49,7 @@ impl AdjointStore {
         element: usize,
         contribution: KernelValueId,
     ) -> AutodiffResult<()> {
-        let pending = &mut self.pending[target.index()].0;
+        let pending = self.pending_mut(target)?;
         let width = pending.len();
         let Some(target_element) = pending.get_mut(element) else {
             return Err(AutodiffError::InvalidKernel(format!(
@@ -64,23 +64,51 @@ impl AdjointStore {
     pub(super) fn take_pending(
         &mut self,
         primal: KernelValueId,
-    ) -> Option<Vec<Vec<KernelValueId>>> {
-        let pending = &mut self.pending[primal.index()].0;
+    ) -> AutodiffResult<Option<Vec<Vec<KernelValueId>>>> {
+        let pending = self.pending_mut(primal)?;
         if pending.iter().all(Vec::is_empty) {
-            return None;
+            return Ok(None);
         }
-        Some(pending.iter_mut().map(std::mem::take).collect())
+        Ok(Some(pending.iter_mut().map(std::mem::take).collect()))
     }
 
-    pub(super) fn set_resolved(&mut self, primal: KernelValueId, values: Vec<KernelValueId>) {
-        debug_assert_eq!(self.pending[primal.index()].0.len(), values.len());
+    pub(super) fn set_resolved(
+        &mut self,
+        primal: KernelValueId,
+        values: Vec<KernelValueId>,
+    ) -> AutodiffResult<()> {
+        let width = self.pending_mut(primal)?.len();
+        if width != values.len() {
+            return Err(AutodiffError::InvalidKernel(format!(
+                "resolved adjoint width {} does not match value {} width {width}",
+                values.len(),
+                primal.index(),
+            )));
+        }
         self.resolved[primal.index()] = Some(ResolvedAdjoint(values));
+        Ok(())
     }
 
     pub(super) fn resolved(&self, primal: KernelValueId) -> Option<&[KernelValueId]> {
-        self.resolved[primal.index()]
+        self.resolved
+            .get(primal.index())?
             .as_ref()
             .map(|adjoint| adjoint.0.as_slice())
+    }
+
+    fn pending_mut(
+        &mut self,
+        target: KernelValueId,
+    ) -> AutodiffResult<&mut Vec<Vec<KernelValueId>>> {
+        self.pending
+            .get_mut(target.index())
+            .map(|pending| &mut pending.0)
+            .ok_or_else(|| {
+                AutodiffError::InvalidKernel(format!(
+                    "gradient contribution targets missing value {}",
+                    target.index(),
+                ))
+            })
     }
 }
 
@@ -128,6 +156,22 @@ mod tests {
         assert_eq!(
             error.to_string(),
             "cannot differentiate kernel instruction: gradient contribution element 1 exceeds value 0 width 1"
+        );
+    }
+
+    #[test]
+    fn reports_value_out_of_bounds() {
+        let mut store = AdjointStore::new(&[value(KernelValueKind::Real)]);
+        let error = store
+            .add_value(
+                KernelValueId::from_index(1),
+                &[KernelValueId::from_index(0)],
+            )
+            .unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "cannot differentiate kernel instruction: gradient contribution targets missing value 1"
         );
     }
 }

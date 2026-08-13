@@ -18,10 +18,7 @@ impl ReverseState<'_> {
             UnaryOp::Imag => {
                 let zero = self.real(0.0)?;
                 let imaginary = self.unary(UnaryOp::Real, adjoint)?;
-                self.push(laddu_kernel::ir::KernelInstruction::Complex {
-                    re: zero,
-                    im: imaginary,
-                })?
+                self.complex_value(zero, imaginary)?
             }
             UnaryOp::Conj => self.unary(UnaryOp::Conj, adjoint)?,
             UnaryOp::NormSqr => {

@@ -1,5 +1,5 @@
 use laddu_expr::UnaryOp;
-use laddu_kernel::ir::{KernelInstruction, KernelValueId, KernelValueKind};
+use laddu_kernel::ir::KernelValueId;
 
 use super::super::ReverseState;
 use crate::AutodiffResult;
@@ -11,21 +11,21 @@ impl ReverseState<'_> {
         rhs: KernelValueId,
         adjoint: &[KernelValueId],
     ) -> AutodiffResult<()> {
-        let (KernelValueKind::Matrix { rows, cols: inner }, KernelValueKind::Matrix { cols, .. }) =
-            (self.kind(lhs), self.kind(rhs))
-        else {
-            unreachable!()
-        };
+        let (rows, inner) = self.expect_matrix_kind(lhs, "matrix multiply pullback")?;
+        let (_, cols) = self.expect_matrix_kind(rhs, "matrix multiply pullback")?;
         for row in 0..rows {
             for col in 0..cols {
-                let output_adjoint = adjoint[row * cols + col];
+                let output_index = Self::flat_index(row, cols, col, "matrix multiply pullback")?;
+                let output_adjoint = adjoint[output_index];
                 for k in 0..inner {
                     let rhs_value = self.matrix_element(rhs, k, col)?;
                     let lhs_contribution = self.mul_conj(output_adjoint, rhs_value)?;
-                    self.accumulate_element(lhs, row * inner + k, lhs_contribution)?;
+                    let lhs_index = Self::flat_index(row, inner, k, "matrix multiply pullback")?;
+                    self.accumulate_element(lhs, lhs_index, lhs_contribution)?;
                     let lhs_value = self.matrix_element(lhs, row, k)?;
                     let rhs_contribution = self.mul_conj(output_adjoint, lhs_value)?;
-                    self.accumulate_element(rhs, k * cols + col, rhs_contribution)?;
+                    let rhs_index = Self::flat_index(k, cols, col, "matrix multiply pullback")?;
+                    self.accumulate_element(rhs, rhs_index, rhs_contribution)?;
                 }
             }
         }
@@ -38,14 +38,13 @@ impl ReverseState<'_> {
         vector: KernelValueId,
         adjoint: &[KernelValueId],
     ) -> AutodiffResult<()> {
-        let KernelValueKind::Matrix { rows, cols } = self.kind(matrix) else {
-            unreachable!()
-        };
+        let (rows, cols) = self.expect_matrix_kind(matrix, "matrix-vector pullback")?;
         for (row, &row_adjoint) in adjoint.iter().enumerate().take(rows) {
             for col in 0..cols {
                 let vector_value = self.component(vector, col)?;
                 let matrix_contribution = self.mul_conj(row_adjoint, vector_value)?;
-                self.accumulate_element(matrix, row * cols + col, matrix_contribution)?;
+                let matrix_index = Self::flat_index(row, cols, col, "matrix-vector pullback")?;
+                self.accumulate_element(matrix, matrix_index, matrix_contribution)?;
                 let matrix_value = self.matrix_element(matrix, row, col)?;
                 let vector_contribution = self.mul_conj(row_adjoint, matrix_value)?;
                 self.accumulate_element(vector, col, vector_contribution)?;
@@ -60,9 +59,7 @@ impl ReverseState<'_> {
         rhs: KernelValueId,
         adjoint: KernelValueId,
     ) -> AutodiffResult<()> {
-        let KernelValueKind::Vector { len } = self.kind(lhs) else {
-            unreachable!()
-        };
+        let len = self.expect_vector_kind(lhs, "dot-product pullback")?;
         for index in 0..len {
             let rhs_value = self.component(rhs, index)?;
             let lhs_contribution = self.mul_conj(adjoint, rhs_value)?;
@@ -81,9 +78,7 @@ impl ReverseState<'_> {
         solution: KernelValueId,
         adjoint: &[KernelValueId],
     ) -> AutodiffResult<()> {
-        let KernelValueKind::Matrix { rows, cols } = self.kind(matrix) else {
-            unreachable!()
-        };
+        let (rows, cols) = self.expect_matrix_kind(matrix, "linear-solve pullback")?;
         let mut transpose = Vec::with_capacity(rows * cols);
         for row in 0..rows {
             for col in 0..cols {
@@ -91,16 +86,9 @@ impl ReverseState<'_> {
                 transpose.push(self.unary(UnaryOp::Conj, value)?);
             }
         }
-        let transpose = self.push(KernelInstruction::Matrix {
-            rows,
-            cols,
-            elements: transpose,
-        })?;
-        let adjoint_vector = self.push(KernelInstruction::Vector(adjoint.to_vec()))?;
-        let lambda = self.push(KernelInstruction::Solve {
-            matrix: transpose,
-            rhs: adjoint_vector,
-        })?;
+        let transpose = self.matrix(rows, cols, transpose)?;
+        let adjoint_vector = self.vector(adjoint.to_vec())?;
+        let lambda = self.solve(transpose, adjoint_vector)?;
         for row in 0..rows {
             let lambda_value = self.component(lambda, row)?;
             self.accumulate_element(rhs, row, lambda_value)?;
@@ -108,7 +96,8 @@ impl ReverseState<'_> {
                 let solution_value = self.component(solution, col)?;
                 let product = self.mul_conj(lambda_value, solution_value)?;
                 let contribution = self.unary(UnaryOp::Neg, product)?;
-                self.accumulate_element(matrix, row * cols + col, contribution)?;
+                let matrix_index = Self::flat_index(row, cols, col, "linear-solve pullback")?;
+                self.accumulate_element(matrix, matrix_index, contribution)?;
             }
         }
         Ok(())
@@ -122,12 +111,7 @@ impl ReverseState<'_> {
     ) -> AutodiffResult<()> {
         let len = rhs.len();
         for (index, rhs) in rhs.iter().enumerate() {
-            let contribution = self.push(KernelInstruction::SolveRowAdjointElement {
-                row_slot,
-                index,
-                len,
-                adjoint,
-            })?;
+            let contribution = self.solve_row_adjoint_element(row_slot, index, len, adjoint)?;
             self.accumulate(*rhs, &[contribution])?;
         }
         Ok(())
