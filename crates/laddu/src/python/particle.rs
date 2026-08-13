@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use laddu_physics::quantum::{ExternalId, ParticleProperties};
+use laddu_physics::quantum::{ExternalId, ParticleProperties, ParticlePropertiesPatch};
 use pyo3::{
     exceptions::PyValueError,
     prelude::*,
@@ -130,93 +130,45 @@ impl PyParticle {
         mass: Option<f64>,
         ids: Option<HashMap<String, i64>>,
     ) -> PyResult<Self> {
-        let mut particle = ParticleProperties::unknown();
-        if let Some(name) = name {
-            particle = particle.with_name(name);
-        }
-        match (species, antiparticle_species) {
-            (Some(species), Some(antiparticle)) => {
-                particle = particle
-                    .with_species_names(species, antiparticle)
-                    .map_err(to_py_err)?;
-            }
-            (Some(species), None) => {
-                particle = particle.with_species(species).map_err(to_py_err)?;
-            }
-            (None, Some(antiparticle)) => {
-                particle = particle
-                    .with_antiparticle_species(antiparticle)
-                    .map_err(to_py_err)?;
-            }
-            (None, None) => {}
-        }
-        if let Some(value) = self_conjugate {
-            particle = particle.with_self_conjugate(value).map_err(to_py_err)?;
-        }
-        if let Some(spin) = spin {
-            particle = particle.with_spin(extract_spin(spin)?);
-        }
-        if let Some(value) = parity {
-            particle = particle.with_parity(extract_parity(value)?);
-        }
-        if let Some(value) = c_parity {
-            particle = particle
-                .with_c_parity(extract_parity(value)?)
-                .map_err(to_py_err)?;
-        }
-        if let Some(value) = g_parity {
-            particle = particle.with_g_parity(extract_parity(value)?);
-        }
-        if let Some(value) = charge {
-            particle = particle.with_charge(value);
-        }
-        if let Some(value) = isospin {
-            particle = particle.with_isospin(value.inner);
-        }
-        if let Some(value) = strangeness {
-            particle = particle.with_strangeness(value).map_err(to_py_err)?;
-        }
-        if let Some(value) = charm {
-            particle = particle.with_charm(value).map_err(to_py_err)?;
-        }
-        if let Some(value) = bottomness {
-            particle = particle.with_bottomness(value).map_err(to_py_err)?;
-        }
-        if let Some(value) = topness {
-            particle = particle.with_topness(value).map_err(to_py_err)?;
-        }
-        if let Some(value) = baryon_number {
-            particle = particle.with_baryon_number(value).map_err(to_py_err)?;
-        }
-        if let Some(value) = electron_lepton_number {
-            particle = particle
-                .with_electron_lepton_number(value)
-                .map_err(to_py_err)?;
-        }
-        if let Some(value) = muon_lepton_number {
-            particle = particle.with_muon_lepton_number(value).map_err(to_py_err)?;
-        }
-        if let Some(value) = tau_lepton_number {
-            particle = particle.with_tau_lepton_number(value).map_err(to_py_err)?;
-        }
-        if let Some(value) = statistics {
-            particle.statistics = Some(value.inner);
-        }
         if let Some(value) = mass {
             if !value.is_finite() || value < 0.0 {
                 return Err(PyValueError::new_err(
                     "particle mass must be finite and non-negative",
                 ));
             }
-            particle = particle.with_mass(value);
         }
-        if let Some(ids) = ids {
-            particle = particle.with_ids(
+
+        let patch = ParticlePropertiesPatch {
+            name,
+            species,
+            antiparticle_species,
+            self_conjugate,
+            spin: spin.map(extract_spin).transpose()?,
+            parity: parity.map(extract_parity).transpose()?,
+            c_parity: c_parity.map(extract_parity).transpose()?,
+            g_parity: g_parity.map(extract_parity).transpose()?,
+            charge,
+            isospin: isospin.map(|value| value.inner),
+            strangeness,
+            charm,
+            bottomness,
+            topness,
+            baryon_number,
+            electron_lepton_number,
+            muon_lepton_number,
+            tau_lepton_number,
+            statistics: statistics.map(|value| value.inner),
+            mass,
+            ids: ids.map(|ids| {
                 ids.into_iter()
-                    .map(|(namespace, value)| (namespace, ExternalId::code(value))),
-            );
-        }
-        Ok(particle.into())
+                    .map(|(namespace, value)| (namespace, ExternalId::code(value)))
+                    .collect()
+            }),
+        };
+        Ok(ParticleProperties::unknown()
+            .apply_patch(patch)
+            .map_err(to_py_err)?
+            .into())
     }
 
     #[staticmethod]
