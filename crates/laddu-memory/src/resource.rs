@@ -77,8 +77,7 @@ pub(crate) enum ResourceValidationError {
 }
 
 impl MemoryResource {
-    /// Creates an accelerator resource whose physical capacity is unavailable.
-    pub fn adaptive_device(id: impl Into<String>, name: impl Into<String>) -> Self {
+    fn adaptive_device(id: impl Into<String>, name: impl Into<String>) -> Self {
         Self {
             id: id.into(),
             name: name.into(),
@@ -90,9 +89,7 @@ impl MemoryResource {
         }
     }
 
-    /// Discovers accelerator capacity from platform telemetry, falling back to
-    /// an adaptive backend limit when dedicated-memory telemetry is absent.
-    pub fn discover_device(
+    pub(crate) fn discover_device(
         id: impl Into<String>,
         name: impl Into<String>,
         identity: DeviceIdentity,
@@ -109,12 +106,21 @@ impl MemoryResource {
         resource
     }
 
-    /// Creates a resource with an explicit user-provided capacity.
-    pub fn with_capacity(mut self, total_bytes: u64, available_bytes: Option<u64>) -> Self {
-        self.total_bytes = Some(total_bytes);
-        self.available_bytes = Some(available_bytes.unwrap_or(total_bytes).min(total_bytes));
-        self.capacity_source = CapacitySource::User;
-        self
+    pub(crate) fn user_device(
+        id: impl Into<String>,
+        name: impl Into<String>,
+        total_bytes: u64,
+        available_bytes: Option<u64>,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            name: name.into(),
+            kind: MemoryResourceKind::Device,
+            total_bytes: Some(total_bytes),
+            available_bytes: Some(available_bytes.unwrap_or(total_bytes).min(total_bytes)),
+            capacity_source: CapacitySource::User,
+            device_identity: None,
+        }
     }
 
     pub(crate) fn apply_capacity_snapshot(&mut self, snapshot: CapacitySnapshot) {

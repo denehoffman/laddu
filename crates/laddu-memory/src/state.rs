@@ -12,7 +12,7 @@ use crate::{
     error::{MemoryError, MemoryResult},
     pool::{MemoryPool, MemoryPoolInner, ReservationAccount, ResourceLedger},
     report::{MemoryReport, MemoryResourceReport, ProcessMemoryReport},
-    resource::{MemoryResource, MemoryResourceKind},
+    resource::{DeviceIdentity, MemoryResource, MemoryResourceKind},
 };
 
 /// Live resource discovery and process-wide laddu reservation state.
@@ -101,8 +101,43 @@ impl MemoryState {
         self.resource("host").unwrap_or_else(discover_host)
     }
 
-    /// Registers or refreshes an accelerator resource.
-    pub fn register_device(&self, resource: MemoryResource) {
+    /// Registers capacity telemetry for a runtime-selected accelerator.
+    ///
+    /// The runtime owns the stable identifier and adapter identity. Platform
+    /// telemetry is used when available; otherwise `fallback_bytes` becomes an
+    /// adaptive capacity estimate.
+    pub fn register_discovered_device(
+        &self,
+        id: impl Into<String>,
+        name: impl Into<String>,
+        identity: DeviceIdentity,
+        fallback_bytes: u64,
+    ) {
+        self.insert_device_snapshot(MemoryResource::discover_device(
+            id,
+            name,
+            identity,
+            fallback_bytes,
+        ));
+    }
+
+    /// Overrides capacity telemetry for a device until another user override.
+    pub fn override_device_capacity(
+        &self,
+        id: impl Into<String>,
+        name: impl Into<String>,
+        total_bytes: u64,
+        available_bytes: Option<u64>,
+    ) {
+        self.insert_device_snapshot(MemoryResource::user_device(
+            id,
+            name,
+            total_bytes,
+            available_bytes,
+        ));
+    }
+
+    pub(crate) fn insert_device_snapshot(&self, resource: MemoryResource) {
         let mut resources = self
             .inner
             .resources
@@ -264,7 +299,7 @@ mod tests {
     }
     impl MemoryProbe for ReplacingProbe {
         fn probe_device(&self, _: &MemoryResource) -> ProbeOutcome {
-            self.state.register_device(self.replacement.clone());
+            self.state.insert_device_snapshot(self.replacement.clone());
             self.outcome
         }
     }
@@ -277,19 +312,19 @@ mod tests {
             available_bytes: Some(1_100),
             ..refreshable(0)
         };
-        state.register_device(discovered);
+        state.insert_device_snapshot(discovered);
         assert_eq!(state.resource("test").unwrap().available_bytes, Some(1_000));
-        let user = resource().with_capacity(700, Some(650));
-        state.register_device(user.clone());
-        state.register_device(MemoryResource {
+        let user = MemoryResource::user_device("test", "Test", 700, Some(650));
+        state.override_device_capacity("test", "Test", 700, Some(650));
+        state.insert_device_snapshot(MemoryResource {
             total_bytes: Some(900),
             available_bytes: Some(800),
             ..refreshable(0)
         });
         assert_eq!(state.resource("test"), Some(user));
 
-        let replacement = resource().with_capacity(600, Some(550));
-        state.register_device(replacement.clone());
+        let replacement = MemoryResource::user_device("test", "Test", 600, Some(550));
+        state.override_device_capacity("test", "Test", 600, Some(550));
         assert_eq!(state.resource("test"), Some(replacement));
         assert_eq!(
             state
@@ -304,7 +339,7 @@ mod tests {
     #[test]
     fn refresh_probes_without_holding_the_resource_lock() {
         let state = MemoryState::discover();
-        state.register_device(refreshable(0));
+        state.insert_device_snapshot(refreshable(0));
         let (entered_tx, entered_rx) = mpsc::sync_channel(0);
         let (release_tx, release_rx) = mpsc::sync_channel(0);
         let probe = BlockingProbe {
@@ -331,7 +366,7 @@ mod tests {
     #[test]
     fn refresh_retains_stale_snapshot_on_failure() {
         let state = MemoryState::discover();
-        state.register_device(refreshable(0));
+        state.insert_device_snapshot(refreshable(0));
         state.refresh_with_probe(&FixedProbe(Ok(snapshot(800, 600))));
         let refreshed = state.resource("test").unwrap();
         state.refresh_with_probe(&FixedProbe(Err(ProbeFailure::Unavailable)));
@@ -341,8 +376,8 @@ mod tests {
     #[test]
     fn refresh_does_not_overwrite_user_override_or_replaced_device() {
         let state = MemoryState::discover();
-        state.register_device(refreshable(0));
-        let user = resource().with_capacity(700, Some(650));
+        state.insert_device_snapshot(refreshable(0));
+        let user = MemoryResource::user_device("test", "Test", 700, Some(650));
         state.refresh_with_probe(&ReplacingProbe {
             state: state.clone(),
             replacement: user.clone(),
@@ -351,7 +386,7 @@ mod tests {
         assert_eq!(state.resource("test"), Some(user));
 
         let state = MemoryState::discover();
-        state.register_device(refreshable(0));
+        state.insert_device_snapshot(refreshable(0));
         let replacement = MemoryResource {
             total_bytes: Some(400),
             available_bytes: Some(300),

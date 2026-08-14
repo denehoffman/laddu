@@ -205,10 +205,6 @@ pub laddu_memory::MemoryResource::id: alloc::string::String
 pub laddu_memory::MemoryResource::kind: laddu_memory::MemoryResourceKind
 pub laddu_memory::MemoryResource::name: alloc::string::String
 pub laddu_memory::MemoryResource::total_bytes: core::option::Option<u64>
-impl laddu_memory::MemoryResource
-pub fn laddu_memory::MemoryResource::adaptive_device(impl core::convert::Into<alloc::string::String>, impl core::convert::Into<alloc::string::String>) -> Self
-pub fn laddu_memory::MemoryResource::discover_device(impl core::convert::Into<alloc::string::String>, impl core::convert::Into<alloc::string::String>, laddu_memory::DeviceIdentity, u64) -> Self
-pub fn laddu_memory::MemoryResource::with_capacity(self, u64, core::option::Option<u64>) -> Self
 impl core::clone::Clone for laddu_memory::MemoryResource
 pub fn laddu_memory::MemoryResource::clone(&self) -> laddu_memory::MemoryResource
 impl core::cmp::Eq for laddu_memory::MemoryResource
@@ -243,9 +239,10 @@ pub fn laddu_memory::MemoryState::current() -> Self
 pub fn laddu_memory::MemoryState::devices(&self) -> alloc::vec::Vec<laddu_memory::MemoryResource>
 pub fn laddu_memory::MemoryState::discover() -> Self
 pub fn laddu_memory::MemoryState::host(&self) -> laddu_memory::MemoryResource
+pub fn laddu_memory::MemoryState::override_device_capacity(&self, impl core::convert::Into<alloc::string::String>, impl core::convert::Into<alloc::string::String>, u64, core::option::Option<u64>)
 pub fn laddu_memory::MemoryState::pool(&self, &str, laddu_memory::MemoryBudget) -> laddu_memory::MemoryResult<laddu_memory::MemoryPool>
 pub fn laddu_memory::MemoryState::refresh(&self)
-pub fn laddu_memory::MemoryState::register_device(&self, laddu_memory::MemoryResource)
+pub fn laddu_memory::MemoryState::register_discovered_device(&self, impl core::convert::Into<alloc::string::String>, impl core::convert::Into<alloc::string::String>, laddu_memory::DeviceIdentity, u64)
 pub fn laddu_memory::MemoryState::report(&self) -> laddu_memory::MemoryReport
 pub fn laddu_memory::MemoryState::resource(&self, &str) -> core::option::Option<laddu_memory::MemoryResource>
 impl core::clone::Clone for laddu_memory::MemoryState

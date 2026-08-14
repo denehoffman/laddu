@@ -6,7 +6,7 @@ use std::{
 use laddu_autodiff::AutodiffMode;
 use laddu_data::io::{Partitioning, ReadPlan};
 #[cfg(feature = "wgpu")]
-use laddu_memory::{DeviceIdentity, MemoryResource};
+use laddu_memory::DeviceIdentity;
 use laddu_memory::{
     MemoryBudget, MemoryDecision, MemoryPlan, MemoryPool, MemoryPoolReport, MemoryReport,
     MemoryState,
@@ -290,7 +290,7 @@ impl Execution {
                         .max_buffer_size
                         .min(512 * 1024 * 1024)
                         .max(context.info().max_storage_buffer_binding_size);
-                    let resource = MemoryResource::discover_device(
+                    memory_state.register_discovered_device(
                         resource_id.clone(),
                         context.info().name.clone(),
                         DeviceIdentity {
@@ -301,7 +301,6 @@ impl Execution {
                         },
                         fallback,
                     );
-                    memory_state.register_device(resource);
                     let requested = options.memory.device.unwrap_or(MemoryBudget::Auto);
                     let pool = memory_state.pool(&resource_id, requested)?;
                     context
