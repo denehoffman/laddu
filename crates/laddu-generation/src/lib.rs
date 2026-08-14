@@ -13,7 +13,9 @@ use laddu_data::{
     schema::Schema,
 };
 use laddu_expr::{ExprNode, parameters::ParamValues};
-use laddu_physics::{LadduPhysicsError, channel::Channel, vectors::RealVec4};
+use laddu_physics::{
+    LadduPhysicsError, channel::Channel, generation::PiecewiseDensity, vectors::RealVec4,
+};
 use laddu_runtime::{
     Execution, MemoryBudget, MemoryDecision, MemoryLease, MemoryState, PreparedModel,
 };
@@ -401,72 +403,21 @@ enum EdgeMassPlan {
 #[derive(Clone, Debug)]
 struct AdaptiveMassProposal {
     base: MassProposal,
-    low: f64,
-    high: f64,
-    counts: Arc<[f64]>,
+    density: PiecewiseDensity,
     defensive_fraction: f64,
 }
 
 impl AdaptiveMassProposal {
-    fn bin_width(&self) -> f64 {
-        (self.high - self.low) / self.counts.len() as f64
-    }
-
     fn truncated_total(&self, minimum: f64, maximum: f64) -> f64 {
-        let width = self.bin_width();
-        self.counts
-            .iter()
-            .enumerate()
-            .map(|(bin, count)| {
-                let bin_low = self.low + bin as f64 * width;
-                let bin_high = bin_low + width;
-                let overlap = maximum.min(bin_high) - minimum.max(bin_low);
-                if overlap > 0.0 {
-                    count * overlap / width
-                } else {
-                    0.0
-                }
-            })
-            .sum()
+        self.density.truncated_total(minimum, maximum)
     }
 
     fn adaptive_density(&self, minimum: f64, maximum: f64, mass: f64) -> f64 {
-        if mass < self.low || mass > self.high || mass < minimum || mass > maximum {
-            return 0.0;
-        }
-        let width = self.bin_width();
-        let bin = (((mass - self.low) / width) as usize).min(self.counts.len() - 1);
-        let total = self.truncated_total(minimum, maximum);
-        if total > 0.0 {
-            self.counts[bin] / (width * total)
-        } else {
-            0.0
-        }
+        self.density.density(minimum, maximum, mass)
     }
 
     fn sample_adaptive(&self, minimum: f64, maximum: f64, rng: &mut ProposalRng) -> Option<f64> {
-        let width = self.bin_width();
-        let total = self.truncated_total(minimum, maximum);
-        if total <= 0.0 {
-            return None;
-        }
-        let mut threshold = rng.uniform() * total;
-        for (bin, count) in self.counts.iter().enumerate() {
-            let bin_low = self.low + bin as f64 * width;
-            let bin_high = bin_low + width;
-            let low = minimum.max(bin_low);
-            let high = maximum.min(bin_high);
-            let weight = if high > low {
-                count * (high - low) / width
-            } else {
-                0.0
-            };
-            if threshold <= weight && weight > 0.0 {
-                return Some(low + rng.uniform() * (high - low));
-            }
-            threshold -= weight;
-        }
-        None
+        self.density.sample(minimum, maximum, rng)
     }
 }
 
@@ -1423,9 +1374,8 @@ impl ChannelGenerator {
             }
             let candidate = AdaptiveMassProposal {
                 base: *base,
-                low,
-                high,
-                counts: counts.into(),
+                density: PiecewiseDensity::uniform(low, high, counts.into())
+                    .map_err(GenerationError::Physics)?,
                 defensive_fraction: DEFENSIVE_FRACTION,
             };
             let mut new_sum = 0.0;
@@ -1881,9 +1831,7 @@ mod tests {
     fn adaptive_mass_density_is_normalized_and_matches_returned_weight() {
         let proposal = AdaptiveMassProposal {
             base: MassProposal::uniform(0.0, 4.0),
-            low: 1.0,
-            high: 3.0,
-            counts: Arc::from([1.0, 3.0, 7.0, 1.0]),
+            density: PiecewiseDensity::uniform(1.0, 3.0, Arc::from([1.0, 3.0, 7.0, 1.0])).unwrap(),
             defensive_fraction: 0.2,
         };
         let steps = 20_000;
