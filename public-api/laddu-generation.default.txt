@@ -168,7 +168,7 @@ pub laddu_generation::UnweightedConfig::envelope: laddu_generation::EnvelopeMode
 pub laddu_generation::UnweightedConfig::envelope_overflow: laddu_generation::EnvelopeOverflow
 pub laddu_generation::UnweightedConfig::events: usize
 pub laddu_generation::UnweightedConfig::max_proposals: core::option::Option<usize>
-pub laddu_generation::UnweightedConfig::memory: laddu_memory::MemoryBudget
+pub laddu_generation::UnweightedConfig::memory: laddu_memory::budget::MemoryBudget
 pub laddu_generation::UnweightedConfig::seed: u64
 impl laddu_generation::UnweightedConfig
 pub fn laddu_generation::UnweightedConfig::new(usize) -> Self
@@ -185,7 +185,7 @@ pub fn laddu_generation::UnweightedConfig::deserialize<__D>(__D) -> core::result
 pub struct laddu_generation::WeightedConfig
 pub laddu_generation::WeightedConfig::diagnostics: bool
 pub laddu_generation::WeightedConfig::events: usize
-pub laddu_generation::WeightedConfig::memory: laddu_memory::MemoryBudget
+pub laddu_generation::WeightedConfig::memory: laddu_memory::budget::MemoryBudget
 pub laddu_generation::WeightedConfig::seed: u64
 impl laddu_generation::WeightedConfig
 pub fn laddu_generation::WeightedConfig::new(usize) -> Self
