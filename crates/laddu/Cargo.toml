@@ -86,6 +86,8 @@ criterion.workspace = true
 fastrand.workspace = true
 num_cpus.workspace = true
 rayon.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 
 [[bench]]
 name = "kmatrix_benchmark"
