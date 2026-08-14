@@ -8,6 +8,136 @@ use crate::LadduPhysicsError;
 
 const QUANTUM_NUMBER_FLOAT_TOLERANCE: f64 = 1.0e-12;
 
+#[derive(Clone, Copy)]
+enum Signedness {
+    Nonnegative,
+    Signed,
+}
+
+#[derive(Clone, Copy)]
+enum NonFiniteError {
+    InvalidValue,
+    Custom(&'static str),
+}
+
+#[derive(Clone, Copy)]
+struct QuantumNumberConversion {
+    scale: i128,
+    signedness: Signedness,
+    storage_min: i128,
+    storage_max: i128,
+    domain: &'static str,
+    physical_values: &'static str,
+    storage_values: &'static str,
+    non_finite: NonFiniteError,
+}
+
+impl QuantumNumberConversion {
+    fn signed(self, value: i128) -> Result<i128, LadduPhysicsError> {
+        if matches!(self.signedness, Signedness::Nonnegative) && value < 0 {
+            return Err(LadduPhysicsError::invalid_value(
+                self.domain,
+                "nonnegative",
+                value,
+            ));
+        }
+        let scaled = self.scale_integer(value, format!("{} for value {value}", self.domain))?;
+        self.scaled(scaled)
+    }
+
+    fn unsigned(self, value: u128) -> Result<i128, LadduPhysicsError> {
+        let value = i128::try_from(value).map_err(|_| {
+            LadduPhysicsError::invalid_value(self.domain, "representable as i128", value)
+        })?;
+        self.signed(value)
+    }
+
+    fn ratio(self, numer: i128, denom: i128) -> Result<i128, LadduPhysicsError> {
+        let scaled = self.scale_integer(numer, format!("{} numerator {numer}", self.domain))?;
+        if scaled % denom != 0 {
+            return Err(LadduPhysicsError::invalid_value(
+                self.domain,
+                self.physical_values,
+                format!("{numer}/{denom}"),
+            ));
+        }
+        self.scaled(scaled / denom)
+    }
+
+    fn float(self, value: f64) -> Result<i128, LadduPhysicsError> {
+        if !value.is_finite() {
+            return Err(match self.non_finite {
+                NonFiniteError::InvalidValue => {
+                    LadduPhysicsError::invalid_value(self.domain, "finite", value)
+                }
+                NonFiniteError::Custom(message) => LadduPhysicsError::Custom(message.to_string()),
+            });
+        }
+        let scaled = self.scale as f64 * value;
+        let rounded = scaled.round();
+        if (scaled - rounded).abs() > QUANTUM_NUMBER_FLOAT_TOLERANCE {
+            return Err(LadduPhysicsError::invalid_value(
+                self.domain,
+                self.physical_values,
+                value,
+            ));
+        }
+        if rounded < i128::MIN as f64 || rounded > i128::MAX as f64 {
+            return Err(LadduPhysicsError::invalid_value(
+                self.domain,
+                "representable as i128",
+                rounded,
+            ));
+        }
+        self.scaled(rounded as i128)
+    }
+
+    fn scale_integer(self, value: i128, operation: String) -> Result<i128, LadduPhysicsError> {
+        if self.scale == 1 {
+            return Ok(value);
+        }
+        value.checked_mul(self.scale).ok_or_else(|| {
+            LadduPhysicsError::numeric_overflow(format!("{} * {operation}", self.scale))
+        })
+    }
+
+    fn scaled(self, value: i128) -> Result<i128, LadduPhysicsError> {
+        if value < self.storage_min || value > self.storage_max {
+            return Err(LadduPhysicsError::invalid_value(
+                self.domain,
+                self.storage_values,
+                value,
+            ));
+        }
+        Ok(value)
+    }
+}
+
+trait ScaledQuantumNumber: Sized {
+    const CONVERSION: QuantumNumberConversion;
+
+    fn from_scaled(value: i128) -> Self;
+}
+
+fn quantum_from_signed<T: ScaledQuantumNumber>(value: i128) -> Result<T, LadduPhysicsError> {
+    Ok(T::from_scaled(T::CONVERSION.signed(value)?))
+}
+
+fn quantum_from_unsigned<T: ScaledQuantumNumber>(value: u128) -> Result<T, LadduPhysicsError> {
+    Ok(T::from_scaled(T::CONVERSION.unsigned(value)?))
+}
+
+fn quantum_from_ratio<T: ScaledQuantumNumber>(
+    numer: i128,
+    denom: i128,
+) -> Result<T, LadduPhysicsError> {
+    Ok(T::from_scaled(T::CONVERSION.ratio(numer, denom)?))
+}
+
+fn quantum_from_float<T: ScaledQuantumNumber>(value: f64) -> Result<T, LadduPhysicsError> {
+    Ok(T::from_scaled(T::CONVERSION.float(value)?))
+}
+
 macro_rules! impl_try_from_str {
     ($ty:ty) => {
         impl ::std::convert::TryFrom<&str> for $ty {
@@ -35,7 +165,7 @@ macro_rules! impl_try_from_signed_ints {
                 type Error = LadduPhysicsError;
 
                 fn try_from(value: $int) -> Result<Self, Self::Error> {
-                    <$ty>::try_from_i128(value as i128)
+                    quantum_from_signed::<$ty>(value as i128)
                 }
             }
         )+
@@ -49,7 +179,7 @@ macro_rules! impl_try_from_unsigned_ints {
                 type Error = LadduPhysicsError;
 
                 fn try_from(value: $int) -> Result<Self, Self::Error> {
-                    <$ty>::try_from_u128(value as u128)
+                    quantum_from_unsigned::<$ty>(value as u128)
                 }
             }
         )+
@@ -63,7 +193,7 @@ macro_rules! impl_try_from_signed_ratios {
                 type Error = LadduPhysicsError;
 
                 fn try_from(value: Ratio<$int>) -> Result<Self, Self::Error> {
-                    <$ty>::try_from_ratio_i128(
+                    quantum_from_ratio::<$ty>(
                         *value.numer() as i128,
                         *value.denom() as i128,
                     )
@@ -94,7 +224,7 @@ macro_rules! impl_try_from_unsigned_ratios {
         *value.denom(),
     )
                     })?;
-                    <$ty>::try_from_ratio_i128(numer, denom)
+                    quantum_from_ratio::<$ty>(numer, denom)
                 }
             }
         )+
@@ -108,7 +238,7 @@ macro_rules! impl_try_from_floats {
                 type Error = LadduPhysicsError;
 
                 fn try_from(value: $float) -> Result<Self, Self::Error> {
-                    <$ty>::try_from_f64(value as f64)
+                    quantum_from_float::<$ty>(value as f64)
                 }
             }
         )+
@@ -400,76 +530,22 @@ impl J {
         let max = j1.doubled() + j2.doubled();
         self.doubled() >= min && self.doubled() <= max && (self.doubled() - min).is_multiple_of(2)
     }
+}
 
-    fn try_from_i128(value: i128) -> Result<Self, LadduPhysicsError> {
-        if value < 0 {
-            return Err(LadduPhysicsError::invalid_value(
-                "angular momentum",
-                "nonnegative",
-                value,
-            ));
-        }
-        Self::try_from_scaled_i128(value.checked_mul(2).ok_or_else(|| {
-            LadduPhysicsError::numeric_overflow(format!("2 * angular momentum for value {value}"))
-        })?)
-    }
+impl ScaledQuantumNumber for J {
+    const CONVERSION: QuantumNumberConversion = QuantumNumberConversion {
+        scale: 2,
+        signedness: Signedness::Nonnegative,
+        storage_min: 0,
+        storage_max: u32::MAX as i128,
+        domain: "angular momentum",
+        physical_values: "integer or half-integer",
+        storage_values: "nonnegative and representable as doubled u32",
+        non_finite: NonFiniteError::InvalidValue,
+    };
 
-    fn try_from_u128(value: u128) -> Result<Self, LadduPhysicsError> {
-        let value = i128::try_from(value).map_err(|_| {
-            LadduPhysicsError::invalid_value("angular momentum", "representable as i128", value)
-        })?;
-        Self::try_from_i128(value)
-    }
-
-    fn try_from_ratio_i128(numer: i128, denom: i128) -> Result<Self, LadduPhysicsError> {
-        let scaled = numer.checked_mul(2).ok_or_else(|| {
-            LadduPhysicsError::numeric_overflow(format!("2 * angular momentum numerator {numer}"))
-        })?;
-        if scaled % denom != 0 {
-            return Err(LadduPhysicsError::invalid_value(
-                "angular momentum",
-                "integer or half-integer",
-                format!("{numer}/{denom}"),
-            ));
-        }
-        Self::try_from_scaled_i128(scaled / denom)
-    }
-
-    fn try_from_f64(value: f64) -> Result<Self, LadduPhysicsError> {
-        if !value.is_finite() {
-            return Err(LadduPhysicsError::invalid_value(
-                "angular momentum",
-                "finite",
-                value,
-            ));
-        }
-        let scaled = 2.0 * value;
-        let rounded = scaled.round();
-        if (scaled - rounded).abs() > QUANTUM_NUMBER_FLOAT_TOLERANCE {
-            return Err(LadduPhysicsError::invalid_value(
-                "angular momentum",
-                "integer or half-integer",
-                value,
-            ));
-        }
-        if rounded < i128::MIN as f64 || rounded > i128::MAX as f64 {
-            return Err(LadduPhysicsError::invalid_value(
-                "angular momentum",
-                "representable as i128",
-                rounded,
-            ));
-        }
-        Self::try_from_scaled_i128(rounded as i128)
-    }
-
-    fn try_from_scaled_i128(value: i128) -> Result<Self, LadduPhysicsError> {
-        Ok(Self(u32::try_from(value).map_err(|_| {
-            LadduPhysicsError::invalid_value(
-                "angular momentum",
-                "nonnegative and representable as doubled u32",
-                value,
-            )
-        })?))
+    fn from_scaled(value: i128) -> Self {
+        Self(value as u32)
     }
 }
 
@@ -517,74 +593,22 @@ impl L {
             Parity::Negative
         }
     }
+}
 
-    fn try_from_i128(value: i128) -> Result<Self, LadduPhysicsError> {
-        if value < 0 {
-            return Err(LadduPhysicsError::invalid_value(
-                "orbital angular momentum",
-                "nonnegative",
-                value,
-            ));
-        }
-        Self::try_from_scaled_i128(value)
-    }
+impl ScaledQuantumNumber for L {
+    const CONVERSION: QuantumNumberConversion = QuantumNumberConversion {
+        scale: 1,
+        signedness: Signedness::Nonnegative,
+        storage_min: 0,
+        storage_max: u32::MAX as i128,
+        domain: "orbital angular momentum",
+        physical_values: "integer",
+        storage_values: "nonnegative and representable as u32",
+        non_finite: NonFiniteError::InvalidValue,
+    };
 
-    fn try_from_u128(value: u128) -> Result<Self, LadduPhysicsError> {
-        let value = i128::try_from(value).map_err(|_| {
-            LadduPhysicsError::invalid_value(
-                "orbital angular momentum",
-                "representable as i128",
-                value,
-            )
-        })?;
-        Self::try_from_i128(value)
-    }
-
-    fn try_from_ratio_i128(numer: i128, denom: i128) -> Result<Self, LadduPhysicsError> {
-        if numer % denom != 0 {
-            return Err(LadduPhysicsError::invalid_value(
-                "orbital angular momentum",
-                "integer",
-                format!("{numer}/{denom}"),
-            ));
-        }
-        Self::try_from_scaled_i128(numer / denom)
-    }
-
-    fn try_from_f64(value: f64) -> Result<Self, LadduPhysicsError> {
-        if !value.is_finite() {
-            return Err(LadduPhysicsError::invalid_value(
-                "orbital angular momentum",
-                "finite",
-                value,
-            ));
-        }
-        let rounded = value.round();
-        if (value - rounded).abs() > QUANTUM_NUMBER_FLOAT_TOLERANCE {
-            return Err(LadduPhysicsError::invalid_value(
-                "orbital angular momentum",
-                "integer",
-                value,
-            ));
-        }
-        if rounded < i128::MIN as f64 || rounded > i128::MAX as f64 {
-            return Err(LadduPhysicsError::invalid_value(
-                "orbital angular momentum",
-                "representable as i128",
-                rounded,
-            ));
-        }
-        Self::try_from_scaled_i128(rounded as i128)
-    }
-
-    fn try_from_scaled_i128(value: i128) -> Result<Self, LadduPhysicsError> {
-        Ok(Self(u32::try_from(value).map_err(|_| {
-            LadduPhysicsError::invalid_value(
-                "orbital angular momentum",
-                "nonnegative and representable as u32",
-                value,
-            )
-        })?))
+    fn from_scaled(value: i128) -> Self {
+        Self(value as u32)
     }
 }
 
@@ -648,63 +672,22 @@ impl M {
     pub const fn is_integer(self) -> bool {
         self.0 & 1 == 0
     }
+}
 
-    fn try_from_i128(value: i128) -> Result<Self, LadduPhysicsError> {
-        Self::try_from_scaled_i128(value.checked_mul(2).ok_or_else(|| {
-            LadduPhysicsError::numeric_overflow(format!("2 * projection for value {value}"))
-        })?)
-    }
+impl ScaledQuantumNumber for M {
+    const CONVERSION: QuantumNumberConversion = QuantumNumberConversion {
+        scale: 2,
+        signedness: Signedness::Signed,
+        storage_min: i32::MIN as i128,
+        storage_max: i32::MAX as i128,
+        domain: "projection",
+        physical_values: "integer or half-integer",
+        storage_values: "representable as i32",
+        non_finite: NonFiniteError::Custom("projection must be finite"),
+    };
 
-    fn try_from_u128(value: u128) -> Result<Self, LadduPhysicsError> {
-        let value = i128::try_from(value).map_err(|_| {
-            LadduPhysicsError::invalid_value("projection", "representable as i128", value)
-        })?;
-        Self::try_from_i128(value)
-    }
-
-    fn try_from_ratio_i128(numer: i128, denom: i128) -> Result<Self, LadduPhysicsError> {
-        let scaled = numer.checked_mul(2).ok_or_else(|| {
-            LadduPhysicsError::numeric_overflow(format!("2 * projection numerator {numer}"))
-        })?;
-        if scaled % denom != 0 {
-            return Err(LadduPhysicsError::invalid_value(
-                "projection",
-                "integer or half-integer",
-                format!("{numer}/{denom}"),
-            ));
-        }
-        Self::try_from_scaled_i128(scaled / denom)
-    }
-
-    fn try_from_f64(value: f64) -> Result<Self, LadduPhysicsError> {
-        if !value.is_finite() {
-            return Err(LadduPhysicsError::Custom(
-                "projection must be finite".to_string(),
-            ));
-        }
-        let scaled = 2.0 * value;
-        let rounded = scaled.round();
-        if (scaled - rounded).abs() > QUANTUM_NUMBER_FLOAT_TOLERANCE {
-            return Err(LadduPhysicsError::invalid_value(
-                "projection",
-                "integer or half-integer",
-                value,
-            ));
-        }
-        if rounded < i128::MIN as f64 || rounded > i128::MAX as f64 {
-            return Err(LadduPhysicsError::invalid_value(
-                "projection",
-                "representable as i128",
-                rounded,
-            ));
-        }
-        Self::try_from_scaled_i128(rounded as i128)
-    }
-
-    fn try_from_scaled_i128(value: i128) -> Result<Self, LadduPhysicsError> {
-        Ok(Self(i32::try_from(value).map_err(|_| {
-            LadduPhysicsError::invalid_value("projection", "representable as i32", value)
-        })?))
+    fn from_scaled(value: i128) -> Self {
+        Self(value as i32)
     }
 }
 
@@ -865,5 +848,148 @@ mod tests {
         assert_eq!(M::try_from(-2_i8).unwrap().doubled(), -4);
         assert!(J::try_from(-1_i8).is_err());
         assert!(L::try_from(-1_i8).is_err());
+    }
+
+    #[test]
+    fn every_integer_conversion_uses_the_same_physical_scaling() {
+        macro_rules! assert_signed {
+            ($($ty:ty),+ $(,)?) => {$({
+                assert_eq!(J::try_from(2 as $ty).unwrap(), J::int(2));
+                assert_eq!(L::try_from(2 as $ty).unwrap(), L::int(2));
+                assert_eq!(M::try_from(-2 as $ty).unwrap(), M::int(-2));
+            })+};
+        }
+        macro_rules! assert_unsigned {
+            ($($ty:ty),+ $(,)?) => {$({
+                assert_eq!(J::try_from(2 as $ty).unwrap(), J::int(2));
+                assert_eq!(L::try_from(2 as $ty).unwrap(), L::int(2));
+                assert_eq!(M::try_from(2 as $ty).unwrap(), M::int(2));
+            })+};
+        }
+
+        assert_signed!(i8, i16, i32, i64, i128, isize);
+        assert_unsigned!(u8, u16, u32, u64, u128, usize);
+    }
+
+    #[test]
+    fn every_ratio_conversion_uses_the_same_physical_scaling() {
+        macro_rules! assert_signed {
+            ($($ty:ty),+ $(,)?) => {$({
+                assert_eq!(
+                    J::try_from(Ratio::<$ty>::new(3, 2)).unwrap(),
+                    J::half(3)
+                );
+                assert_eq!(
+                    L::try_from(Ratio::<$ty>::new(2, 1)).unwrap(),
+                    L::int(2)
+                );
+                assert_eq!(
+                    M::try_from(Ratio::<$ty>::new(-3, 2)).unwrap(),
+                    M::half(-3)
+                );
+            })+};
+        }
+        macro_rules! assert_unsigned {
+            ($($ty:ty),+ $(,)?) => {$({
+                assert_eq!(
+                    J::try_from(Ratio::<$ty>::new(3, 2)).unwrap(),
+                    J::half(3)
+                );
+                assert_eq!(
+                    L::try_from(Ratio::<$ty>::new(2, 1)).unwrap(),
+                    L::int(2)
+                );
+                assert_eq!(
+                    M::try_from(Ratio::<$ty>::new(3, 2)).unwrap(),
+                    M::half(3)
+                );
+            })+};
+        }
+
+        assert_signed!(i8, i16, i32, i64, i128, isize);
+        assert_unsigned!(u8, u16, u32, u64, u128, usize);
+    }
+
+    #[test]
+    fn float_conversion_obeys_tolerance_and_storage_boundaries() {
+        assert_eq!(
+            J::try_from(0.5 + QUANTUM_NUMBER_FLOAT_TOLERANCE / 8.0).unwrap(),
+            J::half(1)
+        );
+        assert!(J::try_from(0.5 + QUANTUM_NUMBER_FLOAT_TOLERANCE).is_err());
+        assert_eq!(
+            L::try_from(1.0 + QUANTUM_NUMBER_FLOAT_TOLERANCE / 2.0).unwrap(),
+            L::int(1)
+        );
+        assert!(L::try_from(1.0 + 2.0 * QUANTUM_NUMBER_FLOAT_TOLERANCE).is_err());
+        assert_eq!(M::try_from(-0.5_f32).unwrap(), M::half(-1));
+        assert!(M::try_from(f32::INFINITY).is_err());
+        assert!(J::try_from((u32::MAX as f64 + 1.0) / 2.0).is_err());
+        assert!(L::try_from(u32::MAX as f64 + 1.0).is_err());
+        assert!(M::try_from((i32::MAX as f64 + 1.0) / 2.0).is_err());
+    }
+
+    #[test]
+    fn conversion_error_variants_and_messages_remain_compatible() {
+        let j_negative = J::try_from(-1_i8).unwrap_err();
+        assert!(matches!(j_negative, LadduPhysicsError::InvalidValue { .. }));
+        assert_eq!(
+            j_negative.to_string(),
+            "Invalid value for angular momentum: expected nonnegative, got -1"
+        );
+
+        let j_overflow = J::try_from(i128::MAX).unwrap_err();
+        assert!(matches!(
+            j_overflow,
+            LadduPhysicsError::NumericOverflow { .. }
+        ));
+        assert_eq!(
+            j_overflow.to_string(),
+            format!(
+                "Numeric overflow while computing 2 * angular momentum for value {}",
+                i128::MAX
+            )
+        );
+
+        let l_storage = L::try_from(u32::MAX as u64 + 1).unwrap_err();
+        assert!(matches!(l_storage, LadduPhysicsError::InvalidValue { .. }));
+        assert_eq!(
+            l_storage.to_string(),
+            format!(
+                "Invalid value for orbital angular momentum: expected nonnegative and representable as u32, got {}",
+                u32::MAX as u64 + 1
+            )
+        );
+
+        let m_non_finite = M::try_from(f64::NAN).unwrap_err();
+        assert!(matches!(m_non_finite, LadduPhysicsError::Custom(_)));
+        assert_eq!(m_non_finite.to_string(), "projection must be finite");
+
+        let unsigned_ratio = J::try_from(Ratio::new(u128::MAX, 1)).unwrap_err();
+        assert!(matches!(
+            unsigned_ratio,
+            LadduPhysicsError::InvalidValue { .. }
+        ));
+        assert_eq!(
+            unsigned_ratio.to_string(),
+            format!(
+                "Invalid value for ratio numerator: expected representable as i128, got {}",
+                u128::MAX
+            )
+        );
+    }
+
+    #[test]
+    fn ratio_storage_validation_happens_after_division() {
+        assert_eq!(
+            quantum_from_ratio::<L>(u32::MAX as i128 + 1, 2).unwrap(),
+            L::int((u32::MAX / 2) + 1)
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "attempt to calculate the remainder with a divisor of zero")]
+    fn zero_ratio_denominator_retains_the_existing_failure_mode() {
+        let _ = quantum_from_ratio::<J>(1, 0);
     }
 }
