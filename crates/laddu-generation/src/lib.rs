@@ -13,6 +13,7 @@ use laddu_data::{
     schema::Schema,
 };
 use laddu_expr::{ExprNode, parameters::ParamValues};
+use laddu_memory::{MemoryFitRequest, MemoryFootprint};
 use laddu_physics::{
     LadduPhysicsError, channel::Channel, generation::PiecewiseDensity, vectors::RealVec4,
 };
@@ -548,14 +549,14 @@ impl ChannelGenerator {
             &owned_pool
         };
         let available = pool.remaining().min(operation_cap);
-        let decision = MemoryDecision::fit(
-            label,
-            u64::try_from(fixed_bytes).unwrap_or(u64::MAX),
-            u64::try_from(bytes_per_event).unwrap_or(u64::MAX),
-            available,
-            usage.event_limit,
-            "memory-derived generation",
-        )
+        let decision = MemoryFitRequest {
+            label: label.into(),
+            footprint: MemoryFootprint::from_usize(fixed_bytes, bytes_per_event),
+            available_bytes: available,
+            event_limit: usage.event_limit,
+            strategy: "memory-derived generation".into(),
+        }
+        .evaluate()
         .map_err(laddu_runtime::RuntimeError::from)?;
         let lease = pool
             .reserve(decision.estimated_peak_bytes)

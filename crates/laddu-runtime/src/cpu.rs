@@ -24,6 +24,7 @@ use laddu_kernel::ir::{
     GradientKernelIr, KernelInstruction, KernelValue, KernelValueClass, KernelValueId,
     KernelValueKind, OutputComponent, ScalarKernelIr,
 };
+use laddu_memory::{MemoryFitRequest, MemoryFootprint};
 use nalgebra::{DMatrix, DVector, Dyn, LU};
 use num::{
     complex::{Complex, Complex32, Complex64},
@@ -31,10 +32,7 @@ use num::{
 };
 use rayon::prelude::*;
 
-use crate::{
-    JitPolicy, MemoryDecision, MemoryLease, Precision, RuntimeError, RuntimeResult,
-    execution::Execution,
-};
+use crate::{JitPolicy, MemoryLease, Precision, RuntimeError, RuntimeResult, execution::Execution};
 
 mod gradient_interpreter;
 use gradient_interpreter::GradientInterpreter;
@@ -2324,15 +2322,13 @@ impl CpuPlan {
             MemoryPolicy::Streaming => CacheStorage::Streaming,
             MemoryPolicy::Resident => {
                 if resident_plan.is_none() {
+                    let minimum = MemoryFootprint::from_usize(
+                        cache_zero.saturating_add(source_bytes_per_event.saturating_mul(2)),
+                        cache_bytes_per_event,
+                    );
                     return Err(laddu_memory::MemoryError::BudgetExceeded {
                         resource: "host".into(),
-                        requested: u64::try_from(
-                            cache_bytes_per_event
-                                .saturating_mul(local_event_limit)
-                                .saturating_add(cache_zero)
-                                .saturating_add(source_bytes_per_event.saturating_mul(2)),
-                        )
-                        .unwrap_or(u64::MAX),
+                        requested: minimum.peak_bytes(local_event_limit),
                         remaining: host_remaining,
                     }
                     .into());
@@ -2367,18 +2363,19 @@ impl CpuPlan {
         } else {
             (0, source_bytes_per_event.saturating_mul(2))
         };
-        let decision = MemoryDecision::fit(
-            "CPU prepared dataset",
-            u64::try_from(fixed_peak).unwrap_or(u64::MAX),
-            u64::try_from(per_event_peak).unwrap_or(u64::MAX),
-            available_for_batch,
-            local_event_limit,
-            if requested_storage == CacheStorage::Resident {
+        let decision = MemoryFitRequest {
+            label: "CPU prepared dataset".into(),
+            footprint: MemoryFootprint::from_usize(fixed_peak, per_event_peak),
+            available_bytes: available_for_batch,
+            event_limit: local_event_limit,
+            strategy: if requested_storage == CacheStorage::Resident {
                 "resident"
             } else {
                 "streaming"
-            },
-        )?;
+            }
+            .into(),
+        }
+        .evaluate()?;
         read_plan.chunk_size = Some(
             read_plan
                 .chunk_size

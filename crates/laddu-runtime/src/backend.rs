@@ -4,6 +4,8 @@ use laddu_data::data::EventBatch;
 #[cfg(feature = "wgpu")]
 use laddu_data::data::{CacheStorage, MemoryPolicy, accurate::AccurateF64};
 use laddu_expr::parameters::ParamValues;
+#[cfg(feature = "wgpu")]
+use laddu_memory::{MemoryFitRequest, MemoryFootprint};
 use num::complex::Complex64;
 
 use crate::{
@@ -311,67 +313,63 @@ impl WgpuPlan {
             (4 * schema.n_p4s() + schema.n_scalars() + usize::from(schema.has_weight()))
                 .saturating_mul(size_of::<f64>())
                 .saturating_mul(2);
-        let host_decision = crate::MemoryDecision::fit(
-            "WGPU host staging",
-            0,
-            u64::try_from(host_bytes_per_event).unwrap_or(u64::MAX),
-            execution.host_memory().remaining(),
-            local_event_limit,
-            "bounded host staging",
-        )?;
+        let host_decision = MemoryFitRequest {
+            label: "WGPU host staging".into(),
+            footprint: MemoryFootprint::from_usize(0, host_bytes_per_event),
+            available_bytes: execution.host_memory().remaining(),
+            event_limit: local_event_limit,
+            strategy: "bounded host staging".into(),
+        }
+        .evaluate()?;
         let host_chunks = local_event_limit
             .saturating_add(host_decision.chunk_events.saturating_sub(1))
             / host_decision.chunk_events.max(1);
-        let full = per_event
-            .saturating_mul(local_event_limit)
-            .saturating_add(fixed.saturating_mul(host_chunks));
+        let resident_footprint =
+            MemoryFootprint::from_usize(fixed.saturating_mul(host_chunks), per_event);
+        let resident_peak = resident_footprint.peak_bytes(local_event_limit);
         let device_pool = execution
             .device_memory()
             .ok_or_else(|| RuntimeError::Wgpu("GPU execution has no device memory pool".into()))?;
+        let device_available = device_pool.remaining();
         let storage = match dataset.memory_policy() {
             MemoryPolicy::Streaming => CacheStorage::Streaming,
             MemoryPolicy::Resident => {
-                if u64::try_from(full).unwrap_or(u64::MAX) > device_pool.remaining() {
+                if resident_peak > device_available {
                     return Err(laddu_memory::MemoryError::BudgetExceeded {
                         resource: "device".into(),
-                        requested: u64::try_from(full).unwrap_or(u64::MAX),
-                        remaining: device_pool.remaining(),
+                        requested: resident_peak,
+                        remaining: device_available,
                     }
                     .into());
                 }
                 CacheStorage::Resident
             }
-            MemoryPolicy::Fastest
-                if u64::try_from(full).unwrap_or(u64::MAX) <= device_pool.remaining() =>
-            {
-                CacheStorage::Resident
-            }
+            MemoryPolicy::Fastest if resident_peak <= device_available => CacheStorage::Resident,
             MemoryPolicy::Fastest => CacheStorage::Streaming,
         };
         let memory_lease = if storage == CacheStorage::Resident {
-            Some(device_pool.reserve(u64::try_from(full).unwrap_or(u64::MAX))?)
+            Some(device_pool.reserve(resident_peak)?)
         } else {
             None
         };
         let device_decision = if storage == CacheStorage::Resident {
-            crate::MemoryDecision {
+            MemoryFitRequest {
                 label: "WGPU prepared dataset".into(),
-                fixed_bytes: u64::try_from(fixed.saturating_mul(host_chunks)).unwrap_or(u64::MAX),
-                bytes_per_event: u64::try_from(per_event).unwrap_or(u64::MAX),
-                chunk_events: host_decision.chunk_events,
-                estimated_peak_bytes: u64::try_from(full).unwrap_or(u64::MAX),
-                actual_high_water_bytes: None,
+                footprint: resident_footprint,
+                available_bytes: device_available,
+                event_limit: local_event_limit,
                 strategy: "resident".into(),
             }
+            .evaluate_resident(host_decision.chunk_events)?
         } else {
-            crate::MemoryDecision::fit(
-                "WGPU prepared dataset",
-                u64::try_from(fixed).unwrap_or(u64::MAX),
-                u64::try_from(per_event).unwrap_or(u64::MAX),
-                device_pool.remaining(),
-                local_event_limit,
-                "streaming",
-            )?
+            MemoryFitRequest {
+                label: "WGPU prepared dataset".into(),
+                footprint: MemoryFootprint::from_usize(fixed, per_event),
+                available_bytes: device_available,
+                event_limit: local_event_limit,
+                strategy: "streaming".into(),
+            }
+            .evaluate()?
         };
         let chunk_events = device_decision
             .chunk_events
