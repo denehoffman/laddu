@@ -910,17 +910,10 @@ impl EventSink for RootSink {
             for col in 0..batch.schema().n_p4s() {
                 let p = batch.p4_at(col, row);
 
-                senders.send(index, p.e)?;
-                index += 1;
-
-                senders.send(index, p.px)?;
-                index += 1;
-
-                senders.send(index, p.py)?;
-                index += 1;
-
-                senders.send(index, p.pz)?;
-                index += 1;
+                for component in p.components() {
+                    senders.send(index, component)?;
+                    index += 1;
+                }
             }
 
             for col in 0..batch.schema().n_scalars() {

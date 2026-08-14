@@ -1,4 +1,7 @@
-use std::fmt::Display;
+use std::{
+    fmt::Display,
+    ops::{Add, Div, Mul, Sub},
+};
 
 use approx::{AbsDiffEq, RelativeEq};
 use auto_ops::{impl_op_ex, impl_op_ex_commutative};
@@ -7,6 +10,42 @@ use nalgebra::{Vector3, Vector4};
 use serde::{Deserialize, Serialize};
 
 use crate::{LadduPhysicsError, LadduPhysicsResult};
+
+fn dot3<'a, T>(lhs: [&'a T; 3], rhs: [&'a T; 3]) -> T
+where
+    &'a T: Mul<&'a T, Output = T>,
+    T: Add<T, Output = T>,
+{
+    lhs[0] * rhs[0] + lhs[1] * rhs[1] + lhs[2] * rhs[2]
+}
+
+fn cross3<'a, T>(lhs: [&'a T; 3], rhs: [&'a T; 3]) -> [T; 3]
+where
+    &'a T: Mul<&'a T, Output = T>,
+    T: Sub<T, Output = T>,
+{
+    [
+        lhs[1] * rhs[2] - rhs[1] * lhs[2],
+        lhs[2] * rhs[0] - rhs[2] * lhs[0],
+        lhs[0] * rhs[1] - rhs[0] * lhs[1],
+    ]
+}
+
+fn lorentz_dot4<'a, T>(lhs: [&'a T; 4], rhs: [&'a T; 4]) -> T
+where
+    &'a T: Mul<&'a T, Output = T>,
+    T: Sub<T, Output = T>,
+{
+    lhs[0] * rhs[0] - lhs[1] * rhs[1] - lhs[2] * rhs[2] - lhs[3] * rhs[3]
+}
+
+fn boost_factor<'a, T>(gamma: &'a T, square: impl FnOnce(&T) -> T) -> T
+where
+    &'a T: Add<f64, Output = T>,
+    T: Div<T, Output = T>,
+{
+    square(gamma) / (gamma + 1.0)
+}
 
 /// A vector with three components.
 ///
@@ -190,16 +229,12 @@ impl RealVec3 {
 
     /// Compute the dot product of this [`RealVec3`] and another
     pub fn dot(&self, other: &RealVec3) -> f64 {
-        self.x * other.x + self.y * other.y + self.z * other.z
+        dot3([&self.x, &self.y, &self.z], [&other.x, &other.y, &other.z])
     }
 
     /// Compute the cross product of this [`RealVec3`] and another
     pub fn cross(&self, other: &RealVec3) -> RealVec3 {
-        RealVec3::new(
-            self.y * other.z - other.y * self.z,
-            self.z * other.x - other.z * self.x,
-            self.x * other.y - other.x * self.y,
-        )
+        cross3([&self.x, &self.y, &self.z], [&other.x, &other.y, &other.z]).into()
     }
 
     /// The magnitude of the vector
@@ -355,7 +390,8 @@ impl RelativeEq for RealVec4 {
 
 impl From<RealVec4> for Vector4<f64> {
     fn from(value: RealVec4) -> Self {
-        Vector4::new(value.e, value.px, value.py, value.pz)
+        let [e, px, py, pz] = value.components();
+        Vector4::new(e, px, py, pz)
     }
 }
 
@@ -385,7 +421,7 @@ impl TryFrom<Vec<f64>> for RealVec4 {
 
 impl From<RealVec4> for Vec<f64> {
     fn from(value: RealVec4) -> Self {
-        vec![value.e, value.px, value.py, value.pz]
+        Vec::from(value.components())
     }
 }
 
@@ -402,7 +438,7 @@ impl From<[f64; 4]> for RealVec4 {
 
 impl From<RealVec4> for [f64; 4] {
     fn from(value: RealVec4) -> Self {
-        [value.e, value.px, value.py, value.pz]
+        value.components()
     }
 }
 
@@ -410,6 +446,14 @@ impl RealVec4 {
     /// Create a four-vector in metric order `(E, p_x, p_y, p_z)`.
     pub fn new(e: f64, px: f64, py: f64, pz: f64) -> Self {
         RealVec4 { e, px, py, pz }
+    }
+
+    /// Return components in the canonical storage order `(E, p_x, p_y, p_z)`.
+    ///
+    /// The returned array can be iterated directly when encoding external
+    /// columns without duplicating the component-order policy.
+    pub const fn components(&self) -> [f64; 4] {
+        [self.e, self.px, self.py, self.pz]
     }
 
     /// Momentum in the x-direction
@@ -509,7 +553,10 @@ impl RealVec4 {
 
     /// Compute the Lorentz inner product with another four-vector.
     pub fn dot(&self, other: &Self) -> f64 {
-        self.e * other.e - self.px * other.px - self.py * other.py - self.pz * other.pz
+        lorentz_dot4(
+            [&self.e, &self.px, &self.py, &self.pz],
+            [&other.e, &other.px, &other.py, &other.pz],
+        )
     }
 
     /// Pretty-prints the four-momentum.
@@ -606,7 +653,8 @@ impl RealVec4 {
             return *self;
         }
         let gamma = 1.0 / f64::sqrt(1.0 - b2);
-        let p3 = self.vec3() + beta * ((gamma - 1.0) * self.vec3().dot(beta) / b2 + gamma * self.e);
+        let factor = boost_factor(&gamma, |gamma| gamma * gamma);
+        let p3 = self.vec3() + beta * (factor * self.vec3().dot(beta) + gamma * self.e);
         RealVec4::new(gamma * (self.e + beta.dot(&self.vec3())), p3.x, p3.y, p3.z)
     }
 
@@ -705,16 +753,13 @@ impl Vec3 {
 
     /// Compute the Euclidean inner product.
     pub fn dot(&self, other: &Self) -> Expr {
-        &self.x * &other.x + &self.y * &other.y + &self.z * &other.z
+        dot3([&self.x, &self.y, &self.z], [&other.x, &other.y, &other.z])
     }
 
     /// Compute the Cartesian cross product.
     pub fn cross(&self, other: &Self) -> Self {
-        Self::new(
-            &self.y * &other.z - &other.y * &self.z,
-            &self.z * &other.x - &other.z * &self.x,
-            &self.x * &other.y - &other.x * &self.y,
-        )
+        let [x, y, z] = cross3([&self.x, &self.y, &self.z], [&other.x, &other.y, &other.z]);
+        Self::new(x, y, z)
     }
 
     /// Return the squared Euclidean magnitude.
@@ -886,7 +931,10 @@ impl Vec4 {
 
     /// Compute the Lorentz inner product with another symbolic four-vector.
     pub fn dot(&self, other: &Self) -> Expr {
-        &self.e * &other.e - &self.px * &other.px - &self.py * &other.py - &self.pz * &other.pz
+        lorentz_dot4(
+            [&self.e, &self.px, &self.py, &self.pz],
+            [&other.e, &other.px, &other.py, &other.pz],
+        )
     }
 
     /// Alias for [`Self::m2`], the squared invariant mass.
@@ -904,8 +952,8 @@ impl Vec4 {
         let b2 = beta.dot(beta);
         let gamma = (1.0 - &b2).sqrt();
         let gamma = 1.0 / gamma;
-        let boost_factor = gamma.powi(2) / (&gamma + 1.0);
-        let p3 = self.vec3() + beta * ((boost_factor * self.vec3().dot(beta)) + &gamma * &self.e);
+        let factor = boost_factor(&gamma, |gamma| gamma.powi(2));
+        let p3 = self.vec3() + beta * ((factor * self.vec3().dot(beta)) + &gamma * &self.e);
         Self::new(gamma * (&self.e + beta.dot(&self.vec3())), p3.x, p3.y, p3.z)
     }
 
@@ -937,6 +985,7 @@ impl_op_ex!(-|a: &Vec4| -> Vec4 { Vec4::new(-&a.e, -&a.px, -&a.py, -&a.pz) });
 #[cfg(test)]
 mod tests {
     use approx::{assert_abs_diff_eq, assert_relative_eq};
+    use fastrand::Rng;
     use laddu_compile::CompiledModel;
     use laddu_runtime::CpuBackend;
     use nalgebra::{Vector3, Vector4};
@@ -948,6 +997,17 @@ mod tests {
         let model = CompiledModel::from_expr(&expr).unwrap();
         let params = model.params().default_values();
         CpuBackend.prepare(&model).evaluate(&params).unwrap()
+    }
+
+    fn evaluate_real(expr: Expr) -> f64 {
+        evaluate(expr).re
+    }
+
+    fn assert_symbolic_vec4_eq(symbolic: Vec4, real: RealVec4, epsilon: f64) {
+        assert_relative_eq!(evaluate_real(symbolic.e), real.e, epsilon = epsilon);
+        assert_relative_eq!(evaluate_real(symbolic.px), real.px, epsilon = epsilon);
+        assert_relative_eq!(evaluate_real(symbolic.py), real.py, epsilon = epsilon);
+        assert_relative_eq!(evaluate_real(symbolic.pz), real.pz, epsilon = epsilon);
     }
 
     #[test]
@@ -995,6 +1055,7 @@ mod tests {
 
         let back_to_array: [f64; 4] = v.into();
         assert_eq!(back_to_array, arr);
+        assert_eq!(v.components(), arr);
     }
 
     #[test]
@@ -1139,6 +1200,125 @@ mod tests {
         assert_relative_eq!(p1_boosted.px(), -0.6489200627053444);
         assert_relative_eq!(p1_boosted.py(), 1.5316128987581492);
         assert_relative_eq!(p1_boosted.pz(), 3.712145860221643);
+    }
+
+    #[test]
+    fn real_and_symbolic_vector_formulas_agree_on_finite_inputs() {
+        let mut rng = Rng::with_seed(0x5645_4354_4f52);
+
+        for _ in 0..32 {
+            let a3 = RealVec3::new(
+                rng.f64() * 10.0 - 5.0,
+                rng.f64() * 10.0 - 5.0,
+                rng.f64() * 10.0 - 5.0,
+            );
+            let b3 = RealVec3::new(
+                rng.f64() * 10.0 - 5.0,
+                rng.f64() * 10.0 - 5.0,
+                rng.f64() * 10.0 - 5.0,
+            );
+            let a = Vec3::from(a3);
+            let b = Vec3::from(b3);
+            assert_relative_eq!(evaluate_real(a.dot(&b)), a3.dot(&b3), epsilon = 1e-11);
+            let symbolic_cross = a.cross(&b);
+            let real_cross = a3.cross(&b3);
+            assert_relative_eq!(
+                evaluate_real(symbolic_cross.x),
+                real_cross.x,
+                epsilon = 1e-11
+            );
+            assert_relative_eq!(
+                evaluate_real(symbolic_cross.y),
+                real_cross.y,
+                epsilon = 1e-11
+            );
+            assert_relative_eq!(
+                evaluate_real(symbolic_cross.z),
+                real_cross.z,
+                epsilon = 1e-11
+            );
+
+            let p = RealVec4::new(
+                rng.f64() * 9.0 + 1.0,
+                rng.f64() * 10.0 - 5.0,
+                rng.f64() * 10.0 - 5.0,
+                rng.f64() * 10.0 - 5.0,
+            );
+            let q = RealVec4::new(
+                rng.f64() * 9.0 + 1.0,
+                rng.f64() * 10.0 - 5.0,
+                rng.f64() * 10.0 - 5.0,
+                rng.f64() * 10.0 - 5.0,
+            );
+            let symbolic_p = Vec4::from(p);
+            let symbolic_q = Vec4::from(q);
+            assert_relative_eq!(
+                evaluate_real(symbolic_p.dot(&symbolic_q)),
+                p.dot(&q),
+                epsilon = 1e-11
+            );
+            assert_relative_eq!(evaluate_real(symbolic_p.m2()), p.m2(), epsilon = 1e-11);
+
+            let beta = RealVec3::new(
+                rng.f64() * 0.6 - 0.3,
+                rng.f64() * 0.6 - 0.3,
+                rng.f64() * 0.6 - 0.3,
+            );
+            assert_symbolic_vec4_eq(
+                Vec4::from(p).boost(&Vec3::from(beta)),
+                p.boost(&beta),
+                1e-10,
+            );
+        }
+    }
+
+    #[test]
+    fn vector_formula_boundaries_remain_well_defined() {
+        let p = RealVec4::new(2.0, 0.25, -0.5, 1.0);
+        assert_eq!(p.boost(&RealVec3::zero()), p);
+        assert_symbolic_vec4_eq(Vec4::from(p).boost(&Vec3::zero()), p, 1e-12);
+
+        let near_zero = RealVec3::new(1e-12, -1e-12, 1e-12);
+        assert_symbolic_vec4_eq(
+            Vec4::from(p).boost(&Vec3::from(near_zero)),
+            p.boost(&near_zero),
+            1e-12,
+        );
+
+        let near_lightlike = RealVec4::new(1.0, 1.0 - 1e-12, 0.0, 0.0);
+        assert_relative_eq!(
+            evaluate_real(Vec4::from(near_lightlike).m2()),
+            near_lightlike.m2(),
+            epsilon = 1e-15
+        );
+
+        let near_light_speed = RealVec3::new(1.0 - 1e-12, 0.0, 0.0);
+        assert_symbolic_vec4_eq(
+            Vec4::from(p).boost(&Vec3::from(near_light_speed)),
+            p.boost(&near_light_speed),
+            1e-6,
+        );
+    }
+
+    #[test]
+    fn collinear_frame_composition_matches_combined_boost() {
+        let p = RealVec4::new(5.0, 0.4, -0.2, 1.5);
+        let first = 0.2;
+        let second = -0.35;
+        let combined = (first + second) / (1.0 + first * second);
+
+        let sequential = p
+            .boost(&RealVec3::new(first, 0.0, 0.0))
+            .boost(&RealVec3::new(second, 0.0, 0.0));
+        let direct = p.boost(&RealVec3::new(combined, 0.0, 0.0));
+        assert_relative_eq!(sequential, direct, epsilon = 1e-12);
+        assert_symbolic_vec4_eq(
+            Vec4::from(p)
+                .boost(&Vec3::new(first, 0.0, 0.0))
+                .boost(&Vec3::new(second, 0.0, 0.0)),
+            sequential,
+            1e-12,
+        );
     }
 
     #[test]
