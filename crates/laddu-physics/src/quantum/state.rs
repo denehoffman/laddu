@@ -1086,7 +1086,7 @@ impl ParticleProperties {
         Ok(())
     }
 
-    fn check_invariants(&self) -> LadduPhysicsResult<()> {
+    pub(crate) fn check_invariants(&self) -> LadduPhysicsResult<()> {
         self.check_self_conjugate_additive_qns()?;
         self.check_c_parity_allowed()?;
         Ok(())
