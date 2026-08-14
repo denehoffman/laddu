@@ -2281,6 +2281,7 @@ pub laddu_physics::vectors::RealVec4::pz: f64
 impl laddu_physics::vectors::RealVec4
 pub fn laddu_physics::vectors::RealVec4::beta(&self) -> laddu_physics::LadduPhysicsResult<laddu_physics::vectors::RealVec3>
 pub fn laddu_physics::vectors::RealVec4::boost(&self, &laddu_physics::vectors::RealVec3) -> Self
+pub const fn laddu_physics::vectors::RealVec4::components(&self) -> [f64; 4]
 pub fn laddu_physics::vectors::RealVec4::dot(&self, &Self) -> f64
 pub fn laddu_physics::vectors::RealVec4::e(&self) -> f64
 pub fn laddu_physics::vectors::RealVec4::gamma(&self) -> laddu_physics::LadduPhysicsResult<f64>

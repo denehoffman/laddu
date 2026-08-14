@@ -771,10 +771,12 @@ fn event_batch_to_record_batch(
     for col in 0..batch.schema().n_p4s() {
         let p = batch.vec4_column(col);
 
-        columns.push(array_from_iter(p.iter().map(|x| x.e), precision));
-        columns.push(array_from_iter(p.iter().map(|x| x.px), precision));
-        columns.push(array_from_iter(p.iter().map(|x| x.py), precision));
-        columns.push(array_from_iter(p.iter().map(|x| x.pz), precision));
+        for component in 0..4 {
+            columns.push(array_from_iter(
+                p.iter().map(|x| x.components()[component]),
+                precision,
+            ));
+        }
     }
 
     for col in 0..batch.schema().n_scalars() {
