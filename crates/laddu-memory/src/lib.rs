@@ -1,5 +1,7 @@
 //! Memory discovery, budgeting, reservation, and reporting for laddu.
 
+mod discovery;
+
 use std::{
     collections::BTreeMap,
     fmt,
@@ -11,8 +13,11 @@ use std::{
 };
 
 use serde::{Deserialize, Serialize};
-use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System, get_current_pid};
 use thiserror::Error;
+
+use discovery::{
+    CapacitySnapshot, MemoryProbe, SystemMemoryProbe, discover_host, discover_process_memory,
+};
 
 const AUTO_AVAILABLE_FRACTION: f64 = 0.80;
 
@@ -301,10 +306,8 @@ impl MemoryResource {
     ) -> Self {
         let mut resource = Self::adaptive_device(id, name);
         resource.device_identity = Some(identity);
-        if let Some((total, available, source)) = refresh_device_memory(&resource) {
-            resource.total_bytes = Some(total);
-            resource.available_bytes = Some(available);
-            resource.capacity_source = source;
+        if let Ok(snapshot) = SystemMemoryProbe.probe_device(&resource) {
+            resource.apply_capacity_snapshot(snapshot);
             return resource;
         }
         resource.total_bytes = Some(fallback_bytes);
@@ -323,6 +326,12 @@ impl MemoryResource {
     /// Creates a budget bound to this resource.
     pub const fn budget(&self, budget: MemoryBudget) -> MemoryBudget {
         budget
+    }
+
+    fn apply_capacity_snapshot(&mut self, snapshot: CapacitySnapshot) {
+        self.total_bytes = Some(snapshot.total_bytes);
+        self.available_bytes = Some(snapshot.available_bytes);
+        self.capacity_source = snapshot.source;
     }
 }
 
@@ -409,31 +418,55 @@ impl MemoryState {
     }
 
     fn refresh_inner(&self) -> Option<ProcessMemoryReport> {
+        self.refresh_with_probe(&SystemMemoryProbe)
+    }
+
+    fn refresh_with_probe(&self, probe: &dyn MemoryProbe) -> Option<ProcessMemoryReport> {
         let host = discover_host();
         let process = self.sample_process_memory();
+        let targets = {
+            let mut resources = self
+                .inner
+                .resources
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            let ledger = resources
+                .entry(host.id.clone())
+                .or_insert_with(|| ResourceLedger {
+                    snapshot: host.clone(),
+                    reserved: 0,
+                    high_water: 0,
+                });
+            ledger.snapshot = host;
+            resources
+                .values()
+                .filter(|ledger| {
+                    ledger.snapshot.kind == MemoryResourceKind::Device
+                        && ledger.snapshot.capacity_source != CapacitySource::User
+                })
+                .map(|ledger| ledger.snapshot.clone())
+                .collect::<Vec<_>>()
+        };
+        let outcomes = targets
+            .into_iter()
+            .map(|target| {
+                let outcome = probe.probe_device(&target);
+                (target, outcome)
+            })
+            .collect::<Vec<_>>();
         let mut resources = self
             .inner
             .resources
             .lock()
             .unwrap_or_else(|e| e.into_inner());
-        let ledger = resources
-            .entry(host.id.clone())
-            .or_insert_with(|| ResourceLedger {
-                snapshot: host.clone(),
-                reserved: 0,
-                high_water: 0,
-            });
-        ledger.snapshot = host;
-        for ledger in resources.values_mut() {
-            if ledger.snapshot.kind != MemoryResourceKind::Device
-                || ledger.snapshot.capacity_source == CapacitySource::User
+        for (target, outcome) in outcomes {
+            if let Ok(snapshot) = outcome
+                && let Some(ledger) = resources.get_mut(&target.id)
+                && ledger.snapshot.kind == MemoryResourceKind::Device
+                && ledger.snapshot.capacity_source != CapacitySource::User
+                && ledger.snapshot.device_identity == target.device_identity
             {
-                continue;
-            }
-            if let Some((total, available, source)) = refresh_device_memory(&ledger.snapshot) {
-                ledger.snapshot.total_bytes = Some(total);
-                ledger.snapshot.available_bytes = Some(available);
-                ledger.snapshot.capacity_source = source;
+                ledger.snapshot.apply_capacity_snapshot(snapshot);
             }
         }
         process
@@ -535,13 +568,13 @@ impl MemoryState {
     }
 
     fn sample_process_memory(&self) -> Option<ProcessMemoryReport> {
-        let (resident_bytes, virtual_bytes) = discover_process_memory()?;
+        let snapshot = discover_process_memory().ok()?;
         self.inner
             .process_high_water
-            .fetch_max(resident_bytes, Ordering::AcqRel);
+            .fetch_max(snapshot.resident_bytes, Ordering::AcqRel);
         Some(ProcessMemoryReport {
-            resident_bytes,
-            virtual_bytes,
+            resident_bytes: snapshot.resident_bytes,
+            virtual_bytes: snapshot.virtual_bytes,
             sampled_high_water_bytes: self.inner.process_high_water.load(Ordering::Acquire),
         })
     }
@@ -821,188 +854,6 @@ impl MemoryDecision {
     }
 }
 
-fn discover_host() -> MemoryResource {
-    let mut system = System::new();
-    system.refresh_memory();
-    let mut total = system.total_memory();
-    let mut available = system.available_memory();
-    let mut capacity_source = CapacitySource::OperatingSystem;
-    if let Some((limit, available_in_group)) = discover_cgroup_memory()
-        && limit < total
-    {
-        total = limit;
-        available = available.min(available_in_group);
-        capacity_source = CapacitySource::Cgroup;
-    }
-    MemoryResource {
-        id: "host".into(),
-        name: "Host memory".into(),
-        kind: MemoryResourceKind::Host,
-        total_bytes: Some(total),
-        available_bytes: Some(available),
-        capacity_source,
-        device_identity: None,
-    }
-}
-
-fn discover_cgroup_memory() -> Option<(u64, u64)> {
-    let pid = get_current_pid().ok()?;
-    let mut system = System::new();
-    system.refresh_processes_specifics(
-        ProcessesToUpdate::Some(&[pid]),
-        true,
-        ProcessRefreshKind::nothing().with_memory(),
-    );
-    let limits = system.process(pid)?.cgroup_limits()?;
-    Some((limits.total_memory, limits.free_memory))
-}
-
-fn discover_process_memory() -> Option<(u64, u64)> {
-    let pid = get_current_pid().ok()?;
-    let mut system = System::new();
-    system.refresh_processes_specifics(
-        ProcessesToUpdate::Some(&[pid]),
-        true,
-        ProcessRefreshKind::nothing().with_memory(),
-    );
-    let process = system.process(pid)?;
-    Some((process.memory(), process.virtual_memory()))
-}
-
-fn refresh_device_memory(resource: &MemoryResource) -> Option<(u64, u64, CapacitySource)> {
-    let identity = resource.device_identity.as_ref()?;
-    #[cfg(feature = "nvml")]
-    if let Some((total, available)) = discover_nvml_memory(&identity.pci_bus_id) {
-        return Some((total, available, CapacitySource::Nvml));
-    }
-    #[cfg(target_os = "windows")]
-    if let Some((total, available)) = discover_dxgi_memory(identity) {
-        return Some((total, available, CapacitySource::Dxgi));
-    }
-    #[cfg(target_os = "macos")]
-    if let Some((total, available)) = discover_metal_memory(identity, &resource.name) {
-        return Some((total, available, CapacitySource::Metal));
-    }
-    #[cfg(target_os = "linux")]
-    if let Some((total, available)) = discover_drm_memory(&identity.pci_bus_id) {
-        return Some((total, available, CapacitySource::Drm));
-    }
-    None
-}
-
-#[cfg(feature = "nvml")]
-fn discover_nvml_memory(pci_bus_id: &str) -> Option<(u64, u64)> {
-    if pci_bus_id.is_empty() {
-        return None;
-    }
-    let nvml = nvml_wrapper::Nvml::init().ok()?;
-    let device = nvml.device_by_pci_bus_id(pci_bus_id).ok()?;
-    let memory = device.memory_info().ok()?;
-    Some((memory.total, memory.free))
-}
-
-#[cfg(target_os = "windows")]
-fn discover_dxgi_memory(identity: &DeviceIdentity) -> Option<(u64, u64)> {
-    use windows::{
-        Win32::Graphics::Dxgi::{
-            CreateDXGIFactory1, DXGI_MEMORY_SEGMENT_GROUP_LOCAL, DXGI_QUERY_VIDEO_MEMORY_INFO,
-            IDXGIAdapter3, IDXGIFactory1,
-        },
-        core::Interface,
-    };
-
-    // SAFETY: DXGI factory and adapter methods own their returned COM interfaces,
-    // and all output pointers are provided by the windows crate.
-    unsafe {
-        let factory: IDXGIFactory1 = CreateDXGIFactory1().ok()?;
-        let mut fallback = None;
-        for index in 0.. {
-            let Ok(adapter) = factory.EnumAdapters1(index) else {
-                break;
-            };
-            let Ok(description) = adapter.GetDesc1() else {
-                continue;
-            };
-            if description.VendorId != identity.vendor_id
-                || description.DeviceId != identity.device_id
-            {
-                continue;
-            }
-            let adapter: IDXGIAdapter3 = adapter.cast().ok()?;
-            let mut memory = DXGI_QUERY_VIDEO_MEMORY_INFO::default();
-            adapter
-                .QueryVideoMemoryInfo(0, DXGI_MEMORY_SEGMENT_GROUP_LOCAL, &mut memory)
-                .ok()?;
-            let total = memory.Budget;
-            if total == 0 {
-                continue;
-            }
-            let snapshot = (total, total.saturating_sub(memory.CurrentUsage));
-            if index as usize == identity.adapter_index {
-                return Some(snapshot);
-            }
-            fallback.get_or_insert(snapshot);
-        }
-        return fallback;
-    }
-}
-
-#[cfg(target_os = "macos")]
-fn discover_metal_memory(identity: &DeviceIdentity, expected_name: &str) -> Option<(u64, u64)> {
-    use objc2_metal::MTLDevice;
-
-    #[link(name = "CoreGraphics", kind = "framework")]
-    unsafe extern "C" {}
-
-    let devices = objc2_metal::MTLCopyAllDevices();
-    let device = (0..devices.count())
-        .map(|index| devices.objectAtIndex(index))
-        .find(|device| device.name().to_string() == expected_name)
-        .or_else(|| {
-            (identity.adapter_index < devices.count())
-                .then(|| devices.objectAtIndex(identity.adapter_index))
-        })?;
-    let total = device.recommendedMaxWorkingSetSize();
-    let used = device.currentAllocatedSize() as u64;
-    (total > 0).then_some((total, total.saturating_sub(used)))
-}
-
-#[cfg(target_os = "linux")]
-fn discover_drm_memory(pci_bus_id: &str) -> Option<(u64, u64)> {
-    if pci_bus_id.is_empty() {
-        return None;
-    }
-    let entries = std::fs::read_dir("/sys/class/drm").ok()?;
-    for entry in entries.flatten() {
-        let name = entry.file_name();
-        if !name.to_string_lossy().starts_with("card") || name.to_string_lossy().contains('-') {
-            continue;
-        }
-        let device = entry.path().join("device");
-        let Ok(uevent) = std::fs::read_to_string(device.join("uevent")) else {
-            continue;
-        };
-        let matches_device = uevent.lines().any(|line| {
-            line.strip_prefix("PCI_SLOT_NAME=")
-                .is_some_and(|slot| slot.eq_ignore_ascii_case(pci_bus_id))
-        });
-        if !matches_device {
-            continue;
-        }
-        let Some(total) = read_sysfs_u64(device.join("mem_info_vram_total")) else {
-            continue;
-        };
-        let used = read_sysfs_u64(device.join("mem_info_vram_used")).unwrap_or(0);
-        return Some((total, total.saturating_sub(used)));
-    }
-    None
-}
-
-#[cfg(target_os = "linux")]
-fn read_sysfs_u64(path: impl AsRef<std::path::Path>) -> Option<u64> {
-    std::fs::read_to_string(path).ok()?.trim().parse().ok()
-}
-
 fn validate_percent(percent: f64) -> MemoryResult<f64> {
     if percent.is_finite() && percent > 0.0 && percent <= 100.0 {
         Ok(percent)
@@ -1065,7 +916,43 @@ fn update_max(value: &AtomicU64, candidate: u64) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::thread;
+    use std::{sync::mpsc, thread, time::Duration};
+
+    #[derive(Clone, Copy)]
+    struct FixedProbe(discovery::ProbeOutcome);
+
+    impl MemoryProbe for FixedProbe {
+        fn probe_device(&self, _resource: &MemoryResource) -> discovery::ProbeOutcome {
+            self.0
+        }
+    }
+
+    struct BlockingProbe {
+        entered: mpsc::SyncSender<()>,
+        release: Mutex<mpsc::Receiver<()>>,
+        outcome: discovery::ProbeOutcome,
+    }
+
+    impl MemoryProbe for BlockingProbe {
+        fn probe_device(&self, _resource: &MemoryResource) -> discovery::ProbeOutcome {
+            self.entered.send(()).unwrap();
+            self.release.lock().unwrap().recv().unwrap();
+            self.outcome
+        }
+    }
+
+    struct ReplacingProbe {
+        state: MemoryState,
+        replacement: MemoryResource,
+        outcome: discovery::ProbeOutcome,
+    }
+
+    impl MemoryProbe for ReplacingProbe {
+        fn probe_device(&self, _resource: &MemoryResource) -> discovery::ProbeOutcome {
+            self.state.register_device(self.replacement.clone());
+            self.outcome
+        }
+    }
 
     fn resource() -> MemoryResource {
         MemoryResource {
@@ -1076,6 +963,27 @@ mod tests {
             available_bytes: Some(500),
             capacity_source: CapacitySource::User,
             device_identity: None,
+        }
+    }
+
+    fn refreshable_resource(identity: usize) -> MemoryResource {
+        MemoryResource {
+            capacity_source: CapacitySource::Adaptive,
+            device_identity: Some(DeviceIdentity {
+                adapter_index: identity,
+                vendor_id: 1,
+                device_id: 2,
+                pci_bus_id: format!("bus-{identity}"),
+            }),
+            ..resource()
+        }
+    }
+
+    fn capacity_snapshot(total_bytes: u64, available_bytes: u64) -> CapacitySnapshot {
+        CapacitySnapshot {
+            total_bytes,
+            available_bytes,
+            source: CapacitySource::OperatingSystem,
         }
     }
 
@@ -1235,6 +1143,86 @@ mod tests {
         drop(lease);
         assert_eq!(pool.reserved(), 0);
         assert_eq!(resource_report(&state).laddu_reserved_bytes, 0);
+    }
+
+    #[test]
+    fn refresh_does_not_hold_the_resource_lock_while_probing() {
+        let state = MemoryState::discover();
+        state.register_device(refreshable_resource(0));
+        let pool = state.pool("test", MemoryBudget::Bytes(100)).unwrap();
+        let lease = pool.reserve(10).unwrap();
+        let (entered_tx, entered_rx) = mpsc::sync_channel(0);
+        let (release_tx, release_rx) = mpsc::sync_channel(0);
+        let probe = BlockingProbe {
+            entered: entered_tx,
+            release: Mutex::new(release_rx),
+            outcome: Ok(capacity_snapshot(900, 700)),
+        };
+        let refresh_state = state.clone();
+        let refresh = thread::spawn(move || refresh_state.refresh_with_probe(&probe));
+        entered_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+
+        let access_state = state.clone();
+        let access_pool = pool.clone();
+        let (done_tx, done_rx) = mpsc::sync_channel(0);
+        let access = thread::spawn(move || {
+            assert!(access_state.resource("test").is_some());
+            assert_eq!(access_state.devices().len(), 1);
+            let transient = access_pool.reserve(10).unwrap();
+            drop(transient);
+            drop(lease);
+            done_tx.send(()).unwrap();
+        });
+        let result = done_rx.recv_timeout(Duration::from_secs(2));
+        release_tx.send(()).unwrap();
+        refresh.join().unwrap();
+        access.join().unwrap();
+
+        assert!(result.is_ok(), "resource access blocked during telemetry");
+        assert_eq!(pool.reserved(), 0);
+    }
+
+    #[test]
+    fn refresh_applies_success_and_retains_stale_snapshot_on_failure() {
+        let state = MemoryState::discover();
+        let original = refreshable_resource(0);
+        state.register_device(original.clone());
+
+        state.refresh_with_probe(&FixedProbe(Ok(capacity_snapshot(800, 600))));
+        let refreshed = state.resource("test").unwrap();
+        assert_eq!(refreshed.total_bytes, Some(800));
+        assert_eq!(refreshed.available_bytes, Some(600));
+        assert_eq!(refreshed.capacity_source, CapacitySource::OperatingSystem);
+
+        state.refresh_with_probe(&FixedProbe(Err(discovery::ProbeFailure::Unavailable)));
+        assert_eq!(state.resource("test"), Some(refreshed));
+    }
+
+    #[test]
+    fn refresh_does_not_overwrite_user_override_or_replaced_device() {
+        let state = MemoryState::discover();
+        state.register_device(refreshable_resource(0));
+        let user_override = resource().with_capacity(700, Some(650));
+        state.refresh_with_probe(&ReplacingProbe {
+            state: state.clone(),
+            replacement: user_override.clone(),
+            outcome: Ok(capacity_snapshot(900, 800)),
+        });
+        assert_eq!(state.resource("test"), Some(user_override));
+
+        let state = MemoryState::discover();
+        state.register_device(refreshable_resource(0));
+        let replacement = MemoryResource {
+            total_bytes: Some(400),
+            available_bytes: Some(300),
+            ..refreshable_resource(1)
+        };
+        state.refresh_with_probe(&ReplacingProbe {
+            state: state.clone(),
+            replacement: replacement.clone(),
+            outcome: Ok(capacity_snapshot(900, 800)),
+        });
+        assert_eq!(state.resource("test"), Some(replacement));
     }
 
     #[test]
