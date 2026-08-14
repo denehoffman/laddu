@@ -814,7 +814,11 @@ pub struct MemoryDecision {
 }
 
 impl MemoryDecision {
-    /// Derives the largest nonzero event chunk fitting within `available_bytes`.
+    /// Derives the largest event chunk fitting within `available_bytes`.
+    ///
+    /// A zero event limit produces a zero-event decision without requiring the
+    /// fixed footprint to fit. A zero per-event estimate is normalized to one
+    /// byte so sizing and the reported estimate remain consistent.
     ///
     /// # Errors
     ///
@@ -828,29 +832,58 @@ impl MemoryDecision {
         event_limit: usize,
         strategy: impl Into<String>,
     ) -> MemoryResult<Self> {
-        let label = label.into();
-        let per_event = bytes_per_event.max(1);
-        let capacity = available_bytes.saturating_sub(fixed_bytes);
-        let events = usize::try_from(capacity / per_event)
-            .unwrap_or(usize::MAX)
-            .min(event_limit);
-        if event_limit > 0 && events == 0 {
-            return Err(MemoryError::BudgetExceeded {
-                resource: label,
-                requested: fixed_bytes.saturating_add(per_event),
-                remaining: available_bytes,
-            });
-        }
-        let peak = fixed_bytes.saturating_add(per_event.saturating_mul(events as u64));
-        Ok(Self {
-            label,
+        MemoryFitRequest {
+            label: label.into(),
             fixed_bytes,
             bytes_per_event,
-            chunk_events: events,
-            estimated_peak_bytes: peak,
-            actual_high_water_bytes: None,
+            available_bytes,
+            event_limit,
             strategy: strategy.into(),
-        })
+        }
+        .evaluate()
+    }
+}
+
+struct MemoryFitRequest {
+    label: String,
+    fixed_bytes: u64,
+    bytes_per_event: u64,
+    available_bytes: u64,
+    event_limit: usize,
+    strategy: String,
+}
+
+impl MemoryFitRequest {
+    fn evaluate(mut self) -> MemoryResult<MemoryDecision> {
+        self.bytes_per_event = self.bytes_per_event.max(1);
+        if self.event_limit == 0 {
+            return Ok(self.decision(0));
+        }
+
+        let event_capacity = self.available_bytes.saturating_sub(self.fixed_bytes);
+        let events = saturating_usize(event_capacity / self.bytes_per_event).min(self.event_limit);
+        if events == 0 {
+            return Err(MemoryError::BudgetExceeded {
+                resource: self.label,
+                requested: self.fixed_bytes.saturating_add(self.bytes_per_event),
+                remaining: self.available_bytes,
+            });
+        }
+
+        Ok(self.decision(events))
+    }
+
+    fn decision(self, events: usize) -> MemoryDecision {
+        let event_bytes = self.bytes_per_event.saturating_mul(saturating_u64(events));
+        MemoryDecision {
+            label: self.label,
+            fixed_bytes: self.fixed_bytes,
+            bytes_per_event: self.bytes_per_event,
+            chunk_events: events,
+            estimated_peak_bytes: self.fixed_bytes.saturating_add(event_bytes),
+            actual_high_water_bytes: None,
+            strategy: self.strategy,
+        }
     }
 }
 
@@ -877,30 +910,61 @@ fn parse_bytes(input: &str) -> MemoryResult<u64> {
         .find(|character: char| !character.is_ascii_digit() && character != '.')
         .unwrap_or(input.len());
     let (number, unit) = input.split_at(split);
-    let value = number
-        .trim()
-        .parse::<f64>()
-        .map_err(|_| MemoryError::InvalidBudget(input.into()))?;
-    if !value.is_finite() || value <= 0.0 {
-        return Err(MemoryError::InvalidBudget(input.into()));
-    }
     let multiplier = match unit.trim() {
-        "" | "b" | "byte" | "bytes" => 1.0,
-        "kb" => 1_000.0,
-        "mb" => 1_000_000.0,
-        "gb" => 1_000_000_000.0,
-        "tb" => 1_000_000_000_000.0,
-        "kib" => 1024.0,
-        "mib" => 1024.0 * 1024.0,
-        "gib" => 1024.0 * 1024.0 * 1024.0,
-        "tib" => 1024.0 * 1024.0 * 1024.0 * 1024.0,
+        "" | "b" | "byte" | "bytes" => 1,
+        "kb" => 1_000,
+        "mb" => 1_000_000,
+        "gb" => 1_000_000_000,
+        "tb" => 1_000_000_000_000,
+        "kib" => 1 << 10,
+        "mib" => 1 << 20,
+        "gib" => 1 << 30,
+        "tib" => 1 << 40,
         _ => return Err(MemoryError::InvalidBudget(input.into())),
     };
-    let bytes = value * multiplier;
-    if bytes > u64::MAX as f64 {
+    let (whole, fraction) = match number.split_once('.') {
+        Some((whole, fraction)) if !fraction.contains('.') => (whole, fraction),
+        Some(_) => return Err(MemoryError::InvalidBudget(input.into())),
+        None => (number, ""),
+    };
+    if whole.is_empty() && fraction.is_empty()
+        || !whole.bytes().all(|digit| digit.is_ascii_digit())
+        || !fraction.bytes().all(|digit| digit.is_ascii_digit())
+        || !whole
+            .bytes()
+            .chain(fraction.bytes())
+            .any(|digit| digit != b'0')
+    {
         return Err(MemoryError::InvalidBudget(input.into()));
     }
-    Ok(bytes.floor() as u64)
+
+    let whole = if whole.is_empty() {
+        0
+    } else {
+        whole
+            .parse::<u64>()
+            .map_err(|_| MemoryError::InvalidBudget(input.into()))?
+    };
+    let whole_bytes = whole
+        .checked_mul(multiplier)
+        .ok_or_else(|| MemoryError::InvalidBudget(input.into()))?;
+    let fractional_bytes = fraction.bytes().rev().try_fold(0_u64, |carry, digit| {
+        u64::from(digit - b'0')
+            .checked_mul(multiplier)
+            .and_then(|value| value.checked_add(carry))
+            .map(|value| value / 10)
+    });
+    whole_bytes
+        .checked_add(fractional_bytes.ok_or_else(|| MemoryError::InvalidBudget(input.into()))?)
+        .ok_or_else(|| MemoryError::InvalidBudget(input.into()))
+}
+
+fn saturating_usize(value: u64) -> usize {
+    usize::try_from(value).unwrap_or(usize::MAX)
+}
+
+fn saturating_u64(value: usize) -> u64 {
+    u64::try_from(value).unwrap_or(u64::MAX)
 }
 
 fn update_max(value: &AtomicU64, candidate: u64) {
@@ -1020,6 +1084,82 @@ mod tests {
             Ok(MemoryBudget::PercentAvailable(0.6))
         );
         assert_eq!("auto".parse(), Ok(MemoryBudget::Auto));
+    }
+
+    #[test]
+    fn parses_absolute_budgets_exactly_across_units_and_boundaries() {
+        let units = [
+            ("b", 1),
+            ("byte", 1),
+            ("bytes", 1),
+            ("kb", 1_000),
+            ("mb", 1_000_000),
+            ("gb", 1_000_000_000),
+            ("tb", 1_000_000_000_000),
+            ("kib", 1 << 10),
+            ("mib", 1 << 20),
+            ("gib", 1 << 30),
+            ("tib", 1 << 40),
+        ];
+        for (unit, expected) in units {
+            assert_eq!(
+                format!("1 {unit}").parse(),
+                Ok(MemoryBudget::Bytes(expected))
+            );
+        }
+        assert_eq!("1.5 KiB".parse(), Ok(MemoryBudget::Bytes(1_536)));
+        assert_eq!(".5 kb".parse(), Ok(MemoryBudget::Bytes(500)));
+        assert_eq!("1.999 B".parse(), Ok(MemoryBudget::Bytes(1)));
+        assert_eq!("0.1 B".parse(), Ok(MemoryBudget::Bytes(0)));
+        assert_eq!(
+            "9007199254740991 B".parse(),
+            Ok(MemoryBudget::Bytes(9_007_199_254_740_991))
+        );
+        assert_eq!(
+            "9007199254740993 B".parse(),
+            Ok(MemoryBudget::Bytes(9_007_199_254_740_993))
+        );
+        assert_eq!(
+            "18446744073709551615 B".parse(),
+            Ok(MemoryBudget::Bytes(u64::MAX))
+        );
+        assert_eq!(
+            "18446744073709551.615 KB".parse(),
+            Ok(MemoryBudget::Bytes(u64::MAX))
+        );
+        assert_eq!(
+            MemoryBudget::Bytes(u64::MAX).to_string().parse(),
+            Ok(MemoryBudget::Bytes(u64::MAX))
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_or_out_of_range_absolute_budgets() {
+        for input in [
+            "",
+            "0",
+            ".",
+            "NaN",
+            "inf",
+            "1.2.3 B",
+            "1 XB",
+            "bytes",
+            "18446744073709551616 B",
+            "18446744073709551.616 KB",
+        ] {
+            assert!(
+                input.parse::<MemoryBudget>().is_err(),
+                "{input:?} should be invalid"
+            );
+        }
+        for percent in [0.0, -1.0, 100.1, f64::NAN, f64::INFINITY] {
+            assert!(MemoryBudget::percent_total(percent).is_err());
+            assert!(MemoryBudget::percent_available(percent).is_err());
+        }
+        assert_eq!(
+            MemoryBudget::percent_total(100.0),
+            Ok(MemoryBudget::PercentTotal(1.0))
+        );
     }
 
     #[test]
@@ -1230,6 +1370,50 @@ mod tests {
         let decision = MemoryDecision::fit("test", 100, 8, 1_000, 1_000, "streaming").unwrap();
         assert_eq!(decision.chunk_events, 112);
         assert_eq!(decision.estimated_peak_bytes, 996);
+    }
+
+    #[test]
+    fn decisions_define_zero_and_capacity_boundary_policy() {
+        let zero_events = MemoryDecision::fit("zero", 101, 0, 100, 0, "empty workload").unwrap();
+        assert_eq!(zero_events.bytes_per_event, 1);
+        assert_eq!(zero_events.chunk_events, 0);
+        assert_eq!(zero_events.estimated_peak_bytes, 101);
+
+        let zero_estimate = MemoryDecision::fit("normalized", 0, 0, 100, 200, "streaming").unwrap();
+        assert_eq!(zero_estimate.bytes_per_event, 1);
+        assert_eq!(zero_estimate.chunk_events, 100);
+        assert_eq!(zero_estimate.estimated_peak_bytes, 100);
+
+        for fixed_bytes in [100, 101] {
+            assert_eq!(
+                MemoryDecision::fit("full", fixed_bytes, 1, 100, 1, "streaming"),
+                Err(MemoryError::BudgetExceeded {
+                    resource: "full".into(),
+                    requested: fixed_bytes.saturating_add(1),
+                    remaining: 100,
+                })
+            );
+        }
+    }
+
+    #[test]
+    fn decisions_use_saturating_arithmetic_at_integer_boundaries() {
+        let decision =
+            MemoryDecision::fit("maximum", 0, 1, u64::MAX, usize::MAX, "resident").unwrap();
+        assert_eq!(
+            decision.chunk_events,
+            usize::try_from(u64::MAX).unwrap_or(usize::MAX)
+        );
+        assert_eq!(decision.estimated_peak_bytes, u64::MAX);
+
+        assert_eq!(
+            MemoryDecision::fit("overflow", u64::MAX, 1, u64::MAX, 1, "streaming"),
+            Err(MemoryError::BudgetExceeded {
+                resource: "overflow".into(),
+                requested: u64::MAX,
+                remaining: u64::MAX,
+            })
+        );
     }
 
     #[test]
