@@ -207,7 +207,6 @@ pub laddu_memory::MemoryResource::name: alloc::string::String
 pub laddu_memory::MemoryResource::total_bytes: core::option::Option<u64>
 impl laddu_memory::MemoryResource
 pub fn laddu_memory::MemoryResource::adaptive_device(impl core::convert::Into<alloc::string::String>, impl core::convert::Into<alloc::string::String>) -> Self
-pub const fn laddu_memory::MemoryResource::budget(&self, laddu_memory::MemoryBudget) -> laddu_memory::MemoryBudget
 pub fn laddu_memory::MemoryResource::discover_device(impl core::convert::Into<alloc::string::String>, impl core::convert::Into<alloc::string::String>, laddu_memory::DeviceIdentity, u64) -> Self
 pub fn laddu_memory::MemoryResource::with_capacity(self, u64, core::option::Option<u64>) -> Self
 impl core::clone::Clone for laddu_memory::MemoryResource

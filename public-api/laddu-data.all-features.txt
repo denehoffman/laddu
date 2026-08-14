@@ -81,10 +81,10 @@ pub fn laddu_data::data::dataset::Dataset::from_arc(alloc::sync::Arc<dyn laddu_d
 pub fn laddu_data::data::dataset::Dataset::from_batch(laddu_data::data::event::EventBatch) -> Self
 pub fn laddu_data::data::dataset::Dataset::from_batches(alloc::vec::Vec<laddu_data::data::event::EventBatch>) -> laddu_data::LadduDataResult<Self>
 pub fn laddu_data::data::dataset::Dataset::from_events<I>(alloc::sync::Arc<laddu_data::schema::Schema>, I) -> laddu_data::LadduDataResult<Self> where I: core::iter::traits::collect::IntoIterator<Item = laddu_data::data::event::OwnedEvent>
-pub fn laddu_data::data::dataset::Dataset::last_memory_decision(&self) -> core::option::Option<laddu_memory::MemoryDecision>
+pub fn laddu_data::data::dataset::Dataset::last_memory_decision(&self) -> core::option::Option<laddu_memory::decision::MemoryDecision>
 pub fn laddu_data::data::dataset::Dataset::map_batches<T, F>(&self, F) -> laddu_data::LadduDataResult<alloc::vec::Vec<T>> where F: core::ops::function::FnMut(laddu_data::data::event::EventBatch) -> T
 pub fn laddu_data::data::dataset::Dataset::map_events<T, F>(&self, F) -> laddu_data::LadduDataResult<alloc::vec::Vec<T>> where F: core::ops::function::FnMut(laddu_data::data::event::Event<'_>) -> T
-pub fn laddu_data::data::dataset::Dataset::memory_budget(&self) -> laddu_memory::MemoryBudget
+pub fn laddu_data::data::dataset::Dataset::memory_budget(&self) -> laddu_memory::budget::MemoryBudget
 pub fn laddu_data::data::dataset::Dataset::memory_policy(&self) -> laddu_data::data::dataset::MemoryPolicy
 pub fn laddu_data::data::dataset::Dataset::new<S>(S) -> Self where S: laddu_data::io::EventSource + 'static
 pub fn laddu_data::data::dataset::Dataset::num_events(&self) -> laddu_data::LadduDataResult<core::option::Option<u64>>
@@ -104,7 +104,7 @@ pub fn laddu_data::data::dataset::Dataset::try_map_events<T, F>(&self, F) -> lad
 pub fn laddu_data::data::dataset::Dataset::unchunked(self) -> Self
 pub fn laddu_data::data::dataset::Dataset::weighted_complex_sum<F>(&self, F) -> laddu_data::LadduDataResult<num_complex::Complex64> where F: core::ops::function::FnMut(laddu_data::data::event::Event<'_>) -> num_complex::Complex64
 pub fn laddu_data::data::dataset::Dataset::weighted_sum<F>(&self, F) -> laddu_data::LadduDataResult<f64> where F: core::ops::function::FnMut(laddu_data::data::event::Event<'_>) -> f64
-pub fn laddu_data::data::dataset::Dataset::with_memory_budget(self, laddu_memory::MemoryBudget) -> Self
+pub fn laddu_data::data::dataset::Dataset::with_memory_budget(self, laddu_memory::budget::MemoryBudget) -> Self
 pub fn laddu_data::data::dataset::Dataset::write_to<S: laddu_data::io::EventSink>(&self, &mut S) -> laddu_data::LadduDataResult<()>
 impl core::clone::Clone for laddu_data::data::dataset::Dataset
 pub fn laddu_data::data::dataset::Dataset::clone(&self) -> laddu_data::data::dataset::Dataset
@@ -255,10 +255,10 @@ pub fn laddu_data::data::dataset::Dataset::from_arc(alloc::sync::Arc<dyn laddu_d
 pub fn laddu_data::data::dataset::Dataset::from_batch(laddu_data::data::event::EventBatch) -> Self
 pub fn laddu_data::data::dataset::Dataset::from_batches(alloc::vec::Vec<laddu_data::data::event::EventBatch>) -> laddu_data::LadduDataResult<Self>
 pub fn laddu_data::data::dataset::Dataset::from_events<I>(alloc::sync::Arc<laddu_data::schema::Schema>, I) -> laddu_data::LadduDataResult<Self> where I: core::iter::traits::collect::IntoIterator<Item = laddu_data::data::event::OwnedEvent>
-pub fn laddu_data::data::dataset::Dataset::last_memory_decision(&self) -> core::option::Option<laddu_memory::MemoryDecision>
+pub fn laddu_data::data::dataset::Dataset::last_memory_decision(&self) -> core::option::Option<laddu_memory::decision::MemoryDecision>
 pub fn laddu_data::data::dataset::Dataset::map_batches<T, F>(&self, F) -> laddu_data::LadduDataResult<alloc::vec::Vec<T>> where F: core::ops::function::FnMut(laddu_data::data::event::EventBatch) -> T
 pub fn laddu_data::data::dataset::Dataset::map_events<T, F>(&self, F) -> laddu_data::LadduDataResult<alloc::vec::Vec<T>> where F: core::ops::function::FnMut(laddu_data::data::event::Event<'_>) -> T
-pub fn laddu_data::data::dataset::Dataset::memory_budget(&self) -> laddu_memory::MemoryBudget
+pub fn laddu_data::data::dataset::Dataset::memory_budget(&self) -> laddu_memory::budget::MemoryBudget
 pub fn laddu_data::data::dataset::Dataset::memory_policy(&self) -> laddu_data::data::dataset::MemoryPolicy
 pub fn laddu_data::data::dataset::Dataset::new<S>(S) -> Self where S: laddu_data::io::EventSource + 'static
 pub fn laddu_data::data::dataset::Dataset::num_events(&self) -> laddu_data::LadduDataResult<core::option::Option<u64>>
@@ -278,7 +278,7 @@ pub fn laddu_data::data::dataset::Dataset::try_map_events<T, F>(&self, F) -> lad
 pub fn laddu_data::data::dataset::Dataset::unchunked(self) -> Self
 pub fn laddu_data::data::dataset::Dataset::weighted_complex_sum<F>(&self, F) -> laddu_data::LadduDataResult<num_complex::Complex64> where F: core::ops::function::FnMut(laddu_data::data::event::Event<'_>) -> num_complex::Complex64
 pub fn laddu_data::data::dataset::Dataset::weighted_sum<F>(&self, F) -> laddu_data::LadduDataResult<f64> where F: core::ops::function::FnMut(laddu_data::data::event::Event<'_>) -> f64
-pub fn laddu_data::data::dataset::Dataset::with_memory_budget(self, laddu_memory::MemoryBudget) -> Self
+pub fn laddu_data::data::dataset::Dataset::with_memory_budget(self, laddu_memory::budget::MemoryBudget) -> Self
 pub fn laddu_data::data::dataset::Dataset::write_to<S: laddu_data::io::EventSink>(&self, &mut S) -> laddu_data::LadduDataResult<()>
 impl core::clone::Clone for laddu_data::data::dataset::Dataset
 pub fn laddu_data::data::dataset::Dataset::clone(&self) -> laddu_data::data::dataset::Dataset

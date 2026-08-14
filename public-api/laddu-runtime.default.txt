@@ -50,7 +50,7 @@ impl core::marker::StructuralPartialEq for laddu_runtime::CpuExecutionMode
 pub enum laddu_runtime::CpuPreparedDataset
 pub laddu_runtime::CpuPreparedDataset::Resident
 pub laddu_runtime::CpuPreparedDataset::Resident::dataset: alloc::sync::Arc<laddu_runtime::CpuCachedDataset>
-pub laddu_runtime::CpuPreparedDataset::Resident::memory_lease: laddu_memory::MemoryLease
+pub laddu_runtime::CpuPreparedDataset::Resident::memory_lease: laddu_memory::pool::MemoryLease
 pub laddu_runtime::CpuPreparedDataset::Resident::stats: laddu_runtime::PreparedDatasetStats
 pub laddu_runtime::CpuPreparedDataset::Streaming
 pub laddu_runtime::CpuPreparedDataset::Streaming::dataset: laddu_data::data::dataset::Dataset
@@ -285,7 +285,7 @@ pub laddu_runtime::RuntimeError::InvalidShape
 pub laddu_runtime::RuntimeError::InvalidShape::index: usize
 pub laddu_runtime::RuntimeError::InvalidShape::message: alloc::string::String
 pub laddu_runtime::RuntimeError::JitExecution(i32)
-pub laddu_runtime::RuntimeError::Memory(laddu_memory::MemoryError)
+pub laddu_runtime::RuntimeError::Memory(laddu_memory::error::MemoryError)
 pub laddu_runtime::RuntimeError::MissingEventColumn(alloc::string::String)
 pub laddu_runtime::RuntimeError::MissingEventScalar(alloc::string::String)
 pub laddu_runtime::RuntimeError::Parameter(alloc::string::String)
@@ -302,8 +302,8 @@ impl core::cmp::PartialEq for laddu_runtime::RuntimeError
 pub fn laddu_runtime::RuntimeError::eq(&self, &laddu_runtime::RuntimeError) -> bool
 impl core::convert::From<laddu_compile::reduction::ReductionError> for laddu_runtime::RuntimeError
 pub fn laddu_runtime::RuntimeError::from(laddu_compile::reduction::ReductionError) -> Self
-impl core::convert::From<laddu_memory::MemoryError> for laddu_runtime::RuntimeError
-pub fn laddu_runtime::RuntimeError::from(laddu_memory::MemoryError) -> Self
+impl core::convert::From<laddu_memory::error::MemoryError> for laddu_runtime::RuntimeError
+pub fn laddu_runtime::RuntimeError::from(laddu_memory::error::MemoryError) -> Self
 impl core::convert::From<laddu_runtime::ExecutionError> for laddu_runtime::RuntimeError
 pub fn laddu_runtime::RuntimeError::from(laddu_runtime::ExecutionError) -> Self
 impl core::error::Error for laddu_runtime::RuntimeError
@@ -455,21 +455,21 @@ pub fn laddu_runtime::DatasetBin::clone(&self) -> laddu_runtime::DatasetBin
 pub struct laddu_runtime::Execution
 impl laddu_runtime::Execution
 pub fn laddu_runtime::Execution::autodiff_mode(&self) -> laddu_autodiff::plan::AutodiffMode
-pub fn laddu_runtime::Execution::device_memory(&self) -> core::option::Option<&laddu_memory::MemoryPool>
-pub fn laddu_runtime::Execution::host_memory(&self) -> &laddu_memory::MemoryPool
+pub fn laddu_runtime::Execution::device_memory(&self) -> core::option::Option<&laddu_memory::pool::MemoryPool>
+pub fn laddu_runtime::Execution::host_memory(&self) -> &laddu_memory::pool::MemoryPool
 pub fn laddu_runtime::Execution::is_distributed(&self) -> bool
 pub fn laddu_runtime::Execution::jit_policy(&self) -> laddu_runtime::JitPolicy
 pub fn laddu_runtime::Execution::local(laddu_runtime::ExecutionOptions) -> laddu_runtime::RuntimeResult<Self>
-pub fn laddu_runtime::Execution::memory_decisions(&self) -> alloc::vec::Vec<laddu_memory::MemoryDecision>
-pub fn laddu_runtime::Execution::memory_pool_reports(&self) -> alloc::vec::Vec<laddu_memory::MemoryPoolReport>
-pub fn laddu_runtime::Execution::memory_report(&self) -> laddu_memory::MemoryReport
-pub fn laddu_runtime::Execution::memory_state(&self) -> &laddu_memory::MemoryState
+pub fn laddu_runtime::Execution::memory_decisions(&self) -> alloc::vec::Vec<laddu_memory::decision::MemoryDecision>
+pub fn laddu_runtime::Execution::memory_pool_reports(&self) -> alloc::vec::Vec<laddu_memory::report::MemoryPoolReport>
+pub fn laddu_runtime::Execution::memory_report(&self) -> laddu_memory::report::MemoryReport
+pub fn laddu_runtime::Execution::memory_state(&self) -> &laddu_memory::state::MemoryState
 pub fn laddu_runtime::Execution::normalization_mode(&self) -> laddu_runtime::NormalizationMode
 pub fn laddu_runtime::Execution::nranks(&self) -> usize
 pub fn laddu_runtime::Execution::partitioning(&self) -> laddu_data::io::Partitioning
 pub fn laddu_runtime::Execution::precision(&self) -> laddu_runtime::Precision
 pub fn laddu_runtime::Execution::rank(&self) -> usize
-pub fn laddu_runtime::Execution::record_memory_decision(&self, laddu_memory::MemoryDecision)
+pub fn laddu_runtime::Execution::record_memory_decision(&self, laddu_memory::decision::MemoryDecision)
 pub fn laddu_runtime::Execution::requested_device(&self) -> &laddu_runtime::Device
 pub fn laddu_runtime::Execution::thread_policy(&self) -> laddu_runtime::ThreadPolicy
 impl core::clone::Clone for laddu_runtime::Execution
@@ -481,7 +481,7 @@ pub fn laddu_runtime::Execution::fmt(&self, &mut core::fmt::Formatter<'_>) -> co
 pub struct laddu_runtime::ExecutionOptions
 pub laddu_runtime::ExecutionOptions::autodiff: laddu_autodiff::plan::AutodiffMode
 pub laddu_runtime::ExecutionOptions::device: laddu_runtime::Device
-pub laddu_runtime::ExecutionOptions::memory: laddu_memory::MemoryPlan
+pub laddu_runtime::ExecutionOptions::memory: laddu_memory::budget::MemoryPlan
 pub laddu_runtime::ExecutionOptions::normalization: laddu_runtime::NormalizationMode
 pub laddu_runtime::ExecutionOptions::partitioning: laddu_data::io::Partitioning
 pub laddu_runtime::ExecutionOptions::precision: laddu_runtime::Precision
