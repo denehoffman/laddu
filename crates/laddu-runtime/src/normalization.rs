@@ -6,6 +6,7 @@ use laddu_data::{
     io::ReadPlan,
 };
 use laddu_expr::parameters::{ParamLayout, ParamValues};
+use laddu_memory::{MemoryFitRequest, MemoryFootprint};
 use num::complex::{Complex32, Complex64};
 use std::sync::{
     Arc,
@@ -485,14 +486,15 @@ fn accumulate_statistics(
         .map_err(|error| RuntimeError::Data(error.to_string()))?
         .and_then(|events| usize::try_from(events).ok())
         .unwrap_or(usize::MAX);
-    let decision = crate::MemoryDecision::fit(
-        "normalization statistics",
-        u64::try_from(plans.len() * std::mem::size_of::<Complex64>()).unwrap_or(u64::MAX),
-        u64::try_from(plans.len() * std::mem::size_of::<Complex64>()).unwrap_or(u64::MAX),
-        execution.host_memory().remaining(),
-        local_limit,
-        "single-pass sufficient statistics",
-    )?;
+    let statistic_bytes = plans.len().saturating_mul(std::mem::size_of::<Complex64>());
+    let decision = MemoryFitRequest {
+        label: "normalization statistics".into(),
+        footprint: MemoryFootprint::from_usize(statistic_bytes, statistic_bytes),
+        available_bytes: execution.host_memory().remaining(),
+        event_limit: local_limit,
+        strategy: "single-pass sufficient statistics".into(),
+    }
+    .evaluate()?;
     read_plan.chunk_size = Some(
         read_plan
             .chunk_size

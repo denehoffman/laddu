@@ -19,6 +19,7 @@ workspace = true
 laddu-compile.workspace = true
 laddu-data.workspace = true
 laddu-expr.workspace = true
+laddu-memory.workspace = true
 laddu-physics.workspace = true
 laddu-runtime.workspace = true
 rayon.workspace = true

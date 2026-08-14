@@ -1664,6 +1664,7 @@ dependencies = [
  "laddu-compile",
  "laddu-data",
  "laddu-expr",
+ "laddu-memory",
  "laddu-physics",
  "laddu-runtime",
  "rayon",

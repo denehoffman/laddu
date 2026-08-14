@@ -813,6 +813,64 @@ pub struct MemoryDecision {
     pub strategy: String,
 }
 
+/// Workspace-internal memory footprint used to construct planning decisions.
+///
+/// This type is public so sibling workspace crates can share arithmetic
+/// policy. It is intentionally not re-exported by the runtime or main facade.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MemoryFootprint {
+    /// Fixed bytes required regardless of event count.
+    pub fixed_bytes: u64,
+    /// Estimated incremental bytes per event.
+    pub bytes_per_event: u64,
+}
+
+impl MemoryFootprint {
+    /// Creates a footprint from byte counts.
+    pub const fn new(fixed_bytes: u64, bytes_per_event: u64) -> Self {
+        Self {
+            fixed_bytes,
+            bytes_per_event,
+        }
+    }
+
+    /// Creates a footprint from platform-sized byte counts using saturation.
+    pub fn from_usize(fixed_bytes: usize, bytes_per_event: usize) -> Self {
+        Self::new(saturating_u64(fixed_bytes), saturating_u64(bytes_per_event))
+    }
+
+    /// Estimates peak bytes for `events` using the shared saturation policy.
+    pub fn peak_bytes(self, events: usize) -> u64 {
+        self.fixed_bytes
+            .saturating_add(self.bytes_per_event.saturating_mul(saturating_u64(events)))
+    }
+
+    fn normalized(mut self) -> Self {
+        self.bytes_per_event = self.bytes_per_event.max(1);
+        self
+    }
+}
+
+/// Workspace-internal named input for a memory-derived decision.
+///
+/// This type is public so sibling workspace crates can use one decision path.
+/// It is intentionally not re-exported by the runtime or main facade.
+#[doc(hidden)]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MemoryFitRequest {
+    /// Operation or dataset label.
+    pub label: String,
+    /// Fixed and per-event memory estimate.
+    pub footprint: MemoryFootprint,
+    /// Bytes available to this operation.
+    pub available_bytes: u64,
+    /// Maximum number of events the operation may process.
+    pub event_limit: usize,
+    /// Selected storage or execution strategy.
+    pub strategy: String,
+}
+
 impl MemoryDecision {
     /// Derives the largest event chunk fitting within `available_bytes`.
     ///
@@ -834,8 +892,7 @@ impl MemoryDecision {
     ) -> MemoryResult<Self> {
         MemoryFitRequest {
             label: label.into(),
-            fixed_bytes,
-            bytes_per_event,
+            footprint: MemoryFootprint::new(fixed_bytes, bytes_per_event),
             available_bytes,
             event_limit,
             strategy: strategy.into(),
@@ -844,28 +901,31 @@ impl MemoryDecision {
     }
 }
 
-struct MemoryFitRequest {
-    label: String,
-    fixed_bytes: u64,
-    bytes_per_event: u64,
-    available_bytes: u64,
-    event_limit: usize,
-    strategy: String,
-}
-
 impl MemoryFitRequest {
-    fn evaluate(mut self) -> MemoryResult<MemoryDecision> {
-        self.bytes_per_event = self.bytes_per_event.max(1);
+    /// Evaluates the largest event chunk fitting the request.
+    ///
+    /// # Errors
+    ///
+    /// Returns `MemoryError::BudgetExceeded` when the fixed footprint plus
+    /// one event cannot fit.
+    pub fn evaluate(mut self) -> MemoryResult<MemoryDecision> {
+        self.footprint = self.footprint.normalized();
         if self.event_limit == 0 {
             return Ok(self.decision(0));
         }
 
-        let event_capacity = self.available_bytes.saturating_sub(self.fixed_bytes);
-        let events = saturating_usize(event_capacity / self.bytes_per_event).min(self.event_limit);
+        let event_capacity = self
+            .available_bytes
+            .saturating_sub(self.footprint.fixed_bytes);
+        let events =
+            saturating_usize(event_capacity / self.footprint.bytes_per_event).min(self.event_limit);
         if events == 0 {
             return Err(MemoryError::BudgetExceeded {
                 resource: self.label,
-                requested: self.fixed_bytes.saturating_add(self.bytes_per_event),
+                requested: self
+                    .footprint
+                    .fixed_bytes
+                    .saturating_add(self.footprint.bytes_per_event),
                 remaining: self.available_bytes,
             });
         }
@@ -873,14 +933,37 @@ impl MemoryFitRequest {
         Ok(self.decision(events))
     }
 
+    /// Builds a resident decision covering the full event limit while
+    /// reporting the supplied processing chunk.
+    ///
+    /// # Errors
+    ///
+    /// Returns `MemoryError::BudgetExceeded` when the full resident footprint
+    /// exceeds the available bytes.
+    pub fn evaluate_resident(self, chunk_events: usize) -> MemoryResult<MemoryDecision> {
+        let peak = self.footprint.peak_bytes(self.event_limit);
+        if peak > self.available_bytes {
+            return Err(MemoryError::BudgetExceeded {
+                resource: self.label,
+                requested: peak,
+                remaining: self.available_bytes,
+            });
+        }
+        Ok(self.decision_with_peak(chunk_events, peak))
+    }
+
     fn decision(self, events: usize) -> MemoryDecision {
-        let event_bytes = self.bytes_per_event.saturating_mul(saturating_u64(events));
+        let peak = self.footprint.peak_bytes(events);
+        self.decision_with_peak(events, peak)
+    }
+
+    fn decision_with_peak(self, chunk_events: usize, peak: u64) -> MemoryDecision {
         MemoryDecision {
             label: self.label,
-            fixed_bytes: self.fixed_bytes,
-            bytes_per_event: self.bytes_per_event,
-            chunk_events: events,
-            estimated_peak_bytes: self.fixed_bytes.saturating_add(event_bytes),
+            fixed_bytes: self.footprint.fixed_bytes,
+            bytes_per_event: self.footprint.bytes_per_event,
+            chunk_events,
+            estimated_peak_bytes: peak,
             actual_high_water_bytes: None,
             strategy: self.strategy,
         }
@@ -1413,6 +1496,60 @@ mod tests {
                 requested: u64::MAX,
                 remaining: u64::MAX,
             })
+        );
+    }
+
+    #[test]
+    fn named_fit_requests_match_the_compatibility_entry_point() {
+        let expected = MemoryDecision::fit("named", 100, 8, 1_000, 1_000, "streaming").unwrap();
+        let actual = MemoryFitRequest {
+            label: "named".into(),
+            footprint: MemoryFootprint::from_usize(100, 8),
+            available_bytes: 1_000,
+            event_limit: 1_000,
+            strategy: "streaming".into(),
+        }
+        .evaluate()
+        .unwrap();
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn resident_fit_requests_share_footprint_and_capacity_policy() {
+        let request = MemoryFitRequest {
+            label: "resident".into(),
+            footprint: MemoryFootprint::new(100, 8),
+            available_bytes: 1_000,
+            event_limit: 100,
+            strategy: "resident".into(),
+        };
+        let decision = request.clone().evaluate_resident(25).unwrap();
+        assert_eq!(decision.chunk_events, 25);
+        assert_eq!(decision.estimated_peak_bytes, 900);
+        let zero_per_event = MemoryFitRequest {
+            footprint: MemoryFootprint::new(100, 0),
+            event_limit: 100,
+            ..request.clone()
+        }
+        .evaluate_resident(25)
+        .unwrap();
+        assert_eq!(zero_per_event.bytes_per_event, 0);
+        assert_eq!(zero_per_event.estimated_peak_bytes, 100);
+        assert_eq!(
+            MemoryFitRequest {
+                available_bytes: 899,
+                ..request
+            }
+            .evaluate_resident(25),
+            Err(MemoryError::BudgetExceeded {
+                resource: "resident".into(),
+                requested: 900,
+                remaining: 899,
+            })
+        );
+        assert_eq!(
+            MemoryFootprint::new(u64::MAX, u64::MAX).peak_bytes(usize::MAX),
+            u64::MAX
         );
     }
 

@@ -9,7 +9,7 @@ use crate::{
     io::{EventSink, EventSource, ReadPlan, SourceCapabilities, WritePlan, memory::MemorySource},
     schema::Schema,
 };
-use laddu_memory::{MemoryBudget, MemoryDecision, MemoryState};
+use laddu_memory::{MemoryBudget, MemoryDecision, MemoryFitRequest, MemoryFootprint, MemoryState};
 use laddu_physics::vectors::RealVec4;
 use num::complex::Complex64;
 
@@ -727,11 +727,11 @@ impl Dataset {
     ) -> LadduDataResult<Box<dyn Iterator<Item = LadduDataResult<EventBatch>> + Send>> {
         if plan.chunk_size.is_none() {
             let schema = self.schema()?;
-            let bytes_per_event = 4_u64
-                .saturating_mul(schema.n_p4s() as u64)
-                .saturating_add(schema.n_scalars() as u64)
-                .saturating_add(u64::from(schema.has_weight()))
-                .saturating_mul(size_of::<f64>() as u64);
+            let bytes_per_event = 4_usize
+                .saturating_mul(schema.n_p4s())
+                .saturating_add(schema.n_scalars())
+                .saturating_add(usize::from(schema.has_weight()))
+                .saturating_mul(size_of::<f64>());
             let copies = if self.ops.is_empty() { 1 } else { 2 };
             let peak_per_event = bytes_per_event.saturating_mul(copies);
             let state = MemoryState::current();
@@ -745,14 +745,14 @@ impl Dataset {
                 .num_events()?
                 .and_then(|events| usize::try_from(events).ok())
                 .unwrap_or(usize::MAX);
-            let decision = MemoryDecision::fit(
-                "dataset read",
-                0,
-                peak_per_event,
-                available,
+            let decision = MemoryFitRequest {
+                label: "dataset read".into(),
+                footprint: MemoryFootprint::from_usize(0, peak_per_event),
+                available_bytes: available,
                 event_limit,
-                "memory-derived streaming",
-            )
+                strategy: "memory-derived streaming".into(),
+            }
+            .evaluate()
             .map_err(|error| LadduDataError::Source(error.to_string()))?;
             plan.chunk_size = Some(decision.chunk_events.max(1));
             *self
