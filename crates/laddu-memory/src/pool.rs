@@ -294,7 +294,7 @@ mod tests {
     #[test]
     fn cloned_leases_release_once_and_preserve_high_water() {
         let state = MemoryState::discover();
-        state.register_device(resource());
+        state.insert_device_snapshot(resource());
         let pool = state.pool("test", MemoryBudget::Bytes(300)).unwrap();
         let zero = pool.reserve(0).unwrap();
         assert_eq!((pool.reserved(), resource_reserved(&state)), (0, 0));
@@ -312,7 +312,7 @@ mod tests {
     #[test]
     fn leases_enforce_release_and_align_shared_capacity() {
         let state = MemoryState::discover();
-        state.register_device(resource());
+        state.insert_device_snapshot(resource());
         let first = state.pool("test", MemoryBudget::Bytes(400)).unwrap();
         let second = state.pool("test", MemoryBudget::Bytes(400)).unwrap();
         let first_lease = first.reserve(300).unwrap();
@@ -333,7 +333,7 @@ mod tests {
             available_bytes: Some(u64::MAX),
             ..resource()
         };
-        state.register_device(maximum);
+        state.insert_device_snapshot(maximum);
         let pool = state.pool("test", MemoryBudget::Bytes(u64::MAX)).unwrap();
         let lease = pool.reserve(u64::MAX).unwrap();
         assert!(pool.reserve(1).is_err());
@@ -345,7 +345,7 @@ mod tests {
     #[test]
     fn concurrent_reservations_are_atomic_with_and_without_state() {
         let state = MemoryState::discover();
-        state.register_device(resource());
+        state.insert_device_snapshot(resource());
         let attached = state.pool("test", MemoryBudget::Bytes(100)).unwrap();
         let leases = concurrent_reservations(&attached);
         assert_eq!((leases.len(), attached.reserved()), (10, 100));

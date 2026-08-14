@@ -308,7 +308,7 @@ impl PyMemoryState {
 
     #[pyo3(signature = (id, total_bytes, *, available_bytes=None, name=None))]
     /// Override capacity telemetry for a device resource.
-    fn set_device_capacity(
+    fn override_device_capacity(
         &self,
         id: &str,
         total_bytes: u64,
@@ -320,10 +320,8 @@ impl PyMemoryState {
                 "total_bytes must be greater than zero",
             ));
         }
-        self.inner.register_device(
-            MemoryResource::adaptive_device(id, name.unwrap_or(id))
-                .with_capacity(total_bytes, available_bytes),
-        );
+        self.inner
+            .override_device_capacity(id, name.unwrap_or(id), total_bytes, available_bytes);
         Ok(())
     }
 
