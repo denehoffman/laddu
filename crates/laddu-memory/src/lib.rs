@@ -333,6 +333,37 @@ struct ResourceLedger {
     high_water: u64,
 }
 
+impl ResourceLedger {
+    fn try_reserve(&mut self, bytes: u64) -> MemoryResult<()> {
+        let physical_limit = self
+            .snapshot
+            .available_bytes
+            .or(self.snapshot.total_bytes)
+            .unwrap_or(u64::MAX);
+        let Some(next) = self.reserved.checked_add(bytes) else {
+            return Err(self.budget_exceeded(bytes, physical_limit));
+        };
+        if next > physical_limit {
+            return Err(self.budget_exceeded(bytes, physical_limit));
+        }
+        self.reserved = next;
+        self.high_water = self.high_water.max(next);
+        Ok(())
+    }
+
+    fn release(&mut self, bytes: u64) {
+        self.reserved = self.reserved.saturating_sub(bytes);
+    }
+
+    fn budget_exceeded(&self, requested: u64, physical_limit: u64) -> MemoryError {
+        MemoryError::BudgetExceeded {
+            resource: self.snapshot.name.clone(),
+            requested,
+            remaining: physical_limit.saturating_sub(self.reserved),
+        }
+    }
+}
+
 /// Live resource discovery and process-wide laddu reservation state.
 #[derive(Clone, Debug)]
 pub struct MemoryState {
@@ -470,12 +501,14 @@ impl MemoryState {
         let capacity = budget.resolve(&resource)?;
         Ok(MemoryPool {
             inner: Arc::new(MemoryPoolInner {
-                state: Arc::downgrade(&self.inner),
-                resource_id: resource_id.to_owned(),
                 requested: budget,
-                capacity,
-                reserved: AtomicU64::new(0),
-                high_water: AtomicU64::new(0),
+                accounting: Arc::new(ReservationAccount {
+                    state: Arc::downgrade(&self.inner),
+                    resource_id: resource_id.to_owned(),
+                    capacity,
+                    reserved: AtomicU64::new(0),
+                    high_water: AtomicU64::new(0),
+                }),
             }),
         })
     }
@@ -522,12 +555,89 @@ pub struct MemoryPool {
 
 #[derive(Debug)]
 struct MemoryPoolInner {
+    requested: MemoryBudget,
+    accounting: Arc<ReservationAccount>,
+}
+
+#[derive(Debug)]
+struct ReservationAccount {
     state: Weak<MemoryStateInner>,
     resource_id: String,
-    requested: MemoryBudget,
     capacity: u64,
     reserved: AtomicU64,
     high_water: AtomicU64,
+}
+
+impl ReservationAccount {
+    fn try_reserve(self: &Arc<Self>, bytes: u64) -> MemoryResult<ReservationToken> {
+        let state = self.state.upgrade();
+        let mut resources = state
+            .as_ref()
+            .map(|state| state.resources.lock().unwrap_or_else(|e| e.into_inner()));
+
+        let next = self.try_reserve_local(bytes)?;
+        if let Some(ledger) = resources
+            .as_mut()
+            .and_then(|resources| resources.get_mut(&self.resource_id))
+            && let Err(error) = ledger.try_reserve(bytes)
+        {
+            self.release_local(bytes);
+            return Err(error);
+        }
+
+        update_max(&self.high_water, next);
+        Ok(ReservationToken {
+            account: Arc::clone(self),
+            bytes,
+        })
+    }
+
+    fn try_reserve_local(&self, bytes: u64) -> MemoryResult<u64> {
+        self.reserved
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+                current
+                    .checked_add(bytes)
+                    .filter(|&next| next <= self.capacity)
+            })
+            .map(|previous| previous + bytes)
+            .map_err(|_| self.budget_exceeded(bytes))
+    }
+
+    fn release(&self, bytes: u64) {
+        if let Some(state) = self.state.upgrade() {
+            let mut resources = state.resources.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(ledger) = resources.get_mut(&self.resource_id) {
+                ledger.release(bytes);
+            }
+        }
+        self.release_local(bytes);
+    }
+
+    fn release_local(&self, bytes: u64) {
+        self.reserved.fetch_sub(bytes, Ordering::AcqRel);
+    }
+
+    fn budget_exceeded(&self, requested: u64) -> MemoryError {
+        MemoryError::BudgetExceeded {
+            resource: self.resource_id.clone(),
+            requested,
+            remaining: self
+                .capacity
+                .saturating_sub(self.reserved.load(Ordering::Acquire)),
+        }
+    }
+}
+
+#[derive(Debug)]
+struct ReservationToken {
+    account: Arc<ReservationAccount>,
+    bytes: u64,
+}
+
+impl Drop for ReservationToken {
+    fn drop(&mut self) {
+        self.account.release(self.bytes);
+    }
 }
 
 impl MemoryPool {
@@ -538,12 +648,12 @@ impl MemoryPool {
 
     /// Resolved pool capacity in bytes.
     pub fn capacity(&self) -> u64 {
-        self.inner.capacity
+        self.inner.accounting.capacity
     }
 
     /// Currently reserved bytes.
     pub fn reserved(&self) -> u64 {
-        self.inner.reserved.load(Ordering::Acquire)
+        self.inner.accounting.reserved.load(Ordering::Acquire)
     }
 
     /// Remaining reservable bytes.
@@ -553,7 +663,7 @@ impl MemoryPool {
 
     /// Highest concurrent reservation observed by this pool.
     pub fn high_water(&self) -> u64 {
-        self.inner.high_water.load(Ordering::Acquire)
+        self.inner.accounting.high_water.load(Ordering::Acquire)
     }
 
     /// Attempts to reserve `bytes` until the returned lease is dropped.
@@ -563,45 +673,9 @@ impl MemoryPool {
     /// Returns [`MemoryError::BudgetExceeded`] if the local or shared resource
     /// limit lacks sufficient remaining capacity.
     pub fn reserve(&self, bytes: u64) -> MemoryResult<MemoryLease> {
-        let state = self.inner.state.upgrade();
-        let mut resources = state
-            .as_ref()
-            .map(|state| state.resources.lock().unwrap_or_else(|e| e.into_inner()));
-
-        let current = self.reserved();
-        let next = current
-            .checked_add(bytes)
-            .ok_or_else(|| budget_exceeded(self, bytes))?;
-        if next > self.capacity() {
-            return Err(budget_exceeded(self, bytes));
-        }
-
-        if let Some(resources) = resources.as_mut()
-            && let Some(ledger) = resources.get_mut(&self.inner.resource_id)
-        {
-            let physical_limit = ledger
-                .snapshot
-                .available_bytes
-                .or(ledger.snapshot.total_bytes)
-                .unwrap_or(u64::MAX);
-            let shared_next = ledger.reserved.saturating_add(bytes);
-            if shared_next > physical_limit {
-                return Err(MemoryError::BudgetExceeded {
-                    resource: ledger.snapshot.name.clone(),
-                    requested: bytes,
-                    remaining: physical_limit.saturating_sub(ledger.reserved),
-                });
-            }
-            ledger.reserved = shared_next;
-            ledger.high_water = ledger.high_water.max(shared_next);
-        }
-
-        self.inner.reserved.store(next, Ordering::Release);
-        update_max(&self.inner.high_water, next);
         Ok(MemoryLease {
             inner: Arc::new(MemoryLeaseInner {
-                pool: Arc::clone(&self.inner),
-                bytes,
+                reservation: self.inner.accounting.try_reserve(bytes)?,
             }),
         })
     }
@@ -609,7 +683,7 @@ impl MemoryPool {
     /// Returns a snapshot of this pool's planning and usage.
     pub fn report(&self) -> MemoryPoolReport {
         MemoryPoolReport {
-            resource_id: self.inner.resource_id.clone(),
+            resource_id: self.inner.accounting.resource_id.clone(),
             requested: self.requested(),
             effective_bytes: self.capacity(),
             reserved_bytes: self.reserved(),
@@ -627,27 +701,13 @@ pub struct MemoryLease {
 
 #[derive(Debug)]
 struct MemoryLeaseInner {
-    pool: Arc<MemoryPoolInner>,
-    bytes: u64,
+    reservation: ReservationToken,
 }
 
 impl MemoryLease {
     /// Reserved byte count.
     pub fn bytes(&self) -> u64 {
-        self.inner.bytes
-    }
-}
-
-impl Drop for MemoryLeaseInner {
-    fn drop(&mut self) {
-        let pool = &self.pool;
-        pool.reserved.fetch_sub(self.bytes, Ordering::AcqRel);
-        if let Some(state) = pool.state.upgrade() {
-            let mut resources = state.resources.lock().unwrap_or_else(|e| e.into_inner());
-            if let Some(ledger) = resources.get_mut(&pool.resource_id) {
-                ledger.reserved = ledger.reserved.saturating_sub(self.bytes);
-            }
-        }
+        self.inner.reservation.bytes
     }
 }
 
@@ -992,14 +1052,6 @@ fn parse_bytes(input: &str) -> MemoryResult<u64> {
     Ok(bytes.floor() as u64)
 }
 
-fn budget_exceeded(pool: &MemoryPool, requested: u64) -> MemoryError {
-    MemoryError::BudgetExceeded {
-        resource: pool.inner.resource_id.clone(),
-        requested,
-        remaining: pool.remaining(),
-    }
-}
-
 fn update_max(value: &AtomicU64, candidate: u64) {
     let mut current = value.load(Ordering::Acquire);
     while candidate > current {
@@ -1013,6 +1065,7 @@ fn update_max(value: &AtomicU64, candidate: u64) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::thread;
 
     fn resource() -> MemoryResource {
         MemoryResource {
@@ -1024,6 +1077,27 @@ mod tests {
             capacity_source: CapacitySource::User,
             device_identity: None,
         }
+    }
+
+    fn resource_report(state: &MemoryState) -> MemoryResourceReport {
+        state
+            .report()
+            .resources
+            .into_iter()
+            .find(|report| report.resource.id == "test")
+            .unwrap()
+    }
+
+    fn concurrent_reservations(pool: &MemoryPool) -> Vec<MemoryLease> {
+        (0..32)
+            .map(|_| {
+                let pool = pool.clone();
+                thread::spawn(move || pool.reserve(10))
+            })
+            .collect::<Vec<_>>()
+            .into_iter()
+            .filter_map(|handle| handle.join().unwrap().ok())
+            .collect()
     }
 
     #[test]
@@ -1062,6 +1136,105 @@ mod tests {
         drop(lease);
         assert_eq!(pool.remaining(), 300);
         assert_eq!(pool.high_water(), 200);
+    }
+
+    #[test]
+    fn reservation_lifecycle_keeps_pool_and_resource_reports_aligned() {
+        let state = MemoryState::discover();
+        state.register_device(resource());
+        let pool = state.pool("test", MemoryBudget::Bytes(300)).unwrap();
+
+        let zero = pool.reserve(0).unwrap();
+        assert_eq!(pool.reserved(), 0);
+        assert_eq!(resource_report(&state).laddu_reserved_bytes, 0);
+        drop(zero);
+
+        let lease = pool.reserve(120).unwrap();
+        let clone = lease.clone();
+        let pool_report = pool.report();
+        let state_report = resource_report(&state);
+        assert_eq!(pool_report.reserved_bytes, 120);
+        assert_eq!(pool_report.high_water_bytes, 120);
+        assert_eq!(state_report.laddu_reserved_bytes, 120);
+        assert_eq!(state_report.laddu_high_water_bytes, 120);
+
+        drop(lease);
+        assert_eq!(pool.reserved(), 120);
+        assert_eq!(resource_report(&state).laddu_reserved_bytes, 120);
+        drop(clone);
+
+        let pool_report = pool.report();
+        let state_report = resource_report(&state);
+        assert_eq!(pool_report.reserved_bytes, 0);
+        assert_eq!(pool_report.high_water_bytes, 120);
+        assert_eq!(state_report.laddu_reserved_bytes, 0);
+        assert_eq!(state_report.laddu_high_water_bytes, 120);
+    }
+
+    #[test]
+    fn multiple_pools_share_physical_capacity_without_failed_side_effects() {
+        let state = MemoryState::discover();
+        state.register_device(resource());
+        let first = state.pool("test", MemoryBudget::Bytes(400)).unwrap();
+        let second = state.pool("test", MemoryBudget::Bytes(400)).unwrap();
+
+        let first_lease = first.reserve(300).unwrap();
+        assert!(second.reserve(201).is_err());
+        assert_eq!(second.report().reserved_bytes, 0);
+        assert_eq!(second.report().high_water_bytes, 0);
+        assert_eq!(resource_report(&state).laddu_reserved_bytes, 300);
+
+        let second_lease = second.reserve(200).unwrap();
+        assert_eq!(resource_report(&state).laddu_reserved_bytes, 500);
+        assert_eq!(resource_report(&state).laddu_high_water_bytes, 500);
+        drop(first_lease);
+        assert_eq!(resource_report(&state).laddu_reserved_bytes, 200);
+        drop(second_lease);
+        assert_eq!(resource_report(&state).laddu_reserved_bytes, 0);
+    }
+
+    #[test]
+    fn concurrent_reservations_are_atomic_with_and_without_state() {
+        let state = MemoryState::discover();
+        state.register_device(resource());
+        let attached = state.pool("test", MemoryBudget::Bytes(100)).unwrap();
+        let leases = concurrent_reservations(&attached);
+        assert_eq!(leases.len(), 10);
+        assert_eq!(attached.reserved(), 100);
+        assert_eq!(resource_report(&state).laddu_reserved_bytes, 100);
+        drop(leases);
+        assert_eq!(attached.reserved(), 0);
+        assert_eq!(resource_report(&state).laddu_reserved_bytes, 0);
+
+        let detached = state.pool("test", MemoryBudget::Bytes(100)).unwrap();
+        drop(state);
+        let leases = concurrent_reservations(&detached);
+        assert_eq!(leases.len(), 10);
+        assert_eq!(detached.reserved(), 100);
+        assert_eq!(detached.high_water(), 100);
+        drop(leases);
+        assert_eq!(detached.reserved(), 0);
+    }
+
+    #[test]
+    fn overflow_failure_leaves_reservation_counters_unchanged() {
+        let state = MemoryState::discover();
+        let mut maximum = resource();
+        maximum.total_bytes = Some(u64::MAX);
+        maximum.available_bytes = Some(u64::MAX);
+        state.register_device(maximum);
+        let pool = state.pool("test", MemoryBudget::Bytes(u64::MAX)).unwrap();
+
+        let lease = pool.reserve(u64::MAX).unwrap();
+        assert!(pool.reserve(1).is_err());
+        assert_eq!(pool.reserved(), u64::MAX);
+        assert_eq!(pool.high_water(), u64::MAX);
+        let report = resource_report(&state);
+        assert_eq!(report.laddu_reserved_bytes, u64::MAX);
+        assert_eq!(report.laddu_high_water_bytes, u64::MAX);
+        drop(lease);
+        assert_eq!(pool.reserved(), 0);
+        assert_eq!(resource_report(&state).laddu_reserved_bytes, 0);
     }
 
     #[test]
