@@ -68,6 +68,17 @@ impl VertexProposal {
             Self::TwoBodyScattering { proposal } => proposal.propose(incoming, outgoing, rng),
         }
     }
+
+
+    /// Return continuous-coordinate and analytical-region counts used by the
+    /// proven-envelope report.
+    #[doc(hidden)]
+    pub fn proven_domain_metadata(&self) -> (usize, usize) {
+        match self {
+            Self::TwoBodyDecay => (2, 1),
+            Self::TwoBodyScattering { proposal } => proposal.proven_domain_metadata(),
+        }
+    }
 }
 
 fn propose_two_body_decay(
@@ -218,6 +229,26 @@ pub(super) fn two_body_momentum(parent: f64, first: f64, second: f64) -> LadduPh
     let lambda =
         (parent * parent - (first + second).powi(2)) * (parent * parent - (first - second).powi(2));
     Ok(lambda.max(0.0).sqrt() / (2.0 * parent))
+}
+
+/// Enclose the phase-space correction for an isotropic two-body decay.
+///
+/// This is public only for the workspace generation crate's proven-envelope
+/// path. The interval contains the correction for every kinematically defined
+/// combination of masses in the supplied box.
+#[doc(hidden)]
+pub fn proven_two_body_decay_weight(
+    parent: Interval,
+    first: Interval,
+    second: Interval,
+) -> Interval {
+    let sum = first + second;
+    let difference = first - second;
+    let parent_squared = parent.sqr();
+    let radicand = (parent_squared - sum.sqr()) * (parent_squared - difference.sqr());
+    let momentum = radicand.sqrt() / (2.0 * parent);
+    let result = momentum / (4.0 * PI * parent);
+    Interval::new(0.0, result.sup())
 }
 
 pub(super) fn on_shell(direction: RealVec3, momentum: f64, mass: f64) -> RealVec4 {

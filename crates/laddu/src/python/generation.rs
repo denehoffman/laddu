@@ -1,6 +1,6 @@
 use laddu_generation::{
     ChannelGenerator, EnvelopeMode, EnvelopeOverflow, GenerationReport, ModelEvaluator,
-    UnweightedConfig, WeightedConfig,
+    ProvenEnvelopeReport, UnweightedConfig, WeightedConfig,
 };
 use laddu_physics::{
     generation::{
@@ -409,12 +409,78 @@ impl PyGenerationReport {
     fn actual_high_water_bytes(&self) -> Option<u64> {
         self.inner.actual_high_water_bytes
     }
+    #[getter]
+    /// tuple[float, float] or None: Proven phase-space weight enclosure.
+    fn proven_weight_interval(&self) -> Option<(f64, f64)> {
+        self.inner.proven_weight_interval
+    }
+    #[getter]
+    /// int or None: Continuous proposal-coordinate count in the proven domain.
+    fn proven_continuous_dimensions(&self) -> Option<usize> {
+        self.inner.proven_continuous_dimensions
+    }
+    #[getter]
+    /// int or None: Analytical piecewise-region count in the proven domain.
+    fn proven_piecewise_regions(&self) -> Option<usize> {
+        self.inner.proven_piecewise_regions
+    }
+    #[getter]
+    /// int or None: Adaptive interval subdivision count.
+    fn proven_subdivisions(&self) -> Option<usize> {
+        self.inner.proven_subdivisions
+    }
     fn __repr__(&self) -> String {
         format!(
             "GenerationReport(produced={}, proposals={}, acceptance_rate={:.3})",
             self.inner.produced,
             self.inner.proposals,
             self.inner.acceptance_rate()
+        )
+    }
+}
+
+#[pyclass(
+    name = "ProvenEnvelopeReport",
+    module = "laddu",
+    frozen,
+    skip_from_py_object
+)]
+/// A maryada-backed enclosure of all unit-model phase-space proposal weights.
+pub struct PyProvenEnvelopeReport {
+    inner: ProvenEnvelopeReport,
+}
+
+#[pymethods]
+impl PyProvenEnvelopeReport {
+    #[getter]
+    /// tuple[float, float]: Outward-rounded weight-interval endpoints.
+    fn weight_interval(&self) -> (f64, f64) {
+        self.inner.weight_bounds()
+    }
+    #[getter]
+    /// float: Proven finite upper endpoint usable for rejection sampling.
+    fn maximum_weight(&self) -> f64 {
+        self.inner.maximum_weight
+    }
+    #[getter]
+    /// int: Number of continuous proposal coordinates represented.
+    fn continuous_dimensions(&self) -> usize {
+        self.inner.continuous_dimensions
+    }
+    #[getter]
+    /// int: Number of analytical piecewise regions represented.
+    fn piecewise_regions(&self) -> usize {
+        self.inner.piecewise_regions
+    }
+    #[getter]
+    /// int: Number of adaptive interval subdivisions (zero in v1).
+    fn subdivisions(&self) -> usize {
+        self.inner.subdivisions
+    }
+    fn __repr__(&self) -> String {
+        format!(
+            "ProvenEnvelopeReport(weight_interval={}, maximum_weight={})",
+            self.inner.weight_interval, self.inner.maximum_weight
         )
     }
 }
@@ -454,6 +520,14 @@ impl PyGenerator {
         Ok(Self {
             inner: ChannelGenerator::new(channel.inner.clone()).map_err(to_py_err)?,
         })
+    }
+
+    /// Prove a fixed upper envelope for unit-model phase-space generation.
+    fn phase_space_envelope(&self) -> PyResult<PyProvenEnvelopeReport> {
+        self.inner
+            .phase_space_envelope()
+            .map(|inner| PyProvenEnvelopeReport { inner })
+            .map_err(to_py_err)
     }
 
     #[pyo3(signature = (
@@ -540,7 +614,7 @@ impl PyGenerator {
 
     #[pyo3(signature = (
         events,
-        model,
+        model=None,
         *,
         parameters: "Sequence[float] | numpy.typing.NDArray[numpy.float32 | numpy.float64] | dict[str, float] | None" = None,
         execution=None,
@@ -548,6 +622,7 @@ impl PyGenerator {
         seed=0,
         max_proposals=None,
         max_weight=None,
+        proven_envelope=false,
         pilot_proposals=10_000,
         safety_factor=2.0,
         grow_envelope=false,
@@ -560,8 +635,9 @@ impl PyGenerator {
     /// ----------
     /// events : int
     ///     Number of accepted events to produce.
-    /// model : Model
-    ///     Non-negative event intensity used for accept-reject sampling.
+    /// model : Model, optional
+    ///     Non-negative event intensity used for accept-reject sampling. When
+    ///     omitted, the phase-space proposal weight is used directly.
     /// parameters : sequence of float or dict, optional
     ///     Model parameter values.
     /// execution : Execution, optional
@@ -574,6 +650,8 @@ impl PyGenerator {
     ///     Stop with an error after this many proposals.
     /// max_weight : float, optional
     ///     Strict known envelope. If omitted, estimate one with a pilot run.
+    /// proven_envelope : bool, default=False
+    ///     Prove a fixed phase-space envelope with maryada. Requires ``model=None``.
     /// pilot_proposals : int, default=10000
     ///     Number of proposals used for envelope estimation.
     /// safety_factor : float, default=2.0
@@ -599,13 +677,14 @@ impl PyGenerator {
         &self,
         py: Python<'_>,
         events: usize,
-        model: &PyModel,
+        model: Option<&PyModel>,
         parameters: Option<&Bound<'_, PyAny>>,
         execution: Option<&PyExecution>,
         memory: Option<&Bound<'_, PyAny>>,
         seed: u64,
         max_proposals: Option<usize>,
         max_weight: Option<f64>,
+        proven_envelope: bool,
         pilot_proposals: usize,
         safety_factor: f64,
         grow_envelope: bool,
@@ -615,18 +694,42 @@ impl PyGenerator {
             .cloned()
             .map(Ok)
             .unwrap_or_else(PyExecution::default_inner)?;
-        let evaluator = ModelEvaluator::prepare(
-            &model.inner,
-            model_values(model, parameters)?,
-            &execution.inner,
-        )
-        .map_err(to_py_err)?;
-        let envelope = match max_weight {
-            Some(max_weight) => EnvelopeMode::Strict { max_weight },
-            None => EnvelopeMode::Pilot {
+        if model.is_none() && parameters.is_some() {
+            return Err(PyValueError::new_err("parameters require a model"));
+        }
+        if proven_envelope && max_weight.is_some() {
+            return Err(PyValueError::new_err(
+                "proven_envelope and max_weight are mutually exclusive",
+            ));
+        }
+        if proven_envelope && model.is_some() {
+            return Err(PyValueError::new_err(
+                "proven_envelope is valid only when model is omitted",
+            ));
+        }
+        if proven_envelope && grow_envelope {
+            return Err(PyValueError::new_err(
+                "proven_envelope cannot be combined with grow_envelope",
+            ));
+        }
+        let evaluator = model
+            .map(|model| {
+                ModelEvaluator::prepare(
+                    &model.inner,
+                    model_values(model, parameters)?,
+                    &execution.inner,
+                )
+                .map_err(to_py_err)
+            })
+            .transpose()?;
+        let envelope = match (proven_envelope, max_weight) {
+            (true, None) => EnvelopeMode::ProvenPhaseSpace,
+            (false, Some(max_weight)) => EnvelopeMode::Strict { max_weight },
+            (false, None) => EnvelopeMode::Pilot {
                 proposals: pilot_proposals,
                 safety_factor,
             },
+            (true, Some(_)) => unreachable!("mutually exclusive options were checked above"),
         };
         let envelope_overflow = if grow_envelope {
             EnvelopeOverflow::Grow { safety_factor }
@@ -646,7 +749,10 @@ impl PyGenerator {
             envelope_overflow,
         };
         let (dataset, report) = py
-            .detach(|| self.inner.generate_unweighted_dataset(config, &evaluator))
+            .detach(|| {
+                self.inner
+                    .generate_unweighted_dataset(config, evaluator.as_ref())
+            })
             .map_err(to_py_err)?;
         Ok((
             PyDataset { inner: dataset },
@@ -662,7 +768,7 @@ pub mod generation {
     use super::{
         PyGenerationReport as GenerationReport, PyGenerator as Generator,
         PyInitialMomentum as InitialMomentum, PyMassProposal as MassProposal,
-        PyVertexProposal as VertexProposal,
+        PyProvenEnvelopeReport as ProvenEnvelopeReport, PyVertexProposal as VertexProposal,
     };
 }
 

@@ -120,8 +120,8 @@ pub mod prelude {
         ChannelGenerator, EnvelopeKind, EnvelopeMode, EnvelopeOverflow, GenerationError,
         GenerationReport, GenerationResult, InitialMomentum, InitialMomentumResult, MassProposal,
         ModelEvaluator, NamedMass, NamedMomentum, ProposalResult, ProposalRng,
-        ScalarProposalResult, ScalarSource, TComponent, TDistribution, TwoBodyScattering,
-        UnweightedConfig, VertexProposal, WeightedConfig,
+        ProvenEnvelopeReport, ScalarProposalResult, ScalarSource, TComponent, TDistribution,
+        TwoBodyScattering, UnweightedConfig, VertexProposal, WeightedConfig,
     };
     #[cfg(feature = "likelihood")]
     pub use laddu_likelihood::{

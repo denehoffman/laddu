@@ -1667,6 +1667,7 @@ dependencies = [
  "laddu-memory",
  "laddu-physics",
  "laddu-runtime",
+ "maryada",
  "rayon",
  "serde",
  "smallvec",
@@ -1726,6 +1727,7 @@ dependencies = [
  "laddu-compile",
  "laddu-expr",
  "laddu-runtime",
+ "maryada",
  "nalgebra",
  "num",
  "serde",
@@ -1990,6 +1992,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d640282b302c0bb0a2a8e0233ead9035e3bed871f0b7e81fe4a1ec829765db44"
 dependencies = [
  "libc",
+]
+
+[[package]]
+name = "maryada"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1a98e4d788b863c3fc030fab9e6fafb7fcca79ab24f7051f2a4ba486223952da"
+dependencies = [
+ "libm",
 ]
 
 [[package]]

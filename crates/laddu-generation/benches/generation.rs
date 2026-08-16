@@ -72,7 +72,7 @@ fn benchmarks(c: &mut Criterion) {
                         envelope: EnvelopeMode::Strict { max_weight: 0.1 },
                         ..UnweightedConfig::new(4_096).with_max_proposals(100_000)
                     },
-                    &evaluator,
+                    Some(&evaluator),
                 )
                 .unwrap()
         })
