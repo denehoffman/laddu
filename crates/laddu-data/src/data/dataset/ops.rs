@@ -1,10 +1,8 @@
 use std::sync::Arc;
 
-use laddu_physics::vectors::RealVec4;
-
 use crate::{
     LadduDataResult,
-    data::event::{Event, EventBatch},
+    data::event::{BatchAssembler, Event, EventBatch},
 };
 
 #[derive(Clone)]
@@ -61,46 +59,19 @@ pub(super) fn materialize_batch(
         return Ok(batch.clone());
     }
 
-    let schema = Arc::clone(batch.schema());
-
     let store_weights = batch.weights_column().is_some()
         || ops
             .iter()
             .any(|op| matches!(op, DatasetOp::Bootstrap { .. }));
 
-    let mut p4s: Vec<Vec<RealVec4>> = (0..schema.n_p4s())
-        .map(|_| Vec::with_capacity(batch.len()))
-        .collect();
-    let mut scalars: Vec<Vec<f64>> = (0..schema.n_scalars())
-        .map(|_| Vec::with_capacity(batch.len()))
-        .collect();
-    let mut weights = if store_weights {
-        Some(Vec::with_capacity(batch.len()))
-    } else {
-        None
-    };
+    let mut assembler =
+        BatchAssembler::with_weight_mode(Arc::clone(batch.schema()), batch.len(), store_weights);
 
     eval_batch(batch, ops, base, |ev| {
-        for (col, p4) in p4s.iter_mut().enumerate() {
-            p4.push(ev.p4(col));
-        }
-
-        for (col, scalar) in scalars.iter_mut().enumerate() {
-            scalar.push(ev.scalar(col));
-        }
-
-        if let Some(weights) = weights.as_mut() {
-            weights.push(ev.weight());
-        }
-
-        Ok(())
+        assembler.push_borrowed(ev, store_weights)
     })?;
 
-    let p4s = p4s.into_iter().map(Arc::from).collect();
-    let scalars = scalars.into_iter().map(Arc::from).collect();
-    let weights = weights.map(Arc::from);
-
-    EventBatch::new(schema, p4s, scalars, weights)
+    assembler.finish()
 }
 
 pub(super) fn uniform_hash_01(seed: u64, index: u64) -> f64 {

@@ -79,7 +79,7 @@ impl BatchParts {
         }
     }
 
-    fn validate(&self, schema: &Schema) -> LadduDataResult<usize> {
+    fn validate(&self, schema: &Schema, expected_len: Option<usize>) -> LadduDataResult<usize> {
         if self.p4s.len() != schema.n_p4s() {
             return Err(LadduDataError::Schema(
                 "wrong number of vec4 columns".into(),
@@ -92,7 +92,16 @@ impl BatchParts {
             ));
         }
 
-        infer_len(&self.p4s, &self.scalars, self.weights.as_slice())
+        let len = infer_len(&self.p4s, &self.scalars, self.weights.as_slice())?;
+        if let Some(expected_len) = expected_len {
+            let has_columns =
+                !self.p4s.is_empty() || !self.scalars.is_empty() || self.weights.is_explicit();
+            if has_columns && len != expected_len {
+                return Err(LadduDataError::Schema("inconsistent batch length".into()));
+            }
+            return Ok(expected_len);
+        }
+        Ok(len)
     }
 
     fn select(&self, rows: &[usize]) -> Self {
@@ -257,14 +266,20 @@ impl EventBatch {
         scalars: Vec<Arc<[f64]>>,
         weights: Option<Arc<[f64]>>,
     ) -> LadduDataResult<Self> {
-        Self::from_parts(
-            schema,
-            BatchParts::from_columns(p4s, scalars, Weights::from_option(weights)),
-        )
+        BatchAssembler::from_columns(schema, p4s, scalars, weights)
     }
 
     fn from_parts(schema: Arc<Schema>, parts: BatchParts) -> LadduDataResult<Self> {
-        let len = parts.validate(&schema)?;
+        let len = parts.validate(&schema, None)?;
+        Ok(Self { schema, len, parts })
+    }
+
+    fn from_parts_with_len(
+        schema: Arc<Schema>,
+        parts: BatchParts,
+        expected_len: usize,
+    ) -> LadduDataResult<Self> {
+        let len = parts.validate(&schema, Some(expected_len))?;
         Ok(Self { schema, len, parts })
     }
 
@@ -382,8 +397,12 @@ impl EventBatch {
     ///
     /// Panics when a selected row is outside the batch.
     pub fn select(&self, rows: &[usize]) -> Self {
-        Self::from_parts(Arc::clone(&self.schema), self.parts.select(rows))
-            .expect("select preserves EventBatch invariants")
+        Self::from_parts_with_len(
+            Arc::clone(&self.schema),
+            self.parts.select(rows),
+            rows.len(),
+        )
+        .expect("select preserves EventBatch invariants")
     }
 
     /// Copies rows satisfying `keep` into a new batch.
@@ -423,8 +442,12 @@ impl EventBatch {
             return self.clone();
         }
 
-        Self::from_parts(Arc::clone(&self.schema), self.parts.slice(start, end))
-            .expect("slice preserves EventBatch invariants")
+        Self::from_parts_with_len(
+            Arc::clone(&self.schema),
+            self.parts.slice(start, end),
+            end - start,
+        )
+        .expect("slice preserves EventBatch invariants")
     }
 
     /// Concatenates schema-compatible batches.
@@ -454,7 +477,8 @@ impl EventBatch {
             .iter()
             .map(|batch| (&batch.parts, batch.len))
             .collect::<Vec<_>>();
-        Self::from_parts(schema, BatchParts::concat(&parts))
+        let len = batches.iter().map(|batch| batch.len).sum();
+        Self::from_parts_with_len(schema, BatchParts::concat(&parts), len)
     }
 }
 
@@ -614,8 +638,8 @@ impl OwnedEvent {
     }
 }
 
-/// Incremental builder for a columnar [`EventBatch`].
-pub struct EventBatchBuilder {
+/// Shared checked assembly for row-oriented batch producers.
+pub(crate) struct BatchAssembler {
     schema: Arc<Schema>,
     p4s: Vec<Vec<RealVec4>>,
     scalars: Vec<Vec<f64>>,
@@ -623,23 +647,8 @@ pub struct EventBatchBuilder {
     len: usize,
 }
 
-impl EventBatchBuilder {
-    /// Creates an empty builder.
-    pub fn new(schema: Arc<Schema>) -> Self {
-        let p4s = (0..schema.n_p4s()).map(|_| Vec::new()).collect();
-        let scalars = (0..schema.n_scalars()).map(|_| Vec::new()).collect();
-
-        Self {
-            schema,
-            p4s,
-            scalars,
-            weights: WeightAssembler::default(),
-            len: 0,
-        }
-    }
-
-    /// Creates an empty builder with per-column capacity.
-    pub fn with_capacity(schema: Arc<Schema>, capacity: usize) -> Self {
+impl BatchAssembler {
+    pub(crate) fn new(schema: Arc<Schema>, capacity: usize) -> Self {
         let p4s = (0..schema.n_p4s())
             .map(|_| Vec::with_capacity(capacity))
             .collect();
@@ -653,6 +662,115 @@ impl EventBatchBuilder {
             scalars,
             weights: WeightAssembler::default(),
             len: 0,
+        }
+    }
+
+    pub(crate) fn with_weight_mode(
+        schema: Arc<Schema>,
+        capacity: usize,
+        explicit_weights: bool,
+    ) -> Self {
+        let mut assembler = Self::new(schema, capacity);
+        if explicit_weights {
+            assembler.weights = WeightAssembler::Explicit(Vec::with_capacity(capacity));
+        }
+        assembler
+    }
+
+    pub(crate) fn from_columns(
+        schema: Arc<Schema>,
+        p4s: Vec<Arc<[RealVec4]>>,
+        scalars: Vec<Arc<[f64]>>,
+        weights: Option<Arc<[f64]>>,
+    ) -> LadduDataResult<EventBatch> {
+        EventBatch::from_parts(
+            schema,
+            BatchParts::from_columns(p4s, scalars, Weights::from_option(weights)),
+        )
+    }
+
+    fn push_owned(&mut self, event: OwnedEvent) -> LadduDataResult<()> {
+        if event.p4s.len() != self.schema.n_p4s() {
+            return Err(LadduDataError::Schema(
+                "wrong number of event vec4 values".into(),
+            ));
+        }
+
+        if event.scalars.len() != self.schema.n_scalars() {
+            return Err(LadduDataError::Schema(
+                "wrong number of event scalar values".into(),
+            ));
+        }
+
+        self.weights.push(event.weight, self.len)?;
+
+        for (col, value) in event.p4s.into_iter().enumerate() {
+            self.p4s[col].push(value);
+        }
+        for (col, value) in event.scalars.into_iter().enumerate() {
+            self.scalars[col].push(value);
+        }
+
+        self.len += 1;
+        Ok(())
+    }
+
+    pub(crate) fn push_borrowed(
+        &mut self,
+        event: Event<'_>,
+        explicit_weight: bool,
+    ) -> LadduDataResult<()> {
+        if event.batch.schema().n_p4s() != self.schema.n_p4s() {
+            return Err(LadduDataError::Schema(
+                "wrong number of event vec4 values".into(),
+            ));
+        }
+
+        if event.batch.schema().n_scalars() != self.schema.n_scalars() {
+            return Err(LadduDataError::Schema(
+                "wrong number of event scalar values".into(),
+            ));
+        }
+
+        self.weights
+            .push(explicit_weight.then_some(event.weight()), self.len)?;
+
+        for col in 0..self.schema.n_p4s() {
+            self.p4s[col].push(event.p4(col));
+        }
+        for col in 0..self.schema.n_scalars() {
+            self.scalars[col].push(event.scalar(col));
+        }
+
+        self.len += 1;
+        Ok(())
+    }
+
+    pub(crate) fn finish(self) -> LadduDataResult<EventBatch> {
+        let parts = BatchParts::from_columns(
+            self.p4s.into_iter().map(Arc::from).collect(),
+            self.scalars.into_iter().map(Arc::from).collect(),
+            self.weights.finish(),
+        );
+        EventBatch::from_parts_with_len(self.schema, parts, self.len)
+    }
+}
+
+/// Incremental builder for a columnar [`EventBatch`].
+pub struct EventBatchBuilder {
+    assembler: BatchAssembler,
+}
+
+impl EventBatchBuilder {
+    /// Creates an empty builder.
+    pub fn new(schema: Arc<Schema>) -> Self {
+        Self::with_capacity(schema, 0)
+    }
+
+    /// Creates an empty builder with per-column capacity.
+    pub fn with_capacity(schema: Arc<Schema>, capacity: usize) -> Self {
+        Self {
+            assembler: BatchAssembler::new(schema, capacity),
         }
     }
 
@@ -703,28 +821,7 @@ impl EventBatchBuilder {
     /// Returns [`LadduDataError`] when the event shape does not match the
     /// schema or its weight presence differs from prior events.
     pub fn push_event(&mut self, event: OwnedEvent) -> LadduDataResult<&mut Self> {
-        if event.p4s.len() != self.schema.n_p4s() {
-            return Err(LadduDataError::Schema(
-                "wrong number of event vec4 values".into(),
-            ));
-        }
-
-        if event.scalars.len() != self.schema.n_scalars() {
-            return Err(LadduDataError::Schema(
-                "wrong number of event scalar values".into(),
-            ));
-        }
-
-        self.weights.push(event.weight, self.len)?;
-
-        for (col, value) in event.p4s.into_iter().enumerate() {
-            self.p4s[col].push(value);
-        }
-        for (col, value) in event.scalars.into_iter().enumerate() {
-            self.scalars[col].push(value);
-        }
-
-        self.len += 1;
+        self.assembler.push_owned(event)?;
         Ok(self)
     }
 
@@ -752,12 +849,7 @@ impl EventBatchBuilder {
     /// Returns [`LadduDataError`] if the accumulated columns or weights have
     /// inconsistent lengths.
     pub fn finish(self) -> LadduDataResult<EventBatch> {
-        let parts = BatchParts::from_columns(
-            self.p4s.into_iter().map(Arc::from).collect(),
-            self.scalars.into_iter().map(Arc::from).collect(),
-            self.weights.finish(),
-        );
-        EventBatch::from_parts(self.schema, parts)
+        self.assembler.finish()
     }
 }
 
@@ -896,5 +988,137 @@ mod tests {
 
         let reweighted = batch.reweight(|row, weight| weight + row as f64);
         assert_eq!(reweighted.weights_column().unwrap(), &[1.0, 2.0, 3.0]);
+    }
+
+    #[test]
+    fn shared_assembler_preserves_weight_mode_and_rejects_transitions() {
+        let schema = Arc::new(Schema::new(["p"], ["x"], true).unwrap());
+        let source = EventBatch::from_events(
+            Arc::clone(&schema),
+            [
+                OwnedEvent::weighted(vec![v(1.0)], vec![1.0], 2.0),
+                OwnedEvent::weighted(vec![v(2.0)], vec![2.0], 3.0),
+            ],
+        )
+        .unwrap();
+
+        let mut explicit = BatchAssembler::new(Arc::clone(&schema), 2);
+        let first = Event {
+            batch: &source,
+            row: 0,
+            weight: source.weights_at(0),
+        };
+        explicit.push_borrowed(first, true).unwrap();
+        let second = Event {
+            batch: &source,
+            row: 1,
+            weight: source.weights_at(1),
+        };
+        let transition = explicit.push_borrowed(second, false);
+        assert!(matches!(
+            transition,
+            Err(LadduDataError::InvalidArgument(_))
+        ));
+        let explicit = explicit.finish().unwrap();
+        assert_eq!(explicit.len(), 1);
+        assert_eq!(explicit.weights_column().unwrap(), &[2.0]);
+
+        let unweighted = EventBatch::from_events(
+            Arc::clone(&schema),
+            [OwnedEvent::new(vec![v(3.0)], vec![3.0])],
+        )
+        .unwrap();
+        let mut implicit = BatchAssembler::new(schema, 1);
+        let event = Event {
+            batch: &unweighted,
+            row: 0,
+            weight: unweighted.weights_at(0),
+        };
+        implicit.push_borrowed(event, false).unwrap();
+        let implicit = implicit.finish().unwrap();
+        assert!(implicit.weights_column().is_none());
+        assert_eq!(implicit.weights_at(0), 1.0);
+    }
+
+    #[test]
+    fn assembly_table_covers_column_shapes_and_observable_sharing() {
+        let cases = [
+            (
+                Arc::new(Schema::new(Vec::<&str>::new(), Vec::<&str>::new(), false).unwrap()),
+                false,
+            ),
+            (
+                Arc::new(Schema::new(["p"], Vec::<&str>::new(), false).unwrap()),
+                false,
+            ),
+            (
+                Arc::new(Schema::new(Vec::<&str>::new(), ["x"], false).unwrap()),
+                false,
+            ),
+            (
+                Arc::new(Schema::new(Vec::<&str>::new(), Vec::<&str>::new(), true).unwrap()),
+                true,
+            ),
+            (Arc::new(Schema::new(["p"], ["x"], true).unwrap()), true),
+        ];
+
+        for (schema, weighted) in cases {
+            let events = (0..2).map(|i| {
+                let p4s = if schema.n_p4s() == 0 {
+                    Vec::new()
+                } else {
+                    vec![v(i as f64)]
+                };
+                let scalars = if schema.n_scalars() == 0 {
+                    Vec::new()
+                } else {
+                    vec![i as f64]
+                };
+                if weighted {
+                    OwnedEvent::weighted(p4s, scalars, 2.0 + i as f64)
+                } else {
+                    OwnedEvent::new(p4s, scalars)
+                }
+            });
+            let batch = EventBatch::from_events(Arc::clone(&schema), events).unwrap();
+            assert_eq!(batch.len(), 2);
+            assert_eq!(batch.weights_column().is_some(), weighted);
+
+            let selected = batch.select(&(0..batch.len()).collect::<Vec<_>>());
+            assert_eq!(selected.len(), batch.len());
+            for col in 0..schema.n_p4s() {
+                assert_eq!(selected.vec4_column(col), batch.vec4_column(col));
+            }
+            for col in 0..schema.n_scalars() {
+                assert_eq!(selected.scalar_column(col), batch.scalar_column(col));
+            }
+            assert_eq!(selected.weights_column(), batch.weights_column());
+
+            let concatenated = EventBatch::concat(&[batch.slice(0, 1), batch.slice(1, 2)]).unwrap();
+            assert_eq!(concatenated.len(), batch.len());
+            for col in 0..schema.n_p4s() {
+                assert_eq!(concatenated.vec4_column(col), batch.vec4_column(col));
+            }
+            for col in 0..schema.n_scalars() {
+                assert_eq!(concatenated.scalar_column(col), batch.scalar_column(col));
+            }
+            assert_eq!(concatenated.weights_column(), batch.weights_column());
+
+            if schema.n_p4s() > 0 || schema.n_scalars() > 0 {
+                let reweighted = batch.reweight(|_, weight| weight + 1.0);
+                if schema.n_p4s() > 0 {
+                    assert_eq!(
+                        reweighted.vec4_column(0).as_ptr(),
+                        batch.vec4_column(0).as_ptr()
+                    );
+                }
+                if schema.n_scalars() > 0 {
+                    assert_eq!(
+                        reweighted.scalar_column(0).as_ptr(),
+                        batch.scalar_column(0).as_ptr()
+                    );
+                }
+            }
+        }
     }
 }
