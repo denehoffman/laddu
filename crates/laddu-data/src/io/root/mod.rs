@@ -12,7 +12,7 @@ use oxyroot::{Branch, ReaderTree, RootFile, WriterTree};
 
 use crate::{
     LadduDataError, LadduDataResult, Name,
-    data::EventBatch,
+    data::{BatchAssembler, EventBatch},
     io::{
         DataFragment, EventSink, EventSource, FragmentedSource, OutputMode, OutputPath, ReadPlan,
         SourceCapabilities, WritePlan, fragmented_batches,
@@ -560,7 +560,6 @@ impl<'a> RootColumnReaders<'a> {
 
         for [e, px, py, pz] in self.p4s.iter_mut() {
             let mut col = Vec::with_capacity(len);
-
             for _ in 0..len {
                 col.push(RealVec4 {
                     e: e.next_f64()?,
@@ -569,33 +568,33 @@ impl<'a> RootColumnReaders<'a> {
                     pz: pz.next_f64()?,
                 });
             }
-
-            p4s.push(Arc::from(col));
+            p4s.push(col);
         }
 
         for reader in self.scalars.iter_mut() {
             let mut col = Vec::with_capacity(len);
-
             for _ in 0..len {
                 col.push(reader.next_f64()?);
             }
-
-            scalars.push(Arc::from(col));
+            scalars.push(col);
         }
 
         let weights = if let Some(reader) = self.weights.as_mut() {
             let mut col = Vec::with_capacity(len);
-
             for _ in 0..len {
                 col.push(reader.next_f64()?);
             }
-
-            Some(Arc::from(col))
+            Some(col)
         } else {
             None
         };
 
-        EventBatch::new(schema, p4s, scalars, weights)
+        BatchAssembler::from_columns(
+            schema,
+            p4s.into_iter().map(Arc::from).collect(),
+            scalars.into_iter().map(Arc::from).collect(),
+            weights.map(Arc::from),
+        )
     }
 }
 

@@ -13,7 +13,7 @@ use parquet::{
 
 use crate::{
     LadduDataError, LadduDataResult, Name,
-    data::EventBatch,
+    data::{BatchAssembler, EventBatch},
     io::SliceBatchIter,
     schema::{ColumnInfo, ColumnType, Schema, SchemaColumnNames},
 };
@@ -111,8 +111,8 @@ pub(super) fn record_batch_to_event_batch(
     options: &ParquetReadOptions,
 ) -> LadduDataResult<EventBatch> {
     let arrow_schema = rb.schema();
-    let mut p4s = Vec::with_capacity(schema.n_p4s());
-    let mut scalars = Vec::with_capacity(schema.n_scalars());
+    let mut p4s: Vec<Arc<[RealVec4]>> = Vec::with_capacity(schema.n_p4s());
+    let mut scalars: Vec<Arc<[f64]>> = Vec::with_capacity(schema.n_scalars());
     for name in schema.p4s() {
         let [e_name, px_name, py_name, pz_name] = options
             .schema_inference
@@ -136,7 +136,7 @@ pub(super) fn record_batch_to_event_batch(
     for name in schema.scalars() {
         scalars.push(read_f64_column(&rb, &arrow_schema, name, options)?.into());
     }
-    let weights = if schema.has_weight() {
+    let weights: Option<Arc<[f64]>> = if schema.has_weight() {
         Some(
             read_f64_column(
                 &rb,
@@ -149,7 +149,7 @@ pub(super) fn record_batch_to_event_batch(
     } else {
         None
     };
-    EventBatch::new(schema, p4s, scalars, weights)
+    BatchAssembler::from_columns(schema, p4s, scalars, weights)
 }
 
 fn read_f64_column(

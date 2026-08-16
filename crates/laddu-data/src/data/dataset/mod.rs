@@ -682,6 +682,7 @@ impl Dataset {
 
 #[cfg(test)]
 mod tests {
+    use super::ops::materialize_batch;
     use super::*;
     use crate::io::{EventBatchIter, EventSource, ReadPlan, memory::MemorySink};
     use laddu_physics::vectors::RealVec4;
@@ -972,6 +973,12 @@ mod tests {
         let bootstrapped_batch = bootstrapped.batches().unwrap().next().unwrap().unwrap();
 
         assert!(bootstrapped_batch.weights_column().is_some());
+
+        let source = weighted_batch(0, 2);
+        let empty_weighted =
+            materialize_batch(&source, &[DatasetOp::Filter(Arc::new(|_| false))], 0).unwrap();
+        assert!(empty_weighted.is_empty());
+        assert_eq!(empty_weighted.weights_column(), Some([].as_slice()));
     }
 
     #[test]
