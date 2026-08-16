@@ -15,11 +15,15 @@ use laddu_data::{
 use laddu_expr::{ExprNode, parameters::ParamValues};
 use laddu_memory::{MemoryFitRequest, MemoryFootprint};
 use laddu_physics::{
-    LadduPhysicsError, channel::Channel, generation::PiecewiseDensity, vectors::RealVec4,
+    LadduPhysicsError,
+    channel::Channel,
+    generation::{PiecewiseDensity, proven_two_body_decay_weight},
+    vectors::RealVec4,
 };
 use laddu_runtime::{
     Execution, MemoryBudget, MemoryDecision, MemoryLease, MemoryState, PreparedModel,
 };
+use maryada::{Interval, IntervalOps};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
@@ -240,6 +244,11 @@ pub enum EnvelopeMode {
         /// Multiplier applied to the maximum pilot weight.
         safety_factor: f64,
     },
+    /// Prove a fixed envelope for the phase-space proposal weight using
+    /// outward-rounded interval arithmetic.
+    ///
+    /// This mode is valid only for unit-model generation.
+    ProvenPhaseSpace,
 }
 
 impl Default for EnvelopeMode {
@@ -258,6 +267,30 @@ pub enum EnvelopeKind {
     Strict,
     /// A bound estimated from pilot proposals.
     Pilot,
+    /// A maryada interval enclosure of the unit-model phase-space weight.
+    ProvenPhaseSpace,
+}
+
+/// Diagnostics produced while proving a unit-model phase-space envelope.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ProvenEnvelopeReport {
+    /// Full nonnegative enclosure of every phase-space proposal weight.
+    pub weight_interval: Interval,
+    /// Upper endpoint used as the rejection-sampling maximum.
+    pub maximum_weight: f64,
+    /// Number of continuous proposal coordinates represented by the domain.
+    pub continuous_dimensions: usize,
+    /// Number of analytical piecewise regions represented by the enclosure.
+    pub piecewise_regions: usize,
+    /// Number of adaptive interval subdivisions; zero in the initial implementation.
+    pub subdivisions: usize,
+}
+
+impl ProvenEnvelopeReport {
+    /// Return the outward-rounded lower and upper weight endpoints.
+    pub fn weight_bounds(&self) -> (f64, f64) {
+        self.weight_interval.bounds()
+    }
 }
 
 /// Diagnostics and aggregate statistics from an event-generation run.
@@ -279,6 +312,18 @@ pub struct GenerationReport {
     pub envelope_kind: Option<EnvelopeKind>,
     /// Number of adaptive envelope expansions.
     pub envelope_updates: usize,
+    /// Proven interval endpoints when the phase-space envelope was established analytically.
+    #[serde(default)]
+    pub proven_weight_interval: Option<(f64, f64)>,
+    /// Continuous proposal-coordinate count for a proven phase-space envelope.
+    #[serde(default)]
+    pub proven_continuous_dimensions: Option<usize>,
+    /// Analytical piecewise-region count for a proven phase-space envelope.
+    #[serde(default)]
+    pub proven_piecewise_regions: Option<usize>,
+    /// Adaptive subdivision count for a proven phase-space envelope.
+    #[serde(default)]
+    pub proven_subdivisions: Option<usize>,
     /// Maximum target weight encountered.
     pub maximum_weight: f64,
     /// Minimum target weight encountered.
@@ -503,6 +548,24 @@ struct GeneratedEvent {
     model_weight: f64,
     target_weight: f64,
     index: u64,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct IntervalInitialMomentum {
+    energy: Interval,
+    momentum: [Interval; 3],
+    mass: f64,
+    weight: Interval,
+    continuous_dimensions: usize,
+    piecewise_regions: usize,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct IntervalSample {
+    value: Interval,
+    weight: Interval,
+    continuous_dimensions: usize,
+    piecewise_regions: usize,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -742,6 +805,178 @@ impl ChannelGenerator {
         Ok(self)
     }
 
+    /// Prove an upper envelope for the model-less phase-space proposal weight.
+    ///
+    /// The returned interval is outward-rounded by maryada. A finite upper
+    /// endpoint is required before it can be used for rejection sampling.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GenerationError`] when a proposal domain is invalid, a
+    /// scattering vertex does not consume initial edges, or interval
+    /// propagation cannot establish a finite positive upper endpoint.
+    pub fn phase_space_envelope(&self) -> GenerationResult<ProvenEnvelopeReport> {
+        let mut initials = HashMap::new();
+        let mut weight = Interval::ONE;
+        let mut continuous_dimensions = 0_usize;
+        let mut piecewise_regions = 1_usize;
+
+        for &edge_index in &self.root_indices {
+            let edge = &self.edges[edge_index];
+            let mass = match edge.mass {
+                EdgeMassPlan::Fixed(mass) => mass,
+                EdgeMassPlan::Proposed(_) => {
+                    return Err(GenerationError::InvalidConfiguration(format!(
+                        "initial edge `{}` cannot use a generated mass",
+                        edge.name
+                    )));
+                }
+            };
+            let source = edge.initial.as_ref().ok_or_else(|| {
+                GenerationError::InvalidConfiguration(format!(
+                    "initial edge `{}` has no momentum source",
+                    edge.name
+                ))
+            })?;
+            let initial = interval_initial_momentum(source, mass)?;
+            weight *= initial.weight;
+            continuous_dimensions =
+                continuous_dimensions.saturating_add(initial.continuous_dimensions);
+            piecewise_regions = piecewise_regions.saturating_mul(initial.piecewise_regions);
+            initials.insert(edge_index, initial);
+        }
+
+        let root_s = interval_invariant_mass(
+            self.root_indices
+                .iter()
+                .map(|edge| initials[edge])
+                .collect::<Vec<_>>()
+                .as_slice(),
+        );
+        if root_s.is_empty() || !root_s.sup().is_finite() || root_s.sup() <= 0.0 {
+            return Err(GenerationError::InvalidConfiguration(format!(
+                "initial-state invariant-mass enclosure {root_s} is not finite and positive"
+            )));
+        }
+
+        let mut masses = Vec::with_capacity(self.edges.len());
+        for edge in &self.edges {
+            match edge.mass {
+                EdgeMassPlan::Fixed(mass) => masses.push(Interval::from(mass)),
+                EdgeMassPlan::Proposed(MassProposal::Fixed { mass }) => {
+                    if mass > root_s.sup() {
+                        return Err(GenerationError::InvalidConfiguration(format!(
+                            "fixed generated mass {mass} for edge `{}` exceeds the initial invariant-mass enclosure {root_s}",
+                            edge.name
+                        )));
+                    }
+                    masses.push(Interval::from(mass));
+                }
+                EdgeMassPlan::Proposed(MassProposal::Uniform { low, high }) => {
+                    let support_low = low.max(0.0);
+                    let support_high = high.min(root_s.sup());
+                    if !support_low.is_finite()
+                        || !support_high.is_finite()
+                        || support_high <= support_low
+                    {
+                        return Err(GenerationError::InvalidConfiguration(format!(
+                            "uniform generated mass for edge `{}` has no finite support inside [0, {}]",
+                            edge.name,
+                            root_s.sup()
+                        )));
+                    }
+                    let minimum_width = (high.min(root_s.inf()) - support_low).max(0.0);
+                    let maximum_width = support_high - support_low;
+                    weight *= Interval::new(minimum_width, maximum_width);
+                    masses.push(Interval::new(support_low, support_high));
+                    continuous_dimensions = continuous_dimensions.saturating_add(1);
+                }
+            }
+        }
+
+        for vertex in &self.vertices {
+            let (dimensions, regions) = vertex.proposal.proven_domain_metadata();
+            continuous_dimensions = continuous_dimensions.saturating_add(dimensions);
+            piecewise_regions = piecewise_regions.saturating_mul(regions);
+            let vertex_weight = match &vertex.proposal {
+                VertexProposal::TwoBodyDecay => {
+                    if vertex.incoming.len() != 1 || vertex.outgoing.len() != 2 {
+                        return Err(GenerationError::InvalidConfiguration(format!(
+                            "vertex `{}` is not a one-to-two decay",
+                            vertex.name
+                        )));
+                    }
+                    proven_two_body_decay_weight(
+                        masses[vertex.incoming[0]],
+                        masses[vertex.outgoing[0]],
+                        masses[vertex.outgoing[1]],
+                    )
+                }
+                VertexProposal::TwoBodyScattering { proposal } => {
+                    if vertex.incoming.len() != 2
+                        || vertex.outgoing.len() != 2
+                        || vertex
+                            .incoming
+                            .iter()
+                            .any(|edge| !self.root_indices.contains(edge))
+                    {
+                        return Err(GenerationError::InvalidConfiguration(format!(
+                            "proven two-body scattering at vertex `{}` currently requires two initial incoming edges",
+                            vertex.name
+                        )));
+                    }
+                    proposal.proven_weight_bound(
+                        root_s,
+                        [
+                            (
+                                self.edges[vertex.incoming[0]].name.as_str(),
+                                masses[vertex.incoming[0]],
+                            ),
+                            (
+                                self.edges[vertex.incoming[1]].name.as_str(),
+                                masses[vertex.incoming[1]],
+                            ),
+                        ],
+                        [
+                            (
+                                self.edges[vertex.outgoing[0]].name.as_str(),
+                                masses[vertex.outgoing[0]],
+                            ),
+                            (
+                                self.edges[vertex.outgoing[1]].name.as_str(),
+                                masses[vertex.outgoing[1]],
+                            ),
+                        ],
+                    )?
+                }
+            };
+            weight *= vertex_weight;
+        }
+
+        for (_, source) in &self.scalar_sources {
+            let sample = interval_scalar_sample(source)?;
+            weight *= sample.weight;
+            continuous_dimensions =
+                continuous_dimensions.saturating_add(sample.continuous_dimensions);
+            piecewise_regions = piecewise_regions.saturating_mul(sample.piecewise_regions);
+        }
+
+        let upper = weight.sup();
+        if weight.is_empty() || !upper.is_finite() || upper <= 0.0 {
+            return Err(GenerationError::InvalidConfiguration(format!(
+                "phase-space proposal-weight enclosure {weight} has no finite positive upper endpoint"
+            )));
+        }
+        let weight_interval = Interval::new(0.0, upper);
+        Ok(ProvenEnvelopeReport {
+            weight_interval,
+            maximum_weight: upper,
+            continuous_dimensions,
+            piecewise_regions,
+            subdivisions: 0,
+        })
+    }
+
     /// Generates weighted events and writes them to `sink`.
     ///
     /// # Errors
@@ -801,10 +1036,22 @@ impl ChannelGenerator {
     pub fn generate_unweighted_to(
         &self,
         config: UnweightedConfig,
-        model: &ModelEvaluator,
+        model: Option<&ModelEvaluator>,
         sink: &mut dyn EventSink,
     ) -> GenerationResult<GenerationReport> {
         validate_common(config.events)?;
+        if matches!(config.envelope, EnvelopeMode::ProvenPhaseSpace) && model.is_some() {
+            return Err(GenerationError::InvalidConfiguration(
+                "the proven phase-space envelope is valid only when no model is supplied".into(),
+            ));
+        }
+        if matches!(config.envelope, EnvelopeMode::ProvenPhaseSpace)
+            && !matches!(config.envelope_overflow, EnvelopeOverflow::Error)
+        {
+            return Err(GenerationError::InvalidConfiguration(
+                "the proven phase-space envelope requires envelope_overflow=Error".into(),
+            ));
+        }
         if config
             .max_proposals
             .is_some_and(|max_proposals| max_proposals < config.events)
@@ -817,12 +1064,12 @@ impl ChannelGenerator {
         let schema = self.output_schema(false, config.diagnostics)?;
         let pilot_limit = match config.envelope {
             EnvelopeMode::Pilot { proposals, .. } => proposals,
-            EnvelopeMode::Strict { .. } => 0,
+            EnvelopeMode::Strict { .. } | EnvelopeMode::ProvenPhaseSpace => 0,
         };
         let (decision, _memory) = self.generation_memory(
             &schema,
             config.memory,
-            Some(model),
+            model,
             GenerationMemoryUse {
                 event_limit: config.events.max(pilot_limit),
                 resident_events: if matches!(
@@ -848,6 +1095,7 @@ impl ChannelGenerator {
                 decision.chunk_events
             )));
         }
+        let mut proven_report = None;
         let (mut bound, kind, pilot_count) = match config.envelope {
             EnvelopeMode::Strict { max_weight } => {
                 validate_bound(max_weight)?;
@@ -861,7 +1109,7 @@ impl ChannelGenerator {
                     return Err(GenerationError::InvalidConfiguration("pilot proposals must be nonzero and safety_factor must be finite and greater than one".into()));
                 }
                 let mut adaptation_pilot = self.propose_range(0, proposals, config.seed, 1)?;
-                self.apply_model(&mut adaptation_pilot, Some(model))?;
+                self.apply_model(&mut adaptation_pilot, model)?;
                 let learned = self.learn_mass_adaptations(&adaptation_pilot)?;
                 let has_adaptation = learned.masses.iter().any(Option::is_some)
                     || learned.vertices.iter().any(Option::is_some);
@@ -878,7 +1126,7 @@ impl ChannelGenerator {
                     adaptation_pilot
                 };
                 if has_adaptation {
-                    self.apply_model(&mut envelope_pilot, Some(model))?;
+                    self.apply_model(&mut envelope_pilot, model)?;
                     adaptations = Some(learned);
                 }
                 let observed = envelope_pilot
@@ -890,6 +1138,12 @@ impl ChannelGenerator {
                     EnvelopeKind::Pilot,
                     proposals * if has_adaptation { 2 } else { 1 },
                 )
+            }
+            EnvelopeMode::ProvenPhaseSpace => {
+                let report = self.phase_space_envelope()?;
+                let maximum = report.maximum_weight;
+                proven_report = Some(report);
+                (maximum, EnvelopeKind::ProvenPhaseSpace, 0)
             }
         };
         if let EnvelopeOverflow::Grow { safety_factor } = config.envelope_overflow
@@ -904,6 +1158,12 @@ impl ChannelGenerator {
         report.envelope = Some(bound);
         report.envelope_kind = Some(kind);
         report.pilot_proposals = pilot_count;
+        if let Some(proven) = proven_report {
+            report.proven_weight_interval = Some(proven.weight_interval.bounds());
+            report.proven_continuous_dimensions = Some(proven.continuous_dimensions);
+            report.proven_piecewise_regions = Some(proven.piecewise_regions);
+            report.proven_subdivisions = Some(proven.subdivisions);
+        }
         let mut proposal_index = 0_usize;
         let mut buffered = Vec::new();
         let work_batch = decision.chunk_events.max(1);
@@ -922,7 +1182,7 @@ impl ChannelGenerator {
                 0,
                 adaptations.as_ref(),
             )?;
-            self.apply_model(&mut events, Some(model))?;
+            self.apply_model(&mut events, model)?;
             let remaining_before_overflow = config.events - report.produced;
             if let Some(last_needed) = events
                 .iter()
@@ -1041,7 +1301,7 @@ impl ChannelGenerator {
     pub fn generate_unweighted_dataset(
         &self,
         config: UnweightedConfig,
-        model: &ModelEvaluator,
+        model: Option<&ModelEvaluator>,
     ) -> GenerationResult<(Dataset, GenerationReport)> {
         let mut sink = MemorySink::new();
         let report = self.generate_unweighted_to(config, model, &mut sink)?;
@@ -1641,6 +1901,142 @@ fn topological_plan(channel: &Channel, roots: &HashSet<String>) -> GenerationRes
     Ok(plan)
 }
 
+fn interval_scalar_sample(source: &ScalarSource) -> GenerationResult<IntervalSample> {
+    match source {
+        ScalarSource::Constant(value) => {
+            source.support()?;
+            Ok(IntervalSample {
+                value: Interval::from(*value),
+                weight: Interval::ONE,
+                continuous_dimensions: 0,
+                piecewise_regions: 1,
+            })
+        }
+        ScalarSource::Uniform { low, high } => {
+            source.support()?;
+            Ok(IntervalSample {
+                value: Interval::new(*low, *high),
+                weight: Interval::from(high - low),
+                continuous_dimensions: 1,
+                piecewise_regions: 1,
+            })
+        }
+        ScalarSource::Histogram(histogram) => {
+            let (low, high) = source.support()?;
+            let total: f64 = histogram.counts().iter().sum();
+            let mut minimum_inverse = f64::INFINITY;
+            let mut maximum_inverse = 0.0_f64;
+            let mut regions = 0_usize;
+            for (count, edges) in histogram
+                .counts()
+                .iter()
+                .zip(histogram.bin_edges().windows(2))
+            {
+                if *count <= 0.0 {
+                    continue;
+                }
+                let width = Interval::from(edges[1]) - Interval::from(edges[0]);
+                let density = Interval::from(*count) / (width * total);
+                let inverse_density = density.recip();
+                minimum_inverse = minimum_inverse.min(inverse_density.inf());
+                maximum_inverse = maximum_inverse.max(inverse_density.sup());
+                regions += 1;
+            }
+            if !minimum_inverse.is_finite()
+                || !maximum_inverse.is_finite()
+                || maximum_inverse <= 0.0
+            {
+                return Err(GenerationError::InvalidConfiguration(
+                    "histogram source has no finite positive-density region".into(),
+                ));
+            }
+            Ok(IntervalSample {
+                value: Interval::new(low, high),
+                weight: Interval::new(minimum_inverse, maximum_inverse),
+                continuous_dimensions: 1,
+                piecewise_regions: regions,
+            })
+        }
+    }
+}
+
+fn interval_initial_momentum(
+    source: &InitialMomentum,
+    mass: f64,
+) -> GenerationResult<IntervalInitialMomentum> {
+    let (energy, momentum, weight, continuous_dimensions, piecewise_regions) = match source {
+        InitialMomentum::P4(p4) => (
+            Interval::from(p4.e()),
+            [
+                Interval::from(p4.px()),
+                Interval::from(p4.py()),
+                Interval::from(p4.pz()),
+            ],
+            Interval::ONE,
+            0,
+            1,
+        ),
+        InitialMomentum::Momentum(momentum) => {
+            let p2 = momentum.px() * momentum.px()
+                + momentum.py() * momentum.py()
+                + momentum.pz() * momentum.pz();
+            (
+                Interval::from((p2 + mass * mass).sqrt()),
+                [
+                    Interval::from(momentum.px()),
+                    Interval::from(momentum.py()),
+                    Interval::from(momentum.pz()),
+                ],
+                Interval::ONE,
+                0,
+                1,
+            )
+        }
+        InitialMomentum::EnergyDirection { energy, direction } => {
+            let sample = interval_scalar_sample(energy)?;
+            let direction = direction.unit()?;
+            let magnitude = (sample.value.sqr() - mass * mass).sqrt();
+            (
+                sample.value,
+                [
+                    magnitude * direction.px(),
+                    magnitude * direction.py(),
+                    magnitude * direction.pz(),
+                ],
+                sample.weight,
+                sample.continuous_dimensions,
+                sample.piecewise_regions,
+            )
+        }
+    };
+    Ok(IntervalInitialMomentum {
+        energy,
+        momentum,
+        mass,
+        weight,
+        continuous_dimensions,
+        piecewise_regions,
+    })
+}
+
+fn interval_invariant_mass(initials: &[IntervalInitialMomentum]) -> Interval {
+    let mut invariant_squared = Interval::ZERO;
+    for initial in initials {
+        invariant_squared += initial.mass * initial.mass;
+    }
+    for first in 0..initials.len() {
+        for second in (first + 1)..initials.len() {
+            let lhs = initials[first];
+            let rhs = initials[second];
+            let spatial_dot = lhs.momentum[0] * rhs.momentum[0]
+                + lhs.momentum[1] * rhs.momentum[1]
+                + lhs.momentum[2] * rhs.momentum[2];
+            invariant_squared += 2.0 * (lhs.energy * rhs.energy - spatial_dot);
+        }
+    }
+    invariant_squared.sqrt()
+}
+
 fn validate_common(events: usize) -> GenerationResult<()> {
     if events == 0 {
         return Err(GenerationError::InvalidConfiguration(
@@ -1739,7 +2135,7 @@ fn update_report(report: &mut GenerationReport, events: &[GeneratedEvent]) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use laddu_physics::{quantum::ParticleProperties, vectors::RealVec3};
+    use laddu_physics::{histogram::Histogram, quantum::ParticleProperties, vectors::RealVec3};
 
     fn decay_generator() -> ChannelGenerator {
         let mut channel = Channel::new("decay");
@@ -1760,6 +2156,158 @@ mod tests {
             .incoming(["parent"])
             .outgoing(["a", "b"]);
         ChannelGenerator::new(channel).unwrap()
+    }
+
+    fn closure_generator() -> ChannelGenerator {
+        let photon = ParticleProperties::unknown().with_mass(0.0);
+        let proton = ParticleProperties::unknown().with_mass(0.938_272_088_16);
+        let kaon = ParticleProperties::unknown().with_mass(0.497_611);
+        let mut channel = Channel::new("closure envelope");
+        channel
+            .edge("gamma")
+            .properties(&photon)
+            .initial_energy_source_direction(
+                ScalarSource::uniform(8.0, 9.0),
+                RealVec3::new(0.0, 0.0, 1.0),
+            );
+        channel
+            .edge("target")
+            .properties(&proton)
+            .initial_momentum(RealVec3::new(0.0, 0.0, 0.0));
+        channel
+            .edge("x")
+            .mass_proposal(MassProposal::uniform(2.0 * 0.497_611, 2.0))
+            .generated_only();
+        channel.edge("recoil").properties(&proton);
+        channel.edge("ks1").properties(&kaon);
+        channel.edge("ks2").properties(&kaon);
+        channel
+            .vertex("production")
+            .incoming(["gamma", "target"])
+            .outgoing(["x", "recoil"])
+            .generation(VertexProposal::t_exchange(
+                ("gamma", "x"),
+                TDistribution::mixture([
+                    (0.2, TComponent::Uniform),
+                    (0.8, TComponent::Exponential { slope: 4.0 }),
+                ]),
+            ));
+        channel
+            .vertex("decay")
+            .incoming(["x"])
+            .outgoing(["ks1", "ks2"]);
+        ChannelGenerator::new(channel).unwrap()
+    }
+
+    #[test]
+    fn interval_scalar_and_initial_bounds_cover_builtin_samples() {
+        let histogram = Histogram::new(vec![1.0, 0.0, 3.0], vec![8.0, 8.25, 8.75, 9.0]).unwrap();
+        let sources = [
+            ScalarSource::constant(8.5),
+            ScalarSource::uniform(8.0, 9.0),
+            ScalarSource::histogram(histogram),
+        ];
+        for (index, source) in sources.into_iter().enumerate() {
+            let scalar_bound = interval_scalar_sample(&source).unwrap();
+            let initial_source = InitialMomentum::energy_source_direction(
+                source.clone(),
+                RealVec3::new(0.0, 0.0, 1.0),
+            );
+            let initial_bound = interval_initial_momentum(&initial_source, 0.5).unwrap();
+            let mut rng = ProposalRng::new(500 + index as u64);
+            for _ in 0..2_000 {
+                let scalar = source.sample(&mut rng).unwrap();
+                assert!(scalar_bound.value.contains(scalar.value));
+                assert!(scalar_bound.weight.contains(scalar.weight));
+                let initial = initial_source.sample_prevalidated(0.5, &mut rng).unwrap();
+                assert!(initial_bound.energy.contains(initial.p4.e()));
+                assert!(initial_bound.momentum[2].contains(initial.p4.pz()));
+                assert!(initial_bound.weight.contains(initial.weight));
+            }
+        }
+    }
+
+    #[test]
+    fn proven_decay_envelope_contains_proposals_and_unweights_without_a_model() {
+        let generator = decay_generator();
+        let proven = generator.phase_space_envelope().unwrap();
+        let proposals = generator.propose_range(0, 2_000, 41, 0).unwrap();
+        assert!(
+            proposals
+                .iter()
+                .all(|event| proven.weight_interval.contains(event.proposal_weight))
+        );
+
+        let mut config = UnweightedConfig::new(64).with_max_proposals(10_000);
+        config.seed = 41;
+        config.envelope = EnvelopeMode::ProvenPhaseSpace;
+        let (_, report) = generator.generate_unweighted_dataset(config, None).unwrap();
+        assert_eq!(report.envelope_kind, Some(EnvelopeKind::ProvenPhaseSpace));
+        assert_eq!(report.proven_weight_interval, Some(proven.weight_bounds()));
+        assert!(report.maximum_weight <= proven.maximum_weight);
+    }
+
+    #[test]
+    fn proven_unweighting_is_thread_and_memory_budget_independent() {
+        let generator = decay_generator();
+        let mut first = UnweightedConfig::new(32).with_max_proposals(1_000);
+        first.seed = 57;
+        first.memory = MemoryBudget::Bytes(4_096);
+        first.envelope = EnvelopeMode::ProvenPhaseSpace;
+        let mut second = first;
+        second.memory = MemoryBudget::Bytes(16_384);
+        let one_thread = rayon::ThreadPoolBuilder::new()
+            .num_threads(1)
+            .build()
+            .unwrap();
+        let four_threads = rayon::ThreadPoolBuilder::new()
+            .num_threads(4)
+            .build()
+            .unwrap();
+        let (a, _) = one_thread
+            .install(|| generator.generate_unweighted_dataset(first, None))
+            .unwrap();
+        let (b, _) = four_threads
+            .install(|| generator.generate_unweighted_dataset(second, None))
+            .unwrap();
+        let mut av = Vec::new();
+        a.for_each_event(|event| av.push(event.p4(0))).unwrap();
+        let mut bv = Vec::new();
+        b.for_each_event(|event| bv.push(event.p4(0))).unwrap();
+        assert_eq!(av, bv);
+    }
+
+    #[test]
+    fn closure_phase_space_bound_contains_sample_and_reports_efficiency() {
+        let generator = closure_generator();
+        let proven = generator.phase_space_envelope().unwrap();
+        let mut weights = generator
+            .propose_range(0, 20_000, 73, 0)
+            .unwrap()
+            .into_iter()
+            .map(|event| event.proposal_weight)
+            .collect::<Vec<_>>();
+        assert!(
+            weights
+                .iter()
+                .all(|weight| proven.weight_interval.contains(*weight))
+        );
+        weights.sort_by(f64::total_cmp);
+        let quantile = |fraction: f64| {
+            weights[((weights.len() - 1) as f64 * fraction).round() as usize]
+                / proven.maximum_weight
+        };
+        let mean = weights.iter().sum::<f64>() / weights.len() as f64;
+        eprintln!(
+            "closure proven-envelope ratios: max={:.6e}, mean={:.6e}, p50={:.6e}, p90={:.6e}, p99={:.6e}",
+            weights[weights.len() - 1] / proven.maximum_weight,
+            mean / proven.maximum_weight,
+            quantile(0.50),
+            quantile(0.90),
+            quantile(0.99),
+        );
+        assert!(proven.maximum_weight.is_finite());
+        assert_eq!(proven.subdivisions, 0);
     }
 
     #[test]
@@ -1816,10 +2364,10 @@ mod tests {
             .build()
             .unwrap();
         let (a, _) = one_thread
-            .install(|| generator.generate_unweighted_dataset(first, &evaluator))
+            .install(|| generator.generate_unweighted_dataset(first, Some(&evaluator)))
             .unwrap();
         let (b, _) = four_threads
-            .install(|| generator.generate_unweighted_dataset(second, &evaluator))
+            .install(|| generator.generate_unweighted_dataset(second, Some(&evaluator)))
             .unwrap();
         let mut av = Vec::new();
         a.for_each_event(|event| av.push(event.p4(0))).unwrap();
@@ -1869,7 +2417,7 @@ mod tests {
                     envelope: EnvelopeMode::Strict { max_weight: 1e-12 },
                     ..UnweightedConfig::new(2).with_max_proposals(10)
                 },
-                &evaluator,
+                Some(&evaluator),
             ),
             Err(GenerationError::EnvelopeOverflow { .. })
         ));
@@ -1891,7 +2439,7 @@ mod tests {
         };
         assert_eq!(config.max_proposals, None);
         let (_, report) = generator
-            .generate_unweighted_dataset(config, &evaluator)
+            .generate_unweighted_dataset(config, Some(&evaluator))
             .unwrap();
         assert_eq!(report.produced, 32);
         assert!(report.proposals >= 32);
@@ -1913,7 +2461,7 @@ mod tests {
                     envelope: EnvelopeMode::Strict { max_weight: 1.0 },
                     ..UnweightedConfig::new(16).with_max_proposals(16)
                 },
-                &evaluator,
+                Some(&evaluator),
             ),
             Err(GenerationError::Exhausted {
                 requested: 16,
@@ -1937,7 +2485,7 @@ mod tests {
         config.envelope = EnvelopeMode::Strict { max_weight: 1e-12 };
         config.envelope_overflow = EnvelopeOverflow::Grow { safety_factor: 1.5 };
         let (dataset, report) = generator
-            .generate_unweighted_dataset(config, &evaluator)
+            .generate_unweighted_dataset(config, Some(&evaluator))
             .unwrap();
 
         let mut events = 0;

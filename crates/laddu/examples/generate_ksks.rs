@@ -63,13 +63,14 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let mut unweighted_parquet = ParquetSink::create(output.join("ksks_unweighted.parquet"));
     let report =
-        generator.generate_unweighted_to(unweighted, &evaluator, &mut unweighted_parquet)?;
+        generator.generate_unweighted_to(unweighted, Some(&evaluator), &mut unweighted_parquet)?;
     print_report("unweighted Parquet", &report);
 
     let mut unweighted_root = RootSink::builder(output.join("ksks_unweighted.root"))
         .tree("events")
         .build();
-    let report = generator.generate_unweighted_to(unweighted, &evaluator, &mut unweighted_root)?;
+    let report =
+        generator.generate_unweighted_to(unweighted, Some(&evaluator), &mut unweighted_root)?;
     print_report("unweighted ROOT", &report);
 
     println!("wrote four {EVENTS}-event samples to {}", output.display());

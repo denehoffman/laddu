@@ -22,6 +22,7 @@ laddu-expr.workspace = true
 laddu-memory.workspace = true
 laddu-physics.workspace = true
 laddu-runtime.workspace = true
+maryada.workspace = true
 rayon.workspace = true
 serde.workspace = true
 smallvec.workspace = true

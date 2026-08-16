@@ -130,6 +130,85 @@ impl TComponent {
         }
     }
 
+    fn proven_density_floor(
+        &self,
+        maximum_width: f64,
+        maximum_t: f64,
+    ) -> LadduPhysicsResult<f64> {
+        if !maximum_width.is_finite() || maximum_width <= 0.0 {
+            return Err(LadduPhysicsError::invalid_relation(
+                "proven t-density bound requires a finite positive support width",
+            ));
+        }
+        match self {
+            Self::Uniform => Ok((Interval::ONE / maximum_width).inf()),
+            Self::Exponential { slope } => {
+                if !slope.is_finite() {
+                    return Err(LadduPhysicsError::invalid_value(
+                        "exponential t slope",
+                        "finite",
+                        slope,
+                    ));
+                }
+                let magnitude = slope.abs();
+                if magnitude < 1e-10 {
+                    Ok((Interval::ONE / maximum_width).inf())
+                } else {
+                    let magnitude = Interval::from(magnitude);
+                    let denominator = (magnitude * maximum_width).exp() - 1.0;
+                    Ok((magnitude / denominator).inf())
+                }
+            }
+            Self::Pole {
+                exchange_mass,
+                power,
+            } => {
+                if !exchange_mass.is_finite()
+                    || *exchange_mass < 0.0
+                    || !power.is_finite()
+                    || *power <= 0.0
+                {
+                    return Err(LadduPhysicsError::invalid_relation(
+                        "pole mass and power must be finite, with nonnegative mass and positive power",
+                    ));
+                }
+                // For x = m_ex^2 - t > 0, q(t) is proportional to x^-p.
+                // Over any interval of width W, min(q) >= (a / b)^p / W,
+                // where a and b are the smallest and largest possible x.
+                let a = Interval::from(*exchange_mass).sqr() - maximum_t;
+                if !a.inf().is_finite() || a.inf() <= 0.0 {
+                    return Ok(0.0);
+                }
+                let ratio = a / (a + maximum_width);
+                Ok((ratio.pow(Interval::from(*power)) / maximum_width).inf())
+            }
+            Self::Histogram { histogram } => {
+                let total = histogram
+                    .counts()
+                    .iter()
+                    .fold(Interval::ZERO, |sum, count| sum + *count);
+                let minimum_height = histogram
+                    .counts()
+                    .iter()
+                    .zip(histogram.bin_edges().windows(2))
+                    .filter(|(count, _)| **count > 0.0)
+                    .map(|(count, edges)| {
+                        Interval::from(*count)
+                            / (Interval::from(edges[1]) - Interval::from(edges[0]))
+                    })
+                    .reduce(IntervalOps::min)
+                    .unwrap_or(Interval::EMPTY);
+                let floor = minimum_height / total;
+                if !floor.inf().is_finite() || floor.inf() <= 0.0 {
+                    return Err(LadduPhysicsError::invalid_relation(
+                        "histogram t density has no positive finite support",
+                    ));
+                }
+                Ok(floor.inf())
+            }
+        }
+    }
+
     fn histogram_density(histogram: &Histogram) -> LadduPhysicsResult<PiecewiseDensity> {
         if histogram
             .counts()
@@ -314,6 +393,44 @@ impl TDistribution {
         }
         Ok((t, density))
     }
+
+    fn proven_density_floor(
+        &self,
+        maximum_width: f64,
+        maximum_t: f64,
+    ) -> LadduPhysicsResult<f64> {
+        let normalization = self.normalization()?;
+        let mut everywhere_floor = Interval::ZERO;
+        let mut selected_floor = f64::INFINITY;
+        for (weight, component) in &self.components {
+            let weighted_floor = (Interval::from(*weight / normalization)
+                * component.proven_density_floor(maximum_width, maximum_t)?)
+            .inf();
+            if matches!(component, TComponent::Histogram { .. }) {
+                selected_floor = selected_floor.min(weighted_floor);
+            } else {
+                everywhere_floor += weighted_floor;
+            }
+        }
+        if everywhere_floor.inf() > 0.0 {
+            Ok(everywhere_floor.inf())
+        } else {
+            Ok(selected_floor)
+        }
+    }
+
+    fn proven_piecewise_regions(&self) -> usize {
+        self.components
+            .iter()
+            .map(|(_, component)| match component {
+                TComponent::Histogram { histogram } => {
+                    histogram.counts().iter().filter(|count| **count > 0.0).count()
+                }
+                _ => 1,
+            })
+            .sum::<usize>()
+            .max(1)
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -431,6 +548,73 @@ impl TwoBodyScattering {
             weight: 1.0 / (16.0 * PI * root_s * p_in * q_t),
         })
     }
+
+    /// Enclose the proposal correction for every two-body scattering point in
+    /// the supplied mass box.
+    #[doc(hidden)]
+    pub fn proven_weight_bound(
+        &self,
+        root_s: Interval,
+        incoming: [(&str, Interval); 2],
+        outgoing: [(&str, Interval); 2],
+    ) -> LadduPhysicsResult<Interval> {
+        let paired_in = incoming
+            .iter()
+            .position(|(name, _)| *name == self.incoming_edge)
+            .ok_or_else(|| {
+                LadduPhysicsError::invalid_relation(format!(
+                    "unknown incoming t-pairing edge `{}`",
+                    self.incoming_edge
+                ))
+            })?;
+        let paired_out = outgoing
+            .iter()
+            .position(|(name, _)| *name == self.outgoing_edge)
+            .ok_or_else(|| {
+                LadduPhysicsError::invalid_relation(format!(
+                    "unknown outgoing t-pairing edge `{}`",
+                    self.outgoing_edge
+                ))
+            })?;
+        let incoming_masses = [incoming[0].1, incoming[1].1];
+        let outgoing_masses = [outgoing[0].1, outgoing[1].1];
+        let p_in = proven_two_body_momentum(root_s, incoming_masses[0], incoming_masses[1]);
+        let p_out = proven_two_body_momentum(root_s, outgoing_masses[0], outgoing_masses[1]);
+        let physical_width = 4.0 * p_in * p_out;
+        let maximum_width = physical_width.sup();
+        let m1 = incoming_masses[paired_in];
+        let m3 = outgoing_masses[paired_out];
+        let e1 = (m1.sqr() + p_in.sqr()).sqrt();
+        let e3 = (m3.sqr() + p_out.sqr()).sqrt();
+        let center = m1.sqr() + m3.sqr() - 2.0 * e1 * e3;
+        let mut maximum_t = (center + 2.0 * p_in * p_out).sup();
+        if let Some(t_max) = self.distribution.t_max {
+            maximum_t = maximum_t.min(t_max);
+        }
+        let density_floor = self
+            .distribution
+            .proven_density_floor(maximum_width, maximum_t)?;
+        if !density_floor.is_finite() || density_floor <= 0.0 {
+            return Err(LadduPhysicsError::invalid_relation(
+                "momentum-transfer proposal has no finite positive global density floor",
+            ));
+        }
+        let result = Interval::ONE / (16.0 * PI * root_s * p_in * density_floor);
+        Ok(Interval::new(0.0, result.sup()))
+    }
+
+
+    #[doc(hidden)]
+    pub fn proven_domain_metadata(&self) -> (usize, usize) {
+        (2, self.distribution.proven_piecewise_regions())
+    }
+}
+
+fn proven_two_body_momentum(parent: Interval, first: Interval, second: Interval) -> Interval {
+    let parent_squared = parent.sqr();
+    let radicand = (parent_squared - (first + second).sqr())
+        * (parent_squared - (first - second).sqr());
+    radicand.sqrt() / (2.0 * parent)
 }
 
 #[cfg(test)]
@@ -566,6 +750,97 @@ mod tests {
         assert!((before.pz - after.pz).abs() < 1e-12);
         assert!((result.outgoing[0].m().unwrap() - 0.5).abs() < 1e-12);
         assert!((result.outgoing[1].m().unwrap() - 0.7).abs() < 1e-12);
+    }
+
+    #[test]
+    fn proven_scattering_bounds_cover_every_builtin_transfer_family() {
+        let histogram = Histogram::new(
+            vec![1.0, 0.0, 3.0, 2.0],
+            vec![-8.0, -4.0, -2.0, -0.5, 0.0],
+        )
+        .unwrap();
+        let distributions = [
+            TDistribution::uniform(),
+            TDistribution::exponential(3.0),
+            TDistribution::pole(1.0, 2.0),
+            TDistribution::histogram(histogram.clone()),
+            TDistribution::mixture([
+                (0.2, TComponent::Uniform),
+                (0.3, TComponent::Exponential { slope: 3.0 }),
+                (
+                    0.2,
+                    TComponent::Pole {
+                        exchange_mass: 1.0,
+                        power: 2.0,
+                    },
+                ),
+                (0.3, TComponent::Histogram { histogram }),
+            ]),
+        ];
+        let incoming = [
+            NamedMomentum {
+                name: "beam",
+                p4: RealVec4::new(1.5, 0.0, 0.0, 1.5),
+            },
+            NamedMomentum {
+                name: "target",
+                p4: RealVec4::new(1.5, 0.0, 0.0, -1.5),
+            },
+        ];
+        let outgoing = [
+            NamedMass {
+                name: "x",
+                mass: 0.5,
+            },
+            NamedMass {
+                name: "r",
+                mass: 0.7,
+            },
+        ];
+        for (index, distribution) in distributions.into_iter().enumerate() {
+            let proposal = TwoBodyScattering::t_exchange(("beam", "x"), distribution);
+            let bound = proposal
+                .proven_weight_bound(
+                    Interval::from(3.0),
+                    [
+                        ("beam", Interval::from(0.0)),
+                        ("target", Interval::from(0.0)),
+                    ],
+                    [
+                        ("x", Interval::from(0.5)),
+                        ("r", Interval::from(0.7)),
+                    ],
+                )
+                .unwrap();
+            let mut rng = ProposalRng::new(100 + index as u64);
+            for _ in 0..2_000 {
+                let sampled = proposal.propose(&incoming, &outgoing, &mut rng).unwrap();
+                assert!(bound.contains(sampled.weight), "{bound} missed {}", sampled.weight);
+            }
+        }
+    }
+
+    #[test]
+    fn proven_massless_pole_rejects_a_domain_touching_the_singularity() {
+        let proposal = TwoBodyScattering::t_exchange(
+            ("beam", "x"),
+            TDistribution::pole(0.0, 1.0),
+        );
+        assert!(
+            proposal
+                .proven_weight_bound(
+                    Interval::from(3.0),
+                    [
+                        ("beam", Interval::from(0.0)),
+                        ("target", Interval::from(0.0)),
+                    ],
+                    [
+                        ("x", Interval::from(0.0)),
+                        ("r", Interval::from(0.0)),
+                    ],
+                )
+                .is_err()
+        );
     }
 
     #[test]

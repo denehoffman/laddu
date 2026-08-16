@@ -155,7 +155,7 @@ pub fn run_closure(
             },
             envelope_overflow: EnvelopeOverflow::Grow { safety_factor: 1.5 },
         },
-        &evaluator,
+        Some(&evaluator),
     )?;
     let data_generation_time = data_start.elapsed();
 

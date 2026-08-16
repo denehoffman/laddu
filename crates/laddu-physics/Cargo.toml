@@ -20,6 +20,7 @@ laddu-expr.workspace = true
 serde.workspace = true
 nalgebra.workspace = true
 thiserror.workspace = true
+maryada.workspace = true
 num.workspace = true
 auto_ops.workspace = true
 approx.workspace = true
