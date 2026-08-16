@@ -1,18 +1,247 @@
-use std::mem::size_of;
 use std::sync::Arc;
+use std::{
+    fmt,
+    mem::{size_of, size_of_val},
+};
 
 use laddu_physics::vectors::RealVec4;
 
 use crate::{LadduDataError, LadduDataResult, schema::Schema};
 
-/// Immutable columnar batch of events sharing one schema.
 #[derive(Clone, Debug)]
+struct BatchParts {
+    p4s: Arc<[Arc<[RealVec4]>]>,
+    scalars: Arc<[Arc<[f64]>]>,
+    weights: Weights,
+}
+
+#[derive(Clone, Debug)]
+enum Weights {
+    ImplicitUnit,
+    Explicit(Arc<[f64]>),
+}
+
+impl Weights {
+    fn from_option(weights: Option<Arc<[f64]>>) -> Self {
+        match weights {
+            Some(weights) => Self::Explicit(weights),
+            None => Self::ImplicitUnit,
+        }
+    }
+
+    fn as_slice(&self) -> Option<&[f64]> {
+        match self {
+            Self::ImplicitUnit => None,
+            Self::Explicit(weights) => Some(weights),
+        }
+    }
+
+    fn at(&self, row: usize) -> f64 {
+        self.as_slice().map_or(1.0, |weights| weights[row])
+    }
+
+    fn is_explicit(&self) -> bool {
+        matches!(self, Self::Explicit(_))
+    }
+
+    fn select(&self, rows: &[usize]) -> Self {
+        match self {
+            Self::ImplicitUnit => Self::ImplicitUnit,
+            Self::Explicit(weights) => {
+                let selected: Arc<[f64]> = rows.iter().map(|&row| weights[row]).collect();
+                Self::Explicit(selected)
+            }
+        }
+    }
+
+    fn slice(&self, start: usize, end: usize) -> Self {
+        match self {
+            Self::ImplicitUnit => Self::ImplicitUnit,
+            Self::Explicit(weights) => Self::Explicit(Arc::from(&weights[start..end])),
+        }
+    }
+
+    fn reweight<F>(&self, len: usize, f: F) -> Self
+    where
+        F: Fn(usize, f64) -> f64,
+    {
+        let weights: Arc<[f64]> = (0..len).map(|i| f(i, self.at(i))).collect();
+        Self::Explicit(weights)
+    }
+}
+
+impl BatchParts {
+    fn from_columns(p4s: Vec<Arc<[RealVec4]>>, scalars: Vec<Arc<[f64]>>, weights: Weights) -> Self {
+        Self {
+            p4s: p4s.into(),
+            scalars: scalars.into(),
+            weights,
+        }
+    }
+
+    fn validate(&self, schema: &Schema) -> LadduDataResult<usize> {
+        if self.p4s.len() != schema.n_p4s() {
+            return Err(LadduDataError::Schema(
+                "wrong number of vec4 columns".into(),
+            ));
+        }
+
+        if self.scalars.len() != schema.n_scalars() {
+            return Err(LadduDataError::Schema(
+                "wrong number of scalar columns".into(),
+            ));
+        }
+
+        infer_len(&self.p4s, &self.scalars, self.weights.as_slice())
+    }
+
+    fn select(&self, rows: &[usize]) -> Self {
+        let p4s = self
+            .p4s
+            .iter()
+            .map(|col| rows.iter().map(|&i| col[i]).collect())
+            .collect();
+        let scalars = self
+            .scalars
+            .iter()
+            .map(|col| rows.iter().map(|&i| col[i]).collect())
+            .collect();
+
+        Self {
+            p4s,
+            scalars,
+            weights: self.weights.select(rows),
+        }
+    }
+
+    fn slice(&self, start: usize, end: usize) -> Self {
+        let p4s = self
+            .p4s
+            .iter()
+            .map(|col| Arc::<[RealVec4]>::from(&col[start..end]))
+            .collect();
+        let scalars = self
+            .scalars
+            .iter()
+            .map(|col| Arc::<[f64]>::from(&col[start..end]))
+            .collect();
+
+        Self {
+            p4s,
+            scalars,
+            weights: self.weights.slice(start, end),
+        }
+    }
+
+    fn reweight<F>(&self, len: usize, f: F) -> Self
+    where
+        F: Fn(usize, f64) -> f64,
+    {
+        Self {
+            p4s: Arc::clone(&self.p4s),
+            scalars: Arc::clone(&self.scalars),
+            weights: self.weights.reweight(len, f),
+        }
+    }
+
+    fn concat(batches: &[(&Self, usize)]) -> Self {
+        let len: usize = batches.iter().map(|(_, len)| *len).sum();
+        let n_p4s = batches.first().map_or(0, |(batch, _)| batch.p4s.len());
+        let n_scalars = batches.first().map_or(0, |(batch, _)| batch.scalars.len());
+
+        let mut p4s = Vec::with_capacity(n_p4s);
+        for col in 0..n_p4s {
+            let mut out = Vec::with_capacity(len);
+            for (batch, _) in batches {
+                out.extend_from_slice(&batch.p4s[col]);
+            }
+            p4s.push(Arc::from(out));
+        }
+
+        let mut scalars = Vec::with_capacity(n_scalars);
+        for col in 0..n_scalars {
+            let mut out = Vec::with_capacity(len);
+            for (batch, _) in batches {
+                out.extend_from_slice(&batch.scalars[col]);
+            }
+            scalars.push(Arc::from(out));
+        }
+
+        let weights = if batches.iter().any(|(batch, _)| batch.weights.is_explicit()) {
+            let mut out = Vec::with_capacity(len);
+            for (batch, batch_len) in batches {
+                for row in 0..*batch_len {
+                    out.push(batch.weights.at(row));
+                }
+            }
+            Weights::Explicit(Arc::from(out))
+        } else {
+            Weights::ImplicitUnit
+        };
+
+        Self::from_columns(p4s, scalars, weights)
+    }
+}
+
+#[derive(Default)]
+enum WeightAssembler {
+    #[default]
+    ImplicitUnit,
+    Explicit(Vec<f64>),
+}
+
+impl WeightAssembler {
+    fn push(&mut self, weight: Option<f64>, len: usize) -> LadduDataResult<()> {
+        match self {
+            Self::Explicit(weights) => match weight {
+                Some(weight) => weights.push(weight),
+                None => {
+                    return Err(LadduDataError::InvalidArgument(
+                        "cannot mix weighted and unweighted events in one batch",
+                    ));
+                }
+            },
+            Self::ImplicitUnit => match weight {
+                Some(weight) if len == 0 => *self = Self::Explicit(vec![weight]),
+                Some(_) => {
+                    return Err(LadduDataError::InvalidArgument(
+                        "cannot mix unweighted and weighted events in one batch",
+                    ));
+                }
+                None => {}
+            },
+        }
+
+        Ok(())
+    }
+
+    fn finish(self) -> Weights {
+        match self {
+            Self::ImplicitUnit => Weights::ImplicitUnit,
+            Self::Explicit(weights) => Weights::Explicit(Arc::from(weights)),
+        }
+    }
+}
+
+/// Immutable columnar batch of events sharing one schema.
+#[derive(Clone)]
 pub struct EventBatch {
     schema: Arc<Schema>,
     len: usize,
-    p4s: Arc<[Arc<[RealVec4]>]>,
-    scalars: Arc<[Arc<[f64]>]>,
-    weights: Option<Arc<[f64]>>,
+    parts: BatchParts,
+}
+
+impl fmt::Debug for EventBatch {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("EventBatch")
+            .field("schema", &self.schema)
+            .field("len", &self.len)
+            .field("p4s", &self.parts.p4s)
+            .field("scalars", &self.parts.scalars)
+            .field("weights", &self.parts.weights.as_slice())
+            .finish()
+    }
 }
 
 impl EventBatch {
@@ -28,27 +257,15 @@ impl EventBatch {
         scalars: Vec<Arc<[f64]>>,
         weights: Option<Arc<[f64]>>,
     ) -> LadduDataResult<Self> {
-        if p4s.len() != schema.n_p4s() {
-            return Err(LadduDataError::Schema(
-                "wrong number of vec4 columns".into(),
-            ));
-        }
-
-        if scalars.len() != schema.n_scalars() {
-            return Err(LadduDataError::Schema(
-                "wrong number of scalar columns".into(),
-            ));
-        }
-
-        let len = infer_len(&p4s, &scalars, weights.as_deref())?;
-
-        Ok(Self {
+        Self::from_parts(
             schema,
-            len,
-            p4s: p4s.into(),
-            scalars: scalars.into(),
-            weights,
-        })
+            BatchParts::from_columns(p4s, scalars, Weights::from_option(weights)),
+        )
+    }
+
+    fn from_parts(schema: Arc<Schema>, parts: BatchParts) -> LadduDataResult<Self> {
+        let len = parts.validate(&schema)?;
+        Ok(Self { schema, len, parts })
     }
 
     /// Collects owned row events into a columnar batch.
@@ -78,9 +295,9 @@ impl EventBatch {
 
     /// Returns the logical payload bytes per event represented by this batch.
     pub fn bytes_per_event(&self) -> usize {
-        self.p4s.len() * size_of::<RealVec4>()
-            + self.scalars.len() * size_of::<f64>()
-            + usize::from(self.weights.is_some()) * size_of::<f64>()
+        self.parts.p4s.len() * size_of::<RealVec4>()
+            + self.parts.scalars.len() * size_of::<f64>()
+            + usize::from(self.parts.weights.is_explicit()) * size_of::<f64>()
     }
 
     /// Returns the retained column payload size in bytes.
@@ -88,19 +305,18 @@ impl EventBatch {
     /// Shared schema metadata, allocation headers, and other owners of shared
     /// columns are not included.
     pub fn resident_bytes(&self) -> usize {
-        self.p4s
+        self.parts
+            .p4s
             .iter()
             .map(|column| column.len() * size_of::<RealVec4>())
             .sum::<usize>()
             + self
+                .parts
                 .scalars
                 .iter()
                 .map(|column| column.len() * size_of::<f64>())
                 .sum::<usize>()
-            + self
-                .weights
-                .as_ref()
-                .map_or(0, |weights| weights.len() * size_of::<f64>())
+            + self.parts.weights.as_slice().map_or(0, size_of_val)
     }
 
     /// Returns whether the batch contains no rows.
@@ -110,17 +326,17 @@ impl EventBatch {
 
     /// Returns a four-momentum column by index.
     pub fn vec4_column(&self, index: usize) -> &[RealVec4] {
-        &self.p4s[index]
+        &self.parts.p4s[index]
     }
 
     /// Returns a scalar column by index.
     pub fn scalar_column(&self, index: usize) -> &[f64] {
-        &self.scalars[index]
+        &self.parts.scalars[index]
     }
 
     /// Returns the optional explicit weight column.
     pub fn weights_column(&self) -> Option<&[f64]> {
-        self.weights.as_deref()
+        self.parts.weights.as_slice()
     }
 
     /// Returns a four-momentum column by logical name.
@@ -137,17 +353,17 @@ impl EventBatch {
 
     /// Returns one four-momentum cell.
     pub fn p4_at(&self, col: usize, row: usize) -> RealVec4 {
-        self.p4s[col][row]
+        self.parts.p4s[col][row]
     }
 
     /// Returns one scalar cell.
     pub fn scalar_at(&self, col: usize, row: usize) -> f64 {
-        self.scalars[col][row]
+        self.parts.scalars[col][row]
     }
 
     /// Returns the explicit row weight, or one when weights are absent.
     pub fn weights_at(&self, row: usize) -> f64 {
-        self.weights.as_ref().map_or(1.0, |w| w[row])
+        self.parts.weights.at(row)
     }
 
     /// Returns a borrowed view of one row.
@@ -161,31 +377,13 @@ impl EventBatch {
     }
 
     /// Copies selected rows into a new batch in the requested order.
+    ///
+    /// # Panics
+    ///
+    /// Panics when a selected row is outside the batch.
     pub fn select(&self, rows: &[usize]) -> Self {
-        let p4s = self
-            .p4s
-            .iter()
-            .map(|col| rows.iter().map(|&i| col[i]).collect())
-            .collect();
-
-        let scalars = self
-            .scalars
-            .iter()
-            .map(|col| rows.iter().map(|&i| col[i]).collect())
-            .collect();
-
-        let weights = self
-            .weights
-            .as_ref()
-            .map(|w| rows.iter().map(|&i| w[i]).collect());
-
-        Self {
-            schema: Arc::clone(&self.schema),
-            len: rows.len(),
-            p4s,
-            scalars,
-            weights,
-        }
+        Self::from_parts(Arc::clone(&self.schema), self.parts.select(rows))
+            .expect("select preserves EventBatch invariants")
     }
 
     /// Copies rows satisfying `keep` into a new batch.
@@ -199,19 +397,17 @@ impl EventBatch {
     }
 
     /// Returns a batch sharing value columns with newly computed weights.
+    ///
+    /// # Panics
+    ///
+    /// Panics if an internal batch invariant is violated while rebuilding the
+    /// batch.
     pub fn reweight<F>(&self, f: F) -> Self
     where
         F: Fn(usize, f64) -> f64,
     {
-        let weights: Arc<[f64]> = (0..self.len).map(|i| f(i, self.weights_at(i))).collect();
-
-        Self {
-            schema: Arc::clone(&self.schema),
-            len: self.len,
-            p4s: Arc::clone(&self.p4s),
-            scalars: Arc::clone(&self.scalars),
-            weights: Some(weights),
-        }
+        Self::from_parts(Arc::clone(&self.schema), self.parts.reweight(self.len, f))
+            .expect("reweight preserves EventBatch invariants")
     }
 
     /// Copies the half-open row range `start..end` into a new batch.
@@ -227,30 +423,8 @@ impl EventBatch {
             return self.clone();
         }
 
-        let p4s = self
-            .p4s
-            .iter()
-            .map(|col| Arc::<[RealVec4]>::from(&col[start..end]))
-            .collect();
-
-        let scalars = self
-            .scalars
-            .iter()
-            .map(|col| Arc::<[f64]>::from(&col[start..end]))
-            .collect();
-
-        let weights = self
-            .weights
-            .as_ref()
-            .map(|w| Arc::<[f64]>::from(&w[start..end]));
-
-        Self {
-            schema: Arc::clone(&self.schema),
-            len: end - start,
-            p4s,
-            scalars,
-            weights,
-        }
+        Self::from_parts(Arc::clone(&self.schema), self.parts.slice(start, end))
+            .expect("slice preserves EventBatch invariants")
     }
 
     /// Concatenates schema-compatible batches.
@@ -267,7 +441,6 @@ impl EventBatch {
         }
 
         let schema = Arc::clone(&batches[0].schema);
-        let len: usize = batches.iter().map(|b| b.len).sum();
 
         for batch in batches {
             if schema != batch.schema {
@@ -277,47 +450,11 @@ impl EventBatch {
             }
         }
 
-        let mut p4s = Vec::with_capacity(schema.n_p4s());
-
-        for col in 0..schema.n_p4s() {
-            let mut out = Vec::with_capacity(len);
-            for batch in batches {
-                out.extend_from_slice(batch.vec4_column(col));
-            }
-            p4s.push(Arc::from(out));
-        }
-
-        let mut scalars = Vec::with_capacity(schema.n_scalars());
-
-        for col in 0..schema.n_scalars() {
-            let mut out = Vec::with_capacity(len);
-            for batch in batches {
-                out.extend_from_slice(batch.scalar_column(col));
-            }
-            scalars.push(Arc::from(out));
-        }
-
-        let any_weights = batches.iter().any(|b| b.weights.is_some());
-
-        let weights = if any_weights {
-            let mut out = Vec::with_capacity(len);
-            for batch in batches {
-                for i in 0..batch.len {
-                    out.push(batch.weights_at(i));
-                }
-            }
-            Some(Arc::from(out))
-        } else {
-            None
-        };
-
-        Ok(Self {
-            schema,
-            len,
-            p4s: p4s.into(),
-            scalars: scalars.into(),
-            weights,
-        })
+        let parts = batches
+            .iter()
+            .map(|batch| (&batch.parts, batch.len))
+            .collect::<Vec<_>>();
+        Self::from_parts(schema, BatchParts::concat(&parts))
     }
 }
 
@@ -482,7 +619,7 @@ pub struct EventBatchBuilder {
     schema: Arc<Schema>,
     p4s: Vec<Vec<RealVec4>>,
     scalars: Vec<Vec<f64>>,
-    weights: Option<Vec<f64>>,
+    weights: WeightAssembler,
     len: usize,
 }
 
@@ -496,7 +633,7 @@ impl EventBatchBuilder {
             schema,
             p4s,
             scalars,
-            weights: None,
+            weights: WeightAssembler::default(),
             len: 0,
         }
     }
@@ -506,7 +643,6 @@ impl EventBatchBuilder {
         let p4s = (0..schema.n_p4s())
             .map(|_| Vec::with_capacity(capacity))
             .collect();
-
         let scalars = (0..schema.n_scalars())
             .map(|_| Vec::with_capacity(capacity))
             .collect();
@@ -515,7 +651,7 @@ impl EventBatchBuilder {
             schema,
             p4s,
             scalars,
-            weights: None,
+            weights: WeightAssembler::default(),
             len: 0,
         }
     }
@@ -579,38 +715,16 @@ impl EventBatchBuilder {
             ));
         }
 
-        match (&mut self.weights, event.weight) {
-            (Some(weights), Some(weight)) => weights.push(weight),
-
-            (Some(_), None) => {
-                return Err(LadduDataError::InvalidArgument(
-                    "cannot mix weighted and unweighted events in one batch",
-                ));
-            }
-
-            (None, Some(weight)) if self.len == 0 => {
-                self.weights = Some(vec![weight]);
-            }
-
-            (None, Some(_)) => {
-                return Err(LadduDataError::InvalidArgument(
-                    "cannot mix unweighted and weighted events in one batch",
-                ));
-            }
-
-            (None, None) => {}
-        }
+        self.weights.push(event.weight, self.len)?;
 
         for (col, value) in event.p4s.into_iter().enumerate() {
             self.p4s[col].push(value);
         }
-
         for (col, value) in event.scalars.into_iter().enumerate() {
             self.scalars[col].push(value);
         }
 
         self.len += 1;
-
         Ok(self)
     }
 
@@ -638,11 +752,12 @@ impl EventBatchBuilder {
     /// Returns [`LadduDataError`] if the accumulated columns or weights have
     /// inconsistent lengths.
     pub fn finish(self) -> LadduDataResult<EventBatch> {
-        let p4s = self.p4s.into_iter().map(Arc::from).collect();
-        let scalars = self.scalars.into_iter().map(Arc::from).collect();
-        let weights = self.weights.map(Arc::from);
-
-        EventBatch::new(self.schema, p4s, scalars, weights)
+        let parts = BatchParts::from_columns(
+            self.p4s.into_iter().map(Arc::from).collect(),
+            self.scalars.into_iter().map(Arc::from).collect(),
+            self.weights.finish(),
+        );
+        EventBatch::from_parts(self.schema, parts)
     }
 }
 
@@ -756,5 +871,30 @@ mod tests {
             concatenated.weights_column().unwrap(),
             &[1.0, 1.0, 5.0, 6.0]
         );
+    }
+
+    #[test]
+    fn implicit_unit_weights_survive_assembly_and_row_transforms() {
+        let schema = Arc::new(Schema::new(["p"], ["x"], false).unwrap());
+        let batch = EventBatch::from_events(
+            Arc::clone(&schema),
+            (0..3).map(|i| OwnedEvent::new(vec![v(i as f64)], vec![i as f64])),
+        )
+        .unwrap();
+
+        assert!(batch.weights_column().is_none());
+        assert_eq!(batch.weights_at(2), 1.0);
+
+        let selected = batch.select(&[2, 0]);
+        let sliced = batch.slice(1, 3);
+        let filtered = batch.filter(|event| event.scalar(0) > 0.0);
+        let concatenated = EventBatch::concat(&[selected, sliced]).unwrap();
+
+        assert!(filtered.weights_column().is_none());
+        assert!(concatenated.weights_column().is_none());
+        assert_eq!(concatenated.weights_at(3), 1.0);
+
+        let reweighted = batch.reweight(|row, weight| weight + row as f64);
+        assert_eq!(reweighted.weights_column().unwrap(), &[1.0, 2.0, 3.0]);
     }
 }
