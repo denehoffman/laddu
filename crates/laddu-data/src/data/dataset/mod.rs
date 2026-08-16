@@ -10,20 +10,20 @@ use crate::{
     schema::Schema,
 };
 use laddu_memory::{MemoryBudget, MemoryDecision, MemoryFitRequest, MemoryFootprint, MemoryState};
-use laddu_physics::vectors::RealVec4;
 use num::complex::Complex64;
+
+#[cfg(feature = "parallel")]
+pub mod accurate;
+mod ops;
+
+use ops::{DatasetOp, eval_batch, materialize_batch};
+#[cfg(test)]
+use ops::{poisson1_from_hash, uniform_hash_01};
 
 static NEXT_DATASET_IDENTITY: AtomicU64 = AtomicU64::new(1);
 
 fn next_dataset_identity() -> u64 {
     NEXT_DATASET_IDENTITY.fetch_add(1, Ordering::Relaxed)
-}
-
-#[derive(Clone)]
-enum DatasetOp {
-    Filter(Arc<dyn Fn(Event<'_>) -> bool + Send + Sync>),
-    Subsample { fraction: f64, seed: u64 },
-    Bootstrap { seed: u64 },
 }
 
 struct CoalescedBatches {
@@ -868,194 +868,11 @@ impl Dataset {
     }
 }
 
-fn eval_batch<F>(batch: &EventBatch, ops: &[DatasetOp], base: u64, mut f: F) -> LadduDataResult<()>
-where
-    F: FnMut(Event<'_>) -> LadduDataResult<()>,
-{
-    'rows: for row in 0..batch.len() {
-        let event_id = base + row as u64;
-        let mut weight = batch.weights_at(row);
-
-        for op in ops {
-            match op {
-                DatasetOp::Filter(pred) => {
-                    let ev = Event { batch, row, weight };
-                    if !pred(ev) {
-                        continue 'rows;
-                    }
-                }
-                DatasetOp::Subsample { fraction, seed } => {
-                    if uniform_hash_01(*seed, event_id) >= *fraction {
-                        continue 'rows;
-                    }
-                }
-                DatasetOp::Bootstrap { seed } => {
-                    let k = poisson1_from_hash(*seed, event_id);
-                    weight *= k as f64;
-                }
-            }
-        }
-
-        f(Event { batch, row, weight })?;
-    }
-    Ok(())
-}
-
-fn materialize_batch(
-    batch: &EventBatch,
-    ops: &[DatasetOp],
-    base: u64,
-) -> LadduDataResult<EventBatch> {
-    if ops.is_empty() {
-        return Ok(batch.clone());
-    }
-
-    let schema = Arc::clone(batch.schema());
-
-    let store_weights = batch.weights_column().is_some()
-        || ops
-            .iter()
-            .any(|op| matches!(op, DatasetOp::Bootstrap { .. }));
-
-    let mut p4s: Vec<Vec<RealVec4>> = (0..schema.n_p4s())
-        .map(|_| Vec::with_capacity(batch.len()))
-        .collect();
-    let mut scalars: Vec<Vec<f64>> = (0..schema.n_scalars())
-        .map(|_| Vec::with_capacity(batch.len()))
-        .collect();
-    let mut weights = if store_weights {
-        Some(Vec::with_capacity(batch.len()))
-    } else {
-        None
-    };
-
-    eval_batch(batch, ops, base, |ev| {
-        for (col, p4) in p4s.iter_mut().enumerate() {
-            p4.push(ev.p4(col));
-        }
-
-        for (col, scalar) in scalars.iter_mut().enumerate() {
-            scalar.push(ev.scalar(col));
-        }
-
-        if let Some(weights) = weights.as_mut() {
-            weights.push(ev.weight());
-        }
-
-        Ok(())
-    })?;
-
-    let p4s = p4s.into_iter().map(Arc::from).collect();
-    let scalars = scalars.into_iter().map(Arc::from).collect();
-    let weights = weights.map(Arc::from);
-
-    EventBatch::new(schema, p4s, scalars, weights)
-}
-
-fn uniform_hash_01(seed: u64, index: u64) -> f64 {
-    let x = splitmix64(seed ^ index);
-    ((x >> 11) as f64) / ((1_u64 << 53) as f64)
-}
-
-fn splitmix64(mut x: u64) -> u64 {
-    x = x.wrapping_add(0x9E3779B97F4A7C15);
-
-    let mut z = x;
-    z = (z ^ (z >> 30)).wrapping_mul(0xBF58476D1CE4E5B9);
-    z = (z ^ (z >> 27)).wrapping_mul(0x94D049BB133111EB);
-    z ^ (z >> 31)
-}
-
-fn poisson1_from_hash(seed: u64, index: u64) -> u32 {
-    let u = uniform_hash_01(seed, index);
-
-    let mut k = 0;
-    let mut p = (-1.0_f64).exp();
-    let mut cdf = p;
-
-    while u > cdf {
-        k += 1;
-        p /= k as f64;
-        cdf += p;
-    }
-
-    k
-}
-
-#[cfg(feature = "parallel")]
-/// Numerically accurate accumulators used by parallel reductions.
-pub mod accurate {
-    use accurate::{sum::Sum2, traits::*};
-    use num::complex::Complex64;
-
-    /// Compensated accumulator for real values.
-    #[derive(Clone)]
-    pub struct AccurateF64 {
-        sum: Sum2<f64>,
-    }
-
-    impl AccurateF64 {
-        /// Creates a zero accumulator.
-        pub fn zero() -> Self {
-            Self { sum: Sum2::zero() }
-        }
-
-        /// Adds one value.
-        pub fn push(&mut self, value: f64) {
-            let sum = std::mem::replace(&mut self.sum, Sum2::zero());
-            self.sum = sum + value;
-        }
-
-        /// Merges another accumulator.
-        pub fn merge(&mut self, other: Self) {
-            self.push(other.finish());
-        }
-
-        /// Returns the accumulated sum.
-        pub fn finish(self) -> f64 {
-            self.sum.sum()
-        }
-    }
-
-    /// Pair of compensated accumulators for complex values.
-    #[derive(Clone)]
-    pub struct AccurateComplex64 {
-        re: AccurateF64,
-        im: AccurateF64,
-    }
-
-    impl AccurateComplex64 {
-        /// Creates a zero accumulator.
-        pub fn zero() -> Self {
-            Self {
-                re: AccurateF64::zero(),
-                im: AccurateF64::zero(),
-            }
-        }
-
-        /// Adds one complex value.
-        pub fn push(&mut self, value: Complex64) {
-            self.re.push(value.re);
-            self.im.push(value.im);
-        }
-
-        /// Merges another accumulator.
-        pub fn merge(&mut self, other: Self) {
-            self.re.merge(other.re);
-            self.im.merge(other.im);
-        }
-
-        /// Returns the accumulated complex sum.
-        pub fn finish(self) -> Complex64 {
-            Complex64::new(self.re.finish(), self.im.finish())
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::io::{EventSource, ReadPlan, memory::MemorySink};
+    use laddu_physics::vectors::RealVec4;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     #[derive(Clone)]
