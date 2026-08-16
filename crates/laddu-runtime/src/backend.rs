@@ -280,7 +280,7 @@ impl WgpuPlan {
                 let local = (|| {
                     let mut events = 0;
                     for batch in dataset
-                        .batches_with_plan(read_plan)
+                        .stream_with_plan(read_plan)
                         .map_err(|error| RuntimeError::Data(error.to_string()))?
                     {
                         events += batch
@@ -389,7 +389,7 @@ impl WgpuPlan {
             let mut batch_count = 0;
             let mut sum_weights = AccurateF64::zero();
             for batch in dataset
-                .batches_with_plan(read_plan)
+                .stream_with_plan(read_plan)
                 .map_err(|error| RuntimeError::Data(error.to_string()))?
             {
                 let batch = batch.map_err(|error| RuntimeError::Data(error.to_string()))?;
@@ -477,7 +477,7 @@ impl WgpuPlan {
                     RuntimeError::Wgpu("streaming workspace lock is poisoned".into())
                 })?;
                 for batch in dataset
-                    .batches_with_plan(*read_plan)
+                    .stream_with_plan(*read_plan)
                     .map_err(|error| RuntimeError::Data(error.to_string()))?
                 {
                     let batch = batch.map_err(|error| RuntimeError::Data(error.to_string()))?;
@@ -567,7 +567,7 @@ impl WgpuPlan {
                     RuntimeError::Wgpu("streaming workspace lock is poisoned".into())
                 })?;
                 for batch in dataset
-                    .batches_with_plan(*read_plan)
+                    .stream_with_plan(*read_plan)
                     .map_err(|error| RuntimeError::Data(error.to_string()))?
                 {
                     let batch = batch.map_err(|error| RuntimeError::Data(error.to_string()))?;

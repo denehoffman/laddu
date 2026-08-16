@@ -9,14 +9,16 @@ use crate::{
     io::{EventSink, EventSource, ReadPlan, SourceCapabilities, WritePlan, memory::MemorySource},
     schema::Schema,
 };
-use laddu_memory::{MemoryBudget, MemoryDecision, MemoryFitRequest, MemoryFootprint, MemoryState};
+use laddu_memory::{MemoryBudget, MemoryDecision};
 use num::complex::Complex64;
 
 #[cfg(feature = "parallel")]
 pub mod accurate;
+mod execution;
 mod ops;
 
-use ops::{DatasetOp, eval_batch, materialize_batch};
+use execution::{DatasetExecutionPlan, DatasetExecutor, visit_events};
+use ops::DatasetOp;
 #[cfg(test)]
 use ops::{poisson1_from_hash, uniform_hash_01};
 
@@ -24,110 +26,6 @@ static NEXT_DATASET_IDENTITY: AtomicU64 = AtomicU64::new(1);
 
 fn next_dataset_identity() -> u64 {
     NEXT_DATASET_IDENTITY.fetch_add(1, Ordering::Relaxed)
-}
-
-struct CoalescedBatches {
-    input: Box<dyn Iterator<Item = LadduDataResult<EventBatch>> + Send>,
-    target: usize,
-    pending: Vec<EventBatch>,
-    pending_len: usize,
-    deferred: Option<LadduDataResult<EventBatch>>,
-    finished: bool,
-    stats: Option<Arc<Mutex<DatasetStatsCache>>>,
-    observed_events: u64,
-    observed_sum: f64,
-    observed_correction: f64,
-}
-
-impl CoalescedBatches {
-    fn emit_pending(&mut self) -> Option<LadduDataResult<EventBatch>> {
-        if self.pending.is_empty() {
-            return None;
-        }
-        self.pending_len = 0;
-        let batches = std::mem::take(&mut self.pending);
-        let result = if batches.len() == 1 {
-            Ok(batches.into_iter().next().expect("one pending batch"))
-        } else {
-            EventBatch::concat(&batches)
-        };
-        match &result {
-            Ok(batch) => {
-                self.observed_events = self.observed_events.saturating_add(batch.len() as u64);
-                for row in 0..batch.len() {
-                    let corrected = batch.weights_at(row) - self.observed_correction;
-                    let next = self.observed_sum + corrected;
-                    self.observed_correction = (next - self.observed_sum) - corrected;
-                    self.observed_sum = next;
-                }
-            }
-            Err(_) => self.stats = None,
-        }
-        Some(result)
-    }
-
-    fn commit_stats(&mut self) {
-        let Some(stats) = self.stats.take() else {
-            return;
-        };
-        let mut stats = stats.lock().unwrap_or_else(|error| error.into_inner());
-        stats.events = Some(self.observed_events);
-        stats.sum_weights = Some(self.observed_sum);
-    }
-}
-
-impl Iterator for CoalescedBatches {
-    type Item = LadduDataResult<EventBatch>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        loop {
-            if self.pending_len == self.target {
-                return self.emit_pending();
-            }
-
-            let item = if let Some(item) = self.deferred.take() {
-                Some(item)
-            } else if self.finished {
-                None
-            } else {
-                self.input.next()
-            };
-
-            let Some(item) = item else {
-                self.finished = true;
-                if let Some(batch) = self.emit_pending() {
-                    return Some(batch);
-                }
-                self.commit_stats();
-                return None;
-            };
-            let batch = match item {
-                Ok(batch) => batch,
-                Err(error) => {
-                    self.stats = None;
-                    if self.pending.is_empty() {
-                        return Some(Err(error));
-                    }
-                    self.deferred = Some(Err(error));
-                    return self.emit_pending();
-                }
-            };
-            if batch.is_empty() {
-                continue;
-            }
-
-            let available = self.target - self.pending_len;
-            if batch.len() <= available {
-                self.pending_len += batch.len();
-                self.pending.push(batch);
-                continue;
-            }
-
-            self.pending.push(batch.slice(0, available));
-            self.pending_len += available;
-            self.deferred = Some(Ok(batch.slice(available, batch.len())));
-        }
-    }
 }
 
 /// Cached statistics for an immutable dataset view.
@@ -353,29 +251,12 @@ impl Dataset {
             return Ok(stats);
         }
 
-        let mut events = 0_u64;
-        let mut sum = 0.0;
-        let mut correction = 0.0;
-        for batch in self.batches()? {
-            let batch = batch?;
-            events = events.saturating_add(batch.len() as u64);
-            for row in 0..batch.len() {
-                let weight = batch.weights_at(row);
-                let corrected = weight - correction;
-                let next = sum + corrected;
-                correction = (next - sum) - corrected;
-                sum = next;
-            }
+        let mut executor = self.executor_with_plan(self.plan)?;
+        for batch in &mut executor {
+            batch?;
         }
 
-        let stats = DatasetStats {
-            events,
-            sum_weights: sum,
-        };
-        let mut cache = self.stats.lock().unwrap_or_else(|error| error.into_inner());
-        cache.events = Some(events);
-        cache.sum_weights = Some(sum);
-        Ok(stats)
+        Ok(executor.stats())
     }
 
     /// Returns the current read plan.
@@ -534,32 +415,11 @@ impl Dataset {
     where
         F: FnMut(Event<'_>) -> LadduDataResult<()>,
     {
-        let mut offset = 0_u64;
-        let mut events = 0_u64;
-        let mut sum = 0.0;
-        let mut correction = 0.0;
-
-        self.source_traversals.fetch_add(1, Ordering::Relaxed);
-        for batch in self.source.batches(self.plan)? {
-            let batch = batch?;
-            let base = offset;
-            offset += batch.len() as u64;
-            eval_batch(&batch, &self.ops, base, |event| {
-                f(event)?;
-                events = events.saturating_add(1);
-                let corrected = event.weight() - correction;
-                let next = sum + corrected;
-                correction = (next - sum) - corrected;
-                sum = next;
-                Ok(())
-            })?;
-        }
-
-        let mut stats = self.stats.lock().unwrap_or_else(|error| error.into_inner());
-        stats.events = Some(events);
-        stats.sum_weights = Some(sum);
-
-        Ok(())
+        visit_events(
+            self,
+            DatasetExecutionPlan::resolve(self, self.plan)?,
+            &mut f,
+        )
     }
 
     /// Fallibly maps transformed events into a vector.
@@ -711,82 +571,34 @@ impl Dataset {
     pub fn batches(
         &self,
     ) -> LadduDataResult<Box<dyn Iterator<Item = LadduDataResult<EventBatch>> + Send>> {
-        self.batches_with_plan(self.plan)
+        self.stream_with_plan(self.plan)
     }
 
     #[doc(hidden)]
-    /// Opens transformed batches using an explicit read plan.
+    /// Opens the shared transformed batch stream using an explicit read plan.
     ///
     /// # Errors
     ///
     /// Returns [`LadduDataError`] when the underlying source cannot initialize
     /// the requested batch stream.
+    pub fn stream_with_plan(
+        &self,
+        plan: ReadPlan,
+    ) -> LadduDataResult<Box<dyn Iterator<Item = LadduDataResult<EventBatch>> + Send>> {
+        Ok(Box::new(self.executor_with_plan(plan)?))
+    }
+
+    #[doc(hidden)]
+    /// Compatibility alias for the shared transformed batch stream.
     pub fn batches_with_plan(
         &self,
-        mut plan: ReadPlan,
+        plan: ReadPlan,
     ) -> LadduDataResult<Box<dyn Iterator<Item = LadduDataResult<EventBatch>> + Send>> {
-        if plan.chunk_size.is_none() {
-            let schema = self.schema()?;
-            let bytes_per_event = 4_usize
-                .saturating_mul(schema.n_p4s())
-                .saturating_add(schema.n_scalars())
-                .saturating_add(usize::from(schema.has_weight()))
-                .saturating_mul(size_of::<f64>());
-            let copies = if self.ops.is_empty() { 1 } else { 2 };
-            let peak_per_event = bytes_per_event.saturating_mul(copies);
-            let state = MemoryState::current();
-            state.refresh();
-            let available = self
-                .memory_budget
-                .resolve(&state.host())
-                .map_err(|error| LadduDataError::Source(error.to_string()))?;
-            let event_limit = self
-                .source
-                .num_events()?
-                .and_then(|events| usize::try_from(events).ok())
-                .unwrap_or(usize::MAX);
-            let decision = MemoryFitRequest {
-                label: "dataset read".into(),
-                footprint: MemoryFootprint::from_usize(0, peak_per_event),
-                available_bytes: available,
-                event_limit,
-                strategy: "memory-derived streaming".into(),
-            }
-            .evaluate()
-            .map_err(|error| LadduDataError::Source(error.to_string()))?;
-            plan.chunk_size = Some(decision.chunk_events.max(1));
-            *self
-                .last_memory_decision
-                .lock()
-                .unwrap_or_else(|error| error.into_inner()) = Some(decision);
-        }
-        self.source_traversals.fetch_add(1, Ordering::Relaxed);
-        let iter = self.source.batches(plan)?;
-        let ops = Arc::clone(&self.ops);
+        self.stream_with_plan(plan)
+    }
 
-        let transformed = Box::new(iter.scan(0_u64, move |offset, batch| {
-            let batch = match batch {
-                Ok(batch) => batch,
-                Err(err) => return Some(Err(err)),
-            };
-
-            let base = *offset;
-            *offset += batch.len() as u64;
-
-            Some(materialize_batch(&batch, &ops, base))
-        }));
-        Ok(Box::new(CoalescedBatches {
-            input: transformed,
-            target: plan.chunk_size.unwrap_or(usize::MAX).max(1),
-            pending: Vec::new(),
-            pending_len: 0,
-            deferred: None,
-            finished: false,
-            stats: (!plan.is_distributed()).then(|| Arc::clone(&self.stats)),
-            observed_events: 0,
-            observed_sum: 0.0,
-            observed_correction: 0.0,
-        }))
+    fn executor_with_plan(&self, plan: ReadPlan) -> LadduDataResult<DatasetExecutor> {
+        DatasetExecutor::new(self, DatasetExecutionPlan::resolve(self, plan)?)
     }
 
     /// Visits each transformed batch and stops at the first error.
@@ -871,7 +683,7 @@ impl Dataset {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::io::{EventSource, ReadPlan, memory::MemorySink};
+    use crate::io::{EventBatchIter, EventSource, ReadPlan, memory::MemorySink};
     use laddu_physics::vectors::RealVec4;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -892,6 +704,25 @@ mod tests {
         ) -> LadduDataResult<Box<dyn Iterator<Item = LadduDataResult<EventBatch>> + Send>> {
             self.reads.fetch_add(1, Ordering::Relaxed);
             Ok(Box::new(std::iter::once(Ok(self.batch.clone()))))
+        }
+    }
+
+    #[derive(Clone)]
+    struct ErrorSource {
+        schema: Arc<Schema>,
+        items: Arc<[LadduDataResult<EventBatch>]>,
+    }
+
+    impl EventSource for ErrorSource {
+        fn schema(&self) -> LadduDataResult<Arc<Schema>> {
+            Ok(Arc::clone(&self.schema))
+        }
+
+        fn batches(&self, _plan: ReadPlan) -> LadduDataResult<EventBatchIter> {
+            let items = Arc::clone(&self.items);
+            Ok(Box::new(
+                (0..items.len()).map(move |index| items[index].clone()),
+            ))
         }
     }
 
@@ -928,6 +759,19 @@ mod tests {
             (start..start + len).map(|i| OwnedEvent::new(vec![v(i as f64)], vec![i as f64]));
 
         EventBatch::from_events(schema, events).unwrap()
+    }
+
+    fn error_source(error_after: Option<EventBatch>) -> ErrorSource {
+        let schema = schema_with_weight();
+        let mut items = Vec::new();
+        if let Some(batch) = error_after {
+            items.push(Ok(batch));
+        }
+        items.push(Err(LadduDataError::Unsupported("source")));
+        ErrorSource {
+            schema,
+            items: items.into(),
+        }
     }
 
     fn scalar_values(batch: &EventBatch) -> Vec<f64> {
@@ -991,6 +835,46 @@ mod tests {
                 .collect::<Vec<_>>(),
             (0..10).map(|value| value as f64).collect::<Vec<_>>()
         );
+    }
+
+    #[test]
+    fn shared_stream_preserves_pending_batches_before_source_errors() {
+        let dataset = Dataset::new(error_source(Some(weighted_batch(0, 2))))
+            .chunked(4)
+            .unwrap();
+        let mut batches = dataset.batches().unwrap();
+
+        assert_eq!(batches.next().unwrap().unwrap().len(), 2);
+        assert!(matches!(
+            batches.next().unwrap(),
+            Err(LadduDataError::Unsupported("source"))
+        ));
+        assert!(batches.next().is_none());
+
+        assert!(matches!(
+            dataset.stats(),
+            Err(LadduDataError::Unsupported("source"))
+        ));
+        assert_eq!(dataset.source_traversals(), 2);
+    }
+
+    #[test]
+    fn event_visitors_share_the_execution_plan_without_changing_source_rows() {
+        let dataset = Dataset::new(error_source(Some(weighted_batch(0, 2))))
+            .chunked(4)
+            .unwrap()
+            .filter(|event| event.scalar(0) >= 0.0);
+        let mut rows = Vec::new();
+
+        let error = dataset
+            .try_for_each_event(|event| {
+                rows.push(event.row());
+                Ok(())
+            })
+            .unwrap_err();
+
+        assert!(matches!(error, LadduDataError::Unsupported("source")));
+        assert_eq!(rows, [0, 1]);
     }
 
     #[test]

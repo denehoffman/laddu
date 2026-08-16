@@ -548,7 +548,7 @@ impl EventSource for QuerySource {
     }
 
     fn batches(&self, plan: ReadPlan) -> LadduDataResult<EventBatchIter> {
-        let batches = self.source.batches_with_plan(plan)?;
+        let batches = self.source.stream_with_plan(plan)?;
         let filter = self.filter.clone();
         Ok(Box::new(batches.filter_map(move |batch| {
             let batch = match batch {
