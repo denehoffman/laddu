@@ -1303,7 +1303,7 @@ fn scan_dataset_stats(
     let mut batches = 0;
     let mut sum_weights = AccurateF64::zero();
     for batch in dataset
-        .batches_with_plan(read_plan)
+        .stream_with_plan(read_plan)
         .map_err(|error| RuntimeError::Data(error.to_string()))?
     {
         let batch = batch.map_err(|error| RuntimeError::Data(error.to_string()))?;
@@ -2256,7 +2256,7 @@ impl CpuPlan {
         let mut batches = Vec::new();
         let mut sum_weights = 0.0;
         for batch in dataset
-            .batches_with_plan(read_plan)
+            .stream_with_plan(read_plan)
             .map_err(|err| RuntimeError::Data(err.to_string()))?
         {
             let batch = batch.map_err(|err| RuntimeError::Data(err.to_string()))?;
@@ -2463,7 +2463,7 @@ impl CpuPlan {
                     .map_err(RuntimeError::from)?;
                 let mut total = AccurateF64::zero();
                 for batch in dataset
-                    .batches_with_plan(*read_plan)
+                    .stream_with_plan(*read_plan)
                     .map_err(|error| RuntimeError::Data(error.to_string()))?
                 {
                     let batch = batch.map_err(|error| RuntimeError::Data(error.to_string()))?;
@@ -2539,7 +2539,7 @@ impl CpuPlan {
                     .map(|_| AccurateF64::zero())
                     .collect::<Vec<_>>();
                 for batch in dataset
-                    .batches_with_plan(*read_plan)
+                    .stream_with_plan(*read_plan)
                     .map_err(|error| E::from(RuntimeError::Data(error.to_string())))?
                 {
                     let batch =

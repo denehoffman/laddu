@@ -510,7 +510,7 @@ fn accumulate_statistics(
         let mut weight_sum = 0.0;
         let mut weight_correction = 0.0;
         for batch in dataset
-            .batches_with_plan(read_plan)
+            .stream_with_plan(read_plan)
             .map_err(|error| RuntimeError::Data(error.to_string()))?
         {
             let batch = batch.map_err(|error| RuntimeError::Data(error.to_string()))?;
