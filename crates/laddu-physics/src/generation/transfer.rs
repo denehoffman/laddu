@@ -130,6 +130,7 @@ impl TComponent {
         }
     }
 
+    #[allow(dead_code)]
     fn proven_density_floor(&self, maximum_width: f64, maximum_t: f64) -> LadduPhysicsResult<f64> {
         if !maximum_width.is_finite() || maximum_width <= 0.0 {
             return Err(LadduPhysicsError::invalid_relation(
@@ -199,6 +200,104 @@ impl TComponent {
                     return Err(LadduPhysicsError::invalid_relation(
                         "histogram t density has no positive finite support",
                     ));
+                }
+                Ok(floor.inf())
+            }
+        }
+    }
+
+    fn proven_density_floor_on_interval(
+        &self,
+        support_low: f64,
+        support_high: f64,
+        local_low: f64,
+        local_high: f64,
+    ) -> LadduPhysicsResult<f64> {
+        if !support_low.is_finite()
+            || !support_high.is_finite()
+            || !local_low.is_finite()
+            || !local_high.is_finite()
+            || support_high <= support_low
+            || local_high < local_low
+        {
+            return Err(LadduPhysicsError::invalid_relation(
+                "local t-density bound requires finite ordered support intervals",
+            ));
+        }
+        let width = support_high - support_low;
+        match *self {
+            Self::Uniform => Ok((Interval::ONE / width).inf()),
+            Self::Exponential { slope } => {
+                if !slope.is_finite() {
+                    return Err(LadduPhysicsError::invalid_value(
+                        "exponential t slope",
+                        "finite",
+                        slope,
+                    ));
+                }
+                if slope.abs() < 1e-10 {
+                    return Ok((Interval::ONE / width).inf());
+                }
+                let slope = Interval::from(slope);
+                let denominator = (slope * width).exp() - 1.0;
+                let endpoint = if slope.inf() >= 0.0 {
+                    local_low
+                } else {
+                    local_high
+                };
+                let density = slope * (slope * (endpoint - support_low)).exp() / denominator;
+                Ok(density.inf())
+            }
+            Self::Pole {
+                exchange_mass,
+                power,
+            } => {
+                if !exchange_mass.is_finite()
+                    || exchange_mass < 0.0
+                    || !power.is_finite()
+                    || power <= 0.0
+                {
+                    return Err(LadduPhysicsError::invalid_relation(
+                        "pole mass and power must be finite, with nonnegative mass and positive power",
+                    ));
+                }
+                let pole = Interval::from(exchange_mass).sqr();
+                let a = pole - support_high;
+                let b = pole - support_low;
+                if a.inf() <= 0.0 {
+                    return Ok(0.0);
+                }
+                let norm = if (power - 1.0).abs() < 1e-10 {
+                    (b / a).log()
+                } else {
+                    (b.pow(Interval::from(1.0 - power))
+                        - a.pow(Interval::from(1.0 - power)))
+                        / (1.0 - power)
+                };
+                let x = pole - local_low;
+                Ok((x.pow(Interval::from(-power)) / norm).inf())
+            }
+            Self::Histogram { ref histogram } => {
+                let total = histogram
+                    .counts()
+                    .iter()
+                    .fold(Interval::ZERO, |sum, count| sum + *count);
+                let minimum_height = histogram
+                    .counts()
+                    .iter()
+                    .zip(histogram.bin_edges().windows(2))
+                    .filter(|(count, edges)| {
+                        **count > 0.0 && edges[1] >= local_low && edges[0] <= local_high
+                    })
+                    .map(|(count, edges)| {
+                        Interval::from(*count)
+                            / (Interval::from(edges[1]) - Interval::from(edges[0]))
+                    })
+                    .reduce(IntervalOps::min)
+                    .unwrap_or(Interval::EMPTY);
+                let floor = minimum_height / total;
+                if !floor.inf().is_finite() || floor.inf() <= 0.0 {
+                    return Ok(0.0);
                 }
                 Ok(floor.inf())
             }
@@ -390,6 +489,7 @@ impl TDistribution {
         Ok((t, density))
     }
 
+    #[allow(dead_code)]
     fn proven_density_floor(&self, maximum_width: f64, maximum_t: f64) -> LadduPhysicsResult<f64> {
         let normalization = self.normalization()?;
         let mut everywhere_floor = Interval::ZERO;
@@ -411,6 +511,44 @@ impl TDistribution {
         }
     }
 
+    fn proven_density_floor_on_interval(
+        &self,
+        support_low: Interval,
+        support_high: Interval,
+        local_low: Interval,
+        local_high: Interval,
+    ) -> LadduPhysicsResult<f64> {
+        let normalization = self.normalization()?;
+        let mut everywhere_floor = Interval::ZERO;
+        let mut selected_floor = f64::INFINITY;
+        for (weight, component) in &self.components {
+            let component_floor = component.proven_density_floor_on_interval(
+                support_low.inf(),
+                support_high.sup(),
+                local_low.inf(),
+                local_high.sup(),
+            )?;
+            let weighted_floor = (Interval::from(*weight / normalization) * component_floor).inf();
+            if matches!(component, TComponent::Histogram { .. }) {
+                // Histogram-only mixtures are supported on the union of
+                // their positive bins. A component with no support in this
+                // local box must not erase another component's valid region.
+                if weighted_floor > 0.0 {
+                    selected_floor = selected_floor.min(weighted_floor);
+                }
+            } else {
+                everywhere_floor += weighted_floor;
+            }
+        }
+        if everywhere_floor.inf() > 0.0 {
+            Ok(everywhere_floor.inf())
+        } else if selected_floor.is_finite() {
+            Ok(selected_floor)
+        } else {
+            Ok(0.0)
+        }
+    }
+
     fn proven_piecewise_regions(&self) -> usize {
         self.components
             .iter()
@@ -424,6 +562,13 @@ impl TDistribution {
             })
             .sum::<usize>()
             .max(1)
+    }
+
+    fn has_pole_singularity_on(&self, support_high: Interval) -> bool {
+        self.components.iter().any(|(_, component)| {
+            matches!(component, TComponent::Pole { exchange_mass, .. }
+                if exchange_mass * exchange_mass <= support_high.sup())
+        })
     }
 }
 
@@ -552,6 +697,28 @@ impl TwoBodyScattering {
         incoming: [(&str, Interval); 2],
         outgoing: [(&str, Interval); 2],
     ) -> LadduPhysicsResult<Interval> {
+        self.proven_weight_bound_for_transfer(
+            root_s,
+            incoming,
+            outgoing,
+            Interval::new(0.0, 1.0),
+        )
+    }
+
+    /// Enclose the proposal correction over a normalized transfer subdomain.
+    ///
+    /// `transfer` is expressed as a fraction of the configured physical
+    /// transfer support, so `[0, 1]` reproduces the global bound. Restricting
+    /// this fraction lets a branch-and-bound caller refine the transfer
+    /// variable while retaining the exact angular enclosure.
+    #[doc(hidden)]
+    pub fn proven_weight_bound_for_transfer(
+        &self,
+        root_s: Interval,
+        incoming: [(&str, Interval); 2],
+        outgoing: [(&str, Interval); 2],
+        transfer: Interval,
+    ) -> LadduPhysicsResult<Interval> {
         let paired_in = incoming
             .iter()
             .position(|(name, _)| *name == self.incoming_edge)
@@ -574,23 +741,44 @@ impl TwoBodyScattering {
         let outgoing_masses = [outgoing[0].1, outgoing[1].1];
         let p_in = proven_two_body_momentum(root_s, incoming_masses[0], incoming_masses[1]);
         let p_out = proven_two_body_momentum(root_s, outgoing_masses[0], outgoing_masses[1]);
-        let physical_width = 4.0 * p_in * p_out;
-        let maximum_width = physical_width.sup();
         let m1 = incoming_masses[paired_in];
         let m3 = outgoing_masses[paired_out];
         let e1 = (m1.sqr() + p_in.sqr()).sqrt();
         let e3 = (m3.sqr() + p_out.sqr()).sqrt();
         let center = m1.sqr() + m3.sqr() - 2.0 * e1 * e3;
-        let mut maximum_t = (center + 2.0 * p_in * p_out).sup();
-        if let Some(t_max) = self.distribution.t_max {
-            maximum_t = maximum_t.min(t_max);
+        let span = 2.0 * p_in * p_out;
+        let physical_low = center - span;
+        let physical_high = center + span;
+        let support_low = self
+            .distribution
+            .t_min
+            .map_or(physical_low, |t_min| physical_low.max(t_min.into()));
+        let support_high = self
+            .distribution
+            .t_max
+            .map_or(physical_high, |t_max| physical_high.min(t_max.into()));
+        let support_width = support_high - support_low;
+        if support_width.is_empty() || support_width.sup() <= 0.0 {
+            return Ok(Interval::EMPTY);
         }
+        let transfer_t = support_low + transfer * support_width;
         let density_floor = self
             .distribution
-            .proven_density_floor(maximum_width, maximum_t)?;
+            .proven_density_floor_on_interval(
+                support_low,
+                support_high,
+                transfer_t,
+                transfer_t,
+            )?;
         if !density_floor.is_finite() || density_floor <= 0.0 {
+            if !self.distribution.has_pole_singularity_on(support_high) {
+                // A histogram subdomain can lie entirely in a zero-density
+                // gap. Such a box contributes no valid proposals and is
+                // safely discarded by the branch-and-bound evaluator.
+                return Ok(Interval::EMPTY);
+            }
             return Err(LadduPhysicsError::invalid_relation(
-                "momentum-transfer proposal has no finite positive global density floor",
+                "momentum-transfer proposal has no finite positive local density floor",
             ));
         }
         let result = Interval::ONE / (16.0 * PI * root_s * p_in * density_floor);
@@ -809,6 +997,74 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn local_exponential_transfer_bound_tightens_on_high_t_branch() {
+        let proposal = TwoBodyScattering::t_exchange(
+            ("beam", "x"),
+            TDistribution::exponential(3.0),
+        );
+        let incoming = [("beam", Interval::from(0.0)), ("target", Interval::from(0.0))];
+        let outgoing = [("x", Interval::from(0.5)), ("r", Interval::from(0.7))];
+        let root_s = Interval::from(3.0);
+        let global = proposal
+            .proven_weight_bound_for_transfer(root_s, incoming, outgoing, Interval::new(0.0, 1.0))
+            .unwrap();
+        let high_t = proposal
+            .proven_weight_bound_for_transfer(root_s, incoming, outgoing, Interval::new(0.5, 1.0))
+            .unwrap();
+        assert!(high_t.sup() < global.sup(), "{high_t} was not tighter than {global}");
+    }
+
+    #[test]
+    fn local_histogram_density_distinguishes_gaps_and_positive_bins() {
+        let histogram = Histogram::new(
+            vec![1.0, 0.0, 3.0, 2.0],
+            vec![-8.0, -4.0, -2.0, -0.5, 0.0],
+        )
+        .unwrap();
+        let component = TComponent::Histogram {
+            histogram: histogram.clone(),
+        };
+        let gap = component
+            .proven_density_floor_on_interval(-8.0, 0.0, -3.9, -2.1)
+            .unwrap();
+        let positive = component
+            .proven_density_floor_on_interval(-8.0, 0.0, -1.9, -0.6)
+            .unwrap();
+        assert_eq!(gap, 0.0);
+        assert!(positive.is_finite() && positive > 0.0);
+
+        let mixture = TDistribution::mixture([
+            (0.5, TComponent::Uniform),
+            (0.5, TComponent::Histogram { histogram }),
+        ]);
+        let mixture_gap = mixture
+            .proven_density_floor_on_interval(
+                Interval::from(-8.0),
+                Interval::from(0.0),
+                Interval::from(-3.9),
+                Interval::from(-2.1),
+            )
+            .unwrap();
+        assert!(mixture_gap.is_finite() && mixture_gap > 0.0);
+
+        let left = Histogram::new(vec![1.0, 0.0], vec![-4.0, -2.0, 0.0]).unwrap();
+        let right = Histogram::new(vec![0.0, 1.0], vec![-4.0, -2.0, 0.0]).unwrap();
+        let complementary = TDistribution::mixture([
+            (0.5, TComponent::Histogram { histogram: left }),
+            (0.5, TComponent::Histogram { histogram: right }),
+        ]);
+        let left_only = complementary
+            .proven_density_floor_on_interval(
+                Interval::from(-4.0),
+                Interval::from(0.0),
+                Interval::from(-3.9),
+                Interval::from(-2.1),
+            )
+            .unwrap();
+        assert!(left_only.is_finite() && left_only > 0.0);
     }
 
     #[test]
