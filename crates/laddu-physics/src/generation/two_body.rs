@@ -1,3 +1,5 @@
+use maryada::EnclosureOps;
+
 #[derive(Clone, Copy, Debug)]
 /// A named generated edge and its four-momentum.
 pub struct NamedMomentum<'a> {
@@ -68,7 +70,6 @@ impl VertexProposal {
             Self::TwoBodyScattering { proposal } => proposal.propose(incoming, outgoing, rng),
         }
     }
-
 
     /// Return continuous-coordinate and analytical-region counts used by the
     /// proven-envelope report.
