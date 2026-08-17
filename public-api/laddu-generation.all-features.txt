@@ -15,6 +15,7 @@ pub use laddu_generation::TwoBodyScattering
 pub use laddu_generation::VertexProposal
 pub enum laddu_generation::EnvelopeKind
 pub laddu_generation::EnvelopeKind::Pilot
+pub laddu_generation::EnvelopeKind::ProvenPhaseSpace
 pub laddu_generation::EnvelopeKind::Strict
 impl core::clone::Clone for laddu_generation::EnvelopeKind
 pub fn laddu_generation::EnvelopeKind::clone(&self) -> laddu_generation::EnvelopeKind
@@ -33,6 +34,7 @@ pub enum laddu_generation::EnvelopeMode
 pub laddu_generation::EnvelopeMode::Pilot
 pub laddu_generation::EnvelopeMode::Pilot::proposals: usize
 pub laddu_generation::EnvelopeMode::Pilot::safety_factor: f64
+pub laddu_generation::EnvelopeMode::ProvenPhaseSpace
 pub laddu_generation::EnvelopeMode::Strict
 pub laddu_generation::EnvelopeMode::Strict::max_weight: f64
 impl core::clone::Clone for laddu_generation::EnvelopeMode
@@ -114,11 +116,12 @@ pub fn laddu_generation::GenerationError::fmt(&self, &mut core::fmt::Formatter<'
 pub struct laddu_generation::ChannelGenerator
 impl laddu_generation::ChannelGenerator
 pub fn laddu_generation::ChannelGenerator::add_scalar(&mut self, impl core::convert::Into<alloc::string::String>, laddu_physics::generation::ScalarSource) -> laddu_generation::GenerationResult<&mut Self>
-pub fn laddu_generation::ChannelGenerator::generate_unweighted_dataset(&self, laddu_generation::UnweightedConfig, &laddu_generation::ModelEvaluator) -> laddu_generation::GenerationResult<(laddu_data::data::dataset::Dataset, laddu_generation::GenerationReport)>
-pub fn laddu_generation::ChannelGenerator::generate_unweighted_to(&self, laddu_generation::UnweightedConfig, &laddu_generation::ModelEvaluator, &mut dyn laddu_data::io::EventSink) -> laddu_generation::GenerationResult<laddu_generation::GenerationReport>
+pub fn laddu_generation::ChannelGenerator::generate_unweighted_dataset(&self, laddu_generation::UnweightedConfig, core::option::Option<&laddu_generation::ModelEvaluator>) -> laddu_generation::GenerationResult<(laddu_data::data::dataset::Dataset, laddu_generation::GenerationReport)>
+pub fn laddu_generation::ChannelGenerator::generate_unweighted_to(&self, laddu_generation::UnweightedConfig, core::option::Option<&laddu_generation::ModelEvaluator>, &mut dyn laddu_data::io::EventSink) -> laddu_generation::GenerationResult<laddu_generation::GenerationReport>
 pub fn laddu_generation::ChannelGenerator::generate_weighted_dataset(&self, laddu_generation::WeightedConfig, core::option::Option<&laddu_generation::ModelEvaluator>) -> laddu_generation::GenerationResult<(laddu_data::data::dataset::Dataset, laddu_generation::GenerationReport)>
 pub fn laddu_generation::ChannelGenerator::generate_weighted_to(&self, laddu_generation::WeightedConfig, core::option::Option<&laddu_generation::ModelEvaluator>, &mut dyn laddu_data::io::EventSink) -> laddu_generation::GenerationResult<laddu_generation::GenerationReport>
 pub fn laddu_generation::ChannelGenerator::new(laddu_physics::channel::Channel) -> laddu_generation::GenerationResult<Self>
+pub fn laddu_generation::ChannelGenerator::phase_space_envelope(&self) -> laddu_generation::GenerationResult<laddu_generation::ProvenEnvelopeReport>
 pub fn laddu_generation::ChannelGenerator::with_scalar(self, impl core::convert::Into<alloc::string::String>, laddu_physics::generation::ScalarSource) -> laddu_generation::GenerationResult<Self>
 impl core::convert::TryFrom<laddu_physics::channel::Channel> for laddu_generation::ChannelGenerator
 pub type laddu_generation::ChannelGenerator::Error = laddu_generation::GenerationError
@@ -137,6 +140,10 @@ pub laddu_generation::GenerationReport::minimum_weight: f64
 pub laddu_generation::GenerationReport::pilot_proposals: usize
 pub laddu_generation::GenerationReport::produced: usize
 pub laddu_generation::GenerationReport::proposals: usize
+pub laddu_generation::GenerationReport::proven_continuous_dimensions: core::option::Option<usize>
+pub laddu_generation::GenerationReport::proven_piecewise_regions: core::option::Option<usize>
+pub laddu_generation::GenerationReport::proven_subdivisions: core::option::Option<usize>
+pub laddu_generation::GenerationReport::proven_weight_interval: core::option::Option<(f64, f64)>
 pub laddu_generation::GenerationReport::rejected: usize
 pub laddu_generation::GenerationReport::requested: usize
 pub laddu_generation::GenerationReport::seed: u64
@@ -162,6 +169,22 @@ impl core::clone::Clone for laddu_generation::ModelEvaluator
 pub fn laddu_generation::ModelEvaluator::clone(&self) -> laddu_generation::ModelEvaluator
 impl core::fmt::Debug for laddu_generation::ModelEvaluator
 pub fn laddu_generation::ModelEvaluator::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub struct laddu_generation::ProvenEnvelopeReport
+pub laddu_generation::ProvenEnvelopeReport::continuous_dimensions: usize
+pub laddu_generation::ProvenEnvelopeReport::maximum_weight: f64
+pub laddu_generation::ProvenEnvelopeReport::piecewise_regions: usize
+pub laddu_generation::ProvenEnvelopeReport::subdivisions: usize
+pub laddu_generation::ProvenEnvelopeReport::weight_interval: maryada::types::Interval
+impl laddu_generation::ProvenEnvelopeReport
+pub fn laddu_generation::ProvenEnvelopeReport::weight_bounds(&self) -> (f64, f64)
+impl core::clone::Clone for laddu_generation::ProvenEnvelopeReport
+pub fn laddu_generation::ProvenEnvelopeReport::clone(&self) -> laddu_generation::ProvenEnvelopeReport
+impl core::cmp::PartialEq for laddu_generation::ProvenEnvelopeReport
+pub fn laddu_generation::ProvenEnvelopeReport::eq(&self, &laddu_generation::ProvenEnvelopeReport) -> bool
+impl core::fmt::Debug for laddu_generation::ProvenEnvelopeReport
+pub fn laddu_generation::ProvenEnvelopeReport::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for laddu_generation::ProvenEnvelopeReport
+impl core::marker::StructuralPartialEq for laddu_generation::ProvenEnvelopeReport
 pub struct laddu_generation::UnweightedConfig
 pub laddu_generation::UnweightedConfig::diagnostics: bool
 pub laddu_generation::UnweightedConfig::envelope: laddu_generation::EnvelopeMode

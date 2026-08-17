@@ -254,6 +254,7 @@ pub use laddu::prelude::Predicate
 pub use laddu::prelude::ProcessMemoryReport
 pub use laddu::prelude::ProposalResult
 pub use laddu::prelude::ProposalRng
+pub use laddu::prelude::ProvenEnvelopeReport
 pub use laddu::prelude::ReadPlan
 pub use laddu::prelude::RealVec3
 pub use laddu::prelude::RealVec4
@@ -1219,6 +1220,41 @@ pub type laddu::python::generation::PyMassProposal::Output = pyo3::instance::Bou
 pub type laddu::python::generation::PyMassProposal::Target = laddu::python::generation::PyMassProposal
 pub const laddu::python::generation::PyMassProposal::OUTPUT_TYPE: pyo3::inspect::PyStaticExpr
 pub fn laddu::python::generation::PyMassProposal::into_pyobject(self, pyo3::marker::Python<'py>) -> core::result::Result<<Self as pyo3::conversion::IntoPyObject<'_>>::Output, <Self as pyo3::conversion::IntoPyObject<'_>>::Error>
+pub struct laddu::python::generation::PyProvenEnvelopeReport
+impl pyo3::impl_::pyclass::PyClassImpl for laddu::python::generation::PyProvenEnvelopeReport
+pub type laddu::python::generation::PyProvenEnvelopeReport::BaseNativeType = pyo3::types::any::PyAny
+pub type laddu::python::generation::PyProvenEnvelopeReport::BaseType = pyo3::types::any::PyAny
+pub type laddu::python::generation::PyProvenEnvelopeReport::Dict = pyo3::impl_::pyclass::PyClassDummySlot
+pub type laddu::python::generation::PyProvenEnvelopeReport::Inventory = Pyo3MethodsInventoryForPyProvenEnvelopeReport
+pub type laddu::python::generation::PyProvenEnvelopeReport::Layout = <<laddu::python::generation::PyProvenEnvelopeReport as pyo3::impl_::pyclass::PyClassImpl>::BaseNativeType as pyo3::impl_::pyclass::PyClassBaseType>::Layout
+pub type laddu::python::generation::PyProvenEnvelopeReport::PyClassMutability = <<pyo3::types::any::PyAny as pyo3::impl_::pyclass::PyClassBaseType>::PyClassMutability as pyo3::pycell::impl_::PyClassMutability>::ImmutableChild
+pub type laddu::python::generation::PyProvenEnvelopeReport::ThreadChecker = pyo3::impl_::pyclass::NoopThreadChecker
+pub type laddu::python::generation::PyProvenEnvelopeReport::WeakRef = pyo3::impl_::pyclass::PyClassDummySlot
+pub const laddu::python::generation::PyProvenEnvelopeReport::DOC: &'static core::ffi::c_str::CStr
+pub const laddu::python::generation::PyProvenEnvelopeReport::IS_BASETYPE: bool
+pub const laddu::python::generation::PyProvenEnvelopeReport::IS_IMMUTABLE_TYPE: bool
+pub const laddu::python::generation::PyProvenEnvelopeReport::IS_MAPPING: bool
+pub const laddu::python::generation::PyProvenEnvelopeReport::IS_SEQUENCE: bool
+pub const laddu::python::generation::PyProvenEnvelopeReport::IS_SUBCLASS: bool
+pub const laddu::python::generation::PyProvenEnvelopeReport::MODULE: core::option::Option<&str>
+pub const laddu::python::generation::PyProvenEnvelopeReport::RAW_DOC: &'static core::ffi::c_str::CStr
+pub fn laddu::python::generation::PyProvenEnvelopeReport::items_iter() -> pyo3::impl_::pyclass::PyClassItemsIter
+pub fn laddu::python::generation::PyProvenEnvelopeReport::lazy_type_object() -> &'static pyo3::impl_::pyclass::lazy_type_object::LazyTypeObject<Self>
+impl pyo3::pyclass::PyClass for laddu::python::generation::PyProvenEnvelopeReport
+pub type laddu::python::generation::PyProvenEnvelopeReport::Frozen = pyo3::pyclass::boolean_struct::True
+pub const laddu::python::generation::PyProvenEnvelopeReport::NAME: &str
+impl pyo3::type_object::PyTypeInfo for laddu::python::generation::PyProvenEnvelopeReport
+pub const laddu::python::generation::PyProvenEnvelopeReport::MODULE: core::option::Option<&str>
+pub const laddu::python::generation::PyProvenEnvelopeReport::NAME: &str
+pub const laddu::python::generation::PyProvenEnvelopeReport::TYPE_HINT: pyo3::inspect::PyStaticExpr
+pub fn laddu::python::generation::PyProvenEnvelopeReport::type_object_raw(pyo3::marker::Python<'_>) -> *mut pyo3_ffi::cpython::object::PyTypeObject
+impl pyo3::types::DerefToPyAny for laddu::python::generation::PyProvenEnvelopeReport
+impl<'py> pyo3::conversion::IntoPyObject<'py> for laddu::python::generation::PyProvenEnvelopeReport
+pub type laddu::python::generation::PyProvenEnvelopeReport::Error = pyo3::err::PyErr
+pub type laddu::python::generation::PyProvenEnvelopeReport::Output = pyo3::instance::Bound<'py, <laddu::python::generation::PyProvenEnvelopeReport as pyo3::conversion::IntoPyObject<'py>>::Target>
+pub type laddu::python::generation::PyProvenEnvelopeReport::Target = laddu::python::generation::PyProvenEnvelopeReport
+pub const laddu::python::generation::PyProvenEnvelopeReport::OUTPUT_TYPE: pyo3::inspect::PyStaticExpr
+pub fn laddu::python::generation::PyProvenEnvelopeReport::into_pyobject(self, pyo3::marker::Python<'py>) -> core::result::Result<<Self as pyo3::conversion::IntoPyObject<'_>>::Output, <Self as pyo3::conversion::IntoPyObject<'_>>::Error>
 pub struct laddu::python::generation::PyVertexProposal
 impl core::clone::Clone for laddu::python::generation::PyVertexProposal
 pub fn laddu::python::generation::PyVertexProposal::clone(&self) -> laddu::python::generation::PyVertexProposal

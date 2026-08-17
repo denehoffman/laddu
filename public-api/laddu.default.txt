@@ -246,6 +246,7 @@ pub use laddu::prelude::Predicate
 pub use laddu::prelude::ProcessMemoryReport
 pub use laddu::prelude::ProposalResult
 pub use laddu::prelude::ProposalRng
+pub use laddu::prelude::ProvenEnvelopeReport
 pub use laddu::prelude::ReadPlan
 pub use laddu::prelude::RealVec3
 pub use laddu::prelude::RealVec4
