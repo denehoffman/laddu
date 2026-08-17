@@ -130,12 +130,12 @@ impl PyParticle {
         mass: Option<f64>,
         ids: Option<HashMap<String, i64>>,
     ) -> PyResult<Self> {
-        if let Some(value) = mass {
-            if !value.is_finite() || value < 0.0 {
-                return Err(PyValueError::new_err(
-                    "particle mass must be finite and non-negative",
-                ));
-            }
+        if let Some(value) = mass
+            && (!value.is_finite() || value < 0.0)
+        {
+            return Err(PyValueError::new_err(
+                "particle mass must be finite and non-negative",
+            ));
         }
 
         let patch = ParticlePropertiesPatch {
