@@ -24,7 +24,7 @@ use laddu_physics::{
 use laddu_runtime::{
     Execution, MemoryBudget, MemoryDecision, MemoryLease, MemoryState, PreparedModel,
 };
-use maryada::{EnclosureOps, Interval, IntervalOps};
+use maryada::{EnclosureOps, GlobalMinimizer, GlobalMinimizerOptions, Interval, IntervalOps};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
@@ -283,7 +283,7 @@ pub struct ProvenEnvelopeReport {
     pub continuous_dimensions: usize,
     /// Number of analytical piecewise regions represented by the enclosure.
     pub piecewise_regions: usize,
-    /// Number of adaptive interval subdivisions; zero in the initial implementation.
+    /// Number of branch-and-bound subdivisions used to tighten the enclosure.
     pub subdivisions: usize,
 }
 
@@ -902,18 +902,21 @@ impl ChannelGenerator {
             )));
         }
 
-        let mut masses = Vec::with_capacity(self.edges.len());
+        // Validate the mass supports once against the root domain. The
+        // branch-and-bound evaluator below narrows these supports for each
+        // root-invariant-mass and generated-mass subdomain.
+        let mut mass_dimensions = vec![None; self.edges.len()];
+        let mut domain = vec![root_s];
         for edge in &self.edges {
             match edge.mass {
-                EdgeMassPlan::Fixed(mass) => masses.push(Interval::from(mass)),
-                EdgeMassPlan::Proposed(MassProposal::Fixed { mass }) => {
+                EdgeMassPlan::Fixed(mass)
+                | EdgeMassPlan::Proposed(MassProposal::Fixed { mass }) => {
                     if mass > root_s.sup() {
                         return Err(GenerationError::InvalidConfiguration(format!(
                             "fixed generated mass {mass} for edge `{}` exceeds the initial invariant-mass enclosure {root_s}",
                             edge.name
                         )));
                     }
-                    masses.push(Interval::from(mass));
                 }
                 EdgeMassPlan::Proposed(MassProposal::Uniform { low, high }) => {
                     let support_low = low.max(0.0);
@@ -928,74 +931,39 @@ impl ChannelGenerator {
                             root_s.sup()
                         )));
                     }
-                    let minimum_width = (high.min(root_s.inf()) - support_low).max(0.0);
-                    let maximum_width = support_high - support_low;
-                    weight *= Interval::new(minimum_width, maximum_width);
-                    masses.push(Interval::new(support_low, support_high));
                     continuous_dimensions = continuous_dimensions.saturating_add(1);
                 }
             }
         }
 
+        // Re-index generated-mass coordinates by edge position. Keeping the
+        // mapping separate from the physical mass intervals prevents the
+        // latent variables from being mistaken for independent masses.
+        for (edge_index, edge) in self.edges.iter().enumerate() {
+            if matches!(
+                edge.mass,
+                EdgeMassPlan::Proposed(MassProposal::Uniform { .. })
+            ) {
+                mass_dimensions[edge_index] = Some(domain.len());
+                domain.push(Interval::new(0.0, 1.0));
+            }
+        }
+
+        let mut transfer_dimensions = vec![None; self.vertices.len()];
         for vertex in &self.vertices {
             let (dimensions, regions) = vertex.proposal.proven_domain_metadata();
             continuous_dimensions = continuous_dimensions.saturating_add(dimensions);
             piecewise_regions = piecewise_regions.saturating_mul(regions);
-            let vertex_weight = match &vertex.proposal {
-                VertexProposal::TwoBodyDecay => {
-                    if vertex.incoming.len() != 1 || vertex.outgoing.len() != 2 {
-                        return Err(GenerationError::InvalidConfiguration(format!(
-                            "vertex `{}` is not a one-to-two decay",
-                            vertex.name
-                        )));
-                    }
-                    proven_two_body_decay_weight(
-                        masses[vertex.incoming[0]],
-                        masses[vertex.outgoing[0]],
-                        masses[vertex.outgoing[1]],
-                    )
-                }
-                VertexProposal::TwoBodyScattering { proposal } => {
-                    if vertex.incoming.len() != 2
-                        || vertex.outgoing.len() != 2
-                        || vertex
-                            .incoming
-                            .iter()
-                            .any(|edge| !self.root_indices.contains(edge))
-                    {
-                        return Err(GenerationError::InvalidConfiguration(format!(
-                            "proven two-body scattering at vertex `{}` currently requires two initial incoming edges",
-                            vertex.name
-                        )));
-                    }
-                    proposal.proven_weight_bound(
-                        root_s,
-                        [
-                            (
-                                self.edges[vertex.incoming[0]].name.as_str(),
-                                masses[vertex.incoming[0]],
-                            ),
-                            (
-                                self.edges[vertex.incoming[1]].name.as_str(),
-                                masses[vertex.incoming[1]],
-                            ),
-                        ],
-                        [
-                            (
-                                self.edges[vertex.outgoing[0]].name.as_str(),
-                                masses[vertex.outgoing[0]],
-                            ),
-                            (
-                                self.edges[vertex.outgoing[1]].name.as_str(),
-                                masses[vertex.outgoing[1]],
-                            ),
-                        ],
-                    )?
-                }
-            };
-            weight *= vertex_weight;
         }
-
+        for (vertex_index, vertex) in self.vertices.iter().enumerate() {
+            if matches!(vertex.proposal, VertexProposal::TwoBodyScattering { .. }) {
+                transfer_dimensions[vertex_index] = Some(domain.len());
+                // The transfer coordinate is normalized to the configured
+                // physical support. Angular coordinates remain analytically
+                // enclosed by the physics interval formulas.
+                domain.push(Interval::new(0.0, 1.0));
+            }
+        }
         for (_, source) in &self.scalar_sources {
             let sample = interval_scalar_sample(source)?;
             weight *= sample.weight;
@@ -1004,10 +972,135 @@ impl ChannelGenerator {
             piecewise_regions = piecewise_regions.saturating_mul(sample.piecewise_regions);
         }
 
-        let upper = weight.sup();
-        if weight.is_empty() || !upper.is_finite() || upper <= 0.0 {
+        let static_weight = weight;
+        // Search the derived root invariant mass together with normalized
+        // generated-mass and transfer coordinates. Dependent physical masses
+        // and transfer values are reconstructed inside each box so the search
+        // does not treat them as independent kinematic quantities.
+        let evaluate = |domain: &Vec<Interval>| -> GenerationResult<Interval> {
+            let root_s = domain.first().copied().ok_or_else(|| {
+                GenerationError::InvalidConfiguration(
+                    "branch-and-bound domain has no root invariant-mass coordinate".into(),
+                )
+            })?;
+            let mut weight = static_weight;
+            let mut masses = Vec::with_capacity(self.edges.len());
+            for (edge_index, edge) in self.edges.iter().enumerate() {
+                match edge.mass {
+                    EdgeMassPlan::Fixed(mass)
+                    | EdgeMassPlan::Proposed(MassProposal::Fixed { mass }) => {
+                        masses.push(Interval::from(mass));
+                    }
+                    EdgeMassPlan::Proposed(MassProposal::Uniform { low, high }) => {
+                        let support_low = low.max(0.0);
+                        let support_high = high.min(root_s.sup());
+                        let minimum_width = (high.min(root_s.inf()) - support_low).max(0.0);
+                        let maximum_width = support_high - support_low;
+                        if maximum_width <= 0.0 {
+                            return Ok(Interval::EMPTY);
+                        }
+                        let support_width = Interval::new(minimum_width, maximum_width);
+                        weight *= support_width;
+                        let fraction = domain[mass_dimensions[edge_index].ok_or_else(|| {
+                            GenerationError::InvalidConfiguration(format!(
+                                "missing branch coordinate for generated mass edge `{}`",
+                                edge.name
+                            ))
+                        })?];
+                        masses.push(Interval::from(support_low) + fraction * support_width);
+                    }
+                }
+            }
+
+            for (vertex_index, vertex) in self.vertices.iter().enumerate() {
+                let vertex_weight = match &vertex.proposal {
+                    VertexProposal::TwoBodyDecay => {
+                        if vertex.incoming.len() != 1 || vertex.outgoing.len() != 2 {
+                            return Err(GenerationError::InvalidConfiguration(format!(
+                                "vertex `{}` is not a one-to-two decay",
+                                vertex.name
+                            )));
+                        }
+                        proven_two_body_decay_weight(
+                            masses[vertex.incoming[0]],
+                            masses[vertex.outgoing[0]],
+                            masses[vertex.outgoing[1]],
+                        )
+                    }
+                    VertexProposal::TwoBodyScattering { proposal } => {
+                        if vertex.incoming.len() != 2
+                            || vertex.outgoing.len() != 2
+                            || vertex
+                                .incoming
+                                .iter()
+                                .any(|edge| !self.root_indices.contains(edge))
+                        {
+                            return Err(GenerationError::InvalidConfiguration(format!(
+                                "proven two-body scattering at vertex `{}` currently requires two initial incoming edges",
+                                vertex.name
+                            )));
+                        }
+                        proposal.proven_weight_bound_for_transfer(
+                            root_s,
+                            [
+                                (
+                                    self.edges[vertex.incoming[0]].name.as_str(),
+                                    masses[vertex.incoming[0]],
+                                ),
+                                (
+                                    self.edges[vertex.incoming[1]].name.as_str(),
+                                    masses[vertex.incoming[1]],
+                                ),
+                            ],
+                            [
+                                (
+                                    self.edges[vertex.outgoing[0]].name.as_str(),
+                                    masses[vertex.outgoing[0]],
+                                ),
+                                (
+                                    self.edges[vertex.outgoing[1]].name.as_str(),
+                                    masses[vertex.outgoing[1]],
+                                ),
+                            ],
+                            domain[transfer_dimensions[vertex_index].ok_or_else(|| {
+                                GenerationError::InvalidConfiguration(format!(
+                                    "missing branch coordinate for transfer vertex `{}`",
+                                    vertex.name
+                                ))
+                            })?],
+                        )?
+                    }
+                };
+                weight *= vertex_weight;
+            }
+            Ok(weight)
+        };
+
+        let coarse_weight = evaluate(&domain)?;
+        let scale = coarse_weight.sup().abs().max(1.0);
+        let domain_tolerance = 1.0 / 1_024.0;
+        let options = GlobalMinimizerOptions {
+            value_tolerance: Some(scale * 1.0e-8),
+            domain_tolerance: Some(domain_tolerance),
+            gap_tolerance: Some(scale * 1.0e-8),
+            max_steps: Some(1_024),
+        };
+        let mut minimizer = GlobalMinimizer::with_options(
+            domain,
+            move |domain: &Vec<Interval>| evaluate(domain).map(|value| -value),
+            options,
+        );
+        let result = minimizer.solve().map_err(|error| {
+            GenerationError::InvalidConfiguration(format!(
+                "branch-and-bound phase-space envelope failed: {error}"
+            ))
+        })?;
+        let upper = -result.minimum.inf();
+        debug_assert!(upper <= coarse_weight.sup() * (1.0 + 1.0e-12));
+        if result.minimum.is_empty() || !upper.is_finite() || upper <= 0.0 {
             return Err(GenerationError::InvalidConfiguration(format!(
-                "phase-space proposal-weight enclosure {weight} has no finite positive upper endpoint"
+                "phase-space proposal-weight enclosure has no finite positive upper endpoint: {}",
+                result.minimum
             )));
         }
         let weight_interval = Interval::new(0.0, upper);
@@ -1016,7 +1109,7 @@ impl ChannelGenerator {
             maximum_weight: upper,
             continuous_dimensions,
             piecewise_regions,
-            subdivisions: 0,
+            subdivisions: result.branched,
         })
     }
 
@@ -2397,7 +2490,21 @@ mod tests {
             quantile(0.99),
         );
         assert!(proven.maximum_weight.is_finite());
-        assert_eq!(proven.subdivisions, 0);
+        assert!(
+            proven.subdivisions > 0,
+            "a non-singleton root invariant-mass domain should be subdivided"
+        );
+        eprintln!(
+            "closure branch-and-bound envelope: subdivisions={}, proposal_dimensions={}, regions={}, maximum={:.6e}",
+            proven.subdivisions,
+            proven.continuous_dimensions,
+            proven.piecewise_regions,
+            proven.maximum_weight,
+        );
+        assert!(
+            weights[weights.len() - 1] / proven.maximum_weight > 0.5,
+            "latent mass and transfer refinement should materially tighten the closure envelope"
+        );
     }
 
     #[test]

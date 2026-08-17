@@ -48,7 +48,7 @@ laddu-memory = { version = "0.21.1", path = "crates/laddu-memory" } # x-release-
 laddu-physics = { version = "0.21.1", path = "crates/laddu-physics" } # x-release-please-version
 laddu-runtime = { version = "0.21.1", path = "crates/laddu-runtime" } # x-release-please-version
 laddu-wgpu = { version = "0.21.1", path = "crates/laddu-wgpu" } # x-release-please-version
-maryada = "0.2.1"
+maryada = { version = "0.2.1", features = ["branch"] }
 mpi = { version = "0.8.2", features = ["complex"] }
 mpi_test = "0.1.1"
 nalgebra = { version = "0.35.0", features = ["serde-serialize"] }
