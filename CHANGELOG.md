@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.21.2](https://github.com/denehoffman/laddu/compare/v0.21.1...v0.21.2) (2026-08-17)
+
+
+### Features
+
+* Classify free-parameter validation errors ([9599be9](https://github.com/denehoffman/laddu/commit/9599be95e203a1a7b51dd0c907eaf645658255cf))
+* **data:** Harden batch I/O and memory planning ([29e4ded](https://github.com/denehoffman/laddu/commit/29e4dedbab40eaf5efbd0962cce2414870dbf8ec))
+* **generation:** Add proven phase-space envelope support ([d5d3f30](https://github.com/denehoffman/laddu/commit/d5d3f303000bd452b99ce80c3b4fc9798a533d96))
+* **generation:** Add proven phase-space rejection envelopes ([3b246ea](https://github.com/denehoffman/laddu/commit/3b246eaa36ac6e03d5ed42e5a6bcdf4f7ba5ef1d))
+* **generation:** Tighten proven envelopes with branch and bound ([b6681bc](https://github.com/denehoffman/laddu/commit/b6681bc07251e31784e16124ec21711de6660c57))
+* **kernel:** Expose instruction metadata and check matrix widths ([7e51508](https://github.com/denehoffman/laddu/commit/7e515087bf93827649828f1ac4e2377741169fe2))
+* **python:** Add JSON serialization helpers ([ee1ef56](https://github.com/denehoffman/laddu/commit/ee1ef569f6d3f2215949e908da20c77b88530c7d))
+* Separate laddu-data into smaller submodules ([e67fdb9](https://github.com/denehoffman/laddu/commit/e67fdb97edb9c2442f6558fe18a5e578c697b663))
+* **visualization:** Add expression rendering styles ([dfab904](https://github.com/denehoffman/laddu/commit/dfab9042a1b1a940aa9c002defa8224b883909f1))
+
+
+### Bug Fixes
+
+* Clippy lints ([bbe9fc8](https://github.com/denehoffman/laddu/commit/bbe9fc8d5c5f1ff8173148f9929822639ef38dfe))
+* **data:** Preserve batch lengths during empty and row-based assembly ([ee99827](https://github.com/denehoffman/laddu/commit/ee9982766ca0e42213e0d3253b63f59c7fffa432))
+* **ir:** Enforce wrapper-specific kernel IR validation ([0ee3ca7](https://github.com/denehoffman/laddu/commit/0ee3ca7e3b78d4d5eedb621d4e632d06a27af309))
+* Replace recursive expression traversal with iterative walks ([a5eeeb9](https://github.com/denehoffman/laddu/commit/a5eeeb99256f15f6c6ea4ec752e3e6d3a8d92cd6))
+
 ## [0.21.1](https://github.com/denehoffman/laddu/compare/v0.21.0...v0.21.1) (2026-08-11)
 
 
