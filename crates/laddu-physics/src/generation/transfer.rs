@@ -130,11 +130,7 @@ impl TComponent {
         }
     }
 
-    fn proven_density_floor(
-        &self,
-        maximum_width: f64,
-        maximum_t: f64,
-    ) -> LadduPhysicsResult<f64> {
+    fn proven_density_floor(&self, maximum_width: f64, maximum_t: f64) -> LadduPhysicsResult<f64> {
         if !maximum_width.is_finite() || maximum_width <= 0.0 {
             return Err(LadduPhysicsError::invalid_relation(
                 "proven t-density bound requires a finite positive support width",
@@ -394,11 +390,7 @@ impl TDistribution {
         Ok((t, density))
     }
 
-    fn proven_density_floor(
-        &self,
-        maximum_width: f64,
-        maximum_t: f64,
-    ) -> LadduPhysicsResult<f64> {
+    fn proven_density_floor(&self, maximum_width: f64, maximum_t: f64) -> LadduPhysicsResult<f64> {
         let normalization = self.normalization()?;
         let mut everywhere_floor = Interval::ZERO;
         let mut selected_floor = f64::INFINITY;
@@ -423,9 +415,11 @@ impl TDistribution {
         self.components
             .iter()
             .map(|(_, component)| match component {
-                TComponent::Histogram { histogram } => {
-                    histogram.counts().iter().filter(|count| **count > 0.0).count()
-                }
+                TComponent::Histogram { histogram } => histogram
+                    .counts()
+                    .iter()
+                    .filter(|count| **count > 0.0)
+                    .count(),
                 _ => 1,
             })
             .sum::<usize>()
@@ -603,7 +597,6 @@ impl TwoBodyScattering {
         Ok(Interval::new(0.0, result.sup()))
     }
 
-
     #[doc(hidden)]
     pub fn proven_domain_metadata(&self) -> (usize, usize) {
         (2, self.distribution.proven_piecewise_regions())
@@ -612,8 +605,8 @@ impl TwoBodyScattering {
 
 fn proven_two_body_momentum(parent: Interval, first: Interval, second: Interval) -> Interval {
     let parent_squared = parent.sqr();
-    let radicand = (parent_squared - (first + second).sqr())
-        * (parent_squared - (first - second).sqr());
+    let radicand =
+        (parent_squared - (first + second).sqr()) * (parent_squared - (first - second).sqr());
     radicand.sqrt() / (2.0 * parent)
 }
 
@@ -754,11 +747,8 @@ mod tests {
 
     #[test]
     fn proven_scattering_bounds_cover_every_builtin_transfer_family() {
-        let histogram = Histogram::new(
-            vec![1.0, 0.0, 3.0, 2.0],
-            vec![-8.0, -4.0, -2.0, -0.5, 0.0],
-        )
-        .unwrap();
+        let histogram =
+            Histogram::new(vec![1.0, 0.0, 3.0, 2.0], vec![-8.0, -4.0, -2.0, -0.5, 0.0]).unwrap();
         let distributions = [
             TDistribution::uniform(),
             TDistribution::exponential(3.0),
@@ -806,26 +796,24 @@ mod tests {
                         ("beam", Interval::from(0.0)),
                         ("target", Interval::from(0.0)),
                     ],
-                    [
-                        ("x", Interval::from(0.5)),
-                        ("r", Interval::from(0.7)),
-                    ],
+                    [("x", Interval::from(0.5)), ("r", Interval::from(0.7))],
                 )
                 .unwrap();
             let mut rng = ProposalRng::new(100 + index as u64);
             for _ in 0..2_000 {
                 let sampled = proposal.propose(&incoming, &outgoing, &mut rng).unwrap();
-                assert!(bound.contains(sampled.weight), "{bound} missed {}", sampled.weight);
+                assert!(
+                    bound.contains(sampled.weight),
+                    "{bound} missed {}",
+                    sampled.weight
+                );
             }
         }
     }
 
     #[test]
     fn proven_massless_pole_rejects_a_domain_touching_the_singularity() {
-        let proposal = TwoBodyScattering::t_exchange(
-            ("beam", "x"),
-            TDistribution::pole(0.0, 1.0),
-        );
+        let proposal = TwoBodyScattering::t_exchange(("beam", "x"), TDistribution::pole(0.0, 1.0));
         assert!(
             proposal
                 .proven_weight_bound(
@@ -834,10 +822,7 @@ mod tests {
                         ("beam", Interval::from(0.0)),
                         ("target", Interval::from(0.0)),
                     ],
-                    [
-                        ("x", Interval::from(0.0)),
-                        ("r", Interval::from(0.0)),
-                    ],
+                    [("x", Interval::from(0.0)), ("r", Interval::from(0.0)),],
                 )
                 .is_err()
         );

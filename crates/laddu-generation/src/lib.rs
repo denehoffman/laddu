@@ -24,7 +24,7 @@ use laddu_physics::{
 use laddu_runtime::{
     Execution, MemoryBudget, MemoryDecision, MemoryLease, MemoryState, PreparedModel,
 };
-use maryada::{Interval, IntervalOps};
+use maryada::{EnclosureOps, Interval, IntervalOps};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
