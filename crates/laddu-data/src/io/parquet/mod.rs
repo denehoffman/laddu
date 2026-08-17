@@ -15,7 +15,8 @@ use crate::{
     data::EventBatch,
     io::{
         DataFragment, EventSink, EventSource, FragmentedSource, OutputMode, OutputPath, ReadPlan,
-        SourceCapabilities, WritePlan, fragmented_batches,
+        SinkState, SourceBuild, SourceBuildOptions, SourceCapabilities, WritePlan, build_source,
+        fragmented_batches, sink_error, source_error,
     },
     schema::{
         Precision, Schema, SchemaColumnNames, SchemaInferenceOptions, SchemaWriteOptions,
@@ -174,53 +175,37 @@ impl ParquetSourceBuilder {
     /// Returns [`LadduDataError`] when the glob is invalid or empty, Parquet
     /// metadata cannot be read, schema inference fails, or files disagree.
     pub fn build(self) -> LadduDataResult<ParquetSource> {
-        let mut files: Vec<PathBuf> = glob::glob(&self.pattern)
-            .map_err(|e| LadduDataError::Source(e.to_string()))?
-            .collect::<std::result::Result<_, _>>()
-            .map_err(|e| LadduDataError::Source(e.to_string()))?;
-
-        if self.options.sort_glob {
-            files.sort();
-        }
-
-        if files.is_empty() {
-            return Err(LadduDataError::Source(
-                "no parquet files matched glob".into(),
-            ));
-        }
-
-        let files: Arc<[Arc<PathBuf>]> = files.into_iter().map(Arc::new).collect();
-
-        let schema = match self.schema {
-            Some(schema) => schema,
-            None if self.options.infer_schema => Arc::new({
-                let path: &Path = files[0].as_ref();
-                let options: &ParquetReadOptions = &self.options;
+        let ParquetSourceBuilder {
+            pattern,
+            schema: explicit_schema,
+            options,
+        } = self;
+        let infer_options = options.schema_inference.clone();
+        let validate_options = options.schema_inference.clone();
+        let SourceBuild { files, schema, .. } = build_source(
+            SourceBuildOptions {
+                pattern: &pattern,
+                sort: options.sort_glob,
+                format: "parquet",
+                explicit_schema,
+                infer_schema: options.infer_schema,
+                validate_all_files: options.validate_all_files,
+            },
+            |_| Ok(()),
+            move |path, _| {
                 let arrow_schema = parquet_arrow_schema(path)?;
-                Schema::infer_from_columns(arrow_columns(&arrow_schema), &options.schema_inference)
-            }?),
-            None => return Err(LadduDataError::InvalidArgument("schema required")),
-        };
-
-        if self.options.validate_all_files {
-            for file in files.iter() {
-                {
-                    let path: &Path = file.as_ref();
-                    let schema: &Schema = &schema;
-                    let options: &ParquetReadOptions = &self.options;
-                    let arrow_schema = parquet_arrow_schema(path)?;
-                    schema.validate_required_columns(
-                        arrow_columns(&arrow_schema),
-                        &options.schema_inference,
-                    )
-                }?;
-            }
-        }
+                Schema::infer_from_columns(arrow_columns(&arrow_schema), &infer_options)
+            },
+            move |path, schema, _| {
+                let arrow_schema = parquet_arrow_schema(path)?;
+                schema.validate_required_columns(arrow_columns(&arrow_schema), &validate_options)
+            },
+        )?;
 
         Ok(ParquetSource {
             files,
             schema,
-            options: self.options,
+            options,
         })
     }
 }
@@ -262,11 +247,12 @@ impl FragmentedSource for ParquetSource {
         let mut global_start = 0_u64;
 
         for path in self.files.iter() {
-            let file =
-                File::open(path.as_ref()).map_err(|e| LadduDataError::Source(e.to_string()))?;
+            let resource = path.as_ref().display().to_string();
+            let file = File::open(path.as_ref())
+                .map_err(|error| source_error("open Parquet file", &resource, error))?;
 
             let builder = ParquetRecordBatchReaderBuilder::try_new(file)
-                .map_err(|e| LadduDataError::Source(e.to_string()))?;
+                .map_err(|error| source_error("read Parquet metadata", &resource, error))?;
 
             let metadata = builder.metadata();
 
@@ -315,6 +301,7 @@ pub struct ParquetSink {
     event_schema: Option<Arc<Schema>>,
     options: ParquetWriteOptions,
     resolved_path: Option<PathBuf>,
+    state: SinkState,
 }
 
 /// Parquet writer and physical schema options.
@@ -413,12 +400,27 @@ impl ParquetSinkBuilder {
             event_schema: None,
             options: self.options,
             resolved_path: None,
+            state: SinkState::Idle,
         }
     }
 }
 
 impl EventSink for ParquetSink {
     fn begin(&mut self, schema: Arc<Schema>, plan: WritePlan) -> LadduDataResult<()> {
+        match self.state {
+            SinkState::Idle => {}
+            SinkState::Writing => {
+                return Err(LadduDataError::Sink(
+                    "parquet sink already initialized".into(),
+                ));
+            }
+            SinkState::Failed => {
+                return Err(LadduDataError::Sink(
+                    "parquet sink requires abort after failure".into(),
+                ));
+            }
+        }
+
         let path = self.output.resolve(plan, "parquet")?;
         OutputPath::create_parent_dirs(&path)?;
 
@@ -428,24 +430,37 @@ impl EventSink for ParquetSink {
             &self.options.schema_write,
         ));
 
-        let file = File::create(&path).map_err(|e| LadduDataError::Sink(e.to_string()))?;
+        let file = File::create(&path)
+            .map_err(|error| sink_error("create Parquet file", path.display(), error))?;
 
         let writer = ArrowWriter::try_new(
             file,
             Arc::clone(&arrow_schema),
             self.options.writer_properties.clone(),
         )
-        .map_err(|e| LadduDataError::Sink(e.to_string()))?;
+        .map_err(|error| sink_error("initialize Parquet writer", path.display(), error))?;
 
         self.arrow_schema = Some(arrow_schema);
         self.event_schema = Some(schema);
         self.writer = Some(writer);
         self.resolved_path = Some(path);
+        self.state = SinkState::Writing;
 
         Ok(())
     }
 
     fn write_batch(&mut self, batch: &EventBatch) -> LadduDataResult<()> {
+        if !matches!(self.state, SinkState::Writing) {
+            return Err(LadduDataError::Sink(
+                match self.state {
+                    SinkState::Idle => "parquet sink not initialized",
+                    SinkState::Failed => "parquet sink requires abort after failure",
+                    SinkState::Writing => unreachable!(),
+                }
+                .into(),
+            ));
+        }
+
         let arrow_schema = self
             .arrow_schema
             .as_ref()
@@ -461,27 +476,75 @@ impl EventSink for ParquetSink {
             ));
         }
 
-        let rb = event_batch_to_record_batch(
+        let rb = match event_batch_to_record_batch(
             batch,
             Arc::clone(arrow_schema),
             self.options.schema_write.write_weight_column,
+            &self.options.schema_write,
             self.options.schema_write.precision,
-        )?;
+        ) {
+            Ok(rb) => rb,
+            Err(error) => {
+                self.state = SinkState::Failed;
+                let resource = self.resolved_path.as_deref().map_or_else(
+                    || "Parquet sink".to_owned(),
+                    |path| path.display().to_string(),
+                );
+                return Err(sink_error("encode Parquet batch", resource, error));
+            }
+        };
 
-        self.writer
+        let resource = self.resolved_path.as_deref().map_or_else(
+            || "Parquet sink".to_owned(),
+            |path| path.display().to_string(),
+        );
+        let result = self
+            .writer
             .as_mut()
             .ok_or_else(|| LadduDataError::Sink("parquet sink not initialized".into()))?
             .write(&rb)
-            .map_err(|e| LadduDataError::Sink(e.to_string()))
+            .map_err(|error| sink_error("write Parquet batch", resource, error));
+        if result.is_err() {
+            self.state = SinkState::Failed;
+        }
+        result
     }
 
     fn finish(&mut self) -> LadduDataResult<()> {
-        if let Some(writer) = self.writer.take() {
-            writer
-                .close()
-                .map_err(|e| LadduDataError::Sink(e.to_string()))?;
+        if matches!(self.state, SinkState::Idle) {
+            return Ok(());
+        }
+        if matches!(self.state, SinkState::Failed) {
+            return Err(LadduDataError::Sink(
+                "parquet sink requires abort after failure".into(),
+            ));
         }
 
+        let resource = self.resolved_path.as_deref().map_or_else(
+            || "Parquet sink".to_owned(),
+            |path| path.display().to_string(),
+        );
+        if let Some(writer) = self.writer.take()
+            && let Err(error) = writer.close()
+        {
+            self.state = SinkState::Failed;
+            return Err(sink_error("finalize Parquet file", resource, error));
+        }
+
+        self.arrow_schema = None;
+        self.event_schema = None;
+        self.state = SinkState::Idle;
+        Ok(())
+    }
+
+    fn abort(&mut self) -> LadduDataResult<()> {
+        // Dropping ArrowWriter closes its file handle without attempting to
+        // finalize the Parquet footer. The concrete path is intentionally
+        // retained so callers can identify the potentially incomplete file.
+        self.writer.take();
+        self.arrow_schema = None;
+        self.event_schema = None;
+        self.state = SinkState::Idle;
         Ok(())
     }
 }

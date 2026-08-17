@@ -109,11 +109,27 @@ fn assert_sink_lifecycle(mut sink: impl EventSink) {
     sink.begin(Arc::clone(batches[0].schema()), WritePlan::default())
         .unwrap();
     assert!(matches!(
+        sink.begin(Arc::clone(batches[0].schema()), WritePlan::default()),
+        Err(LadduDataError::Sink(_))
+    ));
+    assert!(matches!(
         sink.write_batch(&mismatched_batch()),
         Err(LadduDataError::Sink(_))
     ));
     sink.write_batch(&batches[0]).unwrap();
     sink.finish().unwrap();
+    assert!(matches!(
+        sink.write_batch(&batches[0]),
+        Err(LadduDataError::Sink(_))
+    ));
+    sink.finish().unwrap();
+
+    sink.begin(Arc::clone(batches[0].schema()), WritePlan::default())
+        .unwrap();
+    sink.write_batch(&batches[0]).unwrap();
+    sink.abort().unwrap();
+    sink.begin(Arc::clone(batches[0].schema()), WritePlan::default())
+        .unwrap();
     sink.finish().unwrap();
 }
 

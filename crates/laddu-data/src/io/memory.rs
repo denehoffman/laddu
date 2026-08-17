@@ -4,8 +4,8 @@ use crate::{
     LadduDataError, LadduDataResult,
     data::{EventBatch, OwnedEvent},
     io::{
-        DataFragment, EventSink, EventSource, FragmentedSource, ReadPlan, SourceCapabilities,
-        WritePlan, fragmented_batches,
+        DataFragment, EventSink, EventSource, FragmentedSource, ReadPlan, SinkState,
+        SourceCapabilities, WritePlan, fragmented_batches,
     },
     schema::Schema,
 };
@@ -230,7 +230,7 @@ impl Iterator for MemoryRangeIter {
 pub struct MemorySink {
     schema: Option<Arc<Schema>>,
     batches: Vec<EventBatch>,
-    finished: bool,
+    state: SinkState,
 }
 
 impl MemorySink {
@@ -278,7 +278,7 @@ impl MemorySink {
     pub fn clear(&mut self) {
         self.schema = None;
         self.batches.clear();
-        self.finished = false;
+        self.state = SinkState::Idle;
     }
 }
 
@@ -288,13 +288,38 @@ impl EventSink for MemorySink {
     }
 
     fn begin(&mut self, schema: Arc<Schema>, _plan: WritePlan) -> LadduDataResult<()> {
+        match self.state {
+            SinkState::Idle => {}
+            SinkState::Writing => {
+                return Err(LadduDataError::Sink(
+                    "memory sink already initialized".into(),
+                ));
+            }
+            SinkState::Failed => {
+                return Err(LadduDataError::Sink(
+                    "memory sink requires abort after failure".into(),
+                ));
+            }
+        }
+
         self.schema = Some(schema);
         self.batches.clear();
-        self.finished = false;
+        self.state = SinkState::Writing;
         Ok(())
     }
 
     fn write_batch(&mut self, batch: &EventBatch) -> LadduDataResult<()> {
+        if !matches!(self.state, SinkState::Writing) {
+            return Err(LadduDataError::Sink(
+                match self.state {
+                    SinkState::Idle => "memory sink not initialized",
+                    SinkState::Failed => "memory sink requires abort after failure",
+                    SinkState::Writing => unreachable!(),
+                }
+                .into(),
+            ));
+        }
+
         let schema = self
             .schema
             .as_ref()
@@ -311,7 +336,19 @@ impl EventSink for MemorySink {
     }
 
     fn finish(&mut self) -> LadduDataResult<()> {
-        self.finished = true;
+        if matches!(self.state, SinkState::Failed) {
+            return Err(LadduDataError::Sink(
+                "memory sink requires abort after failure".into(),
+            ));
+        }
+        self.state = SinkState::Idle;
+        Ok(())
+    }
+
+    fn abort(&mut self) -> LadduDataResult<()> {
+        self.schema = None;
+        self.batches.clear();
+        self.state = SinkState::Idle;
         Ok(())
     }
 }
@@ -484,5 +521,22 @@ mod tests {
 
         assert_eq!(merged.scalar_column(0), &[0.0, 1.0, 2.0, 3.0]);
         assert_eq!(merged.weights_column().unwrap(), &[1.0, 2.0, 3.0, 4.0]);
+    }
+
+    #[test]
+    fn memory_sink_abort_discards_partial_batches_and_allows_reuse() {
+        let mut sink = MemorySink::new();
+        let first = batch(0, 2);
+
+        sink.begin(Arc::clone(first.schema()), WritePlan::default())
+            .unwrap();
+        sink.write_batch(&first).unwrap();
+        sink.abort().unwrap();
+        assert!(sink.schema().is_none());
+        assert!(sink.batches().is_empty());
+
+        sink.begin(Arc::clone(first.schema()), WritePlan::default())
+            .unwrap();
+        sink.finish().unwrap();
     }
 }

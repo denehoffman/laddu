@@ -646,11 +646,21 @@ impl Dataset {
     pub fn write_to<S: EventSink>(&self, sink: &mut S) -> LadduDataResult<()> {
         sink.begin(self.schema()?, WritePlan::from(self.plan))?;
 
-        for batch in self.batches()? {
-            sink.write_batch(&batch?)?;
+        let result = (|| {
+            for batch in self.batches()? {
+                sink.write_batch(&batch?)?;
+            }
+
+            sink.finish()
+        })();
+
+        if result.is_err() {
+            // Preserve the operation error; abort is best-effort cleanup and
+            // may itself report a backend failure.
+            let _ = sink.abort();
         }
 
-        sink.finish()
+        result
     }
 
     fn push_op(self, op: DatasetOp) -> Self {

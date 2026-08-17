@@ -9,8 +9,10 @@ pub mod data;
 mod error;
 /// Streaming event-source and sink abstractions and file-format adapters.
 pub mod io;
+mod layout;
 /// Logical event schemas and physical-column inference.
 pub mod schema;
 pub use error::{LadduDataError, LadduDataResult};
+pub use layout::BatchLayout;
 /// Shared immutable column or field name.
 pub type Name = Arc<str>;

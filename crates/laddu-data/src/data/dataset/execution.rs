@@ -1,14 +1,12 @@
-use std::{
-    mem::size_of,
-    sync::{Arc, Mutex},
-};
+use std::sync::{Arc, Mutex};
 
 use crate::{
-    LadduDataError, LadduDataResult,
+    BatchLayout, LadduDataResult,
     data::event::{Event, EventBatch},
-    io::{EventBatchIter, ReadPlan},
+    io::{EventBatchIter, ReadPlan, source_error},
+    schema::Precision,
 };
-use laddu_memory::{MemoryFitRequest, MemoryFootprint, MemoryState};
+use laddu_memory::{MemoryFitRequest, MemoryState};
 
 use super::ops::{eval_batch, materialize_batch};
 use super::{Dataset, DatasetStats, DatasetStatsCache};
@@ -24,19 +22,24 @@ impl DatasetExecutionPlan {
     pub(super) fn resolve(dataset: &Dataset, mut read_plan: ReadPlan) -> LadduDataResult<Self> {
         if read_plan.chunk_size.is_none() {
             let schema = dataset.schema()?;
-            let bytes_per_event = 4_usize
-                .saturating_mul(schema.n_p4s())
-                .saturating_add(schema.n_scalars())
-                .saturating_add(usize::from(schema.has_weight()))
-                .saturating_mul(size_of::<f64>());
             let copies = if dataset.ops.is_empty() { 1 } else { 2 };
-            let peak_per_event = bytes_per_event.saturating_mul(copies);
+            let footprint = BatchLayout::from_schema(&schema)
+                .schema_working_set(Precision::F64, copies)
+                .map_err(|error| {
+                    source_error(
+                        "plan dataset working set",
+                        "dataset",
+                        format!("dataset working-set overflow: {error}"),
+                    )
+                })?;
             let state = MemoryState::current();
             state.refresh();
             let available = dataset
                 .memory_budget
                 .resolve(&state.host())
-                .map_err(|error| LadduDataError::Source(error.to_string()))?;
+                .map_err(|error| {
+                    source_error("resolve dataset memory budget", "host memory", error)
+                })?;
             let event_limit = dataset
                 .source
                 .num_events()?
@@ -44,13 +47,13 @@ impl DatasetExecutionPlan {
                 .unwrap_or(usize::MAX);
             let decision = MemoryFitRequest {
                 label: "dataset read".into(),
-                footprint: MemoryFootprint::from_usize(0, peak_per_event),
+                footprint,
                 available_bytes: available,
                 event_limit,
                 strategy: "memory-derived streaming".into(),
             }
             .evaluate()
-            .map_err(|error| LadduDataError::Source(error.to_string()))?;
+            .map_err(|error| source_error("plan dataset read", "dataset", error))?;
             read_plan.chunk_size = Some(decision.chunk_events.max(1));
             *dataset
                 .last_memory_decision
@@ -201,35 +204,96 @@ impl Iterator for DatasetExecutor {
 struct CoalescedBatches {
     input: EventBatchIter,
     target: usize,
-    pending: Vec<EventBatch>,
-    pending_len: usize,
-    deferred: Option<LadduDataResult<EventBatch>>,
-    finished: bool,
+    pending: PendingBatches,
+    state: CoalescedState,
+}
+
+#[derive(Default)]
+struct PendingBatches {
+    batches: Vec<EventBatch>,
+    len: usize,
+}
+
+enum CoalescedState {
+    Filling,
+    Deferred(LadduDataResult<EventBatch>),
+    Done,
 }
 
 impl CoalescedBatches {
     fn new(input: EventBatchIter, target: usize) -> Self {
+        debug_assert!(target > 0, "coalescing target must be nonzero");
         Self {
             input,
-            target,
-            pending: Vec::new(),
-            pending_len: 0,
-            deferred: None,
-            finished: false,
+            target: target.max(1),
+            pending: PendingBatches::default(),
+            state: CoalescedState::Filling,
         }
     }
 
     fn emit_pending(&mut self) -> Option<LadduDataResult<EventBatch>> {
-        if self.pending.is_empty() {
+        self.pending.emit()
+    }
+
+    fn take_input(&mut self) -> Option<LadduDataResult<EventBatch>> {
+        let state = std::mem::replace(&mut self.state, CoalescedState::Filling);
+        match state {
+            CoalescedState::Filling => self.input.next(),
+            CoalescedState::Deferred(item) => Some(item),
+            CoalescedState::Done => {
+                self.state = CoalescedState::Done;
+                None
+            }
+        }
+    }
+}
+
+impl PendingBatches {
+    fn is_empty(&self) -> bool {
+        self.batches.is_empty()
+    }
+
+    fn len(&self) -> usize {
+        self.len
+    }
+
+    fn push(&mut self, batch: EventBatch) {
+        debug_assert!(!batch.is_empty(), "empty batches are not pending");
+        self.len = self
+            .len
+            .checked_add(batch.len())
+            .expect("pending batch length overflow");
+        self.batches.push(batch);
+        self.debug_assert_invariant();
+    }
+
+    fn emit(&mut self) -> Option<LadduDataResult<EventBatch>> {
+        self.debug_assert_invariant();
+        if self.batches.is_empty() {
             return None;
         }
-        self.pending_len = 0;
-        let batches = std::mem::take(&mut self.pending);
+
+        let batches = std::mem::take(&mut self.batches);
+        self.len = 0;
+        self.debug_assert_invariant();
+
         Some(if batches.len() == 1 {
             Ok(batches.into_iter().next().expect("one pending batch"))
         } else {
             EventBatch::concat(&batches)
         })
+    }
+
+    fn debug_assert_invariant(&self) {
+        debug_assert_eq!(
+            self.len,
+            self.batches.iter().map(EventBatch::len).sum::<usize>(),
+            "pending batch length must match its contents",
+        );
+        debug_assert!(
+            self.batches.iter().all(|batch| !batch.is_empty()),
+            "pending batches must be nonempty",
+        );
     }
 }
 
@@ -238,20 +302,15 @@ impl Iterator for CoalescedBatches {
 
     fn next(&mut self) -> Option<Self::Item> {
         loop {
-            if self.pending_len == self.target {
+            self.pending.debug_assert_invariant();
+            if self.pending.len() == self.target {
                 return self.emit_pending();
             }
 
-            let item = if let Some(item) = self.deferred.take() {
-                Some(item)
-            } else if self.finished {
-                None
-            } else {
-                self.input.next()
-            };
+            let item = self.take_input();
 
             let Some(item) = item else {
-                self.finished = true;
+                self.state = CoalescedState::Done;
                 if let Some(batch) = self.emit_pending() {
                     return Some(batch);
                 }
@@ -263,7 +322,7 @@ impl Iterator for CoalescedBatches {
                     if self.pending.is_empty() {
                         return Some(Err(error));
                     }
-                    self.deferred = Some(Err(error));
+                    self.state = CoalescedState::Deferred(Err(error));
                     return self.emit_pending();
                 }
             };
@@ -271,16 +330,76 @@ impl Iterator for CoalescedBatches {
                 continue;
             }
 
-            let available = self.target - self.pending_len;
+            let available = self.target - self.pending.len();
             if batch.len() <= available {
-                self.pending_len += batch.len();
                 self.pending.push(batch);
                 continue;
             }
 
             self.pending.push(batch.slice(0, available));
-            self.pending_len += available;
-            self.deferred = Some(Ok(batch.slice(available, batch.len())));
+            self.state = CoalescedState::Deferred(Ok(batch.slice(available, batch.len())));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{LadduDataError, data::EventBatchBuilder, schema::Schema};
+    use laddu_physics::vectors::RealVec4;
+
+    fn batch(start: usize, len: usize) -> EventBatch {
+        let schema = Arc::new(Schema::new(["p"], ["id"], true).unwrap());
+        let mut builder = EventBatchBuilder::with_capacity(schema, len);
+        for index in start..start + len {
+            let value = index as f64;
+            builder
+                .push_weighted(
+                    [RealVec4 {
+                        e: value,
+                        px: value,
+                        py: value,
+                        pz: value,
+                    }],
+                    [value],
+                    1.0,
+                )
+                .unwrap();
+        }
+        builder.finish().unwrap()
+    }
+
+    #[test]
+    fn coalesced_batches_splits_oversized_input_and_skips_empty_batches() {
+        let input: EventBatchIter = Box::new(vec![Ok(batch(0, 0)), Ok(batch(0, 5))].into_iter());
+        let mut batches = CoalescedBatches::new(input, 2);
+
+        assert_eq!(batches.next().unwrap().unwrap().len(), 2);
+        assert_eq!(batches.next().unwrap().unwrap().len(), 2);
+        assert_eq!(batches.next().unwrap().unwrap().len(), 1);
+        assert!(batches.next().is_none());
+        assert!(batches.next().is_none());
+    }
+
+    #[test]
+    fn coalesced_batches_defers_errors_after_pending_data_and_continues() {
+        let input: EventBatchIter = Box::new(
+            vec![
+                Ok(batch(0, 2)),
+                Err(LadduDataError::Source("deferred".into())),
+                Ok(batch(2, 2)),
+            ]
+            .into_iter(),
+        );
+        let mut batches = CoalescedBatches::new(input, 3);
+
+        assert_eq!(batches.next().unwrap().unwrap().len(), 2);
+        assert!(matches!(
+            batches.next(),
+            Some(Err(LadduDataError::Source(message))) if message == "deferred"
+        ));
+        assert_eq!(batches.next().unwrap().unwrap().len(), 2);
+        assert!(batches.next().is_none());
+        assert!(batches.next().is_none());
     }
 }

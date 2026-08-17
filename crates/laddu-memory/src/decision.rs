@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::error::{MemoryError, MemoryResult};
+use crate::error::{FootprintOverflow, MemoryError, MemoryResult};
 
 /// One memory-derived execution decision.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -39,14 +39,98 @@ impl MemoryFootprint {
             bytes_per_event,
         }
     }
+    /// Creates a footprint containing only a fixed allocation.
+    pub const fn fixed(fixed_bytes: u64) -> Self {
+        Self::new(fixed_bytes, 0)
+    }
+    /// Creates a footprint containing only an event-dependent allocation.
+    pub const fn per_event(bytes_per_event: u64) -> Self {
+        Self::new(0, bytes_per_event)
+    }
     /// Creates a footprint from platform-sized byte counts using saturation.
     pub fn from_usize(fixed_bytes: usize, bytes_per_event: usize) -> Self {
-        Self::new(saturating_u64(fixed_bytes), saturating_u64(bytes_per_event))
+        Self::from_usize_checked(fixed_bytes, bytes_per_event)
+            .unwrap_or(Self::new(u64::MAX, u64::MAX))
+    }
+    /// Creates a footprint from platform-sized byte counts with overflow
+    /// detection.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FootprintOverflow::Conversion`] when a platform-sized value
+    /// cannot be represented by `u64`.
+    pub fn from_usize_checked(
+        fixed_bytes: usize,
+        bytes_per_event: usize,
+    ) -> Result<Self, FootprintOverflow> {
+        Ok(Self::new(
+            checked_u64(fixed_bytes)?,
+            checked_u64(bytes_per_event)?,
+        ))
+    }
+    /// Adds two fixed/per-event footprint components with overflow detection.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FootprintOverflow::Addition`] when either component exceeds
+    /// `u64`.
+    pub const fn checked_add(self, other: Self) -> Result<Self, FootprintOverflow> {
+        let fixed_bytes = match self.fixed_bytes.checked_add(other.fixed_bytes) {
+            Some(value) => value,
+            None => return Err(FootprintOverflow::Addition),
+        };
+        let bytes_per_event = match self.bytes_per_event.checked_add(other.bytes_per_event) {
+            Some(value) => value,
+            None => return Err(FootprintOverflow::Addition),
+        };
+        Ok(Self::new(fixed_bytes, bytes_per_event))
+    }
+    /// Scales fixed and per-event components by `factor` with overflow
+    /// detection.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FootprintOverflow::Multiplication`] when scaling exceeds
+    /// `u64`.
+    pub const fn checked_scale(self, factor: u64) -> Result<Self, FootprintOverflow> {
+        let fixed_bytes = match self.fixed_bytes.checked_mul(factor) {
+            Some(value) => value,
+            None => return Err(FootprintOverflow::Multiplication),
+        };
+        let bytes_per_event = match self.bytes_per_event.checked_mul(factor) {
+            Some(value) => value,
+            None => return Err(FootprintOverflow::Multiplication),
+        };
+        Ok(Self::new(fixed_bytes, bytes_per_event))
+    }
+    /// Scales fixed and per-event components by a platform-sized factor with
+    /// overflow detection.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FootprintOverflow`] when conversion or scaling overflows.
+    pub fn checked_scale_usize(self, factor: usize) -> Result<Self, FootprintOverflow> {
+        self.checked_scale(checked_u64(factor)?)
+    }
+    /// Calculates the peak bytes for `events` with overflow detection.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FootprintOverflow`] when conversion, multiplication, or
+    /// addition overflows.
+    pub fn checked_peak_bytes(self, events: usize) -> Result<u64, FootprintOverflow> {
+        let events = checked_u64(events)?;
+        let event_bytes = self
+            .bytes_per_event
+            .checked_mul(events)
+            .ok_or(FootprintOverflow::Multiplication)?;
+        self.fixed_bytes
+            .checked_add(event_bytes)
+            .ok_or(FootprintOverflow::Addition)
     }
     /// Estimates peak bytes for `events` using the shared saturation policy.
     pub fn peak_bytes(self, events: usize) -> u64 {
-        self.fixed_bytes
-            .saturating_add(self.bytes_per_event.saturating_mul(saturating_u64(events)))
+        self.checked_peak_bytes(events).unwrap_or(u64::MAX)
     }
     fn normalized(mut self) -> Self {
         self.bytes_per_event = self.bytes_per_event.max(1);
@@ -165,8 +249,8 @@ impl MemoryFitRequest {
 fn saturating_usize(value: u64) -> usize {
     usize::try_from(value).unwrap_or(usize::MAX)
 }
-fn saturating_u64(value: usize) -> u64 {
-    u64::try_from(value).unwrap_or(u64::MAX)
+fn checked_u64(value: usize) -> Result<u64, FootprintOverflow> {
+    u64::try_from(value).map_err(|_| FootprintOverflow::Conversion)
 }
 
 #[cfg(test)]

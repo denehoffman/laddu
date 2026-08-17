@@ -3,9 +3,9 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use crate::{LadduDataError, LadduDataResult};
+use crate::LadduDataResult;
 
-use super::WritePlan;
+use super::{WritePlan, sink_error};
 
 /// Resolves a base output path for serial or distributed writes.
 #[derive(Clone, Debug)]
@@ -55,7 +55,7 @@ impl OutputPath {
     ///
     /// # Errors
     ///
-    /// Returns [`LadduDataError`] when single-file output is requested for a
+    /// Returns [`crate::LadduDataError`] when single-file output is requested for a
     /// distributed plan.
     pub fn resolve(&self, plan: WritePlan, default_extension: &str) -> LadduDataResult<PathBuf> {
         let mode = match self.mode {
@@ -67,9 +67,10 @@ impl OutputPath {
         match mode {
             OutputMode::SingleFile => {
                 if plan.is_distributed() {
-                    return Err(LadduDataError::Sink(
-                        "single-file output is unsafe with multiple MPI ranks; use per-rank output"
-                            .into(),
+                    return Err(sink_error(
+                        "resolve output path",
+                        self.base.display(),
+                        "single-file output is unsafe with multiple MPI ranks; use per-rank output",
                     ));
                 }
 
@@ -91,12 +92,13 @@ impl OutputPath {
     ///
     /// # Errors
     ///
-    /// Returns [`LadduDataError`] when a required directory cannot be created.
+    /// Returns [`crate::LadduDataError`] when a required directory cannot be created.
     pub fn create_parent_dirs(path: &Path) -> LadduDataResult<()> {
         if let Some(parent) = path.parent()
             && !parent.as_os_str().is_empty()
         {
-            fs::create_dir_all(parent).map_err(|e| LadduDataError::Sink(e.to_string()))?;
+            fs::create_dir_all(parent)
+                .map_err(|e| sink_error("create output directory", parent.display(), e))?;
         }
 
         Ok(())

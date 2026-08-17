@@ -22,6 +22,7 @@ laddu-compile.workspace = true
 laddu-data.workspace = true
 laddu-expr.workspace = true
 laddu-kernel.workspace = true
+laddu-memory.workspace = true
 pollster.workspace = true
 serde.workspace = true
 thiserror.workspace = true

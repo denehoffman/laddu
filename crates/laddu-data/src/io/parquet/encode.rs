@@ -7,9 +7,13 @@ use arrow::{
 };
 
 use crate::{
-    LadduDataError, LadduDataResult,
+    LadduDataResult,
     data::EventBatch,
-    schema::{Precision, Schema, SchemaWriteOptions, WriteWeightColumn},
+    io::sink_error,
+    schema::{
+        PhysicalColumnRole, PhysicalSchemaPlan, Precision, Schema, SchemaWriteOptions,
+        WriteWeightColumn,
+    },
 };
 
 pub(super) fn arrow_schema_from_event_schema(
@@ -17,36 +21,16 @@ pub(super) fn arrow_schema_from_event_schema(
     write_weight: WriteWeightColumn,
     options: &SchemaWriteOptions,
 ) -> ArrowSchema {
-    let should_write_weight =
-        matches!(write_weight, WriteWeightColumn::Always) || schema.has_weight();
-
-    let mut fields = Vec::with_capacity(
-        4 * schema.n_p4s() + schema.n_scalars() + usize::from(should_write_weight),
-    );
+    let plan = PhysicalSchemaPlan::for_write(schema, options, write_weight);
+    let mut fields = Vec::with_capacity(plan.columns().len());
 
     let data_type = match options.precision {
         Precision::F64 => DataType::Float64,
         Precision::F32 => DataType::Float32,
     };
 
-    for name in schema.p4s() {
-        let [e, px, py, pz] = options.column_names.p4_suffixes.physical_p4_names(name);
-        fields.push(Field::new(e, data_type.clone(), false));
-        fields.push(Field::new(px, data_type.clone(), false));
-        fields.push(Field::new(py, data_type.clone(), false));
-        fields.push(Field::new(pz, data_type.clone(), false));
-    }
-
-    for name in schema.scalars() {
-        fields.push(Field::new(name.as_ref(), data_type.clone(), false));
-    }
-
-    if should_write_weight {
-        fields.push(Field::new(
-            options.column_names.weight_column.as_ref(),
-            data_type,
-            false,
-        ));
+    for column in plan.columns() {
+        fields.push(Field::new(column.name().as_ref(), data_type.clone(), false));
     }
 
     ArrowSchema::new(fields)
@@ -65,37 +49,41 @@ pub(super) fn event_batch_to_record_batch(
     batch: &EventBatch,
     arrow_schema: SchemaRef,
     write_weight: WriteWeightColumn,
+    options: &SchemaWriteOptions,
     precision: Precision,
 ) -> LadduDataResult<RecordBatch> {
+    let plan = PhysicalSchemaPlan::for_write(batch.schema(), options, write_weight);
     let mut columns: Vec<ArrayRef> = Vec::with_capacity(arrow_schema.fields().len());
 
-    for col in 0..batch.schema().n_p4s() {
-        let p = batch.vec4_column(col);
-
-        for component in 0..4 {
-            columns.push(array_from_iter(
-                p.iter().map(|x| x.components()[component]),
-                precision,
-            ));
+    // The Arrow schema passed by the sink is created with the same plan.  The
+    // role match below keeps the physical order and the logical-to-physical
+    // binding in one place for both schema creation and encoding.
+    for column in plan.columns() {
+        match column.role() {
+            PhysicalColumnRole::P4 { index, component } => {
+                columns.push(array_from_iter(
+                    batch
+                        .vec4_column(index)
+                        .iter()
+                        .map(|x| x.components()[component]),
+                    precision,
+                ));
+            }
+            PhysicalColumnRole::Scalar { index } => {
+                columns.push(array_from_iter(
+                    batch.scalar_column(index).iter().copied(),
+                    precision,
+                ));
+            }
+            PhysicalColumnRole::Weight => {
+                columns.push(array_from_iter(
+                    (0..batch.len()).map(|i| batch.weights_at(i)),
+                    precision,
+                ));
+            }
         }
     }
 
-    for col in 0..batch.schema().n_scalars() {
-        columns.push(array_from_iter(
-            batch.scalar_column(col).iter().copied(),
-            precision,
-        ));
-    }
-
-    let should_write_weight =
-        matches!(write_weight, WriteWeightColumn::Always) || batch.schema().has_weight();
-
-    if should_write_weight {
-        columns.push(array_from_iter(
-            (0..batch.len()).map(|i| batch.weights_at(i)),
-            precision,
-        ));
-    }
-
-    RecordBatch::try_new(arrow_schema, columns).map_err(|e| LadduDataError::Sink(e.to_string()))
+    RecordBatch::try_new(arrow_schema, columns)
+        .map_err(|error| sink_error("assemble Parquet batch", "record batch", error))
 }

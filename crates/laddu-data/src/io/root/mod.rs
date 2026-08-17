@@ -15,11 +15,12 @@ use crate::{
     data::{BatchAssembler, EventBatch},
     io::{
         DataFragment, EventSink, EventSource, FragmentedSource, OutputMode, OutputPath, ReadPlan,
-        SourceCapabilities, WritePlan, fragmented_batches,
+        SinkState, SourceBuild, SourceBuildOptions, SourceCapabilities, WritePlan, build_source,
+        fragmented_batches, sink_error, source_error,
     },
     schema::{
-        ColumnInfo, ColumnType, Precision, Schema, SchemaColumnNames, SchemaInferenceOptions,
-        SchemaWriteOptions, WriteWeightColumn,
+        ColumnInfo, ColumnType, PhysicalColumnRole, PhysicalSchemaPlan, Precision, Schema,
+        SchemaColumnNames, SchemaInferenceOptions, SchemaWriteOptions, WriteWeightColumn,
     },
 };
 
@@ -131,7 +132,9 @@ impl RootSource {
     ///
     /// Returns [`LadduDataError`] when the ROOT file cannot be opened or read.
     pub fn tree_names(path: impl AsRef<Path>) -> LadduDataResult<Vec<Name>> {
-        let mut file = RootFile::open(path.as_ref()).map_err(root_source_error)?;
+        let path = path.as_ref();
+        let mut file = RootFile::open(path)
+            .map_err(|error| source_error("open ROOT file", path.display(), error))?;
         let key_names: Vec<String> = file.keys_name().map(str::to_owned).collect();
 
         let mut out = Vec::new();
@@ -155,16 +158,22 @@ impl RootSource {
         path: impl AsRef<Path>,
         tree: Option<&str>,
     ) -> LadduDataResult<Vec<RootColumnInfo>> {
-        let mut file = RootFile::open(path.as_ref()).map_err(root_source_error)?;
+        let path = path.as_ref();
+        let mut file = RootFile::open(path)
+            .map_err(|error| source_error("open ROOT file", path.display(), error))?;
 
         let tree_name = match tree {
             Some(name) => Name::from(name),
-            None => first_tree_name(&mut file)?,
+            None => first_tree_name(&mut file, path)?,
         };
 
-        let tree = file
-            .get_tree(tree_name.as_ref())
-            .map_err(root_source_error)?;
+        let tree = file.get_tree(tree_name.as_ref()).map_err(|error| {
+            source_error(
+                "read ROOT tree",
+                format!("{}::{tree_name}", path.display()),
+                error,
+            )
+        })?;
 
         Ok(tree
             .branches_r()
@@ -245,50 +254,37 @@ impl RootSourceBuilder {
     pub fn build(self) -> LadduDataResult<RootSource> {
         let RootSourceBuilder {
             pattern,
-            schema,
+            schema: explicit_schema,
             options,
         } = self;
-
-        let mut files: Vec<PathBuf> = glob::glob(&pattern)
-            .map_err(|e| LadduDataError::Source(e.to_string()))?
-            .collect::<std::result::Result<_, _>>()
-            .map_err(|e| LadduDataError::Source(e.to_string()))?;
-
-        if options.sort_glob {
-            files.sort();
-        }
-
-        if files.is_empty() {
-            return Err(LadduDataError::Source("no ROOT files matched glob".into()));
-        }
-
-        let files: Arc<[Arc<PathBuf>]> = files.into_iter().map(Arc::new).collect();
-
-        let tree_name = {
-            let path: &Path = files[0].as_ref();
-            resolve_tree_name(path, &options.tree)?
-        };
-
-        let schema = match schema {
-            Some(schema) => schema,
-            None if options.infer_schema => {
-                let path: &Path = files[0].as_ref();
+        let tree_selection = options.tree.clone();
+        let infer_options = options.schema_inference.clone();
+        let validate_options = options.schema_inference.clone();
+        let SourceBuild {
+            files,
+            context: tree_name,
+            schema,
+        } = build_source(
+            SourceBuildOptions {
+                pattern: &pattern,
+                sort: options.sort_glob,
+                format: "ROOT",
+                explicit_schema,
+                infer_schema: options.infer_schema,
+                validate_all_files: options.validate_all_files,
+            },
+            move |path| resolve_tree_name(path, &tree_selection),
+            move |path, tree_name| {
                 let columns = root_columns(path, tree_name.as_ref())?;
-
-                Arc::new(Schema::infer_from_columns(
+                Schema::infer_from_columns(
                     columns.iter().map(OwnedColumnInfo::as_column_info),
-                    &options.schema_inference,
-                )?)
-            }
-            None => return Err(LadduDataError::InvalidArgument("schema required")),
-        };
-
-        if options.validate_all_files {
-            for file in files.iter() {
-                let path: &Path = file.as_ref();
-                validate_root_file(path, tree_name.as_ref(), &schema, &options.schema_inference)?;
-            }
-        }
+                    &infer_options,
+                )
+            },
+            move |path, schema, tree_name| {
+                validate_root_file(path, tree_name.as_ref(), schema, &validate_options)
+            },
+        )?;
 
         Ok(RootSource {
             files,
@@ -336,12 +332,20 @@ impl FragmentedSource for RootSource {
         let mut global_start = 0_u64;
 
         for path in self.files.iter() {
-            let mut file = RootFile::open(path.as_ref()).map_err(root_source_error)?;
-            let tree = file
-                .get_tree(self.tree_name.as_ref())
-                .map_err(root_source_error)?;
+            let resource = path.as_ref().display().to_string();
+            let mut file = RootFile::open(path.as_ref())
+                .map_err(|error| source_error("open ROOT file", &resource, error))?;
+            let tree = file.get_tree(self.tree_name.as_ref()).map_err(|error| {
+                source_error(
+                    "read ROOT tree",
+                    format!("{resource}::{}", self.tree_name),
+                    error,
+                )
+            })?;
 
-            let rows = usize_from_i64(tree.entries(), "negative TTree entry count")? as u64;
+            let tree_resource = format!("{resource}::{}", self.tree_name);
+            let rows = usize_from_i64(tree.entries(), "negative TTree entry count", &tree_resource)?
+                as u64;
 
             fragments.push(DataFragment {
                 key: RootFragmentKey {
@@ -384,8 +388,12 @@ impl FragmentedSource for RootSource {
 
 struct RootBatchIter {
     rx: Receiver<LadduDataResult<EventBatch>>,
-    handle: Option<JoinHandle<()>>,
-    joined: bool,
+    state: RootBatchState,
+}
+
+enum RootBatchState {
+    Receiving(JoinHandle<()>),
+    Done,
 }
 
 impl RootBatchIter {
@@ -417,27 +425,24 @@ impl RootBatchIter {
 
         Self {
             rx,
-            handle: Some(handle),
-            joined: false,
+            state: RootBatchState::Receiving(handle),
         }
     }
 
     fn join_if_needed(&mut self) -> Option<LadduDataResult<EventBatch>> {
-        if self.joined {
-            return None;
+        let state = std::mem::replace(&mut self.state, RootBatchState::Done);
+        match state {
+            RootBatchState::Done => None,
+            RootBatchState::Receiving(handle) => {
+                if handle.join().is_err() {
+                    Some(Err(LadduDataError::Source(
+                        "ROOT reader thread panicked".into(),
+                    )))
+                } else {
+                    None
+                }
+            }
         }
-
-        self.joined = true;
-
-        if let Some(handle) = self.handle.take()
-            && handle.join().is_err()
-        {
-            return Some(Err(LadduDataError::Source(
-                "ROOT reader thread panicked".into(),
-            )));
-        }
-
-        None
     }
 }
 
@@ -445,6 +450,10 @@ impl Iterator for RootBatchIter {
     type Item = LadduDataResult<EventBatch>;
 
     fn next(&mut self) -> Option<Self::Item> {
+        if matches!(self.state, RootBatchState::Done) {
+            return None;
+        }
+
         match self.rx.recv() {
             Ok(item) => Some(item),
             Err(_) => self.join_if_needed(),
@@ -461,10 +470,12 @@ fn read_root_range_and_send_batches(
     chunk_size: Option<usize>,
     tx: SyncSender<LadduDataResult<EventBatch>>,
 ) -> LadduDataResult<()> {
-    let mut file = RootFile::open(key.file.as_ref()).map_err(root_source_error)?;
+    let resource = format!("{}::{}", key.file.as_ref().display(), key.tree_name);
+    let mut file = RootFile::open(key.file.as_ref())
+        .map_err(|error| source_error("open ROOT file", &resource, error))?;
     let tree = file
         .get_tree(key.tree_name.as_ref())
-        .map_err(root_source_error)?;
+        .map_err(|error| source_error("read ROOT tree", &resource, error))?;
 
     let mut readers =
         RootColumnReaders::new(&tree, &schema, &options.schema_inference.column_names)?;
@@ -481,7 +492,7 @@ fn read_root_range_and_send_batches(
         let batch = readers.read_batch(Arc::clone(&schema), take)?;
 
         tx.send(Ok(batch))
-            .map_err(|e| LadduDataError::Source(e.to_string()))?;
+            .map_err(|error| source_error("send ROOT batch", &resource, error))?;
 
         remaining -= take;
     }
@@ -501,32 +512,67 @@ impl<'a> RootColumnReaders<'a> {
         schema: &Schema,
         column_names: &SchemaColumnNames,
     ) -> LadduDataResult<Self> {
-        let mut p4s = Vec::with_capacity(schema.n_p4s());
-        let mut scalars = Vec::with_capacity(schema.n_scalars());
+        let plan = PhysicalSchemaPlan::for_read(schema, column_names);
+        let mut p4s: Vec<[Option<RootFloatIter<'a>>; 4]> = (0..schema.n_p4s())
+            .map(|_| std::array::from_fn(|_| None))
+            .collect();
+        let mut scalars: Vec<Option<RootFloatIter<'a>>> =
+            (0..schema.n_scalars()).map(|_| None).collect();
+        let mut weights = None;
 
-        for name in schema.p4s() {
-            let [e, px, py, pz] = column_names.p4_suffixes.physical_p4_names(name);
-
-            p4s.push([
-                open_float_reader(tree, e.as_ref())?,
-                open_float_reader(tree, px.as_ref())?,
-                open_float_reader(tree, py.as_ref())?,
-                open_float_reader(tree, pz.as_ref())?,
-            ]);
+        for column in plan.columns() {
+            let reader = open_float_reader(tree, column.name().as_ref())?;
+            match column.role() {
+                PhysicalColumnRole::P4 { index, component } => {
+                    p4s[index][component] = Some(reader);
+                }
+                PhysicalColumnRole::Scalar { index } => {
+                    scalars[index] = Some(reader);
+                }
+                PhysicalColumnRole::Weight => {
+                    weights = Some(reader);
+                }
+            }
         }
 
-        for name in schema.scalars() {
-            scalars.push(open_float_reader(tree, name.as_ref())?);
-        }
-
-        let weights = if schema.has_weight() {
-            Some(open_float_reader(
-                tree,
-                column_names.weight_column.as_ref(),
-            )?)
-        } else {
-            None
-        };
+        let p4s = p4s
+            .into_iter()
+            .map(|parts| {
+                let [e, px, py, pz] = parts;
+                Ok([
+                    e.ok_or_else(|| {
+                        LadduDataError::Source(
+                            "physical schema plan did not bind ROOT E branch".into(),
+                        )
+                    })?,
+                    px.ok_or_else(|| {
+                        LadduDataError::Source(
+                            "physical schema plan did not bind ROOT px branch".into(),
+                        )
+                    })?,
+                    py.ok_or_else(|| {
+                        LadduDataError::Source(
+                            "physical schema plan did not bind ROOT py branch".into(),
+                        )
+                    })?,
+                    pz.ok_or_else(|| {
+                        LadduDataError::Source(
+                            "physical schema plan did not bind ROOT pz branch".into(),
+                        )
+                    })?,
+                ])
+            })
+            .collect::<LadduDataResult<Vec<_>>>()?;
+        let scalars = scalars
+            .into_iter()
+            .map(|reader| {
+                reader.ok_or_else(|| {
+                    LadduDataError::Source(
+                        "physical schema plan did not bind ROOT scalar branch".into(),
+                    )
+                })
+            })
+            .collect::<LadduDataResult<Vec<_>>>()?;
 
         Ok(Self {
             p4s,
@@ -599,20 +645,26 @@ impl<'a> RootColumnReaders<'a> {
 }
 
 enum RootFloatIter<'a> {
-    F64(Box<dyn Iterator<Item = f64> + 'a>),
-    F32(Box<dyn Iterator<Item = f32> + 'a>),
+    F64 {
+        name: Name,
+        iter: Box<dyn Iterator<Item = f64> + 'a>,
+    },
+    F32 {
+        name: Name,
+        iter: Box<dyn Iterator<Item = f32> + 'a>,
+    },
 }
 
 impl<'a> RootFloatIter<'a> {
     fn next_f64(&mut self) -> LadduDataResult<f64> {
         match self {
-            Self::F64(iter) => iter
+            Self::F64 { name, iter } => iter
                 .next()
-                .ok_or_else(|| LadduDataError::Source("ROOT branch ended early".into())),
-            Self::F32(iter) => iter
+                .ok_or_else(|| source_error("read ROOT branch", name, "ROOT branch ended early")),
+            Self::F32 { name, iter } => iter
                 .next()
                 .map(f64::from)
-                .ok_or_else(|| LadduDataError::Source("ROOT branch ended early".into())),
+                .ok_or_else(|| source_error("read ROOT branch", name, "ROOT branch ended early")),
         }
     }
 }
@@ -622,17 +674,31 @@ fn open_float_reader<'a>(tree: &'a ReaderTree, name: &str) -> LadduDataResult<Ro
         find_branch(tree, name).ok_or_else(|| LadduDataError::MissingColumn(Name::from(name)))?;
 
     match root_column_type(branch) {
-        ColumnType::F64 => Ok(RootFloatIter::F64(Box::new(
-            branch.as_iter::<f64>().map_err(root_source_error)?,
-        ))),
-        ColumnType::F32 => Ok(RootFloatIter::F32(Box::new(
-            branch.as_iter::<f32>().map_err(root_source_error)?,
-        ))),
-        ColumnType::Other => Err(LadduDataError::Source(format!(
-            "column {name} has unsupported ROOT type {} interpreted as {}",
-            branch.item_type_name(),
-            branch.interpretation()
-        ))),
+        ColumnType::F64 => Ok(RootFloatIter::F64 {
+            name: Name::from(name),
+            iter: Box::new(
+                branch
+                    .as_iter::<f64>()
+                    .map_err(|error| source_error("open ROOT branch", name, error))?,
+            ),
+        }),
+        ColumnType::F32 => Ok(RootFloatIter::F32 {
+            name: Name::from(name),
+            iter: Box::new(
+                branch
+                    .as_iter::<f32>()
+                    .map_err(|error| source_error("open ROOT branch", name, error))?,
+            ),
+        }),
+        ColumnType::Other => Err(source_error(
+            "decode ROOT branch",
+            name,
+            format!(
+                "column {name} has unsupported ROOT type {} interpreted as {}",
+                branch.item_type_name(),
+                branch.interpretation()
+            ),
+        )),
     }
 }
 
@@ -660,8 +726,12 @@ impl OwnedColumnInfo {
 }
 
 fn root_columns(path: &Path, tree_name: &str) -> LadduDataResult<Vec<OwnedColumnInfo>> {
-    let mut file = RootFile::open(path).map_err(root_source_error)?;
-    let tree = file.get_tree(tree_name).map_err(root_source_error)?;
+    let resource = format!("{}::{tree_name}", path.display());
+    let mut file = RootFile::open(path)
+        .map_err(|error| source_error("open ROOT file", path.display(), error))?;
+    let tree = file
+        .get_tree(tree_name)
+        .map_err(|error| source_error("read ROOT tree", &resource, error))?;
 
     Ok(tree
         .branches_r()
@@ -697,18 +767,25 @@ fn root_column_type(branch: &Branch) -> ColumnType {
 }
 
 fn resolve_tree_name(path: &Path, selection: &RootTreeSelection) -> LadduDataResult<Name> {
-    let mut file = RootFile::open(path).map_err(root_source_error)?;
+    let mut file = RootFile::open(path)
+        .map_err(|error| source_error("open ROOT file", path.display(), error))?;
 
     match selection {
         RootTreeSelection::Named(name) => {
-            file.get_tree(name.as_ref()).map_err(root_source_error)?;
+            file.get_tree(name.as_ref()).map_err(|error| {
+                source_error(
+                    "read ROOT tree",
+                    format!("{}::{name}", path.display()),
+                    error,
+                )
+            })?;
             Ok(name.clone())
         }
-        RootTreeSelection::First => first_tree_name(&mut file),
+        RootTreeSelection::First => first_tree_name(&mut file, path),
     }
 }
 
-fn first_tree_name(file: &mut RootFile) -> LadduDataResult<Name> {
+fn first_tree_name(file: &mut RootFile, path: &Path) -> LadduDataResult<Name> {
     let key_names: Vec<String> = file.keys_name().map(str::to_owned).collect();
 
     for name in key_names {
@@ -717,23 +794,25 @@ fn first_tree_name(file: &mut RootFile) -> LadduDataResult<Name> {
         }
     }
 
-    Err(LadduDataError::Source("no TTree found in ROOT file".into()))
+    Err(source_error(
+        "resolve first ROOT tree",
+        path.display(),
+        "no TTree found in ROOT file",
+    ))
 }
 
-fn usize_from_i64(value: i64, message: &'static str) -> LadduDataResult<usize> {
+fn usize_from_i64(value: i64, message: &'static str, resource: &str) -> LadduDataResult<usize> {
     if value < 0 {
-        return Err(LadduDataError::Source(message.into()));
+        return Err(source_error("read ROOT entry count", resource, message));
     }
 
-    usize::try_from(value).map_err(|_| LadduDataError::Source("entry count overflows usize".into()))
-}
-
-fn root_source_error(e: impl std::fmt::Display) -> LadduDataError {
-    LadduDataError::Source(e.to_string())
-}
-
-fn root_sink_error(e: impl std::fmt::Display) -> LadduDataError {
-    LadduDataError::Sink(e.to_string())
+    usize::try_from(value).map_err(|_| {
+        source_error(
+            "read ROOT entry count",
+            resource,
+            "entry count overflows usize",
+        )
+    })
 }
 
 /// Event sink that writes a ROOT TTree on a background thread.
@@ -744,6 +823,7 @@ pub struct RootSink {
     event_schema: Option<Arc<Schema>>,
     senders: Option<RootColumnSenders>,
     writer_thread: Option<JoinHandle<LadduDataResult<()>>>,
+    state: SinkState,
 }
 
 /// ROOT tree and physical schema write options.
@@ -851,14 +931,23 @@ impl RootSinkBuilder {
             event_schema: None,
             senders: None,
             writer_thread: None,
+            state: SinkState::Idle,
         }
     }
 }
 
 impl EventSink for RootSink {
     fn begin(&mut self, schema: Arc<Schema>, plan: WritePlan) -> LadduDataResult<()> {
-        if self.writer_thread.is_some() {
-            return Err(LadduDataError::Sink("ROOT sink already initialized".into()));
+        match self.state {
+            SinkState::Idle => {}
+            SinkState::Writing => {
+                return Err(LadduDataError::Sink("ROOT sink already initialized".into()));
+            }
+            SinkState::Failed => {
+                return Err(LadduDataError::Sink(
+                    "ROOT sink requires abort after failure".into(),
+                ));
+            }
         }
 
         let path = self.output.resolve(plan, "root")?;
@@ -881,11 +970,23 @@ impl EventSink for RootSink {
         self.event_schema = Some(schema);
         self.senders = Some(senders);
         self.writer_thread = Some(handle);
+        self.state = SinkState::Writing;
 
         Ok(())
     }
 
     fn write_batch(&mut self, batch: &EventBatch) -> LadduDataResult<()> {
+        if !matches!(self.state, SinkState::Writing) {
+            return Err(LadduDataError::Sink(
+                match self.state {
+                    SinkState::Idle => "ROOT sink not initialized",
+                    SinkState::Failed => "ROOT sink requires abort after failure",
+                    SinkState::Writing => unreachable!(),
+                }
+                .into(),
+            ));
+        }
+
         let event_schema = self
             .event_schema
             .as_ref()
@@ -902,30 +1003,25 @@ impl EventSink for RootSink {
             .as_ref()
             .ok_or_else(|| LadduDataError::Sink("ROOT sink not initialized".into()))?;
 
-        let should_write_weight = matches!(
+        let plan = PhysicalSchemaPlan::for_write(
+            batch.schema(),
+            &self.options.schema_write,
             self.options.schema_write.write_weight_column,
-            WriteWeightColumn::Always
-        ) || batch.schema().has_weight();
+        );
 
         for row in 0..batch.len() {
-            let mut index = 0;
-
-            for col in 0..batch.schema().n_p4s() {
-                let p = batch.p4_at(col, row);
-
-                for component in p.components() {
-                    senders.send(index, component)?;
-                    index += 1;
+            for (index, column) in plan.columns().iter().enumerate() {
+                let value = match column.role() {
+                    PhysicalColumnRole::P4 { index, component } => {
+                        batch.p4_at(index, row).components()[component]
+                    }
+                    PhysicalColumnRole::Scalar { index } => batch.scalar_at(index, row),
+                    PhysicalColumnRole::Weight => batch.weights_at(row),
+                };
+                if let Err(error) = senders.send(index, value) {
+                    self.state = SinkState::Failed;
+                    return Err(sink_error("send ROOT column", column.name(), error));
                 }
-            }
-
-            for col in 0..batch.schema().n_scalars() {
-                senders.send(index, batch.scalar_at(col, row))?;
-                index += 1;
-            }
-
-            if should_write_weight {
-                senders.send(index, batch.weights_at(row))?;
             }
         }
 
@@ -933,22 +1029,59 @@ impl EventSink for RootSink {
     }
 
     fn finish(&mut self) -> LadduDataResult<()> {
+        if matches!(self.state, SinkState::Idle) {
+            return Ok(());
+        }
+        if matches!(self.state, SinkState::Failed) {
+            return Err(LadduDataError::Sink(
+                "ROOT sink requires abort after failure".into(),
+            ));
+        }
+
         self.senders.take();
 
         if let Some(handle) = self.writer_thread.take() {
             match handle.join() {
-                Ok(result) => result?,
-                Err(_) => return Err(LadduDataError::Sink("ROOT writer thread panicked".into())),
+                Ok(Ok(())) => {}
+                Ok(Err(error)) => {
+                    self.state = SinkState::Failed;
+                    return Err(error);
+                }
+                Err(_) => {
+                    self.state = SinkState::Failed;
+                    return Err(LadduDataError::Sink("ROOT writer thread panicked".into()));
+                }
             }
         }
 
+        self.event_schema = None;
+        self.state = SinkState::Idle;
         Ok(())
+    }
+
+    fn abort(&mut self) -> LadduDataResult<()> {
+        // Disconnect all channels before joining so the ROOT writer can finish
+        // its iterator and close the file. The file is deliberately retained
+        // and may contain an incomplete tree.
+        self.senders.take();
+        let result = if let Some(handle) = self.writer_thread.take() {
+            match handle.join() {
+                Ok(result) => result,
+                Err(_) => Err(LadduDataError::Sink("ROOT writer thread panicked".into())),
+            }
+        } else {
+            Ok(())
+        };
+
+        self.event_schema = None;
+        self.state = SinkState::Idle;
+        result
     }
 }
 
 impl Drop for RootSink {
     fn drop(&mut self) {
-        let _ = self.finish();
+        let _ = self.abort();
     }
 }
 
@@ -1018,7 +1151,9 @@ fn write_root_tree(
     tree_name: Name,
     receivers: RootColumnReceivers,
 ) -> LadduDataResult<()> {
-    let mut file = RootFile::create(&path).map_err(root_sink_error)?;
+    let resource = format!("{}::{tree_name}", path.display());
+    let mut file = RootFile::create(&path)
+        .map_err(|error| sink_error("create ROOT file", path.display(), error))?;
     let mut tree = WriterTree::new(tree_name.as_ref());
 
     match receivers {
@@ -1034,8 +1169,10 @@ fn write_root_tree(
         }
     }
 
-    tree.write(&mut file).map_err(root_sink_error)?;
-    file.close().map_err(root_sink_error)?;
+    tree.write(&mut file)
+        .map_err(|error| sink_error("write ROOT tree", &resource, error))?;
+    file.close()
+        .map_err(|error| sink_error("close ROOT file", &resource, error))?;
 
     Ok(())
 }
@@ -1185,6 +1322,15 @@ mod tests {
     }
 
     #[test]
+    fn negative_root_entry_count_error_includes_operation_and_resource() {
+        let error =
+            usize_from_i64(-1, "negative TTree entry count", "events.root::events").unwrap_err();
+        let message = error.to_string();
+        assert!(message.contains("read ROOT entry count `events.root::events`"));
+        assert!(message.contains("negative TTree entry count"));
+    }
+
+    #[test]
     fn root_source_named_missing_tree_fails() {
         let path = temp_path("root");
         let batch = batch();
@@ -1256,5 +1402,19 @@ mod tests {
         assert_eq!(read.weights_column().unwrap(), &[12.0, 13.0]);
 
         let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn root_batch_iter_disconnect_is_terminal_after_joining_reader() {
+        let (tx, rx) = mpsc::sync_channel(1);
+        drop(tx);
+        let handle = thread::spawn(|| {});
+        let mut iter = RootBatchIter {
+            rx,
+            state: RootBatchState::Receiving(handle),
+        };
+
+        assert!(iter.next().is_none());
+        assert!(iter.next().is_none());
     }
 }

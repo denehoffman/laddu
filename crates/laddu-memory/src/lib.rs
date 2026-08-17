@@ -11,7 +11,7 @@ mod state;
 
 pub use budget::{MemoryBudget, MemoryPlan};
 pub use decision::{MemoryDecision, MemoryFitRequest, MemoryFootprint};
-pub use error::{MemoryError, MemoryResult};
+pub use error::{FootprintOverflow, MemoryError, MemoryResult};
 pub use pool::{MemoryLease, MemoryPool};
 pub use report::{MemoryPoolReport, MemoryReport, MemoryResourceReport, ProcessMemoryReport};
 pub use resource::{CapacitySource, DeviceIdentity, MemoryResource, MemoryResourceKind};

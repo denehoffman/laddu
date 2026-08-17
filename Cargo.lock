@@ -1790,6 +1790,7 @@ dependencies = [
  "laddu-data",
  "laddu-expr",
  "laddu-kernel",
+ "laddu-memory",
  "laddu-runtime",
  "naga",
  "pollster",
