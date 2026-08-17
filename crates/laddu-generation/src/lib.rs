@@ -8,9 +8,10 @@ use std::{
 
 use laddu_compile::{CompiledModel, ReductionPlan};
 use laddu_data::{
+    BatchLayout,
     data::{Dataset, EventBatch},
     io::{EventSink, WritePlan, memory::MemorySink},
-    schema::Schema,
+    schema::{Precision as DataPrecision, Schema},
 };
 use laddu_expr::{ExprNode, parameters::ParamValues};
 use laddu_memory::{MemoryFitRequest, MemoryFootprint};
@@ -584,17 +585,59 @@ impl ChannelGenerator {
         usage: GenerationMemoryUse,
         label: &str,
     ) -> GenerationResult<(MemoryDecision, MemoryLease)> {
-        let generated_bytes = size_of::<GeneratedEvent>()
-            + schema.n_p4s() * size_of::<RealVec4>()
-            + schema.n_scalars() * size_of::<f64>()
-            + 4 * size_of::<f64>();
-        let output_bytes =
-            (4 * schema.n_p4s() + schema.n_scalars() + usize::from(schema.has_weight()))
-                * size_of::<f64>();
-        let bytes_per_event = generated_bytes.saturating_add(output_bytes);
-        let fixed_bytes = generated_bytes
-            .saturating_mul(usage.resident_events)
-            .saturating_add(output_bytes.saturating_mul(usage.retained_output_events));
+        let generated_layout = BatchLayout::new(
+            schema.n_p4s(),
+            schema.n_scalars(),
+            schema.has_weight(),
+            false,
+        );
+        let generated = generated_layout
+            .footprint(DataPrecision::F64)
+            .and_then(|footprint| {
+                footprint.checked_add(MemoryFootprint::per_event(
+                    u64::try_from(size_of::<GeneratedEvent>())
+                        .map_err(|_| laddu_memory::FootprintOverflow::Conversion)?,
+                ))
+            })
+            .and_then(|footprint| {
+                footprint.checked_add(MemoryFootprint::per_event(
+                    u64::try_from(4 * size_of::<f64>())
+                        .map_err(|_| laddu_memory::FootprintOverflow::Conversion)?,
+                ))
+            })
+            .map_err(|error| {
+                GenerationError::Runtime(laddu_runtime::RuntimeError::Data(format!(
+                    "generation working-set overflow: {error}"
+                )))
+            })?;
+        let output = generated_layout
+            .schema_footprint(DataPrecision::F64)
+            .map_err(|error| {
+                GenerationError::Runtime(laddu_runtime::RuntimeError::Data(format!(
+                    "output working-set overflow: {error}"
+                )))
+            })?;
+        let bytes_per_event = generated.checked_add(output).map_err(|error| {
+            GenerationError::Runtime(laddu_runtime::RuntimeError::Data(format!(
+                "generation working-set overflow: {error}"
+            )))
+        })?;
+        let fixed_bytes = generated
+            .checked_peak_bytes(usage.resident_events)
+            .and_then(|resident| {
+                output
+                    .checked_peak_bytes(usage.retained_output_events)
+                    .and_then(|retained| {
+                        resident
+                            .checked_add(retained)
+                            .ok_or(laddu_memory::FootprintOverflow::Addition)
+                    })
+            })
+            .map_err(|error| {
+                GenerationError::Runtime(laddu_runtime::RuntimeError::Data(format!(
+                    "generation working-set overflow: {error}"
+                )))
+            })?;
         let state = model
             .map(|model| model.execution.memory_state().clone())
             .unwrap_or_else(MemoryState::current);
@@ -614,7 +657,7 @@ impl ChannelGenerator {
         let available = pool.remaining().min(operation_cap);
         let decision = MemoryFitRequest {
             label: label.into(),
-            footprint: MemoryFootprint::from_usize(fixed_bytes, bytes_per_event),
+            footprint: MemoryFootprint::new(fixed_bytes, bytes_per_event.bytes_per_event),
             available_bytes: available,
             event_limit: usage.event_limit,
             strategy: "memory-derived generation".into(),
@@ -1007,23 +1050,33 @@ impl ChannelGenerator {
             "weighted generation",
         )?;
         sink.begin(Arc::clone(&schema), WritePlan::default())?;
-        let mut report = report(config.events, config.seed, &decision);
-        let work_batch = decision.chunk_events.max(1);
-        for start in (0..config.events).step_by(work_batch) {
-            let count = work_batch.min(config.events - start);
-            let mut events = self.propose_range(start as u64, count, config.seed, 0)?;
-            self.apply_model(&mut events, model)?;
-            update_report(&mut report, &events);
-            report.proposals += events.len();
-            report.produced += events.len();
-            for chunk in events.chunks(decision.chunk_events.max(1)) {
-                let batch =
-                    self.output_batch(chunk, Arc::clone(&schema), true, config.diagnostics)?;
-                sink.write_batch(&batch)?;
+        let result = (|| -> GenerationResult<GenerationReport> {
+            let mut report = report(config.events, config.seed, &decision);
+            let work_batch = decision.chunk_events.max(1);
+            for start in (0..config.events).step_by(work_batch) {
+                let count = work_batch.min(config.events - start);
+                let mut events = self.propose_range(start as u64, count, config.seed, 0)?;
+                self.apply_model(&mut events, model)?;
+                update_report(&mut report, &events);
+                report.proposals += events.len();
+                report.produced += events.len();
+                for chunk in events.chunks(decision.chunk_events.max(1)) {
+                    let batch =
+                        self.output_batch(chunk, Arc::clone(&schema), true, config.diagnostics)?;
+                    sink.write_batch(&batch)?;
+                }
             }
+            sink.finish()?;
+            Ok(report)
+        })();
+
+        if result.is_err() {
+            // The generation error is authoritative even if backend cleanup
+            // also fails. Aborted files are intentionally left in place.
+            let _ = sink.abort();
         }
-        sink.finish()?;
-        Ok(report)
+
+        result
     }
 
     /// Generates rejection-sampled unweighted events and writes them to `sink`.
@@ -1154,126 +1207,134 @@ impl ChannelGenerator {
             ));
         }
         sink.begin(Arc::clone(&schema), WritePlan::default())?;
-        let mut report = report(config.events, config.seed, &decision);
-        report.envelope = Some(bound);
-        report.envelope_kind = Some(kind);
-        report.pilot_proposals = pilot_count;
-        if let Some(proven) = proven_report {
-            report.proven_weight_interval = Some(proven.weight_interval.bounds());
-            report.proven_continuous_dimensions = Some(proven.continuous_dimensions);
-            report.proven_piecewise_regions = Some(proven.piecewise_regions);
-            report.proven_subdivisions = Some(proven.subdivisions);
-        }
-        let mut proposal_index = 0_usize;
-        let mut buffered = Vec::new();
-        let work_batch = decision.chunk_events.max(1);
-        while report.produced < config.events
-            && config
-                .max_proposals
-                .is_none_or(|max_proposals| proposal_index < max_proposals)
-        {
-            let count = config.max_proposals.map_or(work_batch, |max_proposals| {
-                work_batch.min(max_proposals - proposal_index)
-            });
-            let mut events = self.propose_range_with_adaptation(
-                proposal_index as u64,
-                count,
-                config.seed,
-                0,
-                adaptations.as_ref(),
-            )?;
-            self.apply_model(&mut events, model)?;
-            let remaining_before_overflow = config.events - report.produced;
-            if let Some(last_needed) = events
-                .iter()
-                .enumerate()
-                .filter(|(_, event)| {
-                    acceptance_uniform(config.seed, event.index) * bound <= event.target_weight
-                })
-                .nth(remaining_before_overflow - 1)
-                .map(|(position, _)| position + 1)
-                && !events[..last_needed]
+        let result = (|| -> GenerationResult<GenerationReport> {
+            let mut report = report(config.events, config.seed, &decision);
+            report.envelope = Some(bound);
+            report.envelope_kind = Some(kind);
+            report.pilot_proposals = pilot_count;
+            if let Some(proven) = proven_report {
+                report.proven_weight_interval = Some(proven.weight_interval.bounds());
+                report.proven_continuous_dimensions = Some(proven.continuous_dimensions);
+                report.proven_piecewise_regions = Some(proven.piecewise_regions);
+                report.proven_subdivisions = Some(proven.subdivisions);
+            }
+            let mut proposal_index = 0_usize;
+            let mut buffered = Vec::new();
+            let work_batch = decision.chunk_events.max(1);
+            while report.produced < config.events
+                && config
+                    .max_proposals
+                    .is_none_or(|max_proposals| proposal_index < max_proposals)
+            {
+                let count = config.max_proposals.map_or(work_batch, |max_proposals| {
+                    work_batch.min(max_proposals - proposal_index)
+                });
+                let mut events = self.propose_range_with_adaptation(
+                    proposal_index as u64,
+                    count,
+                    config.seed,
+                    0,
+                    adaptations.as_ref(),
+                )?;
+                self.apply_model(&mut events, model)?;
+                let remaining_before_overflow = config.events - report.produced;
+                if let Some(last_needed) = events
                     .iter()
-                    .any(|event| event.target_weight > bound)
-            {
-                events.truncate(last_needed);
-            }
-            update_report(&mut report, &events);
-            if let Some(overflow) = events
-                .iter()
-                .filter(|event| event.target_weight > bound)
-                .max_by(|a, b| a.target_weight.total_cmp(&b.target_weight))
-            {
+                    .enumerate()
+                    .filter(|(_, event)| {
+                        acceptance_uniform(config.seed, event.index) * bound <= event.target_weight
+                    })
+                    .nth(remaining_before_overflow - 1)
+                    .map(|(position, _)| position + 1)
+                    && !events[..last_needed]
+                        .iter()
+                        .any(|event| event.target_weight > bound)
+                {
+                    events.truncate(last_needed);
+                }
+                update_report(&mut report, &events);
+                if let Some(overflow) = events
+                    .iter()
+                    .filter(|event| event.target_weight > bound)
+                    .max_by(|a, b| a.target_weight.total_cmp(&b.target_weight))
+                {
+                    match config.envelope_overflow {
+                        EnvelopeOverflow::Error => {
+                            return Err(GenerationError::EnvelopeOverflow {
+                                index: overflow.index,
+                                weight: overflow.target_weight,
+                                envelope: bound,
+                            });
+                        }
+                        EnvelopeOverflow::Grow { safety_factor } => {
+                            bound = overflow.target_weight * safety_factor;
+                            validate_bound(bound)?;
+                            report.envelope = Some(bound);
+                            report.envelope_updates += 1;
+                            buffered.retain(|event: &GeneratedEvent| {
+                                acceptance_uniform(config.seed, event.index) * bound
+                                    <= event.target_weight
+                            });
+                            report.produced = buffered.len();
+                        }
+                    }
+                }
+                let remaining = config.events - report.produced;
+                let proposal_count = events.len();
+                let accepted = events
+                    .into_iter()
+                    .filter(|event| {
+                        acceptance_uniform(config.seed, event.index) * bound <= event.target_weight
+                    })
+                    .take(remaining)
+                    .collect::<Vec<_>>();
+                report.proposals += proposal_count;
+                report.produced += accepted.len();
+                report.rejected = report.proposals - report.produced;
+                proposal_index += proposal_count;
                 match config.envelope_overflow {
-                    EnvelopeOverflow::Error => {
-                        return Err(GenerationError::EnvelopeOverflow {
-                            index: overflow.index,
-                            weight: overflow.target_weight,
-                            envelope: bound,
-                        });
+                    EnvelopeOverflow::Error if !accepted.is_empty() => {
+                        for chunk in accepted.chunks(decision.chunk_events.max(1)) {
+                            let batch = self.output_batch(
+                                chunk,
+                                Arc::clone(&schema),
+                                false,
+                                config.diagnostics,
+                            )?;
+                            sink.write_batch(&batch)?;
+                        }
                     }
-                    EnvelopeOverflow::Grow { safety_factor } => {
-                        bound = overflow.target_weight * safety_factor;
-                        validate_bound(bound)?;
-                        report.envelope = Some(bound);
-                        report.envelope_updates += 1;
-                        buffered.retain(|event: &GeneratedEvent| {
-                            acceptance_uniform(config.seed, event.index) * bound
-                                <= event.target_weight
-                        });
+                    EnvelopeOverflow::Grow { .. } => {
+                        buffered.extend(accepted);
                         report.produced = buffered.len();
+                        report.rejected = report.proposals - report.produced;
                     }
+                    EnvelopeOverflow::Error => {}
                 }
             }
-            let remaining = config.events - report.produced;
-            let proposal_count = events.len();
-            let accepted = events
-                .into_iter()
-                .filter(|event| {
-                    acceptance_uniform(config.seed, event.index) * bound <= event.target_weight
-                })
-                .take(remaining)
-                .collect::<Vec<_>>();
-            report.proposals += proposal_count;
-            report.produced += accepted.len();
-            report.rejected = report.proposals - report.produced;
-            proposal_index += proposal_count;
-            match config.envelope_overflow {
-                EnvelopeOverflow::Error if !accepted.is_empty() => {
-                    for chunk in accepted.chunks(decision.chunk_events.max(1)) {
-                        let batch = self.output_batch(
-                            chunk,
-                            Arc::clone(&schema),
-                            false,
-                            config.diagnostics,
-                        )?;
-                        sink.write_batch(&batch)?;
-                    }
-                }
-                EnvelopeOverflow::Grow { .. } => {
-                    buffered.extend(accepted);
-                    report.produced = buffered.len();
-                    report.rejected = report.proposals - report.produced;
-                }
-                EnvelopeOverflow::Error => {}
+            if report.produced != config.events {
+                return Err(GenerationError::Exhausted {
+                    requested: config.events,
+                    accepted: report.produced,
+                    proposals: report.proposals,
+                });
             }
-        }
-        if report.produced != config.events {
-            return Err(GenerationError::Exhausted {
-                requested: config.events,
-                accepted: report.produced,
-                proposals: report.proposals,
-            });
-        }
-        if matches!(config.envelope_overflow, EnvelopeOverflow::Grow { .. }) {
-            for events in buffered.chunks(decision.chunk_events.max(1)) {
-                let batch =
-                    self.output_batch(events, Arc::clone(&schema), false, config.diagnostics)?;
-                sink.write_batch(&batch)?;
+            if matches!(config.envelope_overflow, EnvelopeOverflow::Grow { .. }) {
+                for events in buffered.chunks(decision.chunk_events.max(1)) {
+                    let batch =
+                        self.output_batch(events, Arc::clone(&schema), false, config.diagnostics)?;
+                    sink.write_batch(&batch)?;
+                }
             }
+            sink.finish()?;
+            Ok(report)
+        })();
+
+        if result.is_err() {
+            let _ = sink.abort();
         }
-        sink.finish()?;
-        Ok(report)
+
+        result
     }
 
     /// Generates weighted events into an in-memory dataset.
@@ -2137,6 +2198,35 @@ mod tests {
     use super::*;
     use laddu_physics::{histogram::Histogram, quantum::ParticleProperties, vectors::RealVec3};
 
+    struct FailingSink {
+        aborted: bool,
+    }
+
+    impl EventSink for FailingSink {
+        fn begin(
+            &mut self,
+            _schema: Arc<Schema>,
+            _plan: WritePlan,
+        ) -> laddu_data::LadduDataResult<()> {
+            Ok(())
+        }
+
+        fn write_batch(&mut self, _batch: &EventBatch) -> laddu_data::LadduDataResult<()> {
+            Err(laddu_data::LadduDataError::Sink(
+                "injected write failure".into(),
+            ))
+        }
+
+        fn finish(&mut self) -> laddu_data::LadduDataResult<()> {
+            Ok(())
+        }
+
+        fn abort(&mut self) -> laddu_data::LadduDataResult<()> {
+            self.aborted = true;
+            Ok(())
+        }
+    }
+
     fn decay_generator() -> ChannelGenerator {
         let mut channel = Channel::new("decay");
         channel
@@ -2615,5 +2705,20 @@ mod tests {
                 assert!(event.weight() > 0.0);
             })
             .unwrap();
+    }
+
+    #[test]
+    fn weighted_generation_aborts_sink_after_post_begin_failure() {
+        let generator = decay_generator();
+        let mut sink = FailingSink { aborted: false };
+
+        let result = generator.generate_weighted_to(WeightedConfig::new(2), None, &mut sink);
+
+        assert!(matches!(
+            result,
+            Err(GenerationError::Data(laddu_data::LadduDataError::Sink(message)))
+                if message.contains("injected write failure")
+        ));
+        assert!(sink.aborted);
     }
 }

@@ -12,9 +12,10 @@ use laddu_compile::{
 #[cfg(test)]
 use laddu_data::data::accurate::AccurateComplex64;
 use laddu_data::{
+    BatchLayout,
     data::accurate::AccurateF64,
     data::{CacheStorage, Dataset, EventBatch, MemoryPolicy},
-    schema::Schema,
+    schema::{Precision as DataPrecision, Schema},
 };
 use laddu_expr::{
     BinaryOp, ExprGraph, ExprId, ExprNode, P4Component, UnaryOp, ValueKind,
@@ -24,7 +25,7 @@ use laddu_kernel::ir::{
     GradientKernelIr, KernelInstruction, KernelValue, KernelValueClass, KernelValueId,
     KernelValueKind, OutputComponent, ScalarKernelIr,
 };
-use laddu_memory::{MemoryFitRequest, MemoryFootprint};
+use laddu_memory::{FootprintOverflow, MemoryFitRequest, MemoryFootprint};
 use nalgebra::{DMatrix, DVector, Dyn, LU};
 use num::{
     complex::{Complex, Complex32, Complex64},
@@ -2207,45 +2208,66 @@ impl CpuPlan {
 
     /// Estimates retained compiled-cache bytes for `events`.
     pub fn cache_memory_estimate(&self, events: usize) -> usize {
-        let fixed = self.cache_plan.entries().len() * size_of::<CachedSlot>()
-            + self.factor_matrices.len() * size_of::<CachedFactorSlot>()
-            + self.solve_row_keys.len() * size_of::<CachedSolveRowSlot>()
-            + self.cache_plan.entries().len() * size_of::<ExprId>()
-            + self.factor_matrices.len() * size_of::<ExprId>()
-            + self.solve_row_keys.len() * size_of::<(ExprId, usize, usize)>();
-        let slot_bytes = self
-            .cache_plan
-            .entries()
-            .iter()
-            .map(|entry| match entry.value_kind() {
-                ValueKind::Real => size_of::<f64>(),
-                ValueKind::Complex => size_of::<Complex64>(),
-                ValueKind::Vector { len } => len * size_of::<Complex64>(),
-                ValueKind::Matrix { rows, cols } => rows * cols * size_of::<Complex64>(),
-            })
-            .sum::<usize>();
-        let factor_bytes = self
-            .factor_matrices
-            .iter()
-            .map(|(_, dimension)| {
-                size_of::<DynamicLu>()
-                    + dimension * dimension * size_of::<Complex64>()
-                    + dimension * size_of::<usize>()
-            })
-            .sum::<usize>();
-        let solve_bytes = self
-            .solve_row_keys
-            .iter()
-            .map(|(_, _, dimension)| dimension * size_of::<Complex64>())
-            .sum::<usize>();
-        fixed.saturating_add(
-            events.saturating_mul(
-                size_of::<f64>()
-                    .saturating_add(slot_bytes)
-                    .saturating_add(factor_bytes)
-                    .saturating_add(solve_bytes),
+        self.cache_memory_footprint()
+            .map(|footprint| usize::try_from(footprint.peak_bytes(events)).unwrap_or(usize::MAX))
+            .unwrap_or(usize::MAX)
+    }
+
+    fn cache_memory_footprint(&self) -> Result<MemoryFootprint, FootprintOverflow> {
+        let mut fixed = MemoryFootprint::fixed(0);
+        for (count, bytes) in [
+            (self.cache_plan.entries().len(), size_of::<CachedSlot>()),
+            (self.factor_matrices.len(), size_of::<CachedFactorSlot>()),
+            (self.solve_row_keys.len(), size_of::<CachedSolveRowSlot>()),
+            (self.cache_plan.entries().len(), size_of::<ExprId>()),
+            (self.factor_matrices.len(), size_of::<ExprId>()),
+            (
+                self.solve_row_keys.len(),
+                size_of::<(ExprId, usize, usize)>(),
             ),
-        )
+        ] {
+            fixed = fixed.checked_add(
+                MemoryFootprint::from_usize_checked(bytes, 0)?.checked_scale_usize(count)?,
+            )?;
+        }
+
+        let mut per_event = MemoryFootprint::per_event(size_of::<f64>() as u64);
+        for entry in self.cache_plan.entries() {
+            let bytes = match entry.value_kind() {
+                ValueKind::Real => MemoryFootprint::per_event(size_of::<f64>() as u64),
+                ValueKind::Complex => MemoryFootprint::per_event(size_of::<Complex64>() as u64),
+                ValueKind::Vector { len } => {
+                    MemoryFootprint::per_event(size_of::<Complex64>() as u64)
+                        .checked_scale_usize(len)?
+                }
+                ValueKind::Matrix { rows, cols } => {
+                    MemoryFootprint::per_event(size_of::<Complex64>() as u64)
+                        .checked_scale_usize(rows)?
+                        .checked_scale_usize(cols)?
+                }
+            };
+            per_event = per_event.checked_add(bytes)?;
+        }
+        for (_, dimension) in &self.factor_matrices {
+            let bytes = MemoryFootprint::per_event(size_of::<DynamicLu>() as u64)
+                .checked_add(
+                    MemoryFootprint::per_event(size_of::<Complex64>() as u64)
+                        .checked_scale_usize(*dimension)?
+                        .checked_scale_usize(*dimension)?,
+                )?
+                .checked_add(
+                    MemoryFootprint::per_event(size_of::<usize>() as u64)
+                        .checked_scale_usize(*dimension)?,
+                )?;
+            per_event = per_event.checked_add(bytes)?;
+        }
+        for (_, _, dimension) in &self.solve_row_keys {
+            per_event = per_event.checked_add(
+                MemoryFootprint::per_event(size_of::<Complex64>() as u64)
+                    .checked_scale_usize(*dimension)?,
+            )?;
+        }
+        fixed.checked_add(per_event)
     }
 
     fn cache_dataset_with_plan(
@@ -2287,12 +2309,17 @@ impl CpuPlan {
         let schema = dataset
             .schema()
             .map_err(|error| RuntimeError::Data(error.to_string()))?;
+        let source_footprint = BatchLayout::from_schema(&schema)
+            .schema_footprint(DataPrecision::F64)
+            .map_err(|error| RuntimeError::Data(format!("source working-set overflow: {error}")))?;
+        let cache_footprint = self
+            .cache_memory_footprint()
+            .map_err(|error| RuntimeError::Data(format!("cache working-set overflow: {error}")))?;
         let source_bytes_per_event =
-            (4 * schema.n_p4s() + schema.n_scalars() + usize::from(schema.has_weight()))
-                * size_of::<f64>();
-        let cache_one = self.cache_memory_estimate(1);
-        let cache_zero = self.cache_memory_estimate(0);
-        let cache_bytes_per_event = cache_one.saturating_sub(cache_zero);
+            usize::try_from(source_footprint.bytes_per_event).unwrap_or(usize::MAX);
+        let cache_zero = usize::try_from(cache_footprint.fixed_bytes).unwrap_or(usize::MAX);
+        let cache_bytes_per_event =
+            usize::try_from(cache_footprint.bytes_per_event).unwrap_or(usize::MAX);
         let known_local_events = dataset
             .num_events()
             .map_err(|error| RuntimeError::Data(error.to_string()))?
@@ -2322,10 +2349,21 @@ impl CpuPlan {
             MemoryPolicy::Streaming => CacheStorage::Streaming,
             MemoryPolicy::Resident => {
                 if resident_plan.is_none() {
-                    let minimum = MemoryFootprint::from_usize(
-                        cache_zero.saturating_add(source_bytes_per_event.saturating_mul(2)),
-                        cache_bytes_per_event,
-                    );
+                    let source_staging = source_footprint
+                        .checked_scale(2)
+                        .and_then(|footprint| {
+                            MemoryFootprint::fixed(footprint.bytes_per_event).checked_add(
+                                MemoryFootprint::per_event(cache_footprint.bytes_per_event),
+                            )
+                        })
+                        .map_err(|error| {
+                            RuntimeError::Data(format!("source working-set overflow: {error}"))
+                        })?;
+                    let minimum = MemoryFootprint::fixed(cache_footprint.fixed_bytes)
+                        .checked_add(source_staging)
+                        .map_err(|error| {
+                            RuntimeError::Data(format!("cache working-set overflow: {error}"))
+                        })?;
                     return Err(laddu_memory::MemoryError::BudgetExceeded {
                         resource: "host".into(),
                         requested: minimum.peak_bytes(local_event_limit),
@@ -2353,19 +2391,22 @@ impl CpuPlan {
         // Sources may hold the current decoded batch plus one bounded
         // prefetched batch. A resident cache is already covered by its
         // persistent lease; streaming additionally needs one transient cache.
-        let (fixed_peak, per_event_peak) = if requested_storage == CacheStorage::Streaming {
-            (
-                cache_zero,
-                source_bytes_per_event
-                    .saturating_mul(2)
-                    .saturating_add(cache_bytes_per_event),
-            )
+        let transient_footprint = if requested_storage == CacheStorage::Streaming {
+            cache_footprint
+                .checked_add(source_footprint.checked_scale(2).map_err(|error| {
+                    RuntimeError::Data(format!("source working-set overflow: {error}"))
+                })?)
+                .map_err(|error| {
+                    RuntimeError::Data(format!("cache working-set overflow: {error}"))
+                })?
         } else {
-            (0, source_bytes_per_event.saturating_mul(2))
+            source_footprint.checked_scale(2).map_err(|error| {
+                RuntimeError::Data(format!("source working-set overflow: {error}"))
+            })?
         };
         let decision = MemoryFitRequest {
             label: "CPU prepared dataset".into(),
-            footprint: MemoryFootprint::from_usize(fixed_peak, per_event_peak),
+            footprint: transient_footprint,
             available_bytes: available_for_batch,
             event_limit: local_event_limit,
             strategy: if requested_storage == CacheStorage::Resident {

@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::fmt::Display;
 use std::sync::Arc;
 
 use crate::{LadduDataError, LadduDataResult, data::EventBatch, schema::Schema};
@@ -11,7 +12,48 @@ pub mod parquet;
 /// ROOT event sources.
 pub mod root;
 
+mod source;
+
 pub use output::{OutputMode, OutputPath};
+
+pub(crate) use source::{SourceBuild, SourceBuildOptions, build_source};
+
+/// Adds stable operation/resource context to a source failure.
+pub(crate) fn source_error(
+    operation: impl AsRef<str>,
+    resource: impl Display,
+    cause: impl Display,
+) -> LadduDataError {
+    LadduDataError::Source(format!("{} `{resource}`: {cause}", operation.as_ref()))
+}
+
+/// Adds stable operation/resource context to a sink failure.
+pub(crate) fn sink_error(
+    operation: impl AsRef<str>,
+    resource: impl Display,
+    cause: impl Display,
+) -> LadduDataError {
+    LadduDataError::Sink(format!("{} `{resource}`: {cause}", operation.as_ref()))
+}
+
+#[cfg(test)]
+mod context_tests {
+    use super::*;
+
+    #[test]
+    fn source_and_sink_context_have_stable_operation_resource_format() {
+        assert!(matches!(
+            source_error("read ROOT tree", "events.root::events", "branch failed"),
+            LadduDataError::Source(message)
+                if message == "read ROOT tree `events.root::events`: branch failed"
+        ));
+        assert!(matches!(
+            sink_error("write Parquet file", "events.parquet", "disk full"),
+            LadduDataError::Sink(message)
+                if message == "write Parquet file `events.parquet`: disk full"
+        ));
+    }
+}
 
 #[cfg(test)]
 mod contract_tests;
@@ -328,6 +370,28 @@ pub trait EventSink: Send {
     ///
     /// Returns [`LadduDataError`] when buffered output cannot be finalized.
     fn finish(&mut self) -> LadduDataResult<()>;
+
+    /// Aborts the current write operation and releases any backend resources.
+    ///
+    /// Aborting is idempotent: calling it while the sink is idle is a no-op.
+    /// Backends leave any partially written output in place; callers should
+    /// treat such files as incomplete.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduDataError`] when backend resources cannot be released.
+    fn abort(&mut self) -> LadduDataResult<()> {
+        Ok(())
+    }
+}
+
+/// Internal lifecycle shared by concrete event sinks.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum SinkState {
+    #[default]
+    Idle,
+    Writing,
+    Failed,
 }
 
 /// Metadata describing one addressable source fragment.
@@ -542,9 +606,19 @@ where
 {
     source: Arc<S>,
     reads: Vec<FragmentRead<S::Key>>,
-    read_index: usize,
-    current: Option<EventBatchIter>,
+    state: FragmentBatchState,
     chunk_size: Option<usize>,
+}
+
+enum FragmentBatchState {
+    NeedFragment {
+        index: usize,
+    },
+    Reading {
+        iter: EventBatchIter,
+        next_index: usize,
+    },
+    Done,
 }
 
 impl<S> FragmentBatchIter<S>
@@ -558,10 +632,37 @@ where
         Ok(Self {
             source,
             reads,
-            read_index: 0,
-            current: None,
+            state: FragmentBatchState::NeedFragment { index: 0 },
             chunk_size: plan.chunk_size,
         })
+    }
+
+    fn open_fragment(&self, read: FragmentRead<S::Key>) -> LadduDataResult<EventBatchIter> {
+        match read.selection {
+            FragmentSelection::Range {
+                local_start,
+                local_len,
+            } => {
+                self.source
+                    .read_fragment_range(&read.key, local_start, local_len, self.chunk_size)
+            }
+
+            FragmentSelection::StridedRows {
+                global_start,
+                rows,
+                rank,
+                nranks,
+            } => {
+                let inner = self
+                    .source
+                    .read_fragment_range(&read.key, 0, rows, self.chunk_size);
+
+                inner.and_then(|iter| {
+                    let iter = StridedRowsBatchIter::new(iter, global_start, rank, nranks)?;
+                    Ok(Box::new(iter) as EventBatchIter)
+                })
+            }
+        }
     }
 }
 
@@ -573,47 +674,40 @@ where
 
     fn next(&mut self) -> Option<Self::Item> {
         loop {
-            if let Some(iter) = self.current.as_mut() {
-                match iter.next() {
-                    Some(batch) => return Some(batch),
-                    None => self.current = None,
+            let state = std::mem::replace(&mut self.state, FragmentBatchState::Done);
+            match state {
+                FragmentBatchState::Done => return None,
+                FragmentBatchState::Reading {
+                    mut iter,
+                    next_index,
+                } => match iter.next() {
+                    Some(batch) => {
+                        self.state = FragmentBatchState::Reading { iter, next_index };
+                        return Some(batch);
+                    }
+                    None => {
+                        self.state = FragmentBatchState::NeedFragment { index: next_index };
+                    }
+                },
+                FragmentBatchState::NeedFragment { index } => {
+                    let Some(read) = self.reads.get(index).cloned() else {
+                        self.state = FragmentBatchState::Done;
+                        return None;
+                    };
+
+                    let next_index = index.saturating_add(1);
+                    match self.open_fragment(read) {
+                        Ok(iter) => {
+                            self.state = FragmentBatchState::Reading { iter, next_index };
+                        }
+                        Err(err) => {
+                            // Opening one fragment is an item-level failure. Keep
+                            // the next fragment available for a later call.
+                            self.state = FragmentBatchState::NeedFragment { index: next_index };
+                            return Some(Err(err));
+                        }
+                    }
                 }
-            }
-
-            let read = self.reads.get(self.read_index)?.clone();
-            self.read_index += 1;
-
-            let next_iter = match read.selection {
-                FragmentSelection::Range {
-                    local_start,
-                    local_len,
-                } => self.source.read_fragment_range(
-                    &read.key,
-                    local_start,
-                    local_len,
-                    self.chunk_size,
-                ),
-
-                FragmentSelection::StridedRows {
-                    global_start,
-                    rows,
-                    rank,
-                    nranks,
-                } => {
-                    let inner =
-                        self.source
-                            .read_fragment_range(&read.key, 0, rows, self.chunk_size);
-
-                    inner.and_then(|iter| {
-                        let iter = StridedRowsBatchIter::new(iter, global_start, rank, nranks)?;
-                        Ok(Box::new(iter) as EventBatchIter)
-                    })
-                }
-            };
-
-            match next_iter {
-                Ok(iter) => self.current = Some(iter),
-                Err(err) => return Some(Err(err)),
             }
         }
     }
@@ -623,7 +717,13 @@ pub(crate) struct SliceBatchIter<I> {
     inner: I,
     start: usize,
     end: usize,
-    consumed: usize,
+    state: SliceBatchState,
+}
+
+#[derive(Clone, Copy)]
+enum SliceBatchState {
+    Reading { consumed: usize },
+    Done,
 }
 
 impl<I> SliceBatchIter<I> {
@@ -637,7 +737,7 @@ impl<I> SliceBatchIter<I> {
             inner,
             start,
             end,
-            consumed: 0,
+            state: SliceBatchState::Reading { consumed: 0 },
         })
     }
 }
@@ -649,15 +749,30 @@ where
     type Item = LadduDataResult<EventBatch>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        while self.consumed < self.end {
-            let batch = match self.inner.next()? {
+        loop {
+            let SliceBatchState::Reading { consumed } = self.state else {
+                return None;
+            };
+
+            if consumed >= self.end {
+                self.state = SliceBatchState::Done;
+                return None;
+            }
+
+            let Some(item) = self.inner.next() else {
+                self.state = SliceBatchState::Done;
+                return None;
+            };
+            let batch = match item {
                 Ok(batch) => batch,
                 Err(err) => return Some(Err(err)),
             };
 
-            let batch_start = self.consumed;
+            let batch_start = consumed;
             let batch_end = batch_start + batch.len();
-            self.consumed = batch_end;
+            self.state = SliceBatchState::Reading {
+                consumed: batch_end,
+            };
 
             let lo = self.start.max(batch_start);
             let hi = self.end.min(batch_end);
@@ -671,17 +786,21 @@ where
 
             return Some(Ok(batch.slice(local_lo, local_hi)));
         }
-
-        None
     }
 }
 
 pub(crate) struct StridedRowsBatchIter<I> {
     inner: I,
     global_start: u64,
-    consumed: u64,
     rank: usize,
     nranks: usize,
+    state: StridedRowsBatchState,
+}
+
+#[derive(Clone, Copy)]
+enum StridedRowsBatchState {
+    Reading { consumed: u64 },
+    Done,
 }
 
 impl<I> StridedRowsBatchIter<I> {
@@ -702,9 +821,9 @@ impl<I> StridedRowsBatchIter<I> {
         Ok(Self {
             inner,
             global_start,
-            consumed: 0,
             rank,
             nranks,
+            state: StridedRowsBatchState::Reading { consumed: 0 },
         })
     }
 }
@@ -717,13 +836,23 @@ where
 
     fn next(&mut self) -> Option<Self::Item> {
         loop {
-            let batch = match self.inner.next()? {
+            let StridedRowsBatchState::Reading { consumed } = self.state else {
+                return None;
+            };
+
+            let Some(item) = self.inner.next() else {
+                self.state = StridedRowsBatchState::Done;
+                return None;
+            };
+            let batch = match item {
                 Ok(batch) => batch,
                 Err(err) => return Some(Err(err)),
             };
 
-            let batch_global_start = self.global_start + self.consumed;
-            self.consumed = self.consumed.saturating_add(batch.len() as u64);
+            let batch_global_start = self.global_start + consumed;
+            self.state = StridedRowsBatchState::Reading {
+                consumed: consumed.saturating_add(batch.len() as u64),
+            };
 
             let rows: Vec<usize> = (0..batch.len())
                 .filter(|&i| {
@@ -741,15 +870,18 @@ where
 }
 
 pub(crate) struct CoalescedBatchIter<I> {
-    inner: Option<I>,
-    emitted: bool,
+    state: CoalescedBatchState<I>,
+}
+
+enum CoalescedBatchState<I> {
+    Reading(I),
+    Done,
 }
 
 impl<I> CoalescedBatchIter<I> {
     pub(crate) fn new(inner: I) -> Self {
         Self {
-            inner: Some(inner),
-            emitted: false,
+            state: CoalescedBatchState::Reading(inner),
         }
     }
 }
@@ -761,16 +893,14 @@ where
     type Item = LadduDataResult<EventBatch>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.emitted {
+        let CoalescedBatchState::Reading(mut inner) =
+            std::mem::replace(&mut self.state, CoalescedBatchState::Done)
+        else {
             return None;
-        }
-
-        self.emitted = true;
-
-        let inner = self.inner.as_mut()?;
+        };
         let mut batches = Vec::new();
 
-        for batch in inner {
+        for batch in &mut inner {
             match batch {
                 Ok(batch) => batches.push(batch),
                 Err(err) => return Some(Err(err)),
@@ -827,6 +957,64 @@ mod tests {
             .to_vec()
     }
 
+    struct FragmentOpenFailureSource;
+
+    impl FragmentedSource for FragmentOpenFailureSource {
+        type Key = usize;
+
+        fn fragments(&self) -> LadduDataResult<Vec<DataFragment<Self::Key>>> {
+            Ok(vec![
+                DataFragment {
+                    key: 0,
+                    global_start: 0,
+                    rows: 1,
+                },
+                DataFragment {
+                    key: 1,
+                    global_start: 1,
+                    rows: 1,
+                },
+            ])
+        }
+
+        fn read_fragment_range(
+            &self,
+            key: &Self::Key,
+            _local_start: usize,
+            _local_len: usize,
+            _chunk_size: Option<usize>,
+        ) -> LadduDataResult<EventBatchIter> {
+            if *key == 0 {
+                return Err(LadduDataError::Source(
+                    "first fragment failed to open".into(),
+                ));
+            }
+
+            Ok(Box::new(vec![Ok(batch(10, 1))].into_iter()))
+        }
+    }
+
+    #[test]
+    fn fragment_open_error_is_an_item_and_later_fragments_remain_readable() {
+        let mut iter = FragmentBatchIter::new(
+            Arc::new(FragmentOpenFailureSource),
+            ReadPlan {
+                chunk_size: Some(1),
+                #[cfg(feature = "mpi")]
+                distribution: Default::default(),
+            },
+        )
+        .unwrap();
+
+        assert!(matches!(
+            iter.next(),
+            Some(Err(LadduDataError::Source(message))) if message == "first fragment failed to open"
+        ));
+        assert_eq!(iter.next().unwrap().unwrap().scalar_column(0), &[10.0]);
+        assert!(iter.next().is_none());
+        assert!(iter.next().is_none());
+    }
+
     #[test]
     fn slice_batch_iter_slices_across_batch_boundaries_without_losing_alignment() {
         let inner = vec![Ok(batch(0, 3)), Ok(batch(3, 2)), Ok(batch(5, 4))].into_iter();
@@ -838,6 +1026,16 @@ mod tests {
 
         let values = concat_values(out);
         assert_eq!(values, vec![2.0, 3.0, 4.0, 5.0, 6.0]);
+    }
+
+    #[test]
+    fn slice_batch_iter_skips_empty_batches_and_has_a_repeated_terminal_none() {
+        let inner = vec![Ok(batch(0, 0)), Ok(batch(0, 2))].into_iter();
+        let mut iter = SliceBatchIter::new(inner, 0, 2).unwrap();
+
+        assert_eq!(iter.next().unwrap().unwrap().len(), 2);
+        assert!(iter.next().is_none());
+        assert!(iter.next().is_none());
     }
 
     #[test]
@@ -871,12 +1069,17 @@ mod tests {
         ]
         .into_iter();
 
-        let err = CoalescedBatchIter::new(error_inner)
-            .next()
-            .unwrap()
-            .unwrap_err();
+        let mut error_iter = CoalescedBatchIter::new(error_inner);
+        let err = error_iter.next().unwrap().unwrap_err();
 
         assert!(matches!(err, LadduDataError::Source(msg) if msg == "boom"));
+        assert!(error_iter.next().is_none());
+        assert!(error_iter.next().is_none());
+
+        let mut empty =
+            CoalescedBatchIter::new(Vec::<LadduDataResult<EventBatch>>::new().into_iter());
+        assert!(empty.next().is_none());
+        assert!(empty.next().is_none());
     }
 
     #[test]

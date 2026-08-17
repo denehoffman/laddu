@@ -7,6 +7,7 @@ use laddu_kernel::ir::{
     CacheKernelIr, GradientKernelIr, KernelInstruction, KernelValue, KernelValueId,
     KernelValueKind, OutputComponent, ScalarKernelIr,
 };
+use laddu_memory::{FootprintOverflow, MemoryFootprint};
 use wgpu::util::DeviceExt;
 
 use crate::{WgpuContext, WgpuError, WgpuResult};
@@ -63,13 +64,36 @@ enum EventInput {
 impl WgpuScalarKernel {
     /// Estimates tracked GPU bytes for a prepared reduction batch.
     pub fn prepared_memory_estimate(&self, params: &ParamValues, events: usize) -> usize {
+        self.prepared_memory_footprint(params)
+            .map(|footprint| usize::try_from(footprint.peak_bytes(events)).unwrap_or(usize::MAX))
+            .unwrap_or(usize::MAX)
+    }
+
+    /// Returns the checked fixed/per-event footprint for prepared reduction
+    /// buffers.
+    #[doc(hidden)]
+    pub fn prepared_memory_footprint(
+        &self,
+        params: &ParamValues,
+    ) -> Result<MemoryFootprint, FootprintOverflow> {
         let scalar_size = self.scalar_size();
-        let input_bytes = self.event_inputs.len() * 2 * scalar_size;
-        let cache_bytes = self.cache_width * 2 * scalar_size;
-        let result_bytes = self.partial_width * scalar_size + 1;
-        let per_event = input_bytes + cache_bytes + result_bytes;
-        let fixed_bytes = params.as_slice().len().max(1) * scalar_size + 16;
-        fixed_bytes.saturating_add(per_event.saturating_mul(events))
+        let scalar_size = u64::try_from(scalar_size).map_err(|_| FootprintOverflow::Conversion)?;
+        let input_bytes = MemoryFootprint::per_event(scalar_size)
+            .checked_scale_usize(self.event_inputs.len())?
+            .checked_scale(2)?;
+        let cache_bytes = MemoryFootprint::per_event(scalar_size)
+            .checked_scale_usize(self.cache_width)?
+            .checked_scale(2)?;
+        let result_bytes = MemoryFootprint::per_event(scalar_size)
+            .checked_scale_usize(self.partial_width)?
+            .checked_add(MemoryFootprint::per_event(1))?;
+        let per_event = input_bytes
+            .checked_add(cache_bytes)?
+            .checked_add(result_bytes)?;
+        let fixed_bytes = MemoryFootprint::fixed(scalar_size)
+            .checked_scale_usize(params.as_slice().len().max(1))?
+            .checked_add(MemoryFootprint::fixed(16))?;
+        fixed_bytes.checked_add(per_event)
     }
 
     /// Compiles a model's scalar kernel and reduction pipelines for `context`.

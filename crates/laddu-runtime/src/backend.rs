@@ -1,8 +1,12 @@
 use laddu_compile::{CompiledModel, ReductionPlan};
+#[cfg(feature = "wgpu")]
+use laddu_data::BatchLayout;
 use laddu_data::data::Dataset;
 use laddu_data::data::EventBatch;
 #[cfg(feature = "wgpu")]
 use laddu_data::data::{CacheStorage, MemoryPolicy, accurate::AccurateF64};
+#[cfg(feature = "wgpu")]
+use laddu_data::schema::Precision as DataPrecision;
 use laddu_expr::parameters::ParamValues;
 #[cfg(feature = "wgpu")]
 use laddu_memory::{MemoryFitRequest, MemoryFootprint};
@@ -299,23 +303,19 @@ impl WgpuPlan {
         let local_event_limit = known_local_events
             .or(discovered_events)
             .unwrap_or(usize::MAX);
-        let fixed = self
+        let prepared_footprint = self
             .kernel
-            .prepared_memory_estimate(&self.preparation_params, 0);
-        let one = self
-            .kernel
-            .prepared_memory_estimate(&self.preparation_params, 1);
-        let per_event = one.saturating_sub(fixed);
+            .prepared_memory_footprint(&self.preparation_params)
+            .map_err(|error| RuntimeError::Data(format!("GPU working-set overflow: {error}")))?;
         let schema = dataset
             .schema()
             .map_err(|error| RuntimeError::Data(error.to_string()))?;
-        let host_bytes_per_event =
-            (4 * schema.n_p4s() + schema.n_scalars() + usize::from(schema.has_weight()))
-                .saturating_mul(size_of::<f64>())
-                .saturating_mul(2);
+        let host_footprint = BatchLayout::from_schema(&schema)
+            .schema_working_set(DataPrecision::F64, 2)
+            .map_err(|error| RuntimeError::Data(format!("host working-set overflow: {error}")))?;
         let host_decision = MemoryFitRequest {
             label: "WGPU host staging".into(),
-            footprint: MemoryFootprint::from_usize(0, host_bytes_per_event),
+            footprint: host_footprint,
             available_bytes: execution.host_memory().remaining(),
             event_limit: local_event_limit,
             strategy: "bounded host staging".into(),
@@ -324,8 +324,14 @@ impl WgpuPlan {
         let host_chunks = local_event_limit
             .saturating_add(host_decision.chunk_events.saturating_sub(1))
             / host_decision.chunk_events.max(1);
-        let resident_footprint =
-            MemoryFootprint::from_usize(fixed.saturating_mul(host_chunks), per_event);
+        let resident_footprint = MemoryFootprint::fixed(prepared_footprint.fixed_bytes)
+            .checked_scale_usize(host_chunks)
+            .and_then(|fixed| {
+                fixed.checked_add(MemoryFootprint::per_event(
+                    prepared_footprint.bytes_per_event,
+                ))
+            })
+            .map_err(|error| RuntimeError::Data(format!("GPU working-set overflow: {error}")))?;
         let resident_peak = resident_footprint.peak_bytes(local_event_limit);
         let device_pool = execution
             .device_memory()
@@ -364,7 +370,7 @@ impl WgpuPlan {
         } else {
             MemoryFitRequest {
                 label: "WGPU prepared dataset".into(),
-                footprint: MemoryFootprint::from_usize(fixed, per_event),
+                footprint: prepared_footprint,
                 available_bytes: device_available,
                 event_limit: local_event_limit,
                 strategy: "streaming".into(),

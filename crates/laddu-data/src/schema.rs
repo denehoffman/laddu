@@ -296,21 +296,11 @@ impl Schema {
 
     /// Returns all physical columns required to store this schema.
     pub fn physical_columns(&self, column_names: &SchemaColumnNames) -> Vec<Name> {
-        let mut names = Vec::with_capacity(4 * self.n_p4s() + self.n_scalars() + 1);
-
-        for p4 in self.p4s() {
-            for name in column_names.p4_suffixes.physical_p4_names(p4) {
-                names.push(Name::from(name));
-            }
-        }
-
-        names.extend(self.scalars().iter().cloned());
-
-        if self.has_weight() {
-            names.push(Arc::clone(&column_names.weight_column));
-        }
-
-        names
+        PhysicalSchemaPlan::for_read(self, column_names)
+            .columns()
+            .iter()
+            .map(|column| Arc::clone(column.name()))
+            .collect()
     }
 
     /// Validates that all physical columns required by this schema are available.
@@ -330,9 +320,9 @@ impl Schema {
             .map(|c| c.name)
             .collect();
 
-        for required in self.physical_columns(&options.column_names) {
-            if !available.contains(required.as_ref()) {
-                return Err(LadduDataError::MissingColumn(required));
+        for required in PhysicalSchemaPlan::for_read(self, &options.column_names).columns() {
+            if !available.contains(required.name().as_ref()) {
+                return Err(LadduDataError::MissingColumn(Arc::clone(required.name())));
             }
         }
 
@@ -369,6 +359,116 @@ pub struct SchemaWriteOptions {
     pub precision: Precision,
     /// Weight-column emission policy.
     pub write_weight_column: WriteWeightColumn,
+}
+
+/// The semantic role of one physical storage column.
+///
+/// This is deliberately crate-private: callers work with logical [`Schema`]
+/// values while the file-format adapters use this plan to keep physical
+/// column ordering and binding identical across backends.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PhysicalColumnRole {
+    /// One component of a logical four-momentum column.
+    P4 {
+        /// Logical four-momentum column index.
+        index: usize,
+        /// Component index in `(E, px, py, pz)` order.
+        component: usize,
+    },
+    /// One logical scalar column.
+    Scalar {
+        /// Logical scalar column index.
+        index: usize,
+    },
+    /// The physical event-weight column.
+    Weight,
+}
+
+/// Ordered physical representation of a logical event schema.
+///
+/// A plan is built once at each storage boundary and then consumed by schema
+/// creation, projection, encoding, and decoding.  Keeping the role alongside
+/// the name avoids each backend reimplementing the canonical ordering.
+#[derive(Clone, Debug)]
+pub(crate) struct PhysicalSchemaPlan {
+    columns: Vec<PhysicalColumn>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct PhysicalColumn {
+    name: Name,
+    role: PhysicalColumnRole,
+}
+
+impl PhysicalSchemaPlan {
+    /// Builds the physical columns used when reading or validating a schema.
+    pub(crate) fn for_read(schema: &Schema, column_names: &SchemaColumnNames) -> Self {
+        Self::build(schema, column_names, schema.has_weight())
+    }
+
+    /// Builds the physical columns emitted by a sink.
+    pub(crate) fn for_write(
+        schema: &Schema,
+        options: &SchemaWriteOptions,
+        write_weight: WriteWeightColumn,
+    ) -> Self {
+        let should_write_weight =
+            matches!(write_weight, WriteWeightColumn::Always) || schema.has_weight();
+        Self::build(schema, &options.column_names, should_write_weight)
+    }
+
+    fn build(schema: &Schema, column_names: &SchemaColumnNames, include_weight: bool) -> Self {
+        let mut columns = Vec::with_capacity(
+            4 * schema.n_p4s() + schema.n_scalars() + usize::from(include_weight),
+        );
+
+        for (index, p4) in schema.p4s().iter().enumerate() {
+            for (component, name) in column_names
+                .p4_suffixes
+                .physical_p4_names(p4)
+                .into_iter()
+                .enumerate()
+            {
+                columns.push(PhysicalColumn {
+                    name: Name::from(name),
+                    role: PhysicalColumnRole::P4 { index, component },
+                });
+            }
+        }
+
+        for (index, name) in schema.scalars().iter().cloned().enumerate() {
+            columns.push(PhysicalColumn {
+                name,
+                role: PhysicalColumnRole::Scalar { index },
+            });
+        }
+
+        if include_weight {
+            columns.push(PhysicalColumn {
+                name: Arc::clone(&column_names.weight_column),
+                role: PhysicalColumnRole::Weight,
+            });
+        }
+
+        Self { columns }
+    }
+
+    /// Returns physical columns in canonical storage order.
+    pub(crate) fn columns(&self) -> &[PhysicalColumn] {
+        &self.columns
+    }
+}
+
+impl PhysicalColumn {
+    /// Returns the physical storage name.
+    pub(crate) fn name(&self) -> &Name {
+        &self.name
+    }
+
+    /// Returns the logical role of this physical column.
+    pub(crate) fn role(&self) -> PhysicalColumnRole {
+        self.role
+    }
 }
 
 #[cfg(test)]
@@ -532,6 +632,65 @@ mod tests {
 
         assert!(
             matches!(missing_because_not_float, LadduDataError::MissingColumn(name) if name.as_ref() == "p_py")
+        );
+    }
+
+    #[test]
+    fn physical_schema_plan_preserves_order_roles_and_weight_policy() {
+        let schema = Schema::new(["p"], ["mass"], false).unwrap();
+        let options = SchemaWriteOptions {
+            column_names: SchemaColumnNames {
+                weight_column: Name::from("event_weight"),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let only_if_present =
+            PhysicalSchemaPlan::for_write(&schema, &options, WriteWeightColumn::OnlyIfPresent);
+        assert_eq!(
+            only_if_present
+                .columns()
+                .iter()
+                .map(|column| column.name().to_string())
+                .collect::<Vec<_>>(),
+            ["p_e", "p_px", "p_py", "p_pz", "mass"]
+        );
+        assert_eq!(
+            only_if_present
+                .columns()
+                .iter()
+                .map(PhysicalColumn::role)
+                .collect::<Vec<_>>(),
+            [
+                PhysicalColumnRole::P4 {
+                    index: 0,
+                    component: 0,
+                },
+                PhysicalColumnRole::P4 {
+                    index: 0,
+                    component: 1,
+                },
+                PhysicalColumnRole::P4 {
+                    index: 0,
+                    component: 2,
+                },
+                PhysicalColumnRole::P4 {
+                    index: 0,
+                    component: 3,
+                },
+                PhysicalColumnRole::Scalar { index: 0 },
+            ]
+        );
+
+        let always = PhysicalSchemaPlan::for_write(&schema, &options, WriteWeightColumn::Always);
+        assert_eq!(
+            always.columns().last().map(|column| column.name().as_ref()),
+            Some("event_weight")
+        );
+        assert_eq!(
+            always.columns().last().map(PhysicalColumn::role),
+            Some(PhysicalColumnRole::Weight)
         );
     }
 }

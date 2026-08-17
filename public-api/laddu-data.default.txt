@@ -367,6 +367,7 @@ pub fn laddu_data::io::memory::MemorySink::default() -> laddu_data::io::memory::
 impl core::fmt::Debug for laddu_data::io::memory::MemorySink
 pub fn laddu_data::io::memory::MemorySink::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl laddu_data::io::EventSink for laddu_data::io::memory::MemorySink
+pub fn laddu_data::io::memory::MemorySink::abort(&mut self) -> laddu_data::LadduDataResult<()>
 pub fn laddu_data::io::memory::MemorySink::begin(&mut self, alloc::sync::Arc<laddu_data::schema::Schema>, laddu_data::io::WritePlan) -> laddu_data::LadduDataResult<()>
 pub fn laddu_data::io::memory::MemorySink::finish(&mut self) -> laddu_data::LadduDataResult<()>
 pub fn laddu_data::io::memory::MemorySink::retains_batches(&self) -> bool
@@ -428,6 +429,7 @@ pub fn laddu_data::io::parquet::ParquetSink::builder(impl core::convert::Into<st
 pub fn laddu_data::io::parquet::ParquetSink::create(impl core::convert::Into<std::path::PathBuf>) -> Self
 pub fn laddu_data::io::parquet::ParquetSink::resolved_path(&self) -> core::option::Option<&std::path::Path>
 impl laddu_data::io::EventSink for laddu_data::io::parquet::ParquetSink
+pub fn laddu_data::io::parquet::ParquetSink::abort(&mut self) -> laddu_data::LadduDataResult<()>
 pub fn laddu_data::io::parquet::ParquetSink::begin(&mut self, alloc::sync::Arc<laddu_data::schema::Schema>, laddu_data::io::WritePlan) -> laddu_data::LadduDataResult<()>
 pub fn laddu_data::io::parquet::ParquetSink::finish(&mut self) -> laddu_data::LadduDataResult<()>
 pub fn laddu_data::io::parquet::ParquetSink::retains_batches(&self) -> bool
@@ -529,6 +531,7 @@ pub fn laddu_data::io::root::RootSink::resolved_path(&self) -> core::option::Opt
 impl core::ops::drop::Drop for laddu_data::io::root::RootSink
 pub fn laddu_data::io::root::RootSink::drop(&mut self)
 impl laddu_data::io::EventSink for laddu_data::io::root::RootSink
+pub fn laddu_data::io::root::RootSink::abort(&mut self) -> laddu_data::LadduDataResult<()>
 pub fn laddu_data::io::root::RootSink::begin(&mut self, alloc::sync::Arc<laddu_data::schema::Schema>, laddu_data::io::WritePlan) -> laddu_data::LadduDataResult<()>
 pub fn laddu_data::io::root::RootSink::finish(&mut self) -> laddu_data::LadduDataResult<()>
 pub fn laddu_data::io::root::RootSink::retains_batches(&self) -> bool
@@ -730,21 +733,25 @@ pub fn laddu_data::io::WritePlan::serialize<__S>(&self, __S) -> core::result::Re
 impl<'de> serde_core::de::Deserialize<'de> for laddu_data::io::WritePlan
 pub fn laddu_data::io::WritePlan::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
 pub trait laddu_data::io::EventSink: core::marker::Send
+pub fn laddu_data::io::EventSink::abort(&mut self) -> laddu_data::LadduDataResult<()>
 pub fn laddu_data::io::EventSink::begin(&mut self, alloc::sync::Arc<laddu_data::schema::Schema>, laddu_data::io::WritePlan) -> laddu_data::LadduDataResult<()>
 pub fn laddu_data::io::EventSink::finish(&mut self) -> laddu_data::LadduDataResult<()>
 pub fn laddu_data::io::EventSink::retains_batches(&self) -> bool
 pub fn laddu_data::io::EventSink::write_batch(&mut self, &laddu_data::data::event::EventBatch) -> laddu_data::LadduDataResult<()>
 impl laddu_data::io::EventSink for laddu_data::io::memory::MemorySink
+pub fn laddu_data::io::memory::MemorySink::abort(&mut self) -> laddu_data::LadduDataResult<()>
 pub fn laddu_data::io::memory::MemorySink::begin(&mut self, alloc::sync::Arc<laddu_data::schema::Schema>, laddu_data::io::WritePlan) -> laddu_data::LadduDataResult<()>
 pub fn laddu_data::io::memory::MemorySink::finish(&mut self) -> laddu_data::LadduDataResult<()>
 pub fn laddu_data::io::memory::MemorySink::retains_batches(&self) -> bool
 pub fn laddu_data::io::memory::MemorySink::write_batch(&mut self, &laddu_data::data::event::EventBatch) -> laddu_data::LadduDataResult<()>
 impl laddu_data::io::EventSink for laddu_data::io::parquet::ParquetSink
+pub fn laddu_data::io::parquet::ParquetSink::abort(&mut self) -> laddu_data::LadduDataResult<()>
 pub fn laddu_data::io::parquet::ParquetSink::begin(&mut self, alloc::sync::Arc<laddu_data::schema::Schema>, laddu_data::io::WritePlan) -> laddu_data::LadduDataResult<()>
 pub fn laddu_data::io::parquet::ParquetSink::finish(&mut self) -> laddu_data::LadduDataResult<()>
 pub fn laddu_data::io::parquet::ParquetSink::retains_batches(&self) -> bool
 pub fn laddu_data::io::parquet::ParquetSink::write_batch(&mut self, &laddu_data::data::event::EventBatch) -> laddu_data::LadduDataResult<()>
 impl laddu_data::io::EventSink for laddu_data::io::root::RootSink
+pub fn laddu_data::io::root::RootSink::abort(&mut self) -> laddu_data::LadduDataResult<()>
 pub fn laddu_data::io::root::RootSink::begin(&mut self, alloc::sync::Arc<laddu_data::schema::Schema>, laddu_data::io::WritePlan) -> laddu_data::LadduDataResult<()>
 pub fn laddu_data::io::root::RootSink::finish(&mut self) -> laddu_data::LadduDataResult<()>
 pub fn laddu_data::io::root::RootSink::retains_batches(&self) -> bool

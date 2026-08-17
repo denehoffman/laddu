@@ -1,12 +1,12 @@
+use std::fmt;
 use std::sync::Arc;
-use std::{
-    fmt,
-    mem::{size_of, size_of_val},
-};
 
 use laddu_physics::vectors::RealVec4;
 
-use crate::{LadduDataError, LadduDataResult, schema::Schema};
+use crate::{
+    BatchLayout, LadduDataError, LadduDataResult,
+    schema::{Precision, Schema},
+};
 
 #[derive(Clone, Debug)]
 struct BatchParts {
@@ -310,9 +310,11 @@ impl EventBatch {
 
     /// Returns the logical payload bytes per event represented by this batch.
     pub fn bytes_per_event(&self) -> usize {
-        self.parts.p4s.len() * size_of::<RealVec4>()
-            + self.parts.scalars.len() * size_of::<f64>()
-            + usize::from(self.parts.weights.is_explicit()) * size_of::<f64>()
+        BatchLayout::from_batch(self)
+            .bytes_per_event(Precision::F64)
+            .ok()
+            .and_then(|bytes| usize::try_from(bytes).ok())
+            .unwrap_or(usize::MAX)
     }
 
     /// Returns the retained column payload size in bytes.
@@ -320,18 +322,12 @@ impl EventBatch {
     /// Shared schema metadata, allocation headers, and other owners of shared
     /// columns are not included.
     pub fn resident_bytes(&self) -> usize {
-        self.parts
-            .p4s
-            .iter()
-            .map(|column| column.len() * size_of::<RealVec4>())
-            .sum::<usize>()
-            + self
-                .parts
-                .scalars
-                .iter()
-                .map(|column| column.len() * size_of::<f64>())
-                .sum::<usize>()
-            + self.parts.weights.as_slice().map_or(0, size_of_val)
+        BatchLayout::from_batch(self)
+            .footprint(Precision::F64)
+            .and_then(|footprint| footprint.checked_peak_bytes(self.len))
+            .ok()
+            .and_then(|bytes| usize::try_from(bytes).ok())
+            .unwrap_or(usize::MAX)
     }
 
     /// Returns whether the batch contains no rows.
