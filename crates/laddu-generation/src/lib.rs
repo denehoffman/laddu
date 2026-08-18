@@ -848,6 +848,31 @@ impl ChannelGenerator {
         Ok(self)
     }
 
+    /// Returns the configured named scalar sources in output-column order.
+    pub fn scalar_sources(&self) -> impl ExactSizeIterator<Item = (&str, &ScalarSource)> {
+        self.scalar_sources
+            .iter()
+            .map(|(name, source)| (name.as_str(), source))
+    }
+
+    /// Returns the schema produced by weighted generation.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GenerationError`] if the output names do not form a valid schema.
+    pub fn weighted_output_schema(&self, diagnostics: bool) -> GenerationResult<Arc<Schema>> {
+        self.output_schema(true, diagnostics)
+    }
+
+    /// Returns the schema produced by unweighted generation.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GenerationError`] if the output names do not form a valid schema.
+    pub fn unweighted_output_schema(&self, diagnostics: bool) -> GenerationResult<Arc<Schema>> {
+        self.output_schema(false, diagnostics)
+    }
+
     /// Prove an upper envelope for the model-less phase-space proposal weight.
     ///
     /// The returned interval is outward-rounded by maryada. A finite upper
@@ -2794,6 +2819,31 @@ mod tests {
         let generator = decay_generator()
             .with_scalar("aux", ScalarSource::constant(2.0))
             .unwrap();
+        let sources = generator.scalar_sources().collect::<Vec<_>>();
+        assert_eq!(sources.len(), 1);
+        assert_eq!(sources[0].0, "aux");
+        let weighted_schema = generator.weighted_output_schema(false).unwrap();
+        let weighted_scalars = weighted_schema
+            .scalars()
+            .iter()
+            .map(AsRef::as_ref)
+            .collect::<Vec<_>>();
+        assert_eq!(weighted_scalars, ["aux"]);
+        let unweighted_schema = generator.unweighted_output_schema(true).unwrap();
+        let unweighted_scalars = unweighted_schema
+            .scalars()
+            .iter()
+            .map(AsRef::as_ref)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            unweighted_scalars,
+            [
+                "aux",
+                "__laddu_proposal_weight",
+                "__laddu_model_weight",
+                "__laddu_target_weight",
+            ]
+        );
         let model = CompiledModel::from_expr(&laddu_expr::event_scalar("aux")).unwrap();
         let evaluator = ModelEvaluator::prepare(
             &model,

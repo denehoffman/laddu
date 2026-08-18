@@ -1,4 +1,4 @@
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug)]
 /// Source distribution for a generated scalar value.
 pub enum ScalarSource {
     /// A deterministic value.
@@ -12,6 +12,91 @@ pub enum ScalarSource {
     },
     /// A piecewise-constant histogram distribution.
     Histogram(Histogram),
+}
+
+#[derive(Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+enum ScalarSourceRef<'a> {
+    Fixed {
+        value: f64,
+    },
+    Uniform {
+        min: f64,
+        max: f64,
+    },
+    Histogram {
+        edges: &'a [f64],
+        weights: &'a [f64],
+    },
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+enum ScalarSourceOwned {
+    /// Use one value.
+    Fixed {
+        /// Fixed scalar value.
+        value: f64,
+    },
+    /// Draw uniformly from `[min, max)`.
+    Uniform {
+        /// Lower bound.
+        min: f64,
+        /// Upper bound.
+        max: f64,
+    },
+    /// Draw from an inline piecewise-constant histogram.
+    Histogram {
+        /// Bin edges, with one more edge than weight.
+        edges: Vec<f64>,
+        /// Nonnegative bin weights.
+        weights: Vec<f64>,
+    },
+}
+
+impl JsonSchema for ScalarSource {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "ScalarSource".into()
+    }
+
+    fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        ScalarSourceOwned::json_schema(generator)
+    }
+}
+
+impl Serialize for ScalarSource {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        match self {
+            Self::Constant(value) => ScalarSourceRef::Fixed { value: *value },
+            Self::Uniform { low, high } => ScalarSourceRef::Uniform {
+                min: *low,
+                max: *high,
+            },
+            Self::Histogram(histogram) => ScalarSourceRef::Histogram {
+                edges: histogram.bin_edges(),
+                weights: histogram.counts(),
+            },
+        }
+        .serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for ScalarSource {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        match ScalarSourceOwned::deserialize(deserializer)? {
+            ScalarSourceOwned::Fixed { value } => Ok(Self::constant(value)),
+            ScalarSourceOwned::Uniform { min, max } => Ok(Self::uniform(min, max)),
+            ScalarSourceOwned::Histogram { edges, weights } => Histogram::new(weights, edges)
+                .map(Self::histogram)
+                .map_err(serde::de::Error::custom),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug)]

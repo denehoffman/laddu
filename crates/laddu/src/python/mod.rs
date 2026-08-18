@@ -201,7 +201,8 @@ macro_rules! laddu_python_module {
             use $crate::python::generation::{
                 PyGenerationReport as GenerationReport, PyGenerator as Generator,
                 PyInitialMomentum as InitialMomentum, PyMassProposal as MassProposal,
-                PyProvenEnvelopeReport as ProvenEnvelopeReport, PyVertexProposal as VertexProposal,
+                PyProvenEnvelopeReport as ProvenEnvelopeReport, PyScalarSource as ScalarSource,
+                PyVertexProposal as VertexProposal,
             };
             #[pymodule_export]
             use $crate::python::histogram::PyHistogram as Histogram;
