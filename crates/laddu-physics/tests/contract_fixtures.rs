@@ -2,7 +2,7 @@
 
 use laddu_physics::{
     LadduPhysicsError,
-    generation::{MassProposal, ProposalRng},
+    generation::{MassProposal, ProposalRng, ScalarSource},
     histogram::Histogram,
     quantum::ParticleProperties,
     vectors::{RealVec3, RealVec4},
@@ -35,6 +35,18 @@ fn public_physics_types_match_stable_json_fixtures() {
         include_str!("fixtures/mass_proposal.json"),
     );
     assert_json_fixture(
+        &ScalarSource::constant(8.5),
+        include_str!("fixtures/scalar_source_fixed.json"),
+    );
+    assert_json_fixture(
+        &ScalarSource::uniform(8.0, 9.0),
+        include_str!("fixtures/scalar_source_uniform.json"),
+    );
+    assert_json_fixture(
+        &ScalarSource::histogram(Histogram::new(vec![4.0, 9.0], vec![0.0, 1.0, 4.0]).unwrap()),
+        include_str!("fixtures/scalar_source_histogram.json"),
+    );
+    assert_json_fixture(
         &Histogram::new_with_flow(vec![4.0, 9.0], vec![0.0, 1.0, 4.0], 0.5, 1.25).unwrap(),
         include_str!("fixtures/histogram.json"),
     );
@@ -44,6 +56,14 @@ fn public_physics_types_match_stable_json_fixtures() {
             .with_mass(1.25),
         include_str!("fixtures/particle_properties.json"),
     );
+}
+
+#[test]
+fn scalar_source_exposes_its_json_schema() {
+    let schema = serde_json::to_string(&schemars::schema_for!(ScalarSource)).unwrap();
+    for variant in ["fixed", "uniform", "histogram"] {
+        assert!(schema.contains(&format!(r#""const":"{variant}""#)));
+    }
 }
 
 #[test]

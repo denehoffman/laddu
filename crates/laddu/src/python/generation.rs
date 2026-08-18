@@ -8,7 +8,11 @@ use laddu_physics::{
     },
     vectors::{RealVec3, RealVec4},
 };
-use pyo3::{exceptions::PyValueError, prelude::*, types::PyAny};
+use pyo3::{
+    exceptions::PyValueError,
+    prelude::*,
+    types::{PyAny, PyDict},
+};
 
 use super::{
     data::PyDataset,
@@ -65,6 +69,44 @@ impl PyMassProposal {
 
     fn __repr__(&self) -> String {
         format!("MassProposal({:?})", self.inner)
+    }
+}
+
+#[pyclass(name = "ScalarSource", module = "laddu", frozen, skip_from_py_object)]
+#[derive(Clone)]
+/// A fixed, uniform, or histogram-backed generated scalar source.
+pub struct PyScalarSource {
+    pub(crate) inner: ScalarSource,
+}
+
+#[pymethods]
+impl PyScalarSource {
+    #[staticmethod]
+    /// Use one fixed scalar value.
+    fn fixed(value: f64) -> PyResult<Self> {
+        let inner = ScalarSource::constant(value);
+        inner.support().map_err(to_py_err)?;
+        Ok(Self { inner })
+    }
+
+    #[staticmethod]
+    /// Sample uniformly from ``[low, high)``.
+    fn uniform(low: f64, high: f64) -> PyResult<Self> {
+        let inner = ScalarSource::uniform(low, high);
+        inner.support().map_err(to_py_err)?;
+        Ok(Self { inner })
+    }
+
+    #[staticmethod]
+    /// Sample from a piecewise-constant histogram.
+    fn histogram(histogram: &PyHistogram) -> PyResult<Self> {
+        let inner = ScalarSource::histogram(histogram.inner.clone());
+        inner.support().map_err(to_py_err)?;
+        Ok(Self { inner })
+    }
+
+    fn __repr__(&self) -> String {
+        format!("ScalarSource({:?})", self.inner)
     }
 }
 
@@ -492,6 +534,8 @@ impl PyProvenEnvelopeReport {
 /// ----------
 /// channel : Channel
 ///     Fully specified reaction topology and proposal configuration.
+/// scalars : dict[str, ScalarSource], optional
+///     Additional named scalar columns generated with every event.
 pub struct PyGenerator {
     inner: ChannelGenerator,
 }
@@ -516,10 +560,19 @@ impl PyGenerator {
     /// LadduError
     ///     If masses, momenta, vertices, or proposals are incomplete.
     #[new]
-    fn new(channel: &PyChannel) -> PyResult<Self> {
-        Ok(Self {
-            inner: ChannelGenerator::new(channel.inner.clone()).map_err(to_py_err)?,
-        })
+    #[pyo3(signature = (channel, *, scalars: "dict[str, ScalarSource] | None" = None))]
+    fn new(channel: &PyChannel, scalars: Option<&Bound<'_, PyDict>>) -> PyResult<Self> {
+        let mut inner = ChannelGenerator::new(channel.inner.clone()).map_err(to_py_err)?;
+        if let Some(scalars) = scalars {
+            for (name, source) in scalars {
+                let name = name.extract::<String>()?;
+                let source = source.extract::<PyRef<'_, PyScalarSource>>()?;
+                inner
+                    .add_scalar(name, source.inner.clone())
+                    .map_err(to_py_err)?;
+            }
+        }
+        Ok(Self { inner })
     }
 
     /// Prove a fixed upper envelope for unit-model phase-space generation.
@@ -768,11 +821,13 @@ pub mod generation {
     use super::{
         PyGenerationReport as GenerationReport, PyGenerator as Generator,
         PyInitialMomentum as InitialMomentum, PyMassProposal as MassProposal,
-        PyProvenEnvelopeReport as ProvenEnvelopeReport, PyVertexProposal as VertexProposal,
+        PyProvenEnvelopeReport as ProvenEnvelopeReport, PyScalarSource as ScalarSource,
+        PyVertexProposal as VertexProposal,
     };
 }
 
 impl_json_methods!(PyMassProposal);
+impl_json_methods!(PyScalarSource);
 impl_json_methods!(PyInitialMomentum);
 impl_json_methods!(PyVertexProposal);
 impl_json_methods!(PyGenerationReport);

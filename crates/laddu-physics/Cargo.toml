@@ -22,6 +22,7 @@ nalgebra.workspace = true
 thiserror.workspace = true
 maryada.workspace = true
 num.workspace = true
+schemars.workspace = true
 auto_ops.workspace = true
 approx.workspace = true
 factorial.workspace = true

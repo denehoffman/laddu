@@ -8,8 +8,8 @@ DECAY_DIMENSIONS = 2
 N_EVENTS = 16
 
 
-def decay_generator() -> ld.Generator:
-    channel = ld.Channel(
+def decay_channel() -> ld.Channel:
+    return ld.Channel(
         'proven envelope decay',
         edges=[
             ld.Edge(
@@ -30,10 +30,22 @@ def decay_generator() -> ld.Generator:
             ),
         ],
     )
-    return ld.Generator(channel)
+
+
+def decay_generator() -> ld.Generator:
+    return ld.Generator(decay_channel())
 
 
 class ProvenEnvelopeTests(unittest.TestCase):
+    def test_scalar_sources_are_exported_and_accepted(self) -> None:
+        source = ld.ScalarSource.uniform(0.2, 0.3)
+        assert source.to_json() == '{"kind":"uniform","min":0.2,"max":0.3}'
+        restored = ld.ScalarSource.from_json(source.to_json())
+        generator = ld.Generator(decay_channel(), scalars={'polarization': restored})
+        dataset, _ = generator.weighted(1, seed=17)
+        value = dataset.evaluate(ld.scalar('polarization'), real=True)[0]
+        assert 0.2 <= value < 0.3  # noqa: PLR2004
+
     def test_report_and_model_less_unweighting(self) -> None:
         generator = decay_generator()
         proven = generator.phase_space_envelope()
