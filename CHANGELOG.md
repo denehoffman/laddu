@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.21.3](https://github.com/denehoffman/laddu/compare/v0.21.2...v0.21.3) (2026-08-18)
+
+
+### Features
+
+* Refine serialization pipeline for generated scalars ([4a16622](https://github.com/denehoffman/laddu/commit/4a16622f5ad05ec36a07d3e71e7280ecd8f7bd21))
+
 ## [0.21.2](https://github.com/denehoffman/laddu/compare/v0.21.1...v0.21.2) (2026-08-17)
 
 
