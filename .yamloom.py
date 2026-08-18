@@ -38,7 +38,8 @@ PYTHON_MANIFESTS = {
     'laddu': 'python/laddu/Cargo.toml',
     'laddu-local': 'python/laddu-local/Cargo.toml',
 }
-PYTHON_VERSIONS = ('3.11', '3.12', '3.13', '3.14', '3.14t')
+PYTHON_VERSIONS = ('3.11', '3.14t')
+PYTHON_ABI_FEATURES = 'pyo3/abi3-py311,pyo3/abi3t-py315'
 WHEEL_PLATFORMS = (
     MaturinPlatform(
         'linux',
@@ -79,7 +80,14 @@ def maturin_jobs(
             manifest_path=manifest,
             python_versions=PYTHON_VERSIONS,
             platforms=WHEEL_PLATFORMS,
-            args=('--release', '--out', 'dist', '--generate-stubs'),
+            args=(
+                '--release',
+                '--out',
+                'dist',
+                '--generate-stubs',
+                '--features',
+                PYTHON_ABI_FEATURES,
+            ),
             needs=needs,
             condition=condition,
             upload=upload,
