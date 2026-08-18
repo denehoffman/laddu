@@ -152,10 +152,13 @@ impl core::clone::Clone for laddu_physics::generation::ScalarSource
 pub fn laddu_physics::generation::ScalarSource::clone(&self) -> laddu_physics::generation::ScalarSource
 impl core::fmt::Debug for laddu_physics::generation::ScalarSource
 pub fn laddu_physics::generation::ScalarSource::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl schemars::JsonSchema for laddu_physics::generation::ScalarSource
+pub fn laddu_physics::generation::ScalarSource::json_schema(&mut schemars::generate::SchemaGenerator) -> schemars::schema::Schema
+pub fn laddu_physics::generation::ScalarSource::schema_name() -> alloc::borrow::Cow<'static, str>
 impl serde_core::ser::Serialize for laddu_physics::generation::ScalarSource
-pub fn laddu_physics::generation::ScalarSource::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+pub fn laddu_physics::generation::ScalarSource::serialize<S>(&self, S) -> core::result::Result<<S as serde_core::ser::Serializer>::Ok, <S as serde_core::ser::Serializer>::Error> where S: serde_core::ser::Serializer
 impl<'de> serde_core::de::Deserialize<'de> for laddu_physics::generation::ScalarSource
-pub fn laddu_physics::generation::ScalarSource::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub fn laddu_physics::generation::ScalarSource::deserialize<D>(D) -> core::result::Result<Self, <D as serde_core::de::Deserializer>::Error> where D: serde_core::de::Deserializer<'de>
 pub enum laddu_physics::generation::TComponent
 pub laddu_physics::generation::TComponent::Exponential
 pub laddu_physics::generation::TComponent::Exponential::slope: f64

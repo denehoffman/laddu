@@ -1,5 +1,9 @@
 #[derive(Clone, Debug)]
 /// Source distribution for a generated scalar value.
+///
+/// The serialized and JSON Schema representation is tagged by `kind`:
+/// `fixed` contains `value`, `uniform` contains `min` and `max`, and
+/// `histogram` contains `edges` and `weights`.
 pub enum ScalarSource {
     /// A deterministic value.
     Constant(f64),

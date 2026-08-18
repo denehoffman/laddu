@@ -70,6 +70,29 @@ can be nonzero. It need not resemble the physical distribution. A uniform
 mixture in an otherwise forward-peaked proposal protects low-probability
 regions from receiving no samples.
 
+## Add generated scalar columns
+
+Named scalar sources are sampled alongside the event four-momenta. They can
+represent auxiliary quantities such as beam polarization and are available to
+models through ordinary scalar expressions:
+
+```python
+generator = ld.Generator(
+    generation_channel,
+    scalars={
+        "pol_magnitude": ld.ScalarSource.uniform(0.2, 0.3),
+        "pol_angle": ld.ScalarSource.fixed(0.0),
+    },
+)
+
+pol_magnitude = ld.scalar("pol_magnitude")
+pol_angle = ld.scalar("pol_angle")
+```
+
+`ScalarSource.histogram(histogram)` supplies a piecewise-constant alternative.
+The same sources serialize to tagged JSON and expose JSON Schema metadata for
+downstream pipeline configuration formats.
+
 ## Produce weighted phase space
 
 Without a model, `weighted` returns the phase-space/proposal weights required
