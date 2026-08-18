@@ -122,6 +122,9 @@ pub fn laddu_generation::ChannelGenerator::generate_weighted_dataset(&self, ladd
 pub fn laddu_generation::ChannelGenerator::generate_weighted_to(&self, laddu_generation::WeightedConfig, core::option::Option<&laddu_generation::ModelEvaluator>, &mut dyn laddu_data::io::EventSink) -> laddu_generation::GenerationResult<laddu_generation::GenerationReport>
 pub fn laddu_generation::ChannelGenerator::new(laddu_physics::channel::Channel) -> laddu_generation::GenerationResult<Self>
 pub fn laddu_generation::ChannelGenerator::phase_space_envelope(&self) -> laddu_generation::GenerationResult<laddu_generation::ProvenEnvelopeReport>
+pub fn laddu_generation::ChannelGenerator::scalar_sources(&self) -> impl core::iter::traits::exact_size::ExactSizeIterator<Item = (&str, &laddu_physics::generation::ScalarSource)>
+pub fn laddu_generation::ChannelGenerator::unweighted_output_schema(&self, bool) -> laddu_generation::GenerationResult<alloc::sync::Arc<laddu_data::schema::Schema>>
+pub fn laddu_generation::ChannelGenerator::weighted_output_schema(&self, bool) -> laddu_generation::GenerationResult<alloc::sync::Arc<laddu_data::schema::Schema>>
 pub fn laddu_generation::ChannelGenerator::with_scalar(self, impl core::convert::Into<alloc::string::String>, laddu_physics::generation::ScalarSource) -> laddu_generation::GenerationResult<Self>
 impl core::convert::TryFrom<laddu_physics::channel::Channel> for laddu_generation::ChannelGenerator
 pub type laddu_generation::ChannelGenerator::Error = laddu_generation::GenerationError
