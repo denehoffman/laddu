@@ -77,17 +77,11 @@ jobs:
             target: x86_64
             python_versions:
               - "3.11"
-              - "3.12"
-              - "3.13"
-              - "3.14"
               - 3.14t
           - runner: ubuntu-22.04
             target: aarch64
             python_versions:
               - "3.11"
-              - "3.12"
-              - "3.13"
-              - "3.14"
               - 3.14t
       fail-fast: false
     steps:
@@ -104,7 +98,7 @@ jobs:
           manylinux: "2014"
           target: ${{ matrix.platform.target }}
           sccache: ${{ !(startsWith(github.ref, 'refs/tags/')) }}
-          args: --release --out dist --generate-stubs --manifest-path python/laddu/Cargo.toml --interpreter ${{ join(matrix.platform.python_versions, ' ') }}
+          args: --release --out dist --generate-stubs --features pyo3/abi3-py311,pyo3/abi3t-py315 --manifest-path python/laddu/Cargo.toml --interpreter ${{ join(matrix.platform.python_versions, ' ') }}
       - name: Upload Artifact
         uses: actions/upload-artifact@v6
         with:
@@ -126,9 +120,6 @@ jobs:
             target: x64
             python_versions:
               - "3.11"
-              - "3.12"
-              - "3.13"
-              - "3.14"
               - 3.14t
             python_arch: x64
       fail-fast: false
@@ -146,7 +137,7 @@ jobs:
         with:
           target: ${{ matrix.platform.target }}
           sccache: ${{ !(startsWith(github.ref, 'refs/tags/')) }}
-          args: --release --out dist --generate-stubs --manifest-path python/laddu/Cargo.toml --interpreter ${{ join(matrix.platform.python_versions, ' ') }}
+          args: --release --out dist --generate-stubs --features pyo3/abi3-py311,pyo3/abi3t-py315 --manifest-path python/laddu/Cargo.toml --interpreter ${{ join(matrix.platform.python_versions, ' ') }}
       - name: Upload Artifact
         uses: actions/upload-artifact@v6
         with:
@@ -168,17 +159,11 @@ jobs:
             target: x86_64
             python_versions:
               - "3.11"
-              - "3.12"
-              - "3.13"
-              - "3.14"
               - 3.14t
           - runner: macos-latest
             target: aarch64
             python_versions:
               - "3.11"
-              - "3.12"
-              - "3.13"
-              - "3.14"
               - 3.14t
       fail-fast: false
     steps:
@@ -194,7 +179,7 @@ jobs:
         with:
           target: ${{ matrix.platform.target }}
           sccache: ${{ !(startsWith(github.ref, 'refs/tags/')) }}
-          args: --release --out dist --generate-stubs --manifest-path python/laddu/Cargo.toml --interpreter ${{ join(matrix.platform.python_versions, ' ') }}
+          args: --release --out dist --generate-stubs --features pyo3/abi3-py311,pyo3/abi3t-py315 --manifest-path python/laddu/Cargo.toml --interpreter ${{ join(matrix.platform.python_versions, ' ') }}
       - name: Upload Artifact
         uses: actions/upload-artifact@v6
         with:
@@ -238,17 +223,11 @@ jobs:
             target: x86_64
             python_versions:
               - "3.11"
-              - "3.12"
-              - "3.13"
-              - "3.14"
               - 3.14t
           - runner: ubuntu-22.04
             target: aarch64
             python_versions:
               - "3.11"
-              - "3.12"
-              - "3.13"
-              - "3.14"
               - 3.14t
       fail-fast: false
     steps:
@@ -265,7 +244,7 @@ jobs:
           manylinux: "2014"
           target: ${{ matrix.platform.target }}
           sccache: ${{ !(startsWith(github.ref, 'refs/tags/')) }}
-          args: --release --out dist --generate-stubs --manifest-path python/laddu-local/Cargo.toml --interpreter ${{ join(matrix.platform.python_versions, ' ') }}
+          args: --release --out dist --generate-stubs --features pyo3/abi3-py311,pyo3/abi3t-py315 --manifest-path python/laddu-local/Cargo.toml --interpreter ${{ join(matrix.platform.python_versions, ' ') }}
       - name: Upload Artifact
         uses: actions/upload-artifact@v6
         with:
@@ -287,9 +266,6 @@ jobs:
             target: x64
             python_versions:
               - "3.11"
-              - "3.12"
-              - "3.13"
-              - "3.14"
               - 3.14t
             python_arch: x64
       fail-fast: false
@@ -307,7 +283,7 @@ jobs:
         with:
           target: ${{ matrix.platform.target }}
           sccache: ${{ !(startsWith(github.ref, 'refs/tags/')) }}
-          args: --release --out dist --generate-stubs --manifest-path python/laddu-local/Cargo.toml --interpreter ${{ join(matrix.platform.python_versions, ' ') }}
+          args: --release --out dist --generate-stubs --features pyo3/abi3-py311,pyo3/abi3t-py315 --manifest-path python/laddu-local/Cargo.toml --interpreter ${{ join(matrix.platform.python_versions, ' ') }}
       - name: Upload Artifact
         uses: actions/upload-artifact@v6
         with:
@@ -329,17 +305,11 @@ jobs:
             target: x86_64
             python_versions:
               - "3.11"
-              - "3.12"
-              - "3.13"
-              - "3.14"
               - 3.14t
           - runner: macos-latest
             target: aarch64
             python_versions:
               - "3.11"
-              - "3.12"
-              - "3.13"
-              - "3.14"
               - 3.14t
       fail-fast: false
     steps:
@@ -355,7 +325,7 @@ jobs:
         with:
           target: ${{ matrix.platform.target }}
           sccache: ${{ !(startsWith(github.ref, 'refs/tags/')) }}
-          args: --release --out dist --generate-stubs --manifest-path python/laddu-local/Cargo.toml --interpreter ${{ join(matrix.platform.python_versions, ' ') }}
+          args: --release --out dist --generate-stubs --features pyo3/abi3-py311,pyo3/abi3t-py315 --manifest-path python/laddu-local/Cargo.toml --interpreter ${{ join(matrix.platform.python_versions, ' ') }}
       - name: Upload Artifact
         uses: actions/upload-artifact@v6
         with:
