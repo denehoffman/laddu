@@ -1,8 +1,10 @@
 use std::{path::PathBuf, sync::Arc};
 
 use laddu_data::{
+    LadduDataError, LadduDataResult,
     data::{Dataset, EventBatch, MemoryPolicy},
     io::{
+        EventBatchIter, EventSource, ReadPlan, SourceCapabilities,
         parquet::{ParquetSink, ParquetSource},
         root::{RootSink, RootSource},
     },
@@ -12,9 +14,9 @@ use laddu_physics::vectors::RealVec4;
 use laddu_runtime::{DatasetExprExt, MemoryBudget};
 use numpy::{PyArray1, PyReadonlyArray1, PyReadonlyArray2, PyUntypedArrayMethods};
 use pyo3::{
-    exceptions::PyValueError,
+    exceptions::{PyTypeError, PyValueError},
     prelude::*,
-    types::{PyAny, PyDict},
+    types::{PyAny, PyDict, PyIterator},
 };
 
 use super::{
@@ -320,6 +322,160 @@ fn scalar_array(values: &Bound<'_, PyAny>, name: &str) -> PyResult<Arc<[f64]>> {
     )))
 }
 
+fn event_batch_from_arrays(
+    p4s: &Bound<'_, PyDict>,
+    scalars: &Bound<'_, PyDict>,
+    weights: Option<&Bound<'_, PyAny>>,
+) -> PyResult<EventBatch> {
+    let mut p4_names = Vec::with_capacity(p4s.len());
+    let mut p4_columns = Vec::with_capacity(p4s.len());
+    let mut expected_len = None;
+
+    for (name, values) in p4s.iter() {
+        let name = name.extract::<String>()?;
+        let (len, column) = p4_array(&values, &name)?;
+        if expected_len.is_some_and(|expected| expected != len) {
+            return Err(PyValueError::new_err(
+                "all dataset columns must have the same number of events",
+            ));
+        }
+        expected_len = Some(len);
+        p4_names.push(name);
+        p4_columns.push(column);
+    }
+
+    let mut scalar_names = Vec::with_capacity(scalars.len());
+    let mut scalar_columns = Vec::with_capacity(scalars.len());
+    for (name, values) in scalars.iter() {
+        let name = name.extract::<String>()?;
+        let values = scalar_array(&values, &name)?;
+        let len = values.len();
+        if expected_len.is_some_and(|expected| expected != len) {
+            return Err(PyValueError::new_err(
+                "all dataset columns must have the same number of events",
+            ));
+        }
+        expected_len = Some(len);
+        scalar_names.push(name);
+        scalar_columns.push(values);
+    }
+
+    let weights = weights
+        .map(|weights| {
+            let values = scalar_array(weights, "weights")?;
+            if expected_len.is_some_and(|expected| expected != values.len()) {
+                return Err(PyValueError::new_err(
+                    "weights must have the same number of events as the dataset columns",
+                ));
+            }
+            Ok(values)
+        })
+        .transpose()?;
+    let schema =
+        Arc::new(Schema::new(p4_names, scalar_names, weights.is_some()).map_err(to_py_err)?);
+    EventBatch::new(schema, p4_columns, scalar_columns, weights).map_err(to_py_err)
+}
+
+struct PythonBatchSource {
+    schema: Arc<Schema>,
+    batch_factory: Py<PyAny>,
+    length: Option<u64>,
+}
+
+impl EventSource for PythonBatchSource {
+    fn schema(&self) -> LadduDataResult<Arc<Schema>> {
+        Ok(Arc::clone(&self.schema))
+    }
+
+    fn capabilities(&self) -> SourceCapabilities {
+        SourceCapabilities {
+            exact_len: self.length.is_some(),
+            streaming: true,
+            ..SourceCapabilities::default()
+        }
+    }
+
+    fn num_events(&self) -> LadduDataResult<Option<u64>> {
+        Ok(self.length)
+    }
+
+    fn batches(&self, plan: ReadPlan) -> LadduDataResult<EventBatchIter> {
+        let iterator = Python::attach(|py| {
+            let kwargs = PyDict::new(py);
+            kwargs.set_item("chunk_size", plan.chunk_size)?;
+            kwargs.set_item("rank", plan.rank())?;
+            kwargs.set_item("nranks", plan.nranks())?;
+            self.batch_factory
+                .bind(py)
+                .call((), Some(&kwargs))?
+                .try_iter()
+                .map(Bound::unbind)
+        })
+        .map_err(|error| python_source_error("batch factory failed", error))?;
+
+        Ok(Box::new(PythonBatchIter {
+            schema: Arc::clone(&self.schema),
+            iterator,
+        }))
+    }
+}
+
+struct PythonBatchIter {
+    schema: Arc<Schema>,
+    iterator: Py<PyIterator>,
+}
+
+impl Iterator for PythonBatchIter {
+    type Item = LadduDataResult<EventBatch>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        Python::attach(|py| {
+            let mut iterator = self.iterator.bind(py).clone();
+            match iterator.next()? {
+                Ok(value) => Some(
+                    event_batch_from_mapping(&value, &self.schema)
+                        .map_err(|error| python_source_error("invalid batch", error)),
+                ),
+                Err(error) => Some(Err(python_source_error("batch iterator failed", error))),
+            }
+        })
+    }
+}
+
+fn python_source_error(context: &str, error: impl std::fmt::Display) -> LadduDataError {
+    LadduDataError::Source(format!("Python {context}: {error}"))
+}
+
+fn event_batch_from_mapping(value: &Bound<'_, PyAny>, schema: &Schema) -> PyResult<EventBatch> {
+    let mapping = value.cast::<PyDict>().map_err(|_| {
+        PyTypeError::new_err("each batch must be a dict with 'p4s' and 'scalars' mappings")
+    })?;
+    let p4s = mapping
+        .get_item("p4s")?
+        .ok_or_else(|| PyValueError::new_err("batch is missing 'p4s'"))?;
+    let p4s = p4s
+        .cast::<PyDict>()
+        .map_err(|_| PyTypeError::new_err("batch 'p4s' must be a dict"))?;
+    let scalars = mapping
+        .get_item("scalars")?
+        .ok_or_else(|| PyValueError::new_err("batch is missing 'scalars'"))?;
+    let scalars = scalars
+        .cast::<PyDict>()
+        .map_err(|_| PyTypeError::new_err("batch 'scalars' must be a dict"))?;
+    let weights = mapping.get_item("weights")?;
+    let weights = weights.as_ref().filter(|weights| !weights.is_none());
+    let batch = event_batch_from_arrays(p4s, scalars, weights)?;
+
+    if batch.schema().as_ref() != schema {
+        return Err(PyValueError::new_err(format!(
+            "batch schema {:?} does not match declared schema {schema:?}",
+            batch.schema()
+        )));
+    }
+
+    Ok(batch)
+}
+
 #[pyclass(name = "Dataset", module = "laddu", frozen, skip_from_py_object)]
 #[derive(Clone)]
 /// A reusable collection of weighted physics events.
@@ -409,56 +565,83 @@ impl PyDataset {
         scalars: &Bound<'_, PyDict>,
         weights: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Self> {
-        let mut p4_names = Vec::with_capacity(p4s.len());
-        let mut p4_columns = Vec::with_capacity(p4s.len());
-        let mut expected_len = None;
-
-        for (name, values) in p4s.iter() {
-            let name = name.extract::<String>()?;
-            let (len, column) = p4_array(&values, &name)?;
-            if expected_len.is_some_and(|expected| expected != len) {
-                return Err(PyValueError::new_err(
-                    "all dataset columns must have the same number of events",
-                ));
-            }
-            expected_len = Some(len);
-            p4_names.push(name);
-            p4_columns.push(column);
-        }
-
-        let mut scalar_names = Vec::with_capacity(scalars.len());
-        let mut scalar_columns = Vec::with_capacity(scalars.len());
-        for (name, values) in scalars.iter() {
-            let name = name.extract::<String>()?;
-            let values = scalar_array(&values, &name)?;
-            let len = values.len();
-            if expected_len.is_some_and(|expected| expected != len) {
-                return Err(PyValueError::new_err(
-                    "all dataset columns must have the same number of events",
-                ));
-            }
-            expected_len = Some(len);
-            scalar_names.push(name);
-            scalar_columns.push(values);
-        }
-
-        let weights = weights
-            .map(|weights| {
-                let values = scalar_array(weights, "weights")?;
-                if expected_len.is_some_and(|expected| expected != values.len()) {
-                    return Err(PyValueError::new_err(
-                        "weights must have the same number of events as the dataset columns",
-                    ));
-                }
-                Ok(values)
-            })
-            .transpose()?;
-        let schema =
-            Arc::new(Schema::new(p4_names, scalar_names, weights.is_some()).map_err(to_py_err)?);
-        let batch =
-            EventBatch::new(schema, p4_columns, scalar_columns, weights).map_err(to_py_err)?;
         Ok(Self {
-            inner: Dataset::from_batch(batch),
+            inner: Dataset::from_batch(event_batch_from_arrays(p4s, scalars, weights)?),
+        })
+    }
+
+    #[staticmethod]
+    #[pyo3(signature = (
+        batch_factory: "Callable[..., Iterable[dict[str, object]]]",
+        *,
+        schema: "dict[str, object]",
+        length=None,
+        memory: "MemoryBudget | int | str | None" = None,
+        cache="fastest"
+    ))]
+    /// Create a reusable streaming dataset from a Python batch factory.
+    ///
+    /// The factory is called for every source traversal with keyword arguments
+    /// ``chunk_size``, ``rank``, and ``nranks``. It must return a fresh iterable
+    /// of dictionaries containing ``p4s`` and ``scalars`` mappings and an
+    /// optional ``weights`` array.
+    ///
+    /// Parameters
+    /// ----------
+    /// batch_factory : callable
+    ///     Callable returning a fresh iterable of batch dictionaries.
+    /// schema : dict
+    ///     Mapping with ``p4s`` and ``scalars`` name sequences and an optional
+    ///     boolean ``weights`` entry.
+    /// length : int, optional
+    ///     Exact number of events, when cheaply known.
+    /// memory : MemoryBudget, int, or str, optional
+    ///     Host-memory budget. Defaults to automatic memory planning.
+    /// cache : {'fastest', 'resident', 'streaming'}, default='fastest'
+    ///     Prefer the fastest fitting strategy or require a cache mode.
+    ///
+    /// Returns
+    /// -------
+    /// Dataset
+    ///     A lazy dataset that requests fresh batches for each traversal.
+    ///
+    /// Raises
+    /// ------
+    /// TypeError
+    ///     If ``batch_factory`` is not callable or ``schema`` has invalid types.
+    /// ValueError
+    ///     If the schema or cache mode is invalid.
+    fn from_batches(
+        batch_factory: Py<PyAny>,
+        schema: &Bound<'_, PyDict>,
+        length: Option<u64>,
+        memory: Option<&Bound<'_, PyAny>>,
+        cache: &str,
+    ) -> PyResult<Self> {
+        if !batch_factory.bind(schema.py()).is_callable() {
+            return Err(PyTypeError::new_err("batch_factory must be callable"));
+        }
+        let p4s = schema
+            .get_item("p4s")?
+            .ok_or_else(|| PyValueError::new_err("schema is missing 'p4s'"))?
+            .extract::<Vec<String>>()?;
+        let scalars = schema
+            .get_item("scalars")?
+            .ok_or_else(|| PyValueError::new_err("schema is missing 'scalars'"))?
+            .extract::<Vec<String>>()?;
+        let has_weight = schema
+            .get_item("weights")?
+            .map(|value| value.extract::<bool>())
+            .transpose()?
+            .unwrap_or(false);
+        let schema = Arc::new(Schema::new(p4s, scalars, has_weight).map_err(to_py_err)?);
+        let source = PythonBatchSource {
+            schema,
+            batch_factory,
+            length,
+        };
+        Ok(Self {
+            inner: configure(Dataset::new(source), memory, cache)?,
         })
     }
 
