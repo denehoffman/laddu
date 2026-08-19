@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.21.4](https://github.com/denehoffman/laddu/compare/v0.21.3...v0.21.4) (2026-08-19)
+
+
+### Features
+
+* Add `Dataset.from_batches` to enable downstream crates with Python bindings to implement their own readers ([df237a7](https://github.com/denehoffman/laddu/commit/df237a769ea2eb6a2f23d8531f97549d6434a945))
+
 ## [0.21.3](https://github.com/denehoffman/laddu/compare/v0.21.2...v0.21.3) (2026-08-18)
 
 
