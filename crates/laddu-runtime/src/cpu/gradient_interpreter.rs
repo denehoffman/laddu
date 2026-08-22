@@ -6,11 +6,14 @@ use laddu_kernel::ir::{
 use nalgebra::{DMatrix, DVector};
 use num::complex::Complex64;
 
-use super::{
-    CpuBatchCache, RuntimeError, RuntimeResult, ScalarEvaluationPlan, ScalarEventWorkspace,
-    ScalarInvariantValues, ScalarSlot, Value, eval_binary, eval_unary, evaluate_scalar_cache_block,
-    matrix_at, matrix_values_row_major, scalar_at, vector_at,
+use super::evaluation::evaluate_scalar_cache_block;
+use super::layout::{
+    Value, eval_binary, eval_unary, matrix_at, matrix_values_row_major, scalar_at, vector_at,
 };
+use super::scalar::{
+    ScalarEvaluationPlan, ScalarEventWorkspace, ScalarInvariantValues, ScalarSlot,
+};
+use super::{CpuBatchCache, RuntimeError, RuntimeResult};
 
 #[derive(Clone, Debug)]
 pub(super) struct GradientInterpreter {
