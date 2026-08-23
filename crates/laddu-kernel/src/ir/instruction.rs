@@ -42,11 +42,16 @@ impl KernelInstruction {
     /// Returns the direct input value identifiers.
     pub fn operands(&self) -> Vec<KernelValueId> {
         let mut operands = Vec::new();
-        self.visit_operands(|operand| operands.push(operand));
+        self.for_each_operand(|operand| operands.push(operand));
         operands
     }
 
-    pub(super) fn visit_operands(&self, mut visit: impl FnMut(KernelValueId)) {
+    /// Visits direct operands in their instruction order without allocating.
+    ///
+    /// The owned [`Self::operands`] method remains available for callers that
+    /// need a collected list. Backend dependency and liveness analysis should
+    /// prefer this callback when it only needs to traverse the operands.
+    pub fn for_each_operand(&self, mut visit: impl FnMut(KernelValueId)) {
         match self {
             Self::Cached(_)
             | Self::RealConstant(_)
@@ -82,7 +87,7 @@ impl KernelInstruction {
 
     pub(super) fn validate_operand_order(&self, value: usize) -> Result<(), KernelIrError> {
         let mut invalid_operand = None;
-        self.visit_operands(|operand| {
+        self.for_each_operand(|operand| {
             if invalid_operand.is_none() && operand.index() >= value {
                 invalid_operand = Some(operand.index());
             }

@@ -65,6 +65,7 @@ pub laddu_kernel::ir::KernelInstruction::Vector(alloc::vec::Vec<laddu_kernel::ir
 impl laddu_kernel::ir::KernelInstruction
 pub fn laddu_kernel::ir::KernelInstruction::diagnostic_name(&self) -> &'static str
 pub fn laddu_kernel::ir::KernelInstruction::event_dependence(&self) -> laddu_kernel::ir::KernelEventDependence
+pub fn laddu_kernel::ir::KernelInstruction::for_each_operand(&self, impl core::ops::function::FnMut(laddu_kernel::ir::KernelValueId))
 pub fn laddu_kernel::ir::KernelInstruction::operands(&self) -> alloc::vec::Vec<laddu_kernel::ir::KernelValueId>
 impl core::clone::Clone for laddu_kernel::ir::KernelInstruction
 pub fn laddu_kernel::ir::KernelInstruction::clone(&self) -> laddu_kernel::ir::KernelInstruction
@@ -91,6 +92,7 @@ pub laddu_kernel::ir::KernelValueKind::Real
 pub laddu_kernel::ir::KernelValueKind::Vector
 pub laddu_kernel::ir::KernelValueKind::Vector::len: usize
 impl laddu_kernel::ir::KernelValueKind
+pub fn laddu_kernel::ir::KernelValueKind::checked_row_major_index(self, usize, usize) -> core::option::Option<usize>
 pub fn laddu_kernel::ir::KernelValueKind::width(self) -> usize
 impl core::clone::Clone for laddu_kernel::ir::KernelValueKind
 pub fn laddu_kernel::ir::KernelValueKind::clone(&self) -> laddu_kernel::ir::KernelValueKind
@@ -130,6 +132,7 @@ pub fn laddu_kernel::ir::GradientKernelIr::component(&self) -> laddu_kernel::ir:
 pub fn laddu_kernel::ir::GradientKernelIr::new(alloc::vec::Vec<laddu_kernel::ir::KernelValue>, laddu_kernel::ir::KernelValueId, alloc::vec::Vec<laddu_kernel::ir::KernelValueId>, laddu_kernel::ir::OutputComponent) -> core::result::Result<Self, laddu_kernel::KernelIrError>
 pub fn laddu_kernel::ir::GradientKernelIr::outputs(&self) -> &[laddu_kernel::ir::KernelValueId]
 pub fn laddu_kernel::ir::GradientKernelIr::primal_root(&self) -> laddu_kernel::ir::KernelValueId
+pub fn laddu_kernel::ir::GradientKernelIr::required_values(&self) -> alloc::vec::Vec<bool>
 pub fn laddu_kernel::ir::GradientKernelIr::validate(&self) -> core::result::Result<(), laddu_kernel::KernelIrError>
 pub fn laddu_kernel::ir::GradientKernelIr::values(&self) -> &[laddu_kernel::ir::KernelValue]
 impl core::clone::Clone for laddu_kernel::ir::GradientKernelIr
@@ -170,6 +173,7 @@ impl core::marker::StructuralPartialEq for laddu_kernel::ir::KernelValueId
 pub struct laddu_kernel::ir::ScalarKernelIr
 impl laddu_kernel::ir::ScalarKernelIr
 pub fn laddu_kernel::ir::ScalarKernelIr::new(alloc::vec::Vec<laddu_kernel::ir::KernelValue>, laddu_kernel::ir::KernelValueId) -> core::result::Result<Self, laddu_kernel::KernelIrError>
+pub fn laddu_kernel::ir::ScalarKernelIr::required_values(&self) -> alloc::vec::Vec<bool>
 pub fn laddu_kernel::ir::ScalarKernelIr::root(&self) -> laddu_kernel::ir::KernelValueId
 pub fn laddu_kernel::ir::ScalarKernelIr::validate(&self) -> core::result::Result<(), laddu_kernel::KernelIrError>
 pub fn laddu_kernel::ir::ScalarKernelIr::values(&self) -> &[laddu_kernel::ir::KernelValue]

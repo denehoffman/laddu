@@ -316,15 +316,17 @@ impl GradientInterpreter {
                 }
                 KernelInstruction::MatrixElement { input, row, col } => {
                     let (rows, cols, matrix) = matrix_at(&values, input.index())?;
-                    if *row >= rows || *col >= cols {
+                    let Some(offset) = (KernelValueKind::Matrix { rows, cols })
+                        .checked_row_major_index(*row, *col)
+                    else {
                         return Err(RuntimeError::InvalidShape {
                             index,
                             message: format!(
                                 "matrix element ({row}, {col}) is out of bounds for {rows}x{cols}"
                             ),
                         });
-                    }
-                    Value::Scalar(matrix[row * cols + col])
+                    };
+                    Value::Scalar(matrix[offset])
                 }
                 KernelInstruction::MatMul { lhs, rhs } => {
                     let (lhs_rows, lhs_cols, lhs) = matrix_at(&values, lhs.index())?;

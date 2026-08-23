@@ -305,7 +305,7 @@ impl KernelInstruction {
             KernelEventDependence::Event => KernelValueClass::Event,
             KernelEventDependence::Operands => {
                 let mut class = KernelValueClass::Invariant;
-                self.visit_operands(|operand| {
+                self.for_each_operand(|operand| {
                     if values[operand.index()].class == KernelValueClass::Event {
                         class = KernelValueClass::Event;
                     }
