@@ -23,3 +23,18 @@ pub use laddu_memory::{
 };
 pub use normalization::{PreparedNormalization, PreparedNormalizationDiagnostics};
 pub use query::{BinSpec, Comparison, DatasetBin, DatasetExprExt, IntervalClosure, Predicate};
+
+use laddu_compile::CompiledModel;
+use laddu_expr::ExprNode;
+
+pub(crate) fn required_event_scalars(model: &CompiledModel) -> Vec<String> {
+    let mut required = Vec::new();
+    for node in model.graph().nodes() {
+        if let ExprNode::EventScalar(name) = node
+            && !required.iter().any(|required| required == name.as_ref())
+        {
+            required.push(name.to_string());
+        }
+    }
+    required
+}

@@ -25,6 +25,8 @@ use gradient_interpreter::GradientInterpreter;
 mod autodiff;
 use autodiff::{DerivativeWorkspace, ReverseDerivativeWorkspace};
 mod cache;
+#[cfg(feature = "jit")]
+pub(crate) use cache::{CacheDescriptor, JitDescriptorSet};
 pub use cache::{CpuBatchCache, CpuCachedBatch, CpuCachedDataset, CpuPreparedDataset};
 mod layout;
 use layout::{Value, matrix_at, matrix_values_row_major, scalar_at, vector_at};
@@ -87,6 +89,7 @@ pub enum CpuExecutionMode {
 pub struct CpuPlan {
     pub(super) precision: Precision,
     pub(super) graph: ExprGraph,
+    pub(super) required_event_scalars: Vec<String>,
     pub(super) params: ParamLayout,
     pub(in crate::cpu) parameter_slots: Vec<Option<ParamId>>,
     pub(super) autodiff: AutodiffPlan,
@@ -314,6 +317,11 @@ impl CpuPlan {
     /// Returns the event-cache layout required by this plan.
     pub fn cache_plan(&self) -> &CachePlan {
         &self.cache_plan
+    }
+
+    /// Returns the event-scalar columns required by this prepared model.
+    pub fn required_event_scalars(&self) -> &[String] {
+        &self.required_event_scalars
     }
 
     /// Evaluates a model that has no event-dependent inputs.

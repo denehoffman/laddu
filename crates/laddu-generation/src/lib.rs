@@ -13,7 +13,7 @@ use laddu_data::{
     io::{EventSink, WritePlan, memory::MemorySink},
     schema::{Precision as DataPrecision, Schema},
 };
-use laddu_expr::{ExprNode, parameters::ParamValues};
+use laddu_expr::parameters::ParamValues;
 use laddu_memory::{MemoryFitRequest, MemoryFootprint};
 use laddu_physics::{
     LadduPhysicsError,
@@ -375,17 +375,10 @@ impl ModelEvaluator {
         params: ParamValues,
         execution: &Execution,
     ) -> GenerationResult<Self> {
-        let required_scalars = model
-            .graph()
-            .nodes()
-            .iter()
-            .filter_map(|node| match node {
-                ExprNode::EventScalar(name) => Some(name.to_string()),
-                _ => None,
-            })
-            .collect();
+        let prepared = PreparedModel::prepare(model, execution)?;
+        let required_scalars = prepared.required_event_scalars().iter().cloned().collect();
         Ok(Self {
-            prepared: PreparedModel::prepare(model, execution)?,
+            prepared,
             params,
             required_scalars,
             execution: execution.clone(),

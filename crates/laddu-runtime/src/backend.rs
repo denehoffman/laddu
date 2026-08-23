@@ -49,6 +49,17 @@ impl PreparedDataset {
 }
 
 impl PreparedModel {
+    /// Returns the event-scalar columns required by this prepared model.
+    ///
+    /// Requirements are deduplicated while retaining compiled graph order.
+    pub fn required_event_scalars(&self) -> &[String] {
+        match self {
+            Self::Cpu(plan) => plan.required_event_scalars(),
+            #[cfg(feature = "wgpu")]
+            Self::Wgpu(plan) => &plan.required_event_scalars,
+        }
+    }
+
     /// Evaluates the model for every event in a batch.
     ///
     /// # Errors
@@ -111,6 +122,7 @@ impl PreparedModel {
                 kernel: std::sync::Arc::new(
                     laddu_wgpu::WgpuScalarKernel::compile(context, model).map_err(wgpu_error)?,
                 ),
+                required_event_scalars: crate::required_event_scalars(model),
             }));
         }
         Ok(Self::Cpu(Box::new(
@@ -206,6 +218,7 @@ pub struct WgpuPlan {
     context: std::sync::Arc<laddu_wgpu::WgpuContext>,
     preparation_params: ParamValues,
     kernel: std::sync::Arc<laddu_wgpu::WgpuScalarKernel>,
+    required_event_scalars: Vec<String>,
 }
 
 #[cfg(feature = "wgpu")]

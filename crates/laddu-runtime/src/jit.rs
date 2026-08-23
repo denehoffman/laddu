@@ -1,5 +1,6 @@
 use std::{
     fmt,
+    marker::PhantomData,
     mem::{self, size_of},
     ops::Range,
     sync::{Arc, Mutex},
@@ -29,27 +30,21 @@ use num::{
     traits::Float,
 };
 
-use crate::{CpuBatchCache, RuntimeError, RuntimeResult};
+use crate::{CacheDescriptor, CpuBatchCache, JitDescriptorSet, RuntimeError, RuntimeResult};
 
 const MAX_IN_PLACE_SOLVE_DIMENSION: usize = 8;
 
-#[repr(C)]
-#[derive(Copy, Clone)]
-struct CacheDescriptor {
-    values: *const u8,
-    width: usize,
-}
-
-pub(crate) struct JitCacheView {
+pub(crate) struct JitCacheView<'a> {
     values: Vec<CacheDescriptor>,
     solve_rows: Vec<CacheDescriptor>,
     rows: usize,
+    _cache: PhantomData<&'a CpuBatchCache>,
 }
 
 // The descriptors borrow immutable cache allocations for the duration of an evaluation.
 // Generated kernels only read through these pointers, so sharing a view across workers is safe.
-unsafe impl Send for JitCacheView {}
-unsafe impl Sync for JitCacheView {}
+unsafe impl Send for JitCacheView<'_> {}
+unsafe impl Sync for JitCacheView<'_> {}
 
 type BlockJitFn = unsafe extern "C" fn(
     *const f64,
@@ -209,7 +204,7 @@ impl JitStatus {
 struct ScalarAbi<'a> {
     function: BlockJitFn,
     parameters: &'a ParamValues,
-    cache: Option<&'a JitCacheView>,
+    cache: Option<&'a JitCacheView<'a>>,
     range: EventRange,
     output: &'a mut Vec<Complex64>,
 }
@@ -247,7 +242,7 @@ impl ScalarAbi<'_> {
 struct GradientAbi<'a> {
     function: GradientBlockJitFn,
     parameters: &'a ParamValues,
-    cache: Option<&'a JitCacheView>,
+    cache: Option<&'a JitCacheView<'a>>,
     range: EventRange,
     parameter_count: usize,
     output: &'a mut Vec<f64>,
@@ -488,14 +483,14 @@ impl JitScalarKernel {
         self.evaluate_prepared(parameters, &view, start, end, output)
     }
 
-    pub(crate) fn prepare_cache(cache: &CpuBatchCache) -> JitCacheView {
+    pub(crate) fn prepare_cache<'a>(cache: &'a CpuBatchCache) -> JitCacheView<'a> {
         JitCacheView::new(cache)
     }
 
     pub(crate) fn evaluate_prepared(
         &self,
         parameters: &ParamValues,
-        view: &JitCacheView,
+        view: &JitCacheView<'_>,
         start: usize,
         end: usize,
         output: &mut Vec<Complex64>,
@@ -507,7 +502,7 @@ impl JitScalarKernel {
     fn evaluate_abi(
         &self,
         parameters: &ParamValues,
-        cache: Option<&JitCacheView>,
+        cache: Option<&JitCacheView<'_>>,
         range: EventRange,
         output: &mut Vec<Complex64>,
     ) -> RuntimeResult<()> {
@@ -586,7 +581,7 @@ impl JitGradientKernel {
     pub(crate) fn evaluate_prepared(
         &self,
         parameters: &ParamValues,
-        view: &JitCacheView,
+        view: &JitCacheView<'_>,
         start: usize,
         end: usize,
         component: usize,
@@ -610,7 +605,7 @@ impl JitGradientKernel {
     fn evaluate_abi(
         &self,
         parameters: &ParamValues,
-        cache: Option<&JitCacheView>,
+        cache: Option<&JitCacheView<'_>>,
         range: EventRange,
         component: OutputComponent,
         output: &mut Vec<f64>,
@@ -664,28 +659,14 @@ impl JitGradientKernel {
     }
 }
 
-impl JitCacheView {
-    fn new(cache: &CpuBatchCache) -> Self {
-        let values = cache
-            .slots
-            .iter()
-            .map(|slot| CacheDescriptor {
-                values: slot.values_ptr(),
-                width: slot.width(),
-            })
-            .collect();
-        let solve_rows = cache
-            .solve_row_slots
-            .iter()
-            .map(|slot| CacheDescriptor {
-                values: slot.values.as_ptr().cast(),
-                width: slot.dimension,
-            })
-            .collect();
+impl<'a> JitCacheView<'a> {
+    fn new(cache: &'a CpuBatchCache) -> Self {
+        let descriptors: JitDescriptorSet<'a> = cache.jit_descriptors();
         Self {
-            values,
-            solve_rows,
+            values: descriptors.values,
+            solve_rows: descriptors.solve_rows,
             rows: cache.len(),
+            _cache: PhantomData,
         }
     }
 }
