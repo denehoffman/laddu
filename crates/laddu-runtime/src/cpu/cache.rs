@@ -1,3 +1,5 @@
+#[cfg(feature = "jit")]
+use std::marker::PhantomData;
 use std::{mem::size_of, sync::Arc};
 
 use laddu_compile::CachePlan;
@@ -9,9 +11,25 @@ use laddu_expr::{ExprId, ValueKind};
 use nalgebra::{DMatrix, DVector};
 use num::complex::Complex64;
 
-use super::layout::matrix_at_optional;
+use super::layout::{FlatRows, matrix_at_optional};
 use super::{CpuPlan, DynamicLu, PreparedDatasetStats, RuntimeError, RuntimeResult, Value};
 use crate::MemoryLease;
+
+/// Raw cache payload metadata consumed by compiled JIT kernels.
+#[cfg(feature = "jit")]
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub(crate) struct CacheDescriptor {
+    pub(crate) values: *const u8,
+    pub(crate) width: usize,
+}
+
+#[cfg(feature = "jit")]
+pub(crate) struct JitDescriptorSet<'a> {
+    pub(crate) values: Vec<CacheDescriptor>,
+    pub(crate) solve_rows: Vec<CacheDescriptor>,
+    pub(crate) _cache: PhantomData<&'a CpuBatchCache>,
+}
 
 /// Materialized event-dependent values for one batch.
 #[derive(Clone, Debug)]
@@ -33,8 +51,17 @@ impl CpuBatchCache {
         factor_matrices: &[(ExprId, usize)],
         solve_row_keys: &[(ExprId, usize, usize)],
         len: usize,
-    ) -> Self {
-        Self {
+    ) -> RuntimeResult<Self> {
+        let slots = cache_plan
+            .entries()
+            .iter()
+            .map(|entry| CachedSlot::new(entry.value_kind(), len))
+            .collect::<RuntimeResult<Vec<_>>>()?;
+        let solve_row_slots = solve_row_keys
+            .iter()
+            .map(|(_, _, dimension)| CachedSolveRowSlot::new(*dimension, len))
+            .collect::<RuntimeResult<Vec<_>>>()?;
+        Ok(Self {
             len,
             weights: vec![1.0; len],
             sum_weights: len as f64,
@@ -43,22 +70,15 @@ impl CpuBatchCache {
                 .iter()
                 .map(|entry| entry.node())
                 .collect(),
-            slots: cache_plan
-                .entries()
-                .iter()
-                .map(|entry| CachedSlot::new(entry.value_kind(), len))
-                .collect(),
+            slots,
             factor_nodes: factor_matrices.iter().map(|(node, _)| *node).collect(),
             factor_slots: factor_matrices
                 .iter()
                 .map(|(_, dimension)| CachedFactorSlot::new(*dimension))
                 .collect(),
             solve_row_keys: solve_row_keys.to_vec(),
-            solve_row_slots: solve_row_keys
-                .iter()
-                .map(|(_, _, dimension)| CachedSolveRowSlot::new(*dimension))
-                .collect(),
-        }
+            solve_row_slots,
+        })
     }
 
     /// Returns the number of cached events.
@@ -79,6 +99,35 @@ impl CpuBatchCache {
     /// Returns the sum of event weights.
     pub fn sum_weights(&self) -> f64 {
         self.sum_weights
+    }
+
+    /// Returns the raw cache payload metadata required by the JIT ABI.
+    ///
+    /// The returned pointers borrow this cache and are valid only while it is
+    /// immutably borrowed.  Keeping this projection here prevents the JIT
+    /// backend from depending on cache-slot representation details.
+    #[cfg(feature = "jit")]
+    #[cfg(feature = "jit")]
+    pub(crate) fn jit_descriptors(&self) -> JitDescriptorSet<'_> {
+        JitDescriptorSet {
+            values: self
+                .slots
+                .iter()
+                .map(|slot| CacheDescriptor {
+                    values: slot.values_ptr(),
+                    width: slot.width(),
+                })
+                .collect(),
+            solve_rows: self
+                .solve_row_slots
+                .iter()
+                .map(|slot| CacheDescriptor {
+                    values: slot.values.as_ptr().cast(),
+                    width: slot.dimension,
+                })
+                .collect(),
+            _cache: PhantomData,
+        }
     }
 
     /// Estimates heap memory retained by this cache, in bytes.
@@ -258,7 +307,7 @@ impl CpuPlan {
             &self.factor_matrices,
             &self.solve_row_keys,
             batch.len(),
-        );
+        )?;
         for row in 0..batch.len() {
             let values = self.evaluate_cache_values_for_row(batch, row, &event_columns)?;
             for (slot, entry) in self.cache_plan.entries().iter().enumerate() {
@@ -490,50 +539,25 @@ pub(super) struct CachedFactorSlot {
 
 #[derive(Clone, Debug)]
 pub(crate) struct CachedSolveRowSlot {
+    #[cfg_attr(not(feature = "jit"), allow(dead_code))]
     pub(crate) dimension: usize,
-    pub(crate) values: Vec<Complex64>,
+    pub(crate) values: FlatRows<Complex64>,
 }
 
 impl CachedSolveRowSlot {
-    fn new(dimension: usize) -> Self {
-        Self {
+    fn new(dimension: usize, events: usize) -> RuntimeResult<Self> {
+        Ok(Self {
             dimension,
-            values: Vec::new(),
-        }
+            values: FlatRows::try_with_capacity(dimension, events)?,
+        })
     }
 
     fn push(&mut self, values: impl IntoIterator<Item = Complex64>) -> RuntimeResult<()> {
-        let start = self.values.len();
-        self.values.extend(values);
-        let actual = self.values.len() - start;
-        if actual != self.dimension {
-            return Err(RuntimeError::InvalidShape {
-                index: start / self.dimension,
-                message: format!(
-                    "cached solve row has len {actual}, expected {}",
-                    self.dimension
-                ),
-            });
-        }
-        Ok(())
+        self.values.push_row(values)
     }
 
     fn row(&self, row: usize) -> RuntimeResult<&[Complex64]> {
-        let start = row
-            .checked_mul(self.dimension)
-            .ok_or_else(|| RuntimeError::InvalidShape {
-                index: row,
-                message: "cached solve row offset overflowed".into(),
-            })?;
-        self.values
-            .get(start..start + self.dimension)
-            .ok_or_else(|| RuntimeError::InvalidShape {
-                index: row,
-                message: format!(
-                    "cached solve row {row} out of bounds for len {}",
-                    self.values.len() / self.dimension
-                ),
-            })
+        self.values.row(row)
     }
 
     fn resident_bytes(&self) -> usize {
@@ -579,12 +603,12 @@ pub(crate) enum CachedSlot {
     Complex(Vec<Complex64>),
     Vector {
         len: usize,
-        values: Vec<Complex64>,
+        values: FlatRows<Complex64>,
     },
     Matrix {
         rows: usize,
         cols: usize,
-        values: Vec<Complex64>,
+        values: FlatRows<Complex64>,
     },
 }
 
@@ -593,9 +617,8 @@ impl CachedSlot {
     pub(crate) fn values_ptr(&self) -> *const u8 {
         match self {
             Self::Real(values) => values.as_ptr().cast(),
-            Self::Complex(values) | Self::Vector { values, .. } | Self::Matrix { values, .. } => {
-                values.as_ptr().cast()
-            }
+            Self::Complex(values) => values.as_ptr().cast(),
+            Self::Vector { values, .. } | Self::Matrix { values, .. } => values.as_ptr().cast(),
         }
     }
 
@@ -603,25 +626,31 @@ impl CachedSlot {
     pub(crate) fn width(&self) -> usize {
         match self {
             Self::Real(_) | Self::Complex(_) => 1,
-            Self::Vector { len, .. } => *len,
-            Self::Matrix { rows, cols, .. } => rows * cols,
+            Self::Vector { values, .. } | Self::Matrix { values, .. } => values.width(),
         }
     }
 
-    fn new(kind: ValueKind, events: usize) -> Self {
-        match kind {
+    fn new(kind: ValueKind, events: usize) -> RuntimeResult<Self> {
+        Ok(match kind {
             ValueKind::Real => Self::Real(Vec::with_capacity(events)),
             ValueKind::Complex => Self::Complex(Vec::with_capacity(events)),
             ValueKind::Vector { len } => Self::Vector {
                 len,
-                values: Vec::with_capacity(events.saturating_mul(len)),
+                values: FlatRows::try_with_capacity(len, events)?,
             },
             ValueKind::Matrix { rows, cols } => Self::Matrix {
                 rows,
                 cols,
-                values: Vec::with_capacity(events.saturating_mul(rows).saturating_mul(cols)),
+                values: FlatRows::try_with_capacity(
+                    rows.checked_mul(cols)
+                        .ok_or_else(|| RuntimeError::InvalidShape {
+                            index: rows,
+                            message: format!("matrix width overflowed for {rows}x{cols}"),
+                        })?,
+                    events,
+                )?,
             },
-        }
+        })
     }
 
     pub(crate) fn resident_bytes(&self) -> usize {
@@ -645,8 +674,7 @@ impl CachedSlot {
                 Ok(())
             }
             (Self::Vector { len, values }, Value::Vector(value)) if *len == value.len() => {
-                values.extend(value);
-                Ok(())
+                values.push_row(value)
             }
             (
                 Self::Matrix { rows, cols, values },
@@ -655,10 +683,7 @@ impl CachedSlot {
                     cols: value_cols,
                     values: value,
                 },
-            ) if *rows == value_rows && *cols == value_cols => {
-                values.extend(value);
-                Ok(())
-            }
+            ) if *rows == value_rows && *cols == value_cols => values.push_row(value),
             (_, value) => Err(RuntimeError::InvalidShape {
                 index: 0,
                 message: format!("cached value kind did not match slot: {}", value.kind()),
@@ -683,43 +708,14 @@ impl CachedSlot {
                     message: format!("cache row {row} out of bounds"),
                 }
             }),
-            Self::Vector { len, values } => {
-                let start = row
-                    .checked_mul(*len)
-                    .ok_or_else(|| RuntimeError::InvalidShape {
-                        index: row,
-                        message: "cache vector row offset overflowed".into(),
-                    })?;
-                let end = start + *len;
-                values
-                    .get(start..end)
-                    .map(|value| Value::Vector(value.to_vec()))
-                    .ok_or_else(|| RuntimeError::InvalidShape {
-                        index: row,
-                        message: format!("cache row {row} out of bounds"),
-                    })
+            Self::Vector { values, .. } => {
+                values.row(row).map(|value| Value::Vector(value.to_vec()))
             }
-            Self::Matrix { rows, cols, values } => {
-                let len = rows * cols;
-                let start = row
-                    .checked_mul(len)
-                    .ok_or_else(|| RuntimeError::InvalidShape {
-                        index: row,
-                        message: "cache matrix row offset overflowed".into(),
-                    })?;
-                let end = start + len;
-                values
-                    .get(start..end)
-                    .map(|value| Value::Matrix {
-                        rows: *rows,
-                        cols: *cols,
-                        values: value.to_vec(),
-                    })
-                    .ok_or_else(|| RuntimeError::InvalidShape {
-                        index: row,
-                        message: format!("cache row {row} out of bounds"),
-                    })
-            }
+            Self::Matrix { rows, cols, values } => values.row(row).map(|value| Value::Matrix {
+                rows: *rows,
+                cols: *cols,
+                values: value.to_vec(),
+            }),
         }
     }
 

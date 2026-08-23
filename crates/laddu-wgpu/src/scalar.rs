@@ -60,6 +60,175 @@ enum EventInput {
     P4(String, P4Component),
 }
 
+const WORKGROUP_SIZE: usize = 64;
+const COMPLEX_COMPONENTS: usize = 2;
+const STATUS_WORD_BYTES: usize = size_of::<u32>();
+const REDUCTION_STATUS_WORDS: usize = 2;
+const MIN_BUFFER_BYTES: usize = 8;
+
+/// Checked byte geometry shared by WGPU planning and buffer construction.
+///
+/// The planner intentionally uses the same `MemoryFootprint` policy as the
+/// other workspace planners.  The individual widths are retained here so
+/// allocation and binding-limit calculations cannot drift from the planning
+/// calculation.
+#[derive(Clone, Copy, Debug)]
+struct GpuMemoryLayout {
+    scalar_size: u64,
+    input_bytes: MemoryFootprint,
+    cache_bytes: MemoryFootprint,
+    weight_bytes: MemoryFootprint,
+    output_bytes: MemoryFootprint,
+    partial_bytes: MemoryFootprint,
+    parameter_bytes: MemoryFootprint,
+}
+
+impl GpuMemoryLayout {
+    fn new(
+        scalar_size: usize,
+        event_inputs: usize,
+        cache_width: usize,
+        partial_width: usize,
+        parameter_count: usize,
+    ) -> Result<Self, FootprintOverflow> {
+        let scalar_size = u64::try_from(scalar_size).map_err(|_| FootprintOverflow::Conversion)?;
+        let scalar = MemoryFootprint::per_event(scalar_size);
+        Ok(Self {
+            scalar_size,
+            input_bytes: scalar
+                .checked_scale_usize(event_inputs)?
+                .checked_scale(COMPLEX_COMPONENTS as u64)?,
+            cache_bytes: scalar
+                .checked_scale_usize(cache_width)?
+                .checked_scale(COMPLEX_COMPONENTS as u64)?,
+            weight_bytes: scalar,
+            output_bytes: scalar.checked_scale(COMPLEX_COMPONENTS as u64)?,
+            partial_bytes: scalar.checked_scale_usize(partial_width)?,
+            parameter_bytes: MemoryFootprint::fixed(scalar_size)
+                .checked_scale_usize(parameter_count.max(1))?,
+        })
+    }
+
+    fn prepared_footprint(self) -> Result<MemoryFootprint, FootprintOverflow> {
+        let per_event = self
+            .input_bytes
+            .checked_add(self.cache_bytes)?
+            .checked_add(self.partial_bytes)?
+            .checked_add(MemoryFootprint::per_event(1))?;
+        self.parameter_bytes
+            .checked_add(MemoryFootprint::fixed(16))?
+            .checked_add(per_event)
+    }
+
+    fn evaluation_footprint(self) -> Result<MemoryFootprint, FootprintOverflow> {
+        let per_event = self
+            .input_bytes
+            .checked_add(self.cache_bytes)?
+            .checked_add(self.output_bytes.checked_scale(2)?)?;
+        self.parameter_bytes.checked_add(per_event)
+    }
+
+    fn groups(events: usize) -> usize {
+        events / WORKGROUP_SIZE + usize::from(!events.is_multiple_of(WORKGROUP_SIZE))
+    }
+
+    fn event_bytes(
+        self,
+        footprint: MemoryFootprint,
+        events: usize,
+    ) -> Result<u64, FootprintOverflow> {
+        footprint.checked_peak_bytes(events)
+    }
+
+    fn input_buffer_bytes(self, events: usize) -> Result<u64, FootprintOverflow> {
+        let bytes = self.event_bytes(self.input_bytes, events)?;
+        if bytes == 0 {
+            self.scalar_size
+                .checked_mul(COMPLEX_COMPONENTS as u64)
+                .ok_or(FootprintOverflow::Multiplication)
+        } else {
+            Ok(bytes)
+        }
+    }
+
+    fn cache_buffer_bytes(self, events: usize) -> Result<u64, FootprintOverflow> {
+        Ok(self
+            .event_bytes(self.cache_bytes, events)?
+            .max(MIN_BUFFER_BYTES as u64))
+    }
+
+    fn weight_buffer_bytes(self, events: usize) -> Result<u64, FootprintOverflow> {
+        self.event_bytes(self.weight_bytes, events)
+    }
+
+    fn partial_buffer_bytes(self, events: usize, minimum: usize) -> Result<u64, FootprintOverflow> {
+        let groups = Self::groups(events);
+        let bytes = self
+            .partial_bytes
+            .bytes_per_event
+            .checked_mul(u64::try_from(groups).map_err(|_| FootprintOverflow::Conversion)?)
+            .ok_or(FootprintOverflow::Multiplication)?;
+        Ok(bytes.max(minimum as u64))
+    }
+
+    fn scalar_partial_bytes(self, events: usize) -> Result<u64, FootprintOverflow> {
+        self.scalar_size
+            .checked_mul(
+                u64::try_from(Self::groups(events)).map_err(|_| FootprintOverflow::Conversion)?,
+            )
+            .ok_or(FootprintOverflow::Multiplication)
+    }
+
+    fn staging_buffer_bytes(self, events: usize) -> Result<u64, FootprintOverflow> {
+        self.partial_buffer_bytes(events, 0)?
+            .checked_add((REDUCTION_STATUS_WORDS * STATUS_WORD_BYTES) as u64)
+            .map(|bytes| bytes.max(MIN_BUFFER_BYTES as u64))
+            .ok_or(FootprintOverflow::Addition)
+    }
+
+    fn prepared_resident_bytes(self, events: usize) -> Result<u64, FootprintOverflow> {
+        // This is the existing resident accounting contract: input, weights,
+        // cache, parameters, partials + staging, and the two error words.
+        // Resident accounting preserves the historical estimate: the trailing
+        // eight bytes are the two status words, even for an empty geometry.
+        // Actual scratch buffers still apply their independent four-byte
+        // minimum to partial storage.
+        let partial = self.partial_buffer_bytes(events, 0)?;
+        let input = self.input_buffer_bytes(events)?;
+        let weights = self.weight_buffer_bytes(events)?;
+        let cache = self.cache_buffer_bytes(events)?;
+        let partials = partial
+            .checked_mul(2)
+            .ok_or(FootprintOverflow::Multiplication)?;
+        input
+            .checked_add(weights)
+            .and_then(|bytes| bytes.checked_add(cache))
+            .and_then(|bytes| bytes.checked_add(self.parameter_bytes.fixed_bytes))
+            .and_then(|bytes| bytes.checked_add(partials))
+            .and_then(|bytes| bytes.checked_add((STATUS_WORD_BYTES * 2) as u64))
+            .ok_or(FootprintOverflow::Addition)
+    }
+
+    fn binding_limit(self, max_binding: u64, reduction: bool) -> usize {
+        let mut limit = u64::from(u32::MAX);
+        let widths = [
+            self.input_bytes.bytes_per_event,
+            self.cache_bytes.bytes_per_event,
+            if reduction {
+                self.partial_bytes.bytes_per_event
+            } else {
+                self.output_bytes.bytes_per_event
+            },
+        ];
+        for width in widths {
+            if let Some(events) = max_binding.checked_div(width) {
+                limit = limit.min(events);
+            }
+        }
+        usize::try_from(limit).unwrap_or(usize::MAX)
+    }
+}
+
 impl WgpuScalarKernel {
     /// Estimates tracked GPU bytes for a prepared reduction batch.
     pub fn prepared_memory_estimate(&self, params: &ParamValues, events: usize) -> usize {
@@ -75,24 +244,27 @@ impl WgpuScalarKernel {
         &self,
         params: &ParamValues,
     ) -> Result<MemoryFootprint, FootprintOverflow> {
-        let scalar_size = self.scalar_size();
-        let scalar_size = u64::try_from(scalar_size).map_err(|_| FootprintOverflow::Conversion)?;
-        let input_bytes = MemoryFootprint::per_event(scalar_size)
-            .checked_scale_usize(self.event_inputs.len())?
-            .checked_scale(2)?;
-        let cache_bytes = MemoryFootprint::per_event(scalar_size)
-            .checked_scale_usize(self.cache_width)?
-            .checked_scale(2)?;
-        let result_bytes = MemoryFootprint::per_event(scalar_size)
-            .checked_scale_usize(self.partial_width)?
-            .checked_add(MemoryFootprint::per_event(1))?;
-        let per_event = input_bytes
-            .checked_add(cache_bytes)?
-            .checked_add(result_bytes)?;
-        let fixed_bytes = MemoryFootprint::fixed(scalar_size)
-            .checked_scale_usize(params.as_slice().len().max(1))?
-            .checked_add(MemoryFootprint::fixed(16))?;
-        fixed_bytes.checked_add(per_event)
+        self.memory_layout(params)?.prepared_footprint()
+    }
+
+    fn memory_layout(&self, params: &ParamValues) -> Result<GpuMemoryLayout, FootprintOverflow> {
+        GpuMemoryLayout::new(
+            self.scalar_size(),
+            self.event_inputs.len(),
+            self.cache_width,
+            self.partial_width,
+            params.as_slice().len(),
+        )
+    }
+
+    fn buffer_layout(&self) -> Result<GpuMemoryLayout, FootprintOverflow> {
+        GpuMemoryLayout::new(
+            self.scalar_size(),
+            self.event_inputs.len(),
+            self.cache_width,
+            self.partial_width,
+            0,
+        )
     }
 
     /// Compiles a model's scalar kernel and reduction pipelines for `context`.
@@ -446,8 +618,14 @@ impl WgpuScalarKernel {
         batch: &EventBatch,
     ) -> WgpuResult<WgpuPreparedBatch> {
         let chunk_len = self.max_chunk_events(context, params, true)?;
+        let layout = self
+            .memory_layout(params)
+            .map_err(|_| WgpuError::MemoryBudgetTooSmall {
+                required: usize::MAX,
+                available: context.memory_budget().unwrap_or(usize::MAX),
+            })?;
         let mut chunks = Vec::new();
-        let mut resident_bytes = 0;
+        let mut resident_bytes: usize = 0;
         for start in (0..batch.len()).step_by(chunk_len) {
             let end = (start + chunk_len).min(batch.len());
             let chunk = batch.slice(start, end);
@@ -456,7 +634,7 @@ impl WgpuScalarKernel {
                 .map(|row| chunk.weights_at(row))
                 .collect::<Vec<_>>();
             let weight_bytes = self.encode_scalars(&weights);
-            let (input, cache) = self.cache_buffers(context, &inputs, chunk.len());
+            let (input, cache) = self.cache_buffers(context, &inputs, chunk.len())?;
             let weights_buffer =
                 context
                     .device()
@@ -465,7 +643,7 @@ impl WgpuScalarKernel {
                         contents: &weight_bytes,
                         usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
                     });
-            let scratch = self.reduction_scratch(context, params, chunk.len());
+            let scratch = self.reduction_scratch(context, params, chunk.len())?;
             let mut encoder = context.device().create_command_encoder(&Default::default());
             self.encode_cache_materialization(
                 context,
@@ -479,12 +657,20 @@ impl WgpuScalarKernel {
             if let Some(index) = Self::read_error(context, &scratch.solve_error)? {
                 return Err(WgpuError::SingularMatrixEvent(start + index));
             }
-            resident_bytes += inputs.len()
-                + weight_bytes.len()
-                + (chunk.len() * self.cache_width * 2 * self.scalar_size()).max(8)
-                + params.as_slice().len().max(1) * self.scalar_size()
-                + chunk.len().div_ceil(64) * self.partial_width * self.scalar_size() * 2
-                + 8;
+            let chunk_bytes = layout
+                .prepared_resident_bytes(chunk.len())
+                .and_then(|bytes| usize::try_from(bytes).map_err(|_| FootprintOverflow::Conversion))
+                .map_err(|_| WgpuError::MemoryBudgetTooSmall {
+                    required: usize::MAX,
+                    available: context.memory_budget().unwrap_or(usize::MAX),
+                })?;
+            resident_bytes =
+                resident_bytes
+                    .checked_add(chunk_bytes)
+                    .ok_or(WgpuError::MemoryBudgetTooSmall {
+                        required: usize::MAX,
+                        available: context.memory_budget().unwrap_or(usize::MAX),
+                    })?;
             chunks.push(WgpuPreparedChunk {
                 input,
                 cache,
@@ -752,9 +938,14 @@ impl WgpuScalarKernel {
         context: &WgpuContext,
         params: &ParamValues,
         events: usize,
-    ) -> ReductionScratch {
+    ) -> WgpuResult<ReductionScratch> {
+        let layout = self
+            .memory_layout(params)
+            .map_err(|_| WgpuError::MemoryBudgetTooSmall {
+                required: usize::MAX,
+                available: context.memory_budget().unwrap_or(usize::MAX),
+            })?;
         let parameters = self.parameter_values(params);
-        let groups = events.div_ceil(64);
         let params = context
             .device()
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -771,7 +962,12 @@ impl WgpuScalarKernel {
             });
         let partials = context.device().create_buffer(&wgpu::BufferDescriptor {
             label: Some("laddu prepared reduction partials"),
-            size: (groups * self.partial_width * self.scalar_size()).max(4) as u64,
+            size: layout
+                .partial_buffer_bytes(events, STATUS_WORD_BYTES)
+                .map_err(|_| WgpuError::MemoryBudgetTooSmall {
+                    required: usize::MAX,
+                    available: context.memory_budget().unwrap_or(usize::MAX),
+                })?,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
             mapped_at_creation: false,
         });
@@ -795,18 +991,23 @@ impl WgpuScalarKernel {
             });
         let staging = context.device().create_buffer(&wgpu::BufferDescriptor {
             label: Some("laddu prepared reduction readback"),
-            size: (groups * self.partial_width * self.scalar_size() + 8).max(8) as u64,
+            size: layout.staging_buffer_bytes(events).map_err(|_| {
+                WgpuError::MemoryBudgetTooSmall {
+                    required: usize::MAX,
+                    available: context.memory_budget().unwrap_or(usize::MAX),
+                }
+            })?,
             usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
             mapped_at_creation: false,
         });
-        ReductionScratch {
+        Ok(ReductionScratch {
             params,
             config,
             partials,
             error,
             solve_error,
             staging,
-        }
+        })
     }
 
     fn execute_prepared_reduce(
@@ -817,8 +1018,23 @@ impl WgpuScalarKernel {
         events: usize,
         scratch: &ReductionScratch,
     ) -> WgpuResult<f64> {
-        let groups = events.div_ceil(64);
-        let partial_bytes = groups * self.scalar_size();
+        let groups = GpuMemoryLayout::groups(events);
+        let layout = self
+            .buffer_layout()
+            .map_err(|_| WgpuError::MemoryBudgetTooSmall {
+                required: usize::MAX,
+                available: context.memory_budget().unwrap_or(usize::MAX),
+            })?;
+        let partial_bytes = usize::try_from(layout.scalar_partial_bytes(events).map_err(|_| {
+            WgpuError::MemoryBudgetTooSmall {
+                required: usize::MAX,
+                available: context.memory_budget().unwrap_or(usize::MAX),
+            }
+        })?)
+        .map_err(|_| WgpuError::MemoryBudgetTooSmall {
+            required: usize::MAX,
+            available: context.memory_budget().unwrap_or(usize::MAX),
+        })?;
         let bind_group = context
             .device()
             .create_bind_group(&wgpu::BindGroupDescriptor {
@@ -907,9 +1123,24 @@ impl WgpuScalarKernel {
         let pipeline = self.gradient_reduction_pipeline.as_ref().ok_or_else(|| {
             WgpuError::UnsupportedInstruction("model has no free parameters".into())
         })?;
-        let groups = events.div_ceil(64);
-        let partial_words = groups * self.partial_width;
-        let partial_bytes = partial_words * self.scalar_size();
+        let groups = GpuMemoryLayout::groups(events);
+        let layout = self
+            .buffer_layout()
+            .map_err(|_| WgpuError::MemoryBudgetTooSmall {
+                required: usize::MAX,
+                available: context.memory_budget().unwrap_or(usize::MAX),
+            })?;
+        let partial_bytes =
+            usize::try_from(layout.partial_buffer_bytes(events, 0).map_err(|_| {
+                WgpuError::MemoryBudgetTooSmall {
+                    required: usize::MAX,
+                    available: context.memory_budget().unwrap_or(usize::MAX),
+                }
+            })?)
+            .map_err(|_| WgpuError::MemoryBudgetTooSmall {
+                required: usize::MAX,
+                available: context.memory_budget().unwrap_or(usize::MAX),
+            })?;
         let bind_group = context
             .device()
             .create_bind_group(&wgpu::BindGroupDescriptor {
@@ -1005,7 +1236,7 @@ impl WgpuScalarKernel {
             .map(|row| batch.weights_at(row))
             .collect::<Vec<_>>();
         let weight_bytes = self.encode_scalars(&weights);
-        let (input_buffer, cache_buffer) = self.cache_buffers(context, &inputs, batch.len());
+        let (input_buffer, cache_buffer) = self.cache_buffers(context, &inputs, batch.len())?;
         let solve_error = context
             .device()
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -1053,14 +1284,29 @@ impl WgpuScalarKernel {
         events: usize,
         reduction: ReductionPlan,
     ) -> WgpuResult<f64> {
+        let layout = self
+            .memory_layout(params)
+            .map_err(|_| WgpuError::MemoryBudgetTooSmall {
+                required: usize::MAX,
+                available: context.memory_budget().unwrap_or(usize::MAX),
+            })?;
         let parameters = self.parameter_values(params);
         let mode = match reduction.transform() {
             ReductionTransform::Real => 0_u32,
             ReductionTransform::PositiveReal => 1,
             ReductionTransform::LogPositiveReal => 2,
         };
-        let groups = events.div_ceil(64);
-        let partial_bytes = groups * self.scalar_size();
+        let groups = GpuMemoryLayout::groups(events);
+        let partial_bytes = usize::try_from(layout.scalar_partial_bytes(events).map_err(|_| {
+            WgpuError::MemoryBudgetTooSmall {
+                required: usize::MAX,
+                available: context.memory_budget().unwrap_or(usize::MAX),
+            }
+        })?)
+        .map_err(|_| WgpuError::MemoryBudgetTooSmall {
+            required: usize::MAX,
+            available: context.memory_budget().unwrap_or(usize::MAX),
+        })?;
         let params_buffer =
             context
                 .device()
@@ -1162,50 +1408,51 @@ impl WgpuScalarKernel {
         params: &ParamValues,
         reduction: bool,
     ) -> WgpuResult<usize> {
-        let scalar_size = self.scalar_size();
-        let input_bytes = self.event_inputs.len() * 2 * scalar_size;
-        let cache_bytes = self.cache_width * 2 * scalar_size;
-        let result_bytes = if reduction {
-            self.partial_width * scalar_size + 1
+        let layout = self
+            .memory_layout(params)
+            .map_err(|_| WgpuError::MemoryBudgetTooSmall {
+                required: usize::MAX,
+                available: context.memory_budget().unwrap_or(usize::MAX),
+            })?;
+        let footprint = if reduction {
+            layout.prepared_footprint()
         } else {
-            4 * scalar_size
-        };
-        let per_event = input_bytes + cache_bytes + result_bytes;
-        let parameter_bytes = params.as_slice().len().max(1) * scalar_size;
-        let fixed_bytes = parameter_bytes + if reduction { 16 } else { 0 };
+            layout.evaluation_footprint()
+        }
+        .map_err(|_| WgpuError::MemoryBudgetTooSmall {
+            required: usize::MAX,
+            available: context.memory_budget().unwrap_or(usize::MAX),
+        })?;
         let max_binding = context
             .info()
             .max_buffer_size
             .min(context.info().max_storage_buffer_binding_size)
-            .min(usize::MAX as u64) as usize;
-        let mut max_events = u32::MAX as usize;
-        for width in [
-            input_bytes,
-            cache_bytes,
-            if reduction {
-                self.partial_width * scalar_size
-            } else {
-                2 * scalar_size
-            },
-        ] {
-            if let Some(events) = max_binding.checked_div(width) {
-                max_events = max_events.min(events);
-            }
-        }
+            .min(usize::MAX as u64);
+        let mut max_events = layout.binding_limit(max_binding, reduction);
         if let Some(budget) = context.memory_budget() {
-            let available = budget.saturating_sub(fixed_bytes);
-            max_events = max_events.min(available / per_event.max(1));
+            let available = u64::try_from(budget)
+                .unwrap_or(u64::MAX)
+                .saturating_sub(footprint.fixed_bytes);
+            let per_event = footprint.bytes_per_event.max(1);
+            max_events =
+                max_events.min(usize::try_from(available / per_event).unwrap_or(usize::MAX));
             if max_events == 0 {
                 return Err(WgpuError::MemoryBudgetTooSmall {
-                    required: fixed_bytes + per_event.max(1),
+                    required: usize::try_from(footprint.fixed_bytes.saturating_add(per_event))
+                        .unwrap_or(usize::MAX),
                     available: budget,
                 });
             }
         }
         if max_events == 0 {
             return Err(WgpuError::MemoryBudgetTooSmall {
-                required: fixed_bytes + per_event.max(1),
-                available: max_binding,
+                required: usize::try_from(
+                    footprint
+                        .fixed_bytes
+                        .saturating_add(footprint.bytes_per_event.max(1)),
+                )
+                .unwrap_or(usize::MAX),
+                available: usize::try_from(max_binding).unwrap_or(usize::MAX),
             });
         }
         Ok(max_events)
@@ -1257,6 +1504,12 @@ impl WgpuScalarKernel {
             return Ok(Vec::new());
         }
         let values = self.parameter_values(params);
+        let layout = self
+            .memory_layout(params)
+            .map_err(|_| WgpuError::MemoryBudgetTooSmall {
+                required: usize::MAX,
+                available: context.memory_budget().unwrap_or(usize::MAX),
+            })?;
         let params_buffer =
             context
                 .device()
@@ -1265,8 +1518,13 @@ impl WgpuScalarKernel {
                     contents: &values,
                     usage: wgpu::BufferUsages::STORAGE,
                 });
-        let (input_buffer, cache_buffer) = self.cache_buffers(context, inputs, events);
-        let output_size = (events * 2 * self.scalar_size()) as u64;
+        let (input_buffer, cache_buffer) = self.cache_buffers(context, inputs, events)?;
+        let output_size = layout
+            .event_bytes(layout.output_bytes, events)
+            .map_err(|_| WgpuError::MemoryBudgetTooSmall {
+                required: usize::MAX,
+                available: context.memory_budget().unwrap_or(usize::MAX),
+            })?;
         let output = context.device().create_buffer(&wgpu::BufferDescriptor {
             label: Some("laddu scalar output"),
             size: output_size,
@@ -1275,7 +1533,12 @@ impl WgpuScalarKernel {
         });
         let staging = context.device().create_buffer(&wgpu::BufferDescriptor {
             label: Some("laddu scalar readback"),
-            size: output_size + 4,
+            size: output_size.checked_add(STATUS_WORD_BYTES as u64).ok_or(
+                WgpuError::MemoryBudgetTooSmall {
+                    required: usize::MAX,
+                    available: context.memory_budget().unwrap_or(usize::MAX),
+                },
+            )?,
             usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
             mapped_at_creation: false,
         });
@@ -1323,23 +1586,35 @@ impl WgpuScalarKernel {
             let mut pass = encoder.begin_compute_pass(&Default::default());
             pass.set_pipeline(&self.pipeline);
             pass.set_bind_group(0, &bind_group, &[]);
-            pass.dispatch_workgroups((events as u32).div_ceil(64), 1, 1);
+            pass.dispatch_workgroups(GpuMemoryLayout::groups(events) as u32, 1, 1);
         }
         encoder.copy_buffer_to_buffer(&output, 0, &staging, 0, output_size);
-        encoder.copy_buffer_to_buffer(&solve_error, 0, &staging, output_size, 4);
-        submit_and_readback(context, encoder, &staging, output_size + 4, |mapped| {
-            let status = decode_singular_status(&mapped[output_size as usize..])?;
-            if let Some(error) = status.error() {
-                return Err(error);
-            }
-            let result = self.decode_scalars(&mapped[..output_size as usize]);
-            Ok(result
-                .as_chunks::<2>()
-                .0
-                .iter()
-                .map(|value| (value[0], value[1]))
-                .collect())
-        })
+        encoder.copy_buffer_to_buffer(
+            &solve_error,
+            0,
+            &staging,
+            output_size,
+            STATUS_WORD_BYTES as u64,
+        );
+        submit_and_readback(
+            context,
+            encoder,
+            &staging,
+            output_size + STATUS_WORD_BYTES as u64,
+            |mapped| {
+                let status = decode_singular_status(&mapped[output_size as usize..])?;
+                if let Some(error) = status.error() {
+                    return Err(error);
+                }
+                let result = self.decode_scalars(&mapped[..output_size as usize]);
+                Ok(result
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
+                    .map(|value| (value[0], value[1]))
+                    .collect())
+            },
+        )
     }
 
     fn cache_buffers(
@@ -1347,7 +1622,13 @@ impl WgpuScalarKernel {
         context: &WgpuContext,
         inputs: &[u8],
         events: usize,
-    ) -> (wgpu::Buffer, wgpu::Buffer) {
+    ) -> WgpuResult<(wgpu::Buffer, wgpu::Buffer)> {
+        let layout = self
+            .buffer_layout()
+            .map_err(|_| WgpuError::MemoryBudgetTooSmall {
+                required: usize::MAX,
+                available: context.memory_budget().unwrap_or(usize::MAX),
+            })?;
         let input = context
             .device()
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -1355,14 +1636,20 @@ impl WgpuScalarKernel {
                 contents: inputs,
                 usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             });
-        let cache_size = (events * self.cache_width * 2 * self.scalar_size()).max(8) as u64;
+        let cache_size =
+            layout
+                .cache_buffer_bytes(events)
+                .map_err(|_| WgpuError::MemoryBudgetTooSmall {
+                    required: usize::MAX,
+                    available: context.memory_budget().unwrap_or(usize::MAX),
+                })?;
         let cache = context.device().create_buffer(&wgpu::BufferDescriptor {
             label: Some("laddu event cache"),
             size: cache_size,
             usage: wgpu::BufferUsages::STORAGE,
             mapped_at_creation: false,
         });
-        (input, cache)
+        Ok((input, cache))
     }
 
     fn encode_cache_materialization(
@@ -1401,7 +1688,7 @@ impl WgpuScalarKernel {
         let mut pass = encoder.begin_compute_pass(&Default::default());
         pass.set_pipeline(pipeline);
         pass.set_bind_group(0, &bind_group, &[]);
-        pass.dispatch_workgroups((events as u32).div_ceil(64), 1, 1);
+        pass.dispatch_workgroups(GpuMemoryLayout::groups(events) as u32, 1, 1);
     }
 
     fn scalar_prelude(precision: crate::WgpuPrecision) -> &'static str {
@@ -1939,6 +2226,8 @@ impl WgpuPreparedBatch {
 mod tests {
     use std::sync::Arc;
 
+    use super::{GpuMemoryLayout, WgpuScalarKernel};
+
     use laddu_compile::{CompiledModel, ReductionPlan};
     use laddu_data::{
         data::{Dataset, EventBatch, OwnedEvent},
@@ -1950,7 +2239,93 @@ mod tests {
     };
     use laddu_runtime::{CpuBackend, CpuOptions, Device, Execution, ExecutionOptions, Precision};
 
-    use crate::{WgpuBackend, WgpuOptions, WgpuPrecision, WgpuScalarKernel};
+    use crate::{WgpuBackend, WgpuOptions, WgpuPrecision};
+    use laddu_memory::{FootprintOverflow, MemoryFootprint};
+
+    #[test]
+    fn gpu_layout_uses_checked_shared_footprint_components() {
+        let layout = GpuMemoryLayout::new(8, 2, 3, 4, 2).unwrap();
+        assert_eq!(layout.input_bytes.bytes_per_event, 32);
+        assert_eq!(layout.cache_bytes.bytes_per_event, 48);
+        assert_eq!(layout.partial_bytes.bytes_per_event, 32);
+        assert_eq!(
+            layout.prepared_footprint().unwrap(),
+            MemoryFootprint::new(32, 113)
+        );
+        assert_eq!(layout.prepared_resident_bytes(65).unwrap(), 5_872);
+    }
+
+    #[test]
+    fn gpu_layout_rejects_overflow_before_buffer_geometry() {
+        assert!(matches!(
+            GpuMemoryLayout::new(8, usize::MAX, 0, 0, 0),
+            Err(FootprintOverflow::Multiplication)
+        ));
+        let layout = GpuMemoryLayout::new(8, 0, 1, 1, 0).unwrap();
+        assert_eq!(layout.input_buffer_bytes(usize::MAX).unwrap(), 16);
+        assert_eq!(GpuMemoryLayout::groups(63), 1);
+        assert_eq!(GpuMemoryLayout::groups(64), 1);
+        assert_eq!(GpuMemoryLayout::groups(65), 2);
+    }
+
+    #[test]
+    fn gpu_layout_covers_empty_and_workgroup_boundaries() {
+        for scalar_size in [4, 8] {
+            let layout = GpuMemoryLayout::new(scalar_size, 0, 0, 0, 0).unwrap();
+            let mut previous = 0;
+            for (events, groups) in [(0, 0), (1, 1), (63, 1), (64, 1), (65, 2)] {
+                let resident = layout.prepared_resident_bytes(events).unwrap();
+                assert!(resident >= previous);
+                previous = resident;
+                assert_eq!(GpuMemoryLayout::groups(events), groups);
+            }
+            assert_eq!(
+                layout.prepared_resident_bytes(0).unwrap(),
+                (scalar_size * 3 + 16) as u64
+            );
+        }
+        let layout = GpuMemoryLayout::new(8, 1, 1, 1, 1).unwrap();
+        assert!(
+            layout.prepared_resident_bytes(63).unwrap()
+                < layout.prepared_resident_bytes(64).unwrap()
+        );
+        assert!(
+            layout.prepared_resident_bytes(64).unwrap()
+                < layout.prepared_resident_bytes(65).unwrap()
+        );
+    }
+
+    #[test]
+    fn gpu_layout_binding_and_budget_arithmetic_is_checked() {
+        let layout = GpuMemoryLayout::new(4, 1, 1, 1, 1).unwrap();
+        assert_eq!(layout.binding_limit(120, true), 15);
+        assert_eq!(layout.binding_limit(120, false), 15);
+        assert_eq!(
+            GpuMemoryLayout::new(4, 0, 0, 0, 0)
+                .unwrap()
+                .binding_limit(0, true),
+            u32::MAX as usize
+        );
+        let footprint = layout.prepared_footprint().unwrap();
+        assert_eq!(footprint.checked_peak_bytes(1).unwrap(), 41);
+        assert!(
+            MemoryFootprint::new(u64::MAX, 1)
+                .checked_peak_bytes(1)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn gpu_layout_resident_chunk_estimate_tracks_workgroup_storage() {
+        let layout = GpuMemoryLayout::new(4, 0, 0, 7, 2).unwrap();
+        assert_eq!(
+            layout.prepared_footprint().unwrap(),
+            MemoryFootprint::new(24, 29)
+        );
+        assert_eq!(layout.prepared_resident_bytes(8).unwrap(), 120);
+        assert_eq!(layout.prepared_resident_bytes(64).unwrap(), 344);
+        assert_eq!(layout.prepared_resident_bytes(65).unwrap(), 404);
+    }
 
     #[test]
     fn scalar_kernel_accepts_resolved_precisions() {

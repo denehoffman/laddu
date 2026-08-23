@@ -777,16 +777,32 @@ impl StochasticObjective for Likelihood {
 pub struct NllTerm {
     name: LikelihoodName,
     model: CompiledModel,
-    plan: Option<PreparedModel>,
     local_params: Arc<ParamLayout>,
-    projection: Option<ParamProjection>,
     data_source: Dataset,
     accepted_mc_source: Dataset,
-    data: Option<PreparedDataset>,
-    accepted_mc: Option<PreparedDataset>,
-    data_weight_sum: Option<f64>,
-    normalization: Option<Arc<PreparedNormalization>>,
-    execution: Option<Execution>,
+    state: NllState,
+}
+
+#[derive(Clone)]
+enum NllState {
+    Unresolved,
+    Prepared(Box<PreparedNll>),
+}
+
+#[derive(Clone)]
+struct PreparedNll {
+    plan: PreparedModel,
+    projection: ParamProjection,
+    data: PreparedDataset,
+    normalization: NormalizationData,
+    data_weight_sum: f64,
+    execution: Execution,
+}
+
+#[derive(Clone)]
+enum NormalizationData {
+    PreparedDataset(Box<PreparedDataset>),
+    CompilerNative(Arc<PreparedNormalization>),
 }
 
 impl std::fmt::Debug for NllTerm {
@@ -794,7 +810,7 @@ impl std::fmt::Debug for NllTerm {
         formatter
             .debug_struct("NllTerm")
             .field("name", &self.name)
-            .field("prepared", &self.data.is_some())
+            .field("prepared", &matches!(self.state, NllState::Prepared(_)))
             .finish_non_exhaustive()
     }
 }
@@ -802,31 +818,29 @@ impl std::fmt::Debug for NllTerm {
 impl NllTerm {
     fn bootstrap_term(&self, seed: u64) -> LikelihoodResult<Self> {
         let data_source = self.data_source.clone().bootstrap(seed);
-        let (Some(plan), Some(projection), Some(execution)) =
-            (&self.plan, &self.projection, &self.execution)
-        else {
-            return Self::new(
-                self.name(),
-                &self.model,
-                &data_source,
-                &self.accepted_mc_source,
-            );
+        let state = match &self.state {
+            NllState::Unresolved => NllState::Unresolved,
+            NllState::Prepared(prepared) => {
+                let data = prepared
+                    .plan
+                    .prepare_dataset(&prepared.execution, &data_source)?;
+                NllState::Prepared(Box::new(PreparedNll {
+                    plan: prepared.plan.clone(),
+                    projection: prepared.projection.clone(),
+                    data_weight_sum: data.stats().sum_weights(),
+                    data,
+                    normalization: prepared.normalization.clone(),
+                    execution: prepared.execution.clone(),
+                }))
+            }
         };
-        let data = plan.prepare_dataset(execution, &data_source)?;
-        let data_weight_sum = data.stats().sum_weights();
         Ok(Self {
             name: self.name.clone(),
             model: self.model.clone(),
-            plan: Some(plan.clone()),
             local_params: Arc::clone(&self.local_params),
-            projection: Some(projection.clone()),
             data_source,
             accepted_mc_source: self.accepted_mc_source.clone(),
-            data: Some(data),
-            accepted_mc: self.accepted_mc.clone(),
-            data_weight_sum: Some(data_weight_sum),
-            normalization: self.normalization.clone(),
-            execution: Some(execution.clone()),
+            state,
         })
     }
     fn projection<'a>(
@@ -860,7 +874,7 @@ impl NllTerm {
             full_plan: self.plan()?.clone(),
             full_projection: self.resolved_projection()?.clone(),
             full_accepted_mc: self.accepted_mc_for_analysis(execution)?,
-            full_normalization: self.normalization.clone(),
+            full_normalization: self.compiler_native_normalization()?,
             projected_accepted_mc: projected_plan
                 .prepare_dataset(execution, &self.accepted_mc_source)?,
             projected_normalization,
@@ -890,16 +904,10 @@ impl NllTerm {
         Ok(Self {
             name: LikelihoodName::new(name),
             model: model.clone(),
-            plan: None,
             local_params: Arc::new(model.params().clone()),
-            projection: None,
             data_source: data.clone(),
             accepted_mc_source: accepted_mc.clone(),
-            data: None,
-            accepted_mc: None,
-            data_weight_sum: None,
-            normalization: None,
-            execution: None,
+            state: NllState::Unresolved,
         })
     }
 
@@ -910,15 +918,17 @@ impl NllTerm {
     /// Returns [`LikelihoodError::UnresolvedTerm`] when this term has not been
     /// resolved as part of a [`Likelihood`].
     pub fn data(&self) -> LikelihoodResult<&PreparedDataset> {
-        self.data
-            .as_ref()
-            .ok_or_else(|| LikelihoodError::UnresolvedTerm(self.name().to_owned()))
+        match &self.state {
+            NllState::Prepared(prepared) => Ok(&prepared.data),
+            NllState::Unresolved => Err(LikelihoodError::UnresolvedTerm(self.name().to_owned())),
+        }
     }
 
     fn plan(&self) -> LikelihoodResult<&PreparedModel> {
-        self.plan
-            .as_ref()
-            .ok_or_else(|| LikelihoodError::UnresolvedTerm(self.name().to_owned()))
+        match &self.state {
+            NllState::Prepared(prepared) => Ok(&prepared.plan),
+            NllState::Unresolved => Err(LikelihoodError::UnresolvedTerm(self.name().to_owned())),
+        }
     }
 
     /// Returns the prepared accepted Monte Carlo dataset.
@@ -928,18 +938,27 @@ impl NllTerm {
     /// Returns [`LikelihoodError::UnresolvedTerm`] when this term has not been
     /// resolved as part of a [`Likelihood`].
     pub fn accepted_mc(&self) -> LikelihoodResult<&PreparedDataset> {
-        self.accepted_mc
-            .as_ref()
-            .ok_or_else(|| LikelihoodError::UnresolvedTerm(self.name().to_owned()))
+        match &self.state {
+            NllState::Prepared(prepared) => match &prepared.normalization {
+                NormalizationData::PreparedDataset(accepted_mc) => Ok(accepted_mc),
+                NormalizationData::CompilerNative(_) => {
+                    Err(LikelihoodError::UnresolvedTerm(self.name().to_owned()))
+                }
+            },
+            NllState::Unresolved => Err(LikelihoodError::UnresolvedTerm(self.name().to_owned())),
+        }
     }
 
     fn accepted_mc_for_analysis(&self, execution: &Execution) -> LikelihoodResult<PreparedDataset> {
-        if let Some(accepted_mc) = &self.accepted_mc {
-            return Ok(accepted_mc.clone());
+        match &self.state {
+            NllState::Prepared(prepared) => match &prepared.normalization {
+                NormalizationData::PreparedDataset(accepted_mc) => Ok((**accepted_mc).clone()),
+                NormalizationData::CompilerNative(_) => Ok(prepared
+                    .plan
+                    .prepare_dataset(execution, &self.accepted_mc_source)?),
+            },
+            NllState::Unresolved => Err(LikelihoodError::UnresolvedTerm(self.name().to_owned())),
         }
-        Ok(self
-            .plan()?
-            .prepare_dataset(execution, &self.accepted_mc_source)?)
     }
 
     /// Returns the observed dataset's total event weight.
@@ -949,8 +968,10 @@ impl NllTerm {
     /// Returns [`LikelihoodError::UnresolvedTerm`] when this term has not been
     /// resolved as part of a [`Likelihood`].
     pub fn data_weight_sum(&self) -> LikelihoodResult<f64> {
-        self.data_weight_sum
-            .ok_or_else(|| LikelihoodError::UnresolvedTerm(self.name().to_owned()))
+        match &self.state {
+            NllState::Prepared(prepared) => Ok(prepared.data_weight_sum),
+            NllState::Unresolved => Err(LikelihoodError::UnresolvedTerm(self.name().to_owned())),
+        }
     }
 
     /// Returns the weighted log-intensity sum over observed data.
@@ -995,13 +1016,13 @@ impl NllTerm {
             full_plan: plan.clone(),
             full_projection: self.resolved_projection()?.clone(),
             full_accepted_mc: accepted_mc.clone(),
-            full_normalization: self.normalization.clone(),
+            full_normalization: self.compiler_native_normalization()?,
             accepted_mc_source: self.accepted_mc_source.clone(),
             generated_mc_source: generated_mc.clone(),
             plan: plan.clone(),
             projection: self.resolved_projection()?.clone(),
             accepted_mc,
-            normalization: self.normalization.clone(),
+            normalization: self.compiler_native_normalization()?,
             generated_mc: plan.prepare_dataset(execution, generated_mc)?,
             data_weight_sum: self.data_weight_sum()?,
             has_absolute_rate,
@@ -1041,10 +1062,17 @@ impl NllTerm {
         params: &ParamValues,
         execution: &Execution,
     ) -> LikelihoodResult<f64> {
-        if let Some(normalization) = &self.normalization {
-            return normalization
-                .value(params, execution)
-                .map_err(LikelihoodError::from);
+        match &self.state {
+            NllState::Prepared(prepared) => {
+                if let NormalizationData::CompilerNative(normalization) = &prepared.normalization {
+                    return normalization
+                        .value(params, execution)
+                        .map_err(LikelihoodError::from);
+                }
+            }
+            NllState::Unresolved => {
+                return Err(LikelihoodError::UnresolvedTerm(self.name().to_owned()));
+            }
         }
         self.plan()?
             .reduce(
@@ -1061,10 +1089,17 @@ impl NllTerm {
         params: &ParamValues,
         execution: &Execution,
     ) -> LikelihoodResult<(f64, Vec<f64>)> {
-        if let Some(normalization) = &self.normalization {
-            return normalization
-                .value_gradient(params, execution)
-                .map_err(LikelihoodError::from);
+        match &self.state {
+            NllState::Prepared(prepared) => {
+                if let NormalizationData::CompilerNative(normalization) = &prepared.normalization {
+                    return normalization
+                        .value_gradient(params, execution)
+                        .map_err(LikelihoodError::from);
+                }
+            }
+            NllState::Unresolved => {
+                return Err(LikelihoodError::UnresolvedTerm(self.name().to_owned()));
+            }
         }
         Ok(self
             .plan()?
@@ -1124,15 +1159,31 @@ impl NllTerm {
     }
 
     fn resolved_projection(&self) -> LikelihoodResult<&ParamProjection> {
-        self.projection
-            .as_ref()
-            .ok_or(LikelihoodError::ParameterLayoutMismatch)
+        match &self.state {
+            NllState::Prepared(prepared) => Ok(&prepared.projection),
+            NllState::Unresolved => Err(LikelihoodError::UnresolvedTerm(self.name().to_owned())),
+        }
     }
 
     fn resolved_execution(&self) -> LikelihoodResult<&Execution> {
-        self.execution
-            .as_ref()
-            .ok_or(LikelihoodError::ParameterLayoutMismatch)
+        match &self.state {
+            NllState::Prepared(prepared) => Ok(&prepared.execution),
+            NllState::Unresolved => Err(LikelihoodError::UnresolvedTerm(self.name().to_owned())),
+        }
+    }
+
+    fn compiler_native_normalization(
+        &self,
+    ) -> LikelihoodResult<Option<Arc<PreparedNormalization>>> {
+        match &self.state {
+            NllState::Prepared(prepared) => match &prepared.normalization {
+                NormalizationData::CompilerNative(normalization) => {
+                    Ok(Some(Arc::clone(normalization)))
+                }
+                NormalizationData::PreparedDataset(_) => Ok(None),
+            },
+            NllState::Unresolved => Err(LikelihoodError::UnresolvedTerm(self.name().to_owned())),
+        }
     }
 }
 
@@ -1142,43 +1193,45 @@ impl LikelihoodTerm for NllTerm {
     }
 
     fn append_diagnostics(&self, diagnostics: &mut Vec<DatasetDiagnostics>) {
-        if let Some(data) = &self.data {
-            diagnostics.push(DatasetDiagnostics {
-                term: self.name.as_str().to_owned(),
-                role: DatasetRole::Observed,
-                stats: *data.stats(),
-                quadratic_normalization: false,
-                normalization: None,
-                source_traversals: self.data_source.source_traversals(),
-            });
-        }
-        if let Some(normalization) = &self.normalization {
-            diagnostics.push(DatasetDiagnostics {
-                term: self.name.as_str().to_owned(),
-                role: DatasetRole::AcceptedMc,
-                stats: *normalization.stats(),
-                quadratic_normalization: true,
-                normalization: Some(normalization.diagnostics()),
-                source_traversals: self.accepted_mc_source.source_traversals(),
-            });
-        } else if let Some(accepted_mc) = &self.accepted_mc {
-            diagnostics.push(DatasetDiagnostics {
-                term: self.name.as_str().to_owned(),
-                role: DatasetRole::AcceptedMc,
-                stats: *accepted_mc.stats(),
-                quadratic_normalization: false,
-                normalization: Some(PreparedNormalizationDiagnostics::general(
-                    self.model.normalization_diagnostics().clone(),
-                )),
-                source_traversals: self.accepted_mc_source.source_traversals(),
-            });
+        let NllState::Prepared(prepared) = &self.state else {
+            return;
+        };
+        diagnostics.push(DatasetDiagnostics {
+            term: self.name.as_str().to_owned(),
+            role: DatasetRole::Observed,
+            stats: *prepared.data.stats(),
+            quadratic_normalization: false,
+            normalization: None,
+            source_traversals: self.data_source.source_traversals(),
+        });
+        match &prepared.normalization {
+            NormalizationData::CompilerNative(normalization) => {
+                diagnostics.push(DatasetDiagnostics {
+                    term: self.name.as_str().to_owned(),
+                    role: DatasetRole::AcceptedMc,
+                    stats: *normalization.stats(),
+                    quadratic_normalization: true,
+                    normalization: Some(normalization.diagnostics()),
+                    source_traversals: self.accepted_mc_source.source_traversals(),
+                });
+            }
+            NormalizationData::PreparedDataset(accepted_mc) => {
+                diagnostics.push(DatasetDiagnostics {
+                    term: self.name.as_str().to_owned(),
+                    role: DatasetRole::AcceptedMc,
+                    stats: *accepted_mc.stats(),
+                    quadratic_normalization: false,
+                    normalization: Some(PreparedNormalizationDiagnostics::general(
+                        self.model.normalization_diagnostics().clone(),
+                    )),
+                    source_traversals: self.accepted_mc_source.source_traversals(),
+                });
+            }
         }
     }
 
     fn bootstrap_clone_is_prepared(&self) -> bool {
-        self.plan.is_some()
-            && self.data.is_some()
-            && (self.accepted_mc.is_some() || self.normalization.is_some())
+        matches!(self.state, NllState::Prepared(_))
     }
 
     fn bootstrap_clone(&self, seed: u64) -> LikelihoodResult<Box<dyn LikelihoodTerm>> {
@@ -1197,11 +1250,7 @@ impl LikelihoodTerm for NllTerm {
         global_params: Arc<ParamLayout>,
         execution: &Execution,
     ) -> LikelihoodResult<()> {
-        self.projection = Some(ParamProjection::new(
-            global_params,
-            &self.local_params,
-            self.name(),
-        )?);
+        let projection = ParamProjection::new(global_params, &self.local_params, self.name())?;
         let plan = PreparedModel::prepare(&self.model, execution)?;
         let data = plan.prepare_dataset(execution, &self.data_source)?;
         let normalization = PreparedNormalization::prepare(
@@ -1210,17 +1259,22 @@ impl LikelihoodTerm for NllTerm {
             &self.accepted_mc_source,
             execution,
         )?;
-        let accepted_mc = if normalization.is_some() {
-            None
+        let normalization = if let Some(normalization) = normalization {
+            NormalizationData::CompilerNative(normalization)
         } else {
-            Some(plan.prepare_dataset(execution, &self.accepted_mc_source)?)
+            NormalizationData::PreparedDataset(Box::new(
+                plan.prepare_dataset(execution, &self.accepted_mc_source)?,
+            ))
         };
-        self.data = Some(data);
-        self.accepted_mc = accepted_mc;
-        self.plan = Some(plan);
-        self.data_weight_sum = Some(self.data()?.stats().sum_weights());
-        self.normalization = normalization;
-        self.execution = Some(execution.clone());
+        let data_weight_sum = data.stats().sum_weights();
+        self.state = NllState::Prepared(Box::new(PreparedNll {
+            plan,
+            projection,
+            data,
+            normalization,
+            data_weight_sum,
+            execution: execution.clone(),
+        }));
         Ok(())
     }
 
@@ -1321,7 +1375,7 @@ impl std::fmt::Debug for ExtendedNllTerm {
         formatter
             .debug_struct("ExtendedNllTerm")
             .field("name", &self.inner.name)
-            .field("prepared", &self.inner.data.is_some())
+            .field("prepared", &self.inner.data().is_ok())
             .finish_non_exhaustive()
     }
 }
@@ -3393,6 +3447,127 @@ mod tests {
     }
 
     #[test]
+    fn unresolved_nll_accessors_report_unresolved_state() {
+        let model =
+            CompiledModel::from_expr(&(event_scalar("x") * parameter!("scale", initial: 2.0)))
+                .unwrap();
+        let data = weighted_dataset(&[(1.0, 1.0)]);
+        let term = NllTerm::new("signal", &model, &data, &data).unwrap();
+
+        assert!(
+            matches!(term.data(), Err(LikelihoodError::UnresolvedTerm(name)) if name == "signal")
+        );
+        assert!(
+            matches!(term.accepted_mc(), Err(LikelihoodError::UnresolvedTerm(name)) if name == "signal")
+        );
+        assert!(
+            matches!(term.data_weight_sum(), Err(LikelihoodError::UnresolvedTerm(name)) if name == "signal")
+        );
+    }
+
+    #[test]
+    fn failed_nll_resolution_does_not_leave_partial_preparation() {
+        let model =
+            CompiledModel::from_expr(&(event_scalar("x") * parameter!("scale", initial: 2.0)))
+                .unwrap();
+        let data = weighted_dataset(&[(1.0, 1.0)]);
+        let mut term = NllTerm::new("signal", &model, &data, &data).unwrap();
+        let empty_layout = Arc::new(ParamRegistry::new().layout().unwrap());
+
+        assert!(matches!(
+            term.resolve(empty_layout, &Execution::default()),
+            Err(LikelihoodError::MissingParameter { .. })
+        ));
+        assert!(
+            matches!(term.data(), Err(LikelihoodError::UnresolvedTerm(name)) if name == "signal")
+        );
+
+        term.resolve(Arc::new(model.params().clone()), &Execution::default())
+            .unwrap();
+        assert!(term.data().is_ok());
+        assert!(term.data_weight_sum().is_ok());
+    }
+
+    #[test]
+    fn failed_nll_reresolution_preserves_prepared_state() {
+        let model =
+            CompiledModel::from_expr(&(event_scalar("x") * parameter!("scale", initial: 2.0)))
+                .unwrap();
+        let data = weighted_dataset(&[(1.0, 1.0), (2.0, 2.0)]);
+        let mut term = NllTerm::new("signal", &model, &data, &data).unwrap();
+        let execution = Execution::default();
+        term.resolve(Arc::new(model.params().clone()), &execution)
+            .unwrap();
+        let params = model.params().default_values();
+        let value = term.nll(&params, &execution).unwrap();
+        let stats = *term.data().unwrap().stats();
+        let mut diagnostics = Vec::new();
+        term.append_diagnostics(&mut diagnostics);
+
+        assert!(matches!(
+            term.resolve(Arc::new(ParamRegistry::new().layout().unwrap()), &execution),
+            Err(LikelihoodError::MissingParameter { .. })
+        ));
+        assert_eq!(term.nll(&params, &execution).unwrap(), value);
+        assert_eq!(*term.data().unwrap().stats(), stats);
+        let mut after_diagnostics = Vec::new();
+        term.append_diagnostics(&mut after_diagnostics);
+        assert_eq!(after_diagnostics, diagnostics);
+    }
+
+    #[test]
+    fn prepared_bootstrap_preserves_normalization_and_dataset_diagnostics() {
+        let model =
+            CompiledModel::from_expr(&(event_scalar("x") * parameter!("scale", initial: 2.0)))
+                .unwrap();
+        let data = weighted_dataset(&[(1.0, 1.0), (2.0, 1.0), (3.0, 1.0)]);
+        let accepted = weighted_dataset(&[(1.0, 1.0), (2.0, 2.0)]);
+        let executions = [
+            Execution::default(),
+            Execution::local(ExecutionOptions {
+                normalization: NormalizationMode::General,
+                ..ExecutionOptions::default()
+            })
+            .unwrap(),
+        ];
+
+        for execution in executions {
+            let likelihood = single_term_likelihood_with_execution(
+                "signal", &model, &data, &accepted, execution,
+            );
+            let baseline = likelihood
+                .diagnostics()
+                .datasets()
+                .iter()
+                .find(|dataset| dataset.role() == DatasetRole::AcceptedMc)
+                .unwrap()
+                .clone();
+            let first = likelihood.bootstrap(41).unwrap();
+            let second = first.bootstrap(42).unwrap();
+
+            for replica in [&first, &second] {
+                let diagnostics = replica.diagnostics();
+                let accepted_diagnostics = diagnostics
+                    .datasets()
+                    .iter()
+                    .find(|dataset| dataset.role() == DatasetRole::AcceptedMc)
+                    .unwrap();
+                assert_eq!(accepted_diagnostics, &baseline);
+                assert_eq!(
+                    accepted_diagnostics.source_traversals(),
+                    baseline.source_traversals()
+                );
+                let term = replica.terms()[0].as_intensity().unwrap();
+                if baseline.uses_quadratic_normalization() {
+                    assert!(term.accepted_mc().is_err());
+                } else {
+                    assert_eq!(term.accepted_mc().unwrap().stats(), baseline.stats());
+                }
+            }
+        }
+    }
+
+    #[test]
     fn coherent_quadratic_normalization_matches_general_event_reduction() {
         let coefficient = complex(
             parameter!("coefficient_re", initial: 0.7),
@@ -3621,48 +3796,59 @@ mod tests {
         );
         let params = cpu.default_params();
         let expected = cpu.nll_with_gradient(&params).unwrap();
-        let gpu = single_term_likelihood_with_execution(
-            "resident",
-            &model,
-            &data,
-            &accepted,
-            wgpu_execution(Some(256)),
-        );
-        let streaming_gpu = single_term_likelihood_with_execution(
-            "streaming",
-            &model,
-            &streaming_data,
-            &streaming_accepted,
-            wgpu_execution(Some(256)),
-        );
-        let mixed_gpu = single_term_likelihood_with_execution(
-            "mixed",
-            &model,
-            &data,
-            &streaming_accepted,
-            wgpu_execution(Some(256)),
-        );
-        let first = gpu.nll_with_gradient(&params).unwrap();
-        let second = gpu.nll_with_gradient(&params).unwrap();
+        let (first, second) = {
+            let gpu = single_term_likelihood_with_execution(
+                "resident",
+                &model,
+                &data,
+                &accepted,
+                wgpu_execution(Some(256)),
+            );
+            (
+                gpu.nll_with_gradient(&params).unwrap(),
+                gpu.nll_with_gradient(&params).unwrap(),
+            )
+        };
 
         assert_evaluation_close(&first, &expected, 5.0e-4);
         assert_eq!(second, first);
-        let streaming_gradient = streaming_gpu.nll_with_gradient(&params).unwrap();
-        let mixed_gradient = mixed_gpu.nll_with_gradient(&params).unwrap();
+
+        let streaming_gradient = {
+            let streaming_gpu = single_term_likelihood_with_execution(
+                "streaming",
+                &model,
+                &streaming_data,
+                &streaming_accepted,
+                wgpu_execution(Some(256)),
+            );
+            let streaming_gradient = streaming_gpu.nll_with_gradient(&params).unwrap();
+            let streaming_term = streaming_gpu.terms()[0].as_intensity().unwrap();
+            let streaming_data_stats = streaming_term.data().unwrap().stats();
+            let streaming_accepted_stats = streaming_term.accepted_mc().unwrap().stats();
+            assert_eq!(streaming_data_stats.storage(), CacheStorage::Streaming);
+            assert_eq!(streaming_data_stats.resident_bytes(), 0);
+            assert_eq!(streaming_data_stats.local_batches(), 2);
+            assert_eq!(streaming_accepted_stats.storage(), CacheStorage::Streaming);
+            assert_eq!(streaming_accepted_stats.resident_bytes(), 0);
+            assert_eq!(streaming_accepted_stats.local_batches(), 2);
+            streaming_gradient
+        };
+
         assert_evaluation_close(&streaming_gradient, &expected, 5.0e-4);
+
+        let mixed_gradient = {
+            let mixed_gpu = single_term_likelihood_with_execution(
+                "mixed",
+                &model,
+                &data,
+                &streaming_accepted,
+                wgpu_execution(Some(256)),
+            );
+            mixed_gpu.nll_with_gradient(&params).unwrap()
+        };
         assert_evaluation_close(&mixed_gradient, &expected, 5.0e-4);
         assert_evaluation_close(&streaming_gradient, &first, 2.0e-5);
         assert_evaluation_close(&mixed_gradient, &first, 2.0e-5);
-
-        let streaming_term = streaming_gpu.terms()[0].as_intensity().unwrap();
-        let streaming_data_stats = streaming_term.data().unwrap().stats();
-        let streaming_accepted_stats = streaming_term.accepted_mc().unwrap().stats();
-        assert_eq!(streaming_data_stats.storage(), CacheStorage::Streaming);
-        assert_eq!(streaming_data_stats.resident_bytes(), 0);
-        assert_eq!(streaming_data_stats.local_batches(), 2);
-        assert_eq!(streaming_accepted_stats.storage(), CacheStorage::Streaming);
-        assert_eq!(streaming_accepted_stats.resident_bytes(), 0);
-        assert_eq!(streaming_accepted_stats.local_batches(), 2);
 
         let cpu_f64 = single_term_likelihood_with_execution(
             "scalar",

@@ -271,6 +271,7 @@ pub fn laddu_runtime::PreparedModel::prepare(&laddu_compile::model::CompiledMode
 pub fn laddu_runtime::PreparedModel::prepare_dataset(&self, &laddu_runtime::Execution, &laddu_data::data::dataset::Dataset) -> laddu_runtime::RuntimeResult<laddu_runtime::PreparedDataset>
 pub fn laddu_runtime::PreparedModel::reduce(&self, &laddu_runtime::Execution, &laddu_expr::parameters::ParamValues, &laddu_runtime::PreparedDataset, laddu_compile::reduction::ReductionPlan) -> laddu_runtime::RuntimeResult<f64>
 pub fn laddu_runtime::PreparedModel::reduce_with_gradient(&self, &laddu_runtime::Execution, &laddu_expr::parameters::ParamValues, &laddu_runtime::PreparedDataset, laddu_compile::reduction::ReductionPlan) -> laddu_runtime::RuntimeResult<laddu_runtime::ReductionEvaluation>
+pub fn laddu_runtime::PreparedModel::required_event_scalars(&self) -> &[alloc::string::String]
 impl core::clone::Clone for laddu_runtime::PreparedModel
 pub fn laddu_runtime::PreparedModel::clone(&self) -> laddu_runtime::PreparedModel
 impl core::fmt::Debug for laddu_runtime::PreparedModel
@@ -441,6 +442,7 @@ pub fn laddu_runtime::CpuPlan::evaluate_with_event_and_gradient(&self, &laddu_ex
 pub fn laddu_runtime::CpuPlan::evaluate_with_gradient(&self, &laddu_expr::parameters::ParamValues) -> laddu_runtime::RuntimeResult<laddu_runtime::ValueGradient>
 pub fn laddu_runtime::CpuPlan::free_parameter_count(&self) -> usize
 pub fn laddu_runtime::CpuPlan::parameter_count(&self) -> usize
+pub fn laddu_runtime::CpuPlan::required_event_scalars(&self) -> &[alloc::string::String]
 impl core::clone::Clone for laddu_runtime::CpuPlan
 pub fn laddu_runtime::CpuPlan::clone(&self) -> laddu_runtime::CpuPlan
 impl core::fmt::Debug for laddu_runtime::CpuPlan

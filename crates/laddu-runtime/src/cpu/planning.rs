@@ -125,6 +125,7 @@ impl CpuBackend {
         Ok(CpuPlan {
             precision,
             graph: executable.graph().clone(),
+            required_event_scalars: crate::required_event_scalars(model),
             params: executable.params().clone(),
             parameter_slots: executable.parameter_slots().to_vec(),
             autodiff: AutodiffPlan::from_model(model, autodiff_mode)?,
