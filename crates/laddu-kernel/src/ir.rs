@@ -55,6 +55,18 @@ impl KernelValueKind {
         }
     }
 
+    /// Returns the checked row-major element index for a matrix value.
+    ///
+    /// Returns `None` when this is not a matrix, either coordinate is out of
+    /// bounds, or the dimensions/index arithmetic cannot be represented by
+    /// `usize`.
+    pub fn checked_row_major_index(self, row: usize, col: usize) -> Option<usize> {
+        let Self::Matrix { rows, cols } = self else {
+            return None;
+        };
+        checked_row_major_index(rows, cols, row, col)
+    }
+
     fn scalar_combine(self, rhs: Self) -> Option<Self> {
         match (self, rhs) {
             (Self::Real, Self::Real) => Some(Self::Real),

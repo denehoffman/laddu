@@ -127,6 +127,18 @@ fn matrix_shape_arithmetic_is_checked() {
         checked_row_major_index(usize::MAX, usize::MAX, usize::MAX - 1, 0),
         None
     );
+    assert_eq!(
+        KernelValueKind::Matrix { rows: 3, cols: 4 }.checked_row_major_index(2, 3),
+        Some(11)
+    );
+    assert_eq!(
+        KernelValueKind::Matrix {
+            rows: usize::MAX,
+            cols: usize::MAX,
+        }
+        .checked_row_major_index(0, 0),
+        None
+    );
 
     let error = ScalarKernelIr::new(
         vec![value(
@@ -278,6 +290,9 @@ fn operand_discovery_is_complete_and_ordered() {
 
     for (instruction, expected) in cases {
         assert_eq!(instruction.operands(), expected);
+        let mut visited = Vec::new();
+        instruction.for_each_operand(|operand| visited.push(operand));
+        assert_eq!(visited, expected);
     }
 }
 
@@ -704,6 +719,7 @@ fn gradient_builder_appends_valid_real_outputs() {
     assert_eq!(gradient.outputs(), &[output]);
     assert_eq!(gradient.component(), OutputComponent::Real);
     assert_eq!(gradient.values().len(), 2);
+    assert_eq!(gradient.required_values(), vec![true, true]);
 }
 
 #[test]

@@ -727,15 +727,7 @@ fn emit_gradient_kernel(
     let output = args[5];
     let end = builder.ins().iadd(start, len);
 
-    let mut required = vec![false; ir.values().len()];
-    let mut pending = ir.outputs().to_vec();
-    while let Some(id) = pending.pop() {
-        if required[id.index()] {
-            continue;
-        }
-        required[id.index()] = true;
-        pending.extend(ir.values()[id.index()].instruction.operands());
-    }
+    let required = ir.required_values();
     let mut invariant = vec![None; ir.values().len()];
     let invariant_row = builder.ins().iconst(pointer_type, 0);
     for (index, value) in ir.values().iter().enumerate() {
@@ -937,10 +929,14 @@ fn emit_instruction(
             .collect::<Result<_, _>>()?,
         KernelInstruction::Component { input, index } => vec![get(*input)?.elements[*index]],
         KernelInstruction::MatrixElement { input, row, col } => {
-            let KernelValueKind::Matrix { cols, .. } = get(*input)?.kind else {
+            let kind = get(*input)?.kind;
+            let KernelValueKind::Matrix { .. } = kind else {
                 unreachable!()
             };
-            vec![get(*input)?.elements[row * cols + col]]
+            let offset = kind
+                .checked_row_major_index(*row, *col)
+                .expect("validated kernel matrix element is in bounds");
+            vec![get(*input)?.elements[offset]]
         }
         KernelInstruction::MatMul { lhs, rhs } => {
             let lhs = get(*lhs)?;

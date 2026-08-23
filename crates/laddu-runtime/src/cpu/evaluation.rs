@@ -1,6 +1,6 @@
 use laddu_data::{data::EventBatch, schema::Schema};
 use laddu_expr::{BinaryOp, ExprId, ExprNode, P4Component, UnaryOp, parameters::ParamValues};
-use laddu_kernel::ir::{GradientKernelIr, KernelInstruction, KernelValue};
+use laddu_kernel::ir::{GradientKernelIr, KernelInstruction, KernelValue, KernelValueKind};
 use nalgebra::{DMatrix, DVector};
 use num::complex::{Complex32, Complex64};
 
@@ -219,15 +219,17 @@ impl CpuPlan {
                 }
                 KernelInstruction::MatrixElement { input, row, col } => {
                     let (rows, cols, matrix) = f32_matrix_at(&values, *input)?;
-                    if *row >= rows || *col >= cols {
+                    let Some(offset) = (KernelValueKind::Matrix { rows, cols })
+                        .checked_row_major_index(*row, *col)
+                    else {
                         return Err(RuntimeError::InvalidShape {
                             index,
                             message: format!(
                                 "matrix element ({row}, {col}) out of bounds for shape {rows}x{cols}"
                             ),
                         });
-                    }
-                    F32Value::Scalar(matrix[row * cols + col])
+                    };
+                    F32Value::Scalar(matrix[offset])
                 }
                 KernelInstruction::Dot { lhs, rhs } => {
                     let lhs = f32_vector_at(&values, *lhs)?;

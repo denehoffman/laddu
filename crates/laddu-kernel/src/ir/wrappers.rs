@@ -62,6 +62,21 @@ fn validate_gradient_outputs(
     Ok(())
 }
 
+fn required_values(values: &[KernelValue], outputs: &[KernelValueId]) -> Vec<bool> {
+    let mut required = vec![false; values.len()];
+    let mut pending = outputs.to_vec();
+    while let Some(id) = pending.pop() {
+        if required[id.index()] {
+            continue;
+        }
+        required[id.index()] = true;
+        values[id.index()]
+            .instruction
+            .for_each_operand(|operand| pending.push(operand));
+    }
+    required
+}
+
 impl ScalarKernelIr {
     /// Validates values and constructs a scalar kernel rooted at `root`.
     ///
@@ -106,6 +121,11 @@ impl ScalarKernelIr {
     /// Returns the scalar output identifier.
     pub fn root(&self) -> KernelValueId {
         self.root
+    }
+
+    /// Returns a mask of values needed to evaluate the scalar root.
+    pub fn required_values(&self) -> Vec<bool> {
+        required_values(&self.values, std::slice::from_ref(&self.root))
     }
 }
 
@@ -204,5 +224,10 @@ impl GradientKernelIr {
     /// Returns the differentiated component of the complex primal.
     pub fn component(&self) -> OutputComponent {
         self.component
+    }
+
+    /// Returns a mask of values needed to evaluate the derivative outputs.
+    pub fn required_values(&self) -> Vec<bool> {
+        required_values(&self.values, &self.outputs)
     }
 }
