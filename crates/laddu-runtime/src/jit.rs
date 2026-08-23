@@ -1,6 +1,7 @@
 use std::{
     fmt,
     mem::{self, size_of},
+    ops::Range,
     sync::{Arc, Mutex},
 };
 
@@ -42,6 +43,7 @@ struct CacheDescriptor {
 pub(crate) struct JitCacheView {
     values: Vec<CacheDescriptor>,
     solve_rows: Vec<CacheDescriptor>,
+    rows: usize,
 }
 
 // The descriptors borrow immutable cache allocations for the duration of an evaluation.
@@ -133,6 +135,159 @@ struct FunctionHelpers {
     solve: FuncRef,
 }
 
+/// The row interval accepted by a generated kernel. Keeping this checked and
+/// typed prevents the raw ABI from ever seeing an inverted or out-of-cache
+/// interval.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct EventRange(Range<usize>);
+
+impl EventRange {
+    fn checked(start: usize, end: usize, rows: usize) -> RuntimeResult<Self> {
+        if start > end {
+            return Err(RuntimeError::InvalidShape {
+                index: start,
+                message: format!("JIT range start {start} exceeds end {end}"),
+            });
+        }
+        if end > rows {
+            return Err(RuntimeError::InvalidShape {
+                index: end,
+                message: format!("JIT range end {end} exceeds cache length {rows}"),
+            });
+        }
+        Ok(Self(start..end))
+    }
+
+    fn invariant() -> Self {
+        Self(0..1)
+    }
+
+    fn start(&self) -> usize {
+        self.0.start
+    }
+
+    fn len(&self) -> usize {
+        self.0.len()
+    }
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+enum JitStatus {
+    Success,
+    KernelFailure,
+    InvalidComponent,
+    Unknown(i32),
+}
+
+impl JitStatus {
+    fn from_raw(status: i32) -> Self {
+        match status {
+            0 => Self::Success,
+            1 => Self::KernelFailure,
+            status => Self::Unknown(status),
+        }
+    }
+
+    // Status 1 is retained for compatibility: it is the failure status
+    // emitted by existing kernels and historically used for bad components.
+    fn raw(self) -> i32 {
+        match self {
+            Self::Success => 0,
+            Self::KernelFailure | Self::InvalidComponent => 1,
+            Self::Unknown(status) => status,
+        }
+    }
+
+    fn result(self) -> RuntimeResult<()> {
+        match self {
+            Self::Success => Ok(()),
+            status => Err(RuntimeError::JitExecution(status.raw())),
+        }
+    }
+}
+
+struct ScalarAbi<'a> {
+    function: BlockJitFn,
+    parameters: &'a ParamValues,
+    cache: Option<&'a JitCacheView>,
+    range: EventRange,
+    output: &'a mut Vec<Complex64>,
+}
+
+impl ScalarAbi<'_> {
+    fn invoke(self) -> RuntimeResult<()> {
+        let expected = self.range.len();
+        self.output.clear();
+        self.output.resize(expected, Complex64::ZERO);
+        if self.output.len() != expected {
+            return Err(RuntimeError::InvalidShape {
+                index: expected,
+                message: "JIT scalar output has an invalid length".into(),
+            });
+        }
+        let (values, solve_rows) = self
+            .cache
+            .map_or((std::ptr::null(), std::ptr::null()), |view| {
+                (view.values.as_ptr(), view.solve_rows.as_ptr())
+            });
+        let status = unsafe {
+            (self.function)(
+                self.parameters.as_slice().as_ptr(),
+                values,
+                solve_rows,
+                self.range.start(),
+                self.range.len(),
+                self.output.as_mut_ptr(),
+            )
+        };
+        JitStatus::from_raw(status).result()
+    }
+}
+
+struct GradientAbi<'a> {
+    function: GradientBlockJitFn,
+    parameters: &'a ParamValues,
+    cache: Option<&'a JitCacheView>,
+    range: EventRange,
+    parameter_count: usize,
+    output: &'a mut Vec<f64>,
+}
+
+impl GradientAbi<'_> {
+    fn invoke(self) -> RuntimeResult<()> {
+        let expected = self.range.len().checked_mul(self.parameter_count).ok_or(
+            RuntimeError::InvalidShape {
+                index: self.range.len(),
+                message: "JIT gradient output size overflow".into(),
+            },
+        )?;
+        self.output.clear();
+        self.output.resize(expected, 0.0);
+        if self.output.len() != expected {
+            return Err(RuntimeError::InvalidShape {
+                index: expected,
+                message: "JIT gradient output has an invalid length".into(),
+            });
+        }
+        let (values, solve_rows) = self
+            .cache
+            .map_or((std::ptr::null(), std::ptr::null()), |view| {
+                (view.values.as_ptr(), view.solve_rows.as_ptr())
+            });
+        let status = unsafe {
+            (self.function)(
+                self.parameters.as_slice().as_ptr(),
+                values,
+                solve_rows,
+                self.range.start(),
+                self.range.len(),
+                self.output.as_mut_ptr(),
+            )
+        };
+        JitStatus::from_raw(status).result()
+    }
+}
+
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub(crate) enum JitPrecision {
     F32,
@@ -205,11 +360,23 @@ impl JitPrecision {
     }
 }
 
-impl JitScalarKernel {
-    pub(crate) fn compile_with_precision(
-        ir: &ScalarKernelIr,
-        precision: JitPrecision,
-    ) -> Result<Option<Self>, String> {
+/// Owns all module-level JIT state while one kernel is lowered. Scalar and
+/// gradient kernels differ only in their IR and ABI parameter count; keeping
+/// module setup here makes those compile paths share one boundary.
+struct JitCompiler {
+    module: JITModule,
+    pointer_type: Type,
+    precision: JitPrecision,
+    helpers: HelperFunctions,
+}
+
+enum KernelToCompile<'a> {
+    Scalar(&'a ScalarKernelIr),
+    Gradient(&'a GradientKernelIr),
+}
+
+impl JitCompiler {
+    fn new(precision: JitPrecision) -> Result<Option<Self>, String> {
         let mut jit_builder =
             JITBuilder::new(default_libcall_names()).map_err(|error| error.to_string())?;
         register_helper_symbols(&mut jit_builder, precision);
@@ -218,42 +385,86 @@ impl JitScalarKernel {
         if pointer_type != types::I64 {
             return Ok(None);
         }
-
         let helpers = declare_helpers(&mut module, pointer_type, precision)?;
-        let mut signature = module.make_signature();
-        for _ in 0..3 {
-            signature.params.push(AbiParam::new(pointer_type));
+        Ok(Some(Self {
+            module,
+            pointer_type,
+            precision,
+            helpers,
+        }))
+    }
+
+    fn compile(
+        mut self,
+        name: &str,
+        parameter_count: usize,
+        kernel: KernelToCompile<'_>,
+    ) -> Result<(JITModule, *const u8), String> {
+        let mut signature = self.module.make_signature();
+        for _ in 0..parameter_count {
+            signature.params.push(AbiParam::new(self.pointer_type));
         }
-        signature.params.push(AbiParam::new(pointer_type));
-        signature.params.push(AbiParam::new(pointer_type));
-        signature.params.push(AbiParam::new(pointer_type));
         signature.returns.push(AbiParam::new(types::I32));
-        let function_id = module
-            .declare_function("laddu_block_kernel", Linkage::Local, &signature)
+        let function_id = self
+            .module
+            .declare_function(name, Linkage::Local, &signature)
             .map_err(|error| error.to_string())?;
-        let mut context = module.make_context();
+        let mut context = self.module.make_context();
         context.func.signature = signature;
         context.func.name = UserFuncName::user(0, function_id.as_u32());
         let mut function_context = FunctionBuilderContext::new();
-
         {
             let function_helpers = FunctionHelpers {
-                unary: module.declare_func_in_func(helpers.unary, &mut context.func),
-                binary: module.declare_func_in_func(helpers.binary, &mut context.func),
-                solve: module.declare_func_in_func(helpers.solve, &mut context.func),
+                unary: self
+                    .module
+                    .declare_func_in_func(self.helpers.unary, &mut context.func),
+                binary: self
+                    .module
+                    .declare_func_in_func(self.helpers.binary, &mut context.func),
+                solve: self
+                    .module
+                    .declare_func_in_func(self.helpers.solve, &mut context.func),
             };
             let mut builder = FunctionBuilder::new(&mut context.func, &mut function_context);
-            emit_kernel(&mut builder, ir, pointer_type, precision, &function_helpers)?;
+            match kernel {
+                KernelToCompile::Scalar(ir) => emit_kernel(
+                    &mut builder,
+                    ir,
+                    self.pointer_type,
+                    self.precision,
+                    &function_helpers,
+                )?,
+                KernelToCompile::Gradient(ir) => emit_gradient_kernel(
+                    &mut builder,
+                    ir,
+                    self.pointer_type,
+                    self.precision,
+                    &function_helpers,
+                )?,
+            }
             builder.finalize();
         }
-
-        module
+        self.module
             .define_function(function_id, &mut context)
             .map_err(|error| error.to_string())?;
-        module
+        self.module
             .finalize_definitions()
             .map_err(|error| error.to_string())?;
-        let code = module.get_finalized_function(function_id);
+        let code = self.module.get_finalized_function(function_id);
+        Ok((self.module, code))
+    }
+}
+
+impl JitScalarKernel {
+    pub(crate) fn compile_with_precision(
+        ir: &ScalarKernelIr,
+        precision: JitPrecision,
+    ) -> Result<Option<Self>, String> {
+        let Some(compiler) = JitCompiler::new(precision)? else {
+            return Ok(None);
+        };
+        let (module, code) =
+            compiler.compile("laddu_block_kernel", 6, KernelToCompile::Scalar(ir))?;
         let function = unsafe { mem::transmute::<*const u8, BlockJitFn>(code) };
         Ok(Some(Self {
             code: Arc::new(JitScalarCode {
@@ -289,42 +500,31 @@ impl JitScalarKernel {
         end: usize,
         output: &mut Vec<Complex64>,
     ) -> RuntimeResult<()> {
-        output.clear();
-        output.resize(end - start, Complex64::ZERO);
-        let status = unsafe {
-            (self.code.function)(
-                parameters.as_slice().as_ptr(),
-                view.values.as_ptr(),
-                view.solve_rows.as_ptr(),
-                start,
-                end - start,
-                output.as_mut_ptr(),
-            )
-        };
-        if status == 0 {
-            Ok(())
-        } else {
-            Err(RuntimeError::JitExecution(status))
+        let range = EventRange::checked(start, end, view.rows)?;
+        self.evaluate_abi(parameters, Some(view), range, output)
+    }
+
+    fn evaluate_abi(
+        &self,
+        parameters: &ParamValues,
+        cache: Option<&JitCacheView>,
+        range: EventRange,
+        output: &mut Vec<Complex64>,
+    ) -> RuntimeResult<()> {
+        ScalarAbi {
+            function: self.code.function,
+            parameters,
+            cache,
+            range,
+            output,
         }
+        .invoke()
     }
 
     pub(crate) fn evaluate_invariant(&self, parameters: &ParamValues) -> RuntimeResult<Complex64> {
-        let mut output = Complex64::ZERO;
-        let status = unsafe {
-            (self.code.function)(
-                parameters.as_slice().as_ptr(),
-                std::ptr::null(),
-                std::ptr::null(),
-                0,
-                1,
-                &mut output,
-            )
-        };
-        if status == 0 {
-            Ok(output)
-        } else {
-            Err(RuntimeError::JitExecution(status))
-        }
+        let mut values = vec![Complex64::ZERO];
+        self.evaluate_abi(parameters, None, EventRange::invariant(), &mut values)?;
+        Ok(values[0])
     }
 
     #[cfg(test)]
@@ -365,47 +565,14 @@ impl JitGradientKernel {
         ir: &GradientKernelIr,
         precision: JitPrecision,
     ) -> Result<JitGradientCode, String> {
-        let mut jit_builder =
-            JITBuilder::new(default_libcall_names()).map_err(|error| error.to_string())?;
-        register_helper_symbols(&mut jit_builder, precision);
-        let mut module = JITModule::new(jit_builder);
-        let pointer_type = module.target_config().pointer_type();
-        if pointer_type != types::I64 {
+        let Some(compiler) = JitCompiler::new(precision)? else {
             return Err("gradient JIT requires 64-bit pointers".into());
-        }
-
-        let helpers = declare_helpers(&mut module, pointer_type, precision)?;
-        let mut signature = module.make_signature();
-        for _ in 0..6 {
-            signature.params.push(AbiParam::new(pointer_type));
-        }
-        signature.returns.push(AbiParam::new(types::I32));
-        let function_id = module
-            .declare_function("laddu_gradient_block_kernel", Linkage::Local, &signature)
-            .map_err(|error| error.to_string())?;
-        let mut context = module.make_context();
-        context.func.signature = signature;
-        context.func.name = UserFuncName::user(0, function_id.as_u32());
-        let mut function_context = FunctionBuilderContext::new();
-
-        {
-            let function_helpers = FunctionHelpers {
-                unary: module.declare_func_in_func(helpers.unary, &mut context.func),
-                binary: module.declare_func_in_func(helpers.binary, &mut context.func),
-                solve: module.declare_func_in_func(helpers.solve, &mut context.func),
-            };
-            let mut builder = FunctionBuilder::new(&mut context.func, &mut function_context);
-            emit_gradient_kernel(&mut builder, ir, pointer_type, precision, &function_helpers)?;
-            builder.finalize();
-        }
-
-        module
-            .define_function(function_id, &mut context)
-            .map_err(|error| error.to_string())?;
-        module
-            .finalize_definitions()
-            .map_err(|error| error.to_string())?;
-        let code = module.get_finalized_function(function_id);
+        };
+        let (module, code) = compiler.compile(
+            "laddu_gradient_block_kernel",
+            6,
+            KernelToCompile::Gradient(ir),
+        )?;
         let function = unsafe { mem::transmute::<*const u8, GradientBlockJitFn>(code) };
         Ok(JitGradientCode {
             _module: Mutex::new(module),
@@ -425,35 +592,55 @@ impl JitGradientKernel {
         component: usize,
         output: &mut Vec<f64>,
     ) -> RuntimeResult<()> {
+        let component = Self::component(component)?;
+        let range = EventRange::checked(start, end, view.rows)?;
+        self.evaluate_abi(parameters, Some(view), range, component, output)
+    }
+
+    fn component(component: usize) -> RuntimeResult<OutputComponent> {
+        match component {
+            0 => Ok(OutputComponent::Real),
+            1 => Ok(OutputComponent::Imag),
+            _ => Err(RuntimeError::JitExecution(
+                JitStatus::InvalidComponent.raw(),
+            )),
+        }
+    }
+
+    fn evaluate_abi(
+        &self,
+        parameters: &ParamValues,
+        cache: Option<&JitCacheView>,
+        range: EventRange,
+        component: OutputComponent,
+        output: &mut Vec<f64>,
+    ) -> RuntimeResult<()> {
         let code = match component {
-            0 => &self.real,
-            1 => match &self.imag {
+            OutputComponent::Real => &self.real,
+            OutputComponent::Imag => match &self.imag {
                 Some(code) => code,
                 None => {
+                    let expected = range.len().checked_mul(self.real.parameter_count).ok_or(
+                        RuntimeError::InvalidShape {
+                            index: range.len(),
+                            message: "JIT gradient output size overflow".into(),
+                        },
+                    )?;
                     output.clear();
-                    output.resize((end - start) * self.real.parameter_count, 0.0);
+                    output.resize(expected, 0.0);
                     return Ok(());
                 }
             },
-            _ => return Err(RuntimeError::JitExecution(1)),
         };
-        output.clear();
-        output.resize((end - start) * code.parameter_count, 0.0);
-        let status = unsafe {
-            (code.function)(
-                parameters.as_slice().as_ptr(),
-                view.values.as_ptr(),
-                view.solve_rows.as_ptr(),
-                start,
-                end - start,
-                output.as_mut_ptr(),
-            )
-        };
-        if status == 0 {
-            Ok(())
-        } else {
-            Err(RuntimeError::JitExecution(status))
+        GradientAbi {
+            function: code.function,
+            parameters,
+            cache,
+            range,
+            parameter_count: code.parameter_count,
+            output,
         }
+        .invoke()
     }
 
     pub(crate) fn evaluate_invariant_component(
@@ -462,35 +649,8 @@ impl JitGradientKernel {
         component: usize,
         output: &mut Vec<f64>,
     ) -> RuntimeResult<()> {
-        let code = match component {
-            0 => &self.real,
-            1 => match &self.imag {
-                Some(code) => code,
-                None => {
-                    output.clear();
-                    output.resize(self.real.parameter_count, 0.0);
-                    return Ok(());
-                }
-            },
-            _ => return Err(RuntimeError::JitExecution(1)),
-        };
-        output.clear();
-        output.resize(code.parameter_count, 0.0);
-        let status = unsafe {
-            (code.function)(
-                parameters.as_slice().as_ptr(),
-                std::ptr::null(),
-                std::ptr::null(),
-                0,
-                1,
-                output.as_mut_ptr(),
-            )
-        };
-        if status == 0 {
-            Ok(())
-        } else {
-            Err(RuntimeError::JitExecution(status))
-        }
+        let component = Self::component(component)?;
+        self.evaluate_abi(parameters, None, EventRange::invariant(), component, output)
     }
 
     #[cfg(test)]
@@ -522,7 +682,11 @@ impl JitCacheView {
                 width: slot.dimension,
             })
             .collect();
-        Self { values, solve_rows }
+        Self {
+            values,
+            solve_rows,
+            rows: cache.len(),
+        }
     }
 }
 
@@ -600,6 +764,54 @@ fn declare_helpers(
     })
 }
 
+fn emit_row_loop<F>(
+    builder: &mut FunctionBuilder<'_>,
+    start: cranelift::prelude::Value,
+    len: cranelift::prelude::Value,
+    output: cranelift::prelude::Value,
+    failed: Block,
+    body: F,
+) -> Result<(), String>
+where
+    F: FnOnce(
+        &mut FunctionBuilder<'_>,
+        cranelift::prelude::Value,
+        cranelift::prelude::Value,
+        cranelift::prelude::Value,
+        Block,
+    ) -> Result<(), String>,
+{
+    let loop_header = builder.create_block();
+    let body_block = builder.create_block();
+    let done = builder.create_block();
+    builder.append_block_param(loop_header, types::I64);
+    let end = builder.ins().iadd(start, len);
+    builder.ins().jump(loop_header, &[BlockArg::from(start)]);
+    builder.switch_to_block(loop_header);
+    let row = builder.block_params(loop_header)[0];
+    let finished = builder
+        .ins()
+        .icmp(IntCC::UnsignedGreaterThanOrEqual, row, end);
+    builder.ins().brif(finished, done, &[], body_block, &[]);
+    builder.switch_to_block(body_block);
+    let output_row = builder.ins().isub(row, start);
+    body(builder, row, output_row, output, failed)?;
+    let next = builder.ins().iadd_imm(row, 1);
+    builder.ins().jump(loop_header, &[BlockArg::from(next)]);
+    builder.switch_to_block(done);
+    let success_status = builder
+        .ins()
+        .iconst(types::I32, JitStatus::Success.raw() as i64);
+    builder.ins().return_(&[success_status]);
+    builder.switch_to_block(failed);
+    let failure_status = builder
+        .ins()
+        .iconst(types::I32, JitStatus::KernelFailure.raw() as i64);
+    builder.ins().return_(&[failure_status]);
+    builder.seal_all_blocks();
+    Ok(())
+}
+
 fn emit_kernel(
     builder: &mut FunctionBuilder<'_>,
     ir: &ScalarKernelIr,
@@ -608,12 +820,8 @@ fn emit_kernel(
     helpers: &FunctionHelpers,
 ) -> Result<(), String> {
     let entry = builder.create_block();
-    let loop_header = builder.create_block();
-    let body = builder.create_block();
-    let done = builder.create_block();
     let failed = builder.create_block();
     builder.append_block_params_for_function_params(entry);
-    builder.append_block_param(loop_header, pointer_type);
     builder.switch_to_block(entry);
     let args = builder.block_params(entry).to_vec();
     let parameters = args[0];
@@ -622,85 +830,69 @@ fn emit_kernel(
     let start = args[3];
     let len = args[4];
     let output = args[5];
-    let end = builder.ins().iadd(start, len);
-
     let mut invariant = vec![None; ir.values().len()];
     let invariant_row = builder.ins().iconst(pointer_type, 0);
     for (index, value) in ir.values().iter().enumerate() {
         if value.class == KernelValueClass::Invariant {
-            invariant[index] = Some(emit_instruction(
-                builder,
-                value,
-                &invariant,
+            let lowered = LoweringContext {
+                values: &invariant,
                 parameters,
                 cache,
                 solve_rows,
-                invariant_row,
+                row: invariant_row,
                 pointer_type,
                 precision,
                 helpers,
                 failed,
-            )?);
+            }
+            .emit(builder, value)?;
+            invariant[index] = Some(lowered);
         }
     }
-    let start_arg = BlockArg::from(start);
-    builder.ins().jump(loop_header, &[start_arg]);
-
-    builder.switch_to_block(loop_header);
-    let row = builder.block_params(loop_header)[0];
-    let finished = builder
-        .ins()
-        .icmp(IntCC::UnsignedGreaterThanOrEqual, row, end);
-    builder.ins().brif(finished, done, &[], body, &[]);
-
-    builder.switch_to_block(body);
-    let mut values = invariant.clone();
-    for (index, value) in ir.values().iter().enumerate() {
-        if value.class == KernelValueClass::Event {
-            values[index] = Some(emit_instruction(
-                builder,
-                value,
-                &values,
-                parameters,
-                cache,
-                solve_rows,
-                row,
-                pointer_type,
-                precision,
-                helpers,
-                failed,
-            )?);
-        }
-    }
-    let root = values[ir.root().index()]
-        .as_ref()
-        .ok_or("kernel root was not lowered")?;
-    let result = root.elements.first().ok_or("kernel root is empty")?;
-    let output_row = builder.ins().isub(row, start);
-    let byte_offset = builder
-        .ins()
-        .imul_imm(output_row, size_of::<Complex64>() as i64);
-    let output_ptr = builder.ins().iadd(output, byte_offset);
-    let result_re = precision.promote_to_f64(builder, result.re);
-    let result_im = precision.promote_to_f64(builder, result.im);
-    builder
-        .ins()
-        .store(MemFlagsData::trusted(), result_re, output_ptr, 0);
-    builder
-        .ins()
-        .store(MemFlagsData::trusted(), result_im, output_ptr, 8);
-    let next = builder.ins().iadd_imm(row, 1);
-    let next_arg = BlockArg::from(next);
-    builder.ins().jump(loop_header, &[next_arg]);
-
-    builder.switch_to_block(done);
-    let success_status = builder.ins().iconst(types::I32, 0);
-    builder.ins().return_(&[success_status]);
-    builder.switch_to_block(failed);
-    let failure_status = builder.ins().iconst(types::I32, 1);
-    builder.ins().return_(&[failure_status]);
-    builder.seal_all_blocks();
-    Ok(())
+    emit_row_loop(
+        builder,
+        start,
+        len,
+        output,
+        failed,
+        |builder, row, output_row, output, failed| {
+            let mut values = invariant.clone();
+            for (index, value) in ir.values().iter().enumerate() {
+                if value.class == KernelValueClass::Event {
+                    let lowered = LoweringContext {
+                        values: &values,
+                        parameters,
+                        cache,
+                        solve_rows,
+                        row,
+                        pointer_type,
+                        precision,
+                        helpers,
+                        failed,
+                    }
+                    .emit(builder, value)?;
+                    values[index] = Some(lowered);
+                }
+            }
+            let root = values[ir.root().index()]
+                .as_ref()
+                .ok_or("kernel root was not lowered")?;
+            let result = root.elements.first().ok_or("kernel root is empty")?;
+            let byte_offset = builder
+                .ins()
+                .imul_imm(output_row, size_of::<Complex64>() as i64);
+            let output_ptr = builder.ins().iadd(output, byte_offset);
+            let result_re = precision.promote_to_f64(builder, result.re);
+            let result_im = precision.promote_to_f64(builder, result.im);
+            builder
+                .ins()
+                .store(MemFlagsData::trusted(), result_re, output_ptr, 0);
+            builder
+                .ins()
+                .store(MemFlagsData::trusted(), result_im, output_ptr, 8);
+            Ok(())
+        },
+    )
 }
 
 fn emit_gradient_kernel(
@@ -711,12 +903,8 @@ fn emit_gradient_kernel(
     helpers: &FunctionHelpers,
 ) -> Result<(), String> {
     let entry = builder.create_block();
-    let loop_header = builder.create_block();
-    let body = builder.create_block();
-    let done = builder.create_block();
     let failed = builder.create_block();
     builder.append_block_params_for_function_params(entry);
-    builder.append_block_param(loop_header, pointer_type);
     builder.switch_to_block(entry);
     let args = builder.block_params(entry).to_vec();
     let parameters = args[0];
@@ -725,81 +913,68 @@ fn emit_gradient_kernel(
     let start = args[3];
     let len = args[4];
     let output = args[5];
-    let end = builder.ins().iadd(start, len);
-
     let required = ir.required_values();
     let mut invariant = vec![None; ir.values().len()];
     let invariant_row = builder.ins().iconst(pointer_type, 0);
     for (index, value) in ir.values().iter().enumerate() {
         if required[index] && value.class == KernelValueClass::Invariant {
-            invariant[index] = Some(emit_instruction(
-                builder,
-                value,
-                &invariant,
+            let lowered = LoweringContext {
+                values: &invariant,
                 parameters,
                 cache,
                 solve_rows,
-                invariant_row,
+                row: invariant_row,
                 pointer_type,
                 precision,
                 helpers,
                 failed,
-            )?);
+            }
+            .emit(builder, value)?;
+            invariant[index] = Some(lowered);
         }
     }
-    builder.ins().jump(loop_header, &[BlockArg::from(start)]);
+    emit_row_loop(
+        builder,
+        start,
+        len,
+        output,
+        failed,
+        |builder, row, output_row, output, failed| {
+            let mut values = invariant.clone();
+            for (index, value) in ir.values().iter().enumerate() {
+                if required[index] && value.class == KernelValueClass::Event {
+                    let lowered = LoweringContext {
+                        values: &values,
+                        parameters,
+                        cache,
+                        solve_rows,
+                        row,
+                        pointer_type,
+                        precision,
+                        helpers,
+                        failed,
+                    }
+                    .emit(builder, value)?;
+                    values[index] = Some(lowered);
+                }
+            }
 
-    builder.switch_to_block(loop_header);
-    let row = builder.block_params(loop_header)[0];
-    let finished = builder
-        .ins()
-        .icmp(IntCC::UnsignedGreaterThanOrEqual, row, end);
-    builder.ins().brif(finished, done, &[], body, &[]);
-
-    builder.switch_to_block(body);
-    let mut values = invariant.clone();
-    for (index, value) in ir.values().iter().enumerate() {
-        if required[index] && value.class == KernelValueClass::Event {
-            values[index] = Some(emit_instruction(
-                builder,
-                value,
-                &values,
-                parameters,
-                cache,
-                solve_rows,
-                row,
-                pointer_type,
-                precision,
-                helpers,
-                failed,
-            )?);
-        }
-    }
-
-    let output_row = builder.ins().isub(row, start);
-    let row_offset = builder
-        .ins()
-        .imul_imm(output_row, (ir.outputs().len() * size_of::<f64>()) as i64);
-    let output_ptr = builder.ins().iadd(output, row_offset);
-    for (index, output) in ir.outputs().iter().enumerate() {
-        let derivative = precision.promote_to_f64(builder, lowered_scalar(&values, *output)?.re);
-        let offset = i32::try_from(index * size_of::<f64>())
-            .map_err(|_| "gradient output offset exceeds JIT address range")?;
-        builder
-            .ins()
-            .store(MemFlagsData::trusted(), derivative, output_ptr, offset);
-    }
-    let next = builder.ins().iadd_imm(row, 1);
-    builder.ins().jump(loop_header, &[BlockArg::from(next)]);
-
-    builder.switch_to_block(done);
-    let success_status = builder.ins().iconst(types::I32, 0);
-    builder.ins().return_(&[success_status]);
-    builder.switch_to_block(failed);
-    let failure_status = builder.ins().iconst(types::I32, 1);
-    builder.ins().return_(&[failure_status]);
-    builder.seal_all_blocks();
-    Ok(())
+            let row_offset = builder
+                .ins()
+                .imul_imm(output_row, (ir.outputs().len() * size_of::<f64>()) as i64);
+            let output_ptr = builder.ins().iadd(output, row_offset);
+            for (index, output) in ir.outputs().iter().enumerate() {
+                let derivative =
+                    precision.promote_to_f64(builder, lowered_scalar(&values, *output)?.re);
+                let offset = i32::try_from(index * size_of::<f64>())
+                    .map_err(|_| "gradient output offset exceeds JIT address range")?;
+                builder
+                    .ins()
+                    .store(MemFlagsData::trusted(), derivative, output_ptr, offset);
+            }
+            Ok(())
+        },
+    )
 }
 
 fn lowered_value(
@@ -822,229 +997,245 @@ fn lowered_scalar(
         .ok_or_else(|| String::from("scalar operand is empty"))
 }
 
-#[allow(clippy::too_many_arguments)]
-fn emit_instruction(
-    builder: &mut FunctionBuilder<'_>,
-    value: &KernelValue,
-    values: &[Option<LoweredValue>],
+struct LoweringContext<'a> {
+    values: &'a [Option<LoweredValue>],
     parameters: cranelift::prelude::Value,
     cache: cranelift::prelude::Value,
     solve_rows: cranelift::prelude::Value,
     row: cranelift::prelude::Value,
     pointer_type: Type,
     precision: JitPrecision,
-    helpers: &FunctionHelpers,
+    helpers: &'a FunctionHelpers,
     failed: Block,
-) -> Result<LoweredValue, String> {
-    let get = |id: KernelValueId| {
-        values[id.index()]
-            .as_ref()
-            .ok_or_else(|| format!("kernel operand {} was not lowered", id.index()))
-    };
-    let scalar = |id: KernelValueId| -> Result<ComplexValue, String> {
-        get(id)?
-            .elements
-            .first()
-            .copied()
-            .ok_or_else(|| "scalar operand is empty".into())
-    };
-    let zero = |builder: &mut FunctionBuilder<'_>| ComplexValue {
-        re: precision.zero(builder),
-        im: precision.zero(builder),
-    };
-    let elements = match &value.instruction {
-        KernelInstruction::Cached(slot) => load_descriptor(
-            builder,
-            cache,
-            *slot,
-            value.kind,
-            row,
-            pointer_type,
-            precision,
-        )?,
-        KernelInstruction::RealConstant(number) => vec![ComplexValue {
-            re: precision.constant(builder, *number),
+}
+
+impl LoweringContext<'_> {
+    fn emit(
+        &self,
+        builder: &mut FunctionBuilder<'_>,
+        value: &KernelValue,
+    ) -> Result<LoweredValue, String> {
+        let values = self.values;
+        let parameters = self.parameters;
+        let cache = self.cache;
+        let solve_rows = self.solve_rows;
+        let row = self.row;
+        let pointer_type = self.pointer_type;
+        let precision = self.precision;
+        let helpers = self.helpers;
+        let failed = self.failed;
+        let get = |id: KernelValueId| {
+            values[id.index()]
+                .as_ref()
+                .ok_or_else(|| format!("kernel operand {} was not lowered", id.index()))
+        };
+        let scalar = |id: KernelValueId| -> Result<ComplexValue, String> {
+            get(id)?
+                .elements
+                .first()
+                .copied()
+                .ok_or_else(|| "scalar operand is empty".into())
+        };
+        let zero = |builder: &mut FunctionBuilder<'_>| ComplexValue {
+            re: precision.zero(builder),
             im: precision.zero(builder),
-        }],
-        KernelInstruction::ComplexConstant(number) => vec![ComplexValue {
-            re: precision.constant(builder, number.re),
-            im: precision.constant(builder, number.im),
-        }],
-        KernelInstruction::Parameter(id) => {
-            let offset = i32::try_from(id.index() * size_of::<f64>())
-                .map_err(|_| "parameter offset exceeds JIT address range")?;
-            let re = builder
-                .ins()
-                .load(types::F64, MemFlagsData::trusted(), parameters, offset);
-            vec![ComplexValue {
-                re: precision.demote_from_f64(builder, re),
+        };
+        let elements = match &value.instruction {
+            KernelInstruction::Cached(slot) => load_descriptor(
+                builder,
+                cache,
+                *slot,
+                value.kind,
+                row,
+                pointer_type,
+                precision,
+            )?,
+            KernelInstruction::RealConstant(number) => vec![ComplexValue {
+                re: precision.constant(builder, *number),
                 im: precision.zero(builder),
-            }]
-        }
-        KernelInstruction::Unary { op, input } => vec![emit_unary(
-            builder,
-            *op,
-            scalar(*input)?,
-            pointer_type,
-            precision,
-            helpers.unary,
-        )],
-        KernelInstruction::Binary { op, lhs, rhs } => vec![emit_binary(
-            builder,
-            *op,
-            scalar(*lhs)?,
-            scalar(*rhs)?,
-            pointer_type,
-            precision,
-            helpers.binary,
-        )],
-        KernelInstruction::Add(terms) => {
-            let mut out = zero(builder);
-            for term in terms {
-                out = add(builder, out, scalar(*term)?);
+            }],
+            KernelInstruction::ComplexConstant(number) => vec![ComplexValue {
+                re: precision.constant(builder, number.re),
+                im: precision.constant(builder, number.im),
+            }],
+            KernelInstruction::Parameter(id) => {
+                let offset = i32::try_from(id.index() * size_of::<f64>())
+                    .map_err(|_| "parameter offset exceeds JIT address range")?;
+                let re =
+                    builder
+                        .ins()
+                        .load(types::F64, MemFlagsData::trusted(), parameters, offset);
+                vec![ComplexValue {
+                    re: precision.demote_from_f64(builder, re),
+                    im: precision.zero(builder),
+                }]
             }
-            vec![out]
-        }
-        KernelInstruction::Mul(factors) => {
-            let mut out = ComplexValue {
-                re: precision.one(builder),
-                im: precision.zero(builder),
-            };
-            for factor in factors {
-                out = mul(builder, out, scalar(*factor)?);
+            KernelInstruction::Unary { op, input } => vec![emit_unary(
+                builder,
+                *op,
+                scalar(*input)?,
+                pointer_type,
+                precision,
+                helpers.unary,
+            )],
+            KernelInstruction::Binary { op, lhs, rhs } => vec![emit_binary(
+                builder,
+                *op,
+                scalar(*lhs)?,
+                scalar(*rhs)?,
+                pointer_type,
+                precision,
+                helpers.binary,
+            )],
+            KernelInstruction::Add(terms) => {
+                let mut out = zero(builder);
+                for term in terms {
+                    out = add(builder, out, scalar(*term)?);
+                }
+                vec![out]
             }
-            vec![out]
-        }
-        KernelInstruction::Complex { re, im } => vec![ComplexValue {
-            re: scalar(*re)?.re,
-            im: scalar(*im)?.re,
-        }],
-        KernelInstruction::Vector(entries) => entries
-            .iter()
-            .map(|entry| scalar(*entry))
-            .collect::<Result<_, _>>()?,
-        KernelInstruction::Matrix { elements, .. } => elements
-            .iter()
-            .map(|entry| scalar(*entry))
-            .collect::<Result<_, _>>()?,
-        KernelInstruction::Component { input, index } => vec![get(*input)?.elements[*index]],
-        KernelInstruction::MatrixElement { input, row, col } => {
-            let kind = get(*input)?.kind;
-            let KernelValueKind::Matrix { .. } = kind else {
-                unreachable!()
-            };
-            let offset = kind
-                .checked_row_major_index(*row, *col)
-                .expect("validated kernel matrix element is in bounds");
-            vec![get(*input)?.elements[offset]]
-        }
-        KernelInstruction::MatMul { lhs, rhs } => {
-            let lhs = get(*lhs)?;
-            let rhs = get(*rhs)?;
-            let (
-                KernelValueKind::Matrix { rows, cols: inner },
-                KernelValueKind::Matrix { cols, .. },
-            ) = (lhs.kind, rhs.kind)
-            else {
-                unreachable!()
-            };
-            let mut out = Vec::with_capacity(rows * cols);
-            for r in 0..rows {
-                for c in 0..cols {
+            KernelInstruction::Mul(factors) => {
+                let mut out = ComplexValue {
+                    re: precision.one(builder),
+                    im: precision.zero(builder),
+                };
+                for factor in factors {
+                    out = mul(builder, out, scalar(*factor)?);
+                }
+                vec![out]
+            }
+            KernelInstruction::Complex { re, im } => vec![ComplexValue {
+                re: scalar(*re)?.re,
+                im: scalar(*im)?.re,
+            }],
+            KernelInstruction::Vector(entries) => entries
+                .iter()
+                .map(|entry| scalar(*entry))
+                .collect::<Result<_, _>>()?,
+            KernelInstruction::Matrix { elements, .. } => elements
+                .iter()
+                .map(|entry| scalar(*entry))
+                .collect::<Result<_, _>>()?,
+            KernelInstruction::Component { input, index } => vec![get(*input)?.elements[*index]],
+            KernelInstruction::MatrixElement { input, row, col } => {
+                let kind = get(*input)?.kind;
+                let KernelValueKind::Matrix { .. } = kind else {
+                    unreachable!()
+                };
+                let offset = kind
+                    .checked_row_major_index(*row, *col)
+                    .expect("validated kernel matrix element is in bounds");
+                vec![get(*input)?.elements[offset]]
+            }
+            KernelInstruction::MatMul { lhs, rhs } => {
+                let lhs = get(*lhs)?;
+                let rhs = get(*rhs)?;
+                let (
+                    KernelValueKind::Matrix { rows, cols: inner },
+                    KernelValueKind::Matrix { cols, .. },
+                ) = (lhs.kind, rhs.kind)
+                else {
+                    unreachable!()
+                };
+                let mut out = Vec::with_capacity(rows * cols);
+                for r in 0..rows {
+                    for c in 0..cols {
+                        let mut sum = zero(builder);
+                        for k in 0..inner {
+                            let product = mul(
+                                builder,
+                                lhs.elements[r * inner + k],
+                                rhs.elements[k * cols + c],
+                            );
+                            sum = add(builder, sum, product);
+                        }
+                        out.push(sum);
+                    }
+                }
+                out
+            }
+            KernelInstruction::MatVec { matrix, vector } => {
+                let matrix = get(*matrix)?;
+                let vector = get(*vector)?;
+                let KernelValueKind::Matrix { rows, cols } = matrix.kind else {
+                    unreachable!()
+                };
+                let mut out = Vec::with_capacity(rows);
+                for r in 0..rows {
                     let mut sum = zero(builder);
-                    for k in 0..inner {
-                        let product = mul(
-                            builder,
-                            lhs.elements[r * inner + k],
-                            rhs.elements[k * cols + c],
-                        );
+                    for c in 0..cols {
+                        let product =
+                            mul(builder, matrix.elements[r * cols + c], vector.elements[c]);
                         sum = add(builder, sum, product);
                     }
                     out.push(sum);
                 }
+                out
             }
-            out
-        }
-        KernelInstruction::MatVec { matrix, vector } => {
-            let matrix = get(*matrix)?;
-            let vector = get(*vector)?;
-            let KernelValueKind::Matrix { rows, cols } = matrix.kind else {
-                unreachable!()
-            };
-            let mut out = Vec::with_capacity(rows);
-            for r in 0..rows {
+            KernelInstruction::Dot { lhs, rhs } => {
+                let lhs = get(*lhs)?;
+                let rhs = get(*rhs)?;
                 let mut sum = zero(builder);
-                for c in 0..cols {
-                    let product = mul(builder, matrix.elements[r * cols + c], vector.elements[c]);
+                for (lhs, rhs) in lhs.elements.iter().zip(&rhs.elements) {
+                    let product = mul(builder, *lhs, *rhs);
                     sum = add(builder, sum, product);
                 }
-                out.push(sum);
+                vec![sum]
             }
-            out
-        }
-        KernelInstruction::Dot { lhs, rhs } => {
-            let lhs = get(*lhs)?;
-            let rhs = get(*rhs)?;
-            let mut sum = zero(builder);
-            for (lhs, rhs) in lhs.elements.iter().zip(&rhs.elements) {
-                let product = mul(builder, *lhs, *rhs);
-                sum = add(builder, sum, product);
+            KernelInstruction::Solve { matrix, rhs } => {
+                let matrix = get(*matrix)?;
+                let rhs = get(*rhs)?;
+                emit_solve(
+                    builder,
+                    &matrix.elements,
+                    &rhs.elements,
+                    pointer_type,
+                    precision,
+                    helpers.solve,
+                    failed,
+                )?
             }
-            vec![sum]
-        }
-        KernelInstruction::Solve { matrix, rhs } => {
-            let matrix = get(*matrix)?;
-            let rhs = get(*rhs)?;
-            emit_solve(
-                builder,
-                &matrix.elements,
-                &rhs.elements,
-                pointer_type,
-                precision,
-                helpers.solve,
-                failed,
-            )?
-        }
-        KernelInstruction::SolveRow { row_slot, rhs } => {
-            let inverse = load_descriptor(
-                builder,
-                solve_rows,
-                *row_slot,
-                KernelValueKind::Vector { len: rhs.len() },
-                row,
-                pointer_type,
-                precision,
-            )?;
-            let mut sum = zero(builder);
-            for (coefficient, rhs) in inverse.iter().zip(rhs) {
-                let product = mul(builder, *coefficient, scalar(*rhs)?);
-                sum = add(builder, sum, product);
+            KernelInstruction::SolveRow { row_slot, rhs } => {
+                let inverse = load_descriptor(
+                    builder,
+                    solve_rows,
+                    *row_slot,
+                    KernelValueKind::Vector { len: rhs.len() },
+                    row,
+                    pointer_type,
+                    precision,
+                )?;
+                let mut sum = zero(builder);
+                for (coefficient, rhs) in inverse.iter().zip(rhs) {
+                    let product = mul(builder, *coefficient, scalar(*rhs)?);
+                    sum = add(builder, sum, product);
+                }
+                vec![sum]
             }
-            vec![sum]
-        }
-        KernelInstruction::SolveRowAdjointElement {
-            row_slot,
-            index,
-            len,
-            adjoint,
-        } => {
-            let coefficient = load_complex_descriptor_element(
-                builder,
-                solve_rows,
-                *row_slot,
-                *index,
-                *len,
-                row,
-                pointer_type,
-                precision,
-            )?;
-            vec![mul_conj(builder, scalar(*adjoint)?, coefficient)]
-        }
-    };
-    Ok(LoweredValue {
-        kind: value.kind,
-        elements,
-    })
+            KernelInstruction::SolveRowAdjointElement {
+                row_slot,
+                index,
+                len,
+                adjoint,
+            } => {
+                let coefficient = load_complex_descriptor_element(
+                    builder,
+                    solve_rows,
+                    *row_slot,
+                    *index,
+                    *len,
+                    row,
+                    pointer_type,
+                    precision,
+                )?;
+                vec![mul_conj(builder, scalar(*adjoint)?, coefficient)]
+            }
+        };
+        Ok(LoweredValue {
+            kind: value.kind,
+            elements,
+        })
+    }
 }
 
 #[allow(clippy::too_many_arguments)]

@@ -2,6 +2,7 @@
 
 mod adapter;
 mod error;
+mod readback;
 mod scalar;
 
 pub use adapter::{

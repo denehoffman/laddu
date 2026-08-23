@@ -1,6 +1,60 @@
 use super::*;
 
 #[cfg(feature = "jit")]
+use crate::jit::JitScalarKernel;
+
+#[cfg(feature = "jit")]
+#[test]
+fn jit_abi_validates_ranges_output_sizes_and_components() {
+    let offset = laddu_expr::Expr::from(parameter!("offset", initial: 0.25));
+    let model = CompiledModel::from_expr(&(event_scalar("x") + offset)).unwrap();
+    let params = model.params().default_values();
+    let (jit, _) = f64_jit_and_interpreter(&model);
+    let ScalarExecutor::Jit(value_kernel) = jit.scalar_executor.as_ref().unwrap() else {
+        unreachable!("f64_jit_and_interpreter should select the scalar JIT");
+    };
+    let batch = EventBatch::from_events(
+        Arc::new(Schema::new(std::iter::empty::<&str>(), ["x"], false).unwrap()),
+        [
+            OwnedEvent::new(vec![], vec![0.25]),
+            OwnedEvent::new(vec![], vec![0.75]),
+        ],
+    )
+    .unwrap();
+    let cache = jit.cache_event_batch(&batch).unwrap();
+    let view = JitScalarKernel::prepare_cache(&cache);
+    let mut output = vec![num::complex::Complex64::new(1.0, 0.0)];
+
+    assert!(
+        value_kernel
+            .evaluate_prepared(&params, &view, 1, 1, &mut output)
+            .is_ok()
+    );
+    assert!(output.is_empty(), "empty ABI ranges must produce no output");
+    assert!(matches!(
+        value_kernel.evaluate_prepared(&params, &view, 2, 3, &mut output),
+        Err(RuntimeError::InvalidShape { .. })
+    ));
+    assert!(matches!(
+        value_kernel.evaluate_prepared(&params, &view, 2, 1, &mut output),
+        Err(RuntimeError::InvalidShape { .. })
+    ));
+
+    let GradientExecutor::Jit(gradient_kernel) = &jit.gradient_executor else {
+        panic!("event scalar should have a gradient JIT");
+    };
+    assert!(matches!(
+        gradient_kernel.evaluate_prepared(&params, &view, 0, 1, 2, &mut Vec::new()),
+        Err(RuntimeError::JitExecution(1))
+    ));
+    let mut missing_imaginary = vec![1.0];
+    gradient_kernel
+        .evaluate_prepared(&params, &view, 0, 1, 1, &mut missing_imaginary)
+        .unwrap();
+    assert_eq!(missing_imaginary, vec![0.0]);
+}
+
+#[cfg(feature = "jit")]
 #[test]
 fn forward_and_reverse_gradients_match_interpreter_and_jit_in_both_precisions() {
     let event = event_scalar("x");
