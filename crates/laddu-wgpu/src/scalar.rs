@@ -1,5 +1,3 @@
-use std::sync::mpsc;
-
 use laddu_compile::{CompiledModel, ExecutablePlan, ReductionPlan, ReductionTransform};
 use laddu_data::data::{EventBatch, accurate::AccurateF64};
 use laddu_expr::{BinaryOp, ExprNode, P4Component, UnaryOp, parameters::ParamValues};
@@ -10,6 +8,7 @@ use laddu_kernel::ir::{
 use laddu_memory::{FootprintOverflow, MemoryFootprint};
 use wgpu::util::DeviceExt;
 
+use crate::readback::{decode_singular_status, decode_status, submit_and_readback};
 use crate::{WgpuContext, WgpuError, WgpuResult};
 
 /// A compiled scalar model kernel and its reduction pipelines.
@@ -352,30 +351,9 @@ impl WgpuScalarKernel {
         });
         let mut encoder = context.device().create_command_encoder(&Default::default());
         encoder.copy_buffer_to_buffer(error, 0, &staging, 0, 4);
-        context.queue().submit([encoder.finish()]);
-        let slice = staging.slice(..);
-        let (sender, receiver) = mpsc::channel();
-        slice.map_async(wgpu::MapMode::Read, move |result| {
-            let _ = sender.send(result);
-        });
-        context
-            .device()
-            .poll(wgpu::PollType::Wait {
-                submission_index: None,
-                timeout: None,
-            })
-            .map_err(|error| WgpuError::DevicePoll(error.to_string()))?;
-        receiver
-            .recv()
-            .map_err(|error| WgpuError::BufferMap(error.to_string()))?
-            .map_err(|error| WgpuError::BufferMap(error.to_string()))?;
-        let mapped = slice
-            .get_mapped_range()
-            .map_err(|error| WgpuError::BufferMap(error.to_string()))?;
-        let value = u32::from_ne_bytes(mapped[..4].try_into().expect("error is four bytes"));
-        drop(mapped);
-        staging.unmap();
-        Ok((value != u32::MAX).then_some(value as usize))
+        submit_and_readback(context, encoder, &staging, 4, |mapped| {
+            Ok(decode_singular_status(mapped)?.singular_event)
+        })
     }
 
     /// Evaluates a model with no event-dependent inputs.
@@ -899,46 +877,23 @@ impl WgpuScalarKernel {
             (partial_bytes + 4) as u64,
             4,
         );
-        context.queue().submit([encoder.finish()]);
-        let slice = scratch.staging.slice(..(partial_bytes + 8) as u64);
-        let (sender, receiver) = mpsc::channel();
-        slice.map_async(wgpu::MapMode::Read, move |result| {
-            let _ = sender.send(result);
-        });
-        context
-            .device()
-            .poll(wgpu::PollType::Wait {
-                submission_index: None,
-                timeout: None,
-            })
-            .map_err(|error| WgpuError::DevicePoll(error.to_string()))?;
-        receiver
-            .recv()
-            .map_err(|error| WgpuError::BufferMap(error.to_string()))?
-            .map_err(|error| WgpuError::BufferMap(error.to_string()))?;
-        let mapped = slice
-            .get_mapped_range()
-            .map_err(|error| WgpuError::BufferMap(error.to_string()))?;
-        let invalid =
-            u32::from_ne_bytes(mapped[partial_bytes..partial_bytes + 4].try_into().unwrap());
-        let singular = u32::from_ne_bytes(
-            mapped[partial_bytes + 4..partial_bytes + 8]
-                .try_into()
-                .unwrap(),
-        );
-        let mut total = AccurateF64::zero();
-        for value in self.decode_scalars(&mapped[..partial_bytes]) {
-            total.push(value);
-        }
-        drop(mapped);
-        scratch.staging.unmap();
-        if invalid != u32::MAX {
-            return Err(WgpuError::NonPositiveEvent(invalid as usize));
-        }
-        if singular != u32::MAX {
-            return Err(WgpuError::SingularMatrixEvent(singular as usize));
-        }
-        Ok(total.finish())
+        submit_and_readback(
+            context,
+            encoder,
+            &scratch.staging,
+            (partial_bytes + 8) as u64,
+            |mapped| {
+                let status = decode_status(&mapped[partial_bytes..], 2)?;
+                if let Some(error) = status.error() {
+                    return Err(error);
+                }
+                let mut total = AccurateF64::zero();
+                for value in self.decode_scalars(&mapped[..partial_bytes]) {
+                    total.push(value);
+                }
+                Ok(total.finish())
+            },
+        )
     }
 
     fn execute_prepared_gradient_reduce(
@@ -1013,52 +968,29 @@ impl WgpuScalarKernel {
             (partial_bytes + 4) as u64,
             4,
         );
-        context.queue().submit([encoder.finish()]);
-        let slice = scratch.staging.slice(..(partial_bytes + 8) as u64);
-        let (sender, receiver) = mpsc::channel();
-        slice.map_async(wgpu::MapMode::Read, move |result| {
-            let _ = sender.send(result);
-        });
-        context
-            .device()
-            .poll(wgpu::PollType::Wait {
-                submission_index: None,
-                timeout: None,
-            })
-            .map_err(|error| WgpuError::DevicePoll(error.to_string()))?;
-        receiver
-            .recv()
-            .map_err(|error| WgpuError::BufferMap(error.to_string()))?
-            .map_err(|error| WgpuError::BufferMap(error.to_string()))?;
-        let mapped = slice
-            .get_mapped_range()
-            .map_err(|error| WgpuError::BufferMap(error.to_string()))?;
-        let invalid =
-            u32::from_ne_bytes(mapped[partial_bytes..partial_bytes + 4].try_into().unwrap());
-        let singular = u32::from_ne_bytes(
-            mapped[partial_bytes + 4..partial_bytes + 8]
-                .try_into()
-                .unwrap(),
-        );
-        let partials = self.decode_scalars(&mapped[..partial_bytes]);
-        let mut sums = (0..self.partial_width)
-            .map(|_| AccurateF64::zero())
-            .collect::<Vec<_>>();
-        for group in 0..groups {
-            for component in 0..self.partial_width {
-                sums[component].push(partials[group * self.partial_width + component]);
-            }
-        }
-        drop(mapped);
-        scratch.staging.unmap();
-        if invalid != u32::MAX {
-            return Err(WgpuError::NonPositiveEvent(invalid as usize));
-        }
-        if singular != u32::MAX {
-            return Err(WgpuError::SingularMatrixEvent(singular as usize));
-        }
-        let mut values = sums.into_iter().map(AccurateF64::finish);
-        Ok((values.next().unwrap_or(0.0), values.collect()))
+        submit_and_readback(
+            context,
+            encoder,
+            &scratch.staging,
+            (partial_bytes + 8) as u64,
+            |mapped| {
+                let status = decode_status(&mapped[partial_bytes..], 2)?;
+                if let Some(error) = status.error() {
+                    return Err(error);
+                }
+                let partials = self.decode_scalars(&mapped[..partial_bytes]);
+                let mut sums = (0..self.partial_width)
+                    .map(|_| AccurateF64::zero())
+                    .collect::<Vec<_>>();
+                for group in 0..groups {
+                    for component in 0..self.partial_width {
+                        sums[component].push(partials[group * self.partial_width + component]);
+                    }
+                }
+                let mut values = sums.into_iter().map(AccurateF64::finish);
+                Ok((values.next().unwrap_or(0.0), values.collect()))
+            },
+        )
     }
 
     fn reduce_chunk(
@@ -1211,44 +1143,17 @@ impl WgpuScalarKernel {
         encoder.copy_buffer_to_buffer(&partials, 0, &staging, 0, partial_bytes as u64);
         encoder.copy_buffer_to_buffer(&error, 0, &staging, partial_bytes as u64, 4);
         encoder.copy_buffer_to_buffer(solve_error, 0, &staging, (partial_bytes + 4) as u64, 4);
-        context.queue().submit([encoder.finish()]);
-        let slice = staging.slice(..);
-        let (sender, receiver) = mpsc::channel();
-        slice.map_async(wgpu::MapMode::Read, move |result| {
-            let _ = sender.send(result);
-        });
-        context
-            .device()
-            .poll(wgpu::PollType::Wait {
-                submission_index: None,
-                timeout: None,
-            })
-            .map_err(|error| WgpuError::DevicePoll(error.to_string()))?;
-        receiver
-            .recv()
-            .map_err(|error| WgpuError::BufferMap(error.to_string()))?
-            .map_err(|error| WgpuError::BufferMap(error.to_string()))?;
-        let mapped = slice
-            .get_mapped_range()
-            .map_err(|error| WgpuError::BufferMap(error.to_string()))?;
-        let invalid =
-            u32::from_ne_bytes(mapped[partial_bytes..partial_bytes + 4].try_into().unwrap());
-        let singular = u32::from_ne_bytes(
-            mapped[partial_bytes + 4..partial_bytes + 8]
-                .try_into()
-                .unwrap(),
-        );
-        if invalid != u32::MAX {
-            return Err(WgpuError::NonPositiveEvent(invalid as usize));
-        }
-        if singular != u32::MAX {
-            return Err(WgpuError::SingularMatrixEvent(singular as usize));
-        }
-        let mut total = AccurateF64::zero();
-        for value in self.decode_scalars(&mapped[..partial_bytes]) {
-            total.push(value);
-        }
-        Ok(total.finish())
+        submit_and_readback(context, encoder, &staging, staging_size, |mapped| {
+            let status = decode_status(&mapped[partial_bytes..], 2)?;
+            if let Some(error) = status.error() {
+                return Err(error);
+            }
+            let mut total = AccurateF64::zero();
+            for value in self.decode_scalars(&mapped[..partial_bytes]) {
+                total.push(value);
+            }
+            Ok(total.finish())
+        })
     }
 
     fn max_chunk_events(
@@ -1422,44 +1327,19 @@ impl WgpuScalarKernel {
         }
         encoder.copy_buffer_to_buffer(&output, 0, &staging, 0, output_size);
         encoder.copy_buffer_to_buffer(&solve_error, 0, &staging, output_size, 4);
-        context.queue().submit([encoder.finish()]);
-        let slice = staging.slice(..);
-        let (sender, receiver) = mpsc::channel();
-        slice.map_async(wgpu::MapMode::Read, move |result| {
-            let _ = sender.send(result);
-        });
-        context
-            .device()
-            .poll(wgpu::PollType::Wait {
-                submission_index: None,
-                timeout: None,
-            })
-            .map_err(|error| WgpuError::DevicePoll(error.to_string()))?;
-        receiver
-            .recv()
-            .map_err(|error| WgpuError::BufferMap(error.to_string()))?
-            .map_err(|error| WgpuError::BufferMap(error.to_string()))?;
-        let mapped = slice
-            .get_mapped_range()
-            .map_err(|error| WgpuError::BufferMap(error.to_string()))?;
-        let result = self.decode_scalars(&mapped[..output_size as usize]);
-        let values = result
-            .as_chunks::<2>()
-            .0
-            .iter()
-            .map(|value| (value[0], value[1]))
-            .collect();
-        let singular = u32::from_ne_bytes(
-            mapped[output_size as usize..output_size as usize + 4]
-                .try_into()
-                .expect("solve error readback is four bytes"),
-        );
-        drop(mapped);
-        staging.unmap();
-        if singular != u32::MAX {
-            return Err(WgpuError::SingularMatrixEvent(singular as usize));
-        }
-        Ok(values)
+        submit_and_readback(context, encoder, &staging, output_size + 4, |mapped| {
+            let status = decode_singular_status(&mapped[output_size as usize..])?;
+            if let Some(error) = status.error() {
+                return Err(error);
+            }
+            let result = self.decode_scalars(&mapped[..output_size as usize]);
+            Ok(result
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .map(|value| (value[0], value[1]))
+                .collect())
+        })
     }
 
     fn cache_buffers(
