@@ -364,6 +364,17 @@ pub fn laddu_compile::optimize::NormSqrReductionRule::rewrite(&self, &laddu_expr
 impl laddu_compile::optimize::RewriteRule for laddu_compile::optimize::TrigIdentityRule
 pub fn laddu_compile::optimize::TrigIdentityRule::name(&self) -> &'static str
 pub fn laddu_compile::optimize::TrigIdentityRule::rewrite(&self, &laddu_expr::expression::ExprNode, &laddu_expr::expression::ExprMetadata, &laddu_compile::optimize::RewriteContext<'_>) -> laddu_compile::CompileResult<laddu_compile::optimize::Rewrite>
+pub enum laddu_compile::CacheInput
+pub laddu_compile::CacheInput::P4(alloc::string::String, laddu_expr::expression::P4Component)
+pub laddu_compile::CacheInput::Scalar(alloc::string::String)
+impl core::clone::Clone for laddu_compile::CacheInput
+pub fn laddu_compile::CacheInput::clone(&self) -> laddu_compile::CacheInput
+impl core::cmp::Eq for laddu_compile::CacheInput
+impl core::cmp::PartialEq for laddu_compile::CacheInput
+pub fn laddu_compile::CacheInput::eq(&self, &laddu_compile::CacheInput) -> bool
+impl core::fmt::Debug for laddu_compile::CacheInput
+pub fn laddu_compile::CacheInput::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for laddu_compile::CacheInput
 pub enum laddu_compile::CachePolicy
 pub laddu_compile::CachePolicy::EventDependent
 pub laddu_compile::CachePolicy::Off
@@ -529,11 +540,26 @@ impl core::fmt::Debug for laddu_compile::CacheEntry
 pub fn laddu_compile::CacheEntry::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::Copy for laddu_compile::CacheEntry
 impl core::marker::StructuralPartialEq for laddu_compile::CacheEntry
+pub struct laddu_compile::CacheLayout
+impl laddu_compile::CacheLayout
+pub fn laddu_compile::CacheLayout::offsets(&self) -> &[usize]
+pub fn laddu_compile::CacheLayout::width(&self) -> usize
+impl core::clone::Clone for laddu_compile::CacheLayout
+pub fn laddu_compile::CacheLayout::clone(&self) -> laddu_compile::CacheLayout
+impl core::cmp::Eq for laddu_compile::CacheLayout
+impl core::cmp::PartialEq for laddu_compile::CacheLayout
+pub fn laddu_compile::CacheLayout::eq(&self, &laddu_compile::CacheLayout) -> bool
+impl core::default::Default for laddu_compile::CacheLayout
+pub fn laddu_compile::CacheLayout::default() -> laddu_compile::CacheLayout
+impl core::fmt::Debug for laddu_compile::CacheLayout
+pub fn laddu_compile::CacheLayout::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for laddu_compile::CacheLayout
 pub struct laddu_compile::CachePlan
 impl laddu_compile::CachePlan
 pub fn laddu_compile::CachePlan::bytes_per_event(&self) -> usize
 pub fn laddu_compile::CachePlan::entries(&self) -> &[laddu_compile::CacheEntry]
 pub fn laddu_compile::CachePlan::is_empty(&self) -> bool
+pub fn laddu_compile::CachePlan::layout(&self) -> laddu_compile::CacheLayout
 pub fn laddu_compile::CachePlan::len(&self) -> usize
 pub fn laddu_compile::CachePlan::materialization_nodes(&self) -> &[laddu_expr::expression::ExprId]
 pub fn laddu_compile::CachePlan::node_slot(&self, laddu_expr::expression::ExprId) -> core::option::Option<usize>
@@ -602,6 +628,16 @@ impl serde_core::ser::Serialize for laddu_compile::CompiledModel
 pub fn laddu_compile::CompiledModel::serialize<S>(&self, S) -> core::result::Result<<S as serde_core::ser::Serializer>::Ok, <S as serde_core::ser::Serializer>::Error> where S: serde_core::ser::Serializer
 impl<'de> serde_core::de::Deserialize<'de> for laddu_compile::CompiledModel
 pub fn laddu_compile::CompiledModel::deserialize<D>(D) -> core::result::Result<Self, <D as serde_core::de::Deserializer>::Error> where D: serde_core::de::Deserializer<'de>
+pub struct laddu_compile::CompiledQuery
+impl laddu_compile::CompiledQuery
+pub fn laddu_compile::CompiledQuery::from_exprs<I>(I) -> laddu_compile::CompileResult<Self> where I: core::iter::traits::collect::IntoIterator<Item = laddu_expr::expression::Expr>
+pub fn laddu_compile::CompiledQuery::from_exprs_with_options<I>(I, &laddu_compile::CompileOptions) -> laddu_compile::CompileResult<Self> where I: core::iter::traits::collect::IntoIterator<Item = laddu_expr::expression::Expr>
+pub fn laddu_compile::CompiledQuery::model(&self) -> &laddu_compile::CompiledModel
+pub fn laddu_compile::CompiledQuery::outputs(&self) -> &[laddu_expr::expression::ExprId]
+impl core::clone::Clone for laddu_compile::CompiledQuery
+pub fn laddu_compile::CompiledQuery::clone(&self) -> laddu_compile::CompiledQuery
+impl core::fmt::Debug for laddu_compile::CompiledQuery
+pub fn laddu_compile::CompiledQuery::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub struct laddu_compile::ComplexFactRule
 impl core::clone::Clone for laddu_compile::optimize::ComplexFactRule
 pub fn laddu_compile::optimize::ComplexFactRule::clone(&self) -> laddu_compile::optimize::ComplexFactRule
@@ -669,6 +705,7 @@ impl core::marker::StructuralPartialEq for laddu_compile::facts::DependencyFacts
 pub struct laddu_compile::ExecutablePlan
 impl laddu_compile::ExecutablePlan
 pub fn laddu_compile::ExecutablePlan::cache_input_nodes(&self) -> &[laddu_expr::expression::ExprId]
+pub fn laddu_compile::ExecutablePlan::cache_inputs(&self) -> laddu_compile::CompileResult<alloc::vec::Vec<laddu_compile::CacheInput>>
 pub fn laddu_compile::ExecutablePlan::cache_kernel(&self) -> core::option::Option<&laddu_kernel::ir::CacheKernelIr>
 pub fn laddu_compile::ExecutablePlan::cache_materialization_nodes(&self) -> &[laddu_expr::expression::ExprId]
 pub fn laddu_compile::ExecutablePlan::cache_plan(&self) -> &laddu_compile::CachePlan
@@ -679,7 +716,7 @@ pub fn laddu_compile::ExecutablePlan::evaluation_nodes(&self) -> &[laddu_expr::e
 pub fn laddu_compile::ExecutablePlan::factor_matrices(&self) -> &[(laddu_expr::expression::ExprId, usize)]
 pub fn laddu_compile::ExecutablePlan::factor_matrix_slots(&self) -> &[core::option::Option<usize>]
 pub fn laddu_compile::ExecutablePlan::from_model(&laddu_compile::CompiledModel) -> laddu_compile::CompileResult<Self>
-pub fn laddu_compile::ExecutablePlan::from_model_without_solve_rows(&laddu_compile::CompiledModel) -> laddu_compile::CompileResult<Self>
+pub fn laddu_compile::ExecutablePlan::from_model_for_fused_backend(&laddu_compile::CompiledModel) -> laddu_compile::CompileResult<Self>
 pub fn laddu_compile::ExecutablePlan::graph(&self) -> &laddu_expr::expression::ExprGraph
 pub fn laddu_compile::ExecutablePlan::parameter_slots(&self) -> &[core::option::Option<laddu_expr::parameters::ParamId>]
 pub fn laddu_compile::ExecutablePlan::params(&self) -> &laddu_expr::parameters::ParamLayout

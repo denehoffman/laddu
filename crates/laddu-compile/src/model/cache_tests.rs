@@ -42,6 +42,8 @@ fn event_dependent_cache_policy_selects_parameter_boundary() {
     ));
     assert_eq!(entry.storage_kind(), CacheStorageKind::Real);
     assert_eq!(compiled.cache_plan().bytes_per_event(), size_of::<f64>());
+    assert_eq!(compiled.cache_plan().layout().offsets(), &[0]);
+    assert_eq!(compiled.cache_plan().layout().width(), 1);
     assert_eq!(compiled.cache_plan().materialization_nodes().len(), 2);
     assert_eq!(
         compiled.cache_plan().materialization_nodes().last(),

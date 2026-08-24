@@ -2,51 +2,20 @@ use std::{mem::size_of, sync::Arc};
 
 use laddu_data::{
     BatchLayout,
-    data::{CacheStorage, Dataset, MemoryPolicy},
+    data::{CacheStorage, Dataset},
     schema::Precision as DataPrecision,
 };
 use laddu_expr::{ExprId, ValueKind};
-use laddu_memory::{FootprintOverflow, MemoryFitRequest, MemoryFootprint};
+use laddu_memory::{FootprintOverflow, MemoryFootprint};
 use num::complex::Complex64;
 
 use super::cache::{CachedFactorSlot, CachedSlot, CachedSolveRowSlot};
 use super::{
-    CpuCachedBatch, CpuCachedDataset, CpuPlan, CpuPreparedDataset, DynamicLu, PreparedDatasetStats,
-    RuntimeError, RuntimeResult,
+    CpuCachedBatch, CpuCachedDataset, CpuPlan, CpuPreparedDataset, DynamicLu, RuntimeError,
+    RuntimeResult,
 };
 use crate::execution::Execution;
-
-#[derive(Copy, Clone, Debug)]
-struct DatasetScanStats {
-    events: usize,
-    batches: usize,
-    sum_weights: f64,
-}
-
-fn scan_dataset_stats(
-    dataset: &Dataset,
-    read_plan: laddu_data::io::ReadPlan,
-) -> RuntimeResult<DatasetScanStats> {
-    let mut events = 0;
-    let mut batches = 0;
-    let mut sum_weights = laddu_data::data::accurate::AccurateF64::zero();
-    for batch in dataset
-        .stream_with_plan(read_plan)
-        .map_err(|error| RuntimeError::Data(error.to_string()))?
-    {
-        let batch = batch.map_err(|error| RuntimeError::Data(error.to_string()))?;
-        events += batch.len();
-        batches += 1;
-        for row in 0..batch.len() {
-            sum_weights.push(batch.weights_at(row));
-        }
-    }
-    Ok(DatasetScanStats {
-        events,
-        batches,
-        sum_weights: sum_weights.finish(),
-    })
-}
+use crate::preparation::{DatasetPreparation, LocalDatasetStats};
 
 impl CpuPlan {
     /// Materializes all event-dependent caches for a dataset.
@@ -156,7 +125,9 @@ impl CpuPlan {
         execution: &Execution,
         dataset: &Dataset,
     ) -> RuntimeResult<CpuPreparedDataset> {
-        let mut read_plan = execution.read_plan(dataset.read_plan());
+        let preparation = DatasetPreparation::new(execution, dataset);
+        let mut planning = preparation.runtime_plan()?;
+        let initial_read_plan = planning.read_plan();
         let schema = dataset
             .schema()
             .map_err(|error| RuntimeError::Data(error.to_string()))?;
@@ -171,23 +142,7 @@ impl CpuPlan {
         let cache_zero = usize::try_from(cache_footprint.fixed_bytes).unwrap_or(usize::MAX);
         let cache_bytes_per_event =
             usize::try_from(cache_footprint.bytes_per_event).unwrap_or(usize::MAX);
-        let known_local_events = dataset
-            .num_events()
-            .map_err(|error| RuntimeError::Data(error.to_string()))?
-            .and_then(|events| usize::try_from(events).ok());
-        let discovered =
-            if known_local_events.is_none() && dataset.memory_policy() != MemoryPolicy::Streaming {
-                let local = scan_dataset_stats(dataset, read_plan);
-                if !execution.all_succeeded(local.is_ok()) {
-                    return local.and(Err(RuntimeError::DistributedPeerFailure));
-                }
-                Some(local?)
-            } else {
-                None
-            };
-        let local_event_limit = known_local_events
-            .or_else(|| discovered.map(|stats| stats.events))
-            .unwrap_or(usize::MAX);
+        let local_event_limit = planning.event_limit();
         let host_remaining = execution.host_memory().remaining();
         let resident_plan = resident_cache_plan(
             cache_zero,
@@ -196,48 +151,32 @@ impl CpuPlan {
             local_event_limit,
             usize::try_from(host_remaining).unwrap_or(usize::MAX),
         );
-        let requested_storage = match dataset.memory_policy() {
-            MemoryPolicy::Streaming => CacheStorage::Streaming,
-            MemoryPolicy::Resident => {
-                if resident_plan.is_none() {
-                    let source_staging = source_footprint
-                        .checked_scale(2)
-                        .and_then(|footprint| {
-                            MemoryFootprint::fixed(footprint.bytes_per_event).checked_add(
-                                MemoryFootprint::per_event(cache_footprint.bytes_per_event),
-                            )
-                        })
-                        .map_err(|error| {
-                            RuntimeError::Data(format!("source working-set overflow: {error}"))
-                        })?;
-                    let minimum = MemoryFootprint::fixed(cache_footprint.fixed_bytes)
-                        .checked_add(source_staging)
-                        .map_err(|error| {
-                            RuntimeError::Data(format!("cache working-set overflow: {error}"))
-                        })?;
-                    return Err(laddu_memory::MemoryError::BudgetExceeded {
-                        resource: "host".into(),
-                        requested: minimum.peak_bytes(local_event_limit),
-                        remaining: host_remaining,
-                    }
-                    .into());
-                }
-                CacheStorage::Resident
-            }
-            MemoryPolicy::Fastest if resident_plan.is_some() => CacheStorage::Resident,
-            MemoryPolicy::Fastest => CacheStorage::Streaming,
-        };
-        let persistent_lease = if requested_storage == CacheStorage::Resident {
-            let (resident_bytes, _) = resident_plan
-                .ok_or_else(|| RuntimeError::Data("resident cache plan was not resolved".into()))?;
-            Some(
-                execution
-                    .host_memory()
-                    .reserve(u64::try_from(resident_bytes).unwrap_or(u64::MAX))?,
-            )
-        } else {
-            None
-        };
+        let source_staging = source_footprint
+            .checked_scale(2)
+            .and_then(|footprint| {
+                MemoryFootprint::fixed(footprint.bytes_per_event)
+                    .checked_add(MemoryFootprint::per_event(cache_footprint.bytes_per_event))
+            })
+            .map_err(|error| RuntimeError::Data(format!("source working-set overflow: {error}")))?;
+        let minimum = MemoryFootprint::fixed(cache_footprint.fixed_bytes)
+            .checked_add(source_staging)
+            .map_err(|error| RuntimeError::Data(format!("cache working-set overflow: {error}")))?
+            .peak_bytes(local_event_limit);
+        let resident_bytes = resident_plan
+            .map(|(bytes, _)| u64::try_from(bytes).unwrap_or(u64::MAX))
+            .unwrap_or(minimum);
+        planning.select_storage(
+            dataset.memory_policy(),
+            "host",
+            resident_plan.is_some(),
+            resident_bytes,
+            host_remaining,
+        )?;
+        let requested_storage = planning.storage();
+        planning.reserve_storage(Some(execution.host_memory()), || {
+            RuntimeError::Data("CPU execution has no host memory pool".into())
+        })?;
+        let persistent_lease = planning.take_memory_lease();
         let available_for_batch = execution.host_memory().remaining();
         // Sources may hold the current decoded batch plus one bounded
         // prefetched batch. A resident cache is already covered by its
@@ -255,42 +194,36 @@ impl CpuPlan {
                 RuntimeError::Data(format!("source working-set overflow: {error}"))
             })?
         };
-        let decision = MemoryFitRequest {
-            label: "CPU prepared dataset".into(),
-            footprint: transient_footprint,
-            available_bytes: available_for_batch,
-            event_limit: local_event_limit,
-            strategy: if requested_storage == CacheStorage::Resident {
+        let decision = planning.fit_staging(
+            "CPU prepared dataset",
+            transient_footprint,
+            available_for_batch,
+            if requested_storage == CacheStorage::Resident {
                 "resident"
             } else {
                 "streaming"
-            }
-            .into(),
-        }
-        .evaluate()?;
-        read_plan.chunk_size = Some(
-            read_plan
-                .chunk_size
-                .map_or(decision.chunk_events, |manual| {
-                    manual.min(decision.chunk_events)
-                })
-                .max(1),
-        );
+            },
+        )?;
+        planning.clamp_read_plan(initial_read_plan.chunk_size, decision.chunk_events);
+        let decision = planning
+            .take_decisions()
+            .into_iter()
+            .next()
+            .expect("CPU preparation records one staging decision");
         execution.record_memory_decision(decision.clone());
+        let read_plan = planning.read_plan();
         match requested_storage {
             CacheStorage::Resident => {
-                let local = self.cache_dataset_with_plan(dataset, read_plan);
-                if !execution.all_succeeded(local.is_ok()) {
-                    return local.and(Err(RuntimeError::DistributedPeerFailure));
-                }
-                let dataset = local?;
-                let stats = PreparedDatasetStats::new(
-                    dataset.len(),
-                    execution.sum_usize(dataset.len()),
-                    dataset.batches().len(),
-                    execution.sum_f64(dataset.sum_weights()),
+                let dataset =
+                    preparation.coordinate(self.cache_dataset_with_plan(dataset, read_plan))?;
+                let stats = preparation.finish_stats(
+                    LocalDatasetStats::new(
+                        dataset.len(),
+                        dataset.batches().len(),
+                        dataset.sum_weights(),
+                    ),
                     dataset.resident_bytes(),
-                    CacheStorage::Resident,
+                    requested_storage,
                 );
                 let memory_lease = persistent_lease.ok_or_else(|| {
                     RuntimeError::Data(
@@ -304,21 +237,10 @@ impl CpuPlan {
                 })
             }
             CacheStorage::Streaming => {
-                let local = scan_dataset_stats(dataset, read_plan);
-                if !execution.all_succeeded(local.is_ok()) {
-                    return local.and(Err(RuntimeError::DistributedPeerFailure));
-                }
-                let local = local?;
+                let local = preparation.scan()?;
                 Ok(CpuPreparedDataset::Streaming {
                     dataset: dataset.clone(),
-                    stats: PreparedDatasetStats::new(
-                        local.events,
-                        execution.sum_usize(local.events),
-                        local.batches,
-                        execution.sum_f64(local.sum_weights),
-                        0,
-                        CacheStorage::Streaming,
-                    ),
+                    stats: preparation.finish_stats(local, 0, requested_storage),
                     read_plan,
                     transient_bytes: decision.estimated_peak_bytes,
                 })

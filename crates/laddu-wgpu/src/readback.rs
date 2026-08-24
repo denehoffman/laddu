@@ -1,9 +1,7 @@
 use std::sync::mpsc;
 
+use crate::scalar::memory::{STATUS_SENTINEL, STATUS_WORD_BYTES};
 use crate::{WgpuContext, WgpuError, WgpuResult};
-
-pub(crate) const STATUS_WORD_BYTES: usize = std::mem::size_of::<u32>();
-pub(crate) const STATUS_SENTINEL: u32 = u32::MAX;
 
 struct UnmapGuard<'a>(&'a wgpu::Buffer);
 
@@ -117,8 +115,9 @@ pub(crate) fn submit_and_readback<T>(
 
 #[cfg(test)]
 mod tests {
-    use super::{GpuStatus, STATUS_SENTINEL, STATUS_WORD_BYTES, decode_status};
+    use super::{GpuStatus, decode_status};
     use crate::WgpuError;
+    use crate::scalar::memory::{STATUS_SENTINEL, STATUS_WORD_BYTES};
 
     fn words(invalid: u32, singular: Option<u32>) -> Vec<u8> {
         let mut bytes = invalid.to_ne_bytes().to_vec();

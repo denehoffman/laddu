@@ -468,6 +468,52 @@ impl CpuPlan {
         self.evaluate_cache(params, &cache)
     }
 
+    /// Evaluates ordered scalar output nodes once and returns one column per
+    /// output. This is the execution seam used by compiled queries; scalar
+    /// models should continue to use [`Self::evaluate_batch`].
+    pub(crate) fn evaluate_batch_outputs(
+        &self,
+        params: &ParamValues,
+        batch: &EventBatch,
+        outputs: &[ExprId],
+    ) -> RuntimeResult<Vec<Vec<Complex64>>> {
+        let cache = self.cache_event_batch(batch)?;
+        let root = self.graph.root();
+        let root_elements = match self.graph.node(root) {
+            Some(laddu_expr::ExprNode::Vector { elements }) => elements,
+            _ => {
+                return Err(RuntimeError::InvalidShape {
+                    index: root.index(),
+                    message: "multi-output evaluation requires a vector root".into(),
+                });
+            }
+        };
+        let positions = outputs
+            .iter()
+            .map(|output| {
+                root_elements
+                    .iter()
+                    .position(|element| element == output)
+                    .ok_or_else(|| RuntimeError::InvalidShape {
+                        index: output.index(),
+                        message: "query output is not a vector root element".into(),
+                    })
+            })
+            .collect::<RuntimeResult<Vec<_>>>()?;
+        let mut values = outputs
+            .iter()
+            .map(|_| Vec::with_capacity(cache.len()))
+            .collect::<Vec<_>>();
+        for row in 0..cache.len() {
+            let evaluated = self.evaluate_values_from_cache(params, &cache, row)?;
+            let row_values = self.cached_vector_at(&evaluated, root)?;
+            for (column, position) in values.iter_mut().zip(&positions) {
+                column.push(row_values[*position]);
+            }
+        }
+        Ok(values)
+    }
+
     /// Evaluates the model and gradient for every event in a batch.
     ///
     /// # Errors

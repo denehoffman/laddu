@@ -15,11 +15,11 @@ mod reduction;
 
 pub use cost::{LifecycleCost, OptimizationCost};
 pub use error::{CompileError, CompileResult};
-pub use executable::{ExecutablePlan, SolveComponentPlan, SolveRowMatrixPlan};
+pub use executable::{CacheInput, ExecutablePlan, SolveComponentPlan, SolveRowMatrixPlan};
 pub use facts::{DependencyFacts, EvaluationClass, GraphFacts, NodeFacts, NumberClass};
 pub use model::{
-    CacheEntry, CachePlan, CachePolicy, CacheStorageKind, CompileOptions, CompiledModel,
-    collect_params,
+    CacheEntry, CacheLayout, CachePlan, CachePolicy, CacheStorageKind, CompileOptions,
+    CompiledModel, CompiledQuery, collect_params,
 };
 pub use normalization::{
     NormalizationDiagnostics, NormalizationFallbackReason, NormalizationPlan, NormalizationStrategy,

@@ -71,3 +71,35 @@ fn normalization_submodel_recipe_disables_analysis_after_execution_lowering() {
     ));
     assert_eq!(compiled.cache_plan().len(), 1);
 }
+
+#[test]
+fn compiled_query_deduplicates_structurally_repeated_outputs() {
+    let x = event_scalar("x");
+    let query = CompiledQuery::from_exprs([x.clone(), x, event_scalar("y")]).unwrap();
+
+    assert_eq!(query.outputs().len(), 3);
+    assert_eq!(query.outputs()[0], query.outputs()[1]);
+    assert_eq!(
+        query
+            .model()
+            .graph()
+            .nodes()
+            .iter()
+            .filter(|node| matches!(node, ExprNode::EventScalar(name) if name.as_ref() == "x"))
+            .count(),
+        1
+    );
+
+    let query =
+        CompiledQuery::from_exprs([event_scalar("x") + 1.0, event_scalar("x") + 2.0]).unwrap();
+    let graph = query.model().graph();
+    assert!(query.outputs().len() == 2 && query.outputs()[0] != query.outputs()[1]);
+    assert_eq!(
+        graph
+            .nodes()
+            .iter()
+            .filter(|node| matches!(node, ExprNode::EventScalar(name) if name.as_ref() == "x"))
+            .count(),
+        1
+    );
+}

@@ -1,0 +1,66 @@
+# yamloom: generated from .yamloom.py
+---
+name: WGPU tests
+"on":
+  pull_request:
+    paths:
+      - crates/laddu-wgpu/**
+      - crates/laddu-data/**
+      - crates/laddu-runtime/**
+      - crates/laddu-compile/**
+      - crates/laddu-kernel/**
+      - crates/laddu-autodiff/**
+      - crates/laddu-expr/**
+      - Cargo.toml
+      - Cargo.lock
+      - ".yamloom.py"
+      - ".github/workflows/wgpu.yml"
+  push:
+    branches:
+      - development
+      - main
+    paths:
+      - crates/laddu-wgpu/**
+      - crates/laddu-data/**
+      - crates/laddu-runtime/**
+      - crates/laddu-compile/**
+      - crates/laddu-kernel/**
+      - crates/laddu-autodiff/**
+      - crates/laddu-expr/**
+      - Cargo.toml
+      - Cargo.lock
+      - ".yamloom.py"
+      - ".github/workflows/wgpu.yml"
+  workflow_dispatch: ~
+jobs:
+  software:
+    name: WGPU unit and shader-compile tests
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v6
+      - name: Setup Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: 1.95.0
+      - name: Run hardware-independent WGPU tests
+        run: cargo test -p laddu-wgpu --lib
+  hardware:
+    name: WGPU hardware integration tests
+    permissions:
+      contents: read
+    if: ${{ (github.event_name == 'workflow_dispatch') }}
+    runs-on:
+      - self-hosted
+      - wgpu
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v6
+      - name: Setup Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: 1.95.0
+      - name: Run adapter/device integration tests
+        run: cargo test -p laddu-wgpu --test hardware -- --ignored
