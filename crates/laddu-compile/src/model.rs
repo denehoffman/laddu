@@ -7,6 +7,7 @@ use crate::CompileResult;
 use laddu_expr::{
     BinaryOp, Expr, ExprGraph, ExprId, ExprNode, ParameterStructuralKey, UnaryOp, ValueKind,
     parameters::{ParamLayout, ParamRegistry},
+    vector,
 };
 use serde::{Deserialize, Serialize};
 
@@ -352,6 +353,42 @@ impl CachePlan {
             .map(|entry| entry.storage_kind().bytes_per_event())
             .sum()
     }
+
+    /// Returns the packed logical-element layout shared by backend consumers.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the total packed width exceeds the addressable `usize` range.
+    pub fn layout(&self) -> CacheLayout {
+        let mut offsets = Vec::with_capacity(self.entries.len());
+        let mut width: usize = 0;
+        for entry in &self.entries {
+            offsets.push(width);
+            width = width
+                .checked_add(entry.storage_kind().width())
+                .expect("cache layout width exceeds addressable memory");
+        }
+        CacheLayout { offsets, width }
+    }
+}
+
+/// Packed logical-element offsets for ordinary event-cache entries.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct CacheLayout {
+    offsets: Vec<usize>,
+    width: usize,
+}
+
+impl CacheLayout {
+    /// Returns each cache slot's first logical element offset.
+    pub fn offsets(&self) -> &[usize] {
+        &self.offsets
+    }
+
+    /// Returns the total logical elements stored per event.
+    pub fn width(&self) -> usize {
+        self.width
+    }
 }
 
 /// In-memory representation used for one cache entry.
@@ -434,6 +471,73 @@ pub struct CompiledModel {
     facts: GraphFacts,
     cache_plan: CachePlan,
     normalization_plan: NormalizationPlan,
+}
+
+/// A set of compiled expression outputs that shares compilation work for
+/// repeated roots.
+///
+/// Query consumers commonly need several scalar expressions over the same
+/// event rows.  This artifact keeps the output order supplied by the caller
+/// while retaining one compiled model for structurally repeated expressions.
+/// It is intentionally additive; a single [`CompiledModel`] remains the
+/// execution seam for ordinary model evaluation.
+#[derive(Clone, Debug)]
+pub struct CompiledQuery {
+    model: CompiledModel,
+    outputs: Vec<ExprId>,
+}
+
+impl CompiledQuery {
+    /// Compiles expression outputs with default options.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CompileError`] when no expressions are supplied, parameter
+    /// definitions conflict, or graph optimization fails.
+    pub fn from_exprs<I>(exprs: I) -> CompileResult<Self>
+    where
+        I: IntoIterator<Item = Expr>,
+    {
+        Self::from_exprs_with_options(exprs, &CompileOptions::default())
+    }
+
+    /// Compiles expression outputs with explicit options.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CompileError`] when no expressions are supplied, parameter
+    /// definitions conflict, or graph optimization fails.
+    pub fn from_exprs_with_options<I>(exprs: I, options: &CompileOptions) -> CompileResult<Self>
+    where
+        I: IntoIterator<Item = Expr>,
+    {
+        let expressions = exprs.into_iter().collect::<Vec<_>>();
+        if expressions.is_empty() {
+            return Err(crate::CompileError::Unsupported(
+                "multi-output query requires at least one expression",
+            ));
+        }
+        let model = CompiledModel::from_expr_with_options(&vector(expressions), options)?;
+        let outputs = match model.graph().node(model.graph().root()) {
+            Some(ExprNode::Vector { elements }) => elements.clone(),
+            _ => {
+                return Err(crate::CompileError::InvalidExecutablePlan(
+                    "compiled query root is not a vector".into(),
+                ));
+            }
+        };
+        Ok(Self { model, outputs })
+    }
+
+    /// Returns the one compiled graph containing every output root.
+    pub fn model(&self) -> &CompiledModel {
+        &self.model
+    }
+
+    /// Returns output node identifiers in the caller's requested order.
+    pub fn outputs(&self) -> &[ExprId] {
+        &self.outputs
+    }
 }
 
 impl Serialize for CompiledModel {

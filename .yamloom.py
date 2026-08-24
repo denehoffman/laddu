@@ -346,6 +346,56 @@ api_workflow = Workflow(
     },
 )
 
+wgpu_paths = [
+    'crates/laddu-wgpu/**',
+    'crates/laddu-data/**',
+    'crates/laddu-runtime/**',
+    'crates/laddu-compile/**',
+    'crates/laddu-kernel/**',
+    'crates/laddu-autodiff/**',
+    'crates/laddu-expr/**',
+    'Cargo.toml',
+    'Cargo.lock',
+    '.yamloom.py',
+    '.github/workflows/wgpu.yml',
+]
+
+wgpu_workflow = Workflow(
+    name='WGPU tests',
+    on=Events(
+        push=PushEvent(branches=['development', 'main'], paths=wgpu_paths),
+        pull_request=PullRequestEvent(paths=wgpu_paths),
+        workflow_dispatch=WorkflowDispatchEvent(),
+    ),
+    jobs={
+        'software': Job(
+            name='WGPU unit and shader-compile tests',
+            runs_on='ubuntu-latest',
+            steps=[
+                Checkout(),
+                SetupRust(toolchain=MSRV),
+                script(
+                    'cargo test -p laddu-wgpu --lib',
+                    name='Run hardware-independent WGPU tests',
+                ),
+            ],
+        ),
+        'hardware': Job(
+            name='WGPU hardware integration tests',
+            condition=context.github.event_name == 'workflow_dispatch',
+            runs_on=['self-hosted', 'wgpu'],
+            steps=[
+                Checkout(),
+                SetupRust(toolchain=MSRV),
+                script(
+                    'cargo test -p laddu-wgpu --test hardware -- --ignored',
+                    name='Run adapter/device integration tests',
+                ),
+            ],
+        ),
+    },
+)
+
 if __name__ == '__main__':
     sync(
         {
@@ -355,5 +405,6 @@ if __name__ == '__main__':
             'python-release.yml': python_release_workflow,
             'release-please.yml': release_please_workflow,
             'test-build.yml': test_build_workflow,
+            'wgpu.yml': wgpu_workflow,
         }
     )

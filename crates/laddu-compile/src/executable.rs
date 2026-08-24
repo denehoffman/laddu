@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use laddu_expr::{
-    ExprGraph, ExprId, ExprNode, ValueKind,
+    ExprGraph, ExprId, ExprNode, P4Component, ValueKind,
     parameters::{ParamId, ParamLayout},
 };
 use laddu_kernel::ir::{
@@ -17,6 +17,18 @@ pub struct SolveComponentPlan {
     rhs: ExprId,
     row_slot: usize,
     dimension: usize,
+}
+
+/// Typed event columns required to materialize the executable cache.
+///
+/// This is backend-ready plan metadata: consumers do not need to inspect the
+/// optimized expression graph to decide how to bind event storage.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CacheInput {
+    /// A named scalar event column.
+    Scalar(String),
+    /// A named four-momentum component.
+    P4(String, P4Component),
 }
 
 impl SolveComponentPlan {
@@ -111,7 +123,7 @@ impl ExecutablePlan {
         Self::from_model_with_solve_rows(model, true)
     }
 
-    /// Build an executable plan without the CPU-oriented cached solve-row specialization.
+    /// Build an executable plan for a backend with fused solve support.
     ///
     /// Backends with inexpensive fused solves can use this form to keep the original `Solve`
     /// instruction and consume an ordinarily cached event-dependent matrix directly.
@@ -120,7 +132,7 @@ impl ExecutablePlan {
     ///
     /// Returns [`CompileError`](crate::CompileError) when the model cannot be
     /// lowered to valid scalar or cache kernel IR.
-    pub fn from_model_without_solve_rows(model: &CompiledModel) -> CompileResult<Self> {
+    pub fn from_model_for_fused_backend(model: &CompiledModel) -> CompileResult<Self> {
         Self::from_model_with_solve_rows(model, false)
     }
 
@@ -179,6 +191,27 @@ impl ExecutablePlan {
     /// Returns graph nodes supplied as inputs to the cache kernel.
     pub fn cache_input_nodes(&self) -> &[ExprId] {
         &self.cache_input_nodes
+    }
+
+    /// Returns typed event-column bindings for cache materialization.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CompileError::InvalidExecutablePlan`](crate::CompileError::InvalidExecutablePlan)
+    /// if a cache input is not a direct event column.
+    pub fn cache_inputs(&self) -> CompileResult<Vec<CacheInput>> {
+        self.cache_input_nodes
+            .iter()
+            .map(|node| match self.graph.node(*node) {
+                Some(ExprNode::EventScalar(name)) => Ok(CacheInput::Scalar(name.to_string())),
+                Some(ExprNode::EventP4Component { name, component }) => {
+                    Ok(CacheInput::P4(name.to_string(), *component))
+                }
+                node => Err(crate::CompileError::InvalidExecutablePlan(format!(
+                    "cache input is not an event column: {node:?}"
+                ))),
+            })
+            .collect()
     }
 
     /// Returns nodes evaluated while materializing all caches.
@@ -324,6 +357,12 @@ impl ExecutablePlan {
         let root = lowered.value_ids[model.graph().root().index()].ok_or_else(|| {
             crate::CompileError::InvalidExecutablePlan("graph root is not scheduled".into())
         })?;
+        if !matches!(
+            lowered.values[root.index()].kind,
+            KernelValueKind::Real | KernelValueKind::Complex
+        ) {
+            return Ok(None);
+        }
         Ok(Some(ScalarKernelIr::new(lowered.values, root)?))
     }
 
@@ -999,7 +1038,10 @@ impl<'a> KernelLowerer<'a> {
 
 #[cfg(test)]
 mod tests {
-    use laddu_expr::{Expr, event_scalar, matrix, matvec, parameter, solve, vector};
+    use laddu_expr::{
+        Expr, P4Component, event_p4_component, event_scalar, matrix, matvec, parameter, solve,
+        vector,
+    };
 
     use super::*;
 
@@ -1013,6 +1055,10 @@ mod tests {
 
         assert_eq!(plan.params().n_free(), 2);
         assert!(!plan.cache_plan().is_empty());
+        assert_eq!(
+            plan.cache_inputs().unwrap(),
+            vec![CacheInput::Scalar("x".into())]
+        );
         let kernel = plan.scalar_kernel().unwrap();
         assert!(
             kernel
@@ -1025,6 +1071,17 @@ mod tests {
                 .values()
                 .iter()
                 .any(|value| matches!(value.instruction, KernelInstruction::Parameter(_)))
+        );
+    }
+
+    #[test]
+    fn executable_plan_exposes_typed_p4_cache_inputs() {
+        let model = CompiledModel::from_expr(&event_p4_component("p", P4Component::Py)).unwrap();
+        let plan = ExecutablePlan::from_model(&model).unwrap();
+
+        assert_eq!(
+            plan.cache_inputs().unwrap(),
+            vec![CacheInput::P4("p".into(), P4Component::Py)]
         );
     }
 

@@ -143,8 +143,9 @@ impl laddu_wgpu::WgpuScalarKernel
 pub fn laddu_wgpu::WgpuScalarKernel::compile(&laddu_wgpu::WgpuContext, &laddu_compile::model::CompiledModel) -> laddu_wgpu::WgpuResult<Self>
 pub fn laddu_wgpu::WgpuScalarKernel::evaluate(&self, &laddu_wgpu::WgpuContext, &laddu_expr::parameters::ParamValues) -> laddu_wgpu::WgpuResult<(f64, f64)>
 pub fn laddu_wgpu::WgpuScalarKernel::evaluate_batch(&self, &laddu_wgpu::WgpuContext, &laddu_expr::parameters::ParamValues, &laddu_data::data::event::EventBatch) -> laddu_wgpu::WgpuResult<alloc::vec::Vec<(f64, f64)>>
-pub fn laddu_wgpu::WgpuScalarKernel::prepare_batch(&self, &laddu_wgpu::WgpuContext, &laddu_expr::parameters::ParamValues, &laddu_data::data::event::EventBatch) -> laddu_wgpu::WgpuResult<laddu_wgpu::WgpuPreparedBatch>
 pub fn laddu_wgpu::WgpuScalarKernel::prepared_memory_estimate(&self, &laddu_expr::parameters::ParamValues, usize) -> usize
+impl laddu_wgpu::WgpuScalarKernel
+pub fn laddu_wgpu::WgpuScalarKernel::prepare_batch(&self, &laddu_wgpu::WgpuContext, &laddu_expr::parameters::ParamValues, &laddu_data::data::event::EventBatch) -> laddu_wgpu::WgpuResult<laddu_wgpu::WgpuPreparedBatch>
 pub fn laddu_wgpu::WgpuScalarKernel::reduce_batch(&self, &laddu_wgpu::WgpuContext, &laddu_expr::parameters::ParamValues, &laddu_data::data::event::EventBatch, laddu_compile::reduction::ReductionPlan) -> laddu_wgpu::WgpuResult<f64>
 pub fn laddu_wgpu::WgpuScalarKernel::reduce_prepared_batch(&self, &laddu_wgpu::WgpuContext, &laddu_expr::parameters::ParamValues, &laddu_wgpu::WgpuPreparedBatch, laddu_compile::reduction::ReductionPlan) -> laddu_wgpu::WgpuResult<f64>
 pub fn laddu_wgpu::WgpuScalarKernel::reduce_prepared_batch_with_gradient(&self, &laddu_wgpu::WgpuContext, &laddu_expr::parameters::ParamValues, &laddu_wgpu::WgpuPreparedBatch, laddu_compile::reduction::ReductionPlan) -> laddu_wgpu::WgpuResult<(f64, alloc::vec::Vec<f64>)>

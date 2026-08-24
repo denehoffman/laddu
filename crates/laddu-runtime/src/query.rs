@@ -1,13 +1,13 @@
 use std::sync::Arc;
 
-use laddu_compile::CompiledModel;
+use laddu_compile::CompiledQuery;
 use laddu_data::{
     LadduDataError, LadduDataResult,
     data::{Dataset, EventBatch},
     io::{EventBatchIter, EventSource, ReadPlan, SourceCapabilities, memory::MemorySource},
     schema::Schema,
 };
-use laddu_expr::{Expr, ExprShape, ValueKind};
+use laddu_expr::{Expr, ValueKind};
 use num::complex::Complex64;
 use serde::{Deserialize, Deserializer, Serialize};
 
@@ -293,22 +293,26 @@ pub trait DatasetExprExt {
 
 impl DatasetExprExt for Dataset {
     fn evaluate_expr(&self, expr: &Expr, execution: &Execution) -> RuntimeResult<Vec<Complex64>> {
-        let query = QueryExpr::prepare(expr, execution, false)?;
+        let query = QueryExprSet::prepare(vec![expr.clone()], execution, false)?;
         let mut output = Vec::new();
         for batch in self.batches().map_err(data_error)? {
-            output.extend(query.evaluate_batch(&batch.map_err(data_error)?)?);
+            output.extend(
+                query.evaluate_batch(&batch.map_err(data_error)?)?[0]
+                    .iter()
+                    .copied(),
+            );
         }
         Ok(output)
     }
 
     fn evaluate_real(&self, expr: &Expr, execution: &Execution) -> RuntimeResult<Vec<f64>> {
-        let query = QueryExpr::prepare(expr, execution, true)?;
+        let query = QueryExprSet::prepare(vec![expr.clone()], execution, true)?;
         let mut output = Vec::new();
         for batch in self.batches().map_err(data_error)? {
             output.extend(
-                query
-                    .evaluate_batch(&batch.map_err(data_error)?)?
-                    .into_iter()
+                query.evaluate_batch(&batch.map_err(data_error)?)?[0]
+                    .iter()
+                    .copied()
                     .map(|v| v.re),
             );
         }
@@ -329,13 +333,13 @@ impl DatasetExprExt for Dataset {
         bins: BinSpec,
         execution: &Execution,
     ) -> RuntimeResult<Vec<DatasetBin>> {
-        let query = QueryExpr::prepare(expr, execution, true)?;
+        let query = QueryExprSet::prepare(vec![expr.clone()], execution, true)?;
         let schema = self.schema().map_err(data_error)?;
         let mut partitions = vec![Vec::new(); bins.bin_count()];
         for batch in self.batches().map_err(data_error)? {
             let batch = batch.map_err(data_error)?;
             let mut rows = vec![Vec::new(); bins.bin_count()];
-            for (row, value) in query.evaluate_batch(&batch)?.into_iter().enumerate() {
+            for (row, value) in query.evaluate_batch(&batch)?[0].iter().copied().enumerate() {
                 if let Some(index) = bins.index(value.re) {
                     rows[index].push(row);
                 }
@@ -352,10 +356,7 @@ impl DatasetExprExt for Dataset {
             .enumerate()
             .map(|(index, batches)| {
                 let source = if batches.is_empty() {
-                    MemorySource::new(
-                        EventBatch::from_events(Arc::clone(&schema), std::iter::empty())
-                            .map_err(data_error)?,
-                    )
+                    MemorySource::empty(Arc::clone(&schema))
                 } else {
                     MemorySource::from_batches(batches).map_err(data_error)?
                 };
@@ -373,134 +374,242 @@ impl DatasetExprExt for Dataset {
 struct QueryExpr {
     model: PreparedModel,
     params: laddu_expr::parameters::ParamValues,
+    outputs: Vec<laddu_expr::ExprId>,
+}
+
+struct QueryExprSet {
+    shared: QueryExprStorage,
+    outputs: usize,
+}
+
+enum QueryExprStorage {
+    Shared(QueryExpr),
+    Separate(Vec<QueryExpr>),
+}
+
+impl QueryExprSet {
+    fn prepare(
+        expressions: Vec<Expr>,
+        execution: &Execution,
+        require_real: bool,
+    ) -> RuntimeResult<Self> {
+        let expression_count = expressions.len();
+        let compiled = CompiledQuery::from_exprs(expressions.clone())
+            .map_err(|error| query_error(error.to_string()))?;
+        let model = compiled.model();
+        let outputs = compiled.outputs();
+        if outputs.len() != expression_count {
+            return Err(query_error(
+                "compiled query output count changed during lowering",
+            ));
+        }
+        for element in outputs {
+            let value_kind = model
+                .node_facts(*element)
+                .map(|facts| facts.value_kind)
+                .ok_or_else(|| query_error("compiled expression facts are incomplete"))?;
+            if value_kind != ValueKind::Real
+                && (require_real || !matches!(value_kind, ValueKind::Complex))
+            {
+                return Err(query_error(if require_real {
+                    "this dataset operation requires a real-valued expression"
+                } else {
+                    "dataset expressions must be scalar"
+                }));
+            }
+        }
+        if model.params().n_free() != 0 {
+            return Err(query_error(
+                "dataset expressions cannot contain free parameters",
+            ));
+        }
+        let params = model.params().default_values();
+        let plan = match PreparedModel::prepare(model, execution) {
+            Ok(plan) => QueryExprStorage::Shared(QueryExpr {
+                model: plan,
+                params,
+                outputs: outputs.to_vec(),
+            }),
+            Err(shared_error) => {
+                if !may_fallback_to_scalar(execution, &shared_error) {
+                    return Err(shared_error);
+                }
+                let separate = expressions
+                    .iter()
+                    .map(|expr| QueryExpr::prepare(expr, execution, require_real))
+                    .collect::<RuntimeResult<Vec<_>>>();
+                QueryExprStorage::Separate(separate?)
+            }
+        };
+        Ok(Self {
+            shared: plan,
+            outputs: expression_count,
+        })
+    }
+
+    fn evaluate_batch(&self, batch: &EventBatch) -> RuntimeResult<Vec<Vec<Complex64>>> {
+        let values = match &self.shared {
+            QueryExprStorage::Shared(query) => query.evaluate_outputs(batch)?,
+            QueryExprStorage::Separate(queries) => queries
+                .iter()
+                .map(|query| query.evaluate_batch(batch))
+                .collect::<RuntimeResult<Vec<_>>>()?,
+        };
+        if values.len() != self.outputs {
+            return Err(query_error(
+                "compiled query returned an unexpected output count",
+            ));
+        }
+        Ok(values)
+    }
 }
 
 impl QueryExpr {
     fn prepare(expr: &Expr, execution: &Execution, require_real: bool) -> RuntimeResult<Self> {
-        if expr.shape().map_err(|e| query_error(e.to_string()))? != ExprShape::Scalar {
+        if expr.shape().map_err(|e| query_error(e.to_string()))? != laddu_expr::ExprShape::Scalar {
             return Err(query_error("dataset expressions must be scalar"));
         }
-        let compiled = CompiledModel::from_expr(expr).map_err(|e| query_error(e.to_string()))?;
+        let compiled = laddu_compile::CompiledModel::from_expr(expr)
+            .map_err(|error| query_error(error.to_string()))?;
+        let value_kind = compiled
+            .node_facts(compiled.graph().root())
+            .map(|facts| facts.value_kind)
+            .ok_or_else(|| query_error("compiled expression facts are incomplete"))?;
+        if require_real && value_kind == ValueKind::Complex {
+            return Err(query_error(
+                "this dataset operation requires a real-valued expression",
+            ));
+        }
         if compiled.params().n_free() != 0 {
             return Err(query_error(
                 "dataset expressions cannot contain free parameters",
             ));
         }
-        if require_real
-            && compiled
-                .node_facts(compiled.graph().root())
-                .is_some_and(|facts| facts.value_kind == ValueKind::Complex)
-        {
-            return Err(query_error(
-                "this dataset operation requires a real-valued expression",
-            ));
-        }
         let params = compiled.params().default_values();
         let model = PreparedModel::prepare(&compiled, execution)?;
-        Ok(Self { model, params })
+        Ok(Self {
+            model,
+            params,
+            outputs: Vec::new(),
+        })
     }
 
     fn evaluate_batch(&self, batch: &EventBatch) -> RuntimeResult<Vec<Complex64>> {
         self.model.evaluate_batch(&self.params, batch)
     }
+
+    fn evaluate_outputs(&self, batch: &EventBatch) -> RuntimeResult<Vec<Vec<Complex64>>> {
+        self.model
+            .evaluate_batch_outputs(&self.params, batch, &self.outputs)
+    }
 }
 
-enum CompiledPredicate {
+struct CompiledPredicate {
+    expressions: QueryExprSet,
+    program: PredicateProgram,
+}
+
+enum PredicateProgram {
     Compare {
-        lhs: Box<QueryExpr>,
+        lhs: usize,
         op: Comparison,
-        rhs: Box<QueryExpr>,
+        rhs: usize,
     },
     And(Box<Self>, Box<Self>),
     Or(Box<Self>, Box<Self>),
     Not(Box<Self>),
     Between {
-        value: Box<QueryExpr>,
-        lower: Box<QueryExpr>,
-        upper: Box<QueryExpr>,
+        value: usize,
+        lower: usize,
+        upper: usize,
         closure: IntervalClosure,
     },
 }
 
 impl CompiledPredicate {
     fn prepare(predicate: &Predicate, execution: &Execution) -> RuntimeResult<Self> {
-        Ok(match predicate {
-            Predicate::Compare { lhs, op, rhs } => Self::Compare {
-                lhs: Box::new(QueryExpr::prepare(lhs, execution, true)?),
+        let mut expressions = Vec::new();
+        let program = Self::compile_program(predicate, &mut expressions);
+        Ok(Self {
+            expressions: QueryExprSet::prepare(expressions, execution, true)?,
+            program,
+        })
+    }
+
+    fn compile_program(predicate: &Predicate, expressions: &mut Vec<Expr>) -> PredicateProgram {
+        let leaf = |expr: &Expr, expressions: &mut Vec<Expr>| {
+            let index = expressions.len();
+            expressions.push(expr.clone());
+            index
+        };
+        match predicate {
+            Predicate::Compare { lhs, op, rhs } => PredicateProgram::Compare {
+                lhs: leaf(lhs, expressions),
                 op: *op,
-                rhs: Box::new(QueryExpr::prepare(rhs, execution, true)?),
+                rhs: leaf(rhs, expressions),
             },
-            Predicate::And(lhs, rhs) => Self::And(
-                Box::new(Self::prepare(lhs, execution)?),
-                Box::new(Self::prepare(rhs, execution)?),
+            Predicate::And(lhs, rhs) => PredicateProgram::And(
+                Box::new(Self::compile_program(lhs, expressions)),
+                Box::new(Self::compile_program(rhs, expressions)),
             ),
-            Predicate::Or(lhs, rhs) => Self::Or(
-                Box::new(Self::prepare(lhs, execution)?),
-                Box::new(Self::prepare(rhs, execution)?),
+            Predicate::Or(lhs, rhs) => PredicateProgram::Or(
+                Box::new(Self::compile_program(lhs, expressions)),
+                Box::new(Self::compile_program(rhs, expressions)),
             ),
-            Predicate::Not(inner) => Self::Not(Box::new(Self::prepare(inner, execution)?)),
+            Predicate::Not(inner) => {
+                PredicateProgram::Not(Box::new(Self::compile_program(inner, expressions)))
+            }
             Predicate::Between {
                 value,
                 lower,
                 upper,
                 closure,
-            } => Self::Between {
-                value: Box::new(QueryExpr::prepare(value, execution, true)?),
-                lower: Box::new(QueryExpr::prepare(lower, execution, true)?),
-                upper: Box::new(QueryExpr::prepare(upper, execution, true)?),
+            } => PredicateProgram::Between {
+                value: leaf(value, expressions),
+                lower: leaf(lower, expressions),
+                upper: leaf(upper, expressions),
                 closure: *closure,
             },
-        })
+        }
     }
 
-    fn evaluate_batch(&self, batch: &EventBatch) -> RuntimeResult<Vec<bool>> {
-        Ok(match self {
-            Self::Compare { lhs, op, rhs } => lhs
-                .evaluate_batch(batch)?
-                .into_iter()
-                .zip(rhs.evaluate_batch(batch)?)
-                .map(|(lhs, rhs)| compare(lhs.re, *op, rhs.re))
-                .collect(),
-            Self::And(lhs, rhs) => lhs
-                .evaluate_batch(batch)?
-                .into_iter()
-                .zip(rhs.evaluate_batch(batch)?)
-                .map(|(l, r)| l && r)
-                .collect(),
-            Self::Or(lhs, rhs) => lhs
-                .evaluate_batch(batch)?
-                .into_iter()
-                .zip(rhs.evaluate_batch(batch)?)
-                .map(|(l, r)| l || r)
-                .collect(),
-            Self::Not(inner) => inner
-                .evaluate_batch(batch)?
-                .into_iter()
-                .map(|v| !v)
-                .collect(),
-            Self::Between {
+    fn evaluate_batch(&self, batch: &EventBatch) -> RuntimeResult<Vec<usize>> {
+        let values = self.expressions.evaluate_batch(batch)?;
+        Ok((0..batch.len())
+            .filter(|row| Self::evaluate_row(&self.program, &values, *row))
+            .collect())
+    }
+
+    fn evaluate_row(program: &PredicateProgram, values: &[Vec<Complex64>], row: usize) -> bool {
+        match program {
+            PredicateProgram::Compare { lhs, op, rhs } => {
+                compare(values[*lhs][row].re, *op, values[*rhs][row].re)
+            }
+            PredicateProgram::And(lhs, rhs) => {
+                Self::evaluate_row(lhs, values, row) && Self::evaluate_row(rhs, values, row)
+            }
+            PredicateProgram::Or(lhs, rhs) => {
+                Self::evaluate_row(lhs, values, row) || Self::evaluate_row(rhs, values, row)
+            }
+            PredicateProgram::Not(inner) => !Self::evaluate_row(inner, values, row),
+            PredicateProgram::Between {
                 value,
                 lower,
                 upper,
                 closure,
-            } => value
-                .evaluate_batch(batch)?
-                .into_iter()
-                .zip(lower.evaluate_batch(batch)?)
-                .zip(upper.evaluate_batch(batch)?)
-                .map(|((value, lower), upper)| {
-                    let lower_op = match closure {
-                        IntervalClosure::Open | IntervalClosure::RightClosed => Comparison::Gt,
-                        IntervalClosure::LeftClosed | IntervalClosure::Closed => Comparison::Ge,
-                    };
-                    let upper_op = match closure {
-                        IntervalClosure::Open | IntervalClosure::LeftClosed => Comparison::Lt,
-                        IntervalClosure::RightClosed | IntervalClosure::Closed => Comparison::Le,
-                    };
-                    compare(value.re, lower_op, lower.re) && compare(value.re, upper_op, upper.re)
-                })
-                .collect(),
-        })
+            } => {
+                let lower_op = match closure {
+                    IntervalClosure::Open | IntervalClosure::RightClosed => Comparison::Gt,
+                    IntervalClosure::LeftClosed | IntervalClosure::Closed => Comparison::Ge,
+                };
+                let upper_op = match closure {
+                    IntervalClosure::Open | IntervalClosure::LeftClosed => Comparison::Lt,
+                    IntervalClosure::RightClosed | IntervalClosure::Closed => Comparison::Le,
+                };
+                compare(values[*value][row].re, lower_op, values[*lower][row].re)
+                    && compare(values[*value][row].re, upper_op, values[*upper][row].re)
+            }
+        }
     }
 }
 
@@ -566,14 +675,8 @@ impl EventSource for QuerySource {
 
 impl QueryFilter {
     fn rows(&self, batch: &EventBatch) -> RuntimeResult<Vec<usize>> {
-        // TODO: cache evaluated_batch indices somewhere
         match self {
-            Self::Predicate(predicate) => Ok(predicate
-                .evaluate_batch(batch)?
-                .into_iter()
-                .enumerate()
-                .filter_map(|(row, keep)| keep.then_some(row))
-                .collect()),
+            Self::Predicate(predicate) => predicate.evaluate_batch(batch),
         }
     }
 }
@@ -584,6 +687,23 @@ fn query_error(message: impl Into<String>) -> RuntimeError {
         message: message.into(),
     }
 }
+
+fn may_fallback_to_scalar(execution: &Execution, error: &RuntimeError) -> bool {
+    let cpu_f32 = matches!(
+        error,
+        RuntimeError::Execution(crate::ExecutionError::UnsupportedCpuF32Model)
+    );
+    #[cfg(feature = "wgpu")]
+    {
+        cpu_f32 || (execution.wgpu_context().is_some() && matches!(error, RuntimeError::Wgpu(_)))
+    }
+    #[cfg(not(feature = "wgpu"))]
+    {
+        let _ = execution;
+        cpu_f32
+    }
+}
+
 fn data_error(error: impl ToString) -> RuntimeError {
     RuntimeError::Data(error.to_string())
 }
@@ -591,8 +711,10 @@ fn data_error(error: impl ToString) -> RuntimeError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{CpuOptions, Device, ExecutionOptions, Precision};
+    use laddu_compile::CompiledModel;
     use laddu_data::{
-        data::OwnedEvent,
+        data::{EventBatch, OwnedEvent},
         io::{EventSource, ReadPlan, SourceCapabilities, memory::MemorySource},
         schema::Schema,
     };
@@ -626,6 +748,49 @@ mod tests {
             self.reads.fetch_add(1, Ordering::Relaxed);
             self.inner.batches(plan)
         }
+    }
+
+    #[derive(Clone)]
+    struct FailingSource {
+        schema: Arc<Schema>,
+    }
+
+    impl EventSource for FailingSource {
+        fn schema(&self) -> LadduDataResult<Arc<Schema>> {
+            Ok(Arc::clone(&self.schema))
+        }
+
+        fn capabilities(&self) -> SourceCapabilities {
+            SourceCapabilities {
+                exact_len: false,
+                exact_weighted_total: false,
+                random_access: false,
+                deterministic_partitioning: true,
+                predicate_pushdown: false,
+                projection_pushdown: false,
+                streaming: true,
+            }
+        }
+
+        fn batches(&self, _plan: ReadPlan) -> LadduDataResult<EventBatchIter> {
+            Ok(Box::new(std::iter::once(Err(LadduDataError::Source(
+                "query source failed".into(),
+            )))))
+        }
+    }
+
+    fn capability_tuple(
+        capabilities: SourceCapabilities,
+    ) -> (bool, bool, bool, bool, bool, bool, bool) {
+        (
+            capabilities.exact_len,
+            capabilities.exact_weighted_total,
+            capabilities.random_access,
+            capabilities.deterministic_partitioning,
+            capabilities.predicate_pushdown,
+            capabilities.projection_pushdown,
+            capabilities.streaming,
+        )
     }
 
     fn dataset() -> Dataset {
@@ -682,6 +847,90 @@ mod tests {
                 .unwrap(),
             vec![1.0, 2.0]
         );
+    }
+
+    #[test]
+    fn empty_batches_are_valid_query_inputs() {
+        let execution = Execution::default();
+        let x = event_scalar("x");
+
+        let empty_batch_schema =
+            Arc::new(Schema::new(std::iter::empty::<&str>(), ["x"], true).unwrap());
+        let empty_batch = Dataset::from_batch(
+            EventBatch::from_events(empty_batch_schema, std::iter::empty::<OwnedEvent>()).unwrap(),
+        );
+        for empty in [empty_batch, dataset().empty_derived().unwrap()] {
+            assert!(empty.evaluate_real(&x, &execution).unwrap().is_empty());
+            assert!(
+                empty
+                    .select(&Predicate::ge(x.clone(), 0.0), &execution)
+                    .unwrap()
+                    .map_events(|event| event.scalar(0))
+                    .unwrap()
+                    .is_empty()
+            );
+        }
+    }
+
+    #[test]
+    fn event_column_nan_comparisons_are_false() {
+        let schema = Arc::new(Schema::new(std::iter::empty::<&str>(), ["x"], true).unwrap());
+        let dataset = Dataset::from_events(
+            schema,
+            [
+                OwnedEvent::weighted(vec![], vec![f64::NAN], 1.0),
+                OwnedEvent::weighted(vec![], vec![0.0], 1.0),
+                OwnedEvent::weighted(vec![], vec![1.0], 1.0),
+            ],
+        )
+        .unwrap();
+        let x = event_scalar("x");
+        let selected = dataset
+            .select(&Predicate::ne(x, 0.0), &Execution::default())
+            .unwrap();
+
+        assert_eq!(
+            selected.map_events(|event| event.scalar(0)).unwrap(),
+            vec![1.0]
+        );
+    }
+
+    #[test]
+    fn query_propagates_source_batch_errors() {
+        let schema = Arc::new(Schema::new(std::iter::empty::<&str>(), ["x"], true).unwrap());
+        let dataset = Dataset::new(FailingSource { schema });
+
+        let error = dataset
+            .evaluate_real(&event_scalar("x"), &Execution::default())
+            .unwrap_err();
+        assert!(
+            matches!(error, RuntimeError::Data(message) if message.contains("query source failed"))
+        );
+    }
+
+    #[test]
+    fn all_empty_bins_retain_valid_empty_derived_sources() {
+        let source = dataset();
+        let before = capability_tuple(source.capabilities());
+        let bins = source
+            .bin_by(
+                &event_scalar("x"),
+                BinSpec::edges([10.0, 20.0, 30.0]).unwrap(),
+                &Execution::default(),
+            )
+            .unwrap();
+
+        assert_eq!(capability_tuple(source.capabilities()), before);
+        assert_eq!(bins.len(), 2);
+        for bin in bins {
+            assert_eq!(bin.dataset().num_events().unwrap(), Some(0));
+            assert!(
+                bin.dataset()
+                    .evaluate_real(&event_scalar("x"), &Execution::default())
+                    .unwrap()
+                    .is_empty()
+            );
+        }
     }
 
     #[test]
@@ -749,6 +998,61 @@ mod tests {
         );
         let parameter = Expr::from(laddu_expr::parameters::Parameter::free("p"));
         assert!(dataset.evaluate_expr(&parameter, &execution).is_err());
+    }
+
+    #[test]
+    fn compiled_query_outputs_preserve_order_and_values() {
+        let source = dataset();
+        let batch = source.batches().unwrap().next().unwrap().unwrap();
+        let x = event_scalar("x");
+        let query = QueryExprSet::prepare(
+            vec![x.clone() + 1.0, x.clone() * 2.0, x],
+            &Execution::default(),
+            false,
+        )
+        .unwrap();
+        let values = query.evaluate_batch(&batch).unwrap();
+        assert_eq!(
+            values[0].iter().map(|v| v.re).collect::<Vec<_>>(),
+            [0.0, 1.0, 2.0, 3.0]
+        );
+        assert_eq!(
+            values[1].iter().map(|v| v.re).collect::<Vec<_>>(),
+            [-2.0, 0.0, 2.0, 4.0]
+        );
+        assert_eq!(
+            values[2].iter().map(|v| v.re).collect::<Vec<_>>(),
+            [-1.0, 0.0, 1.0, 2.0]
+        );
+    }
+
+    #[test]
+    fn repeated_predicate_leaves_are_evaluated_once() {
+        let x = event_scalar("x");
+        let selected = dataset()
+            .select(
+                &Predicate::ge(x.clone() + 1.0, 0.0).and(Predicate::lt(x + 1.0, 2.0)),
+                &Execution::default(),
+            )
+            .unwrap();
+        assert_eq!(
+            selected.map_events(|event| event.scalar(0)).unwrap(),
+            [-1.0, 0.0]
+        );
+    }
+
+    #[test]
+    fn f32_queries_match_f64_query_results() {
+        let x = event_scalar("x");
+        let f64_values = dataset().evaluate_real(&x, &Execution::default()).unwrap();
+        let f32_execution = Execution::local(ExecutionOptions {
+            device: Device::Cpu(CpuOptions::default()),
+            precision: Precision::F32,
+            ..ExecutionOptions::default()
+        })
+        .unwrap();
+        let f32_values = dataset().evaluate_real(&x, &f32_execution).unwrap();
+        assert_eq!(f32_values, f64_values);
     }
 
     #[test]

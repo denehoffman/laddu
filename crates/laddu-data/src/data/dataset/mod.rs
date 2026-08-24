@@ -126,8 +126,10 @@ impl Dataset {
         }
     }
 
-    /// Build a derived dataset while preserving this dataset's read and cache policy.
-    #[doc(hidden)]
+    /// Builds a derived dataset while preserving this dataset's read and cache policy.
+    ///
+    /// The derived source owns its row lifetime; this method only carries over
+    /// execution policy and schema-independent dataset settings.
     pub fn with_derived_source<S>(&self, source: S) -> Self
     where
         S: EventSource + 'static,
@@ -144,6 +146,15 @@ impl Dataset {
             stats: Default::default(),
             source_traversals: Default::default(),
         }
+    }
+
+    /// Builds an empty derived dataset with this dataset's schema and policy.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduDataError`] when the source schema cannot be read.
+    pub fn empty_derived(&self) -> LadduDataResult<Self> {
+        Ok(self.with_derived_source(MemorySource::empty(self.schema()?)))
     }
 
     /// Creates an in-memory dataset from one batch.
@@ -494,6 +505,25 @@ impl Dataset {
         F: FnMut(T, Event<'_>) -> T,
     {
         self.try_fold_events(init, |acc, ev| Ok(f(acc, ev)))
+    }
+
+    /// Fallibly folds transformed event batches into an owned accumulator.
+    ///
+    /// The callback receives each batch in source order and may stop the
+    /// traversal by returning a data error.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first source or callback error.
+    pub fn try_fold_batches<T, F>(&self, init: T, mut f: F) -> LadduDataResult<T>
+    where
+        F: FnMut(T, EventBatch) -> LadduDataResult<T>,
+    {
+        let mut acc = init;
+        for batch in self.batches()? {
+            acc = f(acc, batch?)?;
+        }
+        Ok(acc)
     }
 
     /// Fallibly updates a mutable accumulator for every transformed event.
@@ -935,6 +965,40 @@ mod tests {
             .unwrap_err();
 
         assert!(matches!(err, LadduDataError::Unsupported("stop")));
+    }
+
+    #[test]
+    fn batch_folds_and_empty_derived_sources_preserve_schema_and_errors() {
+        let dataset = Dataset::from_batches(vec![weighted_batch(0, 2), weighted_batch(2, 2)])
+            .unwrap()
+            .chunked(2)
+            .unwrap();
+        let event_count = dataset
+            .try_fold_batches(0usize, |count, batch| Ok(count + batch.len()))
+            .unwrap();
+        assert_eq!(event_count, 4);
+        let rows = dataset
+            .try_fold_batches(Vec::new(), |mut rows, batch| {
+                rows.extend((0..batch.len()).map(|row| batch.scalar_at(0, row)));
+                Ok(rows)
+            })
+            .unwrap();
+        assert_eq!(rows, [0.0, 1.0, 2.0, 3.0]);
+
+        let error = dataset
+            .try_fold_batches(0usize, |_count, _batch| {
+                Err(LadduDataError::Unsupported("stop"))
+            })
+            .unwrap_err();
+        assert!(matches!(error, LadduDataError::Unsupported("stop")));
+
+        let empty = dataset.empty_derived().unwrap();
+        assert_eq!(
+            empty.schema().unwrap().as_ref(),
+            dataset.schema().unwrap().as_ref()
+        );
+        assert_eq!(empty.num_events().unwrap(), Some(0));
+        assert!(empty.batches().unwrap().next().is_none());
     }
 
     #[test]

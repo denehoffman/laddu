@@ -9,9 +9,11 @@ use laddu_data::data::{CacheStorage, MemoryPolicy, accurate::AccurateF64};
 use laddu_data::schema::Precision as DataPrecision;
 use laddu_expr::parameters::ParamValues;
 #[cfg(feature = "wgpu")]
-use laddu_memory::{MemoryDecision, MemoryFitRequest, MemoryFootprint};
+use laddu_memory::{MemoryDecision, MemoryFootprint};
 use num::complex::Complex64;
 
+#[cfg(feature = "wgpu")]
+use crate::preparation::{DatasetPreparation, DatasetStatsAccumulator, RuntimePreparationPlan};
 use crate::{
     CpuBackend, CpuPlan, CpuPreparedDataset, Execution, PreparedDatasetStats, ReductionEvaluation,
     RuntimeError, RuntimeResult,
@@ -84,6 +86,24 @@ impl PreparedModel {
                         .collect()
                 })
                 .map_err(wgpu_error),
+        }
+    }
+
+    /// Evaluates a vector-root model and returns one output column per root
+    /// element. CPU supports this query-oriented ABI; scalar WGPU kernels
+    /// retain their existing single-output contract.
+    pub(crate) fn evaluate_batch_outputs(
+        &self,
+        params: &ParamValues,
+        batch: &EventBatch,
+        outputs: &[laddu_expr::ExprId],
+    ) -> RuntimeResult<Vec<Vec<Complex64>>> {
+        match self {
+            Self::Cpu(plan) => plan.evaluate_batch_outputs(params, batch, outputs),
+            #[cfg(feature = "wgpu")]
+            Self::Wgpu(_) => Err(RuntimeError::Wgpu(
+                "multi-output query evaluation is not implemented by the WGPU backend".into(),
+            )),
         }
     }
 
@@ -225,15 +245,14 @@ pub struct WgpuPlan {
 #[derive(Clone, Debug)]
 struct WgpuDatasetPlan {
     read_plan: laddu_data::io::ReadPlan,
-    storage: CacheStorage,
-    host_decision: MemoryDecision,
+    preparation_plan: RuntimePreparationPlan,
     device_decision: MemoryDecision,
 }
 
 #[cfg(feature = "wgpu")]
 impl WgpuDatasetPlan {
     fn resolve(
-        mut read_plan: laddu_data::io::ReadPlan,
+        read_plan: laddu_data::io::ReadPlan,
         memory_policy: MemoryPolicy,
         local_event_limit: usize,
         host_footprint: MemoryFootprint,
@@ -241,14 +260,13 @@ impl WgpuDatasetPlan {
         host_available: u64,
         device_available: Option<u64>,
     ) -> RuntimeResult<Self> {
-        let host_decision = MemoryFitRequest {
-            label: "WGPU host staging".into(),
-            footprint: host_footprint,
-            available_bytes: host_available,
-            event_limit: local_event_limit,
-            strategy: "bounded host staging".into(),
-        }
-        .evaluate()?;
+        let mut preparation_plan = RuntimePreparationPlan::new(read_plan, local_event_limit);
+        let host_decision = preparation_plan.fit_staging(
+            "WGPU host staging",
+            host_footprint,
+            host_available,
+            "bounded host staging",
+        )?;
         let host_chunks = local_event_limit
             .saturating_add(host_decision.chunk_events.saturating_sub(1))
             / host_decision.chunk_events.max(1);
@@ -263,57 +281,53 @@ impl WgpuDatasetPlan {
         let resident_peak = resident_footprint.peak_bytes(local_event_limit);
         let device_available = device_available
             .ok_or_else(|| RuntimeError::Wgpu("GPU execution has no device memory pool".into()))?;
-        let storage = match memory_policy {
-            MemoryPolicy::Streaming => CacheStorage::Streaming,
-            MemoryPolicy::Resident => {
-                if resident_peak > device_available {
-                    return Err(laddu_memory::MemoryError::BudgetExceeded {
-                        resource: "device".into(),
-                        requested: resident_peak,
-                        remaining: device_available,
-                    }
-                    .into());
-                }
-                CacheStorage::Resident
-            }
-            MemoryPolicy::Fastest if resident_peak <= device_available => CacheStorage::Resident,
-            MemoryPolicy::Fastest => CacheStorage::Streaming,
-        };
-        let device_decision = if storage == CacheStorage::Resident {
-            MemoryFitRequest {
-                label: "WGPU prepared dataset".into(),
-                footprint: resident_footprint,
-                available_bytes: device_available,
-                event_limit: local_event_limit,
-                strategy: "resident".into(),
-            }
-            .evaluate_resident(host_decision.chunk_events)?
+        preparation_plan.select_storage(
+            memory_policy,
+            "device",
+            resident_peak <= device_available,
+            resident_peak,
+            device_available,
+        )?;
+        let device_decision = if preparation_plan.storage() == CacheStorage::Resident {
+            preparation_plan.fit_resident(
+                "WGPU prepared dataset",
+                resident_footprint,
+                device_available,
+                "resident",
+                host_decision.chunk_events,
+            )?
         } else {
-            MemoryFitRequest {
-                label: "WGPU prepared dataset".into(),
-                footprint: prepared_footprint,
-                available_bytes: device_available,
-                event_limit: local_event_limit,
-                strategy: "streaming".into(),
-            }
-            .evaluate()?
+            preparation_plan.fit_staging(
+                "WGPU prepared dataset",
+                prepared_footprint,
+                device_available,
+                "streaming",
+            )?
         };
         let chunk_events = device_decision
             .chunk_events
             .min(host_decision.chunk_events)
             .max(1);
-        read_plan.chunk_size = Some(
-            read_plan
-                .chunk_size
-                .map_or(chunk_events, |manual| manual.min(chunk_events))
-                .max(1),
-        );
+        preparation_plan.clamp_read_plan(read_plan.chunk_size, chunk_events);
         Ok(Self {
-            read_plan,
-            storage,
-            host_decision,
+            read_plan: preparation_plan.read_plan(),
+            preparation_plan,
             device_decision,
         })
+    }
+
+    fn storage(&self) -> CacheStorage {
+        self.preparation_plan.storage()
+    }
+
+    fn reserve_storage(
+        &mut self,
+        pool: Option<&crate::MemoryPool>,
+    ) -> RuntimeResult<Option<crate::MemoryLease>> {
+        self.preparation_plan.reserve_storage(pool, || {
+            RuntimeError::Wgpu("GPU execution has no device memory pool".into())
+        })?;
+        Ok(self.preparation_plan.take_memory_lease())
     }
 }
 
@@ -447,35 +461,10 @@ impl WgpuPlan {
         execution: &Execution,
         dataset: &Dataset,
     ) -> RuntimeResult<WgpuPreparedDataset> {
-        let read_plan = execution.read_plan(dataset.read_plan());
-        let known_local_events = dataset
-            .num_events()
-            .map_err(|error| RuntimeError::Data(error.to_string()))?
-            .and_then(|events| usize::try_from(events).ok());
-        let discovered_events =
-            if known_local_events.is_none() && dataset.memory_policy() != MemoryPolicy::Streaming {
-                let local = (|| {
-                    let mut events = 0;
-                    for batch in dataset
-                        .stream_with_plan(read_plan)
-                        .map_err(|error| RuntimeError::Data(error.to_string()))?
-                    {
-                        events += batch
-                            .map_err(|error| RuntimeError::Data(error.to_string()))?
-                            .len();
-                    }
-                    Ok::<_, RuntimeError>(events)
-                })();
-                if !execution.all_succeeded(local.is_ok()) {
-                    return local.and(Err(RuntimeError::DistributedPeerFailure));
-                }
-                Some(local?)
-            } else {
-                None
-            };
-        let local_event_limit = known_local_events
-            .or(discovered_events)
-            .unwrap_or(usize::MAX);
+        let preparation = DatasetPreparation::new(execution, dataset);
+        let preparation_plan = preparation.runtime_plan()?;
+        let read_plan = preparation_plan.read_plan();
+        let local_event_limit = preparation_plan.event_limit();
         let prepared_footprint = self
             .kernel
             .prepared_memory_footprint(&self.preparation_params)
@@ -486,7 +475,7 @@ impl WgpuPlan {
         let host_footprint = BatchLayout::from_schema(&schema)
             .schema_working_set(DataPrecision::F64, 2)
             .map_err(|error| RuntimeError::Data(format!("host working-set overflow: {error}")))?;
-        let plan = WgpuDatasetPlan::resolve(
+        let mut plan = WgpuDatasetPlan::resolve(
             read_plan,
             dataset.memory_policy(),
             local_event_limit,
@@ -495,32 +484,20 @@ impl WgpuPlan {
             execution.host_memory().remaining(),
             execution.device_memory().map(|pool| pool.remaining()),
         )?;
-        let memory_lease = if plan.storage == CacheStorage::Resident {
-            let device_pool = execution.device_memory().ok_or_else(|| {
-                RuntimeError::Wgpu("GPU execution has no device memory pool".into())
-            })?;
-            Some(device_pool.reserve(plan.device_decision.estimated_peak_bytes)?)
-        } else {
-            None
-        };
-        execution.record_memory_decision(plan.device_decision.clone());
-        execution.record_memory_decision(plan.host_decision.clone());
+        let memory_lease = plan.reserve_storage(execution.device_memory())?;
+        for decision in plan.preparation_plan.take_decisions().into_iter().rev() {
+            execution.record_memory_decision(decision);
+        }
         let local = (|| {
             let mut batches = Vec::new();
-            let mut events = 0;
-            let mut batch_count = 0;
-            let mut sum_weights = AccurateF64::zero();
+            let mut stats = DatasetStatsAccumulator::new();
             for batch in dataset
                 .stream_with_plan(plan.read_plan)
                 .map_err(|error| RuntimeError::Data(error.to_string()))?
             {
                 let batch = batch.map_err(|error| RuntimeError::Data(error.to_string()))?;
-                events += batch.len();
-                batch_count += 1;
-                for row in 0..batch.len() {
-                    sum_weights.push(batch.weights_at(row));
-                }
-                if plan.storage == CacheStorage::Resident {
+                stats.observe(&batch);
+                if plan.storage() == CacheStorage::Resident {
                     batches.push(
                         self.kernel
                             .prepare_batch(&self.context, &self.preparation_params, &batch)
@@ -528,25 +505,15 @@ impl WgpuPlan {
                     );
                 }
             }
-            Ok::<_, RuntimeError>((batches, events, batch_count, sum_weights.finish()))
+            Ok::<_, RuntimeError>((batches, stats.finish()))
         })();
-        if !execution.all_succeeded(local.is_ok()) {
-            return local.and(Err(RuntimeError::DistributedPeerFailure));
-        }
-        let (batches, events, batch_count, sum_weights) = local?;
+        let (batches, local_stats) = preparation.coordinate(local)?;
         let resident_bytes = batches
             .iter()
             .map(laddu_wgpu::WgpuPreparedBatch::resident_bytes)
             .sum();
-        let stats = PreparedDatasetStats::new(
-            events,
-            execution.sum_usize(events),
-            batch_count,
-            execution.sum_f64(sum_weights),
-            resident_bytes,
-            plan.storage,
-        );
-        Ok(match plan.storage {
+        let stats = preparation.finish_stats(local_stats, resident_bytes, plan.storage());
+        Ok(match plan.storage() {
             CacheStorage::Resident => WgpuPreparedDataset::Resident {
                 batches: batches.into(),
                 stats,
@@ -663,9 +630,8 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(plan.storage, CacheStorage::Resident);
+        assert_eq!(plan.storage(), CacheStorage::Resident);
         assert_eq!(plan.read_plan.chunk_size, Some(3));
-        assert_eq!(plan.host_decision.chunk_events, 100);
         assert_eq!(plan.device_decision.chunk_events, 100);
         assert_eq!(plan.device_decision.estimated_peak_bytes, 600);
     }
@@ -683,7 +649,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(plan.storage, CacheStorage::Streaming);
+        assert_eq!(plan.storage(), CacheStorage::Streaming);
         assert_eq!(plan.read_plan.chunk_size, Some(50));
         assert_eq!(plan.device_decision.chunk_events, 50);
         assert_eq!(plan.device_decision.estimated_peak_bytes, 1_000);

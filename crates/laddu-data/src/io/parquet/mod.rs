@@ -562,13 +562,16 @@ mod tests {
     use crate::data::{Dataset, EventBatchBuilder};
 
     fn temp_path(ext: &str) -> PathBuf {
+        static NEXT_PATH: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_nanos();
+        let sequence = NEXT_PATH.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
         std::env::temp_dir().join(format!(
-            "laddu-parquet-test-{}-{nanos}.{ext}",
+            "laddu-parquet-test-{}-{nanos}-{sequence}.{ext}",
             std::process::id()
         ))
     }

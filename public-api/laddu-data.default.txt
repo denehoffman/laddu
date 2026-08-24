@@ -73,6 +73,7 @@ pub fn laddu_data::data::dataset::Dataset::bootstrap(self, u64) -> Self
 pub fn laddu_data::data::dataset::Dataset::cache_storage(&self) -> laddu_data::data::dataset::CacheStorage
 pub fn laddu_data::data::dataset::Dataset::capabilities(&self) -> laddu_data::io::SourceCapabilities
 pub fn laddu_data::data::dataset::Dataset::chunked(self, usize) -> laddu_data::LadduDataResult<Self>
+pub fn laddu_data::data::dataset::Dataset::empty_derived(&self) -> laddu_data::LadduDataResult<Self>
 pub fn laddu_data::data::dataset::Dataset::fastest(self) -> Self
 pub fn laddu_data::data::dataset::Dataset::filter<F>(self, F) -> Self where F: core::ops::function::Fn(laddu_data::data::event::Event<'_>) -> bool + core::marker::Send + core::marker::Sync + 'static
 pub fn laddu_data::data::dataset::Dataset::fold_events<T, F>(&self, T, F) -> laddu_data::LadduDataResult<T> where F: core::ops::function::FnMut(T, laddu_data::data::event::Event<'_>) -> T
@@ -97,6 +98,7 @@ pub fn laddu_data::data::dataset::Dataset::streaming(self) -> Self
 pub fn laddu_data::data::dataset::Dataset::subsample(self, f64, u64) -> laddu_data::LadduDataResult<Self>
 pub fn laddu_data::data::dataset::Dataset::sum_weights(&self) -> laddu_data::LadduDataResult<f64>
 pub fn laddu_data::data::dataset::Dataset::try_accumulate_events<T, F>(&self, T, F) -> laddu_data::LadduDataResult<T> where F: core::ops::function::FnMut(&mut T, laddu_data::data::event::Event<'_>) -> laddu_data::LadduDataResult<()>
+pub fn laddu_data::data::dataset::Dataset::try_fold_batches<T, F>(&self, T, F) -> laddu_data::LadduDataResult<T> where F: core::ops::function::FnMut(T, laddu_data::data::event::EventBatch) -> laddu_data::LadduDataResult<T>
 pub fn laddu_data::data::dataset::Dataset::try_fold_events<T, F>(&self, T, F) -> laddu_data::LadduDataResult<T> where F: core::ops::function::FnMut(T, laddu_data::data::event::Event<'_>) -> laddu_data::LadduDataResult<T>
 pub fn laddu_data::data::dataset::Dataset::try_for_each_batch<F>(&self, F) -> laddu_data::LadduDataResult<()> where F: core::ops::function::FnMut(laddu_data::data::event::EventBatch) -> laddu_data::LadduDataResult<()>
 pub fn laddu_data::data::dataset::Dataset::try_for_each_event<F>(&self, F) -> laddu_data::LadduDataResult<()> where F: core::ops::function::FnMut(laddu_data::data::event::Event<'_>) -> laddu_data::LadduDataResult<()>
@@ -104,6 +106,7 @@ pub fn laddu_data::data::dataset::Dataset::try_map_events<T, F>(&self, F) -> lad
 pub fn laddu_data::data::dataset::Dataset::unchunked(self) -> Self
 pub fn laddu_data::data::dataset::Dataset::weighted_complex_sum<F>(&self, F) -> laddu_data::LadduDataResult<num_complex::Complex64> where F: core::ops::function::FnMut(laddu_data::data::event::Event<'_>) -> num_complex::Complex64
 pub fn laddu_data::data::dataset::Dataset::weighted_sum<F>(&self, F) -> laddu_data::LadduDataResult<f64> where F: core::ops::function::FnMut(laddu_data::data::event::Event<'_>) -> f64
+pub fn laddu_data::data::dataset::Dataset::with_derived_source<S>(&self, S) -> Self where S: laddu_data::io::EventSource + 'static
 pub fn laddu_data::data::dataset::Dataset::with_memory_budget(self, laddu_memory::budget::MemoryBudget) -> Self
 pub fn laddu_data::data::dataset::Dataset::write_to<S: laddu_data::io::EventSink>(&self, &mut S) -> laddu_data::LadduDataResult<()>
 impl core::clone::Clone for laddu_data::data::dataset::Dataset
@@ -160,10 +163,12 @@ pub fn laddu_data::data::event::EventBatch::iter(&self) -> impl core::iter::trai
 pub fn laddu_data::data::event::EventBatch::len(&self) -> usize
 pub fn laddu_data::data::event::EventBatch::new(alloc::sync::Arc<laddu_data::schema::Schema>, alloc::vec::Vec<alloc::sync::Arc<[laddu_physics::vectors::RealVec4]>>, alloc::vec::Vec<alloc::sync::Arc<[f64]>>, core::option::Option<alloc::sync::Arc<[f64]>>) -> laddu_data::LadduDataResult<Self>
 pub fn laddu_data::data::event::EventBatch::p4_at(&self, usize, usize) -> laddu_physics::vectors::RealVec4
+pub fn laddu_data::data::event::EventBatch::p4_column_bound(&self, &laddu_data::schema::P4Binding) -> laddu_data::LadduDataResult<&[laddu_physics::vectors::RealVec4]>
 pub fn laddu_data::data::event::EventBatch::resident_bytes(&self) -> usize
 pub fn laddu_data::data::event::EventBatch::reweight<F>(&self, F) -> Self where F: core::ops::function::Fn(usize, f64) -> f64
 pub fn laddu_data::data::event::EventBatch::scalar_at(&self, usize, usize) -> f64
 pub fn laddu_data::data::event::EventBatch::scalar_column(&self, usize) -> &[f64]
+pub fn laddu_data::data::event::EventBatch::scalar_column_bound(&self, &laddu_data::schema::ScalarBinding) -> laddu_data::LadduDataResult<&[f64]>
 pub fn laddu_data::data::event::EventBatch::scalar_column_named(&self, &str) -> core::option::Option<&[f64]>
 pub fn laddu_data::data::event::EventBatch::schema(&self) -> &alloc::sync::Arc<laddu_data::schema::Schema>
 pub fn laddu_data::data::event::EventBatch::select(&self, &[usize]) -> Self
@@ -247,6 +252,7 @@ pub fn laddu_data::data::dataset::Dataset::bootstrap(self, u64) -> Self
 pub fn laddu_data::data::dataset::Dataset::cache_storage(&self) -> laddu_data::data::dataset::CacheStorage
 pub fn laddu_data::data::dataset::Dataset::capabilities(&self) -> laddu_data::io::SourceCapabilities
 pub fn laddu_data::data::dataset::Dataset::chunked(self, usize) -> laddu_data::LadduDataResult<Self>
+pub fn laddu_data::data::dataset::Dataset::empty_derived(&self) -> laddu_data::LadduDataResult<Self>
 pub fn laddu_data::data::dataset::Dataset::fastest(self) -> Self
 pub fn laddu_data::data::dataset::Dataset::filter<F>(self, F) -> Self where F: core::ops::function::Fn(laddu_data::data::event::Event<'_>) -> bool + core::marker::Send + core::marker::Sync + 'static
 pub fn laddu_data::data::dataset::Dataset::fold_events<T, F>(&self, T, F) -> laddu_data::LadduDataResult<T> where F: core::ops::function::FnMut(T, laddu_data::data::event::Event<'_>) -> T
@@ -271,6 +277,7 @@ pub fn laddu_data::data::dataset::Dataset::streaming(self) -> Self
 pub fn laddu_data::data::dataset::Dataset::subsample(self, f64, u64) -> laddu_data::LadduDataResult<Self>
 pub fn laddu_data::data::dataset::Dataset::sum_weights(&self) -> laddu_data::LadduDataResult<f64>
 pub fn laddu_data::data::dataset::Dataset::try_accumulate_events<T, F>(&self, T, F) -> laddu_data::LadduDataResult<T> where F: core::ops::function::FnMut(&mut T, laddu_data::data::event::Event<'_>) -> laddu_data::LadduDataResult<()>
+pub fn laddu_data::data::dataset::Dataset::try_fold_batches<T, F>(&self, T, F) -> laddu_data::LadduDataResult<T> where F: core::ops::function::FnMut(T, laddu_data::data::event::EventBatch) -> laddu_data::LadduDataResult<T>
 pub fn laddu_data::data::dataset::Dataset::try_fold_events<T, F>(&self, T, F) -> laddu_data::LadduDataResult<T> where F: core::ops::function::FnMut(T, laddu_data::data::event::Event<'_>) -> laddu_data::LadduDataResult<T>
 pub fn laddu_data::data::dataset::Dataset::try_for_each_batch<F>(&self, F) -> laddu_data::LadduDataResult<()> where F: core::ops::function::FnMut(laddu_data::data::event::EventBatch) -> laddu_data::LadduDataResult<()>
 pub fn laddu_data::data::dataset::Dataset::try_for_each_event<F>(&self, F) -> laddu_data::LadduDataResult<()> where F: core::ops::function::FnMut(laddu_data::data::event::Event<'_>) -> laddu_data::LadduDataResult<()>
@@ -278,6 +285,7 @@ pub fn laddu_data::data::dataset::Dataset::try_map_events<T, F>(&self, F) -> lad
 pub fn laddu_data::data::dataset::Dataset::unchunked(self) -> Self
 pub fn laddu_data::data::dataset::Dataset::weighted_complex_sum<F>(&self, F) -> laddu_data::LadduDataResult<num_complex::Complex64> where F: core::ops::function::FnMut(laddu_data::data::event::Event<'_>) -> num_complex::Complex64
 pub fn laddu_data::data::dataset::Dataset::weighted_sum<F>(&self, F) -> laddu_data::LadduDataResult<f64> where F: core::ops::function::FnMut(laddu_data::data::event::Event<'_>) -> f64
+pub fn laddu_data::data::dataset::Dataset::with_derived_source<S>(&self, S) -> Self where S: laddu_data::io::EventSource + 'static
 pub fn laddu_data::data::dataset::Dataset::with_memory_budget(self, laddu_memory::budget::MemoryBudget) -> Self
 pub fn laddu_data::data::dataset::Dataset::write_to<S: laddu_data::io::EventSink>(&self, &mut S) -> laddu_data::LadduDataResult<()>
 impl core::clone::Clone for laddu_data::data::dataset::Dataset
@@ -307,10 +315,12 @@ pub fn laddu_data::data::event::EventBatch::iter(&self) -> impl core::iter::trai
 pub fn laddu_data::data::event::EventBatch::len(&self) -> usize
 pub fn laddu_data::data::event::EventBatch::new(alloc::sync::Arc<laddu_data::schema::Schema>, alloc::vec::Vec<alloc::sync::Arc<[laddu_physics::vectors::RealVec4]>>, alloc::vec::Vec<alloc::sync::Arc<[f64]>>, core::option::Option<alloc::sync::Arc<[f64]>>) -> laddu_data::LadduDataResult<Self>
 pub fn laddu_data::data::event::EventBatch::p4_at(&self, usize, usize) -> laddu_physics::vectors::RealVec4
+pub fn laddu_data::data::event::EventBatch::p4_column_bound(&self, &laddu_data::schema::P4Binding) -> laddu_data::LadduDataResult<&[laddu_physics::vectors::RealVec4]>
 pub fn laddu_data::data::event::EventBatch::resident_bytes(&self) -> usize
 pub fn laddu_data::data::event::EventBatch::reweight<F>(&self, F) -> Self where F: core::ops::function::Fn(usize, f64) -> f64
 pub fn laddu_data::data::event::EventBatch::scalar_at(&self, usize, usize) -> f64
 pub fn laddu_data::data::event::EventBatch::scalar_column(&self, usize) -> &[f64]
+pub fn laddu_data::data::event::EventBatch::scalar_column_bound(&self, &laddu_data::schema::ScalarBinding) -> laddu_data::LadduDataResult<&[f64]>
 pub fn laddu_data::data::event::EventBatch::scalar_column_named(&self, &str) -> core::option::Option<&[f64]>
 pub fn laddu_data::data::event::EventBatch::schema(&self) -> &alloc::sync::Arc<laddu_data::schema::Schema>
 pub fn laddu_data::data::event::EventBatch::select(&self, &[usize]) -> Self
@@ -375,6 +385,7 @@ pub fn laddu_data::io::memory::MemorySink::write_batch(&mut self, &laddu_data::d
 pub struct laddu_data::io::memory::MemorySource
 impl laddu_data::io::memory::MemorySource
 pub fn laddu_data::io::memory::MemorySource::batches_slice(&self) -> &[laddu_data::data::event::EventBatch]
+pub fn laddu_data::io::memory::MemorySource::empty(alloc::sync::Arc<laddu_data::schema::Schema>) -> Self
 pub fn laddu_data::io::memory::MemorySource::from_batches(alloc::vec::Vec<laddu_data::data::event::EventBatch>) -> laddu_data::LadduDataResult<Self>
 pub fn laddu_data::io::memory::MemorySource::from_events<I>(alloc::sync::Arc<laddu_data::schema::Schema>, I) -> laddu_data::LadduDataResult<Self> where I: core::iter::traits::collect::IntoIterator<Item = laddu_data::data::event::OwnedEvent>
 pub fn laddu_data::io::memory::MemorySource::into_batch(self) -> laddu_data::LadduDataResult<laddu_data::data::event::EventBatch>
@@ -843,6 +854,16 @@ pub fn laddu_data::schema::ColumnInfo<'a>::clone(&self) -> laddu_data::schema::C
 impl<'a> core::fmt::Debug for laddu_data::schema::ColumnInfo<'a>
 pub fn laddu_data::schema::ColumnInfo<'a>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl<'a> core::marker::Copy for laddu_data::schema::ColumnInfo<'a>
+pub struct laddu_data::schema::P4Binding
+impl laddu_data::schema::P4Binding
+pub fn laddu_data::schema::P4Binding::index(&self) -> usize
+impl core::clone::Clone for laddu_data::schema::P4Binding
+pub fn laddu_data::schema::P4Binding::clone(&self) -> laddu_data::schema::P4Binding
+impl core::cmp::PartialEq for laddu_data::schema::P4Binding
+pub fn laddu_data::schema::P4Binding::eq(&self, &laddu_data::schema::P4Binding) -> bool
+impl core::fmt::Debug for laddu_data::schema::P4Binding
+pub fn laddu_data::schema::P4Binding::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for laddu_data::schema::P4Binding
 pub struct laddu_data::schema::P4Suffixes
 pub laddu_data::schema::P4Suffixes::e: &'static str
 pub laddu_data::schema::P4Suffixes::px: &'static str
@@ -857,8 +878,20 @@ impl core::default::Default for laddu_data::schema::P4Suffixes
 pub fn laddu_data::schema::P4Suffixes::default() -> Self
 impl core::fmt::Debug for laddu_data::schema::P4Suffixes
 pub fn laddu_data::schema::P4Suffixes::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub struct laddu_data::schema::ScalarBinding
+impl laddu_data::schema::ScalarBinding
+pub fn laddu_data::schema::ScalarBinding::index(&self) -> usize
+impl core::clone::Clone for laddu_data::schema::ScalarBinding
+pub fn laddu_data::schema::ScalarBinding::clone(&self) -> laddu_data::schema::ScalarBinding
+impl core::cmp::PartialEq for laddu_data::schema::ScalarBinding
+pub fn laddu_data::schema::ScalarBinding::eq(&self, &laddu_data::schema::ScalarBinding) -> bool
+impl core::fmt::Debug for laddu_data::schema::ScalarBinding
+pub fn laddu_data::schema::ScalarBinding::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for laddu_data::schema::ScalarBinding
 pub struct laddu_data::schema::Schema
 impl laddu_data::schema::Schema
+pub fn laddu_data::schema::Schema::bind_p4(&self, &str) -> core::option::Option<laddu_data::schema::P4Binding>
+pub fn laddu_data::schema::Schema::bind_scalar(&self, &str) -> core::option::Option<laddu_data::schema::ScalarBinding>
 pub fn laddu_data::schema::Schema::has_weight(&self) -> bool
 pub fn laddu_data::schema::Schema::n_p4s(&self) -> usize
 pub fn laddu_data::schema::Schema::n_scalars(&self) -> usize

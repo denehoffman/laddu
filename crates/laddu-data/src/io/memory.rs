@@ -24,6 +24,18 @@ pub struct MemoryFragmentKey {
 }
 
 impl MemorySource {
+    /// Creates an empty replayable source with the supplied schema.
+    ///
+    /// Empty derived datasets retain schema and source capabilities while
+    /// yielding no batches. This is useful for partitioning operations where
+    /// a valid empty result is distinct from an invalid source definition.
+    pub fn empty(schema: Arc<Schema>) -> Self {
+        Self {
+            schema,
+            batches: Arc::from([]),
+        }
+    }
+
     /// Creates a source containing one batch.
     pub fn new(batch: EventBatch) -> Self {
         Self {

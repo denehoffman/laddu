@@ -5,7 +5,7 @@ use laddu_physics::vectors::RealVec4;
 
 use crate::{
     BatchLayout, LadduDataError, LadduDataResult,
-    schema::{Precision, Schema},
+    schema::{P4Binding, Precision, ScalarBinding, Schema},
 };
 
 #[derive(Clone, Debug)]
@@ -367,9 +367,45 @@ impl EventBatch {
         self.parts.p4s[col][row]
     }
 
+    /// Returns a four-momentum column through a schema-resolved binding.
+    ///
+    /// Schema compatibility is checked once, so callers can safely reuse the
+    /// returned slice for every row in a packing loop.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduDataError::Schema`] when the binding belongs to another
+    /// schema.
+    pub fn p4_column_bound(&self, binding: &P4Binding) -> LadduDataResult<&[RealVec4]> {
+        if !binding.matches(&self.schema) {
+            return Err(LadduDataError::Schema(
+                "column binding belongs to a different schema".into(),
+            ));
+        }
+        Ok(self.vec4_column(binding.index()))
+    }
+
     /// Returns one scalar cell.
     pub fn scalar_at(&self, col: usize, row: usize) -> f64 {
         self.parts.scalars[col][row]
+    }
+
+    /// Returns a scalar column through a schema-resolved binding.
+    ///
+    /// Schema compatibility is checked once, so callers can safely reuse the
+    /// returned slice for every row in a packing loop.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduDataError::Schema`] when the binding belongs to another
+    /// schema.
+    pub fn scalar_column_bound(&self, binding: &ScalarBinding) -> LadduDataResult<&[f64]> {
+        if !binding.matches(&self.schema) {
+            return Err(LadduDataError::Schema(
+                "column binding belongs to a different schema".into(),
+            ));
+        }
+        Ok(self.scalar_column(binding.index()))
     }
 
     /// Returns the explicit row weight, or one when weights are absent.
@@ -877,6 +913,23 @@ mod tests {
 
     fn scalar_values(batch: &EventBatch) -> Vec<f64> {
         batch.scalar_column(0).to_vec()
+    }
+
+    #[test]
+    fn bound_columns_reuse_schema_resolution_for_row_access() {
+        let batch = weighted_batch(3, 2);
+        let scalar = batch.schema().bind_scalar("x").unwrap();
+        let p4 = batch.schema().bind_p4("p").unwrap();
+
+        assert_eq!(batch.scalar_column_bound(&scalar).unwrap(), &[3.0, 4.0]);
+        assert_eq!(batch.p4_column_bound(&p4).unwrap(), &[v(3.0), v(4.0)]);
+
+        let other_schema = Arc::new(Schema::new(["other"], ["x"], true).unwrap());
+        let other = other_schema.bind_scalar("x").unwrap();
+        assert!(matches!(
+            batch.scalar_column_bound(&other),
+            Err(LadduDataError::Schema(message)) if message == "column binding belongs to a different schema"
+        ));
     }
 
     #[test]

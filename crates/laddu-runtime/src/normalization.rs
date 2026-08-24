@@ -162,6 +162,12 @@ pub struct PreparedNormalization {
     _memory_lease: MemoryLease,
 }
 
+#[derive(Debug)]
+struct NormalizationEvaluation {
+    value: f64,
+    gradient: Option<Vec<f64>>,
+}
+
 impl PreparedNormalization {
     /// Prepares compiler-native normalization when selected by execution policy.
     ///
@@ -341,28 +347,7 @@ impl PreparedNormalization {
     /// Returns a runtime error for incompatible parameters, residual backend
     /// failures, or a verification mismatch.
     pub fn value(&self, params: &ParamValues, execution: &Execution) -> RuntimeResult<f64> {
-        let evaluator_params = project_normalization(&self.evaluator_parameters, params)?;
-        let mut value = self.evaluator.evaluate(&evaluator_params)?.re;
-        if let Some(residual) = &self.residual {
-            let residual_params = project_normalization(&residual.parameters, params)?;
-            value += residual.plan.reduce(
-                execution,
-                &residual_params,
-                &residual.dataset,
-                ReductionPlan::weighted_real(),
-            )?;
-        }
-        if let Some(general) = &self.verification {
-            let general_params = project_normalization(&general.parameters, params)?;
-            let expected = general.plan.reduce(
-                execution,
-                &general_params,
-                &general.dataset,
-                ReductionPlan::weighted_real(),
-            )?;
-            verify_close("normalization value", value, expected, execution)?;
-        }
-        Ok(value)
+        Ok(self.evaluate_composed(params, execution, false)?.value)
     }
 
     /// Evaluates the accepted normalization and its local free-parameter gradient.
@@ -376,61 +361,96 @@ impl PreparedNormalization {
         params: &ParamValues,
         execution: &Execution,
     ) -> RuntimeResult<(f64, Vec<f64>)> {
+        let evaluation = self.evaluate_composed(params, execution, true)?;
+        Ok((
+            evaluation.value,
+            evaluation.gradient.ok_or_else(|| {
+                RuntimeError::Data("normalization gradient composition produced no gradient".into())
+            })?,
+        ))
+    }
+
+    fn evaluate_composed(
+        &self,
+        params: &ParamValues,
+        execution: &Execution,
+        with_gradient: bool,
+    ) -> RuntimeResult<NormalizationEvaluation> {
         let evaluator_params = project_normalization(&self.evaluator_parameters, params)?;
-        let evaluation = self.evaluator.evaluate_with_gradient(&evaluator_params)?;
-        let mut value = evaluation.value().re;
-        let evaluator_gradient = evaluation
-            .gradient()
-            .iter()
-            .map(|value| value.re)
-            .collect::<Vec<_>>();
-        let mut gradient = vec![0.0; params.layout().n_free()];
-        self.evaluator_parameters
-            .scatter_add(&evaluator_gradient, &mut gradient)
-            .map_err(|_| {
-                RuntimeError::Data(
-                    "normalization gradient has an incompatible parameter layout".into(),
-                )
-            })?;
+        let (mut value, mut gradient) = if with_gradient {
+            let evaluation = self.evaluator.evaluate_with_gradient(&evaluator_params)?;
+            let mut gradient = vec![0.0; params.layout().n_free()];
+            let evaluator_gradient = evaluation
+                .gradient()
+                .iter()
+                .map(|value| value.re)
+                .collect::<Vec<_>>();
+            self.evaluator_parameters
+                .scatter_add(&evaluator_gradient, &mut gradient)
+                .map_err(|_| incompatible_gradient_layout())?;
+            (evaluation.value().re, Some(gradient))
+        } else {
+            (self.evaluator.evaluate(&evaluator_params)?.re, None)
+        };
         if let Some(residual) = &self.residual {
             let residual_params = project_normalization(&residual.parameters, params)?;
-            let residual_evaluation = residual.plan.reduce_with_gradient(
-                execution,
-                &residual_params,
-                &residual.dataset,
-                ReductionPlan::weighted_real(),
-            )?;
-            value += residual_evaluation.value();
-            residual
-                .parameters
-                .scatter_add(residual_evaluation.gradient(), &mut gradient)
-                .map_err(|_| {
-                    RuntimeError::Data(
-                        "normalization gradient has an incompatible parameter layout".into(),
-                    )
-                })?;
-        }
-        if let Some(general) = &self.verification {
-            let general_params = project_normalization(&general.parameters, params)?;
-            let expected = general.plan.reduce_with_gradient(
-                execution,
-                &general_params,
-                &general.dataset,
-                ReductionPlan::weighted_real(),
-            )?;
-            verify_close("normalization value", value, expected.value(), execution)?;
-            for (index, (actual, expected)) in gradient.iter().zip(expected.gradient()).enumerate()
-            {
-                verify_close(
-                    &format!("normalization gradient[{index}]"),
-                    *actual,
-                    *expected,
+            if let Some(gradient) = &mut gradient {
+                let residual_evaluation = residual.plan.reduce_with_gradient(
                     execution,
+                    &residual_params,
+                    &residual.dataset,
+                    ReductionPlan::weighted_real(),
+                )?;
+                value += residual_evaluation.value();
+                residual
+                    .parameters
+                    .scatter_add(residual_evaluation.gradient(), gradient)
+                    .map_err(|_| incompatible_gradient_layout())?;
+            } else {
+                value += residual.plan.reduce(
+                    execution,
+                    &residual_params,
+                    &residual.dataset,
+                    ReductionPlan::weighted_real(),
                 )?;
             }
         }
-        Ok((value, gradient))
+        if let Some(general) = &self.verification {
+            let general_params = project_normalization(&general.parameters, params)?;
+            if let Some(gradient) = &gradient {
+                let expected = general.plan.reduce_with_gradient(
+                    execution,
+                    &general_params,
+                    &general.dataset,
+                    ReductionPlan::weighted_real(),
+                )?;
+                verify_close("normalization value", value, expected.value(), execution)?;
+                for (index, (actual, expected)) in
+                    gradient.iter().zip(expected.gradient()).enumerate()
+                {
+                    verify_close(
+                        &format!("normalization gradient[{index}]"),
+                        *actual,
+                        *expected,
+                        execution,
+                    )?;
+                }
+            } else {
+                let expected = general.plan.reduce(
+                    execution,
+                    &general_params,
+                    &general.dataset,
+                    ReductionPlan::weighted_real(),
+                )?;
+                verify_close("normalization value", value, expected, execution)?;
+            }
+        }
+        Ok(NormalizationEvaluation { value, gradient })
     }
+}
+
+fn incompatible_gradient_layout() -> RuntimeError {
+    RuntimeError::Data("normalization gradient has an incompatible parameter layout".into())
 }
 
 fn accumulate_statistics(

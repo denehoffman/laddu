@@ -16,6 +16,52 @@ pub struct Schema {
     scalar_index: Arc<HashMap<Name, usize>>,
 }
 
+/// A schema-resolved scalar column binding.
+///
+/// Resolve bindings once against the schema used by an
+/// [`EventBatch`](crate::data::EventBatch), then reuse them for every row.
+/// Bindings must not be used with a batch whose schema has a different column
+/// ordering.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ScalarBinding {
+    schema: Arc<Schema>,
+    index: usize,
+}
+
+impl ScalarBinding {
+    /// Returns the physical scalar-column index.
+    pub fn index(&self) -> usize {
+        self.index
+    }
+
+    pub(crate) fn matches(&self, schema: &Schema) -> bool {
+        self.schema.as_ref() == schema
+    }
+}
+
+/// A schema-resolved four-momentum column binding.
+///
+/// Resolve bindings once against the schema used by an
+/// [`EventBatch`](crate::data::EventBatch), then reuse them for every row.
+/// Bindings must not be used with a batch whose schema has a different column
+/// ordering.
+#[derive(Clone, Debug, PartialEq)]
+pub struct P4Binding {
+    schema: Arc<Schema>,
+    index: usize,
+}
+
+impl P4Binding {
+    /// Returns the physical four-momentum-column index.
+    pub fn index(&self) -> usize {
+        self.index
+    }
+
+    pub(crate) fn matches(&self, schema: &Schema) -> bool {
+        self.schema.as_ref() == schema
+    }
+}
+
 impl PartialEq for Schema {
     fn eq(&self, other: &Self) -> bool {
         self.p4s == other.p4s
@@ -54,9 +100,25 @@ impl Schema {
         self.p4_index.get(name).copied()
     }
 
+    /// Resolves a four-momentum column name once for repeated row access.
+    pub fn bind_p4(&self, name: &str) -> Option<P4Binding> {
+        self.p4_index(name).map(|index| P4Binding {
+            schema: Arc::new(self.clone()),
+            index,
+        })
+    }
+
     /// Returns the scalar column index for `name`.
     pub fn scalar_index(&self, name: &str) -> Option<usize> {
         self.scalar_index.get(name).copied()
+    }
+
+    /// Resolves a scalar column name once for repeated row access.
+    pub fn bind_scalar(&self, name: &str) -> Option<ScalarBinding> {
+        self.scalar_index(name).map(|index| ScalarBinding {
+            schema: Arc::new(self.clone()),
+            index,
+        })
     }
 
     /// Returns four-momentum names in column order.
@@ -494,6 +556,16 @@ mod tests {
 
         let err = schema.require_scalar("missing").unwrap_err();
         assert!(matches!(err, LadduDataError::MissingColumn(name) if name.as_ref() == "missing"));
+    }
+
+    #[test]
+    fn schema_bindings_resolve_typed_indices_once() {
+        let schema = Schema::new(["beam", "recoil"], ["mass", "costheta"], true).unwrap();
+
+        assert_eq!(schema.bind_p4("recoil").unwrap().index(), 1);
+        assert_eq!(schema.bind_scalar("costheta").unwrap().index(), 1);
+        assert_eq!(schema.bind_p4("missing"), None);
+        assert_eq!(schema.bind_scalar("missing"), None);
     }
 
     #[test]

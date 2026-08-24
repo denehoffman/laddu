@@ -7,6 +7,7 @@ mod execution;
 #[cfg(feature = "jit")]
 mod jit;
 mod normalization;
+mod preparation;
 mod query;
 
 pub use backend::{PreparedDataset, PreparedModel};
