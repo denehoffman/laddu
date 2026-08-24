@@ -479,7 +479,7 @@ impl From<(f64, f64)> for InitialSpec {
 pub struct ParamLayout {
     specs: Arc<[Parameter]>,
     names: Arc<HashMap<Arc<str>, ParamId>>,
-    projection: ParamProjection,
+    projection: ParamLayoutProjection,
 }
 
 impl fmt::Debug for ParamLayout {
@@ -497,13 +497,13 @@ impl fmt::Debug for ParamLayout {
 
 #[derive(Clone, Debug)]
 // Owns the stable mappings and defaults that define full/free projection.
-struct ParamProjection {
+struct ParamLayoutProjection {
     free_params: Arc<[ParamId]>,
     full_to_free: Arc<[Option<FreeParamId>]>,
     defaults: Arc<[f64]>,
 }
 
-impl ParamProjection {
+impl ParamLayoutProjection {
     fn n_free(&self) -> usize {
         self.free_params.len()
     }
@@ -554,6 +554,19 @@ impl ParamProjection {
     }
 }
 
+/// Validated projection from one parameter layout into another.
+///
+/// The target layout owns the values produced by [`Self::project`], while the
+/// source layout owns the values accepted by it.  Only free parameters are
+/// projected: fixed target parameters retain their configured values, and a
+/// target free parameter must also be free in the source layout.
+#[derive(Clone, Debug)]
+pub struct ParamProjection {
+    source: Arc<ParamLayout>,
+    target: Arc<ParamLayout>,
+    source_free_ids: Arc<[FreeParamId]>,
+}
+
 #[derive(Serialize, Deserialize)]
 // Keep ParamLayout's established flat serialized representation while its
 // projection fields are grouped behind one internal artifact.
@@ -590,12 +603,62 @@ impl<'de> Deserialize<'de> for ParamLayout {
         Ok(Self {
             specs: serialized.specs,
             names: serialized.names,
-            projection: ParamProjection {
+            projection: ParamLayoutProjection {
                 free_params: serialized.free_params,
                 full_to_free: serialized.full_to_free,
                 defaults: serialized.defaults,
             },
         })
+    }
+}
+
+impl ParamProjection {
+    /// Projects values from the source layout into the target layout.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ParamError::UnknownName`] when the supplied values do not
+    /// contain a required target parameter.
+    pub fn project(&self, source: &ParamValues) -> ParamResult<ParamValues> {
+        let free = if source.layout().specs() == self.source.specs() {
+            self.source_free_ids
+                .iter()
+                .map(|id| source.get(self.source.projection.full_id(*id)))
+                .collect::<ParamResult<Vec<_>>>()?
+        } else {
+            self.target
+                .free_params()
+                .iter()
+                .map(|target_id| {
+                    let name = self.target.name(*target_id)?;
+                    let source_id = source
+                        .layout()
+                        .id(name)
+                        .ok_or_else(|| ParamError::UnknownName(name.to_owned()))?;
+                    source.get(source_id)
+                })
+                .collect::<ParamResult<Vec<_>>>()?
+        };
+        self.target.values(&free)
+    }
+
+    /// Scatters a target-layout free gradient into a source-layout gradient.
+    ///
+    /// Values are added to `source`, allowing several projections to
+    /// contribute to one gradient.  Both dimensions are validated against the
+    /// layouts captured by this artifact.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ParamError::FreeLengthMismatch`] when either slice has an
+    /// incompatible free-parameter dimension.
+    pub fn scatter_add(&self, target: &[f64], source: &mut [f64]) -> ParamResult<()> {
+        self.target.projection.validate_free_dimension(target)?;
+        self.source.projection.validate_free_dimension(source)?;
+        for (value, id) in target.iter().zip(self.source_free_ids.iter()) {
+            source[id.index()] += value;
+        }
+        Ok(())
     }
 }
 
@@ -641,7 +704,7 @@ impl LayoutBuilder {
         ParamLayout {
             specs: self.specs.into(),
             names: Arc::new(self.names),
-            projection: ParamProjection {
+            projection: ParamLayoutProjection {
                 free_params: self.free_params.into(),
                 full_to_free: self.full_to_free.into(),
                 defaults: self.defaults.into(),
@@ -738,6 +801,41 @@ impl ParamLayout {
     /// Returns full-layout identifiers in free-parameter order.
     pub fn free_params(&self) -> &[ParamId] {
         self.projection.free_params()
+    }
+
+    /// Builds a validated projection from `source` into this layout.
+    ///
+    /// Free parameters are matched by name and must be free in both layouts.
+    /// Parameters present only in the source are permitted; fixed parameters
+    /// in this layout use their own configured values.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ParamError::UnknownName`] when a free target parameter is
+    /// absent from `source`, or [`ParamError::ParameterConflict`] when it is
+    /// fixed there.
+    pub fn projection_from(&self, source: &ParamLayout) -> ParamResult<ParamProjection> {
+        let source_free_ids = self
+            .free_params()
+            .iter()
+            .map(|target_id| {
+                let name = self.name(*target_id)?;
+                let source_id = source
+                    .id(name)
+                    .ok_or_else(|| ParamError::UnknownName(name.to_owned()))?;
+                source
+                    .free_id(source_id)?
+                    .ok_or_else(|| ParamError::ParameterConflict {
+                        name: name.to_owned(),
+                        reason: "target free parameter is fixed in the source layout".to_owned(),
+                    })
+            })
+            .collect::<ParamResult<Arc<[_]>>>()?;
+        Ok(ParamProjection {
+            source: Arc::new(source.clone()),
+            target: Arc::new(self.clone()),
+            source_free_ids,
+        })
     }
 
     /// Iterates parameter definitions in stable free-parameter order.
@@ -1449,6 +1547,91 @@ mod tests {
                 }
             ))
         );
+    }
+
+    #[test]
+    fn cross_layout_projection_reorders_values_and_scatters_gradients() {
+        let source = ParamLayout::new([
+            Parameter::fixed("offset", -1.0),
+            Parameter::free("x"),
+            Parameter::free("y"),
+        ])
+        .unwrap();
+        let target = ParamLayout::new([
+            Parameter::free("y"),
+            Parameter::fixed("scale", 2.0),
+            Parameter::free("x"),
+        ])
+        .unwrap();
+        let projection = target.projection_from(&source).unwrap();
+        let source_values = source.values(&[1.0, 2.0]).unwrap();
+
+        assert_eq!(
+            projection.project(&source_values).unwrap().as_slice(),
+            &[2.0, 2.0, 1.0]
+        );
+
+        let mut source_gradient = vec![10.0, 20.0];
+        projection
+            .scatter_add(&[0.5, 1.5], &mut source_gradient)
+            .unwrap();
+        assert_eq!(source_gradient, vec![11.5, 20.5]);
+    }
+
+    #[test]
+    fn cross_layout_projection_rejects_missing_and_fixed_source_parameters() {
+        let target = ParamLayout::new([Parameter::free("x")]).unwrap();
+        let missing = ParamLayout::new([Parameter::free("y")]).unwrap();
+        assert_eq!(
+            target.projection_from(&missing).unwrap_err(),
+            ParamError::UnknownName("x".into())
+        );
+
+        let fixed = ParamLayout::new([Parameter::fixed("x", 1.0)]).unwrap();
+        assert!(matches!(
+            target.projection_from(&fixed),
+            Err(ParamError::ParameterConflict { name, .. }) if name == "x"
+        ));
+    }
+
+    #[test]
+    fn cross_layout_projection_supports_zero_free_layouts() {
+        let source = ParamLayout::new([Parameter::fixed("source", 3.0)]).unwrap();
+        let target = ParamLayout::new([Parameter::fixed("target", 4.0)]).unwrap();
+        let projection = target.projection_from(&source).unwrap();
+        let values = source.default_values();
+
+        assert_eq!(projection.project(&values).unwrap().as_slice(), &[4.0]);
+        let mut gradient = Vec::new();
+        projection.scatter_add(&[], &mut gradient).unwrap();
+    }
+
+    #[test]
+    fn cross_layout_projection_accepts_reordered_compatible_source_layouts() {
+        let source = ParamLayout::new([Parameter::free("x")]).unwrap();
+        let other =
+            ParamLayout::new([Parameter::fixed("extra", 9.0), Parameter::fixed("x", 3.0)]).unwrap();
+        let target = ParamLayout::new([Parameter::free("x")]).unwrap();
+        let projection = target.projection_from(&source).unwrap();
+        let values = other.default_values();
+
+        assert_eq!(projection.project(&values).unwrap().as_slice(), &[3.0]);
+        assert_eq!(values.as_slice(), &[9.0, 3.0]);
+    }
+
+    #[test]
+    fn cross_layout_projection_rejects_missing_alternate_source_name() {
+        let source = ParamLayout::new([Parameter::free("x")]).unwrap();
+        let other = ParamLayout::new([Parameter::free("y")]).unwrap();
+        let target = ParamLayout::new([Parameter::free("x")]).unwrap();
+        let projection = target.projection_from(&source).unwrap();
+        let values = other.values(&[7.0]).unwrap();
+
+        assert_eq!(
+            projection.project(&values).unwrap_err(),
+            ParamError::UnknownName("x".into())
+        );
+        assert_eq!(values.as_slice(), &[7.0]);
     }
 
     #[test]

@@ -6,6 +6,7 @@ use laddu_kernel::ir::{
     KernelValueKind, OutputComponent, ScalarKernelIr,
 };
 use laddu_memory::{FootprintOverflow, MemoryFootprint};
+use std::ops::Range;
 use wgpu::util::DeviceExt;
 
 use crate::readback::{decode_singular_status, decode_status, submit_and_readback};
@@ -58,6 +59,42 @@ struct ReductionScratch {
 enum EventInput {
     Scalar(String),
     P4(String, P4Component),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ChunkPlan {
+    ranges: Vec<Range<usize>>,
+}
+
+impl ChunkPlan {
+    fn for_batch(batch_len: usize, chunk_len: usize) -> Self {
+        assert!(chunk_len > 0, "chunk plans require a non-zero chunk length");
+        Self {
+            ranges: (0..batch_len)
+                .step_by(chunk_len)
+                .map(|start| start..start.saturating_add(chunk_len).min(batch_len))
+                .collect(),
+        }
+    }
+
+    fn matches_event_counts<I>(&self, prepared: I) -> bool
+    where
+        I: ExactSizeIterator<Item = usize>,
+    {
+        self.ranges.len() == prepared.len()
+            && self
+                .ranges
+                .iter()
+                .zip(prepared)
+                .all(|(range, events)| range.len() == events)
+    }
+}
+
+struct PackedChunk {
+    start: usize,
+    events: usize,
+    inputs: Vec<u8>,
+    weights: Vec<u8>,
 }
 
 const WORKGROUP_SIZE: usize = 64;
@@ -626,24 +663,19 @@ impl WgpuScalarKernel {
             })?;
         let mut chunks = Vec::new();
         let mut resident_bytes: usize = 0;
-        for start in (0..batch.len()).step_by(chunk_len) {
-            let end = (start + chunk_len).min(batch.len());
-            let chunk = batch.slice(start, end);
-            let inputs = self.pack_batch(&chunk)?;
-            let weights = (0..chunk.len())
-                .map(|row| chunk.weights_at(row))
-                .collect::<Vec<_>>();
-            let weight_bytes = self.encode_scalars(&weights);
-            let (input, cache) = self.cache_buffers(context, &inputs, chunk.len())?;
+        let plan = ChunkPlan::for_batch(batch.len(), chunk_len);
+        for range in &plan.ranges {
+            let packed = self.pack_chunk(batch, range.clone())?;
+            let (input, cache) = self.cache_buffers(context, &packed.inputs, packed.events)?;
             let weights_buffer =
                 context
                     .device()
                     .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                         label: Some("laddu resident event weights"),
-                        contents: &weight_bytes,
+                        contents: &packed.weights,
                         usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
                     });
-            let scratch = self.reduction_scratch(context, params, chunk.len())?;
+            let scratch = self.reduction_scratch(context, params, packed.events)?;
             let mut encoder = context.device().create_command_encoder(&Default::default());
             self.encode_cache_materialization(
                 context,
@@ -651,14 +683,14 @@ impl WgpuScalarKernel {
                 &input,
                 &cache,
                 &scratch.solve_error,
-                chunk.len(),
+                packed.events,
             );
             context.queue().submit([encoder.finish()]);
             if let Some(index) = Self::read_error(context, &scratch.solve_error)? {
-                return Err(WgpuError::SingularMatrixEvent(start + index));
+                return Err(WgpuError::SingularMatrixEvent(packed.start + index));
             }
             let chunk_bytes = layout
-                .prepared_resident_bytes(chunk.len())
+                .prepared_resident_bytes(packed.events)
                 .and_then(|bytes| usize::try_from(bytes).map_err(|_| FootprintOverflow::Conversion))
                 .map_err(|_| WgpuError::MemoryBudgetTooSmall {
                     required: usize::MAX,
@@ -676,7 +708,7 @@ impl WgpuScalarKernel {
                 cache,
                 weights: weights_buffer,
                 scratch,
-                events: chunk.len(),
+                events: packed.events,
             });
         }
         Ok(WgpuPreparedBatch {
@@ -690,6 +722,10 @@ impl WgpuScalarKernel {
     ///
     /// Returns `false` when the existing chunk layout is incompatible with `batch`.
     ///
+    /// Compatibility is checked for the complete batch before any prepared
+    /// buffer is written. A `false` result therefore leaves the prepared
+    /// resources unchanged, including when only a later chunk is incompatible.
+    ///
     /// # Errors
     ///
     /// Returns [`WgpuError`] when parameters or event columns are incompatible,
@@ -702,28 +738,28 @@ impl WgpuScalarKernel {
         prepared: &mut WgpuPreparedBatch,
     ) -> WgpuResult<bool> {
         let chunk_len = self.max_chunk_events(context, params, true)?;
-        let expected = batch.len().div_ceil(chunk_len);
-        if prepared.chunks.len() != expected {
+        let plan = ChunkPlan::for_batch(batch.len(), chunk_len);
+        if !plan.matches_event_counts(prepared.chunks.iter().map(|chunk| chunk.events)) {
             return Ok(false);
         }
-        for (chunk_index, start) in (0..batch.len()).step_by(chunk_len).enumerate() {
-            let end = (start + chunk_len).min(batch.len());
-            let batch_chunk = batch.slice(start, end);
-            let prepared_chunk = &prepared.chunks[chunk_index];
-            if prepared_chunk.events != batch_chunk.len() {
-                return Ok(false);
-            }
-            let inputs = self.pack_batch(&batch_chunk)?;
-            let weights = (0..batch_chunk.len())
-                .map(|row| batch_chunk.weights_at(row))
-                .collect::<Vec<_>>();
-            let weight_bytes = self.encode_scalars(&weights);
+
+        // Pack the complete incoming batch before the first queue write. In
+        // addition to making the layout check atomic, this keeps a packing
+        // error (for example, a missing event column) from leaving a prefix
+        // of the prepared resources refreshed.
+        let packed_chunks = plan
+            .ranges
+            .iter()
+            .map(|range| self.pack_chunk(batch, range.clone()))
+            .collect::<WgpuResult<Vec<_>>>()?;
+
+        for (packed, prepared_chunk) in packed_chunks.iter().zip(&prepared.chunks) {
             context
                 .queue()
-                .write_buffer(&prepared_chunk.input, 0, &inputs);
+                .write_buffer(&prepared_chunk.input, 0, &packed.inputs);
             context
                 .queue()
-                .write_buffer(&prepared_chunk.weights, 0, &weight_bytes);
+                .write_buffer(&prepared_chunk.weights, 0, &packed.weights);
             let mut encoder = context.device().create_command_encoder(&Default::default());
             context.queue().write_buffer(
                 &prepared_chunk.scratch.solve_error,
@@ -736,11 +772,11 @@ impl WgpuScalarKernel {
                 &prepared_chunk.input,
                 &prepared_chunk.cache,
                 &prepared_chunk.scratch.solve_error,
-                prepared_chunk.events,
+                packed.events,
             );
             context.queue().submit([encoder.finish()]);
             if let Some(index) = Self::read_error(context, &prepared_chunk.scratch.solve_error)? {
-                return Err(WgpuError::SingularMatrixEvent(start + index));
+                return Err(WgpuError::SingularMatrixEvent(packed.start + index));
             }
         }
         prepared.len = batch.len();
@@ -1493,6 +1529,19 @@ impl WgpuScalarKernel {
         Ok(self.encode_scalars(&inputs))
     }
 
+    fn pack_chunk(&self, batch: &EventBatch, range: Range<usize>) -> WgpuResult<PackedChunk> {
+        let chunk = batch.slice(range.start, range.end);
+        let weights = (0..chunk.len())
+            .map(|row| chunk.weights_at(row))
+            .collect::<Vec<_>>();
+        Ok(PackedChunk {
+            start: range.start,
+            events: chunk.len(),
+            inputs: self.pack_batch(&chunk)?,
+            weights: self.encode_scalars(&weights),
+        })
+    }
+
     fn evaluate_packed(
         &self,
         context: &WgpuContext,
@@ -2224,9 +2273,10 @@ impl WgpuPreparedBatch {
 
 #[cfg(test)]
 mod tests {
+    use std::ops::Range;
     use std::sync::Arc;
 
-    use super::{GpuMemoryLayout, WgpuScalarKernel};
+    use super::{ChunkPlan, GpuMemoryLayout, WgpuScalarKernel};
 
     use laddu_compile::{CompiledModel, ReductionPlan};
     use laddu_data::{
@@ -2325,6 +2375,60 @@ mod tests {
         assert_eq!(layout.prepared_resident_bytes(8).unwrap(), 120);
         assert_eq!(layout.prepared_resident_bytes(64).unwrap(), 344);
         assert_eq!(layout.prepared_resident_bytes(65).unwrap(), 404);
+    }
+
+    #[test]
+    fn refresh_preflight_rejects_a_late_chunk_without_mutating_prepared_layout() {
+        let prepared_plan = ChunkPlan::for_batch(129, 64);
+        let incoming_plan = ChunkPlan::for_batch(130, 64);
+        let prepared_events = prepared_plan
+            .ranges
+            .iter()
+            .map(Range::len)
+            .collect::<Vec<_>>();
+
+        assert_eq!(prepared_events, [64, 64, 1]);
+        assert_eq!(
+            incoming_plan
+                .ranges
+                .iter()
+                .map(Range::len)
+                .collect::<Vec<_>>(),
+            [64, 64, 2]
+        );
+        assert!(!incoming_plan.matches_event_counts(prepared_events.iter().copied()));
+        assert_eq!(prepared_events, [64, 64, 1]);
+    }
+
+    #[test]
+    fn refresh_preflight_accepts_compatible_chunks() {
+        let prepared_plan = ChunkPlan::for_batch(130, 64);
+        let incoming_plan = ChunkPlan::for_batch(130, 64);
+        let prepared_events = prepared_plan
+            .ranges
+            .iter()
+            .map(Range::len)
+            .collect::<Vec<_>>();
+
+        assert!(incoming_plan.matches_event_counts(prepared_events.iter().copied()));
+        assert_eq!(prepared_events, [64, 64, 2]);
+    }
+
+    #[test]
+    fn chunk_plan_covers_empty_and_partial_boundaries() {
+        for (events, expected) in [
+            (0, vec![]),
+            (1, vec![1]),
+            (63, vec![63]),
+            (64, vec![64]),
+            (65, vec![64, 1]),
+        ] {
+            let plan = ChunkPlan::for_batch(events, 64);
+            assert_eq!(
+                plan.ranges.iter().map(Range::len).collect::<Vec<_>>(),
+                expected
+            );
+        }
     }
 
     #[test]
@@ -2744,6 +2848,151 @@ mod tests {
                 ReductionPlan::weighted_positive_real()
             ),
             Err(crate::WgpuError::NonPositiveEvent(11))
+        ));
+    }
+
+    #[test]
+    #[ignore = "requires a WGPU-compatible hardware adapter"]
+    fn gpu_refresh_rejects_late_chunk_mismatch_without_mutating_prepared_batch() {
+        let expression = event_scalar("x") * parameter!("scale", initial: 1.25) + 2.0;
+        let model = CompiledModel::from_expr(&expression).unwrap();
+        let params = model.params().default_values();
+        let schema = Arc::new(Schema::new(std::iter::empty::<&str>(), ["x"], false).unwrap());
+        let make_batch = |len| {
+            EventBatch::from_events(
+                Arc::clone(&schema),
+                (0..len).map(|index| {
+                    OwnedEvent::weighted(vec![], vec![1.0 + index as f64 * 0.01], 1.0)
+                }),
+            )
+            .unwrap()
+        };
+        let original = make_batch(129);
+        let incoming = make_batch(130);
+        let context = WgpuBackend::default()
+            .open(
+                &WgpuOptions {
+                    memory_budget: Some(256),
+                    ..WgpuOptions::default()
+                },
+                WgpuPrecision::F32,
+            )
+            .unwrap();
+        let kernel = WgpuScalarKernel::compile(&context, &model).unwrap();
+        let chunk_len = kernel.max_chunk_events(&context, &params, true).unwrap();
+        assert_eq!(129_usize.div_ceil(chunk_len), 130_usize.div_ceil(chunk_len));
+        assert_ne!(129 % chunk_len, 0);
+
+        let mut prepared = kernel.prepare_batch(&context, &params, &original).unwrap();
+        let prepared_len = prepared.len();
+        let prepared_resident_bytes = prepared.resident_bytes();
+        let reduction = ReductionPlan::weighted_real();
+        let original_values = kernel.evaluate_batch(&context, &params, &original).unwrap();
+        let original_reduction = kernel
+            .reduce_prepared_batch(&context, &params, &prepared, reduction)
+            .unwrap();
+
+        assert!(
+            !kernel
+                .refresh_batch(&context, &params, &incoming, &mut prepared)
+                .unwrap()
+        );
+        assert_eq!(prepared.len(), prepared_len);
+        assert_eq!(prepared.resident_bytes(), prepared_resident_bytes);
+
+        let refreshed_values = kernel.evaluate_batch(&context, &params, &original).unwrap();
+        let refreshed_reduction = kernel
+            .reduce_prepared_batch(&context, &params, &prepared, reduction)
+            .unwrap();
+        assert_eq!(refreshed_values, original_values);
+        assert_eq!(refreshed_reduction, original_reduction);
+    }
+
+    #[test]
+    #[ignore = "requires a WGPU-compatible hardware adapter"]
+    fn gpu_refresh_packing_error_leaves_prepared_batch_unchanged() {
+        let expression = event_scalar("x") * parameter!("scale", initial: 1.25) + 2.0;
+        let model = CompiledModel::from_expr(&expression).unwrap();
+        let params = model.params().default_values();
+        let original_schema =
+            Arc::new(Schema::new(std::iter::empty::<&str>(), ["x"], false).unwrap());
+        let original = EventBatch::from_events(
+            Arc::clone(&original_schema),
+            (0..129)
+                .map(|index| OwnedEvent::weighted(vec![], vec![1.0 + index as f64 * 0.01], 1.0)),
+        )
+        .unwrap();
+        let incoming = EventBatch::from_events(
+            Arc::new(Schema::new(std::iter::empty::<&str>(), ["y"], false).unwrap()),
+            (0..130)
+                .map(|index| OwnedEvent::weighted(vec![], vec![1.0 + index as f64 * 0.01], 1.0)),
+        )
+        .unwrap();
+        let context = WgpuBackend::default()
+            .open(
+                &WgpuOptions {
+                    memory_budget: Some(256),
+                    ..WgpuOptions::default()
+                },
+                WgpuPrecision::F32,
+            )
+            .unwrap();
+        let kernel = WgpuScalarKernel::compile(&context, &model).unwrap();
+        let mut prepared = kernel.prepare_batch(&context, &params, &original).unwrap();
+        let reduction = ReductionPlan::weighted_real();
+        let before = kernel
+            .reduce_prepared_batch(&context, &params, &prepared, reduction)
+            .unwrap();
+
+        assert!(matches!(
+            kernel.refresh_batch(&context, &params, &incoming, &mut prepared),
+            Err(crate::WgpuError::MissingEventColumn(name)) if name == "x"
+        ));
+        let after = kernel
+            .reduce_prepared_batch(&context, &params, &prepared, reduction)
+            .unwrap();
+        assert_eq!(after, before);
+    }
+
+    #[test]
+    #[ignore = "requires a WGPU-compatible hardware adapter"]
+    fn gpu_refresh_rebases_singular_cache_error_to_global_event_index() {
+        let expression = solve(
+            matrix([[event_scalar("x"), 0.0.into()], [0.0.into(), 1.0.into()]]),
+            vector([1.0, 1.0]),
+        )
+        .component(0);
+        let model = CompiledModel::from_expr(&expression).unwrap();
+        let params = model.params().default_values();
+        let schema = Arc::new(Schema::new(std::iter::empty::<&str>(), ["x"], false).unwrap());
+        let chunk_values = |singular_at: Option<usize>| {
+            (0..129).map(move |index| {
+                let value = if singular_at == Some(index) { 0.0 } else { 1.0 };
+                OwnedEvent::new(vec![], vec![value])
+            })
+        };
+        let original = EventBatch::from_events(Arc::clone(&schema), chunk_values(None)).unwrap();
+        let context = WgpuBackend::default()
+            .open(
+                &WgpuOptions {
+                    memory_budget: Some(256),
+                    ..WgpuOptions::default()
+                },
+                WgpuPrecision::F32,
+            )
+            .unwrap();
+        let kernel = WgpuScalarKernel::compile(&context, &model).unwrap();
+        let chunk_len = kernel.max_chunk_events(&context, &params, true).unwrap();
+        let singular_index = chunk_len + 1;
+        assert!(singular_index < 129);
+        let incoming =
+            EventBatch::from_events(Arc::clone(&schema), chunk_values(Some(singular_index)))
+                .unwrap();
+        let mut prepared = kernel.prepare_batch(&context, &params, &original).unwrap();
+
+        assert!(matches!(
+            kernel.refresh_batch(&context, &params, &incoming, &mut prepared),
+            Err(crate::WgpuError::SingularMatrixEvent(index)) if index == singular_index
         ));
     }
 

@@ -198,12 +198,122 @@ impl std::fmt::Debug for Execution {
     }
 }
 
+struct ResolvedCpu {
+    threads: ThreadPolicy,
+    jit: JitPolicy,
+    pool: Option<Arc<ThreadPool>>,
+}
+
+struct ResolvedHost {
+    state: MemoryState,
+    pool: MemoryPool,
+}
+
+fn resolve_host_memory(budget: MemoryBudget) -> RuntimeResult<ResolvedHost> {
+    let state = MemoryState::current();
+    state.refresh();
+    let pool = state.pool("host", budget)?;
+    Ok(ResolvedHost { state, pool })
+}
+
+fn resolve_precision(requested: Precision, gpu_requested: bool) -> Precision {
+    match requested {
+        Precision::Auto if gpu_requested => Precision::F32,
+        Precision::Auto => Precision::F64,
+        precision => precision,
+    }
+}
+
+fn resolve_cpu(options: CpuOptions) -> RuntimeResult<ResolvedCpu> {
+    #[cfg(not(feature = "jit"))]
+    if options.jit == JitPolicy::Enabled {
+        return Err(ExecutionError::JitUnavailable.into());
+    }
+    let pool = match options.threads {
+        ThreadPolicy::Fixed(0) => return Err(ExecutionError::ZeroThreads.into()),
+        ThreadPolicy::Fixed(threads) => Some(Arc::new(
+            ThreadPoolBuilder::new()
+                .num_threads(threads)
+                .build()
+                .map_err(|error| ExecutionError::ThreadPool(error.to_string()))?,
+        )),
+        ThreadPolicy::Auto | ThreadPolicy::Serial => None,
+    };
+    Ok(ResolvedCpu {
+        threads: options.threads,
+        jit: options.jit,
+        pool,
+    })
+}
+
+#[cfg(feature = "wgpu")]
+struct ResolvedGpu {
+    context: Arc<laddu_wgpu::WgpuContext>,
+    memory: MemoryPool,
+}
+
+#[cfg(feature = "wgpu")]
+fn resolve_gpu(
+    memory_state: &MemoryState,
+    options: &GpuOptions,
+    requested_precision: Precision,
+    requested_memory: Option<MemoryBudget>,
+) -> RuntimeResult<ResolvedGpu> {
+    if options.backend == GpuBackend::Cuda {
+        return Err(ExecutionError::GpuUnavailable(options.backend).into());
+    }
+    let selector = match &options.device {
+        GpuDeviceSelector::Auto => laddu_wgpu::WgpuDeviceSelector::Auto,
+        GpuDeviceSelector::Index(index) => laddu_wgpu::WgpuDeviceSelector::Index(*index),
+        GpuDeviceSelector::PciBusId(id) => laddu_wgpu::WgpuDeviceSelector::PciBusId(id.clone()),
+        GpuDeviceSelector::Name(name) => laddu_wgpu::WgpuDeviceSelector::Name(name.clone()),
+    };
+    let precision = match requested_precision {
+        Precision::Auto => laddu_wgpu::WgpuPrecision::Auto,
+        Precision::F32 => laddu_wgpu::WgpuPrecision::F32,
+        Precision::F64 => laddu_wgpu::WgpuPrecision::F64,
+    };
+    let mut context = laddu_wgpu::WgpuBackend::default()
+        .open(
+            &laddu_wgpu::WgpuOptions {
+                device: selector,
+                memory_budget: None,
+            },
+            precision,
+        )
+        .map_err(|error| RuntimeError::Wgpu(error.to_string()))?;
+    let resource_id = if context.info().pci_bus_id.is_empty() {
+        format!("wgpu:{}", context.info().index)
+    } else {
+        format!("pci:{}", context.info().pci_bus_id)
+    };
+    let fallback = context
+        .info()
+        .max_buffer_size
+        .min(512 * 1024 * 1024)
+        .max(context.info().max_storage_buffer_binding_size);
+    memory_state.register_discovered_device(
+        resource_id.clone(),
+        context.info().name.clone(),
+        DeviceIdentity {
+            adapter_index: context.info().index,
+            vendor_id: context.info().vendor,
+            device_id: context.info().device,
+            pci_bus_id: context.info().pci_bus_id.clone(),
+        },
+        fallback,
+    );
+    let memory = memory_state.pool(&resource_id, requested_memory.unwrap_or(MemoryBudget::Auto))?;
+    context.set_memory_budget(usize::try_from(memory.capacity()).unwrap_or(usize::MAX));
+    Ok(ResolvedGpu {
+        context: Arc::new(context),
+        memory,
+    })
+}
+
 impl Default for Execution {
     fn default() -> Self {
-        let memory_state = MemoryState::current();
-        memory_state.refresh();
-        let host_memory = memory_state
-            .pool("host", MemoryBudget::Auto)
+        let resolved_host = resolve_host_memory(MemoryBudget::Auto)
             .expect("host memory discovery must resolve an automatic budget");
         Self {
             requested_device: Device::Auto,
@@ -214,8 +324,8 @@ impl Default for Execution {
             jit: JitPolicy::Auto,
             pool: None,
             partitioning: Partitioning::default(),
-            memory_state,
-            host_memory,
+            memory_state: resolved_host.state,
+            host_memory: resolved_host.pool,
             device_memory: None,
             memory_decisions: Default::default(),
             normalization_cache: Default::default(),
@@ -236,102 +346,36 @@ impl Execution {
     /// unavailable, GPU initialization fails, or the CPU thread pool cannot be
     /// created.
     pub fn local(options: ExecutionOptions) -> RuntimeResult<Self> {
-        let memory_state = MemoryState::current();
-        memory_state.refresh();
-        let host_memory = memory_state.pool("host", options.memory.host)?;
+        let resolved_host = resolve_host_memory(options.memory.host)?;
+        let memory_state = resolved_host.state;
+        let host_memory = resolved_host.pool;
         #[cfg(feature = "wgpu")]
-        let mut wgpu = None;
+        let resolved_gpu = match &options.device {
+            Device::Gpu(gpu_options) => Some(resolve_gpu(
+                &memory_state,
+                gpu_options,
+                options.precision,
+                options.memory.device,
+            )?),
+            _ => None,
+        };
         #[cfg(feature = "wgpu")]
-        let mut device_memory = None;
+        let wgpu = resolved_gpu.as_ref().map(|gpu| Arc::clone(&gpu.context));
+        #[cfg(feature = "wgpu")]
+        let device_memory = resolved_gpu.map(|gpu| gpu.memory);
         #[cfg(not(feature = "wgpu"))]
         let device_memory = None;
-        let cpu = match &options.device {
-            Device::Auto => CpuOptions::default(),
-            Device::Cpu(options) => options.clone(),
-            Device::Gpu(gpu_options) => {
-                #[cfg(feature = "wgpu")]
-                {
-                    if gpu_options.backend == GpuBackend::Cuda {
-                        return Err(ExecutionError::GpuUnavailable(gpu_options.backend).into());
-                    }
-                    let selector = match &gpu_options.device {
-                        GpuDeviceSelector::Auto => laddu_wgpu::WgpuDeviceSelector::Auto,
-                        GpuDeviceSelector::Index(index) => {
-                            laddu_wgpu::WgpuDeviceSelector::Index(*index)
-                        }
-                        GpuDeviceSelector::PciBusId(id) => {
-                            laddu_wgpu::WgpuDeviceSelector::PciBusId(id.clone())
-                        }
-                        GpuDeviceSelector::Name(name) => {
-                            laddu_wgpu::WgpuDeviceSelector::Name(name.clone())
-                        }
-                    };
-                    let precision = match options.precision {
-                        Precision::Auto => laddu_wgpu::WgpuPrecision::Auto,
-                        Precision::F32 => laddu_wgpu::WgpuPrecision::F32,
-                        Precision::F64 => laddu_wgpu::WgpuPrecision::F64,
-                    };
-                    let mut context = laddu_wgpu::WgpuBackend::default()
-                        .open(
-                            &laddu_wgpu::WgpuOptions {
-                                device: selector,
-                                memory_budget: None,
-                            },
-                            precision,
-                        )
-                        .map_err(|error| RuntimeError::Wgpu(error.to_string()))?;
-                    let resource_id = if context.info().pci_bus_id.is_empty() {
-                        format!("wgpu:{}", context.info().index)
-                    } else {
-                        format!("pci:{}", context.info().pci_bus_id)
-                    };
-                    let fallback = context
-                        .info()
-                        .max_buffer_size
-                        .min(512 * 1024 * 1024)
-                        .max(context.info().max_storage_buffer_binding_size);
-                    memory_state.register_discovered_device(
-                        resource_id.clone(),
-                        context.info().name.clone(),
-                        DeviceIdentity {
-                            adapter_index: context.info().index,
-                            vendor_id: context.info().vendor,
-                            device_id: context.info().device,
-                            pci_bus_id: context.info().pci_bus_id.clone(),
-                        },
-                        fallback,
-                    );
-                    let requested = options.memory.device.unwrap_or(MemoryBudget::Auto);
-                    let pool = memory_state.pool(&resource_id, requested)?;
-                    context
-                        .set_memory_budget(usize::try_from(pool.capacity()).unwrap_or(usize::MAX));
-                    device_memory = Some(pool);
-                    wgpu = Some(Arc::new(context));
-                    CpuOptions::default()
-                }
-                #[cfg(not(feature = "wgpu"))]
-                return Err(ExecutionError::GpuUnavailable(gpu_options.backend).into());
-            }
-        };
-        let precision = match options.precision {
-            Precision::Auto if matches!(options.device, Device::Gpu(_)) => Precision::F32,
-            Precision::Auto => Precision::F64,
-            precision => precision,
-        };
-        #[cfg(not(feature = "jit"))]
-        if cpu.jit == JitPolicy::Enabled {
-            return Err(ExecutionError::JitUnavailable.into());
+        #[cfg(not(feature = "wgpu"))]
+        if let Device::Gpu(gpu_options) = &options.device {
+            return Err(ExecutionError::GpuUnavailable(gpu_options.backend).into());
         }
-        let pool = match cpu.threads {
-            ThreadPolicy::Fixed(0) => return Err(ExecutionError::ZeroThreads.into()),
-            ThreadPolicy::Fixed(threads) => Some(Arc::new(
-                ThreadPoolBuilder::new()
-                    .num_threads(threads)
-                    .build()
-                    .map_err(|error| ExecutionError::ThreadPool(error.to_string()))?,
-            )),
-            ThreadPolicy::Auto | ThreadPolicy::Serial => None,
+        let cpu_options = match &options.device {
+            Device::Cpu(options) => options.clone(),
+            Device::Auto | Device::Gpu(_) => CpuOptions::default(),
         };
+        let cpu = resolve_cpu(cpu_options)?;
+        let precision =
+            resolve_precision(options.precision, matches!(options.device, Device::Gpu(_)));
         Ok(Self {
             requested_device: options.device,
             precision,
@@ -339,7 +383,7 @@ impl Execution {
             normalization: options.normalization,
             threads: cpu.threads,
             jit: cpu.jit,
-            pool,
+            pool: cpu.pool,
             partitioning: options.partitioning,
             memory_state,
             host_memory,
@@ -593,7 +637,6 @@ fn mpi_local_process_count(world_size: i32) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[cfg(not(feature = "wgpu"))]
     use crate::RuntimeError;
     use crate::execution::GpuBackend;
 
@@ -695,5 +738,58 @@ mod tests {
         .unwrap();
         assert_eq!(reverse_f32.precision(), Precision::F32);
         assert_eq!(reverse_f32.autodiff_mode(), AutodiffMode::Reverse);
+    }
+
+    #[test]
+    fn focused_resource_resolution_covers_cpu_policy_matrix() {
+        let cases = [
+            (ThreadPolicy::Auto, JitPolicy::Disabled, false),
+            (ThreadPolicy::Serial, JitPolicy::Auto, false),
+            (ThreadPolicy::Fixed(2), JitPolicy::Disabled, true),
+        ];
+        for (threads, jit, has_pool) in cases {
+            let resolved = resolve_cpu(CpuOptions { threads, jit }).unwrap();
+            assert_eq!(resolved.threads, threads);
+            assert_eq!(resolved.jit, jit);
+            assert_eq!(resolved.pool.is_some(), has_pool);
+        }
+
+        assert!(matches!(
+            resolve_cpu(CpuOptions {
+                threads: ThreadPolicy::Fixed(0),
+                jit: JitPolicy::Disabled,
+            }),
+            Err(RuntimeError::Execution(ExecutionError::ZeroThreads))
+        ));
+
+        #[cfg(not(feature = "jit"))]
+        assert!(matches!(
+            resolve_cpu(CpuOptions {
+                threads: ThreadPolicy::Auto,
+                jit: JitPolicy::Enabled,
+            }),
+            Err(RuntimeError::Execution(ExecutionError::JitUnavailable))
+        ));
+        #[cfg(feature = "jit")]
+        assert!(
+            resolve_cpu(CpuOptions {
+                threads: ThreadPolicy::Auto,
+                jit: JitPolicy::Enabled,
+            })
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn focused_precision_resolution_uses_device_defaults() {
+        let cases = [
+            (Precision::Auto, false, Precision::F64),
+            (Precision::Auto, true, Precision::F32),
+            (Precision::F32, false, Precision::F32),
+            (Precision::F64, true, Precision::F64),
+        ];
+        for (requested, gpu_requested, expected) in cases {
+            assert_eq!(resolve_precision(requested, gpu_requested), expected);
+        }
     }
 }

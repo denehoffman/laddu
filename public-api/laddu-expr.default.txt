@@ -190,6 +190,7 @@ pub fn laddu_expr::parameters::ParamLayout::len(&self) -> usize
 pub fn laddu_expr::parameters::ParamLayout::n_free(&self) -> usize
 pub fn laddu_expr::parameters::ParamLayout::name(&self, laddu_expr::parameters::ParamId) -> laddu_expr::ParamResult<&str>
 pub fn laddu_expr::parameters::ParamLayout::new<S>(impl core::iter::traits::collect::IntoIterator<Item = S>) -> laddu_expr::ParamResult<Self> where S: core::convert::Into<laddu_expr::parameters::Parameter>
+pub fn laddu_expr::parameters::ParamLayout::projection_from(&self, &laddu_expr::parameters::ParamLayout) -> laddu_expr::ParamResult<laddu_expr::parameters::ParamProjection>
 pub fn laddu_expr::parameters::ParamLayout::sample_initial(&self, u64) -> alloc::vec::Vec<f64>
 pub fn laddu_expr::parameters::ParamLayout::spec(&self, laddu_expr::parameters::ParamId) -> laddu_expr::ParamResult<&laddu_expr::parameters::Parameter>
 pub fn laddu_expr::parameters::ParamLayout::specs(&self) -> &[laddu_expr::parameters::Parameter]
@@ -205,6 +206,14 @@ impl serde_core::ser::Serialize for laddu_expr::parameters::ParamLayout
 pub fn laddu_expr::parameters::ParamLayout::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
 impl<'de> serde_core::de::Deserialize<'de> for laddu_expr::parameters::ParamLayout
 pub fn laddu_expr::parameters::ParamLayout::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct laddu_expr::parameters::ParamProjection
+impl laddu_expr::parameters::ParamProjection
+pub fn laddu_expr::parameters::ParamProjection::project(&self, &laddu_expr::parameters::ParamValues) -> laddu_expr::ParamResult<laddu_expr::parameters::ParamValues>
+pub fn laddu_expr::parameters::ParamProjection::scatter_add(&self, &[f64], &mut [f64]) -> laddu_expr::ParamResult<()>
+impl core::clone::Clone for laddu_expr::parameters::ParamProjection
+pub fn laddu_expr::parameters::ParamProjection::clone(&self) -> laddu_expr::parameters::ParamProjection
+impl core::fmt::Debug for laddu_expr::parameters::ParamProjection
+pub fn laddu_expr::parameters::ParamProjection::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub struct laddu_expr::parameters::ParamRegistry
 impl laddu_expr::parameters::ParamRegistry
 pub fn laddu_expr::parameters::ParamRegistry::layout(&self) -> laddu_expr::ParamResult<laddu_expr::parameters::ParamLayout>
