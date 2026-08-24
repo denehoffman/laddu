@@ -5,7 +5,7 @@ use laddu_data::{
     data::{CacheStorage, Dataset},
     io::ReadPlan,
 };
-use laddu_expr::parameters::{ParamLayout, ParamValues};
+use laddu_expr::parameters::{ParamError, ParamLayout, ParamProjection, ParamValues};
 use laddu_memory::{MemoryFitRequest, MemoryFootprint};
 use num::complex::{Complex32, Complex64};
 use std::sync::{
@@ -80,7 +80,7 @@ impl PreparedNormalizationDiagnostics {
 struct GeneralResidual {
     plan: PreparedModel,
     dataset: PreparedDataset,
-    parameters: ParameterMapping,
+    parameters: ParamProjection,
 }
 
 #[derive(Debug)]
@@ -121,88 +121,38 @@ impl StoredStatistics {
     }
 }
 
-#[derive(Clone, Debug)]
-struct ParameterMapping {
-    layout: ParamLayout,
-    child_to_parent_free: Vec<usize>,
-    parent_free: usize,
+fn normalization_projection(
+    child: &ParamLayout,
+    parent: &ParamLayout,
+) -> RuntimeResult<ParamProjection> {
+    child.projection_from(parent).map_err(|error| match error {
+        ParamError::UnknownName(name) => RuntimeError::Data(format!(
+            "normalization parameter `{name}` is absent from the source model"
+        )),
+        ParamError::ParameterConflict { name, .. } => RuntimeError::Data(format!(
+            "normalization parameter `{name}` is unexpectedly fixed in the source model"
+        )),
+        error => RuntimeError::Parameter(error.to_string()),
+    })
 }
 
-impl ParameterMapping {
-    fn new(child: &ParamLayout, parent: &ParamLayout) -> RuntimeResult<Self> {
-        let child_to_parent_free = child
-            .free_params()
-            .iter()
-            .map(|child_id| {
-                let name = child
-                    .name(*child_id)
-                    .map_err(|error| RuntimeError::Parameter(error.to_string()))?;
-                let parent_id = parent.id(name).ok_or_else(|| {
-                    RuntimeError::Data(format!(
-                        "normalization parameter `{name}` is absent from the source model"
-                    ))
-                })?;
-                parent
-                    .free_id(parent_id)
-                    .map_err(|error| RuntimeError::Parameter(error.to_string()))?
-                    .map(|id| id.index())
-                    .ok_or_else(|| {
-                        RuntimeError::Data(format!(
-                            "normalization parameter `{name}` is unexpectedly fixed in the source model"
-                        ))
-                    })
-            })
-            .collect::<RuntimeResult<Vec<_>>>()?;
-        Ok(Self {
-            layout: child.clone(),
-            child_to_parent_free,
-            parent_free: parent.n_free(),
-        })
-    }
-
-    fn project(&self, parent: &ParamValues) -> RuntimeResult<ParamValues> {
-        let free = self
-            .layout
-            .free_params()
-            .iter()
-            .map(|child_id| {
-                let name = self
-                    .layout
-                    .name(*child_id)
-                    .map_err(|error| RuntimeError::Parameter(error.to_string()))?;
-                let parent_id = parent.layout().id(name).ok_or_else(|| {
-                    RuntimeError::Data(format!(
-                        "normalization parameter `{name}` is absent from supplied values"
-                    ))
-                })?;
-                parent
-                    .get(parent_id)
-                    .map_err(|error| RuntimeError::Parameter(error.to_string()))
-            })
-            .collect::<RuntimeResult<Vec<_>>>()?;
-        self.layout
-            .values(&free)
-            .map_err(|error| RuntimeError::Parameter(error.to_string()))
-    }
-
-    fn scatter_add(&self, child: &[f64], parent: &mut [f64]) -> RuntimeResult<()> {
-        if child.len() != self.child_to_parent_free.len() || parent.len() != self.parent_free {
-            return Err(RuntimeError::Data(
-                "normalization gradient has an incompatible parameter layout".into(),
-            ));
-        }
-        for (value, parent_index) in child.iter().zip(&self.child_to_parent_free) {
-            parent[*parent_index] += value;
-        }
-        Ok(())
-    }
+fn project_normalization(
+    projection: &ParamProjection,
+    params: &ParamValues,
+) -> RuntimeResult<ParamValues> {
+    projection.project(params).map_err(|error| match error {
+        ParamError::UnknownName(name) => RuntimeError::Data(format!(
+            "normalization parameter `{name}` is absent from supplied values"
+        )),
+        error => RuntimeError::Parameter(error.to_string()),
+    })
 }
 
 /// Prepared sufficient statistics and their parameter-only contraction.
 #[derive(Debug)]
 pub struct PreparedNormalization {
     evaluator: CpuPlan,
-    evaluator_parameters: ParameterMapping,
+    evaluator_parameters: ParamProjection,
     statistics: StoredStatistics,
     residual: Option<GeneralResidual>,
     verification: Option<GeneralResidual>,
@@ -317,14 +267,15 @@ impl PreparedNormalization {
         let evaluator = CpuBackend
             .prepare_with_autodiff_mode(&evaluator_model, execution.autodiff_mode())
             .map_err(|error| RuntimeError::Data(error.to_string()))?;
-        let evaluator_parameters = ParameterMapping::new(evaluator_model.params(), model.params())?;
+        let evaluator_parameters =
+            normalization_projection(evaluator_model.params(), model.params())?;
 
         let residual_model = model
             .normalization_plan()
             .residual_model()
             .map_err(|error| RuntimeError::Data(error.to_string()))?;
         let residual = if let Some(residual_model) = residual_model {
-            let parameters = ParameterMapping::new(residual_model.params(), model.params())?;
+            let parameters = normalization_projection(residual_model.params(), model.params())?;
             let plan = PreparedModel::prepare(&residual_model, execution)?;
             let dataset = plan.prepare_dataset(execution, dataset)?;
             Some(GeneralResidual {
@@ -339,7 +290,7 @@ impl PreparedNormalization {
             Some(GeneralResidual {
                 plan: general_plan.clone(),
                 dataset: general_plan.prepare_dataset(execution, dataset)?,
-                parameters: ParameterMapping::new(model.params(), model.params())?,
+                parameters: normalization_projection(model.params(), model.params())?,
             })
         } else {
             None
@@ -390,10 +341,10 @@ impl PreparedNormalization {
     /// Returns a runtime error for incompatible parameters, residual backend
     /// failures, or a verification mismatch.
     pub fn value(&self, params: &ParamValues, execution: &Execution) -> RuntimeResult<f64> {
-        let evaluator_params = self.evaluator_parameters.project(params)?;
+        let evaluator_params = project_normalization(&self.evaluator_parameters, params)?;
         let mut value = self.evaluator.evaluate(&evaluator_params)?.re;
         if let Some(residual) = &self.residual {
-            let residual_params = residual.parameters.project(params)?;
+            let residual_params = project_normalization(&residual.parameters, params)?;
             value += residual.plan.reduce(
                 execution,
                 &residual_params,
@@ -402,7 +353,7 @@ impl PreparedNormalization {
             )?;
         }
         if let Some(general) = &self.verification {
-            let general_params = general.parameters.project(params)?;
+            let general_params = project_normalization(&general.parameters, params)?;
             let expected = general.plan.reduce(
                 execution,
                 &general_params,
@@ -425,7 +376,7 @@ impl PreparedNormalization {
         params: &ParamValues,
         execution: &Execution,
     ) -> RuntimeResult<(f64, Vec<f64>)> {
-        let evaluator_params = self.evaluator_parameters.project(params)?;
+        let evaluator_params = project_normalization(&self.evaluator_parameters, params)?;
         let evaluation = self.evaluator.evaluate_with_gradient(&evaluator_params)?;
         let mut value = evaluation.value().re;
         let evaluator_gradient = evaluation
@@ -433,11 +384,16 @@ impl PreparedNormalization {
             .iter()
             .map(|value| value.re)
             .collect::<Vec<_>>();
-        let mut gradient = vec![0.0; self.evaluator_parameters.parent_free];
+        let mut gradient = vec![0.0; params.layout().n_free()];
         self.evaluator_parameters
-            .scatter_add(&evaluator_gradient, &mut gradient)?;
+            .scatter_add(&evaluator_gradient, &mut gradient)
+            .map_err(|_| {
+                RuntimeError::Data(
+                    "normalization gradient has an incompatible parameter layout".into(),
+                )
+            })?;
         if let Some(residual) = &self.residual {
-            let residual_params = residual.parameters.project(params)?;
+            let residual_params = project_normalization(&residual.parameters, params)?;
             let residual_evaluation = residual.plan.reduce_with_gradient(
                 execution,
                 &residual_params,
@@ -447,10 +403,15 @@ impl PreparedNormalization {
             value += residual_evaluation.value();
             residual
                 .parameters
-                .scatter_add(residual_evaluation.gradient(), &mut gradient)?;
+                .scatter_add(residual_evaluation.gradient(), &mut gradient)
+                .map_err(|_| {
+                    RuntimeError::Data(
+                        "normalization gradient has an incompatible parameter layout".into(),
+                    )
+                })?;
         }
         if let Some(general) = &self.verification {
-            let general_params = general.parameters.project(params)?;
+            let general_params = project_normalization(&general.parameters, params)?;
             let expected = general.plan.reduce_with_gradient(
                 execution,
                 &general_params,
