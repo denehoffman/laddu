@@ -2148,15 +2148,22 @@ impl CrossSectionIntegrals {
         self.intensities(free, &self.accepted_mc_source)
     }
 
-    pub(crate) fn accepted_prepared_intensities_many(
+    pub(crate) fn visit_accepted_prepared_intensities_many<F>(
         &self,
         free: &[&[f64]],
-    ) -> LikelihoodResult<(Vec<Vec<f64>>, Vec<f64>)> {
-        self.prepared_intensities_many_with_reduction(
+        parameter_contexts: &[String],
+        consume: F,
+    ) -> LikelihoodResult<Vec<f64>>
+    where
+        F: FnMut(usize, usize, &[f64]),
+    {
+        self.visit_prepared_intensities_many(
             free,
+            parameter_contexts,
             &self.accepted_mc,
             &self.accepted_mc_source,
-            ReductionPlan::weighted_positive_real(),
+            Some(ReductionPlan::weighted_positive_real()),
+            consume,
         )
     }
 
@@ -2169,11 +2176,24 @@ impl CrossSectionIntegrals {
         self.intensities(free, &self.generated_mc_source)
     }
 
-    pub(crate) fn generated_prepared_intensities_many(
+    pub(crate) fn visit_generated_prepared_intensities_many<F>(
         &self,
         free: &[&[f64]],
-    ) -> LikelihoodResult<Vec<Vec<f64>>> {
-        self.prepared_intensities_many(free, &self.generated_mc, &self.generated_mc_source)
+        parameter_contexts: &[String],
+        consume: F,
+    ) -> LikelihoodResult<()>
+    where
+        F: FnMut(usize, usize, &[f64]),
+    {
+        self.visit_prepared_intensities_many(
+            free,
+            parameter_contexts,
+            &self.generated_mc,
+            &self.generated_mc_source,
+            None,
+            consume,
+        )?;
+        Ok(())
     }
 
     /// Returns the accepted-to-generated integral ratio.
@@ -2314,43 +2334,44 @@ impl CrossSectionIntegrals {
         Ok(output)
     }
 
-    fn prepared_intensities_many(
+    fn visit_prepared_intensities_many<F>(
         &self,
         free: &[&[f64]],
+        parameter_contexts: &[String],
         dataset: &PreparedDataset,
         source: &Dataset,
-    ) -> LikelihoodResult<Vec<Vec<f64>>> {
+        reduction: Option<ReductionPlan>,
+        mut consume: F,
+    ) -> LikelihoodResult<Vec<f64>>
+    where
+        F: FnMut(usize, usize, &[f64]),
+    {
         let local = self.project_many(free)?;
-        Ok(self
-            .plan
-            .evaluate_prepared_many(&self.execution, &local, dataset, source)?
-            .into_iter()
-            .map(|values| values.into_iter().map(|value| value.re).collect())
-            .collect())
-    }
-
-    fn prepared_intensities_many_with_reduction(
-        &self,
-        free: &[&[f64]],
-        dataset: &PreparedDataset,
-        source: &Dataset,
-        reduction: ReductionPlan,
-    ) -> LikelihoodResult<(Vec<Vec<f64>>, Vec<f64>)> {
-        let local = self.project_many(free)?;
-        let (values, sums) = self.plan.evaluate_prepared_many_with_reduction(
-            &self.execution,
-            &local,
-            dataset,
-            source,
-            reduction,
-        )?;
-        Ok((
-            values
-                .into_iter()
-                .map(|values| values.into_iter().map(|value| value.re).collect())
-                .collect(),
-            sums,
-        ))
+        let parameter_sets = local
+            .iter()
+            .zip(parameter_contexts)
+            .map(|(parameters, context)| (parameters, context.as_str()))
+            .collect::<Vec<_>>();
+        if parameter_sets.len() != local.len() {
+            return Err(LikelihoodError::Runtime(RuntimeError::InvalidShape {
+                index: 0,
+                message: "parameter values and evaluation contexts have different lengths".into(),
+            }));
+        }
+        self.plan
+            .visit_prepared_many(
+                &self.execution,
+                &parameter_sets,
+                dataset,
+                source,
+                reduction,
+                |offset, parameter_index, values| {
+                    let real = values.iter().map(|value| value.re).collect::<Vec<f64>>();
+                    consume(offset, parameter_index, &real);
+                    Ok(())
+                },
+            )
+            .map_err(LikelihoodError::from)
     }
 
     fn project_many(&self, free: &[&[f64]]) -> LikelihoodResult<Vec<ParamValues>> {

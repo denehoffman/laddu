@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 use laddu_likelihood::{
-    Axis, BinnedEstimate, CrossSection, DifferentialCrossSection, Ensemble, Estimate,
+    Axis, BinnedEstimate, CrossSection, DifferentialCrossSection, Ensemble, Estimate, Projection,
 };
 use numpy::{PyArray1, PyArray2};
 use pyo3::{
@@ -425,6 +425,38 @@ impl PyCrossSection {
             .map(Into::into)
             .map_err(to_py_err)
     }
+
+    #[pyo3(signature = (
+        projections: "dict[str, Axis | Sequence[Axis]]",
+        *,
+        components: "dict[str, Sequence[str]] | None" = None
+    ))]
+    /// Return independent named differential cross sections in request order.
+    fn projection_set<'py>(
+        &self,
+        py: Python<'py>,
+        projections: &Bound<'_, PyAny>,
+        components: Option<HashMap<String, Vec<String>>>,
+    ) -> PyResult<Bound<'py, PyDict>> {
+        let projections = extract_projections(py, projections)?;
+        let results = self
+            .inner
+            .projection_set(&projections, &components.unwrap_or_default())
+            .map_err(to_py_err)?;
+        let output = PyDict::new(py);
+        for (name, result) in results.iter() {
+            output.set_item(
+                name,
+                Py::new(
+                    py,
+                    PyDifferentialCrossSection {
+                        inner: result.clone(),
+                    },
+                )?,
+            )?;
+        }
+        Ok(output)
+    }
 }
 
 fn extract_axes(py: Python<'_>, axes: &Bound<'_, PyAny>) -> PyResult<Vec<Axis>> {
@@ -438,4 +470,21 @@ fn extract_axes(py: Python<'_>, axes: &Bound<'_, PyAny>) -> PyResult<Vec<Axis>> 
         .into_iter()
         .map(|axis| axis.borrow(py).inner.clone())
         .collect())
+}
+
+fn extract_projections(
+    py: Python<'_>,
+    projections: &Bound<'_, PyAny>,
+) -> PyResult<Vec<Projection>> {
+    let items = projections.call_method0("items").map_err(|_| {
+        PyTypeError::new_err("projections must be a mapping from names to Axis values")
+    })?;
+    items
+        .try_iter()?
+        .map(|item| {
+            let (name, axes) = item?.extract::<(String, Py<PyAny>)>()?;
+            let axes = extract_axes(py, axes.bind(py))?;
+            Projection::new(name, axes).map_err(to_py_err)
+        })
+        .collect()
 }

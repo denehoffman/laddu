@@ -32,6 +32,19 @@ fn projection_benchmark(criterion: &mut Criterion) {
             },
         );
         group.bench_with_input(
+            BenchmarkId::new("single-set/resident/20-draws/aliases", projections),
+            &projections,
+            |bencher, &projections| {
+                bencher.iter(|| {
+                    black_box(
+                        resident_20
+                            .evaluate_single_set(black_box(projections))
+                            .unwrap(),
+                    )
+                });
+            },
+        );
+        group.bench_with_input(
             BenchmarkId::new("combined/resident/20-draws/aliases", projections),
             &projections,
             |bencher, &projections| {

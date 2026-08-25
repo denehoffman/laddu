@@ -81,10 +81,14 @@ impl CpuPlan {
         scalar_at(&values, self.graph.root().index())
     }
 
-    pub(super) fn evaluate_with_gradient_inner(
-        &self,
-        params: &ParamValues,
-    ) -> RuntimeResult<ValueGradient> {
+    /// Evaluates an event-independent model and its free-parameter gradient.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RuntimeError`] when parameters are incompatible, the model
+    /// requires event data, differentiation or evaluation fails, or a solve is
+    /// singular.
+    pub fn evaluate_with_gradient(&self, params: &ParamValues) -> RuntimeResult<ValueGradient> {
         #[cfg(feature = "jit")]
         if let (Some(value_kernel), Some(gradient_kernel)) =
             (self.scalar_jit_kernel(), self.gradient_jit_kernel())
@@ -1238,7 +1242,13 @@ impl CpuPlan {
         )
     }
 
-    pub(super) fn evaluate_cache_inner(
+    /// Evaluates every row in a materialized batch cache.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RuntimeError`] when parameters or cache layout are
+    /// incompatible, evaluation fails, or a matrix is singular.
+    pub fn evaluate_cache(
         &self,
         params: &ParamValues,
         cache: &CpuBatchCache,
@@ -1413,7 +1423,7 @@ impl CpuPlan {
     ///
     /// Returns [`RuntimeError`] when parameters or cache layout are
     /// incompatible, or differentiation or evaluation fails.
-    pub(in crate::cpu) fn evaluate_cache_with_gradient_impl(
+    pub fn evaluate_cache_with_gradient(
         &self,
         params: &ParamValues,
         cache: &CpuBatchCache,

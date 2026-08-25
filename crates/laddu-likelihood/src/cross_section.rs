@@ -10,7 +10,7 @@ use std::{
 
 use auto_ops::impl_op_ex;
 use laddu_data::data::Dataset;
-use laddu_expr::Expr;
+use laddu_expr::{Expr, ExprNodeStructuralKey};
 use laddu_runtime::{DatasetExprExt, Execution};
 
 use crate::{CrossSectionIntegrals, Likelihood, LikelihoodError, LikelihoodResult};
@@ -31,11 +31,27 @@ thread_local! {
     static SELECTION_INTENSITY_EVALUATIONS: std::cell::Cell<usize> = const {
         std::cell::Cell::new(0)
     };
+    static PREPARED_INTENSITY_EVALUATIONS: std::cell::Cell<usize> = const {
+        std::cell::Cell::new(0)
+    };
+    static BIN_ASSIGNMENT_EVALUATIONS: std::cell::Cell<usize> = const {
+        std::cell::Cell::new(0)
+    };
 }
 
 fn record_selection_intensity_evaluation() {
     #[cfg(test)]
     SELECTION_INTENSITY_EVALUATIONS.with(|count| count.set(count.get() + 1));
+}
+
+fn record_prepared_intensity_evaluation() {
+    #[cfg(test)]
+    PREPARED_INTENSITY_EVALUATIONS.with(|count| count.set(count.get() + 1));
+}
+
+fn record_bin_assignment_evaluation() {
+    #[cfg(test)]
+    BIN_ASSIGNMENT_EVALUATIONS.with(|count| count.set(count.get() + 1));
 }
 
 #[cfg(test)]
@@ -46,6 +62,19 @@ fn reset_selection_intensity_evaluation_count() {
 #[cfg(test)]
 fn selection_intensity_evaluation_count() -> usize {
     SELECTION_INTENSITY_EVALUATIONS.with(std::cell::Cell::get)
+}
+
+#[cfg(test)]
+fn reset_projection_evaluation_counts() {
+    PREPARED_INTENSITY_EVALUATIONS.with(|count| count.set(0));
+    BIN_ASSIGNMENT_EVALUATIONS.with(|count| count.set(0));
+}
+
+#[cfg(test)]
+fn projection_evaluation_counts() -> (usize, usize) {
+    let intensities = PREPARED_INTENSITY_EVALUATIONS.with(std::cell::Cell::get);
+    let assignments = BIN_ASSIGNMENT_EVALUATIONS.with(std::cell::Cell::get);
+    (intensities, assignments)
 }
 
 /// Named parameter draws with optional paired bootstrap likelihood replicas.
@@ -625,6 +654,72 @@ impl DifferentialCrossSection {
     }
 }
 
+/// One named differential cross section within a projection-set request.
+#[derive(Clone, Debug)]
+pub struct Projection {
+    name: String,
+    axes: Vec<Axis>,
+}
+
+impl Projection {
+    /// Constructs a named projection specification.
+    ///
+    /// # Errors
+    /// Returns an error when the name or axis group is empty.
+    pub fn new(name: impl Into<String>, axes: Vec<Axis>) -> LikelihoodResult<Self> {
+        let name = name.into();
+        if name.is_empty() {
+            return Err(invalid("projection names must not be empty"));
+        }
+        if axes.is_empty() {
+            return Err(invalid("each projection must contain at least one axis"));
+        }
+        Ok(Self { name, axes })
+    }
+
+    /// Public projection name.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// Axes forming this entry's joint differential cross section.
+    pub fn axes(&self) -> &[Axis] {
+        &self.axes
+    }
+}
+
+/// Ordered results from a multi-projection cross-section request.
+#[derive(Clone, Debug)]
+pub struct ProjectionSet {
+    entries: Vec<(String, DifferentialCrossSection)>,
+}
+
+impl ProjectionSet {
+    /// Number of named projection results.
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// Whether the result contains no projections.
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    /// Looks up a projection result by its public name.
+    pub fn get(&self, name: &str) -> Option<&DifferentialCrossSection> {
+        self.entries
+            .iter()
+            .find_map(|(candidate, result)| (candidate == name).then_some(result))
+    }
+
+    /// Iterates over projection names and results in request order.
+    pub fn iter(&self) -> impl ExactSizeIterator<Item = (&str, &DifferentialCrossSection)> {
+        self.entries
+            .iter()
+            .map(|(name, result)| (name.as_str(), result))
+    }
+}
+
 /// A prepared total, tagged, differential, and combinable cross-section analysis.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 struct CanonicalTags(Vec<String>);
@@ -746,6 +841,54 @@ struct BinAssignments {
     count: usize,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+struct ProjectionKey(Vec<AxisKey>);
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+struct AxisKey {
+    root: usize,
+    nodes: Vec<ExprNodeStructuralKey>,
+    edges: Vec<u64>,
+}
+
+impl ProjectionKey {
+    fn new(axes: &[Axis]) -> Self {
+        Self(
+            axes.iter()
+                .map(|axis| {
+                    let graph = axis.expression.to_graph();
+                    AxisKey {
+                        root: graph.root().index(),
+                        nodes: graph
+                            .nodes()
+                            .iter()
+                            .map(|node| node.structural_key())
+                            .collect(),
+                        edges: axis.edges.iter().map(|edge| edge.to_bits()).collect(),
+                    }
+                })
+                .collect(),
+        )
+    }
+}
+
+struct PreparedProjection {
+    name: String,
+    request_axes: Vec<Axis>,
+    axes: Vec<Vec<f64>>,
+    shape: Vec<usize>,
+    volumes: Vec<f64>,
+    data_bins: BinAssignments,
+    accepted_bins: BinAssignments,
+    generated_bins: BinAssignments,
+}
+
+struct ProjectionReplica {
+    bins: Vec<Option<BinAssignments>>,
+    weights: Option<Vec<f64>>,
+    total_data: f64,
+}
+
 impl BinAssignments {
     fn new(values: &[Vec<f64>], axes: &[Axis]) -> Self {
         let event_count = values.first().map_or(0, Vec::len);
@@ -776,6 +919,24 @@ impl BinAssignments {
 
     fn accumulate_weighted_intensities(&self, weights: &[f64], intensities: &[f64]) -> Vec<f64> {
         self.accumulate_products(weights, Some(intensities))
+    }
+
+    fn accumulate_weighted_block(
+        &self,
+        offset: usize,
+        weights: &[f64],
+        intensities: &[f64],
+        bins: &mut [f64],
+    ) {
+        debug_assert!(offset + intensities.len() <= self.indices.len());
+        debug_assert_eq!(self.indices.len(), weights.len());
+        debug_assert_eq!(self.count, bins.len());
+        for (row, &intensity) in intensities.iter().enumerate() {
+            let event = offset + row;
+            if let Some(index) = self.indices[event] {
+                bins[index] += weights[event] * intensity;
+            }
+        }
     }
 
     fn accumulate_products(&self, weights: &[f64], intensities: Option<&[f64]>) -> Vec<f64> {
@@ -1177,6 +1338,36 @@ impl CrossSection {
         self.single_differential(axes, components)
     }
 
+    /// Computes an ordered set of independent named differential cross sections.
+    ///
+    /// # Errors
+    /// Returns an error for an empty request, duplicate names, combined cross
+    /// sections, or failed expression/model evaluation.
+    pub fn projection_set(
+        &self,
+        projections: &[Projection],
+        components: &HashMap<String, Vec<String>>,
+    ) -> LikelihoodResult<ProjectionSet> {
+        if projections.is_empty() {
+            return Err(invalid("at least one projection is required"));
+        }
+        if self.members.is_some() {
+            return Err(invalid(
+                "projection sets for combined CrossSection values are not supported",
+            ));
+        }
+        let mut names = std::collections::HashSet::with_capacity(projections.len());
+        for projection in projections {
+            if !names.insert(projection.name()) {
+                return Err(invalid(format!(
+                    "duplicate projection name: {}",
+                    projection.name()
+                )));
+            }
+        }
+        self.single_projection_set(projections, components)
+    }
+
     fn integrals_for(
         &self,
         likelihood: &Likelihood,
@@ -1355,17 +1546,81 @@ impl CrossSection {
         axes: &[Axis],
         components: &HashMap<String, Vec<String>>,
     ) -> LikelihoodResult<DifferentialCrossSection> {
+        let projection = Projection {
+            name: "differential".to_owned(),
+            axes: axes.to_vec(),
+        };
+        let mut entries = self
+            .single_projection_set(std::slice::from_ref(&projection), components)?
+            .entries;
+        Ok(entries.remove(0).1)
+    }
+
+    fn single_projection_set(
+        &self,
+        projections: &[Projection],
+        components: &HashMap<String, Vec<String>>,
+    ) -> LikelihoodResult<ProjectionSet> {
+        let request_context = format!(
+            "member `{}` projections [{}]",
+            self.term_name,
+            projections
+                .iter()
+                .map(|projection| projection.name())
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
         let execution = self.likelihood.execution();
         let (data, _) = self.likelihood.intensity_datasets(&self.term_name)?;
         let full = self.integrals_for(&self.likelihood, None)?;
-        let data_bins = evaluate_bin_assignments(data, axes, execution)?;
-        let accepted_bins = evaluate_bin_assignments(full.accepted_mc_source(), axes, execution)?;
-        let generated_bins = evaluate_bin_assignments(full.generated_mc_source(), axes, execution)?;
         let data_weights = dataset_weights(data)?;
         let accepted_weights = dataset_weights(full.accepted_mc_source())?;
         let generated_weights = dataset_weights(full.generated_mc_source())?;
-        let volumes = bin_volumes(axes);
         let component_integrals = CanonicalComponents::prepare(self, &self.likelihood, components)?;
+        let mut plan_indexes = HashMap::with_capacity(projections.len());
+        let mut plans = Vec::with_capacity(projections.len());
+        let projection_plans = projections
+            .iter()
+            .map(|projection| {
+                let key = ProjectionKey::new(projection.axes());
+                if let Some(index) = plan_indexes.get(&key) {
+                    return Ok(*index);
+                }
+                let index = plans.len();
+                let prepare = || {
+                    Ok(PreparedProjection {
+                        name: projection.name().to_owned(),
+                        request_axes: projection.axes().to_vec(),
+                        axes: projection
+                            .axes()
+                            .iter()
+                            .map(|axis| axis.edges.clone())
+                            .collect(),
+                        shape: projection.axes().iter().map(Axis::bins).collect(),
+                        volumes: bin_volumes(projection.axes()),
+                        data_bins: evaluate_bin_assignments(data, projection.axes(), execution)?,
+                        accepted_bins: evaluate_bin_assignments(
+                            full.accepted_mc_source(),
+                            projection.axes(),
+                            execution,
+                        )?,
+                        generated_bins: evaluate_bin_assignments(
+                            full.generated_mc_source(),
+                            projection.axes(),
+                            execution,
+                        )?,
+                    })
+                };
+                plans.push(prepare().map_err(|error: LikelihoodError| {
+                    invalid(format!(
+                        "projection `{}` preparation failed: {error}",
+                        projection.name()
+                    ))
+                })?);
+                plan_indexes.insert(key, index);
+                Ok(index)
+            })
+            .collect::<LikelihoodResult<Vec<_>>>()?;
         let parameter_sets = std::iter::once(self.parameters.as_slice())
             .chain(
                 self.ensemble
@@ -1373,121 +1628,238 @@ impl CrossSection {
                     .flat_map(|ensemble| ensemble.draws.iter().map(Vec::as_slice)),
             )
             .collect::<Vec<_>>();
-        let (accepted_intensities, full_accepted_integrals) =
-            full.accepted_prepared_intensities_many(&parameter_sets)?;
-        let generated_intensities = full.generated_prepared_intensities_many(&parameter_sets)?;
-        let component_intensities = component_integrals
-            .integrals
+        let parameter_contexts = std::iter::once("central value".to_owned())
+            .chain(
+                (0..parameter_sets.len().saturating_sub(1))
+                    .map(|index| format!("ensemble draw {index}")),
+            )
+            .collect::<Vec<_>>();
+        let mut accepted_histograms = plans
             .iter()
-            .map(|(canonical_tags, selected)| {
-                record_selection_intensity_evaluation();
-                Ok((
-                    canonical_tags.clone(),
-                    selected.generated_prepared_intensities_many(&parameter_sets)?,
-                ))
-            })
-            .collect::<LikelihoodResult<HashMap<_, _>>>()?;
-        let evaluate = |draw_index: usize,
-                        draw_data_bins: &BinAssignments,
-                        draw_data_weights: &[f64],
-                        total_data: f64|
-         -> LikelihoodResult<DifferentialValues> {
-            let data_histogram = draw_data_bins.accumulate(draw_data_weights);
-            let accepted_histogram = accepted_bins.accumulate_weighted_intensities(
-                &accepted_weights,
-                &accepted_intensities[draw_index],
-            );
-            let generated_histogram = generated_bins.accumulate_weighted_intensities(
-                &generated_weights,
-                &generated_intensities[draw_index],
-            );
-            let full_accepted = full_accepted_integrals[draw_index];
-            let data_cross_section = data_histogram
-                .iter()
-                .zip(&accepted_histogram)
-                .zip(&generated_histogram)
-                .zip(&volumes)
-                .map(|(((data, accepted), generated), volume)| {
-                    if *accepted > 0.0 {
-                        data * generated / accepted / self.luminosity / volume
-                    } else {
-                        f64::NAN
+            .map(|plan| vec![vec![0.0; plan.accepted_bins.count]; parameter_sets.len()])
+            .collect::<Vec<_>>();
+        record_prepared_intensity_evaluation();
+        let full_accepted_integrals = full
+            .visit_accepted_prepared_intensities_many(
+                &parameter_sets,
+                &parameter_contexts,
+                |offset, parameter_index, intensities| {
+                    for (plan, histograms) in plans.iter().zip(&mut accepted_histograms) {
+                        plan.accepted_bins.accumulate_weighted_block(
+                            offset,
+                            &accepted_weights,
+                            intensities,
+                            &mut histograms[parameter_index],
+                        );
                     }
-                })
-                .collect();
-            let model = generated_histogram
-                .iter()
-                .zip(&volumes)
-                .map(|(generated, volume)| {
-                    total_data * generated / full_accepted / self.luminosity / volume
-                })
-                .collect();
-            let component_values = component_integrals
-                .aliases
-                .iter()
-                .map(|(name, canonical_tags)| {
-                    let bins = generated_bins.accumulate_weighted_intensities(
+                },
+            )
+            .map_err(|error| {
+                invalid(format!(
+                    "projection set {request_context} accepted MC intensity evaluation failed: {error}"
+                ))
+            })?;
+        let mut generated_histograms = plans
+            .iter()
+            .map(|plan| vec![vec![0.0; plan.generated_bins.count]; parameter_sets.len()])
+            .collect::<Vec<_>>();
+        record_prepared_intensity_evaluation();
+        full.visit_generated_prepared_intensities_many(
+            &parameter_sets,
+            &parameter_contexts,
+            |offset, parameter_index, intensities| {
+                for (plan, histograms) in plans.iter().zip(&mut generated_histograms) {
+                    plan.generated_bins.accumulate_weighted_block(
+                        offset,
                         &generated_weights,
-                        &component_intensities[canonical_tags][draw_index],
+                        intensities,
+                        &mut histograms[parameter_index],
                     );
-                    Ok((
-                        name.clone(),
-                        bins.iter()
-                            .zip(&volumes)
-                            .map(|(generated, volume)| {
-                                total_data * generated / full_accepted / self.luminosity / volume
-                            })
-                            .collect(),
+                }
+            },
+        )
+        .map_err(|error| {
+            invalid(format!(
+                "projection set {request_context} generated MC intensity evaluation failed: {error}"
+            ))
+        })?;
+        let mut component_histograms = HashMap::new();
+        for (canonical_tags, selected) in &component_integrals.integrals {
+            let mut histograms = plans
+                .iter()
+                .map(|plan| vec![vec![0.0; plan.generated_bins.count]; parameter_sets.len()])
+                .collect::<Vec<_>>();
+            record_selection_intensity_evaluation();
+            record_prepared_intensity_evaluation();
+            selected
+                .visit_generated_prepared_intensities_many(
+                    &parameter_sets,
+                    &parameter_contexts,
+                    |offset, parameter_index, intensities| {
+                        for (plan, histograms) in plans.iter().zip(&mut histograms) {
+                            plan.generated_bins.accumulate_weighted_block(
+                                offset,
+                                &generated_weights,
+                                intensities,
+                                &mut histograms[parameter_index],
+                            );
+                        }
+                    },
+                )
+                .map_err(|error| {
+                    invalid(format!(
+                        "projection set {request_context} generated MC component {:?} intensity evaluation failed: {error}",
+                        canonical_tags.as_slice()
                     ))
-                })
-                .collect::<LikelihoodResult<HashMap<_, _>>>()?;
-            Ok((data_cross_section, model, component_values))
-        };
-        let (data_cross_section, model, component_values) =
-            evaluate(0, &data_bins, &data_weights, full.data_weight_sum())?;
-        let mut data_draws = Vec::new();
-        let mut model_draws = Vec::new();
-        let mut component_draws: HashMap<String, Vec<Vec<f64>>> = components
-            .keys()
-            .map(|name| (name.clone(), Vec::new()))
-            .collect();
-        if let Some(ensemble) = &self.ensemble {
-            for (index, _) in ensemble.draws.iter().enumerate() {
+                })?;
+            component_histograms.insert(canonical_tags.clone(), histograms);
+        }
+        let replicas = self
+            .ensemble
+            .as_ref()
+            .map(|ensemble| {
+                ensemble
+                    .draws
+                    .iter()
+                    .enumerate()
+                    .map(|(index, _)| {
                 let replica_data = ensemble
                     .replicas
                     .get(index)
                     .map(|likelihood| likelihood.intensity_datasets(&self.term_name))
                     .transpose()?
                     .map(|(data, _)| data);
-                let replica_bins =
-                    ensemble.replica_bin_assignments(replica_data, axes, execution)?;
                 let replica_weights = replica_data.map(dataset_weights).transpose()?;
-                let draw_data_bins = replica_bins.as_ref().unwrap_or(&data_bins);
-                let draw_data_weights = replica_weights.as_deref().unwrap_or(&data_weights);
                 let total_data = replica_weights
                     .as_ref()
                     .map(|weights| weights.iter().sum())
                     .unwrap_or_else(|| full.data_weight_sum());
-                let (data, model, component_values) =
-                    evaluate(index + 1, draw_data_bins, draw_data_weights, total_data)?;
-                data_draws.push(data);
-                model_draws.push(model);
-                for (name, values) in component_values {
-                    component_draws.entry(name).or_default().push(values);
+                        let bins = plans
+                            .iter()
+                            .map(|plan| {
+                                ensemble
+                                    .replica_bin_assignments(
+                                        replica_data,
+                                        &plan.request_axes,
+                                        execution,
+                                    )
+                                    .map_err(|error| {
+                                        invalid(format!(
+                                            "projection `{}` draw {index} bin preparation failed: {error}",
+                                            plan.name
+                                        ))
+                                    })
+                            })
+                            .collect::<LikelihoodResult<Vec<_>>>()?;
+                        Ok(ProjectionReplica {
+                            bins,
+                            weights: replica_weights,
+                            total_data,
+                        })
+                    })
+                    .collect::<LikelihoodResult<Vec<_>>>()
+            })
+            .transpose()?
+            .unwrap_or_default();
+        let unique_results = plans
+            .iter()
+            .enumerate()
+            .map(|(plan_index, plan)| {
+                let evaluate = |draw_index: usize,
+                                draw_data_bins: &BinAssignments,
+                                draw_data_weights: &[f64],
+                                total_data: f64|
+                 -> DifferentialValues {
+                    let data_histogram = draw_data_bins.accumulate(draw_data_weights);
+                    let accepted_histogram = &accepted_histograms[plan_index][draw_index];
+                    let generated_histogram = &generated_histograms[plan_index][draw_index];
+                    let full_accepted = full_accepted_integrals[draw_index];
+                    let data_cross_section = data_histogram
+                        .iter()
+                        .zip(accepted_histogram)
+                        .zip(generated_histogram)
+                        .zip(&plan.volumes)
+                        .map(|(((data, accepted), generated), volume)| {
+                            if *accepted > 0.0 {
+                                data * generated / accepted / self.luminosity / volume
+                            } else {
+                                f64::NAN
+                            }
+                        })
+                        .collect();
+                    let model = generated_histogram
+                        .iter()
+                        .zip(&plan.volumes)
+                        .map(|(generated, volume)| {
+                            total_data * generated / full_accepted / self.luminosity / volume
+                        })
+                        .collect();
+                    let component_values = component_integrals
+                        .aliases
+                        .iter()
+                        .map(|(name, canonical_tags)| {
+                            let bins =
+                                &component_histograms[canonical_tags][plan_index][draw_index];
+                            (
+                                name.clone(),
+                                bins.iter()
+                                    .zip(&plan.volumes)
+                                    .map(|(generated, volume)| {
+                                        total_data * generated
+                                            / full_accepted
+                                            / self.luminosity
+                                            / volume
+                                    })
+                                    .collect(),
+                            )
+                        })
+                        .collect();
+                    (data_cross_section, model, component_values)
+                };
+                let (data_cross_section, model, component_values) =
+                    evaluate(0, &plan.data_bins, &data_weights, full.data_weight_sum());
+                let mut data_draws = Vec::with_capacity(replicas.len());
+                let mut model_draws = Vec::with_capacity(replicas.len());
+                let mut component_draws: HashMap<String, Vec<Vec<f64>>> = components
+                    .keys()
+                    .map(|name| (name.clone(), Vec::with_capacity(replicas.len())))
+                    .collect();
+                for (index, replica) in replicas.iter().enumerate() {
+                    let draw_data_bins =
+                        replica.bins[plan_index].as_ref().unwrap_or(&plan.data_bins);
+                    let draw_data_weights = replica.weights.as_deref().unwrap_or(&data_weights);
+                    let (data, model, values) = evaluate(
+                        index + 1,
+                        draw_data_bins,
+                        draw_data_weights,
+                        replica.total_data,
+                    );
+                    data_draws.push(data);
+                    model_draws.push(model);
+                    for (name, values) in values {
+                        component_draws.entry(name).or_default().push(values);
+                    }
                 }
-            }
-        }
-        Ok(DifferentialCrossSection {
-            axes: axes.iter().map(|axis| axis.edges.clone()).collect(),
-            shape: axes.iter().map(Axis::bins).collect(),
-            data: BinnedEstimate::new(data_cross_section, data_draws),
-            model: BinnedEstimate::new(model, model_draws),
-            components: component_values
-                .into_iter()
-                .map(|(name, central)| {
-                    let draws = component_draws.remove(&name).unwrap_or_default();
-                    (name, BinnedEstimate::new(central, draws))
+                Ok(DifferentialCrossSection {
+                    axes: plan.axes.clone(),
+                    shape: plan.shape.clone(),
+                    data: BinnedEstimate::new(data_cross_section, data_draws),
+                    model: BinnedEstimate::new(model, model_draws),
+                    components: component_values
+                        .into_iter()
+                        .map(|(name, central)| {
+                            let draws = component_draws.remove(&name).unwrap_or_default();
+                            (name, BinnedEstimate::new(central, draws))
+                        })
+                        .collect(),
                 })
+            })
+            .collect::<LikelihoodResult<Vec<_>>>()?;
+        Ok(ProjectionSet {
+            entries: projections
+                .iter()
+                .zip(projection_plans)
+                .map(|(projection, plan)| (projection.name.clone(), unique_results[plan].clone()))
                 .collect(),
         })
     }
@@ -1775,6 +2147,7 @@ fn evaluate_bin_assignments(
     axes: &[Axis],
     execution: &Execution,
 ) -> LikelihoodResult<BinAssignments> {
+    record_bin_assignment_evaluation();
     Ok(BinAssignments::new(
         &evaluate_coordinates(dataset, axes, execution)?,
         axes,
@@ -1812,6 +2185,8 @@ fn bin_index(value: f64, edges: &[f64]) -> Option<usize> {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashSet;
+
     use approx::assert_relative_eq;
     use laddu_compile::CompiledModel;
     use laddu_data::{
@@ -1880,6 +2255,49 @@ mod tests {
                     vec!["signal".into(), "background".into(), "signal".into()],
                 ),
             ]),
+        }
+    }
+
+    fn assert_projection_close(
+        actual: &DifferentialCrossSection,
+        expected: &DifferentialCrossSection,
+    ) {
+        fn assert_estimate_close(actual: &BinnedEstimate, expected: &BinnedEstimate) {
+            let rows = std::iter::once((actual.values(), expected.values())).chain(
+                actual
+                    .draws()
+                    .iter()
+                    .zip(expected.draws())
+                    .map(|(actual, expected)| (actual.as_slice(), expected.as_slice())),
+            );
+            assert_eq!(actual.draws().len(), expected.draws().len());
+            for (actual, expected) in rows {
+                assert_eq!(actual.len(), expected.len());
+                for (actual, expected) in actual.iter().zip(expected) {
+                    if expected.is_nan() {
+                        assert!(actual.is_nan());
+                    } else {
+                        assert_relative_eq!(
+                            actual,
+                            expected,
+                            epsilon = 1e-10,
+                            max_relative = 1e-10
+                        );
+                    }
+                }
+            }
+        }
+
+        assert_eq!(actual.axes(), expected.axes());
+        assert_eq!(actual.shape(), expected.shape());
+        assert_estimate_close(actual.data(), expected.data());
+        assert_estimate_close(actual.model(), expected.model());
+        assert_eq!(
+            actual.components().keys().collect::<HashSet<_>>(),
+            expected.components().keys().collect::<HashSet<_>>()
+        );
+        for (name, expected) in expected.components() {
+            assert_estimate_close(&actual.components()[name], expected);
         }
     }
 
@@ -1993,6 +2411,127 @@ mod tests {
         .unwrap();
         assert_eq!(ensemble.len(), 3);
         assert_eq!(ensemble.replicas().len(), 3);
+    }
+
+    #[test]
+    fn rust_projection_set_preserves_order_lookup_and_differential_results() {
+        let fixture = canonical_selection_fixture();
+        let cross_section = fixture
+            .likelihood
+            .cross_section("signal", fixture.generated, 2.0, vec![1.5, 0.75])
+            .unwrap();
+        let wide_axis = Axis::new(event_scalar("x"), vec![0.0, 2.0]).unwrap();
+        let projections = vec![
+            Projection::new("fine", vec![fixture.axis.clone()]).unwrap(),
+            Projection::new("wide", vec![wide_axis.clone()]).unwrap(),
+        ];
+
+        let expected_fine = cross_section
+            .differential(std::slice::from_ref(&fixture.axis), &fixture.components)
+            .unwrap();
+        let expected_wide = cross_section
+            .differential(std::slice::from_ref(&wide_axis), &fixture.components)
+            .unwrap();
+        let actual = cross_section
+            .projection_set(&projections, &fixture.components)
+            .unwrap();
+
+        assert_eq!(actual.len(), 2);
+        assert_eq!(
+            actual.iter().map(|(name, _)| name).collect::<Vec<_>>(),
+            vec!["fine", "wide"]
+        );
+        assert_projection_close(actual.get("fine").unwrap(), &expected_fine);
+        assert_projection_close(actual.get("wide").unwrap(), &expected_wide);
+        assert!(actual.get("missing").is_none());
+    }
+
+    #[test]
+    fn projection_set_shares_intensities_and_identical_bin_assignments() {
+        let fixture = canonical_selection_fixture();
+        let cross_section = fixture
+            .likelihood
+            .cross_section("signal", fixture.generated, 2.0, vec![1.5, 0.75])
+            .unwrap();
+        let wide_axis = Axis::new(event_scalar("x"), vec![0.0, 2.0]).unwrap();
+        let projections = vec![
+            Projection::new("first", vec![fixture.axis.clone()]).unwrap(),
+            Projection::new("alias", vec![fixture.axis]).unwrap(),
+            Projection::new("wide", vec![wide_axis]).unwrap(),
+        ];
+
+        reset_projection_evaluation_counts();
+        let result = cross_section
+            .projection_set(&projections, &fixture.components)
+            .unwrap();
+
+        assert_eq!(result.len(), 3);
+        assert_eq!(projection_evaluation_counts(), (3, 6));
+        assert_projection_close(result.get("first").unwrap(), result.get("alias").unwrap());
+    }
+
+    #[test]
+    fn projection_set_rejects_invalid_requests_before_evaluation() {
+        let fixture = canonical_selection_fixture();
+        let cross_section = fixture
+            .likelihood
+            .cross_section("signal", fixture.generated, 2.0, vec![1.5, 0.75])
+            .unwrap();
+
+        assert!(Projection::new("", vec![fixture.axis.clone()]).is_err());
+        assert!(Projection::new("empty", Vec::new()).is_err());
+        assert!(
+            cross_section
+                .projection_set(&[], &fixture.components)
+                .is_err()
+        );
+        let duplicate = vec![
+            Projection::new("same", vec![fixture.axis.clone()]).unwrap(),
+            Projection::new("same", vec![fixture.axis]).unwrap(),
+        ];
+        reset_projection_evaluation_counts();
+        let error = cross_section
+            .projection_set(&duplicate, &fixture.components)
+            .expect_err("duplicate names must fail");
+
+        assert!(
+            error
+                .to_string()
+                .contains("duplicate projection name: same")
+        );
+        assert_eq!(projection_evaluation_counts(), (0, 0));
+    }
+
+    #[test]
+    fn projection_set_execution_errors_report_dataset_and_draw_context() {
+        let expression: Expr = parameter!("scale", initial: 1.0).into();
+        let model = CompiledModel::from_expr(&expression).unwrap();
+        let data = weighted_dataset(&[(0.25, 1.0)]);
+        let accepted = weighted_dataset(&[(0.25, 1.0)]);
+        let generated = weighted_dataset(&[(0.25, 1.0)]);
+        let likelihood = Arc::new(
+            Likelihood::new([crate::NllTerm::new("signal", &model, &data, &accepted).unwrap()])
+                .unwrap(),
+        );
+        let ensemble = Ensemble::new(vec!["scale".into()], vec![vec![-1.0]]).unwrap();
+        let cross_section = likelihood
+            .cross_section_with_ensemble("signal", generated, 1.0, vec![1.0], ensemble)
+            .unwrap();
+        let projections = [Projection::new(
+            "x",
+            vec![Axis::new(event_scalar("x"), vec![0.0, 1.0]).unwrap()],
+        )
+        .unwrap()];
+
+        let error = cross_section
+            .projection_set(&projections, &HashMap::new())
+            .expect_err("a negative draw intensity must fail");
+        let message = error.to_string();
+
+        assert!(message.contains("accepted MC"), "{message}");
+        assert!(message.contains("ensemble draw 0"), "{message}");
+        assert!(message.contains("member `signal`"), "{message}");
+        assert!(message.contains("projections [x]"), "{message}");
     }
 
     #[test]

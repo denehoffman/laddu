@@ -72,6 +72,34 @@ fn single_member_differentials_preserve_resident_and_streaming_results() {
 }
 
 #[test]
+fn single_member_projection_sets_match_independent_calls_with_ensemble_draws() {
+    for storage in [Storage::Resident, Storage::Streaming] {
+        let fixture = ProjectionFixture::new(96, 3, storage, ThreadPolicy::Serial)
+            .expect("projection fixture should build");
+        let expected = fixture
+            .evaluate_single(4)
+            .expect("independent projections should evaluate");
+        let actual = fixture
+            .evaluate_single_set(4)
+            .expect("projection set should evaluate");
+
+        assert_eq!(actual.len(), expected.len());
+        assert_eq!(
+            actual.iter().map(|(name, _)| name).collect::<Vec<_>>(),
+            vec![
+                "projection_0",
+                "projection_1",
+                "projection_2",
+                "projection_3"
+            ]
+        );
+        for ((_, actual), expected) in actual.iter().zip(&expected) {
+            assert_projection_equal(actual, expected);
+        }
+    }
+}
+
+#[test]
 fn representative_fixture_captures_complete_legacy_reference_fingerprints() {
     let projections = ProjectionFixture::new(128, 3, Storage::Resident, ThreadPolicy::Serial)
         .expect("representative fixture should build")

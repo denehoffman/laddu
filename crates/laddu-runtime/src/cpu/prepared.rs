@@ -24,15 +24,12 @@ impl CpuPlan {
     ///
     /// Returns [`RuntimeError`] when the dataset cannot be read, a batch schema
     /// is incompatible, cache construction fails, or a matrix is singular.
-    pub(in crate::cpu) fn cache_dataset_impl(
-        &self,
-        dataset: &Dataset,
-    ) -> RuntimeResult<CpuCachedDataset> {
+    pub fn cache_dataset(&self, dataset: &Dataset) -> RuntimeResult<CpuCachedDataset> {
         self.cache_dataset_with_plan(dataset, dataset.read_plan())
     }
 
     /// Estimates retained compiled-cache bytes for `events`.
-    pub(in crate::cpu) fn cache_memory_estimate_impl(&self, events: usize) -> usize {
+    pub fn cache_memory_estimate(&self, events: usize) -> usize {
         self.cache_memory_footprint()
             .map(|footprint| usize::try_from(footprint.peak_bytes(events)).unwrap_or(usize::MAX))
             .unwrap_or(usize::MAX)
@@ -120,7 +117,12 @@ impl CpuPlan {
     ///
     /// Returns [`RuntimeError`] when dataset reading or cache construction
     /// fails, or another distributed worker reports failure.
-    pub(in crate::cpu) fn prepare_dataset_impl(
+    ///
+    /// # Panics
+    ///
+    /// Panics if successful preparation planning fails to record its staging
+    /// memory decision, which would violate the planner invariant.
+    pub fn prepare_dataset(
         &self,
         execution: &Execution,
         dataset: &Dataset,

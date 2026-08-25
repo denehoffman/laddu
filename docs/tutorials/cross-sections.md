@@ -179,6 +179,44 @@ model_grid = np.asarray(result.model.central).reshape(result.shape)
 
 `result.axes` stores each edge array and `result.shape` stores the bin counts.
 
+### Projection sets
+
+Use a projection set when several histograms are independent rather than axes
+of one joint histogram. Python accepts an insertion-ordered mapping and returns
+a normal dictionary in the same order:
+
+```python
+projections = cross_section.projection_set(
+    {
+        "mass": mass_axis,
+        "production_angle": ld.Axis(
+            ld.scalar("cos_theta"), edges=np.linspace(-1.0, 1.0, 41)
+        ),
+        "production_azimuth": ld.Axis(
+            ld.scalar("phi"), edges=np.linspace(-np.pi, np.pi, 41)
+        ),
+        "decay_angles": [
+            ld.Axis(ld.scalar("cos_theta_decay"), edges=np.linspace(-1.0, 1.0, 41)),
+            ld.Axis(ld.scalar("phi_decay"), edges=np.linspace(-np.pi, np.pi, 41)),
+        ],
+    },
+    components={
+        "reference": ["reference"],
+        "second": ["second"],
+    },
+)
+
+mass_distribution = projections["mass"]
+decay_grid = np.asarray(projections["decay_angles"].model.central).reshape(
+    projections["decay_angles"].shape
+)
+```
+
+The component mapping applies globally to every entry. Each mapping value may
+be one axis or a sequence of axes; a sequence forms one joint differential
+cross section, while separate names remain independent and share prepared
+event intensities.
+
 ## Statistical uncertainty
 
 Bootstrap replicas must pair each refitted parameter vector with its resampled

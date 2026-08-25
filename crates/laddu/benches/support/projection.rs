@@ -159,6 +159,21 @@ impl ProjectionFixture {
         self.evaluate(&self.single, projections, &self.selections)
     }
 
+    /// Evaluates one or four independent projections through one projection-set call.
+    pub fn evaluate_single_set(&self, projections: usize) -> FixtureResult<ProjectionSet> {
+        if !matches!(projections, 1 | 4) {
+            return Err(format!("projection count must be 1 or 4, got {projections}").into());
+        }
+        let projections = self.axes[..projections]
+            .iter()
+            .enumerate()
+            .map(|(index, axis)| Projection::new(format!("projection_{index}"), vec![axis.clone()]))
+            .collect::<LikelihoodResult<Vec<_>>>()?;
+        self.single
+            .projection_set(&projections, &self.selections)
+            .map_err(Into::into)
+    }
+
     /// Evaluates one or four independent public differential calls on all periods.
     pub fn evaluate_combined(
         &self,

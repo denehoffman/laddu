@@ -244,6 +244,8 @@ pub use laddu::prelude::Partitioning
 pub use laddu::prelude::Precision
 pub use laddu::prelude::Predicate
 pub use laddu::prelude::ProcessMemoryReport
+pub use laddu::prelude::Projection
+pub use laddu::prelude::ProjectionSet
 pub use laddu::prelude::ProposalResult
 pub use laddu::prelude::ProposalRng
 pub use laddu::prelude::ProvenEnvelopeReport

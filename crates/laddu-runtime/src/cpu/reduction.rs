@@ -228,7 +228,66 @@ impl RealGradientAccumulator {
 }
 
 impl CpuPlan {
-    pub(in crate::cpu) fn evaluate_prepared_dataset_many_impl(
+    pub(crate) fn visit_prepared_dataset_many<F>(
+        &self,
+        execution: &Execution,
+        parameter_sets: &[(&ParamValues, &str)],
+        dataset: &CpuPreparedDataset,
+        reduction: Option<ReductionPlan>,
+        mut consume: F,
+    ) -> RuntimeResult<Vec<f64>>
+    where
+        F: FnMut(usize, usize, &[Complex64]) -> RuntimeResult<()>,
+    {
+        let local = (|| {
+            let mut stream = PreparedBatchStream::prepare(self, execution, dataset)?;
+            let mut offset = 0;
+            let mut sums = reduction.map(|_| {
+                parameter_sets
+                    .iter()
+                    .map(|_| AccurateF64::zero())
+                    .collect::<Vec<_>>()
+            });
+            while let Some(batch) = stream.next()? {
+                let batch = batch.cached();
+                for (index, &(parameters, context)) in parameter_sets.iter().enumerate() {
+                    let values =
+                        self.evaluate_cache(parameters, batch.cache())
+                            .map_err(|error| {
+                                RuntimeError::Parameter(format!(
+                                    "{context} evaluation failed: {error}"
+                                ))
+                            })?;
+                    if let (Some(reduction), Some(sums)) = (reduction, sums.as_mut()) {
+                        for (weight, value) in batch.weights().iter().zip(&values) {
+                            let reduced = reduction.apply(*value).map_err(|error| {
+                                RuntimeError::Parameter(format!(
+                                    "{context} reduction failed: {error}"
+                                ))
+                            })?;
+                            sums[index].push(*weight * reduced.value());
+                        }
+                    }
+                    consume(offset, index, &values)?;
+                }
+                offset += batch.weights().len();
+            }
+            Ok(sums
+                .unwrap_or_default()
+                .into_iter()
+                .map(AccurateF64::finish)
+                .collect::<Vec<_>>())
+        })();
+        if !execution.all_succeeded(local.is_ok()) {
+            return local.and(Err(RuntimeError::DistributedPeerFailure));
+        }
+        Ok(local?
+            .into_iter()
+            .map(|sum| execution.sum_f64(sum))
+            .collect())
+    }
+
+    pub(crate) fn evaluate_prepared_dataset_many(
         &self,
         execution: &Execution,
         params: &[ParamValues],
@@ -238,7 +297,7 @@ impl CpuPlan {
             .map(|(values, _)| values)
     }
 
-    pub(in crate::cpu) fn evaluate_prepared_dataset_many_with_reduction_impl(
+    pub(crate) fn evaluate_prepared_dataset_many_with_reduction(
         &self,
         execution: &Execution,
         params: &[ParamValues],
@@ -302,7 +361,7 @@ impl CpuPlan {
     ///
     /// Returns [`RuntimeError`] when streaming, cache validation, evaluation,
     /// or reduction fails, or another distributed worker reports failure.
-    pub(in crate::cpu) fn reduce_impl(
+    pub fn reduce(
         &self,
         execution: &Execution,
         params: &ParamValues,
@@ -330,7 +389,7 @@ impl CpuPlan {
     /// Returns [`RuntimeError`] when streaming, cache validation,
     /// differentiation, evaluation, or reduction fails, or another distributed
     /// worker reports failure.
-    pub(in crate::cpu) fn reduce_with_gradient_impl(
+    pub fn reduce_with_gradient(
         &self,
         execution: &Execution,
         params: &ParamValues,
@@ -366,7 +425,7 @@ impl CpuPlan {
     ///
     /// Returns [`RuntimeError`] when parameters or a cache layout are
     /// incompatible, evaluation fails, or a matrix is singular.
-    pub(in crate::cpu) fn evaluate_cached_dataset_impl(
+    pub fn evaluate_cached_dataset(
         &self,
         params: &ParamValues,
         dataset: &CpuCachedDataset,
@@ -396,7 +455,7 @@ impl CpuPlan {
     ///
     /// Returns [`RuntimeError`] when parameters or a cache layout are
     /// incompatible, or differentiation or evaluation fails.
-    pub(in crate::cpu) fn evaluate_cached_dataset_with_gradient_impl(
+    pub fn evaluate_cached_dataset_with_gradient(
         &self,
         params: &ParamValues,
         dataset: &CpuCachedDataset,
