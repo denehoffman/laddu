@@ -1,10 +1,13 @@
 # ruff: noqa: PT027, S101
 
 import unittest
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import laddu as ld
 import numpy as np
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 
 class ProjectionSetTests(unittest.TestCase):
@@ -37,7 +40,7 @@ class ProjectionSetTests(unittest.TestCase):
         cross_section = self.cross_section()
         fine = ld.Axis(ld.scalar('x'), edges=[0.0, 1.0, 2.0])
         wide = ld.Axis(ld.scalar('x'), edges=[0.0, 2.0])
-        components: dict[str, list[str]] = {
+        components: dict[str, Sequence[str]] = {
             'signal': ['signal'],
             'signal_alias': ['signal', 'signal'],
         }
@@ -74,6 +77,23 @@ class ProjectionSetTests(unittest.TestCase):
             cross_section.projection_set(cast('Any', [axis]))
         with self.assertRaisesRegex(TypeError, 'Axis or a sequence'):
             cross_section.projection_set({'bad': cast('Any', object())})
+
+    def test_combined_projection_set_matches_independent_calls(self) -> None:
+        combined = ld.CrossSection.combine([self.cross_section(), self.cross_section()])
+        fine = ld.Axis(ld.scalar('x'), edges=[0.0, 1.0, 2.0])
+        wide = ld.Axis(ld.scalar('x'), edges=[0.0, 2.0])
+
+        actual = combined.projection_set({'fine': fine, 'wide': wide})
+
+        for name, axis in [('fine', fine), ('wide', wide)]:
+            expected = combined.differential(axis)
+            np.testing.assert_allclose(
+                actual[name].model.central,
+                expected.model.central,
+                rtol=1e-10,
+                atol=1e-10,
+                equal_nan=True,
+            )
 
 
 if __name__ == '__main__':

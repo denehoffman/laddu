@@ -161,17 +161,7 @@ impl ProjectionFixture {
 
     /// Evaluates one or four independent projections through one projection-set call.
     pub fn evaluate_single_set(&self, projections: usize) -> FixtureResult<ProjectionSet> {
-        if !matches!(projections, 1 | 4) {
-            return Err(format!("projection count must be 1 or 4, got {projections}").into());
-        }
-        let projections = self.axes[..projections]
-            .iter()
-            .enumerate()
-            .map(|(index, axis)| Projection::new(format!("projection_{index}"), vec![axis.clone()]))
-            .collect::<LikelihoodResult<Vec<_>>>()?;
-        self.single
-            .projection_set(&projections, &self.selections)
-            .map_err(Into::into)
+        self.evaluate_set(&self.single, projections)
     }
 
     /// Evaluates one or four independent public differential calls on all periods.
@@ -180,6 +170,29 @@ impl ProjectionFixture {
         projections: usize,
     ) -> FixtureResult<Vec<DifferentialCrossSection>> {
         self.evaluate(&self.combined, projections, &self.selections)
+    }
+
+    /// Evaluates one or four independent projections together on all periods.
+    pub fn evaluate_combined_set(&self, projections: usize) -> FixtureResult<ProjectionSet> {
+        self.evaluate_set(&self.combined, projections)
+    }
+
+    fn evaluate_set(
+        &self,
+        cross_section: &CrossSection,
+        projections: usize,
+    ) -> FixtureResult<ProjectionSet> {
+        if !matches!(projections, 1 | 4) {
+            return Err(format!("projection count must be 1 or 4, got {projections}").into());
+        }
+        let projections = self.axes[..projections]
+            .iter()
+            .enumerate()
+            .map(|(index, axis)| Projection::new(format!("projection_{index}"), vec![axis.clone()]))
+            .collect::<LikelihoodResult<Vec<_>>>()?;
+        cross_section
+            .projection_set(&projections, &self.selections)
+            .map_err(Into::into)
     }
 
     /// Evaluates with aliases removed, isolating canonical-selection scaling.
