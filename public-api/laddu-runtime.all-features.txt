@@ -267,6 +267,9 @@ pub laddu_runtime::PreparedModel::Wgpu(laddu_runtime::backend::WgpuPlan)
 impl laddu_runtime::PreparedModel
 pub fn laddu_runtime::PreparedModel::evaluate_batch(&self, &laddu_expr::parameters::ParamValues, &laddu_data::data::event::EventBatch) -> laddu_runtime::RuntimeResult<alloc::vec::Vec<num_complex::Complex64>>
 pub fn laddu_runtime::PreparedModel::evaluate_batch_with_gradient(&self, &laddu_expr::parameters::ParamValues, &laddu_data::data::event::EventBatch) -> laddu_runtime::RuntimeResult<alloc::vec::Vec<laddu_runtime::ValueGradient>>
+pub fn laddu_runtime::PreparedModel::evaluate_prepared(&self, &laddu_runtime::Execution, &laddu_expr::parameters::ParamValues, &laddu_runtime::PreparedDataset, &laddu_data::data::dataset::Dataset) -> laddu_runtime::RuntimeResult<alloc::vec::Vec<num_complex::Complex64>>
+pub fn laddu_runtime::PreparedModel::evaluate_prepared_many(&self, &laddu_runtime::Execution, &[laddu_expr::parameters::ParamValues], &laddu_runtime::PreparedDataset, &laddu_data::data::dataset::Dataset) -> laddu_runtime::RuntimeResult<alloc::vec::Vec<alloc::vec::Vec<num_complex::Complex64>>>
+pub fn laddu_runtime::PreparedModel::evaluate_prepared_many_with_reduction(&self, &laddu_runtime::Execution, &[laddu_expr::parameters::ParamValues], &laddu_runtime::PreparedDataset, &laddu_data::data::dataset::Dataset, laddu_compile::reduction::ReductionPlan) -> laddu_runtime::RuntimeResult<(alloc::vec::Vec<alloc::vec::Vec<num_complex::Complex64>>, alloc::vec::Vec<f64>)>
 pub fn laddu_runtime::PreparedModel::prepare(&laddu_compile::model::CompiledModel, &laddu_runtime::Execution) -> laddu_runtime::RuntimeResult<Self>
 pub fn laddu_runtime::PreparedModel::prepare_dataset(&self, &laddu_runtime::Execution, &laddu_data::data::dataset::Dataset) -> laddu_runtime::RuntimeResult<laddu_runtime::PreparedDataset>
 pub fn laddu_runtime::PreparedModel::reduce(&self, &laddu_runtime::Execution, &laddu_expr::parameters::ParamValues, &laddu_runtime::PreparedDataset, laddu_compile::reduction::ReductionPlan) -> laddu_runtime::RuntimeResult<f64>
@@ -422,27 +425,31 @@ pub struct laddu_runtime::CpuPlan
 impl laddu_runtime::CpuPlan
 pub fn laddu_runtime::CpuPlan::cache_dataset(&self, &laddu_data::data::dataset::Dataset) -> laddu_runtime::RuntimeResult<laddu_runtime::CpuCachedDataset>
 pub fn laddu_runtime::CpuPlan::cache_memory_estimate(&self, usize) -> usize
-pub fn laddu_runtime::CpuPlan::evaluate_batch(&self, &laddu_expr::parameters::ParamValues, &laddu_data::data::event::EventBatch) -> laddu_runtime::RuntimeResult<alloc::vec::Vec<num_complex::Complex64>>
-pub fn laddu_runtime::CpuPlan::evaluate_batch_with_gradient(&self, &laddu_expr::parameters::ParamValues, &laddu_data::data::event::EventBatch) -> laddu_runtime::RuntimeResult<alloc::vec::Vec<laddu_runtime::ValueGradient>>
-pub fn laddu_runtime::CpuPlan::evaluate_cache_row_with_gradient(&self, &laddu_expr::parameters::ParamValues, &laddu_runtime::CpuBatchCache, usize) -> laddu_runtime::RuntimeResult<laddu_runtime::ValueGradient>
-pub fn laddu_runtime::CpuPlan::evaluate_cache_with_gradient(&self, &laddu_expr::parameters::ParamValues, &laddu_runtime::CpuBatchCache) -> laddu_runtime::RuntimeResult<alloc::vec::Vec<laddu_runtime::ValueGradient>>
-pub fn laddu_runtime::CpuPlan::evaluate_cached_dataset(&self, &laddu_expr::parameters::ParamValues, &laddu_runtime::CpuCachedDataset) -> laddu_runtime::RuntimeResult<alloc::vec::Vec<num_complex::Complex64>>
-pub fn laddu_runtime::CpuPlan::evaluate_cached_dataset_with_gradient(&self, &laddu_expr::parameters::ParamValues, &laddu_runtime::CpuCachedDataset) -> laddu_runtime::RuntimeResult<alloc::vec::Vec<laddu_runtime::ValueGradient>>
 pub fn laddu_runtime::CpuPlan::prepare_dataset(&self, &laddu_runtime::Execution, &laddu_data::data::dataset::Dataset) -> laddu_runtime::RuntimeResult<laddu_runtime::CpuPreparedDataset>
-pub fn laddu_runtime::CpuPlan::reduce(&self, &laddu_runtime::Execution, &laddu_expr::parameters::ParamValues, &laddu_runtime::CpuPreparedDataset, laddu_compile::reduction::ReductionPlan) -> laddu_runtime::RuntimeResult<f64>
-pub fn laddu_runtime::CpuPlan::reduce_with_gradient(&self, &laddu_runtime::Execution, &laddu_expr::parameters::ParamValues, &laddu_runtime::CpuPreparedDataset, laddu_compile::reduction::ReductionPlan) -> laddu_runtime::RuntimeResult<laddu_runtime::ReductionEvaluation>
 impl laddu_runtime::CpuPlan
 pub fn laddu_runtime::CpuPlan::cache_event_batch(&self, &laddu_data::data::event::EventBatch) -> laddu_runtime::RuntimeResult<laddu_runtime::CpuBatchCache>
+impl laddu_runtime::CpuPlan
 pub fn laddu_runtime::CpuPlan::cache_plan(&self) -> &laddu_compile::model::CachePlan
 pub fn laddu_runtime::CpuPlan::evaluate(&self, &laddu_expr::parameters::ParamValues) -> laddu_runtime::RuntimeResult<num_complex::Complex64>
-pub fn laddu_runtime::CpuPlan::evaluate_cache(&self, &laddu_expr::parameters::ParamValues, &laddu_runtime::CpuBatchCache) -> laddu_runtime::RuntimeResult<alloc::vec::Vec<num_complex::Complex64>>
 pub fn laddu_runtime::CpuPlan::evaluate_cache_row(&self, &laddu_expr::parameters::ParamValues, &laddu_runtime::CpuBatchCache, usize) -> laddu_runtime::RuntimeResult<num_complex::Complex64>
 pub fn laddu_runtime::CpuPlan::evaluate_with_event(&self, &laddu_expr::parameters::ParamValues, &impl laddu_runtime::EventLookup) -> laddu_runtime::RuntimeResult<num_complex::Complex64>
 pub fn laddu_runtime::CpuPlan::evaluate_with_event_and_gradient(&self, &laddu_expr::parameters::ParamValues, &impl laddu_runtime::EventLookup) -> laddu_runtime::RuntimeResult<laddu_runtime::ValueGradient>
-pub fn laddu_runtime::CpuPlan::evaluate_with_gradient(&self, &laddu_expr::parameters::ParamValues) -> laddu_runtime::RuntimeResult<laddu_runtime::ValueGradient>
 pub fn laddu_runtime::CpuPlan::free_parameter_count(&self) -> usize
 pub fn laddu_runtime::CpuPlan::parameter_count(&self) -> usize
 pub fn laddu_runtime::CpuPlan::required_event_scalars(&self) -> &[alloc::string::String]
+impl laddu_runtime::CpuPlan
+pub fn laddu_runtime::CpuPlan::evaluate_batch(&self, &laddu_expr::parameters::ParamValues, &laddu_data::data::event::EventBatch) -> laddu_runtime::RuntimeResult<alloc::vec::Vec<num_complex::Complex64>>
+pub fn laddu_runtime::CpuPlan::evaluate_batch_with_gradient(&self, &laddu_expr::parameters::ParamValues, &laddu_data::data::event::EventBatch) -> laddu_runtime::RuntimeResult<alloc::vec::Vec<laddu_runtime::ValueGradient>>
+pub fn laddu_runtime::CpuPlan::evaluate_cache_row_with_gradient(&self, &laddu_expr::parameters::ParamValues, &laddu_runtime::CpuBatchCache, usize) -> laddu_runtime::RuntimeResult<laddu_runtime::ValueGradient>
+impl laddu_runtime::CpuPlan
+pub fn laddu_runtime::CpuPlan::evaluate_cache(&self, &laddu_expr::parameters::ParamValues, &laddu_runtime::CpuBatchCache) -> laddu_runtime::RuntimeResult<alloc::vec::Vec<num_complex::Complex64>>
+pub fn laddu_runtime::CpuPlan::evaluate_cache_with_gradient(&self, &laddu_expr::parameters::ParamValues, &laddu_runtime::CpuBatchCache) -> laddu_runtime::RuntimeResult<alloc::vec::Vec<laddu_runtime::ValueGradient>>
+pub fn laddu_runtime::CpuPlan::evaluate_with_gradient(&self, &laddu_expr::parameters::ParamValues) -> laddu_runtime::RuntimeResult<laddu_runtime::ValueGradient>
+impl laddu_runtime::CpuPlan
+pub fn laddu_runtime::CpuPlan::evaluate_cached_dataset(&self, &laddu_expr::parameters::ParamValues, &laddu_runtime::CpuCachedDataset) -> laddu_runtime::RuntimeResult<alloc::vec::Vec<num_complex::Complex64>>
+pub fn laddu_runtime::CpuPlan::evaluate_cached_dataset_with_gradient(&self, &laddu_expr::parameters::ParamValues, &laddu_runtime::CpuCachedDataset) -> laddu_runtime::RuntimeResult<alloc::vec::Vec<laddu_runtime::ValueGradient>>
+pub fn laddu_runtime::CpuPlan::reduce(&self, &laddu_runtime::Execution, &laddu_expr::parameters::ParamValues, &laddu_runtime::CpuPreparedDataset, laddu_compile::reduction::ReductionPlan) -> laddu_runtime::RuntimeResult<f64>
+pub fn laddu_runtime::CpuPlan::reduce_with_gradient(&self, &laddu_runtime::Execution, &laddu_expr::parameters::ParamValues, &laddu_runtime::CpuPreparedDataset, laddu_compile::reduction::ReductionPlan) -> laddu_runtime::RuntimeResult<laddu_runtime::ReductionEvaluation>
 impl core::clone::Clone for laddu_runtime::CpuPlan
 pub fn laddu_runtime::CpuPlan::clone(&self) -> laddu_runtime::CpuPlan
 impl core::fmt::Debug for laddu_runtime::CpuPlan

@@ -297,10 +297,17 @@ impl CpuBatchCache {
 }
 
 impl CpuPlan {
-    pub(super) fn materialize_cache_event_batch(
-        &self,
-        batch: &EventBatch,
-    ) -> RuntimeResult<CpuBatchCache> {
+    /// Materializes the event-dependent cache for a batch.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RuntimeError`] when required columns are missing, expression
+    /// shapes are invalid, cache construction fails, or a matrix is singular.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a node selected by the validated cache plan was not evaluated.
+    pub fn cache_event_batch(&self, batch: &EventBatch) -> RuntimeResult<CpuBatchCache> {
         let event_columns = self.event_columns(batch.schema())?;
         let mut cache = CpuBatchCache::new(
             &self.cache_plan,

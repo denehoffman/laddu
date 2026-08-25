@@ -228,6 +228,43 @@ impl PreparedModel {
         }
     }
 
+    /// Visits one bounded block of prepared values at a time for several
+    /// parameter sets without retaining full-dataset value rows.
+    #[doc(hidden)]
+    pub fn visit_prepared_many<F>(
+        &self,
+        execution: &Execution,
+        parameter_sets: &[(&ParamValues, &str)],
+        dataset: &PreparedDataset,
+        source: &Dataset,
+        reduction: Option<ReductionPlan>,
+        consume: F,
+    ) -> RuntimeResult<Vec<f64>>
+    where
+        F: FnMut(usize, usize, &[Complex64]) -> RuntimeResult<()>,
+    {
+        #[cfg(not(feature = "wgpu"))]
+        let _ = source;
+        #[allow(unreachable_patterns)]
+        match (self, dataset) {
+            (Self::Cpu(plan), PreparedDataset::Cpu(dataset)) => plan.visit_prepared_dataset_many(
+                execution,
+                parameter_sets,
+                dataset,
+                reduction,
+                consume,
+            ),
+            #[cfg(feature = "wgpu")]
+            (Self::Wgpu(_), PreparedDataset::Wgpu(_)) => {
+                visit_source_many(self, execution, parameter_sets, source, reduction, consume)
+            }
+            _ => Err(RuntimeError::InvalidShape {
+                index: 0,
+                message: "prepared model and dataset use different backends".into(),
+            }),
+        }
+    }
+
     /// Evaluates and reduces multiple parameter sets while each prepared block is active.
     ///
     /// # Errors
@@ -323,13 +360,16 @@ impl PreparedModel {
 }
 
 #[cfg(feature = "wgpu")]
+type PreparedValuesWithSums = (Vec<Vec<Complex64>>, Option<Vec<f64>>);
+
+#[cfg(feature = "wgpu")]
 fn evaluate_source_many(
     model: &PreparedModel,
     execution: &Execution,
     params: &[ParamValues],
     source: &Dataset,
     reduction: Option<ReductionPlan>,
-) -> RuntimeResult<(Vec<Vec<Complex64>>, Option<Vec<f64>>)> {
+) -> RuntimeResult<PreparedValuesWithSums> {
     let local = (|| {
         let mut output = params.iter().map(|_| Vec::new()).collect::<Vec<_>>();
         let mut sums = reduction.map(|_| {
@@ -366,6 +406,62 @@ fn evaluate_source_many(
         output,
         sums.map(|sums: Vec<f64>| sums.into_iter().map(|sum| execution.sum_f64(sum)).collect()),
     ))
+}
+
+#[cfg(feature = "wgpu")]
+fn visit_source_many<F>(
+    model: &PreparedModel,
+    execution: &Execution,
+    parameter_sets: &[(&ParamValues, &str)],
+    source: &Dataset,
+    reduction: Option<ReductionPlan>,
+    mut consume: F,
+) -> RuntimeResult<Vec<f64>>
+where
+    F: FnMut(usize, usize, &[Complex64]) -> RuntimeResult<()>,
+{
+    let local = (|| {
+        let mut offset = 0;
+        let mut sums = reduction.map(|_| {
+            parameter_sets
+                .iter()
+                .map(|_| AccurateF64::zero())
+                .collect::<Vec<_>>()
+        });
+        for batch in source
+            .batches()
+            .map_err(|error| RuntimeError::Data(error.to_string()))?
+        {
+            let batch = batch.map_err(|error| RuntimeError::Data(error.to_string()))?;
+            for (index, &(parameters, context)) in parameter_sets.iter().enumerate() {
+                let values = model.evaluate_batch(parameters, &batch).map_err(|error| {
+                    RuntimeError::Parameter(format!("{context} evaluation failed: {error}"))
+                })?;
+                if let (Some(reduction), Some(sums)) = (reduction, sums.as_mut()) {
+                    for (row, value) in values.iter().enumerate() {
+                        let reduced = reduction.apply(*value).map_err(|error| {
+                            RuntimeError::Parameter(format!("{context} reduction failed: {error}"))
+                        })?;
+                        sums[index].push(batch.weights_at(row) * reduced.value());
+                    }
+                }
+                consume(offset, index, &values)?;
+            }
+            offset += batch.len();
+        }
+        Ok(sums
+            .unwrap_or_default()
+            .into_iter()
+            .map(AccurateF64::finish)
+            .collect::<Vec<_>>())
+    })();
+    if !execution.all_succeeded(local.is_ok()) {
+        return local.and(Err(RuntimeError::DistributedPeerFailure));
+    }
+    Ok(local?
+        .into_iter()
+        .map(|sum| execution.sum_f64(sum))
+        .collect())
 }
 
 #[cfg(feature = "wgpu")]
@@ -821,6 +917,26 @@ mod prepared_evaluation_tests {
                 )
                 .expect("prepared dataset should evaluate and reduce");
             assert_eq!(actual, expected);
+            assert_eq!(sums, [7.5, 10.5]);
+            let mut visited = vec![Vec::new(), Vec::new()];
+            let parameter_sets = [
+                (&parameters[0], "central"),
+                (&parameters[1], "ensemble draw 0"),
+            ];
+            let sums = prepared_model
+                .visit_prepared_many(
+                    &execution,
+                    &parameter_sets,
+                    &prepared,
+                    &source,
+                    Some(ReductionPlan::weighted_positive_real()),
+                    |_, parameter_index, values| {
+                        visited[parameter_index].extend_from_slice(values);
+                        Ok(())
+                    },
+                )
+                .expect("prepared blocks should be visited and reduced");
+            assert_eq!(visited, expected);
             assert_eq!(sums, [7.5, 10.5]);
         }
     }

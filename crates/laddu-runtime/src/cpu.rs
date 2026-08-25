@@ -4,10 +4,8 @@ use std::{
 };
 
 use laddu_autodiff::{AutodiffMode, AutodiffPlan, AutodiffResult};
-use laddu_compile::{
-    CachePlan, CompiledModel, ReductionPlan, SolveComponentPlan, SolveRowMatrixPlan,
-};
-use laddu_data::data::{CacheStorage, Dataset, EventBatch};
+use laddu_compile::{CachePlan, CompiledModel, SolveComponentPlan, SolveRowMatrixPlan};
+use laddu_data::data::{CacheStorage, EventBatch};
 use laddu_expr::{
     ExprGraph, ExprId, P4Component,
     parameters::{ParamId, ParamLayout, ParamValues},
@@ -334,17 +332,6 @@ impl CpuPlan {
         self.evaluate_inner(params, None)
     }
 
-    /// Evaluates an event-independent model and its free-parameter gradient.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`RuntimeError`] when parameters are incompatible, the model
-    /// requires event data, differentiation or evaluation fails, or a solve is
-    /// singular.
-    pub fn evaluate_with_gradient(&self, params: &ParamValues) -> RuntimeResult<ValueGradient> {
-        self.evaluate_with_gradient_inner(params)
-    }
-
     /// Evaluates the model using values supplied by an event lookup.
     ///
     /// # Errors
@@ -376,34 +363,6 @@ impl CpuPlan {
         self.require_f64_gradient()?;
         let values = self.evaluate_values(params, Some(event))?;
         self.value_gradient(values, None)
-    }
-
-    /// Materializes the event-dependent cache for a batch.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`RuntimeError`] when required columns are missing, expression
-    /// shapes are invalid, cache construction fails, or a matrix is singular.
-    ///
-    /// # Panics
-    ///
-    /// Panics if a node selected by the validated cache plan was not evaluated.
-    pub fn cache_event_batch(&self, batch: &EventBatch) -> RuntimeResult<CpuBatchCache> {
-        self.materialize_cache_event_batch(batch)
-    }
-
-    /// Evaluates every row in a materialized batch cache.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`RuntimeError`] when parameters or cache layout are
-    /// incompatible, evaluation fails, or a matrix is singular.
-    pub fn evaluate_cache(
-        &self,
-        params: &ParamValues,
-        cache: &CpuBatchCache,
-    ) -> RuntimeResult<Vec<Complex64>> {
-        self.evaluate_cache_inner(params, cache)
     }
 
     /// Evaluates one row in a materialized batch cache.
@@ -438,20 +397,6 @@ impl CpuPlan {
     ) -> RuntimeResult<ValueGradient> {
         self.check_batch_cache(cache)?;
         self.evaluate_cache_row_with_gradient_unchecked(params, cache, row)
-    }
-
-    /// Evaluates every cached row and its free-parameter gradient.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`RuntimeError`] when parameters or cache layout are
-    /// incompatible, or differentiation or evaluation fails.
-    pub fn evaluate_cache_with_gradient(
-        &self,
-        params: &ParamValues,
-        cache: &CpuBatchCache,
-    ) -> RuntimeResult<Vec<ValueGradient>> {
-        self.evaluate_cache_with_gradient_impl(params, cache)
     }
 
     /// Evaluates the model for every event in a batch.
@@ -527,130 +472,6 @@ impl CpuPlan {
     ) -> RuntimeResult<Vec<ValueGradient>> {
         let cache = self.cache_event_batch(batch)?;
         self.evaluate_cache_with_gradient(params, &cache)
-    }
-
-    /// Materializes all event-dependent caches for a dataset.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`RuntimeError`] when the dataset cannot be read, its schema is
-    /// incompatible, cache construction fails, or a matrix is singular.
-    pub fn cache_dataset(&self, dataset: &Dataset) -> RuntimeResult<CpuCachedDataset> {
-        self.cache_dataset_impl(dataset)
-    }
-
-    /// Estimates retained compiled-cache bytes for `events`.
-    pub fn cache_memory_estimate(&self, events: usize) -> usize {
-        self.cache_memory_estimate_impl(events)
-    }
-
-    /// Prepares a dataset according to its cache-storage policy.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`RuntimeError`] when dataset reading or cache construction
-    /// fails, or another distributed worker reports failure.
-    pub fn prepare_dataset(
-        &self,
-        execution: &Execution,
-        dataset: &Dataset,
-    ) -> RuntimeResult<CpuPreparedDataset> {
-        self.prepare_dataset_impl(execution, dataset)
-    }
-
-    /// Execute a weighted reduction over a prepared dataset.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`RuntimeError`] when streaming, cache validation, evaluation,
-    /// or reduction fails, or another distributed worker reports failure.
-    pub fn reduce(
-        &self,
-        execution: &Execution,
-        params: &ParamValues,
-        dataset: &CpuPreparedDataset,
-        reduction: ReductionPlan,
-    ) -> RuntimeResult<f64> {
-        self.reduce_impl(execution, params, dataset, reduction)
-    }
-
-    /// Execute a weighted reduction and its free-parameter gradient.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`RuntimeError`] when streaming, cache validation,
-    /// differentiation, evaluation, or reduction fails, or another
-    /// distributed worker reports failure.
-    pub fn reduce_with_gradient(
-        &self,
-        execution: &Execution,
-        params: &ParamValues,
-        dataset: &CpuPreparedDataset,
-        reduction: ReductionPlan,
-    ) -> RuntimeResult<ReductionEvaluation> {
-        self.reduce_with_gradient_impl(execution, params, dataset, reduction)
-    }
-
-    /// Evaluates every event for multiple parameter sets in one prepared-data pass.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`RuntimeError`] when streaming, cache validation, parameter
-    /// projection, or evaluation fails.
-    pub(crate) fn evaluate_prepared_dataset_many(
-        &self,
-        execution: &Execution,
-        params: &[ParamValues],
-        dataset: &CpuPreparedDataset,
-    ) -> RuntimeResult<Vec<Vec<Complex64>>> {
-        self.evaluate_prepared_dataset_many_impl(execution, params, dataset)
-    }
-
-    /// Evaluates multiple parameter sets and reduces each result in one prepared-data pass.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`RuntimeError`] when streaming, cache validation, parameter
-    /// projection, event evaluation, or reduction fails.
-    pub(crate) fn evaluate_prepared_dataset_many_with_reduction(
-        &self,
-        execution: &Execution,
-        params: &[ParamValues],
-        dataset: &CpuPreparedDataset,
-        reduction: ReductionPlan,
-    ) -> RuntimeResult<(Vec<Vec<Complex64>>, Vec<f64>)> {
-        self.evaluate_prepared_dataset_many_with_reduction_impl(
-            execution, params, dataset, reduction,
-        )
-    }
-
-    /// Evaluates every event in a fully cached dataset.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`RuntimeError`] when parameters or cache layout are
-    /// incompatible, evaluation fails, or a matrix is singular.
-    pub fn evaluate_cached_dataset(
-        &self,
-        params: &ParamValues,
-        dataset: &CpuCachedDataset,
-    ) -> RuntimeResult<Vec<Complex64>> {
-        self.evaluate_cached_dataset_impl(params, dataset)
-    }
-
-    /// Evaluates every event and gradient in a fully cached dataset.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`RuntimeError`] when parameters or cache layout are
-    /// incompatible, differentiation or evaluation fails, or a matrix is
-    /// singular.
-    pub fn evaluate_cached_dataset_with_gradient(
-        &self,
-        params: &ParamValues,
-        dataset: &CpuCachedDataset,
-    ) -> RuntimeResult<Vec<ValueGradient>> {
-        self.evaluate_cached_dataset_with_gradient_impl(params, dataset)
     }
 
     pub(in crate::cpu) fn value_gradient(

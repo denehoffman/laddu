@@ -476,6 +476,7 @@ mod tests {
                 "acceptance",
                 "corrected_yield",
                 "differential",
+                "projection_set",
                 "combine",
             ] {
                 assert!(

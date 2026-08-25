@@ -486,8 +486,12 @@ def main() -> None:  # noqa: PLR0915
     period_differential_started = time.perf_counter()
     distributions = []
     for period, cross_section in zip(periods, cross_sections, strict=True):
-        print(f'{period.label}: propagating the differential cross section...', flush=True)
-        distributions.append(cross_section.differential(diagnostic_axis, components=COMPONENTS))
+        print(f'{period.label}: propagating the projection set...', flush=True)
+        projection_set = cross_section.projection_set(
+            {'mass': diagnostic_axis},
+            components=COMPONENTS,
+        )
+        distributions.append(projection_set['mass'])
     period_differential_time = time.perf_counter() - period_differential_started
     print(
         f'period differential cross sections completed in {period_differential_time:.3f}s',

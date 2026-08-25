@@ -115,6 +115,7 @@ pub fn laddu_likelihood::CrossSection::fitted_total_with_tags(&self, &[alloc::st
 pub fn laddu_likelihood::CrossSection::new(alloc::sync::Arc<laddu_likelihood::Likelihood>, impl core::convert::Into<alloc::string::String>, laddu_data::data::dataset::Dataset, f64, alloc::vec::Vec<f64>) -> laddu_likelihood::LikelihoodResult<Self>
 pub fn laddu_likelihood::CrossSection::observed_total(&self) -> laddu_likelihood::LikelihoodResult<laddu_likelihood::Estimate>
 pub fn laddu_likelihood::CrossSection::observed_total_with_tags(&self, &[alloc::string::String]) -> laddu_likelihood::LikelihoodResult<laddu_likelihood::Estimate>
+pub fn laddu_likelihood::CrossSection::projection_set(&self, &[laddu_likelihood::Projection], &std::collections::hash::map::HashMap<alloc::string::String, alloc::vec::Vec<alloc::string::String>>) -> laddu_likelihood::LikelihoodResult<laddu_likelihood::ProjectionSet>
 pub fn laddu_likelihood::CrossSection::total(&self) -> laddu_likelihood::LikelihoodResult<laddu_likelihood::Estimate>
 pub fn laddu_likelihood::CrossSection::total_with_tags(&self, &[alloc::string::String]) -> laddu_likelihood::LikelihoodResult<laddu_likelihood::Estimate>
 pub fn laddu_likelihood::CrossSection::with_ensemble(alloc::sync::Arc<laddu_likelihood::Likelihood>, impl core::convert::Into<alloc::string::String>, laddu_data::data::dataset::Dataset, f64, alloc::vec::Vec<f64>, core::option::Option<laddu_likelihood::Ensemble>) -> laddu_likelihood::LikelihoodResult<Self>
@@ -474,6 +475,25 @@ pub fn laddu_likelihood::NllTerm::nll_with_gradient(&self, &laddu_expr::paramete
 pub fn laddu_likelihood::NllTerm::register_params(&self, &mut laddu_expr::parameters::ParamRegistry) -> laddu_likelihood::LikelihoodResult<()>
 pub fn laddu_likelihood::NllTerm::resolve(&mut self, alloc::sync::Arc<laddu_expr::parameters::ParamLayout>, &laddu_runtime::execution::Execution) -> laddu_likelihood::LikelihoodResult<()>
 pub fn laddu_likelihood::NllTerm::stochastic_nll_with_gradient(&self, &laddu_expr::parameters::ParamValues, &mut [f64], &laddu_runtime::execution::Execution, f64, u64) -> laddu_likelihood::LikelihoodResult<f64>
+pub struct laddu_likelihood::Projection
+impl laddu_likelihood::Projection
+pub fn laddu_likelihood::Projection::axes(&self) -> &[laddu_likelihood::Axis]
+pub fn laddu_likelihood::Projection::name(&self) -> &str
+pub fn laddu_likelihood::Projection::new(impl core::convert::Into<alloc::string::String>, alloc::vec::Vec<laddu_likelihood::Axis>) -> laddu_likelihood::LikelihoodResult<Self>
+impl core::clone::Clone for laddu_likelihood::Projection
+pub fn laddu_likelihood::Projection::clone(&self) -> laddu_likelihood::Projection
+impl core::fmt::Debug for laddu_likelihood::Projection
+pub fn laddu_likelihood::Projection::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub struct laddu_likelihood::ProjectionSet
+impl laddu_likelihood::ProjectionSet
+pub fn laddu_likelihood::ProjectionSet::get(&self, &str) -> core::option::Option<&laddu_likelihood::DifferentialCrossSection>
+pub fn laddu_likelihood::ProjectionSet::is_empty(&self) -> bool
+pub fn laddu_likelihood::ProjectionSet::iter(&self) -> impl core::iter::traits::exact_size::ExactSizeIterator<Item = (&str, &laddu_likelihood::DifferentialCrossSection)>
+pub fn laddu_likelihood::ProjectionSet::len(&self) -> usize
+impl core::clone::Clone for laddu_likelihood::ProjectionSet
+pub fn laddu_likelihood::ProjectionSet::clone(&self) -> laddu_likelihood::ProjectionSet
+impl core::fmt::Debug for laddu_likelihood::ProjectionSet
+pub fn laddu_likelihood::ProjectionSet::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub struct laddu_likelihood::RidgePenalty
 impl laddu_likelihood::RidgePenalty
 pub fn laddu_likelihood::RidgePenalty::new(impl core::convert::Into<alloc::string::String>, impl core::iter::traits::collect::IntoIterator<Item = impl core::convert::Into<alloc::string::String>>, f64) -> laddu_likelihood::LikelihoodResult<Self>

@@ -1,6 +1,6 @@
 # Projection performance workloads
 
-The projection baseline measures the existing public `CrossSection::differential` behavior. Multiple axes in one call still mean one joint differential cross section; these workloads make one or four separate calls to represent independent projections.
+The projection benchmark compares the public `CrossSection::projection_set` behavior with repeated `CrossSection::differential` calls. Multiple axes in one `differential` call still mean one joint differential cross section; separate named entries in a projection set are independent cross sections that share prepared intensity work.
 
 ## Fast benchmark
 
@@ -10,7 +10,7 @@ Run the CodSpeed-compatible Criterion matrix with:
 cargo bench -p laddu --bench projection_benchmark --features likelihood
 ```
 
-The matrix covers one and four separate calls, 20 and 200 deterministic ensemble draws, single-member and four-period combined cross sections, resident and streaming prepared data, and unique versus duplicate canonical selections. Criterion stores timing reports beneath `target/criterion/`. Results are engineering evidence, not an absolute release gate.
+The matrix compares one projection-set call with one and four repeated calls for a single member. It also retains 20- and 200-draw, four-period combined, resident and streaming, and unique-versus-duplicate-selection baselines for later projection-set slices. Criterion stores timing reports beneath `target/criterion/`. Results are engineering evidence, not an absolute release gate.
 
 ## Representative profiling workload
 
