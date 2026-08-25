@@ -104,6 +104,11 @@ name = "likelihood_pipeline_benchmark"
 harness = false
 required-features = ["jit", "likelihood"]
 
+[[bench]]
+name = "projection_benchmark"
+harness = false
+required-features = ["likelihood"]
+
 [[example]]
 name = "generate_ksks"
 required-features = ["generation"]
@@ -111,6 +116,10 @@ required-features = ["generation"]
 [[example]]
 name = "generate_and_fit_ksks"
 required-features = ["generation", "fit"]
+
+[[example]]
+name = "projection_profile"
+required-features = ["likelihood"]
 
 [[test]]
 name = "generation_fit"
