@@ -172,6 +172,97 @@ impl PreparedModel {
         }
     }
 
+    /// Evaluates every event in a prepared dataset while preserving source order.
+    ///
+    /// Backends with a prepared event adapter reuse their retained or streaming
+    /// prepared blocks. Other backends evaluate the supplied source through the
+    /// already-selected backend; this operation never substitutes a backend.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RuntimeError`] when model and dataset backends differ, source
+    /// streaming fails, or event evaluation fails.
+    pub fn evaluate_prepared(
+        &self,
+        execution: &Execution,
+        params: &ParamValues,
+        dataset: &PreparedDataset,
+        source: &Dataset,
+    ) -> RuntimeResult<Vec<Complex64>> {
+        let mut output =
+            self.evaluate_prepared_many(execution, std::slice::from_ref(params), dataset, source)?;
+        Ok(output.pop().unwrap_or_default())
+    }
+
+    /// Evaluates multiple parameter sets while each prepared event block is active.
+    ///
+    /// Output rows retain parameter-set order and each row retains source-event order.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RuntimeError`] when model and dataset backends differ, source
+    /// streaming fails, or event evaluation fails.
+    pub fn evaluate_prepared_many(
+        &self,
+        execution: &Execution,
+        params: &[ParamValues],
+        dataset: &PreparedDataset,
+        source: &Dataset,
+    ) -> RuntimeResult<Vec<Vec<Complex64>>> {
+        #[cfg(not(feature = "wgpu"))]
+        let _ = source;
+        #[allow(unreachable_patterns)]
+        match (self, dataset) {
+            (Self::Cpu(plan), PreparedDataset::Cpu(dataset)) => {
+                plan.evaluate_prepared_dataset_many(execution, params, dataset)
+            }
+            #[cfg(feature = "wgpu")]
+            (Self::Wgpu(_), PreparedDataset::Wgpu(_)) => {
+                evaluate_source_many(self, execution, params, source, None)
+                    .map(|(values, _)| values)
+            }
+            _ => Err(RuntimeError::InvalidShape {
+                index: 0,
+                message: "prepared model and dataset use different backends".into(),
+            }),
+        }
+    }
+
+    /// Evaluates and reduces multiple parameter sets while each prepared block is active.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RuntimeError`] when model and dataset backends differ, source
+    /// streaming fails, event evaluation fails, or the reduction rejects a value.
+    pub fn evaluate_prepared_many_with_reduction(
+        &self,
+        execution: &Execution,
+        params: &[ParamValues],
+        dataset: &PreparedDataset,
+        source: &Dataset,
+        reduction: ReductionPlan,
+    ) -> RuntimeResult<(Vec<Vec<Complex64>>, Vec<f64>)> {
+        #[cfg(not(feature = "wgpu"))]
+        let _ = source;
+        #[allow(unreachable_patterns)]
+        match (self, dataset) {
+            (Self::Cpu(plan), PreparedDataset::Cpu(dataset)) => plan
+                .evaluate_prepared_dataset_many_with_reduction(
+                    execution, params, dataset, reduction,
+                ),
+            #[cfg(feature = "wgpu")]
+            (Self::Wgpu(_), PreparedDataset::Wgpu(_)) => {
+                let (values, sums) =
+                    evaluate_source_many(self, execution, params, source, Some(reduction))?;
+                Ok((values, sums.unwrap_or_default()))
+            }
+            _ => Err(RuntimeError::InvalidShape {
+                index: 0,
+                message: "prepared model and dataset use different backends".into(),
+            }),
+        }
+    }
+
     /// Executes a weighted scalar reduction over a prepared dataset.
     ///
     /// # Errors
@@ -229,6 +320,52 @@ impl PreparedModel {
             }),
         }
     }
+}
+
+#[cfg(feature = "wgpu")]
+fn evaluate_source_many(
+    model: &PreparedModel,
+    execution: &Execution,
+    params: &[ParamValues],
+    source: &Dataset,
+    reduction: Option<ReductionPlan>,
+) -> RuntimeResult<(Vec<Vec<Complex64>>, Option<Vec<f64>>)> {
+    let local = (|| {
+        let mut output = params.iter().map(|_| Vec::new()).collect::<Vec<_>>();
+        let mut sums = reduction.map(|_| {
+            params
+                .iter()
+                .map(|_| AccurateF64::zero())
+                .collect::<Vec<_>>()
+        });
+        for batch in source
+            .batches()
+            .map_err(|error| RuntimeError::Data(error.to_string()))?
+        {
+            let batch = batch.map_err(|error| RuntimeError::Data(error.to_string()))?;
+            for (index, (parameters, values)) in params.iter().zip(&mut output).enumerate() {
+                let batch_values = model.evaluate_batch(parameters, &batch)?;
+                if let (Some(reduction), Some(sums)) = (reduction, sums.as_mut()) {
+                    for (row, value) in batch_values.iter().enumerate() {
+                        sums[index].push(batch.weights_at(row) * reduction.apply(*value)?.value());
+                    }
+                }
+                values.extend(batch_values);
+            }
+        }
+        Ok((
+            output,
+            sums.map(|sums| sums.into_iter().map(AccurateF64::finish).collect()),
+        ))
+    })();
+    if !execution.all_succeeded(local.is_ok()) {
+        return local.and(Err(RuntimeError::DistributedPeerFailure));
+    }
+    let (output, sums) = local?;
+    Ok((
+        output,
+        sums.map(|sums: Vec<f64>| sums.into_iter().map(|sum| execution.sum_f64(sum)).collect()),
+    ))
 }
 
 #[cfg(feature = "wgpu")]
@@ -599,6 +736,94 @@ impl WgpuPlan {
 #[cfg(feature = "wgpu")]
 fn wgpu_error(error: laddu_wgpu::WgpuError) -> RuntimeError {
     RuntimeError::Wgpu(error.to_string())
+}
+
+#[cfg(test)]
+mod prepared_evaluation_tests {
+    use std::sync::Arc;
+
+    use laddu_compile::{CompiledModel, ReductionPlan};
+    use laddu_data::{
+        data::{Dataset, EventBatch, OwnedEvent},
+        schema::Schema,
+    };
+    use laddu_expr::{event_scalar, parameter};
+    use num::complex::Complex64;
+
+    use super::PreparedModel;
+    use crate::Execution;
+
+    fn dataset(streaming: bool) -> Dataset {
+        let schema = Arc::new(
+            Schema::new(std::iter::empty::<&str>(), ["x"], false)
+                .expect("test schema should be valid"),
+        );
+        let first_batch = EventBatch::from_events(
+            schema.clone(),
+            [
+                OwnedEvent::new(vec![], vec![1.0]),
+                OwnedEvent::new(vec![], vec![2.0]),
+            ],
+        )
+        .expect("first test batch should be valid");
+        let second_batch = EventBatch::from_events(schema, [OwnedEvent::new(vec![], vec![3.0])])
+            .expect("second test batch should be valid");
+        let dataset = Dataset::from_batches(vec![first_batch, second_batch])
+            .expect("test dataset should be valid");
+        if streaming {
+            dataset.streaming()
+        } else {
+            dataset.fastest()
+        }
+    }
+
+    #[test]
+    fn prepared_evaluation_preserves_event_order_for_resident_and_streaming_data() {
+        let model =
+            CompiledModel::from_expr(&(event_scalar("x") + parameter!("offset", initial: 0.5)))
+                .expect("test model should compile");
+        let execution = Execution::default();
+        let prepared_model =
+            PreparedModel::prepare(&model, &execution).expect("model should prepare");
+        let parameters = [
+            model.params().values(&[0.5]).expect("first parameters"),
+            model.params().values(&[1.5]).expect("second parameters"),
+        ];
+        let expected = [
+            vec![
+                Complex64::new(1.5, 0.0),
+                Complex64::new(2.5, 0.0),
+                Complex64::new(3.5, 0.0),
+            ],
+            vec![
+                Complex64::new(2.5, 0.0),
+                Complex64::new(3.5, 0.0),
+                Complex64::new(4.5, 0.0),
+            ],
+        ];
+
+        for streaming in [false, true] {
+            let source = dataset(streaming);
+            let prepared = prepared_model
+                .prepare_dataset(&execution, &source)
+                .expect("dataset should prepare");
+            let actual = prepared_model
+                .evaluate_prepared_many(&execution, &parameters, &prepared, &source)
+                .expect("prepared dataset should evaluate");
+            assert_eq!(actual, expected);
+            let (actual, sums) = prepared_model
+                .evaluate_prepared_many_with_reduction(
+                    &execution,
+                    &parameters,
+                    &prepared,
+                    &source,
+                    ReductionPlan::weighted_positive_real(),
+                )
+                .expect("prepared dataset should evaluate and reduce");
+            assert_eq!(actual, expected);
+            assert_eq!(sums, [7.5, 10.5]);
+        }
+    }
 }
 
 #[cfg(all(test, feature = "wgpu"))]

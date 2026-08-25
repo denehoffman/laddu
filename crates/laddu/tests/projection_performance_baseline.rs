@@ -55,6 +55,23 @@ fn resident_and_streaming_fixtures_preserve_projection_results() {
 }
 
 #[test]
+fn single_member_differentials_preserve_resident_and_streaming_results() {
+    let resident = ProjectionFixture::new(96, 2, Storage::Resident, ThreadPolicy::Serial)
+        .expect("resident fixture should build")
+        .evaluate_single(4)
+        .expect("resident projections should evaluate");
+    let streaming = ProjectionFixture::new(96, 2, Storage::Streaming, ThreadPolicy::Serial)
+        .expect("streaming fixture should build")
+        .evaluate_single(4)
+        .expect("streaming projections should evaluate");
+
+    assert_eq!(resident.len(), streaming.len());
+    for (resident, streaming) in resident.iter().zip(&streaming) {
+        assert_projection_equal(resident, streaming);
+    }
+}
+
+#[test]
 fn representative_fixture_captures_complete_legacy_reference_fingerprints() {
     let projections = ProjectionFixture::new(128, 3, Storage::Resident, ThreadPolicy::Serial)
         .expect("representative fixture should build")

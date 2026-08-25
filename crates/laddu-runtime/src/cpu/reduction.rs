@@ -46,6 +46,8 @@ enum PreparedBatch<'a> {
     Owned(CpuCachedBatch),
 }
 
+type PreparedManyEvaluation = (Vec<Vec<Complex64>>, Option<Vec<f64>>);
+
 impl<'a> PreparedBatch<'a> {
     fn cached(&self) -> &CpuCachedBatch {
         match self {
@@ -226,6 +228,74 @@ impl RealGradientAccumulator {
 }
 
 impl CpuPlan {
+    pub(in crate::cpu) fn evaluate_prepared_dataset_many_impl(
+        &self,
+        execution: &Execution,
+        params: &[ParamValues],
+        dataset: &CpuPreparedDataset,
+    ) -> RuntimeResult<Vec<Vec<Complex64>>> {
+        self.evaluate_prepared_dataset_many_local(execution, params, dataset, None)
+            .map(|(values, _)| values)
+    }
+
+    pub(in crate::cpu) fn evaluate_prepared_dataset_many_with_reduction_impl(
+        &self,
+        execution: &Execution,
+        params: &[ParamValues],
+        dataset: &CpuPreparedDataset,
+        reduction: ReductionPlan,
+    ) -> RuntimeResult<(Vec<Vec<Complex64>>, Vec<f64>)> {
+        let local =
+            self.evaluate_prepared_dataset_many_local(execution, params, dataset, Some(reduction));
+        if !execution.all_succeeded(local.is_ok()) {
+            return local.and(Err(RuntimeError::DistributedPeerFailure));
+        }
+        let (output, sums) = local?;
+        Ok((
+            output,
+            sums.unwrap_or_default()
+                .into_iter()
+                .map(|sum| execution.sum_f64(sum))
+                .collect(),
+        ))
+    }
+
+    fn evaluate_prepared_dataset_many_local(
+        &self,
+        execution: &Execution,
+        params: &[ParamValues],
+        dataset: &CpuPreparedDataset,
+        reduction: Option<ReductionPlan>,
+    ) -> RuntimeResult<PreparedManyEvaluation> {
+        let mut stream = PreparedBatchStream::prepare(self, execution, dataset)?;
+        let mut output = params
+            .iter()
+            .map(|_| Vec::with_capacity(dataset.stats().local_events()))
+            .collect::<Vec<_>>();
+        let mut sums = reduction.map(|_| {
+            params
+                .iter()
+                .map(|_| AccurateF64::zero())
+                .collect::<Vec<_>>()
+        });
+        while let Some(batch) = stream.next()? {
+            let batch = batch.cached();
+            for (index, (parameters, values)) in params.iter().zip(&mut output).enumerate() {
+                let batch_values = self.evaluate_cache(parameters, batch.cache())?;
+                if let (Some(reduction), Some(sums)) = (reduction, sums.as_mut()) {
+                    for (weight, value) in batch.weights().iter().zip(&batch_values) {
+                        sums[index].push(*weight * reduction.apply(*value)?.value());
+                    }
+                }
+                values.extend(batch_values);
+            }
+        }
+        Ok((
+            output,
+            sums.map(|sums| sums.into_iter().map(AccurateF64::finish).collect()),
+        ))
+    }
+
     /// Execute a weighted reduction over a prepared dataset.
     ///
     /// # Errors

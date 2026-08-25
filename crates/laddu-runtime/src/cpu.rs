@@ -591,6 +591,39 @@ impl CpuPlan {
         self.reduce_with_gradient_impl(execution, params, dataset, reduction)
     }
 
+    /// Evaluates every event for multiple parameter sets in one prepared-data pass.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RuntimeError`] when streaming, cache validation, parameter
+    /// projection, or evaluation fails.
+    pub(crate) fn evaluate_prepared_dataset_many(
+        &self,
+        execution: &Execution,
+        params: &[ParamValues],
+        dataset: &CpuPreparedDataset,
+    ) -> RuntimeResult<Vec<Vec<Complex64>>> {
+        self.evaluate_prepared_dataset_many_impl(execution, params, dataset)
+    }
+
+    /// Evaluates multiple parameter sets and reduces each result in one prepared-data pass.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RuntimeError`] when streaming, cache validation, parameter
+    /// projection, event evaluation, or reduction fails.
+    pub(crate) fn evaluate_prepared_dataset_many_with_reduction(
+        &self,
+        execution: &Execution,
+        params: &[ParamValues],
+        dataset: &CpuPreparedDataset,
+        reduction: ReductionPlan,
+    ) -> RuntimeResult<(Vec<Vec<Complex64>>, Vec<f64>)> {
+        self.evaluate_prepared_dataset_many_with_reduction_impl(
+            execution, params, dataset, reduction,
+        )
+    }
+
     /// Evaluates every event in a fully cached dataset.
     ///
     /// # Errors

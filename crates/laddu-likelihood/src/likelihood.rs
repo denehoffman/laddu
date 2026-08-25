@@ -2148,6 +2148,18 @@ impl CrossSectionIntegrals {
         self.intensities(free, &self.accepted_mc_source)
     }
 
+    pub(crate) fn accepted_prepared_intensities_many(
+        &self,
+        free: &[&[f64]],
+    ) -> LikelihoodResult<(Vec<Vec<f64>>, Vec<f64>)> {
+        self.prepared_intensities_many_with_reduction(
+            free,
+            &self.accepted_mc,
+            &self.accepted_mc_source,
+            ReductionPlan::weighted_positive_real(),
+        )
+    }
+
     /// Returns selected intensities over generated Monte Carlo.
     ///
     /// # Errors
@@ -2155,6 +2167,13 @@ impl CrossSectionIntegrals {
     /// Returns [`LikelihoodError`] when parameters or dataset evaluation fail.
     pub fn generated_intensities(&self, free: &[f64]) -> LikelihoodResult<Vec<f64>> {
         self.intensities(free, &self.generated_mc_source)
+    }
+
+    pub(crate) fn generated_prepared_intensities_many(
+        &self,
+        free: &[&[f64]],
+    ) -> LikelihoodResult<Vec<Vec<f64>>> {
+        self.prepared_intensities_many(free, &self.generated_mc, &self.generated_mc_source)
     }
 
     /// Returns the accepted-to-generated integral ratio.
@@ -2293,6 +2312,54 @@ impl CrossSectionIntegrals {
             );
         }
         Ok(output)
+    }
+
+    fn prepared_intensities_many(
+        &self,
+        free: &[&[f64]],
+        dataset: &PreparedDataset,
+        source: &Dataset,
+    ) -> LikelihoodResult<Vec<Vec<f64>>> {
+        let local = self.project_many(free)?;
+        Ok(self
+            .plan
+            .evaluate_prepared_many(&self.execution, &local, dataset, source)?
+            .into_iter()
+            .map(|values| values.into_iter().map(|value| value.re).collect())
+            .collect())
+    }
+
+    fn prepared_intensities_many_with_reduction(
+        &self,
+        free: &[&[f64]],
+        dataset: &PreparedDataset,
+        source: &Dataset,
+        reduction: ReductionPlan,
+    ) -> LikelihoodResult<(Vec<Vec<f64>>, Vec<f64>)> {
+        let local = self.project_many(free)?;
+        let (values, sums) = self.plan.evaluate_prepared_many_with_reduction(
+            &self.execution,
+            &local,
+            dataset,
+            source,
+            reduction,
+        )?;
+        Ok((
+            values
+                .into_iter()
+                .map(|values| values.into_iter().map(|value| value.re).collect())
+                .collect(),
+            sums,
+        ))
+    }
+
+    fn project_many(&self, free: &[&[f64]]) -> LikelihoodResult<Vec<ParamValues>> {
+        free.iter()
+            .map(|free| {
+                let global = self.projection.global_layout.values(free)?;
+                self.projection.project(&global)
+            })
+            .collect()
     }
 }
 
