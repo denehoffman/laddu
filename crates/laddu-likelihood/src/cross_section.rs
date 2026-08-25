@@ -26,6 +26,28 @@ fn invalid(message: impl Into<String>) -> LikelihoodError {
     LikelihoodError::InvalidCrossSection(message.into())
 }
 
+#[cfg(test)]
+thread_local! {
+    static SELECTION_INTENSITY_EVALUATIONS: std::cell::Cell<usize> = const {
+        std::cell::Cell::new(0)
+    };
+}
+
+fn record_selection_intensity_evaluation() {
+    #[cfg(test)]
+    SELECTION_INTENSITY_EVALUATIONS.with(|count| count.set(count.get() + 1));
+}
+
+#[cfg(test)]
+fn reset_selection_intensity_evaluation_count() {
+    SELECTION_INTENSITY_EVALUATIONS.with(|count| count.set(0));
+}
+
+#[cfg(test)]
+fn selection_intensity_evaluation_count() -> usize {
+    SELECTION_INTENSITY_EVALUATIONS.with(std::cell::Cell::get)
+}
+
 /// Named parameter draws with optional paired bootstrap likelihood replicas.
 #[derive(Clone)]
 pub struct Ensemble {
@@ -604,7 +626,23 @@ impl DifferentialCrossSection {
 }
 
 /// A prepared total, tagged, differential, and combinable cross-section analysis.
-type IntegralCacheKey = (usize, Option<Vec<String>>);
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+struct CanonicalTags(Vec<String>);
+
+impl CanonicalTags {
+    fn new(tags: &[String]) -> Self {
+        let mut canonical = tags.to_vec();
+        canonical.sort();
+        canonical.dedup();
+        Self(canonical)
+    }
+
+    fn as_slice(&self) -> &[String] {
+        &self.0
+    }
+}
+
+type IntegralCacheKey = (usize, Option<CanonicalTags>);
 type IntegralCache = Arc<Mutex<HashMap<IntegralCacheKey, CrossSectionIntegrals>>>;
 
 /// A prepared total, tagged, differential, and combinable cross-section analysis.
@@ -651,6 +689,7 @@ impl CrossSectionDiagnostics {
     }
 }
 
+#[derive(Clone)]
 struct BinnedMeasurement {
     yields: Vec<f64>,
     exposures: Vec<f64>,
@@ -662,16 +701,44 @@ struct CombinedMemberValues {
     components: HashMap<String, BinnedMeasurement>,
 }
 
+struct CanonicalComponents {
+    aliases: HashMap<String, CanonicalTags>,
+    integrals: HashMap<CanonicalTags, CrossSectionIntegrals>,
+}
+
 struct CombinedMemberWorkspace {
     luminosity: f64,
     full: CrossSectionIntegrals,
-    components: HashMap<String, CrossSectionIntegrals>,
+    components: CanonicalComponents,
     data_bins: BinAssignments,
     data_weights: Vec<f64>,
     accepted_bins: BinAssignments,
     accepted_weights: Vec<f64>,
     generated_bins: BinAssignments,
     generated_weights: Vec<f64>,
+}
+
+impl CanonicalComponents {
+    fn prepare(
+        member: &CrossSection,
+        likelihood: &Likelihood,
+        components: &HashMap<String, Vec<String>>,
+    ) -> LikelihoodResult<Self> {
+        let aliases = components
+            .iter()
+            .map(|(name, tags)| (name.clone(), CanonicalTags::new(tags)))
+            .collect::<HashMap<_, _>>();
+        let mut integrals = HashMap::new();
+        for tags in aliases.values() {
+            if !integrals.contains_key(tags) {
+                integrals.insert(
+                    tags.clone(),
+                    member.integrals_for(likelihood, Some(tags.as_slice()))?,
+                );
+            }
+        }
+        Ok(Self { aliases, integrals })
+    }
 }
 
 struct BinAssignments {
@@ -734,15 +801,8 @@ impl CombinedMemberWorkspace {
         let execution = member.likelihood.execution();
         let (data, _) = member.likelihood.intensity_datasets(&member.term_name)?;
         let full = member.integrals_for(&member.likelihood, None)?;
-        let component_integrals = components
-            .iter()
-            .map(|(name, tags)| {
-                Ok((
-                    name.clone(),
-                    member.integrals_for(&member.likelihood, Some(tags))?,
-                ))
-            })
-            .collect::<LikelihoodResult<HashMap<_, _>>>()?;
+        let component_integrals =
+            CanonicalComponents::prepare(member, &member.likelihood, components)?;
         Ok(Self {
             luminosity: member.luminosity,
             data_bins: evaluate_bin_assignments(data, axes, execution)?,
@@ -789,11 +849,14 @@ impl CombinedMemberWorkspace {
                 .collect(),
             exposures: full_exposures,
         };
-        let component_values = self
+        let canonical_values = self
             .components
+            .integrals
             .iter()
-            .map(|(name, selected)| {
+            .map(|(canonical_tags, selected)| {
+                record_selection_intensity_evaluation();
                 let accepted_intensities = selected.accepted_intensities(parameters)?;
+                record_selection_intensity_evaluation();
                 let generated_intensities = selected.generated_intensities(parameters)?;
                 let accepted = self
                     .accepted_bins
@@ -803,7 +866,7 @@ impl CombinedMemberWorkspace {
                     &generated_intensities,
                 );
                 Ok((
-                    name.clone(),
+                    canonical_tags.clone(),
                     BinnedMeasurement {
                         yields: accepted
                             .iter()
@@ -818,6 +881,12 @@ impl CombinedMemberWorkspace {
                 ))
             })
             .collect::<LikelihoodResult<HashMap<_, _>>>()?;
+        let component_values = self
+            .components
+            .aliases
+            .iter()
+            .map(|(name, canonical_tags)| (name.clone(), canonical_values[canonical_tags].clone()))
+            .collect();
         Ok(CombinedMemberValues {
             data,
             model,
@@ -1113,12 +1182,7 @@ impl CrossSection {
         likelihood: &Likelihood,
         tags: Option<&[String]>,
     ) -> LikelihoodResult<CrossSectionIntegrals> {
-        let key_tags = tags.map(|tags| {
-            let mut tags = tags.to_vec();
-            tags.sort();
-            tags.dedup();
-            tags
-        });
+        let key_tags = tags.map(CanonicalTags::new);
         let key = (likelihood as *const Likelihood as usize, key_tags.clone());
         if let Some(integrals) = self
             .integral_cache
@@ -1131,11 +1195,11 @@ impl CrossSection {
             return Ok(integrals);
         }
         self.cache_misses.fetch_add(1, Ordering::Relaxed);
-        let integrals = match key_tags.as_deref() {
+        let integrals = match key_tags.as_ref() {
             Some(tags) => likelihood.cross_section_integrals_with_tags(
                 &self.term_name,
                 &self.generated_mc,
-                tags.iter().map(String::as_str),
+                tags.as_slice().iter().map(String::as_str),
             ),
             None => likelihood.cross_section_integrals(&self.term_name, &self.generated_mc),
         }?;
@@ -1301,15 +1365,7 @@ impl CrossSection {
         let accepted_weights = dataset_weights(full.accepted_mc_source())?;
         let generated_weights = dataset_weights(full.generated_mc_source())?;
         let volumes = bin_volumes(axes);
-        let component_integrals = components
-            .iter()
-            .map(|(name, tags)| {
-                Ok((
-                    name.clone(),
-                    self.integrals_for(&self.likelihood, Some(tags))?,
-                ))
-            })
-            .collect::<LikelihoodResult<HashMap<_, _>>>()?;
+        let component_integrals = CanonicalComponents::prepare(self, &self.likelihood, components)?;
         let parameter_sets = std::iter::once(self.parameters.as_slice())
             .chain(
                 self.ensemble
@@ -1321,10 +1377,12 @@ impl CrossSection {
             full.accepted_prepared_intensities_many(&parameter_sets)?;
         let generated_intensities = full.generated_prepared_intensities_many(&parameter_sets)?;
         let component_intensities = component_integrals
+            .integrals
             .iter()
-            .map(|(name, selected)| {
+            .map(|(canonical_tags, selected)| {
+                record_selection_intensity_evaluation();
                 Ok((
-                    name.clone(),
+                    canonical_tags.clone(),
                     selected.generated_prepared_intensities_many(&parameter_sets)?,
                 ))
             })
@@ -1365,11 +1423,12 @@ impl CrossSection {
                 })
                 .collect();
             let component_values = component_integrals
-                .keys()
-                .map(|name| {
+                .aliases
+                .iter()
+                .map(|(name, canonical_tags)| {
                     let bins = generated_bins.accumulate_weighted_intensities(
                         &generated_weights,
-                        &component_intensities[name][draw_index],
+                        &component_intensities[canonical_tags][draw_index],
                     );
                     Ok((
                         name.clone(),
@@ -1787,6 +1846,43 @@ mod tests {
         Dataset::from_batches(vec![batch]).unwrap()
     }
 
+    struct CanonicalSelectionFixture {
+        likelihood: Arc<Likelihood>,
+        generated: Dataset,
+        axis: Axis,
+        components: HashMap<String, Vec<String>>,
+    }
+
+    fn canonical_selection_fixture() -> CanonicalSelectionFixture {
+        let x = event_scalar("x");
+        let signal = (Expr::from(parameter!("a", initial: 1.5)) * x.clone()).tagged("signal");
+        let background = Expr::from(parameter!("b", initial: 0.75)).tagged("background");
+        let model = CompiledModel::from_expr(&(signal + background).norm_sqr()).unwrap();
+        let data = weighted_dataset(&[(0.25, 1.0), (0.75, 2.0), (1.25, 1.0)]);
+        let accepted = weighted_dataset(&[(0.25, 1.0), (0.75, 1.0), (1.25, 1.0)]);
+        let generated = weighted_dataset(&[(0.25, 1.0), (0.75, 1.0), (1.25, 1.0), (1.75, 1.0)]);
+        let likelihood = Arc::new(
+            Likelihood::new([crate::NllTerm::new("signal", &model, &data, &accepted).unwrap()])
+                .unwrap(),
+        );
+        CanonicalSelectionFixture {
+            likelihood,
+            generated,
+            axis: Axis::new(x, vec![0.0, 1.0, 2.0]).unwrap(),
+            components: HashMap::from([
+                ("ordered".into(), vec!["background".into(), "signal".into()]),
+                (
+                    "reordered".into(),
+                    vec!["signal".into(), "background".into()],
+                ),
+                (
+                    "repeated".into(),
+                    vec!["signal".into(), "background".into(), "signal".into()],
+                ),
+            ]),
+        }
+    }
+
     #[test]
     fn estimate_arithmetic_preserves_scalar_provenance() {
         let estimate = Estimate::with_source_id(2.0, vec![1.0, 3.0], Some(17)).unwrap();
@@ -1922,6 +2018,86 @@ mod tests {
         assert_relative_eq!(
             cross_section.total().unwrap().value(),
             cross_section.observed_total().unwrap().value()
+        );
+    }
+
+    #[test]
+    fn differential_aliases_share_canonical_selection_evaluations() {
+        let fixture = canonical_selection_fixture();
+        let ensemble = Ensemble::new(
+            vec!["a".into(), "b".into()],
+            vec![vec![1.6, 0.7], vec![1.4, 0.8]],
+        )
+        .unwrap();
+        let cross_section = fixture
+            .likelihood
+            .cross_section_with_ensemble(
+                "signal",
+                fixture.generated,
+                10.0,
+                fixture.likelihood.default_params(),
+                ensemble,
+            )
+            .unwrap();
+
+        reset_selection_intensity_evaluation_count();
+        let differential = cross_section
+            .differential(std::slice::from_ref(&fixture.axis), &fixture.components)
+            .unwrap();
+
+        assert_eq!(selection_intensity_evaluation_count(), 1);
+        assert_eq!(differential.components().len(), 3);
+        assert_eq!(
+            differential.components()["ordered"].values(),
+            differential.components()["reordered"].values()
+        );
+        assert_eq!(
+            differential.components()["ordered"].values(),
+            differential.components()["repeated"].values()
+        );
+        assert_eq!(
+            differential.components()["ordered"].draws(),
+            differential.components()["reordered"].draws()
+        );
+        assert_eq!(
+            differential.components()["ordered"].draws(),
+            differential.components()["repeated"].draws()
+        );
+    }
+
+    #[test]
+    fn combined_differential_deduplicates_selections_per_member() {
+        let fixture = canonical_selection_fixture();
+        let members = [10.0, 15.0]
+            .into_iter()
+            .map(|luminosity| {
+                fixture
+                    .likelihood
+                    .cross_section(
+                        "signal",
+                        fixture.generated.clone(),
+                        luminosity,
+                        fixture.likelihood.default_params(),
+                    )
+                    .unwrap()
+            })
+            .collect();
+        let cross_section = CrossSection::combine(members).unwrap();
+
+        reset_selection_intensity_evaluation_count();
+        let differential = cross_section
+            .differential(std::slice::from_ref(&fixture.axis), &fixture.components)
+            .unwrap();
+
+        assert_eq!(selection_intensity_evaluation_count(), 4);
+        assert_eq!(differential.components().len(), 3);
+        assert_eq!(
+            differential.components()["ordered"].values(),
+            differential.components()["reordered"].values()
+        );
+        assert_eq!(
+            differential.components()["ordered"].values(),
+            differential.components()["repeated"].values()
         );
     }
 
