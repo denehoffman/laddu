@@ -255,6 +255,7 @@ benchmark_workflow = Workflow(
                     '--bench generation '
                     '--bench jit_benchmark '
                     '--bench kmatrix_benchmark '
+                    '--bench projection_benchmark '
                     '--features laddu/jit',
                     env={'CARGO_BUILD_JOBS': '1'},
                 ),

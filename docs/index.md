@@ -65,4 +65,5 @@ installation
 concepts
 tutorials/index
 reference/api
+benchmarks/projection-performance
 ```
