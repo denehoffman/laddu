@@ -33,6 +33,7 @@ pub struct Ensemble {
     draws: Vec<Vec<f64>>,
     source_id: u64,
     replicas: Vec<Arc<Likelihood>>,
+    replicas_share_event_rows: bool,
 }
 
 /// Failure while constructing a paired bootstrap-fit ensemble.
@@ -60,6 +61,7 @@ impl std::fmt::Debug for Ensemble {
             .field("draws", &self.draws)
             .field("source_id", &self.source_id)
             .field("replicas", &self.replicas.len())
+            .field("replicas_share_event_rows", &self.replicas_share_event_rows)
             .finish()
     }
 }
@@ -98,6 +100,7 @@ impl Ensemble {
             draws,
             source_id,
             replicas: Vec::new(),
+            replicas_share_event_rows: false,
         })
     }
 
@@ -189,7 +192,9 @@ impl Ensemble {
             draws.push(draw);
             replicas.push(replica);
         }
-        Self::with_replicas(parameter_names, draws, replicas).map_err(Into::into)
+        let mut ensemble = Self::with_replicas(parameter_names, draws, replicas)?;
+        ensemble.replicas_share_event_rows = true;
+        Ok(ensemble)
     }
 
     /// Parameter names in draw-column order.
@@ -210,6 +215,21 @@ impl Ensemble {
     /// Paired bootstrap likelihood replicas, if present.
     pub fn replicas(&self) -> &[Arc<Likelihood>] {
         &self.replicas
+    }
+
+    fn replica_bin_assignments(
+        &self,
+        dataset: Option<&Dataset>,
+        axes: &[Axis],
+        execution: &Execution,
+    ) -> LikelihoodResult<Option<BinAssignments>> {
+        if self.replicas_share_event_rows {
+            Ok(None)
+        } else {
+            dataset
+                .map(|dataset| evaluate_bin_assignments(dataset, axes, execution))
+                .transpose()
+        }
     }
 
     /// Number of draws.
@@ -646,12 +666,63 @@ struct CombinedMemberWorkspace {
     luminosity: f64,
     full: CrossSectionIntegrals,
     components: HashMap<String, CrossSectionIntegrals>,
-    data_values: Vec<Vec<f64>>,
+    data_bins: BinAssignments,
     data_weights: Vec<f64>,
-    accepted_values: Vec<Vec<f64>>,
+    accepted_bins: BinAssignments,
     accepted_weights: Vec<f64>,
-    generated_values: Vec<Vec<f64>>,
+    generated_bins: BinAssignments,
     generated_weights: Vec<f64>,
+}
+
+struct BinAssignments {
+    indices: Vec<Option<usize>>,
+    count: usize,
+}
+
+impl BinAssignments {
+    fn new(values: &[Vec<f64>], axes: &[Axis]) -> Self {
+        let event_count = values.first().map_or(0, Vec::len);
+        debug_assert!(
+            values
+                .iter()
+                .all(|coordinates| coordinates.len() == event_count)
+        );
+        let indices = (0..event_count)
+            .map(|event| {
+                axes.iter()
+                    .zip(values)
+                    .try_fold(0, |flat, (axis, coordinates)| {
+                        bin_index(coordinates[event], &axis.edges)
+                            .map(|index| flat * axis.bins() + index)
+                    })
+            })
+            .collect();
+        Self {
+            indices,
+            count: axes.iter().map(Axis::bins).product(),
+        }
+    }
+
+    fn accumulate(&self, weights: &[f64]) -> Vec<f64> {
+        self.accumulate_products(weights, None)
+    }
+
+    fn accumulate_weighted_intensities(&self, weights: &[f64], intensities: &[f64]) -> Vec<f64> {
+        self.accumulate_products(weights, Some(intensities))
+    }
+
+    fn accumulate_products(&self, weights: &[f64], intensities: Option<&[f64]>) -> Vec<f64> {
+        debug_assert_eq!(self.indices.len(), weights.len());
+        debug_assert!(intensities.is_none_or(|values| values.len() == weights.len()));
+        let mut bins = vec![0.0; self.count];
+        for (event, (&index, &weight)) in self.indices.iter().zip(weights).enumerate() {
+            if let Some(index) = index {
+                let intensity = intensities.map_or(1.0, |values| values[event]);
+                bins[index] += weight * intensity;
+            }
+        }
+        bins
+    }
 }
 
 impl CombinedMemberWorkspace {
@@ -674,11 +745,11 @@ impl CombinedMemberWorkspace {
             .collect::<LikelihoodResult<HashMap<_, _>>>()?;
         Ok(Self {
             luminosity: member.luminosity,
-            data_values: evaluate_coordinates(data, axes, execution)?,
+            data_bins: evaluate_bin_assignments(data, axes, execution)?,
             data_weights: dataset_weights(data)?,
-            accepted_values: evaluate_coordinates(full.accepted_mc_source(), axes, execution)?,
+            accepted_bins: evaluate_bin_assignments(full.accepted_mc_source(), axes, execution)?,
             accepted_weights: dataset_weights(full.accepted_mc_source())?,
-            generated_values: evaluate_coordinates(full.generated_mc_source(), axes, execution)?,
+            generated_bins: evaluate_bin_assignments(full.generated_mc_source(), axes, execution)?,
             generated_weights: dataset_weights(full.generated_mc_source())?,
             full,
             components: component_integrals,
@@ -687,27 +758,20 @@ impl CombinedMemberWorkspace {
 
     fn evaluate(
         &self,
-        axes: &[Axis],
         parameters: &[f64],
-        data_values: &[Vec<f64>],
+        data_bins: &BinAssignments,
         data_weights: &[f64],
         total_data: f64,
         factor: f64,
     ) -> LikelihoodResult<CombinedMemberValues> {
         let full_accepted_intensities = self.full.accepted_intensities(parameters)?;
         let full_generated_intensities = self.full.generated_intensities(parameters)?;
-        let full_accepted_bins = histogram_products_nd(
-            &self.accepted_values,
-            &self.accepted_weights,
-            &full_accepted_intensities,
-            axes,
-        );
-        let full_generated_bins = histogram_products_nd(
-            &self.generated_values,
-            &self.generated_weights,
-            &full_generated_intensities,
-            axes,
-        );
+        let full_accepted_bins = self
+            .accepted_bins
+            .accumulate_weighted_intensities(&self.accepted_weights, &full_accepted_intensities);
+        let full_generated_bins = self
+            .generated_bins
+            .accumulate_weighted_intensities(&self.generated_weights, &full_generated_intensities);
         let full_accepted = self.full.full_accepted_integral(parameters)?;
         let full_exposures = binned_exposures(
             self.luminosity * factor,
@@ -715,7 +779,7 @@ impl CombinedMemberWorkspace {
             &full_generated_bins,
         );
         let data = BinnedMeasurement {
-            yields: histogram_nd(data_values, data_weights, axes),
+            yields: data_bins.accumulate(data_weights),
             exposures: full_exposures.clone(),
         };
         let model = BinnedMeasurement {
@@ -731,17 +795,12 @@ impl CombinedMemberWorkspace {
             .map(|(name, selected)| {
                 let accepted_intensities = selected.accepted_intensities(parameters)?;
                 let generated_intensities = selected.generated_intensities(parameters)?;
-                let accepted = histogram_products_nd(
-                    &self.accepted_values,
-                    &self.accepted_weights,
-                    &accepted_intensities,
-                    axes,
-                );
-                let generated = histogram_products_nd(
-                    &self.generated_values,
+                let accepted = self
+                    .accepted_bins
+                    .accumulate_weighted_intensities(&self.accepted_weights, &accepted_intensities);
+                let generated = self.generated_bins.accumulate_weighted_intensities(
                     &self.generated_weights,
                     &generated_intensities,
-                    axes,
                 );
                 Ok((
                     name.clone(),
@@ -1235,9 +1294,9 @@ impl CrossSection {
         let execution = self.likelihood.execution();
         let (data, _) = self.likelihood.intensity_datasets(&self.term_name)?;
         let full = self.integrals_for(&self.likelihood, None)?;
-        let data_values = evaluate_coordinates(data, axes, execution)?;
-        let accepted_values = evaluate_coordinates(full.accepted_mc_source(), axes, execution)?;
-        let generated_values = evaluate_coordinates(full.generated_mc_source(), axes, execution)?;
+        let data_bins = evaluate_bin_assignments(data, axes, execution)?;
+        let accepted_bins = evaluate_bin_assignments(full.accepted_mc_source(), axes, execution)?;
+        let generated_bins = evaluate_bin_assignments(full.generated_mc_source(), axes, execution)?;
         let data_weights = dataset_weights(data)?;
         let accepted_weights = dataset_weights(full.accepted_mc_source())?;
         let generated_weights = dataset_weights(full.generated_mc_source())?;
@@ -1271,28 +1330,24 @@ impl CrossSection {
             })
             .collect::<LikelihoodResult<HashMap<_, _>>>()?;
         let evaluate = |draw_index: usize,
-                        draw_data_values: &[Vec<f64>],
+                        draw_data_bins: &BinAssignments,
                         draw_data_weights: &[f64],
                         total_data: f64|
          -> LikelihoodResult<DifferentialValues> {
-            let data_bins = histogram_nd(draw_data_values, draw_data_weights, axes);
-            let accepted_bins = histogram_products_nd(
-                &accepted_values,
+            let data_histogram = draw_data_bins.accumulate(draw_data_weights);
+            let accepted_histogram = accepted_bins.accumulate_weighted_intensities(
                 &accepted_weights,
                 &accepted_intensities[draw_index],
-                axes,
             );
-            let generated_bins = histogram_products_nd(
-                &generated_values,
+            let generated_histogram = generated_bins.accumulate_weighted_intensities(
                 &generated_weights,
                 &generated_intensities[draw_index],
-                axes,
             );
             let full_accepted = full_accepted_integrals[draw_index];
-            let data_cross_section = data_bins
+            let data_cross_section = data_histogram
                 .iter()
-                .zip(&accepted_bins)
-                .zip(&generated_bins)
+                .zip(&accepted_histogram)
+                .zip(&generated_histogram)
                 .zip(&volumes)
                 .map(|(((data, accepted), generated), volume)| {
                     if *accepted > 0.0 {
@@ -1302,7 +1357,7 @@ impl CrossSection {
                     }
                 })
                 .collect();
-            let model = generated_bins
+            let model = generated_histogram
                 .iter()
                 .zip(&volumes)
                 .map(|(generated, volume)| {
@@ -1312,11 +1367,9 @@ impl CrossSection {
             let component_values = component_integrals
                 .keys()
                 .map(|name| {
-                    let bins = histogram_products_nd(
-                        &generated_values,
+                    let bins = generated_bins.accumulate_weighted_intensities(
                         &generated_weights,
                         &component_intensities[name][draw_index],
-                        axes,
                     );
                     Ok((
                         name.clone(),
@@ -1332,7 +1385,7 @@ impl CrossSection {
             Ok((data_cross_section, model, component_values))
         };
         let (data_cross_section, model, component_values) =
-            evaluate(0, &data_values, &data_weights, full.data_weight_sum())?;
+            evaluate(0, &data_bins, &data_weights, full.data_weight_sum())?;
         let mut data_draws = Vec::new();
         let mut model_draws = Vec::new();
         let mut component_draws: HashMap<String, Vec<Vec<f64>>> = components
@@ -1347,18 +1400,17 @@ impl CrossSection {
                     .map(|likelihood| likelihood.intensity_datasets(&self.term_name))
                     .transpose()?
                     .map(|(data, _)| data);
-                let replica_values = replica_data
-                    .map(|data| evaluate_coordinates(data, axes, execution))
-                    .transpose()?;
+                let replica_bins =
+                    ensemble.replica_bin_assignments(replica_data, axes, execution)?;
                 let replica_weights = replica_data.map(dataset_weights).transpose()?;
-                let draw_data_values = replica_values.as_deref().unwrap_or(&data_values);
+                let draw_data_bins = replica_bins.as_ref().unwrap_or(&data_bins);
                 let draw_data_weights = replica_weights.as_deref().unwrap_or(&data_weights);
                 let total_data = replica_weights
                     .as_ref()
                     .map(|weights| weights.iter().sum())
                     .unwrap_or_else(|| full.data_weight_sum());
                 let (data, model, component_values) =
-                    evaluate(index + 1, draw_data_values, draw_data_weights, total_data)?;
+                    evaluate(index + 1, draw_data_bins, draw_data_weights, total_data)?;
                 data_draws.push(data);
                 model_draws.push(model);
                 for (name, values) in component_values {
@@ -1400,9 +1452,8 @@ impl CrossSection {
             .zip(&workspaces)
             .map(|((member, factor), workspace)| {
                 workspace.evaluate(
-                    axes,
                     &member.parameters,
-                    &workspace.data_values,
+                    &workspace.data_bins,
                     &workspace.data_weights,
                     workspace.full.data_weight_sum(),
                     factor.central,
@@ -1460,11 +1511,16 @@ impl CrossSection {
                         .map(|likelihood| likelihood.intensity_datasets(&member.term_name))
                         .transpose()?
                         .map(|(data, _)| data);
-                    let replica_values = replica_data
-                        .map(|data| evaluate_coordinates(data, axes, member.likelihood.execution()))
-                        .transpose()?;
+                    let replica_bins = match ensemble {
+                        Some(ensemble) => ensemble.replica_bin_assignments(
+                            replica_data,
+                            axes,
+                            member.likelihood.execution(),
+                        )?,
+                        None => None,
+                    };
                     let replica_weights = replica_data.map(dataset_weights).transpose()?;
-                    let data_values = replica_values.as_deref().unwrap_or(&workspace.data_values);
+                    let data_bins = replica_bins.as_ref().unwrap_or(&workspace.data_bins);
                     let data_weights = replica_weights
                         .as_deref()
                         .unwrap_or(&workspace.data_weights);
@@ -1485,14 +1541,7 @@ impl CrossSection {
                         .and_then(|draw_index| factor.draws.get(draw_index))
                         .copied()
                         .unwrap_or(factor.central);
-                    workspace.evaluate(
-                        axes,
-                        parameters,
-                        data_values,
-                        data_weights,
-                        total_data,
-                        factor,
-                    )
+                    workspace.evaluate(parameters, data_bins, data_weights, total_data, factor)
                 })
                 .collect::<LikelihoodResult<Vec<_>>>()?;
             data_draws.push(pool_binned(
@@ -1662,6 +1711,17 @@ fn evaluate_coordinates(
         .collect()
 }
 
+fn evaluate_bin_assignments(
+    dataset: &Dataset,
+    axes: &[Axis],
+    execution: &Execution,
+) -> LikelihoodResult<BinAssignments> {
+    Ok(BinAssignments::new(
+        &evaluate_coordinates(dataset, axes, execution)?,
+        axes,
+    ))
+}
+
 fn dataset_weights(dataset: &Dataset) -> LikelihoodResult<Vec<f64>> {
     dataset
         .try_fold_events(Vec::new(), |mut weights, event| {
@@ -1669,36 +1729,6 @@ fn dataset_weights(dataset: &Dataset) -> LikelihoodResult<Vec<f64>> {
             Ok(weights)
         })
         .map_err(Into::into)
-}
-
-fn histogram_nd(values: &[Vec<f64>], weights: &[f64], axes: &[Axis]) -> Vec<f64> {
-    let mut bins = vec![0.0; axes.iter().map(Axis::bins).product()];
-    for (event, &weight) in weights.iter().enumerate() {
-        let index = axes
-            .iter()
-            .zip(values)
-            .try_fold(0, |flat, (axis, coordinates)| {
-                bin_index(coordinates[event], &axis.edges).map(|index| flat * axis.bins() + index)
-            });
-        if let Some(index) = index {
-            bins[index] += weight;
-        }
-    }
-    bins
-}
-
-fn histogram_products_nd(
-    values: &[Vec<f64>],
-    weights: &[f64],
-    intensities: &[f64],
-    axes: &[Axis],
-) -> Vec<f64> {
-    let products = weights
-        .iter()
-        .zip(intensities)
-        .map(|(weight, intensity)| weight * intensity)
-        .collect::<Vec<_>>();
-    histogram_nd(values, &products, axes)
 }
 
 fn bin_volumes(axes: &[Axis]) -> Vec<f64> {
@@ -1745,6 +1775,18 @@ mod tests {
         Dataset::from_batches(vec![batch]).unwrap()
     }
 
+    fn weighted_dataset_2d(values: &[(f64, f64, f64)]) -> Dataset {
+        let schema = Arc::new(Schema::new(std::iter::empty::<&str>(), ["x", "y"], true).unwrap());
+        let batch = EventBatch::from_events(
+            schema,
+            values
+                .iter()
+                .map(|(x, y, weight)| OwnedEvent::weighted(vec![], vec![*x, *y], *weight)),
+        )
+        .unwrap();
+        Dataset::from_batches(vec![batch]).unwrap()
+    }
+
     #[test]
     fn estimate_arithmetic_preserves_scalar_provenance() {
         let estimate = Estimate::with_source_id(2.0, vec![1.0, 3.0], Some(17)).unwrap();
@@ -1772,6 +1814,51 @@ mod tests {
         assert_eq!(bin_index(0.0, &[0.0, 1.0, 2.0]), Some(0));
         assert_eq!(bin_index(1.0, &[0.0, 1.0, 2.0]), Some(1));
         assert_eq!(bin_index(2.0, &[0.0, 1.0, 2.0]), None);
+    }
+
+    #[test]
+    fn joint_differential_preserves_bin_and_weight_semantics() {
+        let model = CompiledModel::from_expr(&(event_scalar("x") + 1.0)).unwrap();
+        let data = weighted_dataset_2d(&[
+            (0.0, 0.0, 1.0),
+            (0.0, 1.0, 2.0),
+            (1.0, 0.0, -3.0),
+            (1.0, 1.0, 4.0),
+            (2.0, 0.5, 8.0),
+            (f64::NAN, 0.5, 16.0),
+            (0.5, f64::INFINITY, 32.0),
+            (0.5, f64::NEG_INFINITY, 64.0),
+            (-0.5, 0.5, 128.0),
+        ]);
+        let accepted = weighted_dataset_2d(&[
+            (0.25, 0.25, 1.0),
+            (0.25, 1.25, 1.0),
+            (1.25, 0.25, 1.0),
+            (1.25, 1.25, -1.0),
+        ]);
+        let generated = weighted_dataset_2d(&[
+            (0.25, 0.25, 1.0),
+            (0.25, 1.25, 1.0),
+            (1.25, 0.25, 1.0),
+            (1.25, 1.25, 1.0),
+        ]);
+        let likelihood = Arc::new(
+            Likelihood::new([crate::NllTerm::new("signal", &model, &data, &accepted).unwrap()])
+                .unwrap(),
+        );
+        let axes = [
+            Axis::new(event_scalar("x"), vec![0.0, 1.0, 2.0]).unwrap(),
+            Axis::new(event_scalar("y"), vec![0.0, 1.0, 2.0]).unwrap(),
+        ];
+        let differential = likelihood
+            .cross_section("signal", generated, 1.0, Vec::new())
+            .unwrap()
+            .differential(&axes, &HashMap::new())
+            .unwrap();
+
+        assert_eq!(differential.shape(), &[2, 2]);
+        assert_eq!(&differential.data().values()[..3], &[1.0, 2.0, -3.0]);
+        assert!(differential.data().values()[3].is_nan());
     }
 
     #[test]
@@ -1889,6 +1976,42 @@ mod tests {
                 propagated.components()["selected"].draws()[index],
                 individual.components()["selected"].values()
             );
+        }
+    }
+
+    #[test]
+    fn arbitrary_replica_differentials_use_each_replicas_event_rows() {
+        let model = CompiledModel::from_expr(&(event_scalar("x") + 1.0)).unwrap();
+        let accepted = weighted_dataset(&[(0.25, 1.0), (1.25, 1.0)]);
+        let generated = weighted_dataset(&[(0.25, 1.0), (1.25, 1.0)]);
+        let make_likelihood = |data: Dataset| {
+            Arc::new(
+                Likelihood::new([crate::NllTerm::new("signal", &model, &data, &accepted).unwrap()])
+                    .unwrap(),
+            )
+        };
+        let likelihood = make_likelihood(weighted_dataset(&[(0.25, 1.0), (1.25, 1.0)]));
+        let replicas = vec![
+            make_likelihood(weighted_dataset(&[(0.25, 2.0)])),
+            make_likelihood(weighted_dataset(&[(1.25, 3.0)])),
+        ];
+        let ensemble =
+            Ensemble::with_replicas(Vec::new(), vec![Vec::new(), Vec::new()], replicas.clone())
+                .unwrap();
+        let axis = Axis::new(event_scalar("x"), vec![0.0, 1.0, 2.0]).unwrap();
+        let propagated = likelihood
+            .cross_section_with_ensemble("signal", generated.clone(), 1.0, Vec::new(), ensemble)
+            .unwrap()
+            .differential(std::slice::from_ref(&axis), &HashMap::new())
+            .unwrap();
+
+        for (index, replica) in replicas.iter().enumerate() {
+            let individual = replica
+                .cross_section("signal", generated.clone(), 1.0, Vec::new())
+                .unwrap()
+                .differential(std::slice::from_ref(&axis), &HashMap::new())
+                .unwrap();
+            assert_eq!(propagated.data().draws()[index], individual.data().values());
         }
     }
 
