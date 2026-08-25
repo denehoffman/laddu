@@ -1251,27 +1251,44 @@ impl CrossSection {
                 ))
             })
             .collect::<LikelihoodResult<HashMap<_, _>>>()?;
-        let evaluate = |parameters: &[f64],
+        let parameter_sets = std::iter::once(self.parameters.as_slice())
+            .chain(
+                self.ensemble
+                    .iter()
+                    .flat_map(|ensemble| ensemble.draws.iter().map(Vec::as_slice)),
+            )
+            .collect::<Vec<_>>();
+        let (accepted_intensities, full_accepted_integrals) =
+            full.accepted_prepared_intensities_many(&parameter_sets)?;
+        let generated_intensities = full.generated_prepared_intensities_many(&parameter_sets)?;
+        let component_intensities = component_integrals
+            .iter()
+            .map(|(name, selected)| {
+                Ok((
+                    name.clone(),
+                    selected.generated_prepared_intensities_many(&parameter_sets)?,
+                ))
+            })
+            .collect::<LikelihoodResult<HashMap<_, _>>>()?;
+        let evaluate = |draw_index: usize,
                         draw_data_values: &[Vec<f64>],
                         draw_data_weights: &[f64],
                         total_data: f64|
          -> LikelihoodResult<DifferentialValues> {
-            let accepted_intensities = full.accepted_intensities(parameters)?;
-            let generated_intensities = full.generated_intensities(parameters)?;
             let data_bins = histogram_nd(draw_data_values, draw_data_weights, axes);
             let accepted_bins = histogram_products_nd(
                 &accepted_values,
                 &accepted_weights,
-                &accepted_intensities,
+                &accepted_intensities[draw_index],
                 axes,
             );
             let generated_bins = histogram_products_nd(
                 &generated_values,
                 &generated_weights,
-                &generated_intensities,
+                &generated_intensities[draw_index],
                 axes,
             );
-            let full_accepted = full.full_accepted_integral(parameters)?;
+            let full_accepted = full_accepted_integrals[draw_index];
             let data_cross_section = data_bins
                 .iter()
                 .zip(&accepted_bins)
@@ -1293,13 +1310,12 @@ impl CrossSection {
                 })
                 .collect();
             let component_values = component_integrals
-                .iter()
-                .map(|(name, selected)| {
-                    let intensities = selected.generated_intensities(parameters)?;
+                .keys()
+                .map(|name| {
                     let bins = histogram_products_nd(
                         &generated_values,
                         &generated_weights,
-                        &intensities,
+                        &component_intensities[name][draw_index],
                         axes,
                     );
                     Ok((
@@ -1315,12 +1331,8 @@ impl CrossSection {
                 .collect::<LikelihoodResult<HashMap<_, _>>>()?;
             Ok((data_cross_section, model, component_values))
         };
-        let (data_cross_section, model, component_values) = evaluate(
-            &self.parameters,
-            &data_values,
-            &data_weights,
-            full.data_weight_sum(),
-        )?;
+        let (data_cross_section, model, component_values) =
+            evaluate(0, &data_values, &data_weights, full.data_weight_sum())?;
         let mut data_draws = Vec::new();
         let mut model_draws = Vec::new();
         let mut component_draws: HashMap<String, Vec<Vec<f64>>> = components
@@ -1328,7 +1340,7 @@ impl CrossSection {
             .map(|name| (name.clone(), Vec::new()))
             .collect();
         if let Some(ensemble) = &self.ensemble {
-            for (index, parameters) in ensemble.draws.iter().enumerate() {
+            for (index, _) in ensemble.draws.iter().enumerate() {
                 let replica_data = ensemble
                     .replicas
                     .get(index)
@@ -1346,7 +1358,7 @@ impl CrossSection {
                     .map(|weights| weights.iter().sum())
                     .unwrap_or_else(|| full.data_weight_sum());
                 let (data, model, component_values) =
-                    evaluate(parameters, draw_data_values, draw_data_weights, total_data)?;
+                    evaluate(index + 1, draw_data_values, draw_data_weights, total_data)?;
                 data_draws.push(data);
                 model_draws.push(model);
                 for (name, values) in component_values {
