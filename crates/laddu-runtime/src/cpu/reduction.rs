@@ -234,6 +234,7 @@ impl CpuPlan {
         parameter_sets: &[(&ParamValues, &str)],
         dataset: &CpuPreparedDataset,
         reduction: Option<ReductionPlan>,
+        pool_installed: bool,
         mut consume: F,
     ) -> RuntimeResult<Vec<f64>>
     where
@@ -251,13 +252,11 @@ impl CpuPlan {
             while let Some(batch) = stream.next()? {
                 let batch = batch.cached();
                 for (index, &(parameters, context)) in parameter_sets.iter().enumerate() {
-                    let values =
-                        self.evaluate_cache(parameters, batch.cache())
-                            .map_err(|error| {
-                                RuntimeError::Parameter(format!(
-                                    "{context} evaluation failed: {error}"
-                                ))
-                            })?;
+                    let values = self
+                        .evaluate_prepared_batch(execution, parameters, batch, pool_installed)
+                        .map_err(|error| {
+                            RuntimeError::Parameter(format!("{context} evaluation failed: {error}"))
+                        })?;
                     if let (Some(reduction), Some(sums)) = (reduction, sums.as_mut()) {
                         for (weight, value) in batch.weights().iter().zip(&values) {
                             let reduced = reduction.apply(*value).map_err(|error| {
@@ -285,6 +284,54 @@ impl CpuPlan {
             .into_iter()
             .map(|sum| execution.sum_f64(sum))
             .collect())
+    }
+
+    fn evaluate_prepared_batch(
+        &self,
+        execution: &Execution,
+        params: &ParamValues,
+        batch: &CpuCachedBatch,
+        pool_installed: bool,
+    ) -> RuntimeResult<Vec<Complex64>> {
+        let block_count = batch.len().div_ceil(SCALAR_BLOCK_SIZE);
+        if !execution.is_parallel() || block_count < 2 {
+            return self.evaluate_cache(params, batch.cache());
+        }
+        self.check_batch_cache(batch.cache())?;
+        let invariant = self.scalar_invariant_values(params)?;
+        #[cfg(feature = "jit")]
+        let jit_cache = self
+            .scalar_jit_kernel()
+            .map(|_| JitScalarKernel::prepare_cache(batch.cache()));
+        let evaluate = || {
+            (0..block_count)
+                .into_par_iter()
+                .map(|block| {
+                    let start = block * SCALAR_BLOCK_SIZE;
+                    let end = (start + SCALAR_BLOCK_SIZE).min(batch.len());
+                    let mut workspace = ScalarEventWorkspace::default();
+                    let mut output = Vec::with_capacity(end - start);
+                    self.evaluate_cache_block_prepared(
+                        params,
+                        batch.cache(),
+                        start,
+                        end,
+                        invariant.as_ref(),
+                        &mut workspace,
+                        &mut output,
+                        #[cfg(feature = "jit")]
+                        jit_cache.as_ref(),
+                    )?;
+                    Ok(output)
+                })
+                .collect::<RuntimeResult<Vec<_>>>()
+        };
+        let blocks = if pool_installed {
+            evaluate()?
+        } else {
+            execution.install(evaluate)?
+        };
+        Ok(blocks.into_iter().flatten().collect())
     }
 
     pub(crate) fn evaluate_prepared_dataset_many(

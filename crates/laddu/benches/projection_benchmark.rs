@@ -18,6 +18,10 @@ fn projection_benchmark(criterion: &mut Criterion) {
         ProjectionFixture::new(FAST_EVENTS, 20, Storage::Streaming, ThreadPolicy::Serial).unwrap();
     let resident_200 =
         ProjectionFixture::new(FAST_EVENTS, 200, Storage::Resident, ThreadPolicy::Serial).unwrap();
+    let resident_fixed_2 =
+        ProjectionFixture::new(FAST_EVENTS, 20, Storage::Resident, ThreadPolicy::Fixed(2)).unwrap();
+    let resident_auto =
+        ProjectionFixture::new(FAST_EVENTS, 20, Storage::Resident, ThreadPolicy::Auto).unwrap();
 
     let mut group = criterion.benchmark_group("projection baseline");
     group.sample_size(10);
@@ -85,6 +89,15 @@ fn projection_benchmark(criterion: &mut Criterion) {
     });
     group.bench_function("combined-set/resident/200-draws/aliases/4", |bencher| {
         bencher.iter(|| black_box(resident_200.evaluate_combined_set(4).unwrap()));
+    });
+    group.bench_function(
+        "combined-set/resident/20-draws/aliases/4/fixed-2",
+        |bencher| {
+            bencher.iter(|| black_box(resident_fixed_2.evaluate_combined_set(4).unwrap()));
+        },
+    );
+    group.bench_function("combined-set/resident/20-draws/aliases/4/auto", |bencher| {
+        bencher.iter(|| black_box(resident_auto.evaluate_combined_set(4).unwrap()));
     });
     group.finish();
 }

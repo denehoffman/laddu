@@ -2155,7 +2155,7 @@ impl CrossSectionIntegrals {
         consume: F,
     ) -> LikelihoodResult<Vec<f64>>
     where
-        F: FnMut(usize, usize, &[f64]),
+        F: FnMut(usize, usize, &[f64]) + Send,
     {
         self.visit_prepared_intensities_many(
             free,
@@ -2183,7 +2183,7 @@ impl CrossSectionIntegrals {
         consume: F,
     ) -> LikelihoodResult<()>
     where
-        F: FnMut(usize, usize, &[f64]),
+        F: FnMut(usize, usize, &[f64]) + Send,
     {
         self.visit_prepared_intensities_many(
             free,
@@ -2344,7 +2344,7 @@ impl CrossSectionIntegrals {
         mut consume: F,
     ) -> LikelihoodResult<Vec<f64>>
     where
-        F: FnMut(usize, usize, &[f64]),
+        F: FnMut(usize, usize, &[f64]) + Send,
     {
         let local = self.project_many(free)?;
         let parameter_sets = local
@@ -2359,7 +2359,7 @@ impl CrossSectionIntegrals {
             }));
         }
         self.plan
-            .visit_prepared_many(
+            .visit_prepared_many_parallel(
                 &self.execution,
                 &parameter_sets,
                 dataset,

@@ -1710,6 +1710,7 @@ dependencies = [
  "mpi",
  "mpi_test",
  "num",
+ "rayon",
  "thiserror 2.0.20",
 ]
 
