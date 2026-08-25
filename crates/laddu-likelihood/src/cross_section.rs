@@ -12,6 +12,7 @@ use auto_ops::impl_op_ex;
 use laddu_data::data::Dataset;
 use laddu_expr::{Expr, ExprNodeStructuralKey};
 use laddu_runtime::{DatasetExprExt, Execution};
+use rayon::prelude::*;
 
 use crate::{CrossSectionIntegrals, Likelihood, LikelihoodError, LikelihoodResult};
 
@@ -952,10 +953,36 @@ impl BinAssignments {
         debug_assert!(offset + intensities.len() <= self.indices.len());
         debug_assert_eq!(self.indices.len(), weights.len());
         debug_assert_eq!(self.count, bins.len());
-        for (row, &intensity) in intensities.iter().enumerate() {
-            let event = offset + row;
-            if let Some(index) = self.indices[event] {
-                bins[index] += weights[event] * intensity;
+        let worker_count = rayon::current_num_threads().min(intensities.len());
+        if rayon::current_thread_index().is_none() || worker_count < 2 {
+            for (row, &intensity) in intensities.iter().enumerate() {
+                let event = offset + row;
+                if let Some(index) = self.indices[event] {
+                    bins[index] += weights[event] * intensity;
+                }
+            }
+            return;
+        }
+        let chunk_size = intensities.len().div_ceil(worker_count);
+        let chunk_count = intensities.len().div_ceil(chunk_size);
+        let partials = (0..chunk_count)
+            .into_par_iter()
+            .map(|chunk_index| {
+                let start = chunk_index * chunk_size;
+                let end = (start + chunk_size).min(intensities.len());
+                let mut partial = vec![0.0; self.count];
+                for (row, &intensity) in intensities[start..end].iter().enumerate() {
+                    let event = offset + start + row;
+                    if let Some(index) = self.indices[event] {
+                        partial[index] += weights[event] * intensity;
+                    }
+                }
+                partial
+            })
+            .collect::<Vec<_>>();
+        for partial in partials {
+            for (bin, value) in bins.iter_mut().zip(partial) {
+                *bin += value;
             }
         }
     }

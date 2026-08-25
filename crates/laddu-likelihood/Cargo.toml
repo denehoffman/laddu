@@ -23,6 +23,7 @@ laddu-expr.workspace = true
 laddu-runtime.workspace = true
 mpi = { workspace = true, optional = true }
 num.workspace = true
+rayon.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]

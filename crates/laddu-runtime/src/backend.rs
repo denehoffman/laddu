@@ -252,8 +252,48 @@ impl PreparedModel {
                 parameter_sets,
                 dataset,
                 reduction,
+                false,
                 consume,
             ),
+            #[cfg(feature = "wgpu")]
+            (Self::Wgpu(_), PreparedDataset::Wgpu(_)) => {
+                visit_source_many(self, execution, parameter_sets, source, reduction, consume)
+            }
+            _ => Err(RuntimeError::InvalidShape {
+                index: 0,
+                message: "prepared model and dataset use different backends".into(),
+            }),
+        }
+    }
+
+    /// Visits prepared CPU values on the execution-owned thread pool.
+    #[doc(hidden)]
+    pub fn visit_prepared_many_parallel<F>(
+        &self,
+        execution: &Execution,
+        parameter_sets: &[(&ParamValues, &str)],
+        dataset: &PreparedDataset,
+        source: &Dataset,
+        reduction: Option<ReductionPlan>,
+        consume: F,
+    ) -> RuntimeResult<Vec<f64>>
+    where
+        F: FnMut(usize, usize, &[Complex64]) -> RuntimeResult<()> + Send,
+    {
+        #[cfg(not(feature = "wgpu"))]
+        let _ = source;
+        #[allow(unreachable_patterns)]
+        match (self, dataset) {
+            (Self::Cpu(plan), PreparedDataset::Cpu(dataset)) => execution.install(|| {
+                plan.visit_prepared_dataset_many(
+                    execution,
+                    parameter_sets,
+                    dataset,
+                    reduction,
+                    true,
+                    consume,
+                )
+            }),
             #[cfg(feature = "wgpu")]
             (Self::Wgpu(_), PreparedDataset::Wgpu(_)) => {
                 visit_source_many(self, execution, parameter_sets, source, reduction, consume)
@@ -418,7 +458,7 @@ fn visit_source_many<F>(
     mut consume: F,
 ) -> RuntimeResult<Vec<f64>>
 where
-    F: FnMut(usize, usize, &[Complex64]) -> RuntimeResult<()>,
+    F: FnMut(usize, usize, &[Complex64]) -> RuntimeResult<()> + Send,
 {
     let local = (|| {
         let mut offset = 0;
@@ -836,7 +876,7 @@ fn wgpu_error(error: laddu_wgpu::WgpuError) -> RuntimeError {
 
 #[cfg(test)]
 mod prepared_evaluation_tests {
-    use std::sync::Arc;
+    use std::{cell::RefCell, rc::Rc, sync::Arc};
 
     use laddu_compile::{CompiledModel, ReductionPlan};
     use laddu_data::{
@@ -847,7 +887,7 @@ mod prepared_evaluation_tests {
     use num::complex::Complex64;
 
     use super::PreparedModel;
-    use crate::Execution;
+    use crate::{CpuOptions, Device, Execution, ExecutionOptions, JitPolicy, ThreadPolicy};
 
     fn dataset(streaming: bool) -> Dataset {
         let schema = Arc::new(
@@ -939,6 +979,77 @@ mod prepared_evaluation_tests {
             assert_eq!(visited, expected);
             assert_eq!(sums, [7.5, 10.5]);
         }
+    }
+
+    #[test]
+    fn prepared_block_visitors_run_inside_the_execution_owned_pool() {
+        let model =
+            CompiledModel::from_expr(&event_scalar("x")).expect("test model should compile");
+        let execution = Execution::local(ExecutionOptions {
+            device: Device::Cpu(CpuOptions {
+                threads: ThreadPolicy::Fixed(2),
+                jit: JitPolicy::Disabled,
+            }),
+            ..ExecutionOptions::default()
+        })
+        .expect("fixed-thread execution should build");
+        let prepared_model =
+            PreparedModel::prepare(&model, &execution).expect("model should prepare");
+        let source = dataset(false);
+        let prepared = prepared_model
+            .prepare_dataset(&execution, &source)
+            .expect("dataset should prepare");
+        let parameters = model.params().values(&[]).expect("parameters should build");
+        let mut visitor_pool_threads = Vec::new();
+
+        prepared_model
+            .visit_prepared_many_parallel(
+                &execution,
+                &[(&parameters, "central")],
+                &prepared,
+                &source,
+                None,
+                |_, _, _| {
+                    visitor_pool_threads.push(rayon::current_num_threads());
+                    Ok(())
+                },
+            )
+            .expect("prepared blocks should be visited");
+
+        assert!(!visitor_pool_threads.is_empty());
+        assert!(visitor_pool_threads.iter().all(|&threads| threads == 2));
+    }
+
+    #[test]
+    fn existing_prepared_visitor_accepts_non_send_callbacks() {
+        let model =
+            CompiledModel::from_expr(&event_scalar("x")).expect("test model should compile");
+        let execution = Execution::default();
+        let prepared_model =
+            PreparedModel::prepare(&model, &execution).expect("model should prepare");
+        let source = dataset(false);
+        let prepared = prepared_model
+            .prepare_dataset(&execution, &source)
+            .expect("dataset should prepare");
+        let parameters = model.params().values(&[]).expect("parameters should build");
+        let visited = Rc::new(RefCell::new(Vec::new()));
+        let captured = Rc::clone(&visited);
+
+        prepared_model
+            .visit_prepared_many(
+                &execution,
+                &[(&parameters, "central")],
+                &prepared,
+                &source,
+                None,
+                move |_, _, values| {
+                    captured.borrow_mut().extend_from_slice(values);
+                    Ok(())
+                },
+            )
+            .expect("non-Send visitor should remain supported");
+
+        assert_eq!(visited.borrow().len(), 3);
     }
 }
 

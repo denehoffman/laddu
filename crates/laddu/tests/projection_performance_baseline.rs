@@ -119,6 +119,46 @@ fn combined_projection_sets_match_independent_calls_with_ensemble_draws() {
 }
 
 #[test]
+fn cpu_thread_policies_preserve_single_and_combined_projection_sets() {
+    for storage in [Storage::Resident, Storage::Streaming] {
+        let serial = ProjectionFixture::new(128, 3, storage, ThreadPolicy::Serial)
+            .expect("serial projection fixture should build");
+        let expected_single = serial
+            .evaluate_single_set(4)
+            .expect("serial single-member projections should evaluate");
+        let expected_combined = serial
+            .evaluate_combined_set(4)
+            .expect("serial combined projections should evaluate");
+
+        for threads in [ThreadPolicy::Fixed(2), ThreadPolicy::Auto] {
+            let parallel = ProjectionFixture::new(128, 3, storage, threads)
+                .expect("parallel projection fixture should build");
+            let actual_single = parallel
+                .evaluate_single_set(4)
+                .expect("parallel single-member projections should evaluate");
+            let actual_combined = parallel
+                .evaluate_combined_set(4)
+                .expect("parallel combined projections should evaluate");
+
+            assert_eq!(actual_single.len(), expected_single.len());
+            for ((actual_name, actual), (expected_name, expected)) in
+                actual_single.iter().zip(expected_single.iter())
+            {
+                assert_eq!(actual_name, expected_name);
+                assert_projection_equal(actual, expected);
+            }
+            assert_eq!(actual_combined.len(), expected_combined.len());
+            for ((actual_name, actual), (expected_name, expected)) in
+                actual_combined.iter().zip(expected_combined.iter())
+            {
+                assert_eq!(actual_name, expected_name);
+                assert_projection_equal(actual, expected);
+            }
+        }
+    }
+}
+
+#[test]
 fn representative_fixture_captures_complete_legacy_reference_fingerprints() {
     let projections = ProjectionFixture::new(128, 3, Storage::Resident, ThreadPolicy::Serial)
         .expect("representative fixture should build")
