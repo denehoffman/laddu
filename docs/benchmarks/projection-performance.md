@@ -10,11 +10,11 @@ Run the CodSpeed-compatible Criterion matrix with:
 cargo bench -p laddu --bench projection_benchmark --features likelihood
 ```
 
-The matrix compares one projection-set call with one and four repeated calls for a single member. It also retains 20- and 200-draw, four-period combined, resident and streaming, and unique-versus-duplicate-selection baselines for later projection-set slices. Criterion stores timing reports beneath `target/criterion/`. Results are engineering evidence, not an absolute release gate.
+The matrix compares one projection-set call with one and four repeated calls for both single-member and four-period combined cross sections. Combined cases cover 20 and 200 draws plus resident and streaming data; the matrix also retains the unique-versus-duplicate-selection baseline. Criterion stores timing reports beneath `target/criterion/`. Results are engineering evidence, not an absolute release gate.
 
 ## Representative profiling workload
 
-The manual driver defaults to four run periods, four projection calls, 200 seeded draws, both storage policies, and serial, fixed-available, and automatic CPU thread policies:
+The manual driver defaults to one four-projection set over four run periods and 200 seeded draws, both storage policies, and serial, fixed-available, and automatic CPU thread policies:
 
 ```console
 cargo run -p laddu --example projection_profile --features likelihood --release

@@ -26,7 +26,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 thread_case.policy,
             )?;
             let started = Instant::now();
-            let projections = fixture.evaluate_combined(4)?;
+            let projections = fixture.evaluate_combined_set(4)?;
             let elapsed = started.elapsed().as_secs_f64();
             assert_eq!(projections.len(), 4);
             summary.push_str(&format!(

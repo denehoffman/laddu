@@ -57,6 +57,19 @@ fn projection_benchmark(criterion: &mut Criterion) {
                 });
             },
         );
+        group.bench_with_input(
+            BenchmarkId::new("combined-set/resident/20-draws/aliases", projections),
+            &projections,
+            |bencher, &projections| {
+                bencher.iter(|| {
+                    black_box(
+                        resident_20
+                            .evaluate_combined_set(black_box(projections))
+                            .unwrap(),
+                    )
+                });
+            },
+        );
     }
     group.bench_function("combined/resident/20-draws/unique/4", |bencher| {
         bencher.iter(|| black_box(resident_20.evaluate_combined_unique(4).unwrap()));
@@ -64,8 +77,14 @@ fn projection_benchmark(criterion: &mut Criterion) {
     group.bench_function("combined/streaming/20-draws/aliases/4", |bencher| {
         bencher.iter(|| black_box(streaming_20.evaluate_combined(4).unwrap()));
     });
+    group.bench_function("combined-set/streaming/20-draws/aliases/4", |bencher| {
+        bencher.iter(|| black_box(streaming_20.evaluate_combined_set(4).unwrap()));
+    });
     group.bench_function("combined/resident/200-draws/aliases/4", |bencher| {
         bencher.iter(|| black_box(resident_200.evaluate_combined(4).unwrap()));
+    });
+    group.bench_function("combined-set/resident/200-draws/aliases/4", |bencher| {
+        bencher.iter(|| black_box(resident_200.evaluate_combined_set(4).unwrap()));
     });
     group.finish();
 }

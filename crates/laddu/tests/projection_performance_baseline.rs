@@ -100,6 +100,25 @@ fn single_member_projection_sets_match_independent_calls_with_ensemble_draws() {
 }
 
 #[test]
+fn combined_projection_sets_match_independent_calls_with_ensemble_draws() {
+    for storage in [Storage::Resident, Storage::Streaming] {
+        let fixture = ProjectionFixture::new(96, 3, storage, ThreadPolicy::Serial)
+            .expect("projection fixture should build");
+        let expected = fixture
+            .evaluate_combined(4)
+            .expect("independent combined projections should evaluate");
+        let actual = fixture
+            .evaluate_combined_set(4)
+            .expect("combined projection set should evaluate");
+
+        assert_eq!(actual.len(), expected.len());
+        for ((_, actual), expected) in actual.iter().zip(&expected) {
+            assert_projection_equal(actual, expected);
+        }
+    }
+}
+
+#[test]
 fn representative_fixture_captures_complete_legacy_reference_fingerprints() {
     let projections = ProjectionFixture::new(128, 3, Storage::Resident, ThreadPolicy::Serial)
         .expect("representative fixture should build")

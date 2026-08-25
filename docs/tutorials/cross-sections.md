@@ -217,6 +217,12 @@ be one axis or a sequence of axes; a sequence forms one joint differential
 cross section, while separate names remain independent and share prepared
 event intensities.
 
+The same operation works on combined cross sections. Run-period members retain
+their luminosity factors and ensemble/replica pairing while sharing prepared
+intensity work across the requested projections. Reweighted replicas that share
+event identity also share coordinate and bin preparation; arbitrary replica
+datasets remain correct, but may require their own coordinate and bin work.
+
 ## Statistical uncertainty
 
 Bootstrap replicas must pair each refitted parameter vector with its resampled
