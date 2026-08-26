@@ -123,7 +123,7 @@ impl ExecutablePlan {
         Self::from_model_with_solve_rows(model, true)
     }
 
-    /// Build an executable plan for a backend with fused solve support.
+    /// Build an executable plan without the CPU-oriented cached solve-row specialization.
     ///
     /// Backends with inexpensive fused solves can use this form to keep the original `Solve`
     /// instruction and consume an ordinarily cached event-dependent matrix directly.
@@ -132,7 +132,7 @@ impl ExecutablePlan {
     ///
     /// Returns [`CompileError`](crate::CompileError) when the model cannot be
     /// lowered to valid scalar or cache kernel IR.
-    pub fn from_model_for_fused_backend(model: &CompiledModel) -> CompileResult<Self> {
+    pub fn from_model_without_solve_rows(model: &CompiledModel) -> CompileResult<Self> {
         Self::from_model_with_solve_rows(model, false)
     }
 

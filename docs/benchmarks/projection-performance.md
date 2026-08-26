@@ -14,7 +14,7 @@ The matrix compares one projection-set call with one and four repeated calls for
 
 ## Representative profiling workload
 
-The manual driver defaults to one four-projection set over four run periods and 200 seeded draws, both storage policies, and serial, fixed-available, and automatic CPU thread policies:
+The manual driver defaults to one four-projection set over four run periods and 200 seeded draws, both storage policies, and serial, fixed-available, and automatic CPU thread policies. For each case it also records the original four-repeated-call workload at the fixed 20-draw baseline so the release comparison remains visible:
 
 ```console
 cargo run -p laddu --example projection_profile --features likelihood --release
@@ -27,7 +27,7 @@ cargo run -p laddu --example projection_profile --features likelihood --release 
   --events 1000 --draws 20 --storage resident --threads fixed:4
 ```
 
-The driver writes machine-specific timings only to `target/projection-profile/summary.csv` (or the equivalent directory under `CARGO_TARGET_DIR`). Store profiler and flame-graph output beside it, for example:
+The driver writes machine-specific timings only to `target/projection-profile/summary.csv` (or the equivalent directory under `CARGO_TARGET_DIR`). Its `workflow` column distinguishes `projection-set` from `repeated-differentials`; `--draws` changes only the projection-set workload because the comparison baseline remains fixed at 20 draws. Store profiler and flame-graph output beside it, for example:
 
 ```console
 cargo flamegraph -p laddu --example projection_profile --features likelihood \

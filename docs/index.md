@@ -66,4 +66,5 @@ concepts
 tutorials/index
 reference/api
 benchmarks/projection-performance
+wgpu-testing
 ```

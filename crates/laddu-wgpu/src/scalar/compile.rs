@@ -48,7 +48,7 @@ pub(crate) struct CompiledKernel {
 
 /// Validate options and lower the public model into the backend executable.
 fn validate_and_lower(model: &CompiledModel) -> WgpuResult<ExecutablePlan> {
-    ExecutablePlan::from_model_for_fused_backend(model)
+    ExecutablePlan::from_model_without_solve_rows(model)
         .map_err(|error| WgpuError::UnsupportedInstruction(error.to_string()))
 }
 

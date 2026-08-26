@@ -716,7 +716,7 @@ pub fn laddu_compile::ExecutablePlan::evaluation_nodes(&self) -> &[laddu_expr::e
 pub fn laddu_compile::ExecutablePlan::factor_matrices(&self) -> &[(laddu_expr::expression::ExprId, usize)]
 pub fn laddu_compile::ExecutablePlan::factor_matrix_slots(&self) -> &[core::option::Option<usize>]
 pub fn laddu_compile::ExecutablePlan::from_model(&laddu_compile::CompiledModel) -> laddu_compile::CompileResult<Self>
-pub fn laddu_compile::ExecutablePlan::from_model_for_fused_backend(&laddu_compile::CompiledModel) -> laddu_compile::CompileResult<Self>
+pub fn laddu_compile::ExecutablePlan::from_model_without_solve_rows(&laddu_compile::CompiledModel) -> laddu_compile::CompileResult<Self>
 pub fn laddu_compile::ExecutablePlan::graph(&self) -> &laddu_expr::expression::ExprGraph
 pub fn laddu_compile::ExecutablePlan::parameter_slots(&self) -> &[core::option::Option<laddu_expr::parameters::ParamId>]
 pub fn laddu_compile::ExecutablePlan::params(&self) -> &laddu_expr::parameters::ParamLayout

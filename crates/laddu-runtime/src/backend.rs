@@ -458,7 +458,7 @@ fn visit_source_many<F>(
     mut consume: F,
 ) -> RuntimeResult<Vec<f64>>
 where
-    F: FnMut(usize, usize, &[Complex64]) -> RuntimeResult<()> + Send,
+    F: FnMut(usize, usize, &[Complex64]) -> RuntimeResult<()>,
 {
     let local = (|| {
         let mut offset = 0;
@@ -587,10 +587,6 @@ impl WgpuDatasetPlan {
             preparation_plan,
             device_decision,
         })
-    }
-
-    fn storage(&self) -> CacheStorage {
-        self.preparation_plan.storage()
     }
 
     fn reserve_storage(
@@ -770,7 +766,7 @@ impl WgpuPlan {
             {
                 let batch = batch.map_err(|error| RuntimeError::Data(error.to_string()))?;
                 stats.observe(&batch);
-                if plan.storage() == CacheStorage::Resident {
+                if plan.preparation_plan.storage() == CacheStorage::Resident {
                     batches.push(
                         self.kernel
                             .prepare_batch(&self.context, &self.preparation_params, &batch)
@@ -785,8 +781,9 @@ impl WgpuPlan {
             .iter()
             .map(laddu_wgpu::WgpuPreparedBatch::resident_bytes)
             .sum();
-        let stats = preparation.finish_stats(local_stats, resident_bytes, plan.storage());
-        Ok(match plan.storage() {
+        let stats =
+            preparation.finish_stats(local_stats, resident_bytes, plan.preparation_plan.storage());
+        Ok(match plan.preparation_plan.storage() {
             CacheStorage::Resident => WgpuPreparedDataset::Resident {
                 batches: batches.into(),
                 stats,
@@ -1082,7 +1079,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(plan.storage(), CacheStorage::Resident);
+        assert_eq!(plan.preparation_plan.storage(), CacheStorage::Resident);
         assert_eq!(plan.read_plan.chunk_size, Some(3));
         assert_eq!(plan.device_decision.chunk_events, 100);
         assert_eq!(plan.device_decision.estimated_peak_bytes, 600);
@@ -1101,7 +1098,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(plan.storage(), CacheStorage::Streaming);
+        assert_eq!(plan.preparation_plan.storage(), CacheStorage::Streaming);
         assert_eq!(plan.read_plan.chunk_size, Some(50));
         assert_eq!(plan.device_decision.chunk_events, 50);
         assert_eq!(plan.device_decision.estimated_peak_bytes, 1_000);

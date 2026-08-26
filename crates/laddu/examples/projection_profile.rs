@@ -6,7 +6,9 @@ mod projection;
 use std::{env, fs, path::PathBuf, time::Instant};
 
 use laddu::prelude::ThreadPolicy;
-use projection::{ProjectionFixture, Storage};
+use projection::{ProjectionFixture, ProjectionTarget, Storage};
+
+const BASELINE_DRAWS: usize = 20;
 
 fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let options = Options::parse()?;
@@ -16,25 +18,44 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let output_dir = target.join("projection-profile");
     fs::create_dir_all(&output_dir)?;
 
-    let mut summary = String::from("storage,threads,events,draws,elapsed_seconds\n");
+    let mut summary = String::from("workflow,storage,threads,events,draws,elapsed_seconds\n");
     for storage in &options.storage {
         for thread_case in &options.threads {
-            let fixture = ProjectionFixture::new(
+            let projection_set_fixture = ProjectionFixture::new(
                 options.events,
                 options.draws,
                 *storage,
                 thread_case.policy,
             )?;
             let started = Instant::now();
-            let projections = fixture.evaluate_combined_set(4)?;
+            let projections =
+                projection_set_fixture.evaluate_projection_set(ProjectionTarget::Combined, 4)?;
             let elapsed = started.elapsed().as_secs_f64();
             assert_eq!(projections.len(), 4);
             summary.push_str(&format!(
-                "{},{},{},{},{elapsed:.9}\n",
+                "projection-set,{},{},{},{},{elapsed:.9}\n",
                 storage.label(),
                 thread_case.label,
                 options.events,
                 options.draws
+            ));
+
+            let repeated_fixture = ProjectionFixture::new(
+                options.events,
+                BASELINE_DRAWS,
+                *storage,
+                thread_case.policy,
+            )?;
+            let started = Instant::now();
+            let projections =
+                repeated_fixture.evaluate_differentials(ProjectionTarget::Combined, 4)?;
+            let elapsed = started.elapsed().as_secs_f64();
+            assert_eq!(projections.len(), 4);
+            summary.push_str(&format!(
+                "repeated-differentials,{},{},{},{BASELINE_DRAWS},{elapsed:.9}\n",
+                storage.label(),
+                thread_case.label,
+                options.events
             ));
         }
     }

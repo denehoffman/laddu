@@ -30,7 +30,7 @@ autodoc_typehints = 'description'
 napoleon_numpy_docstring = True
 myst_enable_extensions = ['amsmath', 'colon_fence', 'dollarmath', 'fieldlist']
 myst_heading_anchors = 3
-exclude_patterns = ['_build', 'Thumbs.db', '.DS_Store']
+exclude_patterns = ['_build', 'adr/**', 'agents/**', 'Thumbs.db', '.DS_Store']
 templates_path = ['_templates']
 
 laddu_spec = find_spec('laddu')
