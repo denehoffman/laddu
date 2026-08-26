@@ -939,10 +939,6 @@ impl BinAssignments {
         }
     }
 
-    fn accumulate(&self, weights: &[f64]) -> Vec<f64> {
-        self.accumulate_products(weights, None)
-    }
-
     fn accumulate_weighted_block(
         &self,
         offset: usize,
@@ -1254,7 +1250,10 @@ impl CombinedMemberWorkspace {
                             Ok(bins
                                 .as_ref()
                                 .unwrap_or(&projection.data_bins)
-                                .accumulate(weights.as_deref().unwrap_or(&self.data_weights)))
+                                .accumulate_products(
+                                    weights.as_deref().unwrap_or(&self.data_weights),
+                                    None,
+                                ))
                         })
                         .collect::<LikelihoodResult<Vec<_>>>()?;
                     Ok((
@@ -1298,7 +1297,9 @@ impl CombinedMemberWorkspace {
                     .map(|(projection_index, projection)| {
                         let (data_histogram, total_data) = if parameter_index == 0 {
                             (
-                                projection.data_bins.accumulate(&self.data_weights),
+                                projection
+                                    .data_bins
+                                    .accumulate_products(&self.data_weights, None),
                                 self.full.data_weight_sum(),
                             )
                         } else {
@@ -1645,10 +1646,14 @@ impl CrossSection {
         if axes.is_empty() {
             return Err(invalid("at least one differential axis is required"));
         }
-        if self.members.is_some() {
-            return self.combined_differential(axes, components);
-        }
-        self.single_differential(axes, components)
+        let projection = Projection {
+            name: "differential".to_owned(),
+            axes: axes.to_vec(),
+        };
+        let mut entries = self
+            .projection_set(std::slice::from_ref(&projection), components)?
+            .entries;
+        Ok(entries.remove(0).1)
     }
 
     /// Computes an ordered set of independent named differential cross sections.
@@ -1850,21 +1855,6 @@ impl CrossSection {
             draws,
             Some(next_uncertainty_source_id()),
         ))
-    }
-
-    fn single_differential(
-        &self,
-        axes: &[Axis],
-        components: &HashMap<String, Vec<String>>,
-    ) -> LikelihoodResult<DifferentialCrossSection> {
-        let projection = Projection {
-            name: "differential".to_owned(),
-            axes: axes.to_vec(),
-        };
-        let mut entries = self
-            .single_projection_set(std::slice::from_ref(&projection), components)?
-            .entries;
-        Ok(entries.remove(0).1)
     }
 
     fn single_projection_set(
@@ -2073,7 +2063,8 @@ impl CrossSection {
                                 draw_data_weights: &[f64],
                                 total_data: f64|
                  -> DifferentialValues {
-                    let data_histogram = draw_data_bins.accumulate(draw_data_weights);
+                    let data_histogram =
+                        draw_data_bins.accumulate_products(draw_data_weights, None);
                     let accepted_histogram = &accepted_histograms[plan_index][draw_index];
                     let generated_histogram = &generated_histograms[plan_index][draw_index];
                     let full_accepted = full_accepted_integrals[draw_index];
@@ -2165,21 +2156,6 @@ impl CrossSection {
                 .map(|(projection, plan)| (projection.name.clone(), unique_results[plan].clone()))
                 .collect(),
         })
-    }
-
-    fn combined_differential(
-        &self,
-        axes: &[Axis],
-        components: &HashMap<String, Vec<String>>,
-    ) -> LikelihoodResult<DifferentialCrossSection> {
-        let projection = Projection {
-            name: "differential".to_owned(),
-            axes: axes.to_vec(),
-        };
-        let mut entries = self
-            .combined_projection_set(std::slice::from_ref(&projection), components)?
-            .entries;
-        Ok(entries.remove(0).1)
     }
 
     fn combined_projection_set(

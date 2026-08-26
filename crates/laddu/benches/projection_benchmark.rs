@@ -7,7 +7,7 @@ mod support {
 
 use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use laddu::prelude::ThreadPolicy;
-use support::projection::{ProjectionFixture, Storage};
+use support::projection::{ProjectionFixture, ProjectionTarget, Storage};
 
 const FAST_EVENTS: usize = 256;
 
@@ -31,7 +31,14 @@ fn projection_benchmark(criterion: &mut Criterion) {
             &projections,
             |bencher, &projections| {
                 bencher.iter(|| {
-                    black_box(resident_20.evaluate_single(black_box(projections)).unwrap())
+                    black_box(
+                        resident_20
+                            .evaluate_differentials(
+                                ProjectionTarget::Single,
+                                black_box(projections),
+                            )
+                            .unwrap(),
+                    )
                 });
             },
         );
@@ -42,7 +49,10 @@ fn projection_benchmark(criterion: &mut Criterion) {
                 bencher.iter(|| {
                     black_box(
                         resident_20
-                            .evaluate_single_set(black_box(projections))
+                            .evaluate_projection_set(
+                                ProjectionTarget::Single,
+                                black_box(projections),
+                            )
                             .unwrap(),
                     )
                 });
@@ -55,7 +65,10 @@ fn projection_benchmark(criterion: &mut Criterion) {
                 bencher.iter(|| {
                     black_box(
                         resident_20
-                            .evaluate_combined(black_box(projections))
+                            .evaluate_differentials(
+                                ProjectionTarget::Combined,
+                                black_box(projections),
+                            )
                             .unwrap(),
                     )
                 });
@@ -68,7 +81,10 @@ fn projection_benchmark(criterion: &mut Criterion) {
                 bencher.iter(|| {
                     black_box(
                         resident_20
-                            .evaluate_combined_set(black_box(projections))
+                            .evaluate_projection_set(
+                                ProjectionTarget::Combined,
+                                black_box(projections),
+                            )
                             .unwrap(),
                     )
                 });
@@ -79,25 +95,61 @@ fn projection_benchmark(criterion: &mut Criterion) {
         bencher.iter(|| black_box(resident_20.evaluate_combined_unique(4).unwrap()));
     });
     group.bench_function("combined/streaming/20-draws/aliases/4", |bencher| {
-        bencher.iter(|| black_box(streaming_20.evaluate_combined(4).unwrap()));
+        bencher.iter(|| {
+            black_box(
+                streaming_20
+                    .evaluate_differentials(ProjectionTarget::Combined, 4)
+                    .unwrap(),
+            )
+        });
     });
     group.bench_function("combined-set/streaming/20-draws/aliases/4", |bencher| {
-        bencher.iter(|| black_box(streaming_20.evaluate_combined_set(4).unwrap()));
+        bencher.iter(|| {
+            black_box(
+                streaming_20
+                    .evaluate_projection_set(ProjectionTarget::Combined, 4)
+                    .unwrap(),
+            )
+        });
     });
     group.bench_function("combined/resident/200-draws/aliases/4", |bencher| {
-        bencher.iter(|| black_box(resident_200.evaluate_combined(4).unwrap()));
+        bencher.iter(|| {
+            black_box(
+                resident_200
+                    .evaluate_differentials(ProjectionTarget::Combined, 4)
+                    .unwrap(),
+            )
+        });
     });
     group.bench_function("combined-set/resident/200-draws/aliases/4", |bencher| {
-        bencher.iter(|| black_box(resident_200.evaluate_combined_set(4).unwrap()));
+        bencher.iter(|| {
+            black_box(
+                resident_200
+                    .evaluate_projection_set(ProjectionTarget::Combined, 4)
+                    .unwrap(),
+            )
+        });
     });
     group.bench_function(
         "combined-set/resident/20-draws/aliases/4/fixed-2",
         |bencher| {
-            bencher.iter(|| black_box(resident_fixed_2.evaluate_combined_set(4).unwrap()));
+            bencher.iter(|| {
+                black_box(
+                    resident_fixed_2
+                        .evaluate_projection_set(ProjectionTarget::Combined, 4)
+                        .unwrap(),
+                )
+            });
         },
     );
     group.bench_function("combined-set/resident/20-draws/aliases/4/auto", |bencher| {
-        bencher.iter(|| black_box(resident_auto.evaluate_combined_set(4).unwrap()));
+        bencher.iter(|| {
+            black_box(
+                resident_auto
+                    .evaluate_projection_set(ProjectionTarget::Combined, 4)
+                    .unwrap(),
+            )
+        });
     });
     group.finish();
 }

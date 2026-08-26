@@ -66,7 +66,7 @@ fn generated_scalar_shader_accepts_supported_solves_and_rejects_oversized_solves
         &laddu_compile::CompileOptions::without_optimizations(),
     )
     .unwrap();
-    let plan = ExecutablePlan::from_model_for_fused_backend(&model).unwrap();
+    let plan = ExecutablePlan::from_model_without_solve_rows(&model).unwrap();
     let source = WgpuScalarKernel::wgsl(
         plan.scalar_kernel().unwrap(),
         &CacheLayout::default(),
@@ -100,7 +100,7 @@ fn generated_scalar_shader_accepts_supported_solves_and_rejects_oversized_solves
         &laddu_compile::CompileOptions::without_optimizations(),
     )
     .unwrap();
-    let oversized = ExecutablePlan::from_model_for_fused_backend(&oversized).unwrap();
+    let oversized = ExecutablePlan::from_model_without_solve_rows(&oversized).unwrap();
     assert!(matches!(
         WgpuScalarKernel::wgsl(
             oversized.scalar_kernel().unwrap(),
@@ -179,7 +179,7 @@ fn generated_f64_solve_shader_validates() {
         &laddu_compile::CompileOptions::without_optimizations(),
     )
     .unwrap();
-    let plan = ExecutablePlan::from_model_for_fused_backend(&model).unwrap();
+    let plan = ExecutablePlan::from_model_without_solve_rows(&model).unwrap();
     let source = WgpuScalarKernel::wgsl(
         plan.scalar_kernel().unwrap(),
         &CacheLayout::default(),

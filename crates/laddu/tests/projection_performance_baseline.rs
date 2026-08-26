@@ -5,7 +5,7 @@ mod projection;
 
 use laddu::prelude::ThreadPolicy;
 use laddu::prelude::{BinnedEstimate, DifferentialCrossSection};
-use projection::{ProjectionFixture, Storage};
+use projection::{ProjectionFixture, ProjectionTarget, Storage};
 
 #[test]
 fn representative_projection_fixture_exercises_the_public_differential_contract() {
@@ -18,7 +18,7 @@ fn representative_projection_fixture_exercises_the_public_differential_contract(
     assert_eq!(fixture.unique_selection_count(), 2);
 
     let projections = fixture
-        .evaluate_combined(4)
+        .evaluate_differentials(ProjectionTarget::Combined, 4)
         .expect("public differential calls should succeed");
     assert_eq!(projections.len(), 4);
     for projection in &projections {
@@ -41,11 +41,11 @@ fn representative_projection_fixture_exercises_the_public_differential_contract(
 fn resident_and_streaming_fixtures_preserve_projection_results() {
     let resident = ProjectionFixture::new(96, 2, Storage::Resident, ThreadPolicy::Serial)
         .expect("resident fixture should build")
-        .evaluate_combined(4)
+        .evaluate_differentials(ProjectionTarget::Combined, 4)
         .expect("resident projections should evaluate");
     let streaming = ProjectionFixture::new(96, 2, Storage::Streaming, ThreadPolicy::Serial)
         .expect("streaming fixture should build")
-        .evaluate_combined(4)
+        .evaluate_differentials(ProjectionTarget::Combined, 4)
         .expect("streaming projections should evaluate");
 
     assert_eq!(resident.len(), streaming.len());
@@ -58,11 +58,11 @@ fn resident_and_streaming_fixtures_preserve_projection_results() {
 fn single_member_differentials_preserve_resident_and_streaming_results() {
     let resident = ProjectionFixture::new(96, 2, Storage::Resident, ThreadPolicy::Serial)
         .expect("resident fixture should build")
-        .evaluate_single(4)
+        .evaluate_differentials(ProjectionTarget::Single, 4)
         .expect("resident projections should evaluate");
     let streaming = ProjectionFixture::new(96, 2, Storage::Streaming, ThreadPolicy::Serial)
         .expect("streaming fixture should build")
-        .evaluate_single(4)
+        .evaluate_differentials(ProjectionTarget::Single, 4)
         .expect("streaming projections should evaluate");
 
     assert_eq!(resident.len(), streaming.len());
@@ -72,72 +72,25 @@ fn single_member_differentials_preserve_resident_and_streaming_results() {
 }
 
 #[test]
-fn single_member_projection_sets_match_independent_calls_with_ensemble_draws() {
-    for storage in [Storage::Resident, Storage::Streaming] {
-        let fixture = ProjectionFixture::new(96, 3, storage, ThreadPolicy::Serial)
-            .expect("projection fixture should build");
-        let expected = fixture
-            .evaluate_single(4)
-            .expect("independent projections should evaluate");
-        let actual = fixture
-            .evaluate_single_set(4)
-            .expect("projection set should evaluate");
-
-        assert_eq!(actual.len(), expected.len());
-        assert_eq!(
-            actual.iter().map(|(name, _)| name).collect::<Vec<_>>(),
-            vec![
-                "projection_0",
-                "projection_1",
-                "projection_2",
-                "projection_3"
-            ]
-        );
-        for ((_, actual), expected) in actual.iter().zip(&expected) {
-            assert_projection_equal(actual, expected);
-        }
-    }
-}
-
-#[test]
-fn combined_projection_sets_match_independent_calls_with_ensemble_draws() {
-    for storage in [Storage::Resident, Storage::Streaming] {
-        let fixture = ProjectionFixture::new(96, 3, storage, ThreadPolicy::Serial)
-            .expect("projection fixture should build");
-        let expected = fixture
-            .evaluate_combined(4)
-            .expect("independent combined projections should evaluate");
-        let actual = fixture
-            .evaluate_combined_set(4)
-            .expect("combined projection set should evaluate");
-
-        assert_eq!(actual.len(), expected.len());
-        for ((_, actual), expected) in actual.iter().zip(&expected) {
-            assert_projection_equal(actual, expected);
-        }
-    }
-}
-
-#[test]
 fn cpu_thread_policies_preserve_single_and_combined_projection_sets() {
     for storage in [Storage::Resident, Storage::Streaming] {
         let serial = ProjectionFixture::new(128, 3, storage, ThreadPolicy::Serial)
             .expect("serial projection fixture should build");
         let expected_single = serial
-            .evaluate_single_set(4)
+            .evaluate_projection_set(ProjectionTarget::Single, 4)
             .expect("serial single-member projections should evaluate");
         let expected_combined = serial
-            .evaluate_combined_set(4)
+            .evaluate_projection_set(ProjectionTarget::Combined, 4)
             .expect("serial combined projections should evaluate");
 
         for threads in [ThreadPolicy::Fixed(2), ThreadPolicy::Auto] {
             let parallel = ProjectionFixture::new(128, 3, storage, threads)
                 .expect("parallel projection fixture should build");
             let actual_single = parallel
-                .evaluate_single_set(4)
+                .evaluate_projection_set(ProjectionTarget::Single, 4)
                 .expect("parallel single-member projections should evaluate");
             let actual_combined = parallel
-                .evaluate_combined_set(4)
+                .evaluate_projection_set(ProjectionTarget::Combined, 4)
                 .expect("parallel combined projections should evaluate");
 
             assert_eq!(actual_single.len(), expected_single.len());
@@ -162,7 +115,7 @@ fn cpu_thread_policies_preserve_single_and_combined_projection_sets() {
 fn representative_fixture_captures_complete_legacy_reference_fingerprints() {
     let projections = ProjectionFixture::new(128, 3, Storage::Resident, ThreadPolicy::Serial)
         .expect("representative fixture should build")
-        .evaluate_combined(4)
+        .evaluate_differentials(ProjectionTarget::Combined, 4)
         .expect("projections should evaluate");
     let actual = projections.iter().map(fingerprint).collect::<Vec<_>>();
     let expected = [

@@ -498,7 +498,8 @@ impl CompiledQuery {
     where
         I: IntoIterator<Item = Expr>,
     {
-        Self::from_exprs_with_options(exprs, &CompileOptions::default())
+        let expressions = exprs.into_iter().collect();
+        Self::compile_expressions(expressions, &CompileOptions::default())
     }
 
     /// Compiles expression outputs with explicit options.
@@ -511,7 +512,14 @@ impl CompiledQuery {
     where
         I: IntoIterator<Item = Expr>,
     {
-        let expressions = exprs.into_iter().collect::<Vec<_>>();
+        let expressions = exprs.into_iter().collect();
+        Self::compile_expressions(expressions, options)
+    }
+
+    fn compile_expressions(
+        expressions: Vec<Expr>,
+        options: &CompileOptions,
+    ) -> CompileResult<Self> {
         if expressions.is_empty() {
             return Err(crate::CompileError::Unsupported(
                 "multi-output query requires at least one expression",

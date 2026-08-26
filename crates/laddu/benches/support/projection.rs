@@ -20,6 +20,15 @@ pub enum Storage {
     Streaming,
 }
 
+/// Cross-section scope exercised by a projection workload.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ProjectionTarget {
+    /// Evaluate one representative run-period member.
+    Single,
+    /// Evaluate the exposure-pooled four-period cross section.
+    Combined,
+}
+
 #[derive(Clone, Copy)]
 enum DatasetRole {
     Data,
@@ -152,39 +161,31 @@ impl ProjectionFixture {
     }
 
     /// Evaluates one or four independent public differential calls.
-    pub fn evaluate_single(
+    pub fn evaluate_differentials(
         &self,
+        target: ProjectionTarget,
         projections: usize,
     ) -> FixtureResult<Vec<DifferentialCrossSection>> {
-        self.evaluate(&self.single, projections, &self.selections)
+        let cross_section = match target {
+            ProjectionTarget::Single => &self.single,
+            ProjectionTarget::Combined => &self.combined,
+        };
+        self.evaluate(cross_section, projections, &self.selections)
     }
 
     /// Evaluates one or four independent projections through one projection-set call.
-    pub fn evaluate_single_set(&self, projections: usize) -> FixtureResult<ProjectionSet> {
-        self.evaluate_set(&self.single, projections)
-    }
-
-    /// Evaluates one or four independent public differential calls on all periods.
-    pub fn evaluate_combined(
+    pub fn evaluate_projection_set(
         &self,
-        projections: usize,
-    ) -> FixtureResult<Vec<DifferentialCrossSection>> {
-        self.evaluate(&self.combined, projections, &self.selections)
-    }
-
-    /// Evaluates one or four independent projections together on all periods.
-    pub fn evaluate_combined_set(&self, projections: usize) -> FixtureResult<ProjectionSet> {
-        self.evaluate_set(&self.combined, projections)
-    }
-
-    fn evaluate_set(
-        &self,
-        cross_section: &CrossSection,
+        target: ProjectionTarget,
         projections: usize,
     ) -> FixtureResult<ProjectionSet> {
         if !matches!(projections, 1 | 4) {
             return Err(format!("projection count must be 1 or 4, got {projections}").into());
         }
+        let cross_section = match target {
+            ProjectionTarget::Single => &self.single,
+            ProjectionTarget::Combined => &self.combined,
+        };
         let projections = self.axes[..projections]
             .iter()
             .enumerate()

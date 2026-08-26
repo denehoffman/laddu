@@ -449,7 +449,11 @@ impl QueryExprSet {
 
     fn evaluate_batch(&self, batch: &EventBatch) -> RuntimeResult<Vec<Vec<Complex64>>> {
         let values = match &self.shared {
-            QueryExprStorage::Shared(query) => query.evaluate_outputs(batch)?,
+            QueryExprStorage::Shared(query) => {
+                query
+                    .model
+                    .evaluate_batch_outputs(&query.params, batch, &query.outputs)?
+            }
             QueryExprStorage::Separate(queries) => queries
                 .iter()
                 .map(|query| query.evaluate_batch(batch))
@@ -496,11 +500,6 @@ impl QueryExpr {
 
     fn evaluate_batch(&self, batch: &EventBatch) -> RuntimeResult<Vec<Complex64>> {
         self.model.evaluate_batch(&self.params, batch)
-    }
-
-    fn evaluate_outputs(&self, batch: &EventBatch) -> RuntimeResult<Vec<Vec<Complex64>>> {
-        self.model
-            .evaluate_batch_outputs(&self.params, batch, &self.outputs)
     }
 }
 
