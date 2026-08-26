@@ -11,7 +11,7 @@ homepage = "https://github.com/denehoffman/laddu"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/denehoffman/laddu"
 rust-version = "1.95.0"
-version = "0.21.4" # x-release-please-version
+version = "0.21.5" # x-release-please-version
 
 [workspace.dependencies]
 accurate = "0.4.1"
@@ -33,21 +33,21 @@ ganesh = "0.28.1"
 indexmap = { version = "2.14.0", features = ["serde"] }
 lazy_static = "1.5.0"
 layout-rs = "0.1.3"
-laddu = { version = "0.21.4", path = "crates/laddu" } # x-release-please-version
-laddu-amplitudes = { version = "0.21.4", path = "crates/laddu-amplitudes" } # x-release-please-version
-laddu-autodiff = { version = "0.21.4", path = "crates/laddu-autodiff" } # x-release-please-version
-laddu-compile = { version = "0.21.4", path = "crates/laddu-compile" } # x-release-please-version
-laddu-core = { package = "laddu", version = "0.21.4", path = "crates/laddu" } # x-release-please-version
-laddu-data = { version = "0.21.4", path = "crates/laddu-data" } # x-release-please-version
-laddu-expr = { version = "0.21.4", path = "crates/laddu-expr" } # x-release-please-version
-laddu-fit = { version = "0.21.4", path = "crates/laddu-fit" } # x-release-please-version
-laddu-generation = { version = "0.21.4", path = "crates/laddu-generation" } # x-release-please-version
-laddu-kernel = { version = "0.21.4", path = "crates/laddu-kernel" } # x-release-please-version
-laddu-likelihood = { version = "0.21.4", path = "crates/laddu-likelihood" } # x-release-please-version
-laddu-memory = { version = "0.21.4", path = "crates/laddu-memory" } # x-release-please-version
-laddu-physics = { version = "0.21.4", path = "crates/laddu-physics" } # x-release-please-version
-laddu-runtime = { version = "0.21.4", path = "crates/laddu-runtime" } # x-release-please-version
-laddu-wgpu = { version = "0.21.4", path = "crates/laddu-wgpu" } # x-release-please-version
+laddu = { version = "0.21.5", path = "crates/laddu" } # x-release-please-version
+laddu-amplitudes = { version = "0.21.5", path = "crates/laddu-amplitudes" } # x-release-please-version
+laddu-autodiff = { version = "0.21.5", path = "crates/laddu-autodiff" } # x-release-please-version
+laddu-compile = { version = "0.21.5", path = "crates/laddu-compile" } # x-release-please-version
+laddu-core = { package = "laddu", version = "0.21.5", path = "crates/laddu" } # x-release-please-version
+laddu-data = { version = "0.21.5", path = "crates/laddu-data" } # x-release-please-version
+laddu-expr = { version = "0.21.5", path = "crates/laddu-expr" } # x-release-please-version
+laddu-fit = { version = "0.21.5", path = "crates/laddu-fit" } # x-release-please-version
+laddu-generation = { version = "0.21.5", path = "crates/laddu-generation" } # x-release-please-version
+laddu-kernel = { version = "0.21.5", path = "crates/laddu-kernel" } # x-release-please-version
+laddu-likelihood = { version = "0.21.5", path = "crates/laddu-likelihood" } # x-release-please-version
+laddu-memory = { version = "0.21.5", path = "crates/laddu-memory" } # x-release-please-version
+laddu-physics = { version = "0.21.5", path = "crates/laddu-physics" } # x-release-please-version
+laddu-runtime = { version = "0.21.5", path = "crates/laddu-runtime" } # x-release-please-version
+laddu-wgpu = { version = "0.21.5", path = "crates/laddu-wgpu" } # x-release-please-version
 maryada = { version = "0.2.1", features = ["branch"] }
 mpi = { version = "0.8.2", features = ["complex"] }
 mpi_test = "0.1.1"

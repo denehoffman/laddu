@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.21.5](https://github.com/denehoffman/laddu/compare/v0.21.4...v0.21.5) (2026-08-26)
+
+
+### Features
+
+* **execution:** Add multi-output queries and structured WGPU runtime ([c562cd3](https://github.com/denehoffman/laddu/commit/c562cd310ec36480af1ea2b916b6bd699ea22573))
+* **likelihood:** Support combined projection sets ([282bdff](https://github.com/denehoffman/laddu/commit/282bdff16190ff302e8282e7fce0b2914957751c))
+* **projections:** Add single-member projection sets ([7badf21](https://github.com/denehoffman/laddu/commit/7badf215485a3441a716fb207ce66979b7ee0afe))
+
+
+### Performance Improvements
+
+* **projections:** Deduplicate canonical selections ([8d903aa](https://github.com/denehoffman/laddu/commit/8d903aa582afe8087d80846ee6badf049fa7a532))
+* **projections:** Establish deterministic benchmark baseline ([16c806e](https://github.com/denehoffman/laddu/commit/16c806efa2d8ffc5e293b89196fa30ef1fa0d747))
+* **projections:** Parallelize prepared event rows ([7251fe6](https://github.com/denehoffman/laddu/commit/7251fe622fbdcfaa6c82f226539c9634566a89fb))
+* **projections:** Reuse bin assignments during accumulation ([4c32479](https://github.com/denehoffman/laddu/commit/4c324792d888a9e11ad5633ceef3474337f1afe3))
+* **projections:** Reuse prepared blocks across differential draws ([edaae58](https://github.com/denehoffman/laddu/commit/edaae581762f601159be5a613e49bb43212615ef))
+
 ## [0.21.4](https://github.com/denehoffman/laddu/compare/v0.21.3...v0.21.4) (2026-08-19)
 
 
