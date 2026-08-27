@@ -1,6 +1,7 @@
 use std::{
     collections::HashMap,
-    sync::{Arc, OnceLock},
+    hash::{DefaultHasher, Hash, Hasher},
+    sync::{Arc, Mutex, OnceLock},
 };
 
 use laddu_autodiff::{AutodiffMode, AutodiffPlan, AutodiffResult};
@@ -73,13 +74,52 @@ impl EventLookup for HashMap<String, f64> {
 pub struct CpuBackend;
 
 /// CPU scalar-kernel execution strategy.
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub enum CpuExecutionMode {
     /// Prefer JIT execution when available and fall back to interpretation.
     #[default]
     Auto,
     /// Always interpret the scalar kernel.
     Interpreter,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+struct CpuPlanCacheKey {
+    model_digest: u64,
+    cache_plan_digest: u64,
+    autodiff_mode: AutodiffMode,
+    execution_mode: CpuExecutionMode,
+    precision: Precision,
+}
+
+impl CpuPlanCacheKey {
+    fn new(
+        model: &CompiledModel,
+        autodiff_mode: AutodiffMode,
+        execution_mode: CpuExecutionMode,
+        precision: Precision,
+    ) -> Self {
+        let mut cache_plan_hasher = DefaultHasher::new();
+        model
+            .cache_plan()
+            .entries()
+            .len()
+            .hash(&mut cache_plan_hasher);
+        for entry in model.cache_plan().entries() {
+            entry.node().hash(&mut cache_plan_hasher);
+        }
+        model
+            .cache_plan()
+            .materialization_nodes()
+            .hash(&mut cache_plan_hasher);
+        Self {
+            model_digest: model.optimized_digest(),
+            cache_plan_digest: cache_plan_hasher.finish(),
+            autodiff_mode,
+            execution_mode,
+            precision,
+        }
+    }
 }
 
 /// A compiled model prepared for CPU evaluation.
@@ -114,7 +154,74 @@ pub struct CpuPlan {
     pub(super) constant_factors: Vec<Arc<OnceLock<DynamicLu>>>,
 }
 
+type CpuPlanCache = HashMap<CpuPlanCacheKey, Arc<CpuPlan>>;
+
+/// Process-local cache of prepared CPU plans.
+///
+/// We retain this cache so that independent datasets or even entire analyses being fit with the same model do not have to recompile in JIT mode.
+static CPU_PLAN_CACHE: OnceLock<Mutex<CpuPlanCache>> = OnceLock::new();
+
+fn cpu_plan_cache() -> &'static Mutex<CpuPlanCache> {
+    CPU_PLAN_CACHE.get_or_init(|| Mutex::new(CpuPlanCache::new()))
+}
+
 impl CpuBackend {
+    fn prepare_shared_with_modes_precision(
+        &self,
+        model: &CompiledModel,
+        autodiff_mode: AutodiffMode,
+        execution_mode: CpuExecutionMode,
+        precision: Precision,
+    ) -> RuntimeResult<Arc<CpuPlan>> {
+        let key = CpuPlanCacheKey::new(model, autodiff_mode, execution_mode, precision);
+        let mut cache = cpu_plan_cache()
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        if let Some(plan) = cache.get(&key) {
+            return Ok(Arc::clone(plan));
+        }
+        let plan = Arc::new(
+            self.prepare_with_modes_precision(model, autodiff_mode, execution_mode, precision)
+                .map_err(|error| RuntimeError::Data(error.to_string()))?,
+        );
+        cache.insert(key, Arc::clone(&plan));
+        Ok(plan)
+    }
+
+    pub(crate) fn prepare_shared_for_execution(
+        &self,
+        model: &CompiledModel,
+        execution: &Execution,
+    ) -> RuntimeResult<Arc<CpuPlan>> {
+        let execution_mode = match execution.jit_policy() {
+            JitPolicy::Auto | JitPolicy::Enabled => CpuExecutionMode::Auto,
+            JitPolicy::Disabled => CpuExecutionMode::Interpreter,
+        };
+        let plan = self.prepare_shared_with_modes_precision(
+            model,
+            execution.autodiff_mode(),
+            execution_mode,
+            execution.precision(),
+        )?;
+        if execution.precision() == Precision::F32 && !plan.supports_f32_scalar_execution() {
+            return Err(crate::ExecutionError::UnsupportedCpuF32Model.into());
+        }
+        Ok(plan)
+    }
+
+    pub(crate) fn prepare_shared_with_autodiff_mode(
+        &self,
+        model: &CompiledModel,
+        autodiff_mode: AutodiffMode,
+    ) -> RuntimeResult<Arc<CpuPlan>> {
+        self.prepare_shared_with_modes_precision(
+            model,
+            autodiff_mode,
+            CpuExecutionMode::Auto,
+            Precision::F64,
+        )
+    }
+
     /// Prepares a model using the policies resolved by an execution context.
     ///
     /// # Errors
@@ -126,22 +233,8 @@ impl CpuBackend {
         model: &CompiledModel,
         execution: &Execution,
     ) -> RuntimeResult<CpuPlan> {
-        let mode = match execution.jit_policy() {
-            JitPolicy::Auto | JitPolicy::Enabled => CpuExecutionMode::Auto,
-            JitPolicy::Disabled => CpuExecutionMode::Interpreter,
-        };
-        let plan = self
-            .prepare_with_modes_precision(
-                model,
-                execution.autodiff_mode(),
-                mode,
-                execution.precision(),
-            )
-            .map_err(|error| RuntimeError::Data(error.to_string()))?;
-        if execution.precision() == Precision::F32 && !plan.supports_f32_scalar_execution() {
-            return Err(crate::ExecutionError::UnsupportedCpuF32Model.into());
-        }
-        Ok(plan)
+        let plan = self.prepare_shared_for_execution(model, execution)?;
+        Ok((*plan).clone())
     }
 
     /// Prepares a model with forward autodiff and automatic execution-mode selection.

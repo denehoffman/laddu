@@ -11,6 +11,7 @@ use laddu_expr::parameters::ParamValues;
 #[cfg(feature = "wgpu")]
 use laddu_memory::{MemoryDecision, MemoryFootprint};
 use num::complex::Complex64;
+use std::sync::Arc;
 
 #[cfg(feature = "wgpu")]
 use crate::preparation::{DatasetPreparation, DatasetStatsAccumulator, RuntimePreparationPlan};
@@ -23,7 +24,7 @@ use crate::{
 #[derive(Clone, Debug)]
 pub enum PreparedModel {
     /// A model prepared for CPU execution.
-    Cpu(Box<CpuPlan>),
+    Cpu(Arc<CpuPlan>),
     #[cfg(feature = "wgpu")]
     /// A model prepared for WebGPU execution.
     Wgpu(WgpuPlan),
@@ -145,9 +146,9 @@ impl PreparedModel {
                 required_event_scalars: crate::required_event_scalars(model),
             }));
         }
-        Ok(Self::Cpu(Box::new(
-            CpuBackend.prepare_for_execution(model, execution)?,
-        )))
+        Ok(Self::Cpu(
+            CpuBackend.prepare_shared_for_execution(model, execution)?,
+        ))
     }
 
     /// Prepares a dataset for repeated evaluation with this model.
