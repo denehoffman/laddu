@@ -250,9 +250,7 @@ impl PreparedNormalization {
         let basis_plans = basis_models
             .iter()
             .map(|basis| {
-                CpuBackend
-                    .prepare_with_autodiff_mode(basis, execution.autodiff_mode())
-                    .map_err(|error| RuntimeError::Data(error.to_string()))
+                CpuBackend.prepare_shared_with_autodiff_mode(basis, execution.autodiff_mode())
             })
             .collect::<RuntimeResult<Vec<_>>>()?;
         let basis_params = basis_models
@@ -454,7 +452,7 @@ fn incompatible_gradient_layout() -> RuntimeError {
 }
 
 fn accumulate_statistics(
-    plans: &[CpuPlan],
+    plans: &[Arc<CpuPlan>],
     params: &[ParamValues],
     dataset: &Dataset,
     execution: &Execution,

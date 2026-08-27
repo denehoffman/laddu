@@ -45,6 +45,8 @@ impl core::default::Default for laddu_runtime::CpuExecutionMode
 pub fn laddu_runtime::CpuExecutionMode::default() -> laddu_runtime::CpuExecutionMode
 impl core::fmt::Debug for laddu_runtime::CpuExecutionMode
 pub fn laddu_runtime::CpuExecutionMode::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for laddu_runtime::CpuExecutionMode
+pub fn laddu_runtime::CpuExecutionMode::hash<__H: core::hash::Hasher>(&self, &mut __H)
 impl core::marker::Copy for laddu_runtime::CpuExecutionMode
 impl core::marker::StructuralPartialEq for laddu_runtime::CpuExecutionMode
 pub enum laddu_runtime::CpuPreparedDataset
@@ -214,6 +216,8 @@ impl core::default::Default for laddu_runtime::Precision
 pub fn laddu_runtime::Precision::default() -> laddu_runtime::Precision
 impl core::fmt::Debug for laddu_runtime::Precision
 pub fn laddu_runtime::Precision::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for laddu_runtime::Precision
+pub fn laddu_runtime::Precision::hash<__H: core::hash::Hasher>(&self, &mut __H)
 impl core::marker::Copy for laddu_runtime::Precision
 impl core::marker::StructuralPartialEq for laddu_runtime::Precision
 impl serde_core::ser::Serialize for laddu_runtime::Precision
@@ -262,7 +266,7 @@ pub fn laddu_runtime::PreparedDataset::clone(&self) -> laddu_runtime::PreparedDa
 impl core::fmt::Debug for laddu_runtime::PreparedDataset
 pub fn laddu_runtime::PreparedDataset::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub enum laddu_runtime::PreparedModel
-pub laddu_runtime::PreparedModel::Cpu(alloc::boxed::Box<laddu_runtime::CpuPlan>)
+pub laddu_runtime::PreparedModel::Cpu(alloc::sync::Arc<laddu_runtime::CpuPlan>)
 pub laddu_runtime::PreparedModel::Wgpu(laddu_runtime::backend::WgpuPlan)
 impl laddu_runtime::PreparedModel
 pub fn laddu_runtime::PreparedModel::evaluate_batch(&self, &laddu_expr::parameters::ParamValues, &laddu_data::data::event::EventBatch) -> laddu_runtime::RuntimeResult<alloc::vec::Vec<num_complex::Complex64>>

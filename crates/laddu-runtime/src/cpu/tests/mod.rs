@@ -1,6 +1,6 @@
 pub(super) use std::sync::Arc;
 
-pub(super) use laddu_compile::{CompileOptions, CompiledModel, ReductionPlan};
+pub(super) use laddu_compile::{CachePolicy, CompileOptions, CompiledModel, ReductionPlan};
 pub(super) use laddu_data::{
     RealVec4,
     data::{Dataset, EventBatch, OwnedEvent},
@@ -136,6 +136,64 @@ fn assert_complex_slices_close_f64(actual: &[Complex64], expected: &[Complex64])
     for (actual, expected) in actual.iter().zip(expected) {
         assert_complex_close_f64(*actual, *expected);
     }
+}
+
+#[test]
+fn prepared_models_share_cpu_plan_across_executions() {
+    let expression = parameter!("scale", initial: 1.0) * event_scalar("x");
+    let model = CompiledModel::from_expr(&expression).unwrap();
+    let cloned_model = model.clone();
+
+    // Use distinct Execution objects deliberately. The CPU-plan cache is
+    // process-wide so the ordinary Python pattern of constructing separate
+    // likelihoods for separate bins still reuses the same plan.
+    let first = crate::PreparedModel::prepare(&model, &Execution::default()).unwrap();
+    let second = crate::PreparedModel::prepare(&cloned_model, &Execution::default()).unwrap();
+
+    let (crate::PreparedModel::Cpu(first), crate::PreparedModel::Cpu(second)) = (first, second)
+    else {
+        panic!("default execution should prepare CPU models");
+    };
+
+    assert!(
+        Arc::ptr_eq(&first, &second),
+        "structurally identical models should share one CpuPlan"
+    );
+}
+
+#[test]
+fn cpu_plan_cache_distinguishes_event_cache_layouts() {
+    let expression = parameter!("scale", initial: 1.0) * event_scalar("x");
+
+    let cached_model = CompiledModel::from_expr(&expression).unwrap();
+    let uncached_model = CompiledModel::from_expr_with_options(
+        &expression,
+        &CompileOptions::default().with_cache_policy(CachePolicy::Off),
+    )
+    .unwrap();
+
+    // CachePolicy does not alter the optimized expression graph, so the model
+    // digest is identical. The CpuPlan cache must independently include the
+    // resolved event-cache layout in its key.
+    assert_eq!(
+        cached_model.optimized_digest(),
+        uncached_model.optimized_digest()
+    );
+
+    let execution = Execution::default();
+    let cached = crate::PreparedModel::prepare(&cached_model, &execution).unwrap();
+    let uncached = crate::PreparedModel::prepare(&uncached_model, &execution).unwrap();
+
+    let (crate::PreparedModel::Cpu(cached), crate::PreparedModel::Cpu(uncached)) =
+        (cached, uncached)
+    else {
+        panic!("default execution should prepare CPU models");
+    };
+
+    assert!(
+        !Arc::ptr_eq(&cached, &uncached),
+        "different event-cache layouts require different CpuPlans"
+    );
 }
 
 mod autodiff;

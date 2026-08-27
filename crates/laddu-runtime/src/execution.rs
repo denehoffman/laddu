@@ -29,7 +29,7 @@ use mpi::{
 };
 
 /// Numeric precision used to execute a model.
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, Hash)]
 pub enum Precision {
     /// Select a precision appropriate for the resolved device.
     #[default]
