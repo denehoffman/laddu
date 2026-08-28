@@ -150,6 +150,9 @@ fn prepared_models_share_cpu_plan_across_executions() {
     let first = crate::PreparedModel::prepare(&model, &Execution::default()).unwrap();
     let second = crate::PreparedModel::prepare(&cloned_model, &Execution::default()).unwrap();
 
+    #[cfg(not(feature = "wgpu"))]
+    let (crate::PreparedModel::Cpu(first), crate::PreparedModel::Cpu(second)) = (first, second);
+    #[cfg(feature = "wgpu")]
     let (crate::PreparedModel::Cpu(first), crate::PreparedModel::Cpu(second)) = (first, second)
     else {
         panic!("default execution should prepare CPU models");
@@ -184,6 +187,10 @@ fn cpu_plan_cache_distinguishes_event_cache_layouts() {
     let cached = crate::PreparedModel::prepare(&cached_model, &execution).unwrap();
     let uncached = crate::PreparedModel::prepare(&uncached_model, &execution).unwrap();
 
+    #[cfg(not(feature = "wgpu"))]
+    let (crate::PreparedModel::Cpu(cached), crate::PreparedModel::Cpu(uncached)) =
+        (cached, uncached);
+    #[cfg(feature = "wgpu")]
     let (crate::PreparedModel::Cpu(cached), crate::PreparedModel::Cpu(uncached)) =
         (cached, uncached)
     else {
