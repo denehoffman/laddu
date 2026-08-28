@@ -318,32 +318,58 @@ impl PyModel {
         execution=None,
         real=false
     ) -> "complex | float | numpy.typing.NDArray[numpy.complex128 | numpy.float64]")]
-    /// Evaluate the model for every event in a dataset.
+    /// Evaluate a scalar model at parameter values, optionally for each event.
     ///
     /// Parameters
     /// ----------
-    /// dataset : Dataset
-    ///     Events to evaluate, including any required scalar and four-vector
-    ///     columns.
+    /// dataset : Dataset or None, optional
+    ///     Events containing any required scalar and four-vector columns.
+    ///     Omit or pass ``None`` for expressions that need no event inputs.
     /// parameters : sequence of float or dict, optional
     ///     Free values in :attr:`parameter_names` order, or a partial mapping by
-    ///     name. Omitted entries use their defaults.
+    ///     name. Omitted mapping entries use their defaults; omitting
+    ///     ``parameters`` uses :attr:`default_parameters`. Fixed parameters
+    ///     retain their fixed values and are not part of the ordered sequence.
     /// execution : Execution, optional
-    ///     Runtime backend configuration. Defaults to local automatic selection.
+    ///     Runtime backend configuration. Without a dataset, defaults to
+    ///     automatic CPU/JIT selection; explicit CPU/JIT precision and
+    ///     differentiation settings are honored. GPU execution requires a
+    ///     dataset and is rejected otherwise, without falling back to CPU.
     /// real : bool, default=False
-    ///     Return only real components as ``float64`` instead of complex values.
+    ///     Return only real components: a Python ``float`` without a dataset,
+    ///     or a ``float64`` array with one.
     ///
     /// Returns
     /// -------
-    /// numpy.ndarray
-    ///     One value per event.
+    /// complex or float or numpy.ndarray
+    ///     Without a dataset, one Python ``complex`` (``float`` if ``real=True``).
+    ///     With a dataset, an array of shape ``(n_events,)`` and dtype
+    ///     ``complex128`` (``float64`` if ``real=True``). A supplied one-event
+    ///     dataset retains its event dimension, returning shape ``(1,)``.
     ///
     /// Raises
     /// ------
     /// TypeError
     ///     If the parameter representation is invalid.
     /// LadduError
-    ///     If preparation, dataset reading, or evaluation fails.
+    ///     If the result is not scalar, required event inputs are missing,
+    ///     GPU execution is requested without a dataset, or preparation,
+    ///     parameter validation, dataset reading, or evaluation fails.
+    ///
+    /// Notes
+    /// -----
+    /// Vector and matrix operations may appear inside a scalar expression.
+    /// Select an individual vector component (``vector[i]``) or matrix element
+    /// (``matrix.at(i, j)``) before building the model; whole-array results
+    /// are not supported.
+    ///
+    /// Examples
+    /// --------
+    /// >>> import laddu as ld
+    /// >>> z = ld.complex(ld.parameter('x'), ld.parameter('y'))
+    /// >>> model = ld.Model(z * z + 1.0)
+    /// >>> model.evaluate(parameters={'x': 2.0, 'y': 3.0})
+    /// (-4+12j)
     fn evaluate<'py>(
         &self,
         py: Python<'py>,
@@ -417,34 +443,70 @@ impl PyModel {
         execution=None,
         real=false
     ) -> "tuple[complex | float | numpy.typing.NDArray[numpy.complex128 | numpy.float64], numpy.typing.NDArray[numpy.complex128 | numpy.float64]]")]
-    /// Evaluate model values and derivatives for every event.
+    /// Evaluate a scalar model and its derivatives with respect to free parameters.
     ///
     /// Parameters
     /// ----------
-    /// dataset : Dataset
-    ///     Events to evaluate.
+    /// dataset : Dataset or None, optional
+    ///     Events containing any required scalar and four-vector columns.
+    ///     Omit or pass ``None`` for expressions that need no event inputs.
     /// parameters : sequence of float or dict, optional
-    ///     Free parameter values or a partial name-to-value mapping.
+    ///     Free values in :attr:`parameter_names` order, or a partial mapping by
+    ///     name. Omitted mapping entries use their defaults; omitting
+    ///     ``parameters`` uses :attr:`default_parameters`. Fixed parameters
+    ///     retain their fixed values and do not contribute gradient entries.
     /// execution : Execution, optional
-    ///     Runtime backend configuration.
+    ///     Runtime backend configuration. Without a dataset, defaults to
+    ///     automatic CPU/JIT selection; explicit CPU/JIT precision and
+    ///     differentiation settings are honored. GPU execution requires a
+    ///     dataset and is rejected otherwise, without falling back to CPU.
     /// real : bool, default=False
-    ///     Return real components instead of complex values and derivatives.
+    ///     Return real components of both values and derivatives, not their
+    ///     magnitudes. Arrays have dtype ``float64`` instead of ``complex128``.
     ///
     /// Returns
     /// -------
-    /// values : numpy.ndarray
-    ///     Shape ``(n_events,)``.
+    /// values : complex or float or numpy.ndarray
+    ///     Without a dataset, one Python ``complex`` (``float`` if ``real=True``).
+    ///     With a dataset, an array of shape ``(n_events,)``. A supplied one-event
+    ///     dataset retains shape ``(1,)``.
     /// gradients : numpy.ndarray
-    ///     Shape ``(n_events, n_free_parameters)`` in
-    ///     :attr:`parameter_names` order.
+    ///     Shape ``(n_free_parameters,)`` without a dataset, or
+    ///     ``(n_events, n_free_parameters)`` with one, including when there is
+    ///     only one event. Entries follow :attr:`parameter_names` order and
+    ///     differentiate with respect to the real free parameter values.
+    ///     With no free parameters, these shapes are ``(0,)`` and
+    ///     ``(n_events, 0)`` respectively. Value and gradient arrays have dtype
+    ///     ``complex128`` (``float64`` if ``real=True``).
     ///
     /// Raises
     /// ------
     /// TypeError
     ///     If the parameter representation is invalid.
     /// LadduError
-    ///     If automatic differentiation, preparation, reading, or evaluation
-    ///     fails.
+    ///     If the result is not scalar, required event inputs are missing,
+    ///     GPU execution is requested without a dataset, or automatic
+    ///     differentiation, preparation, parameter validation, reading, or
+    ///     evaluation fails.
+    ///
+    /// Notes
+    /// -----
+    /// Vector and matrix operations may appear inside a scalar expression.
+    /// Select an individual component or element before building the model;
+    /// whole-array results and their Jacobians are not supported.
+    ///
+    /// Examples
+    /// --------
+    /// >>> import laddu as ld
+    /// >>> z = ld.complex(ld.parameter('x'), ld.parameter('y'))
+    /// >>> model = ld.Model(z * z + 1.0)
+    /// >>> value, gradient = model.value_and_gradient(parameters={'x': 2.0, 'y': 3.0})
+    /// >>> value
+    /// (-4+12j)
+    /// >>> model.parameter_names
+    /// ['x', 'y']
+    /// >>> gradient.tolist()
+    /// [(4+6j), (-6+4j)]
     fn value_and_gradient<'py>(
         &self,
         py: Python<'py>,
