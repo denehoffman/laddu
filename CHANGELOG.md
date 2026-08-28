@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.22.0](https://github.com/denehoffman/laddu/compare/v0.21.6...v0.22.0) (2026-08-28)
+
+
+### ⚠ BREAKING CHANGES
+
+* **amplitudes:** remove built-in Kopf amplitudes
+
+### Code Refactoring
+
+* **amplitudes:** Remove built-in Kopf amplitudes ([d3951d9](https://github.com/denehoffman/laddu/commit/d3951d964d5974e75a4523a8899c0073ae342cd5))
+
 ## [0.21.6](https://github.com/denehoffman/laddu/compare/v0.21.5...v0.21.6) (2026-08-28)
 
 

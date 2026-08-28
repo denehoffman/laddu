@@ -1550,7 +1550,7 @@ checksum = "e2db585e1d738fc771bf08a151420d3ed193d9d895a36df7f6f8a9456b911ddc"
 
 [[package]]
 name = "laddu"
-version = "0.21.6"
+version = "0.22.0"
 dependencies = [
  "codspeed-criterion-compat",
  "fastrand",
@@ -1579,7 +1579,7 @@ dependencies = [
 
 [[package]]
 name = "laddu-amplitudes"
-version = "0.21.6"
+version = "0.22.0"
 dependencies = [
  "approx",
  "laddu-compile",
@@ -1594,7 +1594,7 @@ dependencies = [
 
 [[package]]
 name = "laddu-autodiff"
-version = "0.21.6"
+version = "0.22.0"
 dependencies = [
  "laddu-compile",
  "laddu-expr",
@@ -1606,7 +1606,7 @@ dependencies = [
 
 [[package]]
 name = "laddu-compile"
-version = "0.21.6"
+version = "0.22.0"
 dependencies = [
  "laddu-expr",
  "laddu-kernel",
@@ -1617,7 +1617,7 @@ dependencies = [
 
 [[package]]
 name = "laddu-data"
-version = "0.21.6"
+version = "0.22.0"
 dependencies = [
  "accurate",
  "approx",
@@ -1641,7 +1641,7 @@ dependencies = [
 
 [[package]]
 name = "laddu-expr"
-version = "0.21.6"
+version = "0.22.0"
 dependencies = [
  "auto_ops",
  "fastrand",
@@ -1655,7 +1655,7 @@ dependencies = [
 
 [[package]]
 name = "laddu-fit"
-version = "0.21.6"
+version = "0.22.0"
 dependencies = [
  "ganesh",
  "laddu-expr",
@@ -1668,7 +1668,7 @@ dependencies = [
 
 [[package]]
 name = "laddu-generation"
-version = "0.21.6"
+version = "0.22.0"
 dependencies = [
  "codspeed-criterion-compat",
  "laddu-compile",
@@ -1686,7 +1686,7 @@ dependencies = [
 
 [[package]]
 name = "laddu-kernel"
-version = "0.21.6"
+version = "0.22.0"
 dependencies = [
  "laddu-expr",
  "num",
@@ -1696,7 +1696,7 @@ dependencies = [
 
 [[package]]
 name = "laddu-likelihood"
-version = "0.21.6"
+version = "0.22.0"
 dependencies = [
  "approx",
  "auto_ops",
@@ -1714,7 +1714,7 @@ dependencies = [
 
 [[package]]
 name = "laddu-memory"
-version = "0.21.6"
+version = "0.22.0"
 dependencies = [
  "nvml-wrapper",
  "objc2-metal",
@@ -1726,7 +1726,7 @@ dependencies = [
 
 [[package]]
 name = "laddu-physics"
-version = "0.21.6"
+version = "0.22.0"
 dependencies = [
  "approx",
  "auto_ops",
@@ -1749,7 +1749,7 @@ dependencies = [
 
 [[package]]
 name = "laddu-python"
-version = "0.21.6"
+version = "0.22.0"
 dependencies = [
  "laddu",
  "pyo3",
@@ -1757,7 +1757,7 @@ dependencies = [
 
 [[package]]
 name = "laddu-python-local"
-version = "0.21.6"
+version = "0.22.0"
 dependencies = [
  "laddu",
  "pyo3",
@@ -1765,7 +1765,7 @@ dependencies = [
 
 [[package]]
 name = "laddu-python-mpi"
-version = "0.21.6"
+version = "0.22.0"
 dependencies = [
  "laddu",
  "pyo3",
@@ -1773,7 +1773,7 @@ dependencies = [
 
 [[package]]
 name = "laddu-runtime"
-version = "0.21.6"
+version = "0.22.0"
 dependencies = [
  "cranelift",
  "laddu-autodiff",
@@ -1794,7 +1794,7 @@ dependencies = [
 
 [[package]]
 name = "laddu-wgpu"
-version = "0.21.6"
+version = "0.22.0"
 dependencies = [
  "bytemuck",
  "laddu-autodiff",
