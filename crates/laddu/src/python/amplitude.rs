@@ -7,12 +7,13 @@ use laddu_amplitudes::{
     relativistic_breit_wigner as rust_relativistic_breit_wigner,
     relativistic_breit_wigner_custom as rust_relativistic_breit_wigner_custom,
 };
+use laddu_physics::math::QR_DEFAULT;
 use pyo3::{prelude::*, types::PyAny};
 
 use super::{
     error::to_py_err,
     expr::{PyExpr, extract_expr},
-    quantum::extract_l,
+    quantum::PyL,
 };
 
 #[pyfunction]
@@ -58,7 +59,7 @@ pub fn breit_wigner(
     width: "Expr | int | float",
     mass1: "Expr | int | float",
     mass2: "Expr | int | float",
-    l: "int | float | None" = None
+    l = None
 ))]
 /// Construct a relativistic two-body Breit-Wigner amplitude.
 ///
@@ -88,10 +89,10 @@ pub fn relativistic_breit_wigner(
     width: &Bound<'_, PyAny>,
     mass1: &Bound<'_, PyAny>,
     mass2: &Bound<'_, PyAny>,
-    l: Option<&Bound<'_, PyAny>>,
+    l: Option<PyL>,
 ) -> PyResult<PyExpr> {
     let l = match l {
-        Some(l) => extract_l(l)?,
+        Some(l) => l.inner,
         None => laddu_physics::quantum::L::try_from(0).map_err(to_py_err)?,
     };
     rust_relativistic_breit_wigner(
@@ -114,9 +115,9 @@ pub fn relativistic_breit_wigner(
     width: "Expr | int | float",
     mass1: "Expr | int | float",
     mass2: "Expr | int | float",
-    l: "int | float",
+    l,
     barrier_factors=true,
-    q_r=1.0
+    q_r: "Expr | int | float | None" = None
 ))]
 #[allow(clippy::too_many_arguments)]
 /// Construct a configurable relativistic Breit-Wigner amplitude.
@@ -131,8 +132,10 @@ pub fn relativistic_breit_wigner(
 ///     Orbital angular momentum.
 /// barrier_factors : bool, default=True
 ///     Include Blatt-Weisskopf factors in the running width.
-/// q_r : float, default=1.0
-///     Barrier-radius momentum scale.
+/// q_r : Expr or number, optional
+///     Barrier-radius momentum scale in GeV. Defaults to 0.1973 GeV.
+///     Must remain real, positive, and finite; use a bounded
+///     parameter to vary it in a fit.
 ///
 /// Returns
 /// -------
@@ -151,17 +154,21 @@ pub fn relativistic_breit_wigner_custom(
     width: &Bound<'_, PyAny>,
     mass1: &Bound<'_, PyAny>,
     mass2: &Bound<'_, PyAny>,
-    l: &Bound<'_, PyAny>,
+    l: PyL,
     barrier_factors: bool,
-    q_r: f64,
+    q_r: Option<&Bound<'_, PyAny>>,
 ) -> PyResult<PyExpr> {
+    let q_r = q_r
+        .map(extract_expr)
+        .transpose()?
+        .unwrap_or_else(|| QR_DEFAULT.into());
     rust_relativistic_breit_wigner_custom(
         extract_expr(s)?,
         extract_expr(mass)?,
         extract_expr(width)?,
         extract_expr(mass1)?,
         extract_expr(mass2)?,
-        extract_l(l)?,
+        l.inner,
         barrier_factors,
         q_r,
     )
@@ -176,8 +183,8 @@ pub fn relativistic_breit_wigner_custom(
     channel_mass_1: "Expr | int | float",
     channel_mass_2: "Expr | int | float",
     pole_masses: "Expr | int | float",
-    l: "int | float",
-    q_r=1.0
+    l,
+    q_r: "Expr | int | float | None" = None
 ))]
 /// Build channel-by-pole Blatt-Weisskopf barrier factors.
 ///
@@ -191,8 +198,10 @@ pub fn relativistic_breit_wigner_custom(
 ///     Vector of pole masses.
 /// l : L or int
 ///     Orbital angular momentum.
-/// q_r : float, default=1.0
-///     Barrier-radius momentum scale.
+/// q_r : Expr or number, optional
+///     Barrier-radius momentum scale in GeV. Defaults to 0.1973 GeV.
+///     Must remain real, positive, and finite; use a bounded
+///     parameter to vary it in a fit.
 ///
 /// Returns
 /// -------
@@ -210,15 +219,19 @@ pub fn blatt_weisskopf_barriers(
     channel_mass_1: &Bound<'_, PyAny>,
     channel_mass_2: &Bound<'_, PyAny>,
     pole_masses: &Bound<'_, PyAny>,
-    l: &Bound<'_, PyAny>,
-    q_r: f64,
+    l: PyL,
+    q_r: Option<&Bound<'_, PyAny>>,
 ) -> PyResult<PyExpr> {
+    let q_r = q_r
+        .map(extract_expr)
+        .transpose()?
+        .unwrap_or_else(|| QR_DEFAULT.into());
     rust_blatt_weisskopf_barriers(
         extract_expr(s)?,
         extract_expr(channel_mass_1)?,
         extract_expr(channel_mass_2)?,
         extract_expr(pole_masses)?,
-        extract_l(l)?,
+        l.inner,
         q_r,
     )
     .map(PyExpr::from)

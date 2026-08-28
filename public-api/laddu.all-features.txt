@@ -361,15 +361,15 @@ pub mod laddu::python
 pub use laddu::python::ganesh
 pub mod laddu::python::amplitude
 pub mod laddu::python::amplitude::amplitudes
-pub fn laddu::python::amplitude::blatt_weisskopf_barriers(&pyo3::instance::Bound<'_, pyo3::types::any::PyAny>, &pyo3::instance::Bound<'_, pyo3::types::any::PyAny>, &pyo3::instance::Bound<'_, pyo3::types::any::PyAny>, &pyo3::instance::Bound<'_, pyo3::types::any::PyAny>, &pyo3::instance::Bound<'_, pyo3::types::any::PyAny>, f64) -> pyo3::err::PyResult<laddu::python::expr::PyExpr>
+pub fn laddu::python::amplitude::blatt_weisskopf_barriers(&pyo3::instance::Bound<'_, pyo3::types::any::PyAny>, &pyo3::instance::Bound<'_, pyo3::types::any::PyAny>, &pyo3::instance::Bound<'_, pyo3::types::any::PyAny>, &pyo3::instance::Bound<'_, pyo3::types::any::PyAny>, laddu::python::quantum::PyL, core::option::Option<&pyo3::instance::Bound<'_, pyo3::types::any::PyAny>>) -> pyo3::err::PyResult<laddu::python::expr::PyExpr>
 pub fn laddu::python::amplitude::breit_wigner(&pyo3::instance::Bound<'_, pyo3::types::any::PyAny>, &pyo3::instance::Bound<'_, pyo3::types::any::PyAny>, &pyo3::instance::Bound<'_, pyo3::types::any::PyAny>) -> pyo3::err::PyResult<laddu::python::expr::PyExpr>
 pub fn laddu::python::amplitude::f_vector(&pyo3::instance::Bound<'_, pyo3::types::any::PyAny>, &pyo3::instance::Bound<'_, pyo3::types::any::PyAny>, &pyo3::instance::Bound<'_, pyo3::types::any::PyAny>, &pyo3::instance::Bound<'_, pyo3::types::any::PyAny>, &pyo3::instance::Bound<'_, pyo3::types::any::PyAny>) -> pyo3::err::PyResult<laddu::python::expr::PyExpr>
 pub fn laddu::python::amplitude::k_matrix(&pyo3::instance::Bound<'_, pyo3::types::any::PyAny>, &pyo3::instance::Bound<'_, pyo3::types::any::PyAny>, &pyo3::instance::Bound<'_, pyo3::types::any::PyAny>, &pyo3::instance::Bound<'_, pyo3::types::any::PyAny>, core::option::Option<&pyo3::instance::Bound<'_, pyo3::types::any::PyAny>>) -> pyo3::err::PyResult<laddu::python::expr::PyExpr>
 pub fn laddu::python::amplitude::kopf_pi1(&pyo3::instance::Bound<'_, pyo3::types::any::PyAny>, alloc::vec::Vec<pyo3::instance::Bound<'_, pyo3::types::any::PyAny>>) -> pyo3::err::PyResult<laddu::python::expr::PyExpr>
 pub fn laddu::python::amplitude::kopf_rho(&pyo3::instance::Bound<'_, pyo3::types::any::PyAny>, alloc::vec::Vec<pyo3::instance::Bound<'_, pyo3::types::any::PyAny>>) -> pyo3::err::PyResult<laddu::python::expr::PyExpr>
 pub fn laddu::python::amplitude::p_vector(&pyo3::instance::Bound<'_, pyo3::types::any::PyAny>, &pyo3::instance::Bound<'_, pyo3::types::any::PyAny>, &pyo3::instance::Bound<'_, pyo3::types::any::PyAny>, &pyo3::instance::Bound<'_, pyo3::types::any::PyAny>, &pyo3::instance::Bound<'_, pyo3::types::any::PyAny>, core::option::Option<&pyo3::instance::Bound<'_, pyo3::types::any::PyAny>>) -> pyo3::err::PyResult<laddu::python::expr::PyExpr>
-pub fn laddu::python::amplitude::relativistic_breit_wigner(&pyo3::instance::Bound<'_, pyo3::types::any::PyAny>, &pyo3::instance::Bound<'_, pyo3::types::any::PyAny>, &pyo3::instance::Bound<'_, pyo3::types::any::PyAny>, &pyo3::instance::Bound<'_, pyo3::types::any::PyAny>, &pyo3::instance::Bound<'_, pyo3::types::any::PyAny>, core::option::Option<&pyo3::instance::Bound<'_, pyo3::types::any::PyAny>>) -> pyo3::err::PyResult<laddu::python::expr::PyExpr>
-pub fn laddu::python::amplitude::relativistic_breit_wigner_custom(&pyo3::instance::Bound<'_, pyo3::types::any::PyAny>, &pyo3::instance::Bound<'_, pyo3::types::any::PyAny>, &pyo3::instance::Bound<'_, pyo3::types::any::PyAny>, &pyo3::instance::Bound<'_, pyo3::types::any::PyAny>, &pyo3::instance::Bound<'_, pyo3::types::any::PyAny>, &pyo3::instance::Bound<'_, pyo3::types::any::PyAny>, bool, f64) -> pyo3::err::PyResult<laddu::python::expr::PyExpr>
+pub fn laddu::python::amplitude::relativistic_breit_wigner(&pyo3::instance::Bound<'_, pyo3::types::any::PyAny>, &pyo3::instance::Bound<'_, pyo3::types::any::PyAny>, &pyo3::instance::Bound<'_, pyo3::types::any::PyAny>, &pyo3::instance::Bound<'_, pyo3::types::any::PyAny>, &pyo3::instance::Bound<'_, pyo3::types::any::PyAny>, core::option::Option<laddu::python::quantum::PyL>) -> pyo3::err::PyResult<laddu::python::expr::PyExpr>
+pub fn laddu::python::amplitude::relativistic_breit_wigner_custom(&pyo3::instance::Bound<'_, pyo3::types::any::PyAny>, &pyo3::instance::Bound<'_, pyo3::types::any::PyAny>, &pyo3::instance::Bound<'_, pyo3::types::any::PyAny>, &pyo3::instance::Bound<'_, pyo3::types::any::PyAny>, &pyo3::instance::Bound<'_, pyo3::types::any::PyAny>, laddu::python::quantum::PyL, bool, core::option::Option<&pyo3::instance::Bound<'_, pyo3::types::any::PyAny>>) -> pyo3::err::PyResult<laddu::python::expr::PyExpr>
 pub mod laddu::python::angular
 pub struct laddu::python::angular::PyVec3
 impl core::clone::Clone for laddu::python::angular::PyVec3
@@ -1790,12 +1790,12 @@ pub type laddu::python::math::PySheet::Output = pyo3::instance::Bound<'py, <ladd
 pub type laddu::python::math::PySheet::Target = laddu::python::math::PySheet
 pub const laddu::python::math::PySheet::OUTPUT_TYPE: pyo3::inspect::PyStaticExpr
 pub fn laddu::python::math::PySheet::into_pyobject(self, pyo3::marker::Python<'py>) -> core::result::Result<<Self as pyo3::conversion::IntoPyObject<'_>>::Output, <Self as pyo3::conversion::IntoPyObject<'_>>::Error>
-pub fn laddu::python::math::blatt_weisskopf(&pyo3::instance::Bound<'_, pyo3::types::any::PyAny>, &pyo3::instance::Bound<'_, pyo3::types::any::PyAny>, &laddu::python::math::PyBarrierKind) -> pyo3::err::PyResult<laddu::python::expr::PyExpr>
-pub fn laddu::python::math::blatt_weisskopf_custom(&pyo3::instance::Bound<'_, pyo3::types::any::PyAny>, &pyo3::instance::Bound<'_, pyo3::types::any::PyAny>, &laddu::python::math::PyBarrierKind, f64) -> pyo3::err::PyResult<laddu::python::expr::PyExpr>
+pub fn laddu::python::math::blatt_weisskopf(&pyo3::instance::Bound<'_, pyo3::types::any::PyAny>, laddu::python::quantum::PyL, &laddu::python::math::PyBarrierKind) -> pyo3::err::PyResult<laddu::python::expr::PyExpr>
+pub fn laddu::python::math::blatt_weisskopf_custom(&pyo3::instance::Bound<'_, pyo3::types::any::PyAny>, laddu::python::quantum::PyL, &laddu::python::math::PyBarrierKind, &pyo3::instance::Bound<'_, pyo3::types::any::PyAny>) -> pyo3::err::PyResult<laddu::python::expr::PyExpr>
 pub fn laddu::python::math::chew_mandelstam(&pyo3::instance::Bound<'_, pyo3::types::any::PyAny>, &pyo3::instance::Bound<'_, pyo3::types::any::PyAny>, &pyo3::instance::Bound<'_, pyo3::types::any::PyAny>) -> pyo3::err::PyResult<laddu::python::expr::PyExpr>
 pub fn laddu::python::math::q(&pyo3::instance::Bound<'_, pyo3::types::any::PyAny>, &pyo3::instance::Bound<'_, pyo3::types::any::PyAny>, &pyo3::instance::Bound<'_, pyo3::types::any::PyAny>, core::option::Option<&laddu::python::math::PySheet>) -> pyo3::err::PyResult<laddu::python::expr::PyExpr>
 pub fn laddu::python::math::rho(&pyo3::instance::Bound<'_, pyo3::types::any::PyAny>, &pyo3::instance::Bound<'_, pyo3::types::any::PyAny>, &pyo3::instance::Bound<'_, pyo3::types::any::PyAny>, core::option::Option<&laddu::python::math::PySheet>) -> pyo3::err::PyResult<laddu::python::expr::PyExpr>
-pub fn laddu::python::math::spherical_harmonic(&pyo3::instance::Bound<'_, pyo3::types::any::PyAny>, &pyo3::instance::Bound<'_, pyo3::types::any::PyAny>, &pyo3::instance::Bound<'_, pyo3::types::any::PyAny>, &pyo3::instance::Bound<'_, pyo3::types::any::PyAny>) -> pyo3::err::PyResult<laddu::python::expr::PyExpr>
+pub fn laddu::python::math::spherical_harmonic(laddu::python::quantum::PyL, &pyo3::instance::Bound<'_, pyo3::types::any::PyAny>, &pyo3::instance::Bound<'_, pyo3::types::any::PyAny>, &pyo3::instance::Bound<'_, pyo3::types::any::PyAny>) -> pyo3::err::PyResult<laddu::python::expr::PyExpr>
 pub mod laddu::python::model
 pub struct laddu::python::model::PyModel
 impl core::clone::Clone for laddu::python::model::PyModel
@@ -2003,6 +2003,10 @@ pub struct laddu::python::quantum::PyL
 impl core::clone::Clone for laddu::python::quantum::PyL
 pub fn laddu::python::quantum::PyL::clone(&self) -> laddu::python::quantum::PyL
 impl core::marker::Copy for laddu::python::quantum::PyL
+impl pyo3::conversion::FromPyObject<'_, '_> for laddu::python::quantum::PyL
+pub type laddu::python::quantum::PyL::Error = pyo3::err::PyErr
+pub const laddu::python::quantum::PyL::INPUT_TYPE: pyo3::inspect::PyStaticExpr
+pub fn laddu::python::quantum::PyL::extract(pyo3::instance::Borrowed<'_, '_, pyo3::types::any::PyAny>) -> pyo3::err::PyResult<Self>
 impl pyo3::impl_::pyclass::PyClassImpl for laddu::python::quantum::PyL
 pub type laddu::python::quantum::PyL::BaseNativeType = pyo3::types::any::PyAny
 pub type laddu::python::quantum::PyL::BaseType = pyo3::types::any::PyAny

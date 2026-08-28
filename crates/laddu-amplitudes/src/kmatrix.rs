@@ -11,22 +11,32 @@ use laddu_physics::{
 /// # Errors
 ///
 /// Returns [`KMatrixError`] when inputs have incompatible shapes, contain no
-/// channels or poles, `l` is invalid, or `q_r` is not positive and finite.
+/// channels or poles, `l` is invalid, `q_r` is not scalar, or a literal
+/// `q_r` is not positive, finite, and real. For other expressions, the caller
+/// must keep their values positive, finite, and real during evaluation.
 pub fn blatt_weisskopf_barriers(
     s: impl Into<Expr>,
     channel_mass_1: impl Into<Expr>,
     channel_mass_2: impl Into<Expr>,
     pole_masses: impl Into<Expr>,
     l: impl TryInto<L>,
-    q_r: f64,
+    q_r: impl Into<Expr>,
 ) -> KMatrixResult<Expr> {
     let s = s.into();
     let channel_mass_1 = channel_mass_1.into();
     let channel_mass_2 = channel_mass_2.into();
     let pole_masses = pole_masses.into();
+    let q_r = q_r.into();
     let l = l
         .try_into()
         .map_err(|_| LadduPhysicsError::ConversionError("L"))?;
+
+    if q_r.shape()? != ExprShape::Scalar {
+        return Err(KMatrixError::InvalidShape(format!(
+            "q_r must be scalar, got {}",
+            q_r.shape()?
+        )));
+    }
 
     if s.shape()? != ExprShape::Scalar {
         return Err(KMatrixError::InvalidShape(format!(
@@ -63,11 +73,11 @@ pub fn blatt_weisskopf_barriers(
         let mass_1 = channel_mass_1.component(channel);
         let mass_2 = channel_mass_2.component(channel);
         let q_s = q(&s, &mass_1, &mass_2, Sheet::Physical);
-        let numerator = blatt_weisskopf_custom(q_s, l, BarrierKind::Full, q_r)?;
+        let numerator = blatt_weisskopf_custom(q_s, l, BarrierKind::Full, &q_r)?;
         for pole in 0..poles {
             let pole_mass = pole_masses.component(pole);
             let q_pole = q(pole_mass.powi(2), &mass_1, &mass_2, Sheet::Physical);
-            let denominator = blatt_weisskopf_custom(q_pole, l, BarrierKind::Full, q_r)?;
+            let denominator = blatt_weisskopf_custom(q_pole, l, BarrierKind::Full, &q_r)?;
             elements.push(&numerator / denominator);
         }
     }
@@ -411,6 +421,56 @@ mod tests {
         let model = CompiledModel::from_expr(&expr).unwrap();
         let params = model.params().default_values();
         CpuBackend.prepare(&model).evaluate(&params).unwrap()
+    }
+
+    #[test]
+    fn barrier_matrix_preserves_reference_momentum_expression_gradients() {
+        let radius = 0.2;
+        let q_r = 2.0 * Expr::from(Parameter::free("radius").with_initial(radius));
+        let barriers = blatt_weisskopf_barriers(
+            1.1,
+            vector([0.2, 0.3]),
+            vector([0.3, 0.4]),
+            vector([1.3, 1.5]),
+            1,
+            q_r,
+        )
+        .unwrap();
+        let step = 1.0e-6;
+        for row in 0..2 {
+            for col in 0..2 {
+                let model = CompiledModel::from_expr(&barriers.matrix_element(row, col)).unwrap();
+                let result = CpuBackend
+                    .prepare(&model)
+                    .evaluate_with_gradient(&model.params().default_values())
+                    .unwrap();
+                let values = [radius, radius + step, radius - step].map(|value| {
+                    let numeric = blatt_weisskopf_barriers(
+                        1.1,
+                        vector([0.2, 0.3]),
+                        vector([0.3, 0.4]),
+                        vector([1.3, 1.5]),
+                        1,
+                        2.0 * value,
+                    )
+                    .unwrap();
+                    evaluate(numeric.matrix_element(row, col))
+                });
+                let finite_difference = (values[1] - values[2]) / (2.0 * step);
+                assert_relative_eq!(result.value().re, values[0].re, epsilon = 1.0e-12);
+                assert_relative_eq!(
+                    result.gradient()[0].re,
+                    finite_difference.re,
+                    epsilon = 1.0e-8
+                );
+                assert_relative_eq!(
+                    result.gradient()[0].im,
+                    finite_difference.im,
+                    epsilon = 1.0e-8
+                );
+                assert!(result.gradient()[0].norm() > 1.0e-5);
+            }
+        }
     }
 
     #[test]

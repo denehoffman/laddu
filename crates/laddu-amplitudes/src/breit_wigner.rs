@@ -36,7 +36,10 @@ pub fn relativistic_breit_wigner(
 /// # Errors
 ///
 /// Returns [`LadduPhysicsError`] when `l` cannot be converted or is outside the
-/// supported range, or `q_r` is not positive and finite.
+/// supported range, `q_r` is not scalar, or a literal `q_r` is not positive,
+/// finite, and real. For other expressions, the caller must keep their values
+/// positive, finite, and real during evaluation. `q_r` is unused when
+/// `barrier_factors` is false.
 pub fn relativistic_breit_wigner_custom(
     s: impl Into<Expr>,
     mass: impl Into<Expr>,
@@ -45,21 +48,22 @@ pub fn relativistic_breit_wigner_custom(
     mass2: impl Into<Expr>,
     l: impl TryInto<L>,
     barrier_factors: bool,
-    q_r: f64,
+    q_r: impl Into<Expr>,
 ) -> LadduPhysicsResult<Expr> {
     let s = s.into();
     let mass = mass.into();
     let width = width.into();
     let mass1 = mass1.into();
     let mass2 = mass2.into();
+    let q_r = q_r.into();
     let l = l
         .try_into()
         .map_err(|_| LadduPhysicsError::ConversionError("L"))?;
     let q0 = q(mass.powi(2), &mass1, &mass2, Sheet::Physical);
     let q = q(&s, &mass1, &mass2, Sheet::Physical);
     let running_width = if barrier_factors {
-        let f0 = blatt_weisskopf_custom(&q0, l, BarrierKind::Full, q_r)?;
-        let f = blatt_weisskopf_custom(&q, l, BarrierKind::Full, q_r)?;
+        let f0 = blatt_weisskopf_custom(&q0, l, BarrierKind::Full, &q_r)?;
+        let f = blatt_weisskopf_custom(&q, l, BarrierKind::Full, &q_r)?;
         width * (&mass / s.sqrt()) * (q / q0) * (f / f0).powi(2)
     } else {
         width * (&mass / s.sqrt()) * (q / q0).powi((2 * l.value() + 1) as i32)
@@ -141,6 +145,32 @@ mod tests {
         );
         assert_complex_relative_eq(result.gradient()[0], expected_mass, EPS);
         assert_complex_relative_eq(result.gradient()[1], expected_width, EPS);
+    }
+
+    #[test]
+    fn relativistic_breit_wigner_accepts_parameter_q_r_and_propagates_gradient() {
+        let q_r_value = 0.4;
+        let q_r = Parameter::free("q_r").with_initial(q_r_value);
+        let expression =
+            relativistic_breit_wigner_custom(1.7, 1.2, 0.13, 0.4, 0.5, l!(1), true, q_r).unwrap();
+        let model = CompiledModel::from_expr(&expression).unwrap();
+        let params = model.params().default_values();
+        let result = CpuBackend
+            .prepare(&model)
+            .evaluate_with_gradient(&params)
+            .unwrap();
+
+        let evaluate_at = |q_r: f64| {
+            evaluate(
+                relativistic_breit_wigner_custom(1.7, 1.2, 0.13, 0.4, 0.5, l!(1), true, q_r)
+                    .unwrap(),
+            )
+        };
+        let step = 1.0e-6;
+        let expected_gradient =
+            (evaluate_at(q_r_value + step) - evaluate_at(q_r_value - step)) / (2.0 * step);
+        assert_complex_relative_eq(result.value(), evaluate_at(q_r_value), LOOSE_EPS);
+        assert_complex_relative_eq(result.gradient()[0], expected_gradient, LOOSE_EPS);
     }
 
     #[test]

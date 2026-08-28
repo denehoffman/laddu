@@ -9,7 +9,7 @@ use pyo3::{
 
 use super::{
     error::to_py_err,
-    quantum::{PyIsospin, PyParity, PyS, PyStatistics, extract_l, extract_parity, extract_spin},
+    quantum::{PyIsospin, PyL, PyParity, PyS, PyStatistics, extract_parity, extract_spin},
 };
 
 fn required<T: Clone>(value: &Option<T>, property: &str) -> PyResult<T> {
@@ -220,7 +220,7 @@ impl PyParticle {
     #[pyo3(signature = (j: "L | J | S | int | float"))]
     /// Create a boson with integer spin.
     fn boson(j: &Bound<'_, PyAny>) -> PyResult<Self> {
-        Ok(ParticleProperties::boson(extract_l(j)?).into())
+        Ok(ParticleProperties::boson(j.extract::<PyL>()?.inner).into())
     }
 
     #[staticmethod]

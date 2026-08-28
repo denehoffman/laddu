@@ -1,6 +1,6 @@
 use std::f64::consts::PI;
 
-use laddu_expr::Expr;
+use laddu_expr::{Expr, ExprNode, ExprShape};
 use num::complex::Complex64;
 use serde::{Deserialize, Serialize};
 
@@ -55,11 +55,31 @@ fn validate_blatt_weisskopf_l(l: L) -> LadduPhysicsResult<()> {
 }
 
 #[inline]
-fn validate_q_r(q_r: f64) -> LadduPhysicsResult<()> {
-    validate_finite_real("q_r", q_r)?;
+fn validate_q_r(q_r: &Expr) -> LadduPhysicsResult<()> {
+    let shape = q_r.shape().map_err(|error| {
+        LadduPhysicsError::custom(format!("q_r must be a scalar expression: {error}"))
+    })?;
+    if shape != ExprShape::Scalar {
+        return Err(LadduPhysicsError::custom(format!(
+            "q_r must be a scalar expression, got {shape}"
+        )));
+    }
 
-    if q_r <= 0.0 {
-        return Err(LadduPhysicsError::invalid_value("q_r", "positive", q_r));
+    let graph = q_r.to_graph();
+    if let Some(value) = graph.node(graph.root()).and_then(ExprNode::const_value) {
+        if value.im != 0.0 {
+            return Err(LadduPhysicsError::invalid_value(
+                "q_r",
+                "positive finite real",
+                value,
+            ));
+        }
+        validate_finite_real("q_r", value.re)?;
+        if value.re <= 0.0 {
+            return Err(LadduPhysicsError::invalid_value(
+                "q_r", "positive", value.re,
+            ));
+        }
     }
 
     Ok(())
@@ -223,19 +243,22 @@ pub const QR_DEFAULT: f64 = 0.1973;
 /// # Errors
 ///
 /// Returns [`LadduPhysicsError`] when `l` cannot be converted, exceeds
-/// [`BLATT_WEISSKOPF_MAX_L`], or `q_r` is not positive and finite.
+/// [`BLATT_WEISSKOPF_MAX_L`], `q_r` is not scalar, or a literal `q_r` is not
+/// positive, finite, and real. For other expressions, the caller must keep
+/// their values positive, finite, and real during evaluation.
 pub fn blatt_weisskopf_custom(
     q: impl Into<Expr>,
     l: impl TryInto<L>,
     kind: BarrierKind,
-    q_r: f64,
+    q_r: impl Into<Expr>,
 ) -> LadduPhysicsResult<Expr> {
     let q = q.into();
+    let q_r = q_r.into();
     let l = l
         .try_into()
         .map_err(|_| LadduPhysicsError::ConversionError("L"))?;
     validate_blatt_weisskopf_l(l)?;
-    validate_q_r(q_r)?;
+    validate_q_r(&q_r)?;
     let z = q.powi(2) / q_r.powi(2);
     let full = blatt_weisskopf_polynomial_expr(z, l);
     Ok(match kind {
@@ -260,8 +283,9 @@ pub fn blatt_weisskopf(
         .try_into()
         .map_err(|_| LadduPhysicsError::ConversionError("L"))?;
     validate_blatt_weisskopf_l(l)?;
-    validate_q_r(QR_DEFAULT)?;
-    let z = q.powi(2) / QR_DEFAULT.powi(2);
+    let q_r = Expr::from(QR_DEFAULT);
+    validate_q_r(&q_r)?;
+    let z = q.powi(2) / q_r.powi(2);
     let full = blatt_weisskopf_polynomial_expr(z, l);
     Ok(match kind {
         BarrierKind::Full => full,
@@ -336,6 +360,7 @@ mod test {
 
     use approx::assert_relative_eq;
     use laddu_compile::CompiledModel;
+    use laddu_expr::{parameters::Parameter, vector};
     use laddu_runtime::CpuBackend;
     use num::complex::Complex64;
 
@@ -599,11 +624,41 @@ mod test {
     }
 
     #[test]
+    fn blatt_weisskopf_accepts_parameter_q_r_and_propagates_gradient() {
+        let q_value = 0.3;
+        let q_r_value = 0.4;
+        let q_r = Parameter::free("q_r").with_initial(q_r_value);
+        let expression = blatt_weisskopf_custom(q_value, l!(1), BarrierKind::Full, q_r).unwrap();
+        let model = CompiledModel::from_expr(&expression).unwrap();
+        let params = model.params().default_values();
+        let result = CpuBackend
+            .prepare(&model)
+            .evaluate_with_gradient(&params)
+            .unwrap();
+
+        let z = q_value.powi(2) / q_r_value.powi(2);
+        let expected_value = (2.0 * z / (1.0 + z)).sqrt();
+        let expected_gradient = -expected_value / (q_r_value * (1.0 + z));
+        assert_relative_eq!(result.value().re, expected_value, epsilon = EPS);
+        assert_relative_eq!(result.value().im, 0.0, epsilon = EPS);
+        assert_relative_eq!(result.gradient()[0].re, expected_gradient, epsilon = EPS);
+        assert_relative_eq!(result.gradient()[0].im, 0.0, epsilon = EPS);
+    }
+
+    #[test]
     fn constructors_reject_invalid_static_configuration() {
         assert!(spherical_harmonic(l!(1), m!(2), 0.0, 0.0).is_err());
         assert!(spherical_harmonic(l!(1), m!(1 / 2), 0.0, 0.0).is_err());
         assert!(blatt_weisskopf(1.0, BLATT_WEISSKOPF_MAX_L + 1, BarrierKind::Full).is_err());
         assert!(blatt_weisskopf_custom(1.0, l!(0), BarrierKind::Full, 0.0).is_err());
         assert!(blatt_weisskopf_custom(1.0, l!(0), BarrierKind::Full, f64::NAN).is_err());
+        let non_scalar_error = blatt_weisskopf_custom(1.0, l!(0), BarrierKind::Full, vector([1.0]))
+            .unwrap_err()
+            .to_string();
+        assert!(non_scalar_error.contains("q_r must be a scalar expression"));
+        assert!(
+            blatt_weisskopf_custom(1.0, l!(0), BarrierKind::Full, Complex64::new(1.0, 0.1),)
+                .is_err()
+        );
     }
 }

@@ -379,7 +379,7 @@ pub fn laddu_physics::math::WignerDMatrix::deserialize<__D>(__D) -> core::result
 pub const laddu_physics::math::BLATT_WEISSKOPF_MAX_L: usize
 pub const laddu_physics::math::QR_DEFAULT: f64
 pub fn laddu_physics::math::blatt_weisskopf(impl core::convert::Into<laddu_expr::expression::Expr>, impl core::convert::TryInto<laddu_physics::quantum::L>, laddu_physics::math::BarrierKind) -> laddu_physics::LadduPhysicsResult<laddu_expr::expression::Expr>
-pub fn laddu_physics::math::blatt_weisskopf_custom(impl core::convert::Into<laddu_expr::expression::Expr>, impl core::convert::TryInto<laddu_physics::quantum::L>, laddu_physics::math::BarrierKind, f64) -> laddu_physics::LadduPhysicsResult<laddu_expr::expression::Expr>
+pub fn laddu_physics::math::blatt_weisskopf_custom(impl core::convert::Into<laddu_expr::expression::Expr>, impl core::convert::TryInto<laddu_physics::quantum::L>, laddu_physics::math::BarrierKind, impl core::convert::Into<laddu_expr::expression::Expr>) -> laddu_physics::LadduPhysicsResult<laddu_expr::expression::Expr>
 pub fn laddu_physics::math::chew_mandelstam(impl core::convert::Into<laddu_expr::expression::Expr>, impl core::convert::Into<laddu_expr::expression::Expr>, impl core::convert::Into<laddu_expr::expression::Expr>) -> laddu_expr::expression::Expr
 pub fn laddu_physics::math::clebsch_gordan(laddu_physics::quantum::J, laddu_physics::quantum::M, laddu_physics::quantum::J, laddu_physics::quantum::M, laddu_physics::quantum::J, laddu_physics::quantum::M) -> f64
 pub fn laddu_physics::math::q(impl core::convert::Into<laddu_expr::expression::Expr>, impl core::convert::Into<laddu_expr::expression::Expr>, impl core::convert::Into<laddu_expr::expression::Expr>, laddu_physics::math::Sheet) -> laddu_expr::expression::Expr

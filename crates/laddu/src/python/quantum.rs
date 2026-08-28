@@ -7,6 +7,7 @@ use pyo3::{
     class::basic::CompareOp,
     exceptions::{PyTypeError, PyValueError},
     prelude::*,
+    type_hint_union,
     types::PyAny,
 };
 
@@ -54,28 +55,51 @@ fn extract_j(value: &Bound<'_, PyAny>) -> PyResult<J> {
     ))
 }
 
-pub(crate) fn extract_l(value: &Bound<'_, PyAny>) -> PyResult<L> {
-    if let Ok(value) = value.extract::<PyRef<'_, PyL>>() {
-        return Ok(value.inner);
+impl FromPyObject<'_, '_> for PyL {
+    type Error = PyErr;
+
+    const INPUT_TYPE: pyo3::inspect::PyStaticExpr = pyo3::type_hint_union!(
+        <PyRef<'_, PyL>>::INPUT_TYPE,
+        <PyRef<'_, PyJ>>::INPUT_TYPE,
+        <PyRef<'_, PyS>>::INPUT_TYPE,
+        i64::INPUT_TYPE,
+        f64::INPUT_TYPE,
+        pyo3::type_hint_identifier!("fractions", "Fraction")
+    );
+
+    fn extract(value: Borrowed<'_, '_, PyAny>) -> PyResult<Self> {
+        if let Ok(value) = value.extract::<PyRef<'_, PyL>>() {
+            return Ok(Self { inner: value.inner });
+        }
+        if let Ok(value) = value.extract::<PyRef<'_, PyJ>>() {
+            return L::try_from(value.inner)
+                .map(|inner| Self { inner })
+                .map_err(to_py_err);
+        }
+        if let Ok(value) = value.extract::<PyRef<'_, PyS>>() {
+            return L::try_from(value.inner)
+                .map(|inner| Self { inner })
+                .map_err(to_py_err);
+        }
+        if let Ok(value) = value.extract::<i64>() {
+            return L::try_from(value)
+                .map(|inner| Self { inner })
+                .map_err(to_py_err);
+        }
+        if let Some(value) = ratio(&value)? {
+            return L::try_from(value)
+                .map(|inner| Self { inner })
+                .map_err(to_py_err);
+        }
+        if let Ok(value) = value.extract::<f64>() {
+            return L::try_from(value)
+                .map(|inner| Self { inner })
+                .map_err(to_py_err);
+        }
+        Err(PyTypeError::new_err(
+            "expected L, an integer, an integer-valued float, or fractions.Fraction",
+        ))
     }
-    if let Ok(value) = value.extract::<PyRef<'_, PyJ>>() {
-        return L::try_from(value.inner).map_err(to_py_err);
-    }
-    if let Ok(value) = value.extract::<PyRef<'_, PyS>>() {
-        return L::try_from(value.inner).map_err(to_py_err);
-    }
-    if let Ok(value) = value.extract::<i64>() {
-        return L::try_from(value).map_err(to_py_err);
-    }
-    if let Some(value) = ratio(value)? {
-        return L::try_from(value).map_err(to_py_err);
-    }
-    if let Ok(value) = value.extract::<f64>() {
-        return L::try_from(value).map_err(to_py_err);
-    }
-    Err(PyTypeError::new_err(
-        "expected L, an integer, an integer-valued float, or fractions.Fraction",
-    ))
 }
 
 fn extract_m(value: &Bound<'_, PyAny>) -> PyResult<M> {
@@ -342,11 +366,8 @@ impl PyL {
     /// ValueError
     ///     If `value` is negative or nonintegral.
     #[new]
-    #[pyo3(signature = (value: "L | J | S | int | float"))]
-    fn new(value: &Bound<'_, PyAny>) -> PyResult<Self> {
-        Ok(Self {
-            inner: extract_l(value)?,
-        })
+    fn new(value: Self) -> Self {
+        value
     }
     #[getter]
     /// int: Orbital angular momentum.
@@ -386,7 +407,7 @@ impl PyL {
     fn __richcmp__(&self, other: &Bound<'_, PyAny>, op: CompareOp) -> PyResult<bool> {
         Ok(compare_i64(
             i64::from(self.inner.value()),
-            i64::from(extract_l(other)?.value()),
+            i64::from(other.extract::<PyL>()?.inner.value()),
             op,
         ))
     }
@@ -1108,7 +1129,7 @@ impl PyRuleSet {
             inner: self.inner.evaluate(
                 &parent.inner,
                 (&daughter_a.inner, &daughter_b.inner),
-                extract_l(l)?,
+                l.extract::<PyL>()?.inner,
                 extract_spin(s)?,
             ),
         })
@@ -1133,7 +1154,7 @@ impl PyPartialWave {
     /// Construct and validate a coupled ``JLS`` partial wave.
     fn new(j: &Bound<'_, PyAny>, l: &Bound<'_, PyAny>, s: &Bound<'_, PyAny>) -> PyResult<Self> {
         Ok(Self {
-            inner: PartialWave::new(extract_j(j)?, extract_l(l)?, extract_spin(s)?)
+            inner: PartialWave::new(extract_j(j)?, l.extract::<PyL>()?.inner, extract_spin(s)?)
                 .map_err(to_py_err)?,
         })
     }
@@ -1225,7 +1246,7 @@ impl PySelectionRules {
     /// Construct from a rule set and maximum orbital angular momentum.
     fn new(rules: &PyRuleSet, max_l: &Bound<'_, PyAny>) -> PyResult<Self> {
         Ok(Self {
-            inner: SelectionRules::new(rules.inner.clone(), extract_l(max_l)?),
+            inner: SelectionRules::new(rules.inner.clone(), max_l.extract::<PyL>()?.inner),
         })
     }
 
@@ -1234,7 +1255,7 @@ impl PySelectionRules {
     /// Construct strong-interaction selection rules.
     fn strong(max_l: &Bound<'_, PyAny>) -> PyResult<Self> {
         Ok(Self {
-            inner: SelectionRules::strong(extract_l(max_l)?),
+            inner: SelectionRules::strong(max_l.extract::<PyL>()?.inner),
         })
     }
 
@@ -1243,7 +1264,7 @@ impl PySelectionRules {
     /// Construct electromagnetic selection rules.
     fn electromagnetic(max_l: &Bound<'_, PyAny>) -> PyResult<Self> {
         Ok(Self {
-            inner: SelectionRules::electromagnetic(extract_l(max_l)?),
+            inner: SelectionRules::electromagnetic(max_l.extract::<PyL>()?.inner),
         })
     }
 
@@ -1252,7 +1273,7 @@ impl PySelectionRules {
     /// Construct weak-interaction selection rules.
     fn weak(max_l: &Bound<'_, PyAny>) -> PyResult<Self> {
         Ok(Self {
-            inner: SelectionRules::weak(extract_l(max_l)?),
+            inner: SelectionRules::weak(max_l.extract::<PyL>()?.inner),
         })
     }
 
