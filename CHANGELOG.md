@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.21.6](https://github.com/denehoffman/laddu/compare/v0.21.5...v0.21.6) (2026-08-28)
+
+
+### Features
+
+* **amplitudes:** Support expression-valued barrier scales ([6ff8d17](https://github.com/denehoffman/laddu/commit/6ff8d171a3a105e091f2d0c150b3ab4aca85dbfc))
+* **python:** Evaluate scalar models without a dataset ([f7fecb3](https://github.com/denehoffman/laddu/commit/f7fecb3e984c44d6b27b5f0687a906f5b7690d93))
+
+
+### Bug Fixes
+
+* **runtime:** Gate CPU test patterns on wgpu support ([bbb0e1f](https://github.com/denehoffman/laddu/commit/bbb0e1fcd1465b91e7ac0285a3b8ea4e16c6b75a))
+
+
+### Performance Improvements
+
+* **runtime:** Cache CPU plans to reuse JIT compilations ([084031a](https://github.com/denehoffman/laddu/commit/084031afd82c0422347a875ffd106697098287b9))
+
 ## [0.21.5](https://github.com/denehoffman/laddu/compare/v0.21.4...v0.21.5) (2026-08-26)
 
 
