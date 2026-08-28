@@ -169,8 +169,8 @@ macro_rules! laddu_python_module {
 
             #[pymodule_export]
             use $crate::python::amplitude::{
-                amplitudes, blatt_weisskopf_barriers, breit_wigner, f_vector, k_matrix, kopf_pi1,
-                kopf_rho, p_vector, relativistic_breit_wigner,
+                amplitudes, blatt_weisskopf_barriers, breit_wigner, f_vector, k_matrix,
+                p_vector, relativistic_breit_wigner,
                 relativistic_breit_wigner_custom,
             };
             #[pymodule_export]

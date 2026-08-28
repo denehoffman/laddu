@@ -1582,8 +1582,6 @@ name = "laddu-amplitudes"
 version = "0.21.6"
 dependencies = [
  "approx",
- "fastrand",
- "fastrand-contrib",
  "laddu-compile",
  "laddu-expr",
  "laddu-kernel",

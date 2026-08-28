@@ -1,8 +1,7 @@
 use laddu_amplitudes::{
     blatt_weisskopf_barriers as rust_blatt_weisskopf_barriers, breit_wigner as rust_breit_wigner,
     f_vector as rust_f_vector, k_matrix as rust_k_matrix,
-    k_matrix_with_background as rust_k_matrix_with_background, kopf_pi1 as rust_kopf_pi1,
-    kopf_rho as rust_kopf_rho, p_vector as rust_p_vector,
+    k_matrix_with_background as rust_k_matrix_with_background, p_vector as rust_p_vector,
     p_vector_with_background as rust_p_vector_with_background,
     relativistic_breit_wigner as rust_relativistic_breit_wigner,
     relativistic_breit_wigner_custom as rust_relativistic_breit_wigner_custom,
@@ -18,20 +17,20 @@ use super::{
 
 #[pyfunction]
 #[pyo3(signature = (
-    s: "Expr | int | float",
+    s: "Expr | complex",
     *,
-    mass: "Expr | int | float",
-    width: "Expr | int | float"
+    mass: "Expr | float",
+    width: "Expr | float"
 ))]
 /// Construct a constant-width Breit-Wigner amplitude.
 ///
 /// Parameters
 /// ----------
-/// s : Expr or number
+/// s : Expr or complex
 ///     Squared invariant mass.
-/// mass : Expr or number
+/// mass : Expr or float
 ///     Resonance pole mass.
-/// width : Expr or number
+/// width : Expr or float
 ///     Resonance width.
 ///
 /// Returns
@@ -53,21 +52,23 @@ pub fn breit_wigner(
 
 #[pyfunction]
 #[pyo3(signature = (
-    s: "Expr | int | float",
+    s: "Expr | complex",
     *,
-    mass: "Expr | int | float",
-    width: "Expr | int | float",
-    mass1: "Expr | int | float",
-    mass2: "Expr | int | float",
+    mass: "Expr | float",
+    width: "Expr | float",
+    mass1: "Expr | float",
+    mass2: "Expr | float",
     l = None
 ))]
 /// Construct a relativistic two-body Breit-Wigner amplitude.
 ///
 /// Parameters
 /// ----------
-/// s, mass, width : Expr or number
-///     Squared invariant mass, pole mass, and nominal width.
-/// mass1, mass2 : Expr or number
+/// s : Expr or complex
+///     Squared invariant mass.
+/// mass, width : Expr or float
+///     Pole mass and nominal width.
+/// mass1, mass2 : Expr or float
 ///     Daughter masses.
 /// l : L or int, optional
 ///     Orbital angular momentum; the default is S-wave (``0``).
@@ -109,30 +110,32 @@ pub fn relativistic_breit_wigner(
 
 #[pyfunction]
 #[pyo3(signature = (
-    s: "Expr | int | float",
+    s: "Expr | complex",
     *,
-    mass: "Expr | int | float",
-    width: "Expr | int | float",
-    mass1: "Expr | int | float",
-    mass2: "Expr | int | float",
+    mass: "Expr | float",
+    width: "Expr | float",
+    mass1: "Expr | float",
+    mass2: "Expr | float",
     l,
     barrier_factors=true,
-    q_r: "Expr | int | float | None" = None
+    q_r: "Expr | float | None" = None
 ))]
 #[allow(clippy::too_many_arguments)]
 /// Construct a configurable relativistic Breit-Wigner amplitude.
 ///
 /// Parameters
 /// ----------
-/// s, mass, width : Expr or number
-///     Squared invariant mass, pole mass, and nominal width.
-/// mass1, mass2 : Expr or number
+/// s : Expr or complex
+///     Squared invariant mass.
+/// mass, width : Expr or float
+///     Pole mass, and nominal width.
+/// mass1, mass2 : Expr or float
 ///     Daughter masses.
 /// l : L or int
 ///     Orbital angular momentum.
 /// barrier_factors : bool, default=True
 ///     Include Blatt-Weisskopf factors in the running width.
-/// q_r : Expr or number, optional
+/// q_r : Expr or float, optional
 ///     Barrier-radius momentum scale in GeV. Defaults to 0.1973 GeV.
 ///     Must remain real, positive, and finite; use a bounded
 ///     parameter to vary it in a fit.
@@ -178,19 +181,19 @@ pub fn relativistic_breit_wigner_custom(
 
 #[pyfunction]
 #[pyo3(signature = (
-    s: "Expr | int | float",
+    s: "Expr | complex",
     *,
-    channel_mass_1: "Expr | int | float",
-    channel_mass_2: "Expr | int | float",
-    pole_masses: "Expr | int | float",
+    channel_mass_1: "Expr",
+    channel_mass_2: "Expr",
+    pole_masses: "Expr",
     l,
-    q_r: "Expr | int | float | None" = None
+    q_r: "Expr | float | None" = None
 ))]
 /// Build channel-by-pole Blatt-Weisskopf barrier factors.
 ///
 /// Parameters
 /// ----------
-/// s : Expr
+/// s : Expr or complex
 ///     Squared invariant mass.
 /// channel_mass_1, channel_mass_2 : Expr
 ///     Vectors of the two daughter masses for each channel.
@@ -198,7 +201,7 @@ pub fn relativistic_breit_wigner_custom(
 ///     Vector of pole masses.
 /// l : L or int
 ///     Orbital angular momentum.
-/// q_r : Expr or number, optional
+/// q_r : Expr or float, optional
 ///     Barrier-radius momentum scale in GeV. Defaults to 0.1973 GeV.
 ///     Must remain real, positive, and finite; use a bounded
 ///     parameter to vary it in a fit.
@@ -240,18 +243,18 @@ pub fn blatt_weisskopf_barriers(
 
 #[pyfunction]
 #[pyo3(signature = (
-    s: "Expr | int | float",
+    s: "Expr | complex",
     *,
-    pole_masses: "Expr | int | float",
-    couplings: "Expr | int | float",
-    barriers: "Expr | int | float",
-    background: "Expr | int | float | None" = None
+    pole_masses: "Expr",
+    couplings: "Expr",
+    barriers: "Expr",
+    background: "Expr | None" = None
 ))]
 /// Construct a coupled-channel K-matrix expression.
 ///
 /// Parameters
 /// ----------
-/// s : Expr
+/// s : Expr or complex
 ///     Squared invariant mass.
 /// pole_masses : Expr
 ///     Vector of pole masses.
@@ -300,19 +303,19 @@ pub fn k_matrix(
 
 #[pyfunction]
 #[pyo3(signature = (
-    s: "Expr | int | float",
+    s: "Expr | complex",
     *,
-    pole_masses: "Expr | int | float",
-    production: "Expr | int | float",
-    couplings: "Expr | int | float",
-    barriers: "Expr | int | float",
-    background: "Expr | int | float | None" = None
+    pole_masses: "Expr",
+    production: "Expr",
+    couplings: "Expr",
+    barriers: "Expr",
+    background: "Expr | None" = None
 ))]
 /// Construct the production vector for a coupled-channel model.
 ///
 /// Parameters
 /// ----------
-/// s : Expr
+/// s : Expr or complex
 ///     Squared invariant mass.
 /// pole_masses : Expr
 ///     Vector of pole masses.
@@ -364,18 +367,18 @@ pub fn p_vector(
 
 #[pyfunction]
 #[pyo3(signature = (
-    s: "Expr | int | float",
+    s: "Expr | complex",
     *,
-    pole_masses: "Expr | int | float",
-    k: "Expr | int | float",
-    p: "Expr | int | float",
-    phase_space: "Expr | int | float"
+    pole_masses: "Expr",
+    k: "Expr",
+    p: "Expr",
+    phase_space: "Expr"
 ))]
 /// Unitarize a production vector with a K-matrix and phase space.
 ///
 /// Parameters
 /// ----------
-/// s : Expr
+/// s : Expr or complex
 ///     Squared invariant mass.
 /// pole_masses : Expr
 ///     Pole-mass vector used to remove spurious singularities.
@@ -415,92 +418,12 @@ pub fn f_vector(
     .map_err(to_py_err)
 }
 
-#[pyfunction]
-#[pyo3(signature = (
-    s: "Expr | int | float",
-    *,
-    production: "list[Expr | int | float] | tuple[Expr | int | float, ...]"
-))]
-/// Construct the published two-pole Kopf rho amplitude.
-///
-/// Parameters
-/// ----------
-/// s : Expr or number
-///     Squared invariant mass.
-/// production : sequence of Expr
-///     Exactly two complex production amplitudes.
-///
-/// Returns
-/// -------
-/// Expr
-///     Coupled-channel rho amplitude vector.
-///
-/// Raises
-/// ------
-/// ValueError
-///     If `production` does not contain exactly two entries.
-/// TypeError
-///     If an entry cannot be converted to an expression.
-pub fn kopf_rho(s: &Bound<'_, PyAny>, production: Vec<Bound<'_, PyAny>>) -> PyResult<PyExpr> {
-    let production: [laddu_expr::Expr; 2] = production
-        .iter()
-        .map(extract_expr)
-        .collect::<PyResult<Vec<_>>>()?
-        .try_into()
-        .map_err(|_| {
-            pyo3::exceptions::PyValueError::new_err("kopf_rho requires 2 production amplitudes")
-        })?;
-    rust_kopf_rho(extract_expr(s)?, production)
-        .map(PyExpr::from)
-        .map_err(to_py_err)
-}
-
-#[pyfunction]
-#[pyo3(signature = (
-    s: "Expr | int | float",
-    *,
-    production: "list[Expr | int | float] | tuple[Expr | int | float, ...]"
-))]
-/// Construct the published one-pole Kopf pi1 amplitude.
-///
-/// Parameters
-/// ----------
-/// s : Expr or number
-///     Squared invariant mass.
-/// production : sequence of Expr
-///     Exactly one complex production amplitude.
-///
-/// Returns
-/// -------
-/// Expr
-///     Coupled-channel pi1 amplitude vector.
-///
-/// Raises
-/// ------
-/// ValueError
-///     If `production` does not contain exactly one entry.
-/// TypeError
-///     If the entry cannot be converted to an expression.
-pub fn kopf_pi1(s: &Bound<'_, PyAny>, production: Vec<Bound<'_, PyAny>>) -> PyResult<PyExpr> {
-    let production: [laddu_expr::Expr; 1] = production
-        .iter()
-        .map(extract_expr)
-        .collect::<PyResult<Vec<_>>>()?
-        .try_into()
-        .map_err(|_| {
-            pyo3::exceptions::PyValueError::new_err("kopf_pi1 requires 1 production amplitude")
-        })?;
-    rust_kopf_pi1(extract_expr(s)?, production)
-        .map(PyExpr::from)
-        .map_err(to_py_err)
-}
-
 #[pymodule]
 /// Standard resonance and coupled-channel amplitude constructors.
 pub mod amplitudes {
     #[pymodule_export]
     use super::{
-        blatt_weisskopf_barriers, breit_wigner, f_vector, k_matrix, kopf_pi1, kopf_rho, p_vector,
+        blatt_weisskopf_barriers, breit_wigner, f_vector, k_matrix, p_vector,
         relativistic_breit_wigner, relativistic_breit_wigner_custom,
     };
 }

@@ -6,10 +6,6 @@
 
 use criterion::{BatchSize, BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use laddu::{
-    amplitudes::{
-        KopfA0Channel, KopfA2Channel, KopfF0Channel, KopfF2Channel, kopf_a0, kopf_a2, kopf_f0,
-        kopf_f2,
-    },
     autodiff::AutodiffMode,
     compile::CompiledModel,
     complex,
@@ -20,7 +16,6 @@ use laddu::{
     event_scalar,
     expr::{Expr, cis},
     likelihood::{Likelihood, LikelihoodEvaluation, NllTerm},
-    parameter,
     physics::{
         channel::Channel,
         math::spherical_harmonic,
@@ -31,6 +26,11 @@ use laddu::{
         CpuOptions, Device, Execution, ExecutionOptions, JitPolicy, Precision, ThreadPolicy,
     },
 };
+
+#[path = "support/kmatrix.rs"]
+mod kmatrix_fixture;
+
+use kmatrix_fixture::fictitious_kmatrix_components;
 
 #[cfg(feature = "wgpu")]
 use laddu::runtime::{GpuBackend, GpuOptions};
@@ -355,78 +355,10 @@ fn kmatrix_term(batches: usize) -> NllTerm {
         &polarization_angle,
     );
 
-    let f0p = kopf_f0(
-        &resonance_s,
-        [
-            complex(parameter!("f0+ c00 re", 0.0), parameter!("f0+ c00 im", 0.0)),
-            complex(
-                parameter!("f0(980)+ re"),
-                parameter!("f0(980)+ im_fix", 0.0),
-            ),
-            complex(parameter!("f0(1370)+ re"), parameter!("f0(1370)+ im")),
-            complex(parameter!("f0(1500)+ re"), parameter!("f0(1500)+ im")),
-            complex(parameter!("f0(1710)+ re"), parameter!("f0(1710)+ im")),
-        ],
-    )
-    .unwrap()
-    .component(KopfF0Channel::KKbar);
-    let a0p = kopf_a0(
-        &resonance_s,
-        [
-            complex(parameter!("a0(980)+ re"), parameter!("a0(980)+ im")),
-            complex(parameter!("a0(1450)+ re"), parameter!("a0(1450)+ im")),
-        ],
-    )
-    .unwrap()
-    .component(KopfA0Channel::KKbar);
-    let f0n = kopf_f0(
-        &resonance_s,
-        [
-            complex(parameter!("f0- c00 re", 0.0), parameter!("f0- c00 im", 0.0)),
-            complex(
-                parameter!("f0(980)- re"),
-                parameter!("f0(980)- im_fix", 0.0),
-            ),
-            complex(parameter!("f0(1370)- re"), parameter!("f0(1370)- im")),
-            complex(parameter!("f0(1500)- re"), parameter!("f0(1500)- im")),
-            complex(parameter!("f0(1710)- re"), parameter!("f0(1710)- im")),
-        ],
-    )
-    .unwrap()
-    .component(KopfF0Channel::KKbar);
-    let a0n = kopf_a0(
-        &resonance_s,
-        [
-            complex(parameter!("a0(980)- re"), parameter!("a0(980)- im")),
-            complex(parameter!("a0(1450)- re"), parameter!("a0(1450)- im")),
-        ],
-    )
-    .unwrap()
-    .component(KopfA0Channel::KKbar);
-    let f2 = kopf_f2(
-        &resonance_s,
-        [
-            complex(parameter!("f2(1270) re"), parameter!("f2(1270) im")),
-            complex(parameter!("f2(1525) re"), parameter!("f2(1525) im")),
-            complex(parameter!("f2(1850) re"), parameter!("f2(1850) im")),
-            complex(parameter!("f2(1910) re"), parameter!("f2(1910) im")),
-        ],
-    )
-    .unwrap()
-    .component(KopfF2Channel::KKbar);
-    let a2 = kopf_a2(
-        &resonance_s,
-        [
-            complex(parameter!("a2(1320) re"), parameter!("a2(1320) im")),
-            complex(parameter!("a2(1700) re"), parameter!("a2(1700) im")),
-        ],
-    )
-    .unwrap()
-    .component(KopfA2Channel::KKbar);
+    // This is a fictitious workload baseline; only its matrix dimensions and
+    // production parameter count are retained for benchmark continuity.
+    let (s0p, s0n, d2p) = fictitious_kmatrix_components(&resonance_s);
 
-    let s0p = f0p + a0p;
-    let s0n = f0n + a0n;
-    let d2p = f2 + a2;
     let pos_re = (&s0p * z00p.real() + &d2p * z22p.real()).norm_sqr();
     let pos_im = (&s0p * z00p.imag() + &d2p * z22p.imag()).norm_sqr();
     let neg_re = (&s0n * z00n.real()).norm_sqr();

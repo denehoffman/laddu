@@ -1,11 +1,7 @@
 //! Integration tests comparing K-matrix gradients across CPU and WebGPU.
-#![cfg(feature = "wgpu")]
+#![cfg(all(feature = "amplitudes", feature = "likelihood"))]
 
 use laddu::{
-    amplitudes::{
-        KopfA0Channel, KopfA2Channel, KopfF0Channel, KopfF2Channel, kopf_a0, kopf_a2, kopf_f0,
-        kopf_f2,
-    },
     autodiff::AutodiffMode,
     compile::CompiledModel,
     complex,
@@ -16,7 +12,6 @@ use laddu::{
     event_scalar,
     expr::{Expr, cis},
     likelihood::{Likelihood, NllTerm},
-    matrix, parameter,
     physics::{
         channel::Channel,
         math::spherical_harmonic,
@@ -24,11 +19,21 @@ use laddu::{
         vectors::{Vec3, Vec4},
     },
     runtime::{
-        CpuOptions, Device, Execution, ExecutionOptions, GpuBackend, GpuOptions, JitPolicy,
-        Precision, ThreadPolicy,
+        CpuOptions, Device, Execution, ExecutionOptions, JitPolicy, Precision, ThreadPolicy,
     },
+};
+
+#[cfg(feature = "wgpu")]
+use laddu::{
+    matrix, parameter,
+    runtime::{GpuBackend, GpuOptions},
     solve, vector,
 };
+
+#[path = "../benches/support/kmatrix.rs"]
+mod kmatrix_fixture;
+
+use kmatrix_fixture::fictitious_kmatrix_components;
 
 fn reaction_variables() -> (Expr, Expr, Expr, Expr) {
     let mut channel = Channel::new("gamma p -> Ks Ks p");
@@ -101,7 +106,7 @@ fn zlm(
     }
 }
 
-fn benchmark_dataset() -> Dataset {
+fn benchmark_dataset(max_events: Option<usize>) -> Dataset {
     const DATASET: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/benches/bench.parquet");
     let dataset = Dataset::new(ParquetSource::open(DATASET).unwrap());
     let materialized = dataset
@@ -109,11 +114,16 @@ fn benchmark_dataset() -> Dataset {
         .unwrap()
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
-    Dataset::from_batch(EventBatch::concat(&materialized).unwrap())
+    let batch = EventBatch::concat(&materialized).unwrap();
+    let batch = match max_events {
+        Some(limit) => batch.slice(0, limit.min(batch.len())),
+        None => batch,
+    };
+    Dataset::from_batch(batch)
 }
 
-fn kmatrix_term() -> NllTerm {
-    let dataset = benchmark_dataset();
+fn kmatrix_term(max_events: Option<usize>) -> NllTerm {
+    let dataset = benchmark_dataset(max_events);
     let (costheta, phi, resonance_s, polarization_angle) = reaction_variables();
     let polarization = event_scalar("pol_magnitude");
     let z00p = zlm(
@@ -144,78 +154,10 @@ fn kmatrix_term() -> NllTerm {
         &polarization_angle,
     );
 
-    let f0p = kopf_f0(
-        &resonance_s,
-        [
-            complex(parameter!("f0+ c00 re", 0.0), parameter!("f0+ c00 im", 0.0)),
-            complex(
-                parameter!("f0(980)+ re"),
-                parameter!("f0(980)+ im_fix", 0.0),
-            ),
-            complex(parameter!("f0(1370)+ re"), parameter!("f0(1370)+ im")),
-            complex(parameter!("f0(1500)+ re"), parameter!("f0(1500)+ im")),
-            complex(parameter!("f0(1710)+ re"), parameter!("f0(1710)+ im")),
-        ],
-    )
-    .unwrap()
-    .component(KopfF0Channel::KKbar);
-    let a0p = kopf_a0(
-        &resonance_s,
-        [
-            complex(parameter!("a0(980)+ re"), parameter!("a0(980)+ im")),
-            complex(parameter!("a0(1450)+ re"), parameter!("a0(1450)+ im")),
-        ],
-    )
-    .unwrap()
-    .component(KopfA0Channel::KKbar);
-    let f0n = kopf_f0(
-        &resonance_s,
-        [
-            complex(parameter!("f0- c00 re", 0.0), parameter!("f0- c00 im", 0.0)),
-            complex(
-                parameter!("f0(980)- re"),
-                parameter!("f0(980)- im_fix", 0.0),
-            ),
-            complex(parameter!("f0(1370)- re"), parameter!("f0(1370)- im")),
-            complex(parameter!("f0(1500)- re"), parameter!("f0(1500)- im")),
-            complex(parameter!("f0(1710)- re"), parameter!("f0(1710)- im")),
-        ],
-    )
-    .unwrap()
-    .component(KopfF0Channel::KKbar);
-    let a0n = kopf_a0(
-        &resonance_s,
-        [
-            complex(parameter!("a0(980)- re"), parameter!("a0(980)- im")),
-            complex(parameter!("a0(1450)- re"), parameter!("a0(1450)- im")),
-        ],
-    )
-    .unwrap()
-    .component(KopfA0Channel::KKbar);
-    let f2 = kopf_f2(
-        &resonance_s,
-        [
-            complex(parameter!("f2(1270) re"), parameter!("f2(1270) im")),
-            complex(parameter!("f2(1525) re"), parameter!("f2(1525) im")),
-            complex(parameter!("f2(1850) re"), parameter!("f2(1850) im")),
-            complex(parameter!("f2(1910) re"), parameter!("f2(1910) im")),
-        ],
-    )
-    .unwrap()
-    .component(KopfF2Channel::KKbar);
-    let a2 = kopf_a2(
-        &resonance_s,
-        [
-            complex(parameter!("a2(1320) re"), parameter!("a2(1320) im")),
-            complex(parameter!("a2(1700) re"), parameter!("a2(1700) im")),
-        ],
-    )
-    .unwrap()
-    .component(KopfA2Channel::KKbar);
+    // This is a fictitious workload baseline; only its matrix dimensions and
+    // production parameter count are retained for benchmark continuity.
+    let (s0p, s0n, d2p) = fictitious_kmatrix_components(&resonance_s);
 
-    let s0p = f0p + a0p;
-    let s0n = f0n + a0n;
-    let d2p = f2 + a2;
     let pos_re = (&s0p * z00p.real() + &d2p * z22p.real()).norm_sqr();
     let pos_im = (&s0p * z00p.imag() + &d2p * z22p.imag()).norm_sqr();
     let neg_re = (&s0n * z00n.real()).norm_sqr();
@@ -228,6 +170,7 @@ fn likelihood(term: &NllTerm, execution: Execution) -> Likelihood {
     Likelihood::with_execution([term.clone()], &execution).unwrap()
 }
 
+#[cfg(any(feature = "jit", feature = "wgpu"))]
 fn cpu_f32_execution() -> Execution {
     cpu_execution(Precision::F32, JitPolicy::Disabled, AutodiffMode::Forward)
 }
@@ -245,10 +188,12 @@ fn cpu_execution(precision: Precision, jit: JitPolicy, autodiff: AutodiffMode) -
     .unwrap()
 }
 
+#[cfg(feature = "wgpu")]
 fn wgpu_execution() -> Execution {
     wgpu_execution_with_autodiff(AutodiffMode::Forward)
 }
 
+#[cfg(feature = "wgpu")]
 fn wgpu_execution_with_autodiff(autodiff: AutodiffMode) -> Execution {
     Execution::local(ExecutionOptions {
         device: Device::Gpu(GpuOptions {
@@ -262,6 +207,7 @@ fn wgpu_execution_with_autodiff(autodiff: AutodiffMode) -> Execution {
     .unwrap()
 }
 
+#[cfg(feature = "jit")]
 fn assert_evaluation_close(
     label: &str,
     actual: &laddu::likelihood::LikelihoodEvaluation,
@@ -285,6 +231,7 @@ fn assert_evaluation_close(
 }
 
 #[test]
+#[cfg(feature = "wgpu")]
 fn wgpu_f32_parameter_dependent_solve_gradient_matches_cpu_f32() {
     let x = event_scalar("x");
     let p = Expr::from(parameter!("p", initial: 0.4));
@@ -331,6 +278,7 @@ fn wgpu_f32_parameter_dependent_solve_gradient_matches_cpu_f32() {
     }
 }
 
+#[cfg(any(feature = "jit", feature = "wgpu"))]
 fn worst_gradient_difference(actual: &[f64], expected: &[f64]) -> (usize, f64, f64, f64) {
     actual
         .iter()
@@ -346,8 +294,45 @@ fn worst_gradient_difference(actual: &[f64], expected: &[f64]) -> (usize, f64, f
 }
 
 #[test]
+fn kmatrix_cpu_f64_nll_gradient_matches_finite_difference_for_all_production_coefficients() {
+    // Check every coefficient on a small event sample, keeping ordinary CI fast.
+    let term = kmatrix_term(Some(16));
+    let cpu = likelihood(
+        &term,
+        cpu_execution(Precision::F64, JitPolicy::Disabled, AutodiffMode::Forward),
+    );
+    let params = cpu.params_with(|_| 0.25);
+    assert_eq!(
+        params.len(),
+        34,
+        "fictitious model production parameter count"
+    );
+
+    let actual = cpu.nll_with_gradient(&params).unwrap();
+    assert!(actual.value().is_finite());
+    let step = 1.0e-5;
+    for index in 0..params.len() {
+        let mut plus = params.clone();
+        let mut minus = params.clone();
+        plus[index] += step;
+        minus[index] -= step;
+        let finite_difference = (cpu.nll(&plus).unwrap() - cpu.nll(&minus).unwrap()) / (2.0 * step);
+        let relative =
+            (actual.gradient()[index] - finite_difference).abs() / finite_difference.abs().max(1.0);
+        assert!(
+            relative < 1.0e-4,
+            "gradient[{index}] {} versus finite difference {} ({:.3}%)",
+            actual.gradient()[index],
+            finite_difference,
+            relative * 100.0
+        );
+    }
+}
+
+#[test]
+#[cfg(feature = "wgpu")]
 fn kmatrix_wgpu_f32_nll_gradient_matches_finite_difference() {
-    let term = kmatrix_term();
+    let term = kmatrix_term(None);
     let cpu = likelihood(&term, cpu_f32_execution());
     let wgpu = likelihood(&term, wgpu_execution());
     let params = cpu.params_with(|_| 0.25);
@@ -382,7 +367,7 @@ fn kmatrix_wgpu_f32_nll_gradient_matches_finite_difference() {
 #[cfg(feature = "jit")]
 #[test]
 fn kmatrix_reverse_gradient_modes_match_precision_baselines() {
-    let term = kmatrix_term();
+    let term = kmatrix_term(None);
     let params = likelihood(&term, cpu_f32_execution()).params_with(|_| 0.25);
     let f64_baseline = likelihood(
         &term,
@@ -426,25 +411,28 @@ fn kmatrix_reverse_gradient_modes_match_precision_baselines() {
         assert_evaluation_close(label, &actual, &f32_baseline, 5.0e-3);
     }
 
-    let wgpu_term = kmatrix_term();
-    let wgpu_forward = likelihood(
-        &wgpu_term,
-        wgpu_execution_with_autodiff(AutodiffMode::Forward),
-    )
-    .nll_with_gradient(&params)
-    .unwrap();
-    let wgpu_reverse = likelihood(
-        &wgpu_term,
-        wgpu_execution_with_autodiff(AutodiffMode::Reverse),
-    )
-    .nll_with_gradient(&params)
-    .unwrap();
-    assert_evaluation_close(
-        "wgpu reverse versus forward",
-        &wgpu_reverse,
-        &wgpu_forward,
-        1.0e-6,
-    );
+    #[cfg(feature = "wgpu")]
+    {
+        let wgpu_term = kmatrix_term(None);
+        let wgpu_forward = likelihood(
+            &wgpu_term,
+            wgpu_execution_with_autodiff(AutodiffMode::Forward),
+        )
+        .nll_with_gradient(&params)
+        .unwrap();
+        let wgpu_reverse = likelihood(
+            &wgpu_term,
+            wgpu_execution_with_autodiff(AutodiffMode::Reverse),
+        )
+        .nll_with_gradient(&params)
+        .unwrap();
+        assert_evaluation_close(
+            "wgpu reverse versus forward",
+            &wgpu_reverse,
+            &wgpu_forward,
+            1.0e-6,
+        );
+    }
 
     assert_evaluation_close(
         "f32 versus f64 forward",
