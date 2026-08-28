@@ -8,7 +8,7 @@ use pyo3::{prelude::*, types::PyAny};
 use super::{
     error::to_py_err,
     expr::{PyExpr, extract_expr},
-    quantum::{extract_l, extract_projection},
+    quantum::{PyL, extract_projection},
 };
 
 #[pyclass(name = "Sheet", module = "laddu", frozen, skip_from_py_object)]
@@ -123,20 +123,20 @@ impl PyBarrierKind {
 /// >>> costheta = ld.scalar("costheta")
 /// >>> amplitude = ld.spherical_harmonic(1, 0, costheta=costheta, phi=0.0)
 #[pyo3(signature = (
-    l: "L | J | S | int | float",
+    l,
     m: "M | int | float",
     *,
     costheta: "Expr | int | float",
     phi: "Expr | int | float"
 ))]
 pub fn spherical_harmonic(
-    l: &Bound<'_, PyAny>,
+    l: PyL,
     m: &Bound<'_, PyAny>,
     costheta: &Bound<'_, PyAny>,
     phi: &Bound<'_, PyAny>,
 ) -> PyResult<PyExpr> {
     rust_spherical_harmonic(
-        extract_l(l)?,
+        l.inner,
         extract_projection(m)?,
         extract_expr(costheta)?,
         extract_expr(phi)?,
@@ -269,7 +269,7 @@ pub fn chew_mandelstam(
 #[pyo3(signature = (
     q: "Expr | int | float",
     *,
-    l: "L | J | S | int | float",
+    l,
     kind
 ))]
 /// Construct a normalized Blatt-Weisskopf barrier factor.
@@ -286,7 +286,7 @@ pub fn chew_mandelstam(
 /// Returns
 /// -------
 /// Expr
-///     Real symbolic barrier factor with reference momentum ``q_r = 1``.
+///     Symbolic barrier factor with reference momentum ``q_r = 0.1973`` GeV.
 ///
 /// Raises
 /// ------
@@ -294,12 +294,8 @@ pub fn chew_mandelstam(
 ///     If `q` or `l` cannot be converted.
 /// LadduError
 ///     If the angular momentum is unsupported.
-pub fn blatt_weisskopf(
-    q: &Bound<'_, PyAny>,
-    l: &Bound<'_, PyAny>,
-    kind: &PyBarrierKind,
-) -> PyResult<PyExpr> {
-    rust_blatt_weisskopf(extract_expr(q)?, extract_l(l)?, kind.inner)
+pub fn blatt_weisskopf(q: &Bound<'_, PyAny>, l: PyL, kind: &PyBarrierKind) -> PyResult<PyExpr> {
+    rust_blatt_weisskopf(extract_expr(q)?, l.inner, kind.inner)
         .map(PyExpr::from)
         .map_err(to_py_err)
 }
@@ -308,9 +304,9 @@ pub fn blatt_weisskopf(
 #[pyo3(signature = (
     q: "Expr | int | float",
     *,
-    l: "L | J | S | int | float",
+    l,
     kind,
-    q_r
+    q_r: "Expr | int | float"
 ))]
 /// Construct a Blatt-Weisskopf factor with a custom reference momentum.
 ///
@@ -322,8 +318,9 @@ pub fn blatt_weisskopf(
 ///     Orbital angular momentum.
 /// kind : BarrierKind
 ///     Barrier-factor convention.
-/// q_r : float
-///     Positive reference momentum or inverse barrier radius.
+/// q_r : Expr or number
+///     Reference momentum or inverse barrier radius in GeV. Must remain real,
+///     positive, and finite; use a bounded parameter to vary it in a fit.
 ///
 /// Returns
 /// -------
@@ -333,16 +330,16 @@ pub fn blatt_weisskopf(
 /// Raises
 /// ------
 /// TypeError
-///     If `q` or `l` cannot be converted.
+///     If `q`, `l`, or `q_r` cannot be converted.
 /// LadduError
 ///     If the angular momentum or reference momentum is invalid.
 pub fn blatt_weisskopf_custom(
     q: &Bound<'_, PyAny>,
-    l: &Bound<'_, PyAny>,
+    l: PyL,
     kind: &PyBarrierKind,
-    q_r: f64,
+    q_r: &Bound<'_, PyAny>,
 ) -> PyResult<PyExpr> {
-    rust_blatt_weisskopf_custom(extract_expr(q)?, extract_l(l)?, kind.inner, q_r)
+    rust_blatt_weisskopf_custom(extract_expr(q)?, l.inner, kind.inner, extract_expr(q_r)?)
         .map(PyExpr::from)
         .map_err(to_py_err)
 }
