@@ -36,7 +36,7 @@ use super::{
 ///
 /// Parameters
 /// ----------
-/// value : Expr or int or float or complex
+/// value : Expr or complex
 ///     Value from which to construct the expression.
 ///
 /// Examples
@@ -117,7 +117,7 @@ impl PyExpr {
     ///
     /// Parameters
     /// ----------
-    /// value : Expr or int or float or complex
+    /// value : Expr or complex
     ///     Symbolic expression or constant to wrap.
     ///
     /// Returns
@@ -130,7 +130,7 @@ impl PyExpr {
     /// TypeError
     ///     If `value` cannot be converted to an expression.
     #[new]
-    #[pyo3(signature = (value: "Expr | int | float"))]
+    #[pyo3(signature = (value: "Expr | complex"))]
     fn new(value: &Bound<'_, PyAny>) -> PyResult<Self> {
         Ok(extract_expr(value)?.into())
     }
@@ -570,14 +570,14 @@ pub fn scalar(name: String) -> PyExpr {
 
 #[pyfunction]
 #[pyo3(signature = (
-    re: "Expr | int | float",
-    im: "Expr | int | float"
+    re: "Expr | float",
+    im: "Expr | float"
 ))]
 /// Construct a complex expression from Cartesian components.
 ///
 /// Parameters
 /// ----------
-/// re, im : Expr or float or complex
+/// re, im : Expr or int or float
 ///     Real and imaginary components.
 ///
 /// Returns
@@ -595,8 +595,8 @@ pub fn complex(re: &Bound<'_, PyAny>, im: &Bound<'_, PyAny>) -> PyResult<PyExpr>
 
 #[pyfunction]
 #[pyo3(signature = (
-    magnitude: "Expr | int | float",
-    phase: "Expr | int | float"
+    magnitude: "Expr | float",
+    phase: "Expr | float"
 ))]
 /// Construct a complex expression from polar components.
 ///
@@ -619,7 +619,7 @@ pub fn polar_complex(magnitude: &Bound<'_, PyAny>, phase: &Bound<'_, PyAny>) -> 
 }
 
 #[pyfunction]
-#[pyo3(signature = (phase: "Expr | int | float"))]
+#[pyo3(signature = (phase: "Expr | float"))]
 /// Construct the unit complex expression ``exp(1j * phase)``.
 ///
 /// Parameters
@@ -642,8 +642,8 @@ pub fn cis(phase: &Bound<'_, PyAny>) -> PyResult<PyExpr> {
 
 #[pyfunction]
 #[pyo3(signature = (
-    y: "Expr | int | float",
-    x: "Expr | int | float"
+    y: "Expr | float",
+    x: "Expr | float"
 ))]
 /// Construct the quadrant-aware angle ``atan2(y, x)``.
 ///
@@ -666,7 +666,7 @@ pub fn atan2(y: &Bound<'_, PyAny>, x: &Bound<'_, PyAny>) -> PyResult<PyExpr> {
 }
 
 #[pyfunction]
-#[pyo3(signature = (value: "Expr | int | float"))]
+#[pyo3(signature = (value: "Expr | float"))]
 /// Apply inverse cosine to an expression-like value.
 ///
 /// Parameters
@@ -688,12 +688,12 @@ pub fn acos(value: &Bound<'_, PyAny>) -> PyResult<PyExpr> {
 }
 
 #[pyfunction]
-#[pyo3(signature = (elements: "Sequence[Expr | int | float]"))]
+#[pyo3(signature = (elements: "Sequence[Expr | complex]"))]
 /// Construct a vector-valued expression.
 ///
 /// Parameters
 /// ----------
-/// elements : sequence of Expr or number
+/// elements : sequence of Expr or complex
 ///     Vector elements in order.
 ///
 /// Returns
@@ -715,13 +715,13 @@ pub fn vector(elements: Vec<Bound<'_, PyAny>>) -> PyResult<PyExpr> {
 
 #[pyfunction]
 #[pyo3(signature = (
-    elements: "Sequence[Sequence[Expr | int | float]]"
+    elements: "Sequence[Sequence[Expr | complex]]"
 ))]
 /// Construct a matrix-valued expression from rows.
 ///
 /// Parameters
 /// ----------
-/// elements : sequence of sequence of Expr or number
+/// elements : sequence of sequence of Expr or complex
 ///     Rectangular matrix in row-major order.
 ///
 /// Returns
@@ -752,7 +752,7 @@ pub fn matrix(elements: Vec<Vec<Bound<'_, PyAny>>>) -> PyResult<PyExpr> {
 macro_rules! binary_function {
     ($name:ident, $function:ident, $doc:literal) => {
         #[pyfunction]
-        #[pyo3(signature = (lhs: "Expr | int | float", rhs: "Expr | int | float"))]
+        #[pyo3(signature = (lhs: "Expr | complex", rhs: "Expr | complex"))]
         #[doc = $doc]
         pub fn $name(lhs: &Bound<'_, PyAny>, rhs: &Bound<'_, PyAny>) -> PyResult<PyExpr> {
             Ok($function(extract_expr(lhs)?, extract_expr(rhs)?).into())

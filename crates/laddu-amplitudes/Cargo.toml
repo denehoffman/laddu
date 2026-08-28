@@ -21,11 +21,9 @@ laddu-kernel.workspace = true
 laddu-physics.workspace = true
 num.workspace = true
 thiserror.workspace = true
-fastrand.workspace = true
-fastrand-contrib.workspace = true
-nalgebra.workspace = true
 
 [dev-dependencies]
+nalgebra.workspace = true
 laddu-compile.workspace = true
 laddu-runtime.workspace = true
 approx.workspace = true
