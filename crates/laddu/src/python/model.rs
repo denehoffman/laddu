@@ -1,9 +1,11 @@
 use std::path::PathBuf;
 
 use laddu_compile::CompiledModel;
-use laddu_runtime::PreparedModel;
+use laddu_expr::ExprNode;
+use laddu_runtime::{Device, PreparedModel};
 use numpy::{PyArray1, PyArray2};
 use pyo3::{
+    IntoPyObjectExt,
     exceptions::PyTypeError,
     prelude::*,
     types::{PyAny, PyDict},
@@ -71,6 +73,30 @@ pub fn model_free_values(model: &CompiledModel, values: &Bound<'_, PyAny>) -> Py
 /// ['slope']
 pub struct PyModel {
     pub(crate) inner: CompiledModel,
+}
+
+impl PyModel {
+    fn validate_without_dataset(&self, device: &Device) -> PyResult<()> {
+        if matches!(device, Device::Gpu(_)) {
+            return Err(to_py_err(
+                "model evaluation without a dataset is not supported by the GPU backend",
+            ));
+        }
+        // The parameter-only JIT entry point cannot read event inputs.
+        for node in self.inner.graph().nodes() {
+            let input = match node {
+                ExprNode::EventScalar(name) => format!("scalar '{name}'"),
+                ExprNode::EventP4Component { name, component } => {
+                    format!("four-momentum '{name}.{}'", component.label())
+                }
+                _ => continue,
+            };
+            return Err(to_py_err(laddu_runtime::RuntimeError::Data(format!(
+                "model requires event input {input}; provide a dataset to evaluate it"
+            ))));
+        }
+        Ok(())
+    }
 }
 
 #[pymethods]
@@ -286,12 +312,12 @@ impl PyModel {
     }
 
     #[pyo3(signature = (
-        dataset,
+        dataset=None,
         *,
         parameters: "Sequence[float] | numpy.typing.NDArray[numpy.float32 | numpy.float64] | dict[str, float] | None" = None,
         execution=None,
         real=false
-    ) -> "Sequence[float]")]
+    ) -> "complex | float | numpy.typing.NDArray[numpy.complex128 | numpy.float64]")]
     /// Evaluate the model for every event in a dataset.
     ///
     /// Parameters
@@ -321,7 +347,7 @@ impl PyModel {
     fn evaluate<'py>(
         &self,
         py: Python<'py>,
-        dataset: &PyDataset,
+        dataset: Option<&PyDataset>,
         parameters: Option<&Bound<'_, PyAny>>,
         execution: Option<&PyExecution>,
         real: bool,
@@ -335,7 +361,27 @@ impl PyModel {
             None => self.inner.params().initial_free_values(),
         };
         let params = self.inner.params().values(&free).map_err(to_py_err)?;
+        if dataset.is_none() {
+            self.validate_without_dataset(execution.inner.requested_device())?;
+        }
         let plan = PreparedModel::prepare(&self.inner, &execution.inner).map_err(to_py_err)?;
+        let Some(dataset) = dataset else {
+            let value = py
+                .detach(move || match plan {
+                    PreparedModel::Cpu(plan) => plan.evaluate(&params),
+                    #[cfg(feature = "wgpu")]
+                    PreparedModel::Wgpu(_) => Err(laddu_runtime::RuntimeError::Wgpu(
+                        "model evaluation without a dataset is not supported by the GPU backend"
+                            .into(),
+                    )),
+                })
+                .map_err(to_py_err)?;
+            return if real {
+                value.re.into_bound_py_any(py)
+            } else {
+                value.into_bound_py_any(py)
+            };
+        };
         let dataset = dataset.inner.clone();
         let values = py
             .detach(move || {
@@ -365,12 +411,12 @@ impl PyModel {
     }
 
     #[pyo3(signature = (
-        dataset,
+        dataset=None,
         *,
         parameters: "Sequence[float] | numpy.typing.NDArray[numpy.float32 | numpy.float64] | dict[str, float] | None" = None,
         execution=None,
         real=false
-    ) -> "tuple[Sequence[float], Sequence[Sequence[float]]]")]
+    ) -> "tuple[complex | float | numpy.typing.NDArray[numpy.complex128 | numpy.float64], numpy.typing.NDArray[numpy.complex128 | numpy.float64]]")]
     /// Evaluate model values and derivatives for every event.
     ///
     /// Parameters
@@ -402,7 +448,7 @@ impl PyModel {
     fn value_and_gradient<'py>(
         &self,
         py: Python<'py>,
-        dataset: &PyDataset,
+        dataset: Option<&PyDataset>,
         parameters: Option<&Bound<'_, PyAny>>,
         execution: Option<&PyExecution>,
         real: bool,
@@ -416,7 +462,37 @@ impl PyModel {
             None => self.inner.params().initial_free_values(),
         };
         let params = self.inner.params().values(&free).map_err(to_py_err)?;
+        if dataset.is_none() {
+            self.validate_without_dataset(execution.inner.requested_device())?;
+        }
         let plan = PreparedModel::prepare(&self.inner, &execution.inner).map_err(to_py_err)?;
+        let Some(dataset) = dataset else {
+            let evaluation = py
+                .detach(move || match plan {
+                    PreparedModel::Cpu(plan) => plan.evaluate_with_gradient(&params),
+                    #[cfg(feature = "wgpu")]
+                    PreparedModel::Wgpu(_) => Err(laddu_runtime::RuntimeError::Wgpu(
+                        "model evaluation without a dataset is not supported by the GPU backend"
+                            .into(),
+                    )),
+                })
+                .map_err(to_py_err)?;
+            return if real {
+                Ok((
+                    evaluation.value().re.into_bound_py_any(py)?,
+                    PyArray1::from_vec(
+                        py,
+                        evaluation.gradient().iter().map(|value| value.re).collect(),
+                    )
+                    .into_any(),
+                ))
+            } else {
+                Ok((
+                    evaluation.value().into_bound_py_any(py)?,
+                    PyArray1::from_vec(py, evaluation.gradient().to_vec()).into_any(),
+                ))
+            };
+        };
         let dataset = dataset.inner.clone();
         let evaluations = py
             .detach(move || {
