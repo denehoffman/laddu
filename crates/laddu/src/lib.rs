@@ -44,7 +44,7 @@ pub use laddu_runtime as runtime;
 pub use laddu_generation as generation;
 
 pub use laddu_expr::parameter;
-pub use laddu_expr::parameters::Parameter;
+pub use laddu_expr::parameters::{Parameter, ParameterUpdate};
 pub use laddu_expr::{
     BinaryOp, ColorPreset, ComponentIndex, DisplayColor, Expr, ExprGraph, ExprGraphDotDisplay,
     ExprGraphTreeDisplay, ExprId, ExprMetadata, ExprNode, ExprNodeKind, ExprShape, ExprShapeError,
@@ -104,7 +104,7 @@ pub mod prelude {
     pub use laddu_expr::parameter;
     pub use laddu_expr::parameters::{
         Bounds, FreeParamId, InitialSpec, ParamError, ParamId, ParamLayout, ParamRegistry,
-        ParamState, ParamValues, Parameter,
+        ParamState, ParamValues, Parameter, ParameterUpdate,
     };
     pub use laddu_expr::{
         BinaryOp, ColorPreset, ComponentIndex, DisplayColor, Expr, ExprGraph, ExprGraphDotDisplay,

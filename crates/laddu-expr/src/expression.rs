@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     ExprGraphError, ExprShapeError, ParamError, ParamResult,
-    parameters::{InitialSpec, ParamState, Parameter},
+    parameters::{InitialSpec, ParamState, Parameter, ParameterUpdate},
 };
 
 /// Stable identifier for a node in a serialized [`ExprGraph`].
@@ -2176,53 +2176,54 @@ impl ExprGraph {
         order
     }
 
-    /// Return a copy of this graph with the named scalar parameter fixed.
+    /// Return a copy of this graph with a batch of parameter updates applied.
+    ///
+    /// Updates are keyed by parameter name and every occurrence of a named
+    /// scalar parameter is updated. The operation is atomic: duplicate or
+    /// unknown names, invalid patches, conflicts, and invalid final
+    /// definitions leave the original graph untouched.
     ///
     /// # Errors
     ///
-    /// Returns [`ParamError::UnknownName`] when the graph has no scalar
-    /// parameter named `name`, or [`ParamError::FixedValueOutOfBounds`] when
-    /// `value` is outside that parameter's bounds.
-    pub fn fix_parameter(&self, name: &str, value: f64) -> ParamResult<Self> {
-        self.map_parameter(name, |parameter| {
-            if !parameter.bounds_spec().contains(value) {
-                return Err(ParamError::FixedValueOutOfBounds {
-                    name: name.to_owned(),
-                    value,
-                });
+    /// Returns [`ParamError`] when an update is duplicated, unknown, invalid,
+    /// or leaves parameter definitions in conflict.
+    pub fn with_parameters<N, I>(&self, updates: I) -> ParamResult<Self>
+    where
+        N: AsRef<str>,
+        I: IntoIterator<Item = (N, ParameterUpdate)>,
+    {
+        let mut by_name = HashMap::new();
+        let mut names = Vec::new();
+        for (name, update) in updates {
+            let name = name.as_ref().to_owned();
+            update.validate()?;
+            if by_name.insert(name.clone(), update).is_some() {
+                return Err(ParamError::DuplicateName(name));
             }
-            Ok(parameter.clone().with_fixed_value(value))
-        })
-    }
+            names.push(name);
+        }
 
-    /// Return a copy of this graph with the named scalar parameter free.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ParamError::UnknownName`] when the graph has no scalar
-    /// parameter named `name`.
-    pub fn free_parameter(&self, name: &str) -> ParamResult<Self> {
-        self.map_parameter(name, |parameter| Ok(parameter.clone().with_free()))
-    }
-
-    fn map_parameter(
-        &self,
-        name: &str,
-        mut map: impl FnMut(&Parameter) -> ParamResult<Parameter>,
-    ) -> ParamResult<Self> {
-        let mut found = false;
+        let mut found = HashSet::new();
         let mut graph = self.clone();
         for node in &mut graph.nodes {
             if let ExprNode::ScalarParam(parameter) = node
-                && parameter.name() == name
+                && let Some(update) = by_name.get(parameter.name())
             {
-                *parameter = map(parameter)?;
-                found = true;
+                *parameter = parameter.with_update(update)?;
+                found.insert(parameter.name().to_owned());
             }
         }
-        if !found {
-            return Err(ParamError::UnknownName(name.to_owned()));
+        if let Some(name) = names.iter().find(|name| !found.contains(*name)) {
+            return Err(ParamError::UnknownName(name.clone()));
         }
+
+        let mut registry = crate::parameters::ParamRegistry::new();
+        for node in &graph.nodes {
+            if let ExprNode::ScalarParam(parameter) = node {
+                registry.register(parameter.clone())?;
+            }
+        }
+        registry.layout()?;
         Ok(graph)
     }
 
@@ -2597,6 +2598,54 @@ mod tests {
         assert_eq!(metadata.name(), Some("event mass"));
         assert_eq!(metadata.tags(), &[Arc::from("data")]);
         assert!(metadata.has_tag("data"));
+    }
+
+    #[test]
+    fn parameter_updates_rewrite_all_same_named_occurrences() {
+        let expression = Expr::from(parameter!("x")) + Expr::from(parameter!("x"));
+        let graph = expression
+            .to_graph()
+            .with_parameters([(
+                String::from("x"),
+                ParameterUpdate {
+                    state: Some(ParamState::Fixed(2.0)),
+                    ..Default::default()
+                },
+            )])
+            .unwrap();
+
+        assert_eq!(
+            graph
+                .nodes()
+                .iter()
+                .filter_map(|node| match node {
+                    ExprNode::ScalarParam(parameter) => Some(parameter),
+                    _ => None,
+                })
+                .count(),
+            2
+        );
+        assert!(graph.nodes().iter().all(|node| {
+            !matches!(node, ExprNode::ScalarParam(parameter) if parameter.name() == "x" && parameter.is_free())
+        }));
+    }
+
+    #[test]
+    fn parameter_updates_reject_duplicates_and_unknown_names_without_mutation() {
+        let graph = Expr::from(parameter!("x")).to_graph();
+        let original = graph.to_string();
+        assert!(matches!(
+            graph.with_parameters([
+                ("x", ParameterUpdate::default()),
+                ("x", ParameterUpdate::default()),
+            ]),
+            Err(ParamError::DuplicateName(name)) if name == "x"
+        ));
+        assert!(matches!(
+            graph.with_parameters([("missing", ParameterUpdate::default())]),
+            Err(ParamError::UnknownName(name)) if name == "missing"
+        ));
+        assert_eq!(graph.to_string(), original);
     }
 
     #[test]

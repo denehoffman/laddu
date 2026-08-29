@@ -96,13 +96,13 @@ impl PyBarrierKind {
 ///
 /// Parameters
 /// ----------
-/// l : L or int
-///     Nonnegative orbital angular momentum.
-/// m : M or int
-///     Magnetic projection satisfying ``-l <= m <= l``.
-/// costheta : Expr or number
+/// l : L, float, or fractions.Fraction
+///     Nonnegative integer-valued orbital angular momentum.
+/// m : M, float, or fractions.Fraction
+///     Integer-valued magnetic projection satisfying ``-l <= m <= l``.
+/// costheta : Expr or float
 ///     Cosine of the polar angle.
-/// phi : Expr or number
+/// phi : Expr or float
 ///     Azimuthal angle in radians.
 ///
 /// Returns
@@ -123,11 +123,11 @@ impl PyBarrierKind {
 /// >>> costheta = ld.scalar("costheta")
 /// >>> amplitude = ld.spherical_harmonic(1, 0, costheta=costheta, phi=0.0)
 #[pyo3(signature = (
-    l,
-    m: "M | int | float",
+    l: "L | float | fractions.Fraction",
+    m: "M | float | fractions.Fraction",
     *,
-    costheta: "Expr | int | float",
-    phi: "Expr | int | float"
+    costheta: "Expr | float",
+    phi: "Expr | float"
 ))]
 pub fn spherical_harmonic(
     l: PyL,
@@ -147,19 +147,19 @@ pub fn spherical_harmonic(
 
 #[pyfunction]
 #[pyo3(signature = (
-    s: "Expr | int | float",
+    s: "Expr | complex",
     *,
-    mass1: "Expr | int | float",
-    mass2: "Expr | int | float",
+    mass1: "Expr | float",
+    mass2: "Expr | float",
     sheet=None
 ))]
 /// Construct the two-body breakup momentum.
 ///
 /// Parameters
 /// ----------
-/// s : Expr or number
+/// s : Expr or complex
 ///     Squared invariant mass of the two-body system.
-/// mass1, mass2 : Expr or number
+/// mass1, mass2 : Expr or float
 ///     Daughter masses.
 /// sheet : Sheet, optional
 ///     Analytic-continuation sheet; defaults to :attr:`Sheet.PHYSICAL`.
@@ -191,19 +191,19 @@ pub fn q(
 
 #[pyfunction]
 #[pyo3(signature = (
-    s: "Expr | int | float",
+    s: "Expr | complex",
     *,
-    mass1: "Expr | int | float",
-    mass2: "Expr | int | float",
+    mass1: "Expr | float",
+    mass2: "Expr | float",
     sheet=None
 ))]
 /// Construct the dimensionless two-body phase-space factor.
 ///
 /// Parameters
 /// ----------
-/// s : Expr or number
+/// s : Expr or complex
 ///     Squared invariant mass.
-/// mass1, mass2 : Expr or number
+/// mass1, mass2 : Expr or float
 ///     Daughter masses.
 /// sheet : Sheet, optional
 ///     Analytic-continuation sheet; defaults to the physical sheet.
@@ -234,18 +234,18 @@ pub fn rho(
 
 #[pyfunction]
 #[pyo3(signature = (
-    s: "Expr | int | float",
+    s: "Expr | complex",
     *,
-    mass1: "Expr | int | float",
-    mass2: "Expr | int | float"
+    mass1: "Expr | float",
+    mass2: "Expr | float"
 ))]
 /// Construct the Chew-Mandelstam two-body function.
 ///
 /// Parameters
 /// ----------
-/// s : Expr or number
+/// s : Expr or complex
 ///     Squared invariant mass.
-/// mass1, mass2 : Expr or number
+/// mass1, mass2 : Expr or float
 ///     Daughter masses.
 ///
 /// Returns
@@ -267,19 +267,19 @@ pub fn chew_mandelstam(
 
 #[pyfunction]
 #[pyo3(signature = (
-    q: "Expr | int | float",
+    q: "Expr | float",
     *,
-    l,
+    l: "L | float | fractions.Fraction",
     kind
 ))]
 /// Construct a normalized Blatt-Weisskopf barrier factor.
 ///
 /// Parameters
 /// ----------
-/// q : Expr or number
+/// q : Expr or float
 ///     Breakup momentum.
-/// l : L or int
-///     Orbital angular momentum.
+/// l : L, float, or fractions.Fraction
+///     Nonnegative integer-valued orbital angular momentum.
 /// kind : BarrierKind
 ///     Barrier-factor convention.
 ///
@@ -302,23 +302,23 @@ pub fn blatt_weisskopf(q: &Bound<'_, PyAny>, l: PyL, kind: &PyBarrierKind) -> Py
 
 #[pyfunction]
 #[pyo3(signature = (
-    q: "Expr | int | float",
+    q: "Expr | float",
     *,
-    l,
+    l: "L | float | fractions.Fraction",
     kind,
-    q_r: "Expr | int | float"
+    q_r: "Expr | float"
 ))]
 /// Construct a Blatt-Weisskopf factor with a custom reference momentum.
 ///
 /// Parameters
 /// ----------
-/// q : Expr or number
+/// q : Expr or float
 ///     Breakup momentum.
-/// l : L or int
-///     Orbital angular momentum.
+/// l : L, float, or fractions.Fraction
+///     Nonnegative integer-valued orbital angular momentum.
 /// kind : BarrierKind
 ///     Barrier-factor convention.
-/// q_r : Expr or number
+/// q_r : Expr or float
 ///     Reference momentum or inverse barrier radius in GeV. Must remain real,
 ///     positive, and finite; use a bounded parameter to vary it in a fit.
 ///

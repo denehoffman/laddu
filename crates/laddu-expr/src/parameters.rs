@@ -54,6 +54,98 @@ pub enum ParamState {
     Fixed(f64),
 }
 
+/// A partial, atomic update to a parameter definition.
+///
+/// An outer `None` preserves the current field. For metadata fields and the
+/// scale, `Some(None)` clears the current value.
+///
+/// ```
+/// use laddu_expr::{Expr, parameters::{ParamState, ParameterUpdate}};
+///
+/// let graph = Expr::from(laddu_expr::parameter!("mass")).to_graph();
+/// let update = ParameterUpdate {
+///     state: Some(ParamState::Fixed(1.0)),
+///     ..Default::default()
+/// };
+/// let updated = graph.with_parameters([("mass", update)])?;
+/// # let _ = updated;
+/// # Ok::<(), laddu_expr::ParamError>(())
+/// ```
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ParameterUpdate {
+    /// Replacement state.
+    pub state: Option<ParamState>,
+    /// Replacement initialization rule.
+    pub initial: Option<InitialSpec>,
+    /// Replacement bounds; [`Bounds::default`] removes all bounds.
+    pub bounds: Option<Bounds>,
+    /// Replacement periodicity flag.
+    pub periodic: Option<bool>,
+    /// Replacement optimizer scale, or `Some(None)` to clear it.
+    pub scale: Option<Option<f64>>,
+    /// Replacement unit label, or `Some(None)` to clear it.
+    pub unit: Option<Option<String>>,
+    /// Replacement LaTeX label, or `Some(None)` to clear it.
+    pub latex: Option<Option<String>>,
+    /// Replacement description, or `Some(None)` to clear it.
+    pub description: Option<Option<String>>,
+}
+
+impl ParameterUpdate {
+    /// Validates values intrinsic to this patch.
+    ///
+    /// Checks that fixed and scalar initial values are finite, uniform initial
+    /// ranges are finite and ordered, and replacement scales are finite and
+    /// positive. Relationships between fields are validated after applying
+    /// the update to a complete [`Parameter`].
+    ///
+    /// # Errors
+    ///
+    /// Returns a field-specific [`ParamError`] when a fixed value, initial
+    /// value or range, bounds, or scale is invalid.
+    pub fn validate(&self) -> ParamResult<()> {
+        if let Some(ParamState::Fixed(value)) = &self.state
+            && !value.is_finite()
+        {
+            return Err(ParamError::InvalidUpdateFixedValue { value: *value });
+        }
+        if let Some(initial) = &self.initial {
+            match initial {
+                InitialSpec::Default => {}
+                InitialSpec::Value(value) if value.is_finite() => {}
+                InitialSpec::Value(value) => {
+                    return Err(ParamError::InvalidUpdateInitialValue { value: *value });
+                }
+                InitialSpec::Uniform { min, max }
+                    if min.is_finite() && max.is_finite() && min <= max => {}
+                InitialSpec::Uniform { min, max } => {
+                    return Err(ParamError::InvalidUpdateInitialRange {
+                        min: *min,
+                        max: *max,
+                    });
+                }
+            }
+        }
+        if let Some(bounds) = &self.bounds {
+            let has_nan =
+                bounds.min.is_some_and(f64::is_nan) || bounds.max.is_some_and(f64::is_nan);
+            let unordered = matches!((bounds.min, bounds.max), (Some(min), Some(max)) if min > max);
+            if has_nan || unordered {
+                return Err(ParamError::InvalidUpdateBounds {
+                    min: bounds.min,
+                    max: bounds.max,
+                });
+            }
+        }
+        if let Some(Some(scale)) = self.scale
+            && (!scale.is_finite() || scale <= 0.0)
+        {
+            return Err(ParamError::InvalidUpdateScale { scale });
+        }
+        Ok(())
+    }
+}
+
 /// Classified failure from validating a free-parameter value vector.
 ///
 /// This separates structural input errors from invalid numeric input and
@@ -104,6 +196,18 @@ impl Bounds {
     }
 
     fn validate(&self, name: &str) -> ParamResult<()> {
+        if let Some(value) = self.min.filter(|value| value.is_nan()) {
+            return Err(ParamError::InvalidBoundValue {
+                name: name.to_owned(),
+                value,
+            });
+        }
+        if let Some(value) = self.max.filter(|value| value.is_nan()) {
+            return Err(ParamError::InvalidBoundValue {
+                name: name.to_owned(),
+                value,
+            });
+        }
         if let (Some(min), Some(max)) = (self.min, self.max)
             && min > max
         {
@@ -180,14 +284,54 @@ impl Parameter {
         self
     }
 
-    fn set_free(&mut self) {
-        self.state = ParamState::Free;
-    }
-
-    /// Returns this parameter marked as free.
-    pub fn with_free(mut self) -> Self {
-        self.set_free();
-        self
+    /// Returns this parameter after applying a validated partial update.
+    ///
+    /// A fixed state also updates the initial value to that fixed value unless
+    /// the patch explicitly supplies an initial rule. All fields are applied
+    /// before the complete parameter is validated, so a patch can replace a
+    /// bound and initial value together.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ParamError`] when the patch or resulting parameter definition
+    /// contains invalid numeric values, bounds, periodic metadata, or support.
+    pub fn with_update(&self, update: &ParameterUpdate) -> ParamResult<Self> {
+        update.validate()?;
+        let mut parameter = self.clone();
+        if let Some(state) = &update.state {
+            parameter.state = state.clone();
+            if let ParamState::Fixed(value) = state
+                && update.initial.is_none()
+            {
+                parameter.initial = InitialSpec::Value(*value);
+            }
+        }
+        if let Some(initial) = &update.initial {
+            parameter.initial = initial.clone();
+        }
+        if let Some(bounds) = &update.bounds {
+            parameter.bounds = bounds.clone();
+        }
+        if let Some(periodic) = update.periodic {
+            parameter.periodic = periodic;
+        }
+        if let Some(scale) = update.scale {
+            parameter.scale = scale;
+        }
+        if let Some(unit) = &update.unit {
+            parameter.unit = unit.as_deref().map(Arc::<str>::from);
+        }
+        if let Some(latex) = &update.latex {
+            parameter.latex = latex.as_deref().map(Arc::<str>::from);
+        }
+        if let Some(description) = &update.description {
+            parameter.description = description.as_deref().map(Arc::<str>::from);
+        }
+        parameter.validate()?;
+        if parameter.is_fixed() {
+            parameter.validate_free_initial()?;
+        }
+        Ok(parameter)
     }
 
     fn set_initial(&mut self, initial: impl Into<InitialSpec>) {
@@ -350,6 +494,12 @@ impl Parameter {
     fn validate_initial(&self) -> ParamResult<()> {
         match self.state {
             ParamState::Fixed(value) => {
+                if !value.is_finite() {
+                    return Err(ParamError::NonFiniteFixedValue {
+                        name: self.name().to_owned(),
+                        value,
+                    });
+                }
                 if !self.bounds.contains(value) {
                     return Err(ParamError::FixedValueOutOfBounds {
                         name: self.name().to_owned(),
@@ -364,7 +514,7 @@ impl Parameter {
 
     fn validate_free_initial(&self) -> ParamResult<()> {
         match self.initial {
-            InitialSpec::Default | InitialSpec::Value(_) => {
+            InitialSpec::Default => {
                 let value = self.initial.representative_value();
                 if !self.bounds.contains(value) {
                     return Err(ParamError::InitialOutOfBounds {
@@ -374,7 +524,29 @@ impl Parameter {
                 }
                 self.validate_periodic_value(value)
             }
+            InitialSpec::Value(value) => {
+                if !value.is_finite() {
+                    return Err(ParamError::NonFiniteInitialValue {
+                        name: self.name().to_owned(),
+                        value,
+                    });
+                }
+                if !self.bounds.contains(value) {
+                    return Err(ParamError::InitialOutOfBounds {
+                        name: self.name().to_owned(),
+                        value,
+                    });
+                }
+                self.validate_periodic_value(value)
+            }
             InitialSpec::Uniform { min, max } => {
+                if !min.is_finite() || !max.is_finite() {
+                    return Err(ParamError::NonFiniteInitialRange {
+                        name: self.name().to_owned(),
+                        min,
+                        max,
+                    });
+                }
                 if min > max {
                     return Err(ParamError::InvalidInitialRange {
                         name: self.name().to_owned(),
@@ -1185,9 +1357,98 @@ mod tests {
     fn parameter_macro_constructs_fixed_parameters() {
         let positional = crate::parameter!("positional", 1.25);
         let named = crate::parameter!("named", fixed: -0.5);
+        let reordered = crate::parameter!(
+            "reordered",
+            bounds: (0.0, 2.0),
+            unit: "GeV",
+            scale: 0.5,
+            fixed: 1.0
+        );
 
         assert_eq!(positional.state(), &ParamState::Fixed(1.25));
         assert_eq!(named.state(), &ParamState::Fixed(-0.5));
+        assert_eq!(reordered.state(), &ParamState::Fixed(1.0));
+        assert_eq!(reordered.bounds_spec(), &Bounds::new(0.0, 2.0));
+        assert_eq!(reordered.unit_label(), Some("GeV"));
+        assert_eq!(reordered.scale(), Some(0.5));
+    }
+
+    #[test]
+    fn parameter_updates_apply_state_initial_and_metadata_atomically() {
+        let parameter = Parameter::free("mass")
+            .with_initial(1.0)
+            .with_bounds(0.0, 2.0)
+            .with_unit("GeV")
+            .with_latex("m")
+            .with_description("mass")
+            .with_scale(0.5);
+        let updated = parameter
+            .with_update(&ParameterUpdate {
+                state: Some(ParamState::Fixed(3.0)),
+                bounds: Some(Bounds::new(0.0, 4.0)),
+                unit: Some(None),
+                latex: Some(Some("m_0".into())),
+                description: Some(None),
+                ..Default::default()
+            })
+            .unwrap();
+
+        assert_eq!(updated.state(), &ParamState::Fixed(3.0));
+        assert_eq!(updated.initial_spec(), &InitialSpec::Value(3.0));
+        assert_eq!(updated.bounds_spec(), &Bounds::new(0.0, 4.0));
+        assert_eq!(updated.unit_label(), None);
+        assert_eq!(updated.latex_label(), Some("m_0"));
+        assert_eq!(updated.description_text(), None);
+        assert_eq!(updated.scale(), Some(0.5));
+    }
+
+    #[test]
+    fn parameter_updates_allow_related_fields_to_change_together() {
+        let parameter = Parameter::free("x").with_initial(1.0).with_bounds(0.0, 2.0);
+        let updated = parameter
+            .with_update(&ParameterUpdate {
+                initial: Some(InitialSpec::Value(4.0)),
+                bounds: Some(Bounds::new(0.0, 5.0)),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(updated.initial_spec(), &InitialSpec::Value(4.0));
+        assert_eq!(updated.bounds_spec(), &Bounds::new(0.0, 5.0));
+    }
+
+    #[test]
+    fn fixed_update_validates_explicit_dormant_initial_rule() {
+        let parameter = Parameter::free("x").with_initial(1.0).with_bounds(0.0, 2.0);
+        let error = parameter
+            .with_update(&ParameterUpdate {
+                state: Some(ParamState::Fixed(1.0)),
+                initial: Some(InitialSpec::Value(3.0)),
+                ..Default::default()
+            })
+            .unwrap_err();
+        assert!(
+            matches!(error, ParamError::InitialOutOfBounds { name, value } if name == "x" && value == 3.0)
+        );
+    }
+
+    #[test]
+    fn parameter_update_intrinsic_errors_are_field_specific() {
+        assert!(matches!(
+            ParameterUpdate {
+                state: Some(ParamState::Fixed(f64::NAN)),
+                ..Default::default()
+            }
+            .validate(),
+            Err(ParamError::InvalidUpdateFixedValue { .. })
+        ));
+        assert!(matches!(
+            ParameterUpdate {
+                bounds: Some(Bounds::new(f64::NAN, None)),
+                ..Default::default()
+            }
+            .validate(),
+            Err(ParamError::InvalidUpdateBounds { .. })
+        ));
     }
 
     #[test]

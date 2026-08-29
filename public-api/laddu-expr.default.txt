@@ -62,6 +62,9 @@ pub laddu_expr::parameters::ParamError::InitialRangeOutOfBounds
 pub laddu_expr::parameters::ParamError::InitialRangeOutOfBounds::max: f64
 pub laddu_expr::parameters::ParamError::InitialRangeOutOfBounds::min: f64
 pub laddu_expr::parameters::ParamError::InitialRangeOutOfBounds::name: alloc::string::String
+pub laddu_expr::parameters::ParamError::InvalidBoundValue
+pub laddu_expr::parameters::ParamError::InvalidBoundValue::name: alloc::string::String
+pub laddu_expr::parameters::ParamError::InvalidBoundValue::value: f64
 pub laddu_expr::parameters::ParamError::InvalidBounds
 pub laddu_expr::parameters::ParamError::InvalidBounds::max: f64
 pub laddu_expr::parameters::ParamError::InvalidBounds::min: f64
@@ -79,6 +82,28 @@ pub laddu_expr::parameters::ParamError::InvalidParamId::len: usize
 pub laddu_expr::parameters::ParamError::InvalidScale
 pub laddu_expr::parameters::ParamError::InvalidScale::name: alloc::string::String
 pub laddu_expr::parameters::ParamError::InvalidScale::scale: f64
+pub laddu_expr::parameters::ParamError::InvalidUpdateBounds
+pub laddu_expr::parameters::ParamError::InvalidUpdateBounds::max: core::option::Option<f64>
+pub laddu_expr::parameters::ParamError::InvalidUpdateBounds::min: core::option::Option<f64>
+pub laddu_expr::parameters::ParamError::InvalidUpdateFixedValue
+pub laddu_expr::parameters::ParamError::InvalidUpdateFixedValue::value: f64
+pub laddu_expr::parameters::ParamError::InvalidUpdateInitialRange
+pub laddu_expr::parameters::ParamError::InvalidUpdateInitialRange::max: f64
+pub laddu_expr::parameters::ParamError::InvalidUpdateInitialRange::min: f64
+pub laddu_expr::parameters::ParamError::InvalidUpdateInitialValue
+pub laddu_expr::parameters::ParamError::InvalidUpdateInitialValue::value: f64
+pub laddu_expr::parameters::ParamError::InvalidUpdateScale
+pub laddu_expr::parameters::ParamError::InvalidUpdateScale::scale: f64
+pub laddu_expr::parameters::ParamError::NonFiniteFixedValue
+pub laddu_expr::parameters::ParamError::NonFiniteFixedValue::name: alloc::string::String
+pub laddu_expr::parameters::ParamError::NonFiniteFixedValue::value: f64
+pub laddu_expr::parameters::ParamError::NonFiniteInitialRange
+pub laddu_expr::parameters::ParamError::NonFiniteInitialRange::max: f64
+pub laddu_expr::parameters::ParamError::NonFiniteInitialRange::min: f64
+pub laddu_expr::parameters::ParamError::NonFiniteInitialRange::name: alloc::string::String
+pub laddu_expr::parameters::ParamError::NonFiniteInitialValue
+pub laddu_expr::parameters::ParamError::NonFiniteInitialValue::name: alloc::string::String
+pub laddu_expr::parameters::ParamError::NonFiniteInitialValue::value: f64
 pub laddu_expr::parameters::ParamError::ParameterConflict
 pub laddu_expr::parameters::ParamError::ParameterConflict::name: alloc::string::String
 pub laddu_expr::parameters::ParamError::ParameterConflict::reason: alloc::string::String
@@ -260,13 +285,13 @@ pub fn laddu_expr::parameters::Parameter::unit_label(&self) -> core::option::Opt
 pub fn laddu_expr::parameters::Parameter::with_bounds(self, impl core::convert::Into<core::option::Option<f64>>, impl core::convert::Into<core::option::Option<f64>>) -> Self
 pub fn laddu_expr::parameters::Parameter::with_description(self, impl core::convert::Into<alloc::sync::Arc<str>>) -> Self
 pub fn laddu_expr::parameters::Parameter::with_fixed_value(self, f64) -> Self
-pub fn laddu_expr::parameters::Parameter::with_free(self) -> Self
 pub fn laddu_expr::parameters::Parameter::with_initial(self, impl core::convert::Into<laddu_expr::parameters::InitialSpec>) -> Self
 pub fn laddu_expr::parameters::Parameter::with_latex(self, impl core::convert::Into<alloc::sync::Arc<str>>) -> Self
 pub fn laddu_expr::parameters::Parameter::with_periodic(self) -> Self
 pub fn laddu_expr::parameters::Parameter::with_periodicity(self, bool) -> Self
 pub fn laddu_expr::parameters::Parameter::with_scale(self, f64) -> Self
 pub fn laddu_expr::parameters::Parameter::with_unit(self, impl core::convert::Into<alloc::sync::Arc<str>>) -> Self
+pub fn laddu_expr::parameters::Parameter::with_update(&self, &laddu_expr::parameters::ParameterUpdate) -> laddu_expr::ParamResult<Self>
 impl core::clone::Clone for laddu_expr::parameters::Parameter
 pub fn laddu_expr::parameters::Parameter::clone(&self) -> laddu_expr::parameters::Parameter
 impl core::cmp::PartialEq for laddu_expr::parameters::Parameter
@@ -640,6 +665,26 @@ impl serde_core::ser::Serialize for laddu_expr::parameters::Parameter
 pub fn laddu_expr::parameters::Parameter::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
 impl<'de> serde_core::de::Deserialize<'de> for laddu_expr::parameters::Parameter
 pub fn laddu_expr::parameters::Parameter::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct laddu_expr::parameters::ParameterUpdate
+pub laddu_expr::parameters::ParameterUpdate::bounds: core::option::Option<laddu_expr::parameters::Bounds>
+pub laddu_expr::parameters::ParameterUpdate::description: core::option::Option<core::option::Option<alloc::string::String>>
+pub laddu_expr::parameters::ParameterUpdate::initial: core::option::Option<laddu_expr::parameters::InitialSpec>
+pub laddu_expr::parameters::ParameterUpdate::latex: core::option::Option<core::option::Option<alloc::string::String>>
+pub laddu_expr::parameters::ParameterUpdate::periodic: core::option::Option<bool>
+pub laddu_expr::parameters::ParameterUpdate::scale: core::option::Option<core::option::Option<f64>>
+pub laddu_expr::parameters::ParameterUpdate::state: core::option::Option<laddu_expr::parameters::ParamState>
+pub laddu_expr::parameters::ParameterUpdate::unit: core::option::Option<core::option::Option<alloc::string::String>>
+impl laddu_expr::parameters::ParameterUpdate
+pub fn laddu_expr::parameters::ParameterUpdate::validate(&self) -> laddu_expr::ParamResult<()>
+impl core::clone::Clone for laddu_expr::parameters::ParameterUpdate
+pub fn laddu_expr::parameters::ParameterUpdate::clone(&self) -> laddu_expr::parameters::ParameterUpdate
+impl core::cmp::PartialEq for laddu_expr::parameters::ParameterUpdate
+pub fn laddu_expr::parameters::ParameterUpdate::eq(&self, &laddu_expr::parameters::ParameterUpdate) -> bool
+impl core::default::Default for laddu_expr::parameters::ParameterUpdate
+pub fn laddu_expr::parameters::ParameterUpdate::default() -> laddu_expr::parameters::ParameterUpdate
+impl core::fmt::Debug for laddu_expr::parameters::ParameterUpdate
+pub fn laddu_expr::parameters::ParameterUpdate::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for laddu_expr::parameters::ParameterUpdate
 pub type laddu_expr::parameters::ParamResult<T> = core::result::Result<T, laddu_expr::ParamError>
 pub macro laddu_expr::parameter!
 pub enum laddu_expr::BinaryOp
@@ -968,6 +1013,9 @@ pub laddu_expr::ParamError::InitialRangeOutOfBounds
 pub laddu_expr::ParamError::InitialRangeOutOfBounds::max: f64
 pub laddu_expr::ParamError::InitialRangeOutOfBounds::min: f64
 pub laddu_expr::ParamError::InitialRangeOutOfBounds::name: alloc::string::String
+pub laddu_expr::ParamError::InvalidBoundValue
+pub laddu_expr::ParamError::InvalidBoundValue::name: alloc::string::String
+pub laddu_expr::ParamError::InvalidBoundValue::value: f64
 pub laddu_expr::ParamError::InvalidBounds
 pub laddu_expr::ParamError::InvalidBounds::max: f64
 pub laddu_expr::ParamError::InvalidBounds::min: f64
@@ -985,6 +1033,28 @@ pub laddu_expr::ParamError::InvalidParamId::len: usize
 pub laddu_expr::ParamError::InvalidScale
 pub laddu_expr::ParamError::InvalidScale::name: alloc::string::String
 pub laddu_expr::ParamError::InvalidScale::scale: f64
+pub laddu_expr::ParamError::InvalidUpdateBounds
+pub laddu_expr::ParamError::InvalidUpdateBounds::max: core::option::Option<f64>
+pub laddu_expr::ParamError::InvalidUpdateBounds::min: core::option::Option<f64>
+pub laddu_expr::ParamError::InvalidUpdateFixedValue
+pub laddu_expr::ParamError::InvalidUpdateFixedValue::value: f64
+pub laddu_expr::ParamError::InvalidUpdateInitialRange
+pub laddu_expr::ParamError::InvalidUpdateInitialRange::max: f64
+pub laddu_expr::ParamError::InvalidUpdateInitialRange::min: f64
+pub laddu_expr::ParamError::InvalidUpdateInitialValue
+pub laddu_expr::ParamError::InvalidUpdateInitialValue::value: f64
+pub laddu_expr::ParamError::InvalidUpdateScale
+pub laddu_expr::ParamError::InvalidUpdateScale::scale: f64
+pub laddu_expr::ParamError::NonFiniteFixedValue
+pub laddu_expr::ParamError::NonFiniteFixedValue::name: alloc::string::String
+pub laddu_expr::ParamError::NonFiniteFixedValue::value: f64
+pub laddu_expr::ParamError::NonFiniteInitialRange
+pub laddu_expr::ParamError::NonFiniteInitialRange::max: f64
+pub laddu_expr::ParamError::NonFiniteInitialRange::min: f64
+pub laddu_expr::ParamError::NonFiniteInitialRange::name: alloc::string::String
+pub laddu_expr::ParamError::NonFiniteInitialValue
+pub laddu_expr::ParamError::NonFiniteInitialValue::name: alloc::string::String
+pub laddu_expr::ParamError::NonFiniteInitialValue::value: f64
 pub laddu_expr::ParamError::ParameterConflict
 pub laddu_expr::ParamError::ParameterConflict::name: alloc::string::String
 pub laddu_expr::ParamError::ParameterConflict::reason: alloc::string::String
@@ -1538,14 +1608,13 @@ pub fn laddu_expr::ExprGraph::display_equation(&self) -> laddu_expr::ExprGraphEq
 pub fn laddu_expr::ExprGraph::display_latex(&self) -> laddu_expr::ExprGraphLatexDisplay<'_>
 pub fn laddu_expr::ExprGraph::display_tree(&self) -> laddu_expr::ExprGraphTreeDisplay<'_>
 impl laddu_expr::ExprGraph
-pub fn laddu_expr::ExprGraph::fix_parameter(&self, &str, f64) -> laddu_expr::ParamResult<Self>
-pub fn laddu_expr::ExprGraph::free_parameter(&self, &str) -> laddu_expr::ParamResult<Self>
 pub fn laddu_expr::ExprGraph::from_parts(laddu_expr::ExprId, alloc::vec::Vec<laddu_expr::ExprNode>, alloc::vec::Vec<laddu_expr::ExprMetadata>) -> core::result::Result<Self, laddu_expr::ExprGraphError>
 pub fn laddu_expr::ExprGraph::metadata(&self, laddu_expr::ExprId) -> core::option::Option<&laddu_expr::ExprMetadata>
 pub fn laddu_expr::ExprGraph::node(&self, laddu_expr::ExprId) -> core::option::Option<&laddu_expr::ExprNode>
 pub fn laddu_expr::ExprGraph::nodes(&self) -> &[laddu_expr::ExprNode]
 pub fn laddu_expr::ExprGraph::project_tags<'a>(&self, impl core::iter::traits::collect::IntoIterator<Item = &'a str>) -> Self
 pub fn laddu_expr::ExprGraph::root(&self) -> laddu_expr::ExprId
+pub fn laddu_expr::ExprGraph::with_parameters<N, I>(&self, I) -> laddu_expr::ParamResult<Self> where N: core::convert::AsRef<str>, I: core::iter::traits::collect::IntoIterator<Item = (N, laddu_expr::parameters::ParameterUpdate)>
 impl core::clone::Clone for laddu_expr::ExprGraph
 pub fn laddu_expr::ExprGraph::clone(&self) -> laddu_expr::ExprGraph
 impl core::fmt::Debug for laddu_expr::ExprGraph

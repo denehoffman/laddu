@@ -34,8 +34,8 @@ fn required<T: Clone>(value: &Option<T>, property: &str) -> PyResult<T> {
 ///     Particle and antiparticle species names.
 /// self_conjugate : bool, optional
 ///     Whether particle and antiparticle are identical.
-/// spin : S, J, L, int, float, or fractions.Fraction, optional
-///     Spin quantum number.
+/// spin : S, float, or fractions.Fraction, optional
+///     Nonnegative integer or half-integer spin quantum number.
 /// parity, c_parity, g_parity : Parity, int, or str, optional
 ///     Intrinsic, charge-conjugation, and G-parity eigenvalues.
 /// charge : int, optional
@@ -88,7 +88,7 @@ impl PyParticle {
         species=None,
         antiparticle_species=None,
         self_conjugate=None,
-        spin: "S | J | L | int | float | None"=None,
+        spin: "S | float | fractions.Fraction | None"=None,
         parity: "Parity | int | str | None"=None,
         c_parity: "Parity | int | str | None"=None,
         g_parity: "Parity | int | str | None"=None,
@@ -182,12 +182,12 @@ impl PyParticle {
     ///
     /// Parameters
     /// ----------
-    /// j : S, J, L, int, float, or fractions.Fraction
-    ///     Spin quantum number.
+    /// j : S, float, or fractions.Fraction
+    ///     Nonnegative integer or half-integer spin quantum number.
     /// parity : Parity, int, or str
     ///     Intrinsic parity.
     #[pyo3(signature = (
-        j: "J | S | L | int | float",
+        j: "S | float | fractions.Fraction",
         *,
         parity: "Parity | int | str"
     ))]
@@ -197,12 +197,14 @@ impl PyParticle {
 
     #[staticmethod]
     #[pyo3(signature = (
-        j: "J | S | L | int | float",
+        j: "S | float | fractions.Fraction",
         *,
         parity: "Parity | int | str",
         c_parity: "Parity | int | str"
     ))]
     /// Create a particle from spin, parity, and C-parity.
+    ///
+    /// Numeric values for `j` must be nonnegative integers or half-integers.
     fn jpc(
         j: &Bound<'_, PyAny>,
         parity: &Bound<'_, PyAny>,
@@ -217,8 +219,10 @@ impl PyParticle {
     }
 
     #[staticmethod]
-    #[pyo3(signature = (j: "L | J | S | int | float"))]
+    #[pyo3(signature = (j: "S | J | float | fractions.Fraction"))]
     /// Create a boson with integer spin.
+    ///
+    /// Numeric values must be nonnegative integers.
     fn boson(j: &Bound<'_, PyAny>) -> PyResult<Self> {
         Ok(ParticleProperties::boson(j.extract::<PyL>()?.inner).into())
     }

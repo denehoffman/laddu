@@ -1,7 +1,7 @@
 {
   "amplitudes": ["breit_wigner", "f_vector", "k_matrix"],
   "data": ["Dataset", "ParquetSource", "RootSource"],
-  "expressions": ["Expr", "complex", "matrix", "parameter", "solve"],
+  "expressions": ["Expr", "ParameterSpec", "ParameterUpdate", "complex", "matrix", "parameter", "solve"],
   "fit": ["ganesh"],
   "generation": ["Generator", "MassProposal", "VertexProposal"],
   "likelihood": ["ExtendedNLL", "Likelihood", "NLL"],
