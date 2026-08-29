@@ -58,7 +58,7 @@ pub fn breit_wigner(
     width: "Expr | float",
     mass1: "Expr | float",
     mass2: "Expr | float",
-    l = None
+    l: "L | float | fractions.Fraction | None" = None
 ))]
 /// Construct a relativistic two-body Breit-Wigner amplitude.
 ///
@@ -70,8 +70,9 @@ pub fn breit_wigner(
 ///     Pole mass and nominal width.
 /// mass1, mass2 : Expr or float
 ///     Daughter masses.
-/// l : L or int, optional
-///     Orbital angular momentum; the default is S-wave (``0``).
+/// l : L, float, or fractions.Fraction, optional
+///     Nonnegative integer-valued orbital angular momentum; the default is
+///     S-wave (``0``).
 ///
 /// Returns
 /// -------
@@ -116,7 +117,7 @@ pub fn relativistic_breit_wigner(
     width: "Expr | float",
     mass1: "Expr | float",
     mass2: "Expr | float",
-    l,
+    l: "L | float | fractions.Fraction",
     barrier_factors=true,
     q_r: "Expr | float | None" = None
 ))]
@@ -131,8 +132,8 @@ pub fn relativistic_breit_wigner(
 ///     Pole mass, and nominal width.
 /// mass1, mass2 : Expr or float
 ///     Daughter masses.
-/// l : L or int
-///     Orbital angular momentum.
+/// l : L, float, or fractions.Fraction
+///     Nonnegative integer-valued orbital angular momentum.
 /// barrier_factors : bool, default=True
 ///     Include Blatt-Weisskopf factors in the running width.
 /// q_r : Expr or float, optional
@@ -186,7 +187,7 @@ pub fn relativistic_breit_wigner_custom(
     channel_mass_1: "Expr",
     channel_mass_2: "Expr",
     pole_masses: "Expr",
-    l,
+    l: "L | float | fractions.Fraction",
     q_r: "Expr | float | None" = None
 ))]
 /// Build channel-by-pole Blatt-Weisskopf barrier factors.
@@ -199,8 +200,8 @@ pub fn relativistic_breit_wigner_custom(
 ///     Vectors of the two daughter masses for each channel.
 /// pole_masses : Expr
 ///     Vector of pole masses.
-/// l : L or int
-///     Orbital angular momentum.
+/// l : L, float, or fractions.Fraction
+///     Nonnegative integer-valued orbital angular momentum.
 /// q_r : Expr or float, optional
 ///     Barrier-radius momentum scale in GeV. Defaults to 0.1973 GeV.
 ///     Must remain real, positive, and finite; use a bounded

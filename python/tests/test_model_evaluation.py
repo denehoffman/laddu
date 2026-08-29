@@ -1,6 +1,7 @@
 # ruff: noqa: PT027, S101
 
 import unittest
+from typing import Any, cast
 
 import laddu as ld
 import numpy as np
@@ -105,17 +106,254 @@ class ModelEvaluationTests(unittest.TestCase):
                 np.testing.assert_allclose(gradient, expected_gradient, rtol=0, atol=1e-12)
                 np.testing.assert_allclose(model.evaluate(parameters=parameters), expected, rtol=0, atol=1e-12)
 
-        fixed = model.fix('x', 3.0)
+        fixed = model.with_parameters({'x': ld.ParameterUpdate(fixed=3.0)})
         assert fixed.parameter_names == ['y']
         value, gradient = fixed.value_and_gradient()
         np.testing.assert_allclose(value, 14.0 + 3.0j, rtol=0, atol=1e-12)
         np.testing.assert_allclose(gradient, [1.0j], rtol=0, atol=1e-12)
 
-        freed = fixed.free('x')
+        freed = fixed.with_parameters({'x': ld.ParameterUpdate(fixed=None)})
         assert freed.parameter_names == ['x', 'y']
         value, gradient = freed.value_and_gradient(parameters={'x': 2.0})
         np.testing.assert_allclose(value, 9.0 + 3.0j, rtol=0, atol=1e-12)
         np.testing.assert_allclose(gradient, [4.0, 1.0j], rtol=0, atol=1e-12)
+
+    def test_parameter_metadata_snapshot_is_complete_and_detached(self) -> None:
+        initial = 2.0
+        scale = 2.0
+        folded_value = 5.0
+        x = ld.parameter(
+            'x',
+            initial=initial,
+            bounds=(0.0, 4.0),
+            periodic=True,
+            scale=scale,
+            unit='GeV',
+            latex=r'\\mu',
+            description='mass',
+        )
+        y = ld.parameter('y', initial=(1.0, 3.0))
+        folded = ld.parameter('folded', fixed=folded_value)
+        model = ld.Model(x + y + folded)
+
+        specs = model.parameter_specs
+        assert set(specs) == {'folded', 'x', 'y'}
+        x_spec = specs['x']
+        assert x_spec.name == 'x'
+        assert x_spec.fixed is None
+        assert x_spec.initial == initial
+        assert x_spec.bounds == (0.0, 4.0)
+        assert x_spec.periodic is True
+        assert x_spec.scale == scale
+        assert x_spec.unit == 'GeV'
+        assert x_spec.latex == r'\\mu'
+        assert x_spec.description == 'mass'
+        assert specs['y'].initial == (1.0, 3.0)
+        assert specs['y'].bounds is None
+        assert specs['folded'].fixed == folded_value
+        assert model.fixed_parameters == {'folded': folded_value}
+
+        specs.pop('x')
+        specs['new'] = x_spec
+        fixed_parameters = model.fixed_parameters
+        fixed_parameters['folded'] = 99.0
+        assert set(model.parameter_specs) == {'folded', 'x', 'y'}
+        assert model.fixed_parameters == {'folded': folded_value}
+        with self.assertRaises(AttributeError):
+            x_spec.scale = 3.0  # ty: ignore[invalid-assignment]
+
+    def test_batched_parameter_updates_change_values_and_gradient_layout(self) -> None:
+        x_fixed = 3.0
+        y_fixed = 5.0
+        x_initial = 2.0
+        x = ld.parameter('x', initial=x_initial)
+        y = ld.parameter('y', initial=3.0)
+        model = ld.Model(x * x + y)
+
+        updated = model.with_parameters(
+            {
+                'x': ld.ParameterUpdate(fixed=x_fixed),
+                'y': ld.ParameterUpdate(initial=4.0),
+            }
+        )
+        assert updated.parameter_names == ['y']
+        assert updated.fixed_parameters == {'x': x_fixed}
+        value, gradient = updated.value_and_gradient()
+        np.testing.assert_allclose(value, 13.0, rtol=0, atol=1e-12)
+        np.testing.assert_allclose(gradient, [1.0], rtol=0, atol=1e-12)
+
+        freed = updated.with_parameters(
+            {
+                'x': ld.ParameterUpdate(fixed=None),
+                'y': ld.ParameterUpdate(fixed=y_fixed),
+            }
+        )
+        assert freed.parameter_names == ['x']
+        assert freed.fixed_parameters == {'y': y_fixed}
+        assert freed.parameter_specs['x'].initial == x_fixed
+        value, gradient = freed.value_and_gradient()
+        np.testing.assert_allclose(value, 14.0, rtol=0, atol=1e-12)
+        np.testing.assert_allclose(gradient, [6.0], rtol=0, atol=1e-12)
+
+        overridden = model.with_parameters(
+            {
+                'x': ld.ParameterUpdate(fixed=x_fixed, initial=1.0),
+            }
+        )
+        assert overridden.parameter_specs['x'].fixed == x_fixed
+        assert overridden.parameter_specs['x'].initial == 1.0
+        still_fixed = overridden.with_parameters({'x': ld.ParameterUpdate(initial=x_initial)})
+        assert still_fixed.parameter_specs['x'].fixed == x_fixed
+        assert still_fixed.parameter_specs['x'].initial == x_initial
+
+    def test_parameter_update_none_has_distinct_reset_and_preserve_semantics(self) -> None:
+        initial = 2.0
+        scale = 2.0
+        fixed_value = 3.0
+        x = ld.parameter(
+            'x',
+            initial=initial,
+            bounds=(0.0, 4.0),
+            periodic=True,
+            scale=scale,
+            unit='GeV',
+            latex=r'\\mu',
+            description='mass',
+        )
+        model = ld.Model(x)
+
+        preserved = model.with_parameters({'x': ld.ParameterUpdate()})
+        assert preserved.parameter_specs['x'].initial == initial
+        assert preserved.parameter_specs['x'].bounds == (0.0, 4.0)
+        assert preserved.parameter_specs['x'].scale == scale
+
+        cleared = model.with_parameters(
+            {
+                'x': ld.ParameterUpdate(
+                    bounds=None,
+                    periodic=False,
+                    scale=None,
+                    unit=None,
+                    latex=None,
+                    description=None,
+                )
+            }
+        )
+        cleared_spec = cleared.parameter_specs['x']
+        assert cleared_spec.bounds is None
+        assert cleared_spec.periodic is False
+        assert cleared_spec.scale is None
+        assert cleared_spec.unit is None
+        assert cleared_spec.latex is None
+        assert cleared_spec.description is None
+
+        reset = model.with_parameters({'x': ld.ParameterUpdate(initial=None)})
+        assert reset.parameter_specs['x'].initial is None
+        assert reset.default_parameters == [0.0]
+
+        fixed = model.with_parameters({'x': ld.ParameterUpdate(fixed=fixed_value)})
+        freed = fixed.with_parameters({'x': ld.ParameterUpdate(fixed=None)})
+        assert freed.parameter_specs['x'].fixed is None
+        assert freed.parameter_specs['x'].initial == fixed_value
+
+    def test_parameter_update_constructor_rejects_unknown_types_and_bad_values(self) -> None:
+        parameter_update = cast('Any', ld.ParameterUpdate)
+        with self.assertRaises(TypeError):
+            parameter_update(unknown=1.0)
+        for kwargs in (
+            {'fixed': 'bad'},
+            {'initial': 'bad'},
+            {'periodic': None},
+        ):
+            with self.subTest(kwargs=kwargs), self.assertRaises(TypeError):
+                parameter_update(**kwargs)
+
+        with self.assertRaises(ValueError):
+            parameter_update(bounds=(0.0, 1.0, 2.0))
+
+        invalid_updates = (
+            {'fixed': float('nan')},
+            {'fixed': float('inf')},
+            {'initial': float('nan')},
+            {'initial': float('inf')},
+            {'initial': (2.0, 1.0)},
+            {'bounds': (2.0, 1.0)},
+            {'bounds': (float('nan'), 1.0)},
+            {'scale': 0.0},
+            {'scale': float('inf')},
+        )
+        for kwargs in invalid_updates:
+            with self.subTest(kwargs=kwargs), self.assertRaises(ld.LadduError):
+                parameter_update(**kwargs)
+
+    def test_parameter_update_validation_is_atomic_for_unknown_and_conflicting_inputs(self) -> None:
+        x = ld.parameter('x', initial=2.0)
+        y = ld.parameter('y', initial=3.0)
+        model = ld.Model(x + y)
+        before = model.parameter_specs
+
+        with self.assertRaises(ld.LadduError):
+            model.with_parameters(
+                {
+                    'x': ld.ParameterUpdate(fixed=4.0),
+                    'missing': ld.ParameterUpdate(fixed=1.0),
+                }
+            )
+        assert model.parameter_specs['x'].fixed is before['x'].fixed
+        assert model.parameter_specs['x'].initial == before['x'].initial
+        assert model.parameter_specs['y'].fixed is before['y'].fixed
+
+        with self.assertRaises(ld.LadduError):
+            model.with_parameters(
+                {
+                    'x': ld.ParameterUpdate(bounds=(0.0, 1.0)),
+                    'y': ld.ParameterUpdate(fixed=7.0),
+                }
+            )
+        assert model.parameter_specs['x'].bounds == before['x'].bounds
+        assert model.parameter_specs['y'].fixed is before['y'].fixed
+
+        with self.assertRaises(ld.LadduError):
+            model.with_parameters(
+                {
+                    'x': ld.ParameterUpdate(
+                        fixed=1.0,
+                        initial=10.0,
+                        bounds=(0.0, 2.0),
+                    )
+                }
+            )
+        assert model.parameter_specs['x'].fixed is before['x'].fixed
+        assert model.parameter_specs['x'].initial == before['x'].initial
+
+        for updates in ({'x': 1.0}, {1: ld.ParameterUpdate()}):
+            with self.subTest(updates=updates), self.assertRaises(TypeError):
+                model.with_parameters(cast('Any', updates))
+
+    def test_repeated_names_update_every_occurrence(self) -> None:
+        model = ld.Model(ld.parameter('shared', initial=2.0) + ld.parameter('shared', initial=2.0))
+        fixed = model.with_parameters({'shared': ld.ParameterUpdate(fixed=3.0)})
+
+        assert fixed.parameter_names == []
+        assert fixed.fixed_parameters == {'shared': 3.0}
+        np.testing.assert_allclose(fixed.evaluate(), 6.0, rtol=0, atol=1e-12)
+
+    def test_optimized_away_parameter_can_be_freed_again(self) -> None:
+        vanishing = ld.parameter('vanishing', initial=4.0)
+        visible = ld.parameter('visible', initial=2.0)
+        model = ld.Model(vanishing * visible)
+        assert model.parameter_names == ['vanishing', 'visible']
+
+        fixed = model.with_parameters({'vanishing': ld.ParameterUpdate(fixed=0.0)})
+        assert fixed.parameter_names == ['visible']
+        assert fixed.parameter_specs['vanishing'].fixed == 0.0
+        np.testing.assert_allclose(fixed.evaluate(parameters={'visible': 3.0}), 0.0, rtol=0, atol=1e-12)
+
+        freed = fixed.with_parameters({'vanishing': ld.ParameterUpdate(fixed=None)})
+        assert freed.parameter_names == ['vanishing', 'visible']
+        value, gradient = freed.value_and_gradient(parameters={'vanishing': 4.0, 'visible': 2.0})
+        np.testing.assert_allclose(value, 8.0, rtol=0, atol=1e-12)
+        np.testing.assert_allclose(gradient, [2.0, 4.0], rtol=0, atol=1e-12)
 
     def test_matrix_elements_and_solve_components(self) -> None:
         x = ld.parameter('x', initial=2.0)

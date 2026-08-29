@@ -42,6 +42,7 @@ pub use laddu::NodeStyle
 pub use laddu::NodeStyleRule
 pub use laddu::P4Component
 pub use laddu::Parameter
+pub use laddu::ParameterUpdate
 pub use laddu::Predicate
 pub use laddu::ProcessMemoryReport
 pub use laddu::RuntimeError
@@ -246,6 +247,7 @@ pub use laddu::prelude::ParamRegistry
 pub use laddu::prelude::ParamState
 pub use laddu::prelude::ParamValues
 pub use laddu::prelude::Parameter
+pub use laddu::prelude::ParameterUpdate
 pub use laddu::prelude::ParquetSink
 pub use laddu::prelude::ParquetSource
 pub use laddu::prelude::Partitioning
@@ -1835,6 +1837,85 @@ pub type laddu::python::model::PyModel::Target = laddu::python::model::PyModel
 pub const laddu::python::model::PyModel::OUTPUT_TYPE: pyo3::inspect::PyStaticExpr
 pub fn laddu::python::model::PyModel::into_pyobject(self, pyo3::marker::Python<'py>) -> core::result::Result<<Self as pyo3::conversion::IntoPyObject<'_>>::Output, <Self as pyo3::conversion::IntoPyObject<'_>>::Error>
 pub fn laddu::python::model::model_free_values(&laddu_compile::model::CompiledModel, &pyo3::instance::Bound<'_, pyo3::types::any::PyAny>) -> pyo3::err::PyResult<alloc::vec::Vec<f64>>
+pub mod laddu::python::parameters
+pub struct laddu::python::parameters::PyParameterSpec
+impl core::clone::Clone for laddu::python::parameters::PyParameterSpec
+pub fn laddu::python::parameters::PyParameterSpec::clone(&self) -> laddu::python::parameters::PyParameterSpec
+impl core::convert::From<&laddu_expr::parameters::Parameter> for laddu::python::parameters::PyParameterSpec
+pub fn laddu::python::parameters::PyParameterSpec::from(&laddu_expr::parameters::Parameter) -> Self
+impl pyo3::impl_::pyclass::PyClassImpl for laddu::python::parameters::PyParameterSpec
+pub type laddu::python::parameters::PyParameterSpec::BaseNativeType = pyo3::types::any::PyAny
+pub type laddu::python::parameters::PyParameterSpec::BaseType = pyo3::types::any::PyAny
+pub type laddu::python::parameters::PyParameterSpec::Dict = pyo3::impl_::pyclass::PyClassDummySlot
+pub type laddu::python::parameters::PyParameterSpec::Inventory = Pyo3MethodsInventoryForPyParameterSpec
+pub type laddu::python::parameters::PyParameterSpec::Layout = <<laddu::python::parameters::PyParameterSpec as pyo3::impl_::pyclass::PyClassImpl>::BaseNativeType as pyo3::impl_::pyclass::PyClassBaseType>::Layout
+pub type laddu::python::parameters::PyParameterSpec::PyClassMutability = <<pyo3::types::any::PyAny as pyo3::impl_::pyclass::PyClassBaseType>::PyClassMutability as pyo3::pycell::impl_::PyClassMutability>::ImmutableChild
+pub type laddu::python::parameters::PyParameterSpec::ThreadChecker = pyo3::impl_::pyclass::NoopThreadChecker
+pub type laddu::python::parameters::PyParameterSpec::WeakRef = pyo3::impl_::pyclass::PyClassDummySlot
+pub const laddu::python::parameters::PyParameterSpec::DOC: &'static core::ffi::c_str::CStr
+pub const laddu::python::parameters::PyParameterSpec::IS_BASETYPE: bool
+pub const laddu::python::parameters::PyParameterSpec::IS_IMMUTABLE_TYPE: bool
+pub const laddu::python::parameters::PyParameterSpec::IS_MAPPING: bool
+pub const laddu::python::parameters::PyParameterSpec::IS_SEQUENCE: bool
+pub const laddu::python::parameters::PyParameterSpec::IS_SUBCLASS: bool
+pub const laddu::python::parameters::PyParameterSpec::MODULE: core::option::Option<&str>
+pub const laddu::python::parameters::PyParameterSpec::RAW_DOC: &'static core::ffi::c_str::CStr
+pub fn laddu::python::parameters::PyParameterSpec::items_iter() -> pyo3::impl_::pyclass::PyClassItemsIter
+pub fn laddu::python::parameters::PyParameterSpec::lazy_type_object() -> &'static pyo3::impl_::pyclass::lazy_type_object::LazyTypeObject<Self>
+impl pyo3::pyclass::PyClass for laddu::python::parameters::PyParameterSpec
+pub type laddu::python::parameters::PyParameterSpec::Frozen = pyo3::pyclass::boolean_struct::True
+pub const laddu::python::parameters::PyParameterSpec::NAME: &str
+impl pyo3::type_object::PyTypeInfo for laddu::python::parameters::PyParameterSpec
+pub const laddu::python::parameters::PyParameterSpec::MODULE: core::option::Option<&str>
+pub const laddu::python::parameters::PyParameterSpec::NAME: &str
+pub const laddu::python::parameters::PyParameterSpec::TYPE_HINT: pyo3::inspect::PyStaticExpr
+pub fn laddu::python::parameters::PyParameterSpec::type_object_raw(pyo3::marker::Python<'_>) -> *mut pyo3_ffi::cpython::object::PyTypeObject
+impl pyo3::types::DerefToPyAny for laddu::python::parameters::PyParameterSpec
+impl<'py> pyo3::conversion::IntoPyObject<'py> for laddu::python::parameters::PyParameterSpec
+pub type laddu::python::parameters::PyParameterSpec::Error = pyo3::err::PyErr
+pub type laddu::python::parameters::PyParameterSpec::Output = pyo3::instance::Bound<'py, <laddu::python::parameters::PyParameterSpec as pyo3::conversion::IntoPyObject<'py>>::Target>
+pub type laddu::python::parameters::PyParameterSpec::Target = laddu::python::parameters::PyParameterSpec
+pub const laddu::python::parameters::PyParameterSpec::OUTPUT_TYPE: pyo3::inspect::PyStaticExpr
+pub fn laddu::python::parameters::PyParameterSpec::into_pyobject(self, pyo3::marker::Python<'py>) -> core::result::Result<<Self as pyo3::conversion::IntoPyObject<'_>>::Output, <Self as pyo3::conversion::IntoPyObject<'_>>::Error>
+pub struct laddu::python::parameters::PyParameterUpdate
+impl core::clone::Clone for laddu::python::parameters::PyParameterUpdate
+pub fn laddu::python::parameters::PyParameterUpdate::clone(&self) -> laddu::python::parameters::PyParameterUpdate
+impl pyo3::impl_::pyclass::PyClassImpl for laddu::python::parameters::PyParameterUpdate
+pub type laddu::python::parameters::PyParameterUpdate::BaseNativeType = pyo3::types::any::PyAny
+pub type laddu::python::parameters::PyParameterUpdate::BaseType = pyo3::types::any::PyAny
+pub type laddu::python::parameters::PyParameterUpdate::Dict = pyo3::impl_::pyclass::PyClassDummySlot
+pub type laddu::python::parameters::PyParameterUpdate::Inventory = Pyo3MethodsInventoryForPyParameterUpdate
+pub type laddu::python::parameters::PyParameterUpdate::Layout = <<laddu::python::parameters::PyParameterUpdate as pyo3::impl_::pyclass::PyClassImpl>::BaseNativeType as pyo3::impl_::pyclass::PyClassBaseType>::Layout
+pub type laddu::python::parameters::PyParameterUpdate::PyClassMutability = <<pyo3::types::any::PyAny as pyo3::impl_::pyclass::PyClassBaseType>::PyClassMutability as pyo3::pycell::impl_::PyClassMutability>::ImmutableChild
+pub type laddu::python::parameters::PyParameterUpdate::ThreadChecker = pyo3::impl_::pyclass::NoopThreadChecker
+pub type laddu::python::parameters::PyParameterUpdate::WeakRef = pyo3::impl_::pyclass::PyClassDummySlot
+pub const laddu::python::parameters::PyParameterUpdate::DOC: &'static core::ffi::c_str::CStr
+pub const laddu::python::parameters::PyParameterUpdate::IS_BASETYPE: bool
+pub const laddu::python::parameters::PyParameterUpdate::IS_IMMUTABLE_TYPE: bool
+pub const laddu::python::parameters::PyParameterUpdate::IS_MAPPING: bool
+pub const laddu::python::parameters::PyParameterUpdate::IS_SEQUENCE: bool
+pub const laddu::python::parameters::PyParameterUpdate::IS_SUBCLASS: bool
+pub const laddu::python::parameters::PyParameterUpdate::MODULE: core::option::Option<&str>
+pub const laddu::python::parameters::PyParameterUpdate::RAW_DOC: &'static core::ffi::c_str::CStr
+pub fn laddu::python::parameters::PyParameterUpdate::items_iter() -> pyo3::impl_::pyclass::PyClassItemsIter
+pub fn laddu::python::parameters::PyParameterUpdate::lazy_type_object() -> &'static pyo3::impl_::pyclass::lazy_type_object::LazyTypeObject<Self>
+impl pyo3::impl_::pyclass::doc::PyClassNewTextSignature for laddu::python::parameters::PyParameterUpdate
+pub const laddu::python::parameters::PyParameterUpdate::TEXT_SIGNATURE: &'static str
+impl pyo3::pyclass::PyClass for laddu::python::parameters::PyParameterUpdate
+pub type laddu::python::parameters::PyParameterUpdate::Frozen = pyo3::pyclass::boolean_struct::True
+pub const laddu::python::parameters::PyParameterUpdate::NAME: &str
+impl pyo3::type_object::PyTypeInfo for laddu::python::parameters::PyParameterUpdate
+pub const laddu::python::parameters::PyParameterUpdate::MODULE: core::option::Option<&str>
+pub const laddu::python::parameters::PyParameterUpdate::NAME: &str
+pub const laddu::python::parameters::PyParameterUpdate::TYPE_HINT: pyo3::inspect::PyStaticExpr
+pub fn laddu::python::parameters::PyParameterUpdate::type_object_raw(pyo3::marker::Python<'_>) -> *mut pyo3_ffi::cpython::object::PyTypeObject
+impl pyo3::types::DerefToPyAny for laddu::python::parameters::PyParameterUpdate
+impl<'py> pyo3::conversion::IntoPyObject<'py> for laddu::python::parameters::PyParameterUpdate
+pub type laddu::python::parameters::PyParameterUpdate::Error = pyo3::err::PyErr
+pub type laddu::python::parameters::PyParameterUpdate::Output = pyo3::instance::Bound<'py, <laddu::python::parameters::PyParameterUpdate as pyo3::conversion::IntoPyObject<'py>>::Target>
+pub type laddu::python::parameters::PyParameterUpdate::Target = laddu::python::parameters::PyParameterUpdate
+pub const laddu::python::parameters::PyParameterUpdate::OUTPUT_TYPE: pyo3::inspect::PyStaticExpr
+pub fn laddu::python::parameters::PyParameterUpdate::into_pyobject(self, pyo3::marker::Python<'py>) -> core::result::Result<<Self as pyo3::conversion::IntoPyObject<'_>>::Output, <Self as pyo3::conversion::IntoPyObject<'_>>::Error>
 pub mod laddu::python::particle
 pub mod laddu::python::particle::particles
 pub struct laddu::python::particle::PyParticle

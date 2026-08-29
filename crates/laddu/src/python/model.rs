@@ -1,7 +1,7 @@
-use std::path::PathBuf;
+use std::{collections::BTreeMap, path::PathBuf};
 
 use laddu_compile::CompiledModel;
-use laddu_expr::ExprNode;
+use laddu_expr::{ExprNode, parameters::ParamState};
 use laddu_runtime::{Device, PreparedModel};
 use numpy::{PyArray1, PyArray2};
 use pyo3::{
@@ -16,6 +16,7 @@ use super::{
     error::to_py_err,
     expr::PyExpr,
     float_vec,
+    parameters::{PyParameterSpec, PyParameterUpdate},
     runtime::PyExecution,
     visualization::{
         PyNodeStyleRule, expression_dot, expression_equation, expression_latex, expression_svg,
@@ -256,6 +257,42 @@ impl PyModel {
         self.inner.params().initial_free_values()
     }
 
+    #[getter]
+    /// dict[str, ParameterSpec]: Definitions of all named parameters, sorted by name.
+    ///
+    /// Includes fixed parameters and parameters whose contributions were optimized
+    /// away. The dictionary is a detached snapshot and its records are immutable.
+    /// Evaluation and gradient ordering still follow :attr:`parameter_names`.
+    fn parameter_specs(&self) -> BTreeMap<String, PyParameterSpec> {
+        self.inner
+            .params()
+            .specs()
+            .iter()
+            .map(|parameter| {
+                (
+                    parameter.name().to_owned(),
+                    PyParameterSpec::from(parameter),
+                )
+            })
+            .collect()
+    }
+
+    #[getter]
+    /// dict[str, float]: Fixed parameter names and values, sorted by name.
+    ///
+    /// Changing the returned dictionary does not change this model.
+    fn fixed_parameters(&self) -> BTreeMap<String, f64> {
+        self.inner
+            .params()
+            .specs()
+            .iter()
+            .filter_map(|parameter| match parameter.state() {
+                ParamState::Fixed(value) => Some((parameter.name().to_owned(), *value)),
+                ParamState::Free => None,
+            })
+            .collect()
+    }
+
     #[pyo3(signature = (*, seed=0))]
     /// Sample reproducible initial values from parameter initialization ranges.
     ///
@@ -287,27 +324,46 @@ impl PyModel {
         })
     }
 
-    /// Return a recompiled model with one parameter fixed.
+    /// Apply a batch of parameter edits and return a recompiled model.
+    ///
+    /// Edits apply to the retained source definitions, including fixed parameters
+    /// optimized into constants. All occurrences of a shared name are updated.
+    /// The complete batch is validated and compiled once; this model is unchanged.
+    ///
+    /// Parameters
+    /// ----------
+    /// updates : dict[str, ParameterUpdate]
+    ///     Updates keyed by parameter name. Unlisted parameters and omitted fields
+    ///     retain their current definitions. Inspect :attr:`parameter_specs` to
+    ///     discover names and settings.
+    ///
+    /// Returns
+    /// -------
+    /// Model
+    ///     New model with updated definitions and its own free-parameter ordering.
     ///
     /// Raises
     /// ------
+    /// TypeError
+    ///     If names are not strings or values are not ParameterUpdate objects.
     /// LadduError
-    ///     If the parameter is unknown or the fixed value violates its bounds.
-    fn fix(&self, name: &str, value: f64) -> PyResult<Self> {
+    ///     If a name is unknown, a resulting definition is invalid, or compilation fails.
+    #[pyo3(signature = (updates: "dict[str, ParameterUpdate]"))]
+    fn with_parameters(&self, updates: &Bound<'_, PyDict>) -> PyResult<Self> {
+        let updates = updates
+            .iter()
+            .map(|(name, update)| {
+                Ok((
+                    name.extract::<String>()?,
+                    update
+                        .extract::<PyRef<'_, PyParameterUpdate>>()?
+                        .inner
+                        .clone(),
+                ))
+            })
+            .collect::<PyResult<Vec<_>>>()?;
         Ok(Self {
-            inner: self.inner.fix_parameter(name, value).map_err(to_py_err)?,
-        })
-    }
-
-    /// Return a recompiled model with a fixed parameter made free.
-    ///
-    /// Raises
-    /// ------
-    /// LadduError
-    ///     If the parameter is unknown or cannot be made free.
-    fn free(&self, name: &str) -> PyResult<Self> {
-        Ok(Self {
-            inner: self.inner.free_parameter(name).map_err(to_py_err)?,
+            inner: self.inner.with_parameters(updates).map_err(to_py_err)?,
         })
     }
 

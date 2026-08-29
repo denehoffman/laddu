@@ -30,9 +30,9 @@ use super::{
 /// A symbolic expression evaluated once per event.
 ///
 /// Expressions form an immutable computation graph. Arithmetic with Python
-/// numbers or other expressions builds a new graph; it does not immediately
-/// compute a value. Compile the expression as part of a model or likelihood to
-/// evaluate it efficiently over a dataset.
+/// complex values or other expressions builds a new graph; it does not
+/// immediately compute a value. Compile the expression as part of a model or
+/// likelihood to evaluate it efficiently over a dataset.
 ///
 /// Parameters
 /// ----------
@@ -58,8 +58,7 @@ impl From<Expr> for PyExpr {
 ///
 /// # Errors
 ///
-/// Returns [`PyTypeError`] unless `value` is an [`Expr`][PyExpr], a real
-/// number, or a complex number.
+/// Returns [`PyTypeError`] unless `value` is an [`Expr`][PyExpr] or a complex value.
 pub fn extract_expr(value: &Bound<'_, PyAny>) -> PyResult<Expr> {
     if let Ok(expression) = value.extract::<PyRef<'_, PyExpr>>() {
         return Ok(expression.inner.clone());
@@ -70,9 +69,7 @@ pub fn extract_expr(value: &Bound<'_, PyAny>) -> PyResult<Expr> {
     if let Ok(value) = value.extract::<Complex64>() {
         return Ok(Expr::from(value));
     }
-    Err(PyTypeError::new_err(
-        "expected an Expr, real number, or complex number",
-    ))
+    Err(PyTypeError::new_err("expected an Expr, float, or complex"))
 }
 
 fn binary(
@@ -495,7 +492,7 @@ impl PyExpr {
 /// Raises
 /// ------
 /// TypeError
-///     If `initial` is neither a number nor a pair of numbers.
+///     If `initial` is neither a float nor a pair of floats.
 /// ValueError
 ///     If the name, bounds, initial value, periodicity, or scale is invalid.
 ///
@@ -577,7 +574,7 @@ pub fn scalar(name: String) -> PyExpr {
 ///
 /// Parameters
 /// ----------
-/// re, im : Expr or int or float
+/// re, im : Expr or float
 ///     Real and imaginary components.
 ///
 /// Returns

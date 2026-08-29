@@ -137,6 +137,8 @@ pub mod likelihood;
 pub mod math;
 /// Python compiled-model wrapper.
 pub mod model;
+/// Python parameter updates and immutable parameter inspection records.
+pub mod parameters;
 /// Python particle definitions and built-in particle catalog.
 pub mod particle;
 /// Python spin, parity, isospin, and statistics types.
@@ -222,6 +224,10 @@ macro_rules! laddu_python_module {
             };
             #[pymodule_export]
             use $crate::python::model::PyModel as Model;
+            #[pymodule_export]
+            use $crate::python::parameters::{
+                PyParameterSpec as ParameterSpec, PyParameterUpdate as ParameterUpdate,
+            };
             #[pymodule_export]
             use $crate::python::particle::{PyParticle as Particle, particles};
             #[pymodule_export]

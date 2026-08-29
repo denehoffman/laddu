@@ -62,7 +62,6 @@ impl FromPyObject<'_, '_> for PyL {
         <PyRef<'_, PyL>>::INPUT_TYPE,
         <PyRef<'_, PyJ>>::INPUT_TYPE,
         <PyRef<'_, PyS>>::INPUT_TYPE,
-        i64::INPUT_TYPE,
         f64::INPUT_TYPE,
         pyo3::type_hint_identifier!("fractions", "Fraction")
     );
@@ -145,7 +144,7 @@ fn half_repr(name: &str, doubled: i64) -> String {
 ///
 /// Parameters
 /// ----------
-/// value : J, S, L, int, float, or fractions.Fraction
+/// value : J, S, L, float, or fractions.Fraction
 ///     Angular momentum. Floating-point inputs must represent an exact integer
 ///     or half-integer.
 ///
@@ -168,7 +167,7 @@ impl PyJ {
     /// ValueError
     ///     If `value` is negative or not an integer or half-integer.
     #[new]
-    #[pyo3(signature = (value: "J | S | L | int | float"))]
+    #[pyo3(signature = (value: "J | S | L | float | fractions.Fraction"))]
     fn new(value: &Bound<'_, PyAny>) -> PyResult<Self> {
         Ok(Self {
             inner: extract_j(value)?,
@@ -204,12 +203,14 @@ impl PyJ {
     }
     /// Return every total angular momentum obtainable by coupling with `other`.
     ///
+    /// Numeric values for `other` must be nonnegative integers or half-integers.
+    ///
     /// Examples
     /// --------
     /// >>> import laddu as ld
     /// >>> ld.J(0.5).coupled_with(ld.S(1))
     /// [J(1/2), J(3/2)]
-    #[pyo3(signature = (other: "J | S | L | int | float"))]
+    #[pyo3(signature = (other: "J | S | L | float | fractions.Fraction"))]
     fn coupled_with(&self, other: &Bound<'_, PyAny>) -> PyResult<Vec<Self>> {
         Ok(self
             .inner
@@ -219,9 +220,11 @@ impl PyJ {
             .collect())
     }
     /// Return whether `first` and `second` can couple to this total angular momentum.
+    ///
+    /// Numeric inputs must be nonnegative integers or half-integers.
     #[pyo3(signature = (
-        first: "J | S | L | int | float",
-        second: "J | S | L | int | float"
+        first: "J | S | L | float | fractions.Fraction",
+        second: "J | S | L | float | fractions.Fraction"
     ))]
     fn can_couple_to(&self, first: &Bound<'_, PyAny>, second: &Bound<'_, PyAny>) -> PyResult<bool> {
         Ok(self
@@ -270,7 +273,7 @@ impl PyS {
     /// ValueError
     ///     If `value` is negative or not an integer or half-integer.
     #[new]
-    #[pyo3(signature = (value: "J | S | L | int | float"))]
+    #[pyo3(signature = (value: "J | S | L | float | fractions.Fraction"))]
     fn new(value: &Bound<'_, PyAny>) -> PyResult<Self> {
         Ok(Self {
             inner: extract_j(value)?,
@@ -305,7 +308,9 @@ impl PyS {
             .collect()
     }
     /// Return every total angular momentum obtainable by coupling with `other`.
-    #[pyo3(signature = (other: "J | S | L | int | float"))]
+    ///
+    /// Numeric values for `other` must be nonnegative integers or half-integers.
+    #[pyo3(signature = (other: "J | S | L | float | fractions.Fraction"))]
     fn coupled_with(&self, other: &Bound<'_, PyAny>) -> PyResult<Vec<PyJ>> {
         Ok(self
             .inner
@@ -315,9 +320,11 @@ impl PyS {
             .collect())
     }
     /// Return whether `first` and `second` can couple to this spin.
+    ///
+    /// Numeric inputs must be nonnegative integers or half-integers.
     #[pyo3(signature = (
-        first: "J | S | L | int | float",
-        second: "J | S | L | int | float"
+        first: "J | S | L | float | fractions.Fraction",
+        second: "J | S | L | float | fractions.Fraction"
     ))]
     fn can_couple_to(&self, first: &Bound<'_, PyAny>, second: &Bound<'_, PyAny>) -> PyResult<bool> {
         Ok(self
@@ -437,7 +444,7 @@ impl PyM {
     /// ValueError
     ///     If `value` is not an integer or half-integer.
     #[new]
-    #[pyo3(signature = (value: "M | int | float"))]
+    #[pyo3(signature = (value: "M | float | fractions.Fraction"))]
     fn new(value: &Bound<'_, PyAny>) -> PyResult<Self> {
         Ok(Self {
             inner: extract_m(value)?,
@@ -605,11 +612,11 @@ impl PyParity {
 ///
 /// Parameters
 /// ----------
-/// isospin : J, S, L, int, float, or fractions.Fraction
-///     Nonnegative total isospin.
-/// projection : M, int, float, or fractions.Fraction, optional
-///     Third component. When supplied, it must lie in ``[-I, I]`` and have
-///     compatible integer/half-integer parity.
+/// isospin : J, float, or fractions.Fraction
+///     Nonnegative integer or half-integer total isospin.
+/// projection : M, float, or fractions.Fraction, optional
+///     Integer or half-integer third component. When supplied, it must lie in
+///     ``[-I, I]`` and have compatible integer/half-integer parity.
 ///
 /// Examples
 /// --------
@@ -631,9 +638,9 @@ impl PyIsospin {
     ///     If the projection is incompatible with the total isospin.
     #[new]
     #[pyo3(signature = (
-        isospin: "J | S | L | int | float",
+        isospin: "J | float | fractions.Fraction",
         *,
-        projection: "M | int | float | None"=None
+        projection: "M | float | fractions.Fraction | None"=None
     ))]
     fn new(isospin: &Bound<'_, PyAny>, projection: Option<&Bound<'_, PyAny>>) -> PyResult<Self> {
         let isospin = extract_j(isospin)?;
@@ -819,11 +826,12 @@ impl PyStatistics {
         Statistics::Fermion.into()
     }
     #[staticmethod]
-    #[pyo3(signature = (spin: "J | S | L | int | float"))]
+    #[pyo3(signature = (spin: "S | float | fractions.Fraction"))]
     /// Determine statistics from the spin-statistics relation.
     ///
     /// Integral spins produce :attr:`BOSON`; half-integral spins produce
     /// :attr:`FERMION`.
+    /// Numeric inputs must be nonnegative integers or half-integers.
     ///
     /// Raises
     /// ------
@@ -1113,10 +1121,13 @@ impl PyRuleSet {
         *,
         daughter_a,
         daughter_b,
-        l: "L | J | S | int | float",
-        s: "J | S | L | int | float"
+        l: "L | float | fractions.Fraction",
+        s: "S | float | fractions.Fraction"
     ))]
     /// Evaluate this rule set for ``parent -> daughter_a daughter_b``.
+    ///
+    /// `l` must be a nonnegative integer-valued orbital angular momentum. `s`
+    /// must be a nonnegative integer or half-integer coupled spin.
     fn evaluate(
         &self,
         parent: &PyParticle,
@@ -1147,11 +1158,14 @@ pub struct PyPartialWave {
 impl PyPartialWave {
     #[new]
     #[pyo3(signature = (
-        j: "J | S | L | int | float",
-        l: "L | J | S | int | float",
-        s: "J | S | L | int | float"
+        j: "J | float | fractions.Fraction",
+        l: "L | float | fractions.Fraction",
+        s: "S | float | fractions.Fraction"
     ))]
     /// Construct and validate a coupled ``JLS`` partial wave.
+    ///
+    /// `j` and `s` must be nonnegative integers or half-integers; `l` must be a
+    /// nonnegative integer.
     fn new(j: &Bound<'_, PyAny>, l: &Bound<'_, PyAny>, s: &Bound<'_, PyAny>) -> PyResult<Self> {
         Ok(Self {
             inner: PartialWave::new(extract_j(j)?, l.extract::<PyL>()?.inner, extract_spin(s)?)
@@ -1241,9 +1255,11 @@ impl PySelectionRules {
     #[new]
     #[pyo3(signature = (
         rules,
-        max_l: "L | J | S | int | float"
+        max_l: "L | float | fractions.Fraction"
     ))]
     /// Construct from a rule set and maximum orbital angular momentum.
+    ///
+    /// `max_l` must be a nonnegative integer-valued orbital angular momentum.
     fn new(rules: &PyRuleSet, max_l: &Bound<'_, PyAny>) -> PyResult<Self> {
         Ok(Self {
             inner: SelectionRules::new(rules.inner.clone(), max_l.extract::<PyL>()?.inner),
@@ -1251,8 +1267,10 @@ impl PySelectionRules {
     }
 
     #[staticmethod]
-    #[pyo3(signature = (max_l: "L | J | S | int | float"))]
+    #[pyo3(signature = (max_l: "L | float | fractions.Fraction"))]
     /// Construct strong-interaction selection rules.
+    ///
+    /// `max_l` must be a nonnegative integer-valued orbital angular momentum.
     fn strong(max_l: &Bound<'_, PyAny>) -> PyResult<Self> {
         Ok(Self {
             inner: SelectionRules::strong(max_l.extract::<PyL>()?.inner),
@@ -1260,8 +1278,10 @@ impl PySelectionRules {
     }
 
     #[staticmethod]
-    #[pyo3(signature = (max_l: "L | J | S | int | float"))]
+    #[pyo3(signature = (max_l: "L | float | fractions.Fraction"))]
     /// Construct electromagnetic selection rules.
+    ///
+    /// `max_l` must be a nonnegative integer-valued orbital angular momentum.
     fn electromagnetic(max_l: &Bound<'_, PyAny>) -> PyResult<Self> {
         Ok(Self {
             inner: SelectionRules::electromagnetic(max_l.extract::<PyL>()?.inner),
@@ -1269,8 +1289,10 @@ impl PySelectionRules {
     }
 
     #[staticmethod]
-    #[pyo3(signature = (max_l: "L | J | S | int | float"))]
+    #[pyo3(signature = (max_l: "L | float | fractions.Fraction"))]
     /// Construct weak-interaction selection rules.
+    ///
+    /// `max_l` must be a nonnegative integer-valued orbital angular momentum.
     fn weak(max_l: &Bound<'_, PyAny>) -> PyResult<Self> {
         Ok(Self {
             inner: SelectionRules::weak(max_l.extract::<PyL>()?.inner),

@@ -606,10 +606,6 @@ pub fn laddu_compile::CompiledModel::cost(&self) -> laddu_compile::cost::Optimiz
 pub fn laddu_compile::CompiledModel::display_dot(&self) -> laddu_expr::visualization::ExprGraphDotDisplay<'_>
 pub fn laddu_compile::CompiledModel::display_tree(&self) -> laddu_expr::visualization::ExprGraphTreeDisplay<'_>
 pub fn laddu_compile::CompiledModel::facts(&self) -> &laddu_compile::facts::GraphFacts
-pub fn laddu_compile::CompiledModel::fix_parameter(&self, &str, f64) -> laddu_compile::CompileResult<Self>
-pub fn laddu_compile::CompiledModel::fix_parameter_with_options(&self, &str, f64, &laddu_compile::CompileOptions) -> laddu_compile::CompileResult<Self>
-pub fn laddu_compile::CompiledModel::free_parameter(&self, &str) -> laddu_compile::CompileResult<Self>
-pub fn laddu_compile::CompiledModel::free_parameter_with_options(&self, &str, &laddu_compile::CompileOptions) -> laddu_compile::CompileResult<Self>
 pub fn laddu_compile::CompiledModel::from_expr(&laddu_expr::expression::Expr) -> laddu_compile::CompileResult<Self>
 pub fn laddu_compile::CompiledModel::from_expr_with_options(&laddu_expr::expression::Expr, &laddu_compile::CompileOptions) -> laddu_compile::CompileResult<Self>
 pub fn laddu_compile::CompiledModel::from_graph(laddu_expr::expression::ExprGraph) -> laddu_compile::CompileResult<Self>
@@ -620,6 +616,8 @@ pub fn laddu_compile::CompiledModel::normalization_diagnostics(&self) -> &laddu_
 pub fn laddu_compile::CompiledModel::parameter_polynomial_degree(&self) -> core::option::Option<usize>
 pub fn laddu_compile::CompiledModel::params(&self) -> &laddu_expr::parameters::ParamLayout
 pub fn laddu_compile::CompiledModel::project_tags<'a>(&self, impl core::iter::traits::collect::IntoIterator<Item = &'a str>) -> laddu_compile::CompileResult<Self>
+pub fn laddu_compile::CompiledModel::with_parameters<N, I>(&self, I) -> laddu_compile::CompileResult<Self> where N: core::convert::AsRef<str>, I: core::iter::traits::collect::IntoIterator<Item = (N, laddu_expr::parameters::ParameterUpdate)>
+pub fn laddu_compile::CompiledModel::with_parameters_with_options<N, I>(&self, I, &laddu_compile::CompileOptions) -> laddu_compile::CompileResult<Self> where N: core::convert::AsRef<str>, I: core::iter::traits::collect::IntoIterator<Item = (N, laddu_expr::parameters::ParameterUpdate)>
 impl core::clone::Clone for laddu_compile::CompiledModel
 pub fn laddu_compile::CompiledModel::clone(&self) -> laddu_compile::CompiledModel
 impl core::fmt::Debug for laddu_compile::CompiledModel

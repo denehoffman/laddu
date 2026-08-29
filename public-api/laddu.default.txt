@@ -41,6 +41,7 @@ pub use laddu::NodeStyle
 pub use laddu::NodeStyleRule
 pub use laddu::P4Component
 pub use laddu::Parameter
+pub use laddu::ParameterUpdate
 pub use laddu::Predicate
 pub use laddu::ProcessMemoryReport
 pub use laddu::RuntimeError
@@ -238,6 +239,7 @@ pub use laddu::prelude::ParamRegistry
 pub use laddu::prelude::ParamState
 pub use laddu::prelude::ParamValues
 pub use laddu::prelude::Parameter
+pub use laddu::prelude::ParameterUpdate
 pub use laddu::prelude::ParquetSink
 pub use laddu::prelude::ParquetSource
 pub use laddu::prelude::Partitioning

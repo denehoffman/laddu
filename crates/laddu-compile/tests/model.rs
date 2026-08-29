@@ -3,7 +3,7 @@
 use laddu_compile::{CompileError, CompileOptions, CompiledModel};
 use laddu_expr::{
     BinaryOp, Expr, ExprNode, complex, event_scalar, parameter,
-    parameters::{ParamError, Parameter},
+    parameters::{ParamError, ParamState, Parameter, ParameterUpdate},
 };
 use num::complex::Complex64;
 
@@ -158,7 +158,13 @@ fn fixed_parameters_are_baked_and_folded() {
     let expression = (parameter!("scale") + 1.0) * event_scalar("x");
     let compiled = CompiledModel::from_expr(&expression)
         .unwrap()
-        .fix_parameter("scale", 2.0)
+        .with_parameters([(
+            "scale",
+            ParameterUpdate {
+                state: Some(ParamState::Fixed(2.0)),
+                ..Default::default()
+            },
+        )])
         .unwrap();
 
     assert_eq!(compiled.params().n_free(), 0);
@@ -179,9 +185,23 @@ fn freeing_a_compiled_parameter_recompiles_from_the_source_graph() {
     let expression = parameter!("scale") * event_scalar("x");
     let fixed = CompiledModel::from_expr(&expression)
         .unwrap()
-        .fix_parameter("scale", 2.0)
+        .with_parameters([(
+            "scale",
+            ParameterUpdate {
+                state: Some(ParamState::Fixed(2.0)),
+                ..Default::default()
+            },
+        )])
         .unwrap();
-    let freed = fixed.free_parameter("scale").unwrap();
+    let freed = fixed
+        .with_parameters([(
+            "scale",
+            ParameterUpdate {
+                state: Some(ParamState::Free),
+                ..Default::default()
+            },
+        )])
+        .unwrap();
 
     assert_eq!(freed.params().n_free(), 1);
     assert!(freed.graph().nodes().iter().any(

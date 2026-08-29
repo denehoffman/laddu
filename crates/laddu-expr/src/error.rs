@@ -59,6 +59,14 @@ pub enum ParamError {
         /// Invalid upper bound.
         max: f64,
     },
+    /// A parameter bound was NaN.
+    #[error("invalid NaN bound {value} for {name}")]
+    InvalidBoundValue {
+        /// Parameter name.
+        name: String,
+        /// Invalid bound value.
+        value: f64,
+    },
     /// A uniform initial range had its endpoints reversed.
     #[error("invalid uniform initial range for {name}: min {min} is greater than max {max}")]
     InvalidInitialRange {
@@ -87,9 +95,35 @@ pub enum ParamError {
         /// Initial range maximum.
         max: f64,
     },
+    /// A scalar initial value was not finite.
+    #[error("initial value {value} for {name} must be finite")]
+    NonFiniteInitialValue {
+        /// Parameter name.
+        name: String,
+        /// Invalid initial value.
+        value: f64,
+    },
+    /// An initial range endpoint was not finite.
+    #[error("initial range [{min}, {max}] for {name} must be finite")]
+    NonFiniteInitialRange {
+        /// Parameter name.
+        name: String,
+        /// Range minimum.
+        min: f64,
+        /// Range maximum.
+        max: f64,
+    },
     /// A fixed parameter value fell outside its bounds.
     #[error("fixed value {value} for {name} is outside bounds")]
     FixedValueOutOfBounds {
+        /// Parameter name.
+        name: String,
+        /// Invalid fixed value.
+        value: f64,
+    },
+    /// A fixed parameter value was not finite.
+    #[error("fixed value {value} for {name} must be finite")]
+    NonFiniteFixedValue {
         /// Parameter name.
         name: String,
         /// Invalid fixed value.
@@ -114,6 +148,42 @@ pub enum ParamError {
     InvalidScale {
         /// Parameter name.
         name: String,
+        /// Invalid scale.
+        scale: f64,
+    },
+    /// A fixed value in a parameter update was not finite.
+    #[error("parameter update fixed value must be finite, got {value}")]
+    InvalidUpdateFixedValue {
+        /// Invalid fixed value.
+        value: f64,
+    },
+    /// A scalar initial value in a parameter update was not finite.
+    #[error("parameter update initial value must be finite, got {value}")]
+    InvalidUpdateInitialValue {
+        /// Invalid initial value.
+        value: f64,
+    },
+    /// A uniform initial range in a parameter update was not finite or ordered.
+    #[error("parameter update initial range must be finite and ordered, got [{min}, {max}]")]
+    InvalidUpdateInitialRange {
+        /// Invalid range minimum.
+        min: f64,
+        /// Invalid range maximum.
+        max: f64,
+    },
+    /// Bounds in a parameter update were unordered or contained NaN.
+    #[error(
+        "parameter update bounds must be ordered and cannot contain NaN, got [{min:?}, {max:?}]"
+    )]
+    InvalidUpdateBounds {
+        /// Invalid lower bound.
+        min: Option<f64>,
+        /// Invalid upper bound.
+        max: Option<f64>,
+    },
+    /// A scale in a parameter update was not finite and positive.
+    #[error("parameter update scale must be finite and positive, got {scale}")]
+    InvalidUpdateScale {
         /// Invalid scale.
         scale: f64,
     },

@@ -6,7 +6,7 @@ use std::{
 use crate::CompileResult;
 use laddu_expr::{
     BinaryOp, Expr, ExprGraph, ExprId, ExprNode, ParameterStructuralKey, UnaryOp, ValueKind,
-    parameters::{ParamLayout, ParamRegistry},
+    parameters::{ParamLayout, ParamRegistry, ParameterUpdate},
     vector,
 };
 use serde::{Deserialize, Serialize};
@@ -735,53 +735,42 @@ impl CompiledModel {
         self.graph.display_dot()
     }
 
-    /// Fix a parameter by name and recompile the model.
+    /// Apply a batch of parameter updates and recompile the model.
+    ///
+    /// The source graph is updated atomically before one compilation from the
+    /// resulting graph. This preserves parameters that an earlier optimized
+    /// graph may have removed by constant folding.
     ///
     /// # Errors
     ///
-    /// Returns [`CompileError`](crate::CompileError) when the parameter is
-    /// unknown, the fixed value is out of bounds, or recompilation fails.
-    pub fn fix_parameter(&self, name: &str, value: f64) -> CompileResult<Self> {
-        self.fix_parameter_with_options(name, value, &CompileOptions::default())
+    /// Returns [`CompileError`] when an update is invalid, unknown, duplicated,
+    /// leaves parameter definitions in conflict, or compilation fails.
+    pub fn with_parameters<N, I>(&self, updates: I) -> CompileResult<Self>
+    where
+        N: AsRef<str>,
+        I: IntoIterator<Item = (N, ParameterUpdate)>,
+    {
+        let source_graph = self.source_graph.with_parameters(updates)?;
+        Self::from_graph_with_options(source_graph, &CompileOptions::default())
     }
 
-    /// Fix a parameter by name and recompile with explicit options.
+    /// Apply a batch of parameter updates and recompile with explicit options.
     ///
     /// # Errors
     ///
-    /// Returns [`CompileError`](crate::CompileError) when the parameter is
-    /// unknown, the fixed value is out of bounds, or recompilation fails.
-    pub fn fix_parameter_with_options(
+    /// Returns [`CompileError`] when an update is invalid, unknown, duplicated,
+    /// leaves parameter definitions in conflict, or compilation fails.
+    pub fn with_parameters_with_options<N, I>(
         &self,
-        name: &str,
-        value: f64,
+        updates: I,
         options: &CompileOptions,
-    ) -> CompileResult<Self> {
-        Self::from_graph_with_options(self.source_graph.fix_parameter(name, value)?, options)
-    }
-
-    /// Free a parameter by name and recompile the model.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`CompileError`](crate::CompileError) when the parameter is
-    /// unknown or recompilation fails.
-    pub fn free_parameter(&self, name: &str) -> CompileResult<Self> {
-        self.free_parameter_with_options(name, &CompileOptions::default())
-    }
-
-    /// Free a parameter by name and recompile with explicit options.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`CompileError`](crate::CompileError) when the parameter is
-    /// unknown or recompilation fails.
-    pub fn free_parameter_with_options(
-        &self,
-        name: &str,
-        options: &CompileOptions,
-    ) -> CompileResult<Self> {
-        Self::from_graph_with_options(self.source_graph.free_parameter(name)?, options)
+    ) -> CompileResult<Self>
+    where
+        N: AsRef<str>,
+        I: IntoIterator<Item = (N, ParameterUpdate)>,
+    {
+        let source_graph = self.source_graph.with_parameters(updates)?;
+        Self::from_graph_with_options(source_graph, options)
     }
 
     /// Returns the validated parameter layout.

@@ -33,9 +33,7 @@ Omitting `parameters` uses `model.default_parameters`. A partial dictionary
 overrides only the named free parameters; other free parameters keep their
 defaults. Ordered lists, tuples, and NumPy arrays follow
 `model.parameter_names`, which is also the gradient order. Fixed parameters
-retain their fixed values and do not occupy gradient entries. Use
-`model.fix(...)` or `model.free(...)` to construct a model with a different
-set of free parameters.
+retain their fixed values and do not occupy gradient entries.
 
 | Dataset argument | Value | Gradient |
 | --- | --- | --- |
@@ -48,6 +46,60 @@ onto their real components; this does not compute their magnitudes. With no
 free parameters, gradients have shape `(0,)` without a dataset or
 `(n_events, 0)` with one. A supplied one-event dataset always retains its event
 dimension.
+
+### Inspect and update parameter definitions
+
+The complete parameter declarations are available as detached
+`model.parameter_specs` and `model.fixed_parameters` snapshots, including
+parameters folded away by graph optimization:
+
+```python
+mass_0 = ld.parameter("mass_0", initial=1.50, bounds=(1.35, 1.65), unit="GeV")
+width_0 = ld.parameter("width_0", initial=0.12, bounds=(0.01, 0.30), unit="GeV")
+model = ld.Model(mass_0 + width_0)
+
+spec = model.parameter_specs["mass_0"]
+print(spec.initial, spec.bounds, spec.unit, spec.description)
+print(model.fixed_parameters)
+```
+
+Each `ParameterSpec` record is immutable, and changing either returned mapping
+does not change the model. Its fields are `name`, `fixed`, `initial`, `bounds`,
+`periodic`, `scale`, `unit`, `latex`, and `description`. `initial` is a scalar,
+an inclusive `(minimum, maximum)` initialization range, or `None` for the
+default zero. `bounds` is an inclusive pair whose endpoints may be `None`, or
+`None` when the parameter is unbounded.
+
+To change parameter definitions, pass a batch of `ParameterUpdate` objects to
+`with_parameters`. The method returns a new recompiled model and validates the
+whole batch before applying any change. Updates affect every occurrence of a
+name in the source graph, including occurrences removed by optimization:
+
+```python
+configured = model.with_parameters({
+    "mass_0": ld.ParameterUpdate(
+        fixed=1.50,
+        bounds=(1.35, 1.65),
+        unit="GeV",
+    ),
+    "width_0": ld.ParameterUpdate(initial=0.12, scale=0.1),
+})
+
+freed = configured.with_parameters({
+    "mass_0": ld.ParameterUpdate(fixed=None),
+})
+```
+
+Omitted update fields preserve their current values. Explicit `None` clears
+optional metadata such as `unit`, `latex`, `description`, and `scale`; it
+removes bounds when used for `bounds`, resets initialization to the default
+zero when used for `initial`, and frees a parameter when used for `fixed`.
+Fixing also sets the initial value to the fixed value unless `initial` is
+explicitly supplied in the same update. Changing `initial` alone leaves the
+fixed/free state unchanged. `periodic` is always a Boolean.
+Unknown parameter names and batches that leave
+an initial or fixed value outside its bounds raise `laddu.LadduError`, and the
+original model remains unchanged.
 
 ### Scalar results and event inputs
 

@@ -45,12 +45,17 @@ Parameters may instead be fixed in the expression or in a compiled model:
 reference_re = ld.parameter("reference_re", fixed=1.0)
 reference_im = ld.parameter("reference_im", fixed=0.0)
 
-mass_fixed_model = model.fix("mass_0", 1.50)
-mass_freed_model = mass_fixed_model.free("mass_0")
+mass_fixed_model = model.with_parameters({
+    "mass_0": ld.ParameterUpdate(fixed=1.50),
+})
+mass_freed_model = mass_fixed_model.with_parameters({
+    "mass_0": ld.ParameterUpdate(fixed=None),
+})
 ```
 
-`fix` and `free` return new models. Rebuild the likelihood because its parameter
-layout has changed.
+`with_parameters` returns a new model. Rebuild the likelihood because its
+parameter layout has changed. Several independent updates can be applied in
+one call, and the entire batch is validated atomically.
 
 ## Minimize the likelihood
 
