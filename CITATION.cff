@@ -5,7 +5,7 @@ title: "laddu: Amplitude analysis made short and sweet"
 authors:
   - family-names: Hoffman
     given-names: Nathaniel Dene
-version: 0.22.0 # x-release-please-version
+version: 0.23.0 # x-release-please-version
 repository-code: "https://github.com/denehoffman/laddu"
 url: "https://laddu.readthedocs.io/"
 license:

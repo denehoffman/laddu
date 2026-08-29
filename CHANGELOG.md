@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.23.0](https://github.com/denehoffman/laddu/compare/v0.22.0...v0.23.0) (2026-08-29)
+
+
+### ⚠ BREAKING CHANGES
+
+* **parameters:** Replace compiled-model and expression-graph fix/free APIs with atomic parameter updates. Remove Python Model.fix and Model.free.
+
+### Features
+
+* **parameters:** Add model parameter updates and inspection ([b36ad17](https://github.com/denehoffman/laddu/commit/b36ad17a11ee79d7154508b3f771f8328e508629))
+
 ## [0.22.0](https://github.com/denehoffman/laddu/compare/v0.21.6...v0.22.0) (2026-08-28)
 
 
