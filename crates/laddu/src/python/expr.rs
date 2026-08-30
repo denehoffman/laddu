@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use num::complex::Complex64;
 use pyo3::{
     class::basic::CompareOp,
-    exceptions::PyTypeError,
+    exceptions::{PyTypeError, PyValueError},
     prelude::*,
     types::{PyAny, PyTuple},
 };
@@ -446,6 +446,221 @@ impl PyExpr {
     }
 }
 
+#[derive(Clone, Copy)]
+enum ComplexParameterCoordinates {
+    Cartesian,
+    Polar,
+}
+
+impl ComplexParameterCoordinates {
+    fn parse(value: &str) -> PyResult<Self> {
+        match value {
+            "cartesian" => Ok(Self::Cartesian),
+            "polar" => Ok(Self::Polar),
+            _ => Err(PyValueError::new_err(
+                "coordinates must be 'cartesian' or 'polar'",
+            )),
+        }
+    }
+
+    fn components(self, value: Complex64) -> (f64, f64) {
+        match self {
+            Self::Cartesian => (value.re, value.im),
+            Self::Polar => (value.norm(), value.arg()),
+        }
+    }
+
+    fn default_suffixes(self) -> (String, String) {
+        match self {
+            Self::Cartesian => (" real".into(), " imag".into()),
+            Self::Polar => (" magnitude".into(), " phase".into()),
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum ComplexParameterInitial {
+    Value(f64),
+    Range(f64, f64),
+}
+
+type ComplexParameterPair<T> = (T, T);
+type ComplexParameterBounds = (Option<f64>, Option<f64>);
+
+struct ComplexParameterComponent {
+    initial: Option<ComplexParameterInitial>,
+    bounds: Option<ComplexParameterBounds>,
+    fixed: Option<f64>,
+    periodic: bool,
+    scale: Option<f64>,
+    unit: Option<String>,
+    latex: Option<String>,
+    description: Option<String>,
+}
+
+impl ComplexParameterComponent {
+    fn into_parameter(self, name: String) -> Parameter {
+        let mut parameter = match self.fixed {
+            Some(value) => Parameter::fixed(name, value),
+            None => Parameter::free(name),
+        };
+        parameter = match self.initial {
+            Some(ComplexParameterInitial::Value(value)) => parameter.with_initial(value),
+            Some(ComplexParameterInitial::Range(minimum, maximum)) => {
+                parameter.with_initial((minimum, maximum))
+            }
+            None => parameter,
+        };
+        if let Some((minimum, maximum)) = self.bounds {
+            parameter = parameter.with_bounds(minimum, maximum);
+        }
+        parameter = parameter.with_periodicity(self.periodic);
+        if let Some(scale) = self.scale {
+            parameter = parameter.with_scale(scale);
+        }
+        if let Some(unit) = self.unit {
+            parameter = parameter.with_unit(unit);
+        }
+        if let Some(latex) = self.latex {
+            parameter = parameter.with_latex(latex);
+        }
+        if let Some(description) = self.description {
+            parameter = parameter.with_description(description);
+        }
+        parameter
+    }
+}
+
+fn extract_complex_initial_part(value: &Bound<'_, PyAny>) -> PyResult<ComplexParameterInitial> {
+    if let Ok(value) = value.extract::<f64>() {
+        return Ok(ComplexParameterInitial::Value(value));
+    }
+    if let Ok((minimum, maximum)) = value.extract::<(f64, f64)>() {
+        return Ok(ComplexParameterInitial::Range(minimum, maximum));
+    }
+    Err(PyTypeError::new_err(
+        "each initial component must be a float or a (minimum, maximum) tuple",
+    ))
+}
+
+fn extract_complex_initial(
+    value: Option<&Bound<'_, PyAny>>,
+    coordinates: ComplexParameterCoordinates,
+) -> PyResult<ComplexParameterPair<Option<ComplexParameterInitial>>> {
+    let Some(value) = value else {
+        return Ok((None, None));
+    };
+    if let Ok(value) = value.extract::<f64>() {
+        let (first, second) = coordinates.components(Complex64::new(value, 0.0));
+        return Ok((
+            Some(ComplexParameterInitial::Value(first)),
+            Some(ComplexParameterInitial::Value(second)),
+        ));
+    }
+    if let Ok(value) = value.extract::<Complex64>() {
+        let (first, second) = coordinates.components(value);
+        return Ok((
+            Some(ComplexParameterInitial::Value(first)),
+            Some(ComplexParameterInitial::Value(second)),
+        ));
+    }
+    let (first, second) = value
+        .extract::<(Bound<'_, PyAny>, Bound<'_, PyAny>)>()
+        .map_err(|_| {
+            PyTypeError::new_err("initial must be a number or a pair of component values or ranges")
+        })?;
+    Ok((
+        Some(extract_complex_initial_part(&first)?),
+        Some(extract_complex_initial_part(&second)?),
+    ))
+}
+
+fn extract_complex_bounds(
+    value: Option<&Bound<'_, PyAny>>,
+) -> PyResult<ComplexParameterPair<Option<ComplexParameterBounds>>> {
+    let Some(value) = value else {
+        return Ok((None, None));
+    };
+    if let Ok(bounds) = value.extract::<(Option<f64>, Option<f64>)>() {
+        return Ok((Some(bounds), Some(bounds)));
+    }
+    if let Ok((first, second)) =
+        value.extract::<((Option<f64>, Option<f64>), (Option<f64>, Option<f64>))>()
+    {
+        return Ok((Some(first), Some(second)));
+    }
+    Err(PyTypeError::new_err(
+        "bounds must be a (minimum, maximum) tuple or a pair of bounds tuples",
+    ))
+}
+
+fn extract_complex_fixed(
+    value: Option<&Bound<'_, PyAny>>,
+    coordinates: ComplexParameterCoordinates,
+) -> PyResult<ComplexParameterPair<Option<f64>>> {
+    let Some(value) = value else {
+        return Ok((None, None));
+    };
+    if let Ok(value) = value.extract::<f64>() {
+        let (first, second) = coordinates.components(Complex64::new(value, 0.0));
+        return Ok((Some(first), Some(second)));
+    }
+    if let Ok(value) = value.extract::<Complex64>() {
+        let (first, second) = coordinates.components(value);
+        return Ok((Some(first), Some(second)));
+    }
+    value.extract::<(Option<f64>, Option<f64>)>().map_err(|_| {
+        PyTypeError::new_err("fixed must be a number or a pair containing floats or None")
+    })
+}
+
+fn extract_complex_periodicity(
+    value: Option<&Bound<'_, PyAny>>,
+) -> PyResult<ComplexParameterPair<bool>> {
+    let Some(value) = value else {
+        return Ok((false, false));
+    };
+    if let Ok(value) = value.extract::<bool>() {
+        return Ok((value, value));
+    }
+    value
+        .extract::<(bool, bool)>()
+        .map_err(|_| PyTypeError::new_err("periodic must be a bool or a pair of bools"))
+}
+
+fn extract_complex_scale(
+    value: Option<&Bound<'_, PyAny>>,
+) -> PyResult<ComplexParameterPair<Option<f64>>> {
+    let Some(value) = value else {
+        return Ok((None, None));
+    };
+    if let Ok(value) = value.extract::<f64>() {
+        return Ok((Some(value), Some(value)));
+    }
+    value
+        .extract::<(Option<f64>, Option<f64>)>()
+        .map_err(|_| PyTypeError::new_err("scale must be a float or a pair of floats or None"))
+}
+
+fn extract_complex_strings(
+    value: Option<&Bound<'_, PyAny>>,
+    field: &str,
+) -> PyResult<ComplexParameterPair<Option<String>>> {
+    let Some(value) = value else {
+        return Ok((None, None));
+    };
+    if let Ok(value) = value.extract::<String>() {
+        return Ok((Some(value.clone()), Some(value)));
+    }
+    value
+        .extract::<(Option<String>, Option<String>)>()
+        .map_err(|_| {
+            PyTypeError::new_err(format!(
+                "{field} must be a string or a pair of strings or None"
+            ))
+        })
+}
+
 #[pyfunction]
 #[pyo3(signature = (
     name,
@@ -547,6 +762,121 @@ pub fn parameter(
     // ParamLayout performs the same validation used during compilation, so fail early.
     laddu_expr::parameters::ParamLayout::new([parameter.clone()]).map_err(to_py_err)?;
     Ok(Expr::from(parameter).into())
+}
+
+#[pyfunction]
+#[pyo3(signature = (
+    name,
+    *,
+    initial: "complex | tuple[float | tuple[float, float], float | tuple[float, float]] | None" = None,
+    coordinates: "Literal['cartesian', 'polar']" = "cartesian",
+    suffixes: "tuple[str, str] | None" = None,
+    bounds: "tuple[float | None, float | None] | tuple[tuple[float | None, float | None], tuple[float | None, float | None]] | None" = None,
+    fixed: "complex | tuple[float | None, float | None] | None" = None,
+    periodic: "bool | tuple[bool, bool] | None" = None,
+    scale: "float | tuple[float | None, float | None] | None" = None,
+    unit: "str | tuple[str | None, str | None] | None" = None,
+    latex: "str | tuple[str | None, str | None] | None" = None,
+    description: "str | tuple[str | None, str | None] | None" = None
+))]
+#[allow(clippy::too_many_arguments)]
+/// Create a complex-valued expression backed by two real fit parameters.
+///
+/// Parameters
+/// ----------
+/// name : str
+///     Base name for the two generated fit parameters.
+/// initial : complex or pair, optional
+///     Complex initial value, a pair of component values, or a pair of
+///     ``(minimum, maximum)`` initialization ranges.
+/// coordinates : {'cartesian', 'polar'}, default='cartesian'
+///     Parameterize the expression by real and imaginary parts or by magnitude
+///     and phase.
+/// suffixes : tuple of str, optional
+///     Suffixes appended to `name`. Defaults to ``(' real', ' imag')`` in
+///     Cartesian coordinates and ``(' magnitude', ' phase')`` in polar
+///     coordinates.
+/// bounds : tuple or pair of tuples, optional
+///     Bounds broadcast to both components, or separate component bounds.
+/// fixed : complex or pair, optional
+///     Fix both components from a complex value, or provide a pair containing
+///     a fixed value or ``None`` for each component.
+/// periodic : bool or pair of bool, optional
+///     Periodicity broadcast to both components or specified separately.
+/// scale : float or pair, optional
+///     Optimizer scale broadcast to both components or specified separately.
+/// unit, latex, description : str or pair of str, optional
+///     Metadata broadcast to both components or specified separately.
+///
+/// Returns
+/// -------
+/// Expr
+///     Complex-valued expression composed from the generated fit parameters.
+///
+/// Raises
+/// ------
+/// TypeError
+///     If a component value or metadata field has an invalid shape or type.
+/// ValueError
+///     If the coordinate system or either generated fit parameter is invalid.
+///
+/// Examples
+/// --------
+/// >>> import laddu as ld
+/// >>> beta = ld.cparameter("beta", initial=1.0 + 2.0j)
+pub fn cparameter(
+    name: String,
+    initial: Option<&Bound<'_, PyAny>>,
+    coordinates: &str,
+    suffixes: Option<(String, String)>,
+    bounds: Option<&Bound<'_, PyAny>>,
+    fixed: Option<&Bound<'_, PyAny>>,
+    periodic: Option<&Bound<'_, PyAny>>,
+    scale: Option<&Bound<'_, PyAny>>,
+    unit: Option<&Bound<'_, PyAny>>,
+    latex: Option<&Bound<'_, PyAny>>,
+    description: Option<&Bound<'_, PyAny>>,
+) -> PyResult<PyExpr> {
+    let coordinates = ComplexParameterCoordinates::parse(coordinates)?;
+    let (first_suffix, second_suffix) = suffixes.unwrap_or_else(|| coordinates.default_suffixes());
+    let (first_initial, second_initial) = extract_complex_initial(initial, coordinates)?;
+    let (first_bounds, second_bounds) = extract_complex_bounds(bounds)?;
+    let (first_fixed, second_fixed) = extract_complex_fixed(fixed, coordinates)?;
+    let (first_periodic, second_periodic) = extract_complex_periodicity(periodic)?;
+    let (first_scale, second_scale) = extract_complex_scale(scale)?;
+    let (first_unit, second_unit) = extract_complex_strings(unit, "unit")?;
+    let (first_latex, second_latex) = extract_complex_strings(latex, "latex")?;
+    let (first_description, second_description) =
+        extract_complex_strings(description, "description")?;
+
+    let first = ComplexParameterComponent {
+        initial: first_initial,
+        bounds: first_bounds,
+        fixed: first_fixed,
+        periodic: first_periodic,
+        scale: first_scale,
+        unit: first_unit,
+        latex: first_latex,
+        description: first_description,
+    }
+    .into_parameter(format!("{name}{first_suffix}"));
+    let second = ComplexParameterComponent {
+        initial: second_initial,
+        bounds: second_bounds,
+        fixed: second_fixed,
+        periodic: second_periodic,
+        scale: second_scale,
+        unit: second_unit,
+        latex: second_latex,
+        description: second_description,
+    }
+    .into_parameter(format!("{name}{second_suffix}"));
+    laddu_expr::parameters::ParamLayout::new([first.clone(), second.clone()]).map_err(to_py_err)?;
+    let expression = match coordinates {
+        ComplexParameterCoordinates::Cartesian => expr_complex(first, second),
+        ComplexParameterCoordinates::Polar => expr_polar_complex(first, second),
+    };
+    Ok(expression.into())
 }
 
 #[pyfunction]

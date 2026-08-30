@@ -8,6 +8,86 @@ import numpy as np
 
 
 class ModelEvaluationTests(unittest.TestCase):
+    def test_cartesian_complex_parameter_shorthand(self) -> None:
+        beta = ld.cparameter('beta', initial=1.0 + 2.0j)
+        model = ld.Model(beta)
+
+        assert model.parameter_names == ['beta real', 'beta imag']
+        assert model.default_parameters == [1.0, 2.0]
+        np.testing.assert_allclose(model.evaluate(), 1.0 + 2.0j, rtol=0, atol=1e-12)
+
+    def test_complex_parameter_component_metadata(self) -> None:
+        real_scale = 0.5
+        imaginary_scale = 0.25
+        beta = ld.cparameter(
+            'beta',
+            initial=((-1.0, 1.0), (-2.0, 2.0)),
+            suffixes=(' re', ' im'),
+            bounds=((-3.0, 3.0), (-4.0, 4.0)),
+            scale=(real_scale, imaginary_scale),
+            unit='arb',
+            latex=(r'\operatorname{Re}\beta', r'\operatorname{Im}\beta'),
+            description='complex coefficient',
+        )
+        model = ld.Model(beta)
+
+        assert model.parameter_names == ['beta re', 'beta im']
+        re = model.parameter_specs['beta re']
+        im = model.parameter_specs['beta im']
+        assert re.initial == (-1.0, 1.0)
+        assert im.initial == (-2.0, 2.0)
+        assert re.bounds == (-3.0, 3.0)
+        assert im.bounds == (-4.0, 4.0)
+        assert re.scale == real_scale
+        assert im.scale == imaginary_scale
+        assert re.unit == im.unit == 'arb'
+        assert re.latex == r'\operatorname{Re}\beta'
+        assert im.latex == r'\operatorname{Im}\beta'
+        assert re.description == im.description == 'complex coefficient'
+
+    def test_complex_parameter_broadcasts_metadata_and_allows_one_fixed_component(self) -> None:
+        scale = 0.5
+        beta = ld.cparameter(
+            'beta',
+            initial=(1.0, 2.0),
+            bounds=(-3.0, 3.0),
+            fixed=(None, 2.0),
+            scale=scale,
+        )
+        model = ld.Model(beta)
+
+        assert model.parameter_names == ['beta real']
+        assert model.fixed_parameters == {'beta imag': 2.0}
+        for spec in model.parameter_specs.values():
+            assert spec.bounds == (-3.0, 3.0)
+            assert spec.scale == scale
+        np.testing.assert_allclose(model.evaluate(), 1.0 + 2.0j, rtol=0, atol=1e-12)
+
+    def test_polar_complex_parameter_shorthand(self) -> None:
+        beta = ld.cparameter(
+            'beta',
+            initial=1.0 + 2.0j,
+            coordinates='polar',
+            bounds=((0.0, None), (-np.pi, np.pi)),
+            periodic=(False, True),
+        )
+        model = ld.Model(beta)
+
+        assert model.parameter_names == ['beta magnitude', 'beta phase']
+        np.testing.assert_allclose(
+            model.default_parameters,
+            [np.sqrt(5.0), np.arctan2(2.0, 1.0)],
+            rtol=0,
+            atol=1e-12,
+        )
+        np.testing.assert_allclose(model.evaluate(), 1.0 + 2.0j, rtol=0, atol=1e-12)
+        assert model.parameter_specs['beta magnitude'].periodic is False
+        assert model.parameter_specs['beta phase'].periodic is True
+
+    def test_complex_parameter_rejects_invalid_coordinates(self) -> None:
+        with self.assertRaisesRegex(ValueError, 'coordinates'):
+            ld.cparameter('beta', coordinates='spherical')
+
     def test_parameter_only_complex_value(self) -> None:
         z = ld.complex(ld.parameter('x', initial=2.0), ld.parameter('y', initial=3.0))
         model = ld.Model(z * z + 1.0)

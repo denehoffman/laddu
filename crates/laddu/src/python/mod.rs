@@ -196,8 +196,8 @@ macro_rules! laddu_python_module {
             use $crate::python::error::LadduError;
             #[pymodule_export]
             use $crate::python::expr::{
-                PyExpr as Expr, acos, atan2, cis, complex, dot, matmul, matrix, matvec, parameter,
-                polar_complex, scalar, solve, vector,
+                PyExpr as Expr, acos, atan2, cis, complex, cparameter, dot, matmul, matrix, matvec,
+                parameter, polar_complex, scalar, solve, vector,
             };
             #[pymodule_export]
             use $crate::python::generation::{
