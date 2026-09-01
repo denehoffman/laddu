@@ -214,10 +214,29 @@ impl Channel {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(untagged)]
+/// The explicitly supplied source of an edge four-momentum.
+pub enum EdgeP4 {
+    /// A legacy dataset four-vector column name.
+    EventColumn(String),
+    /// A symbolic four-vector expression.
+    Expression(Vec4),
+}
+
+impl EdgeP4 {
+    pub(super) fn expression(&self) -> Vec4 {
+        match self {
+            Self::EventColumn(column) => Vec4::event(column),
+            Self::Expression(expression) => expression.clone(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 /// A particle line in a [`Channel`].
 pub struct Edge {
     name: String,
-    p4: Option<Vec4>,
+    p4: Option<EdgeP4>,
     properties: Option<ParticleProperties>,
     output: bool,
     mass_proposal: Option<MassProposal>,
@@ -244,6 +263,11 @@ impl Edge {
     /// Return whether this edge has an explicitly assigned four-momentum.
     pub fn has_explicit_p4(&self) -> bool {
         self.p4.is_some()
+    }
+
+    /// Return the explicitly supplied four-momentum source, if present.
+    pub fn explicit_p4(&self) -> Option<&EdgeP4> {
+        self.p4.as_ref()
     }
 
     /// Return the particle properties attached to this edge, if present.
@@ -279,7 +303,13 @@ impl EdgeHandle<'_> {
     }
     /// Assign an explicit symbolic four-momentum.
     pub fn p4(&mut self, p4: impl Into<Vec4>) -> &mut Self {
-        self.edge.p4 = Some(p4.into());
+        self.edge.p4 = Some(EdgeP4::Expression(p4.into()));
+        self
+    }
+
+    /// Assign a legacy dataset four-vector column by name.
+    pub fn event_p4(&mut self, column: impl Into<String>) -> &mut Self {
+        self.edge.p4 = Some(EdgeP4::EventColumn(column.into()));
         self
     }
 
@@ -1179,6 +1209,25 @@ mod tests {
                 low: 0.1,
                 high: 0.3
             })
+        ));
+    }
+
+    #[test]
+    fn channels_round_trip_event_columns_and_symbolic_edge_momenta_distinctly() {
+        let mut channel = Channel::new("sources");
+        channel.edge("beam").event_p4("beam");
+        channel.edge("target").p4(p4(0.0, 0.0, 0.0, 1.0));
+
+        let encoded = serde_json::to_string(&channel).unwrap();
+        let decoded: Channel = serde_json::from_str(&encoded).unwrap();
+
+        assert!(matches!(
+            decoded.require_edge("beam").unwrap().explicit_p4(),
+            Some(EdgeP4::EventColumn(column)) if column == "beam"
+        ));
+        assert!(matches!(
+            decoded.require_edge("target").unwrap().explicit_p4(),
+            Some(EdgeP4::Expression(_))
         ));
     }
 }

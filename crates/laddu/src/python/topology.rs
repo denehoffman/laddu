@@ -1,14 +1,34 @@
 use std::collections::HashSet;
 
-use laddu_physics::{channel::Channel, vectors::Vec4};
-use pyo3::{exceptions::PyValueError, prelude::*};
+use laddu_physics::channel::{Channel, EdgeP4};
+use pyo3::{
+    exceptions::{PyTypeError, PyValueError},
+    prelude::*,
+    types::PyString,
+};
 
 #[cfg(feature = "generation")]
 use super::generation::{PyInitialMomentum, PyMassProposal, PyVertexProposal};
 use super::{
-    angular::PyVec3, error::to_py_err, expr::PyExpr, particle::PyParticle,
+    angular::{PyVec3, PyVec4},
+    error::to_py_err,
+    expr::PyExpr,
+    particle::PyParticle,
     quantum::PyMandelstamChannel,
 };
+
+fn edge_p4_to_python(p4: &EdgeP4, py: Python<'_>) -> PyResult<Py<PyAny>> {
+    match p4 {
+        EdgeP4::EventColumn(column) => Ok(PyString::new(py, column).unbind().into_any()),
+        EdgeP4::Expression(expression) => Py::new(
+            py,
+            PyVec4 {
+                inner: expression.clone(),
+            },
+        )
+        .map(|value| value.into_any()),
+    }
+}
 
 #[pyclass(name = "Edge", module = "laddu", frozen, skip_from_py_object)]
 #[derive(Clone)]
@@ -18,8 +38,9 @@ use super::{
 /// ----------
 /// name : str
 ///     Unique edge name.
-/// p4 : str, optional
-///     Dataset four-vector column used for observed events.
+/// p4 : str or Vec4, optional
+///     Dataset four-vector column or symbolic four-vector expression used for
+///     observed events.
 /// particle : Particle, optional
 ///     Particle properties such as mass and quantum numbers.
 /// output : bool, default=True
@@ -30,7 +51,7 @@ use super::{
 ///     Momentum prescription for an initial-state edge.
 pub struct PyEdge {
     name: String,
-    p4: Option<String>,
+    p4: Option<EdgeP4>,
     particle: Option<PyParticle>,
     output: bool,
     #[cfg(feature = "generation")]
@@ -49,10 +70,10 @@ impl PyEdge {
     ///     If ``name`` is empty.
     #[new]
     #[cfg(feature = "generation")]
-    #[pyo3(signature = (name, *, p4=None, particle=None, output=true, mass_proposal=None, initial_momentum=None))]
+    #[pyo3(signature = (name, *, p4: "str | Vec4 | None" = None, particle=None, output=true, mass_proposal=None, initial_momentum=None))]
     fn new(
         name: String,
-        p4: Option<String>,
+        p4: Option<&Bound<'_, PyAny>>,
         particle: Option<PyRef<'_, PyParticle>>,
         output: bool,
         mass_proposal: Option<PyRef<'_, PyMassProposal>>,
@@ -61,6 +82,16 @@ impl PyEdge {
         if name.is_empty() {
             return Err(PyValueError::new_err("edge name cannot be empty"));
         }
+        let p4 = p4
+            .map(|p4| {
+                if let Ok(column) = p4.extract::<String>() {
+                    return Ok(EdgeP4::EventColumn(column));
+                }
+                p4.extract::<PyRef<'_, PyVec4>>()
+                    .map(|expression| EdgeP4::Expression(expression.inner.clone()))
+                    .map_err(|_| PyTypeError::new_err("expected p4 to be a str or Vec4"))
+            })
+            .transpose()?;
         Ok(Self {
             name,
             p4,
@@ -72,7 +103,12 @@ impl PyEdge {
     }
 
     fn __repr__(&self) -> String {
-        format!("Edge({:?})", self.name)
+        let p4 = match &self.p4 {
+            Some(EdgeP4::EventColumn(column)) => format!("{column:?}"),
+            Some(EdgeP4::Expression(_)) => "Vec4(...)".to_owned(),
+            None => "None".to_owned(),
+        };
+        format!("Edge({:?}, p4={p4})", self.name)
     }
 
     #[getter]
@@ -81,9 +117,12 @@ impl PyEdge {
         &self.name
     }
     #[getter]
-    /// str or None: Dataset four-vector column.
-    fn p4(&self) -> Option<&str> {
-        self.p4.as_deref()
+    /// str or Vec4 or None: Dataset four-vector column or symbolic expression.
+    fn p4(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
+        self.p4
+            .as_ref()
+            .map(|p4| edge_p4_to_python(p4, py))
+            .transpose()
     }
     #[getter]
     /// Particle or None: Particle properties assigned to the edge.
@@ -363,7 +402,14 @@ impl PyChannel {
             }
             let mut handle = channel.edge(edge.name.clone());
             if let Some(p4) = &edge.p4 {
-                handle.p4(Vec4::event(p4));
+                match p4 {
+                    EdgeP4::EventColumn(column) => {
+                        handle.event_p4(column);
+                    }
+                    EdgeP4::Expression(expression) => {
+                        handle.p4(expression.clone());
+                    }
+                }
             }
             if let Some(particle) = &edge.particle {
                 handle.properties(&particle.inner);
@@ -423,6 +469,21 @@ impl PyChannel {
             .edges()
             .map(|edge| edge.name().to_owned())
             .collect()
+    }
+
+    /// Return an edge's explicitly supplied four-momentum source.
+    ///
+    /// String inputs remain strings across channel construction and JSON round
+    /// trips; symbolic inputs are returned as ``Vec4`` expressions.
+    fn edge_p4(&self, py: Python<'_>, name: &str) -> PyResult<Option<Py<PyAny>>> {
+        let edge = self
+            .inner
+            .edges()
+            .find(|edge| edge.name() == name)
+            .ok_or_else(|| PyValueError::new_err(format!("unknown edge {name:?}")))?;
+        edge.explicit_p4()
+            .map(|p4| edge_p4_to_python(p4, py))
+            .transpose()
     }
     #[getter]
     /// list of str: Vertex names in channel order.

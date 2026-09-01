@@ -18,7 +18,8 @@ the mathematics it implements, and the choices an analysis must make.
 11. {doc}`simultaneous-fits` — share parameters across several datasets.
 12. {doc}`coupled-channel` — share resonance parameters across reaction channels.
 13. {doc}`execution` — choose local, compiled, GPU, and MPI execution only when needed.
-14. {doc}`cross-sections` — turn fitted intensities and efficiencies into cross sections.
+14. {doc}`histograms` — accumulate and merge signed weighted histograms.
+15. {doc}`cross-sections` — turn fitted intensities and efficiencies into cross sections.
 
 ```{toctree}
 :maxdepth: 1
@@ -36,5 +37,6 @@ likelihoods
 simultaneous-fits
 coupled-channel
 execution
+histograms
 cross-sections
 ```

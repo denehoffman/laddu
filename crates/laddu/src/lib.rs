@@ -90,7 +90,10 @@ pub mod prelude {
     pub use laddu_compile::{CompileError, CompileOptions, CompileResult, CompiledModel};
     pub use laddu_data::{
         LadduDataError, LadduDataResult,
-        data::{CacheStorage, Dataset, EventBatch, EventBatchBuilder, MemoryPolicy, OwnedEvent},
+        data::{
+            CacheStorage, Dataset, DatasetStats, EventBatch, EventBatchBuilder, MemoryPolicy,
+            OwnedEvent,
+        },
         io::{
             EventSink, EventSource, Partitioning, ReadPlan, SourceCapabilities, WritePlan,
             memory::{MemorySink, MemorySource},

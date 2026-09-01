@@ -4,9 +4,17 @@ use serde::{Deserialize, Serialize};
 
 use crate::{LadduPhysicsError, LadduPhysicsResult};
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum HistogramFillKind {
+    Manual,
+    Empirical,
+}
+
 /// A simple weighted histogram with explicit bin edges.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct Histogram {
+    fill_kind: HistogramFillKind,
     /// The number of counts in each bin (can be [`f64`]s since these might be weighted counts)
     counts: Vec<f64>,
     /// The edges of each bin (length is one greater than `counts`)
@@ -14,6 +22,101 @@ pub struct Histogram {
     underflow: f64,
     overflow: f64,
     errors: Vec<f64>,
+    sum_squared_weights: Vec<f64>,
+    underflow_sum_squared_weights: Option<f64>,
+    overflow_sum_squared_weights: Option<f64>,
+    #[serde(skip)]
+    corrections: Box<HistogramCorrections>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct HistogramCorrections {
+    counts: Vec<f64>,
+    sum_squared_weights: Vec<f64>,
+    underflow: f64,
+    overflow: f64,
+    underflow_sum_squared_weights: f64,
+    overflow_sum_squared_weights: f64,
+}
+
+impl HistogramCorrections {
+    fn new(bins: usize) -> Self {
+        Self {
+            counts: vec![0.0; bins],
+            sum_squared_weights: vec![0.0; bins],
+            underflow: 0.0,
+            overflow: 0.0,
+            underflow_sum_squared_weights: 0.0,
+            overflow_sum_squared_weights: 0.0,
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct SerializedHistogram {
+    fill_kind: HistogramFillKind,
+    counts: Vec<f64>,
+    bin_edges: Vec<f64>,
+    underflow: f64,
+    overflow: f64,
+    errors: Vec<f64>,
+    sum_squared_weights: Vec<f64>,
+    underflow_sum_squared_weights: Option<f64>,
+    overflow_sum_squared_weights: Option<f64>,
+}
+
+impl<'de> Deserialize<'de> for Histogram {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let SerializedHistogram {
+            fill_kind,
+            counts,
+            bin_edges,
+            underflow,
+            overflow,
+            errors: serialized_errors,
+            sum_squared_weights,
+            underflow_sum_squared_weights,
+            overflow_sum_squared_weights,
+        } = SerializedHistogram::deserialize(deserializer)?;
+        let errors = sum_squared_weights
+            .iter()
+            .map(|sum_squared_weight| sum_squared_weight.sqrt())
+            .collect::<Vec<_>>();
+        if serialized_errors.len() != errors.len()
+            || serialized_errors
+                .iter()
+                .zip(&errors)
+                .any(|(actual, expected)| {
+                    !actual.is_finite()
+                        || (actual - expected).abs()
+                            > f64::EPSILON * 4.0 * actual.abs().max(expected.abs()).max(1.0)
+                })
+        {
+            return Err(serde::de::Error::custom(
+                "histogram errors must match the square root of sum_squared_weights",
+            ));
+        }
+        let bins = counts.len();
+        let histogram = Self {
+            fill_kind,
+            counts,
+            bin_edges,
+            underflow,
+            overflow,
+            errors,
+            sum_squared_weights,
+            underflow_sum_squared_weights,
+            overflow_sum_squared_weights,
+            corrections: Box::new(HistogramCorrections::new(bins)),
+        };
+        histogram
+            .validate_requirements(HistogramRequirements::VALID)
+            .map_err(serde::de::Error::custom)?;
+        Ok(histogram)
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -85,12 +188,18 @@ impl Histogram {
         underflow: f64,
         overflow: f64,
     ) -> LadduPhysicsResult<Self> {
+        let bins = counts.len();
         let histogram = Self {
+            fill_kind: HistogramFillKind::Manual,
             counts: counts.clone(),
             bin_edges,
             underflow,
             overflow,
-            errors: counts.into_iter().map(|count| count.abs().sqrt()).collect(),
+            errors: counts.iter().map(|count| count.abs().sqrt()).collect(),
+            sum_squared_weights: counts.into_iter().map(f64::abs).collect(),
+            underflow_sum_squared_weights: None,
+            overflow_sum_squared_weights: None,
+            corrections: Box::new(HistogramCorrections::new(bins)),
         };
         histogram.validate_requirements(HistogramRequirements::VALID)?;
         Ok(histogram)
@@ -116,8 +225,21 @@ impl Histogram {
     /// Returns [`LadduPhysicsError`] when fewer than two finite, strictly
     /// increasing edges are supplied.
     pub fn empty_with_edges(bin_edges: Vec<f64>) -> LadduPhysicsResult<Self> {
-        let counts = vec![0.0; bin_edges.len().saturating_sub(1)];
-        Self::new(counts, bin_edges)
+        let bins = bin_edges.len().saturating_sub(1);
+        let histogram = Self {
+            fill_kind: HistogramFillKind::Empirical,
+            counts: vec![0.0; bins],
+            bin_edges,
+            underflow: 0.0,
+            overflow: 0.0,
+            errors: vec![0.0; bins],
+            sum_squared_weights: vec![0.0; bins],
+            underflow_sum_squared_weights: Some(0.0),
+            overflow_sum_squared_weights: Some(0.0),
+            corrections: Box::new(HistogramCorrections::new(bins)),
+        };
+        histogram.validate_requirements(HistogramRequirements::VALID)?;
+        Ok(histogram)
     }
 
     /// Fill a uniformly binned histogram from values and optional weights.
@@ -196,6 +318,9 @@ impl Histogram {
 
         Self::validate_errors(errors)?;
         self.errors = errors.to_vec();
+        self.sum_squared_weights = errors.iter().map(|error| error * error).collect();
+        self.corrections.sum_squared_weights.fill(0.0);
+        self.fill_kind = HistogramFillKind::Manual;
         Ok(())
     }
 
@@ -251,6 +376,7 @@ impl Histogram {
     ) -> LadduPhysicsResult<()> {
         Self::validate_fill(value, weight)?;
         Self::validate_error("histogram fill error", error)?;
+        self.fill_kind = HistogramFillKind::Manual;
         self.apply_fill(value, weight, error);
         Ok(())
     }
@@ -277,14 +403,48 @@ impl Histogram {
 
     fn apply_fill(&mut self, value: f64, weight: f64, uncertainty: f64) {
         match self.fill_target(value) {
-            Some(FillTarget::Underflow) => self.underflow += weight,
-            Some(FillTarget::Bin(index)) => {
-                self.counts[index] += weight;
-                self.errors[index] = self.errors[index].hypot(uncertainty);
+            Some(FillTarget::Underflow) => {
+                Self::add_compensated(&mut self.underflow, &mut self.corrections.underflow, weight);
+                if let Some(sum_squared_weights) = &mut self.underflow_sum_squared_weights {
+                    Self::add_compensated(
+                        sum_squared_weights,
+                        &mut self.corrections.underflow_sum_squared_weights,
+                        uncertainty * uncertainty,
+                    );
+                }
             }
-            Some(FillTarget::Overflow) => self.overflow += weight,
+            Some(FillTarget::Bin(index)) => {
+                Self::add_compensated(
+                    &mut self.counts[index],
+                    &mut self.corrections.counts[index],
+                    weight,
+                );
+                Self::add_compensated(
+                    &mut self.sum_squared_weights[index],
+                    &mut self.corrections.sum_squared_weights[index],
+                    uncertainty * uncertainty,
+                );
+                self.errors[index] = self.sum_squared_weights[index].sqrt();
+            }
+            Some(FillTarget::Overflow) => {
+                Self::add_compensated(&mut self.overflow, &mut self.corrections.overflow, weight);
+                if let Some(sum_squared_weights) = &mut self.overflow_sum_squared_weights {
+                    Self::add_compensated(
+                        sum_squared_weights,
+                        &mut self.corrections.overflow_sum_squared_weights,
+                        uncertainty * uncertainty,
+                    );
+                }
+            }
             None => {}
         }
+    }
+
+    fn add_compensated(sum: &mut f64, correction: &mut f64, value: f64) {
+        let corrected = value - *correction;
+        let next = *sum + corrected;
+        *correction = (next - *sum) - corrected;
+        *sum = next;
     }
 
     fn fill_target(&self, value: f64) -> Option<FillTarget> {
@@ -326,6 +486,8 @@ impl Histogram {
 
         Self::validate_counts(counts)?;
         self.counts.copy_from_slice(counts);
+        self.corrections.counts.fill(0.0);
+        self.fill_kind = HistogramFillKind::Manual;
         Ok(())
     }
 
@@ -353,6 +515,8 @@ impl Histogram {
         }
 
         self.counts[bin_index] = value;
+        self.corrections.counts[bin_index] = 0.0;
+        self.fill_kind = HistogramFillKind::Manual;
         Ok(())
     }
 
@@ -374,6 +538,9 @@ impl Histogram {
         }
 
         self.errors[bin_index] = error;
+        self.sum_squared_weights[bin_index] = error * error;
+        self.corrections.sum_squared_weights[bin_index] = 0.0;
+        self.fill_kind = HistogramFillKind::Manual;
         Ok(())
     }
 
@@ -388,6 +555,11 @@ impl Histogram {
         &self.errors
     }
 
+    /// Return the empirical squared-weight constituent for every regular bin.
+    pub fn sum_squared_weights(&self) -> &[f64] {
+        &self.sum_squared_weights
+    }
+
     /// Return the bin edges.
     pub fn bin_edges(&self) -> &[f64] {
         &self.bin_edges
@@ -398,9 +570,128 @@ impl Histogram {
         self.underflow
     }
 
+    /// Return the empirical squared-weight constituent below the first edge.
+    pub fn underflow_sum_squared_weights(&self) -> Option<f64> {
+        self.underflow_sum_squared_weights
+    }
+
     /// Return the accumulated overflow weight.
     pub fn overflow(&self) -> f64 {
         self.overflow
+    }
+
+    /// Return the empirical squared-weight constituent at or above the final edge.
+    pub fn overflow_sum_squared_weights(&self) -> Option<f64> {
+        self.overflow_sum_squared_weights
+    }
+
+    /// Merge a histogram filled from a disjoint event partition.
+    ///
+    /// Geometry, empirical/manual fill policy, and flow-constituent availability
+    /// must match exactly. A failed merge leaves this histogram unchanged.
+    /// The caller is responsible for ensuring the inputs describe disjoint fills;
+    /// histogram accumulators do not retain event-source provenance.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LadduPhysicsError`] when either histogram is invalid, their
+    /// geometry or fill policies differ, or merged finite accumulators overflow.
+    pub fn merge(&mut self, other: &Self) -> LadduPhysicsResult<()> {
+        self.validate_requirements(HistogramRequirements::VALID)?;
+        other.validate_requirements(HistogramRequirements::VALID)?;
+        if self.bin_edges != other.bin_edges {
+            return Err(LadduPhysicsError::invalid_relation(
+                "histogram merge requires identical bin edges",
+            ));
+        }
+        if self.fill_kind != other.fill_kind
+            || self.underflow_sum_squared_weights.is_some()
+                != other.underflow_sum_squared_weights.is_some()
+            || self.overflow_sum_squared_weights.is_some()
+                != other.overflow_sum_squared_weights.is_some()
+        {
+            return Err(LadduPhysicsError::invalid_relation(
+                "histogram merge requires identical fill and uncertainty policies",
+            ));
+        }
+
+        let mut merged = self.clone();
+        for index in 0..merged.counts.len() {
+            Self::add_compensated(
+                &mut merged.counts[index],
+                &mut merged.corrections.counts[index],
+                other.counts[index],
+            );
+            Self::add_compensated(
+                &mut merged.counts[index],
+                &mut merged.corrections.counts[index],
+                -other.corrections.counts[index],
+            );
+            Self::add_compensated(
+                &mut merged.sum_squared_weights[index],
+                &mut merged.corrections.sum_squared_weights[index],
+                other.sum_squared_weights[index],
+            );
+            Self::add_compensated(
+                &mut merged.sum_squared_weights[index],
+                &mut merged.corrections.sum_squared_weights[index],
+                -other.corrections.sum_squared_weights[index],
+            );
+            merged.errors[index] = merged.sum_squared_weights[index].sqrt();
+        }
+        Self::add_compensated(
+            &mut merged.underflow,
+            &mut merged.corrections.underflow,
+            other.underflow,
+        );
+        Self::add_compensated(
+            &mut merged.underflow,
+            &mut merged.corrections.underflow,
+            -other.corrections.underflow,
+        );
+        Self::add_compensated(
+            &mut merged.overflow,
+            &mut merged.corrections.overflow,
+            other.overflow,
+        );
+        Self::add_compensated(
+            &mut merged.overflow,
+            &mut merged.corrections.overflow,
+            -other.corrections.overflow,
+        );
+        if let (Some(merged_sum), Some(other_sum)) = (
+            &mut merged.underflow_sum_squared_weights,
+            other.underflow_sum_squared_weights,
+        ) {
+            Self::add_compensated(
+                merged_sum,
+                &mut merged.corrections.underflow_sum_squared_weights,
+                other_sum,
+            );
+            Self::add_compensated(
+                merged_sum,
+                &mut merged.corrections.underflow_sum_squared_weights,
+                -other.corrections.underflow_sum_squared_weights,
+            );
+        }
+        if let (Some(merged_sum), Some(other_sum)) = (
+            &mut merged.overflow_sum_squared_weights,
+            other.overflow_sum_squared_weights,
+        ) {
+            Self::add_compensated(
+                merged_sum,
+                &mut merged.corrections.overflow_sum_squared_weights,
+                other_sum,
+            );
+            Self::add_compensated(
+                merged_sum,
+                &mut merged.corrections.overflow_sum_squared_weights,
+                -other.corrections.overflow_sum_squared_weights,
+            );
+        }
+        merged.validate_requirements(HistogramRequirements::VALID)?;
+        *self = merged;
+        Ok(())
     }
 
     /// Return the total histogram weight.
@@ -553,21 +844,49 @@ impl Histogram {
             .enumerate()
             .map(|(index, count)| count / scale(index))
             .collect();
-        let errors = self
-            .errors
+        let sum_squared_weights = self
+            .sum_squared_weights
             .iter()
             .enumerate()
-            .map(|(index, error)| error / scale(index).abs())
+            .map(|(index, sum_squared_weight)| sum_squared_weight / scale(index).powi(2))
             .collect::<Vec<_>>();
+        let errors = sum_squared_weights
+            .iter()
+            .map(|sum_squared_weight| sum_squared_weight.sqrt())
+            .collect();
         let (underflow, overflow) = if policy.preserve_flow {
             (self.underflow / total_weight, self.overflow / total_weight)
         } else {
             (0.0, 0.0)
         };
-
-        let mut histogram =
-            Self::new_with_flow(counts, self.bin_edges.clone(), underflow, overflow)?;
-        histogram.set_errors(&errors)?;
+        let flow_scale = total_weight * total_weight;
+        let (underflow_sum_squared_weights, overflow_sum_squared_weights) = if policy.preserve_flow
+        {
+            (
+                self.underflow_sum_squared_weights
+                    .map(|sum| sum / flow_scale),
+                self.overflow_sum_squared_weights
+                    .map(|sum| sum / flow_scale),
+            )
+        } else if self.fill_kind == HistogramFillKind::Empirical {
+            (Some(0.0), Some(0.0))
+        } else {
+            (None, None)
+        };
+        let bins = self.counts.len();
+        let histogram = Self {
+            fill_kind: self.fill_kind,
+            counts,
+            bin_edges: self.bin_edges.clone(),
+            underflow,
+            overflow,
+            errors,
+            sum_squared_weights,
+            underflow_sum_squared_weights,
+            overflow_sum_squared_weights,
+            corrections: Box::new(HistogramCorrections::new(bins)),
+        };
+        histogram.validate_requirements(HistogramRequirements::VALID)?;
         Ok(histogram)
     }
 
@@ -671,6 +990,27 @@ impl Histogram {
             ));
         }
 
+        if self.sum_squared_weights.len() != self.counts.len() {
+            return Err(LadduPhysicsError::invalid_length(
+                "histogram sum_squared_weights",
+                format!("same length as counts ({})", self.counts.len()),
+                self.sum_squared_weights.len(),
+            ));
+        }
+        if self.corrections.counts.len() != self.counts.len()
+            || self.corrections.sum_squared_weights.len() != self.counts.len()
+        {
+            return Err(LadduPhysicsError::invalid_length(
+                "histogram compensated accumulators",
+                format!("same length as counts ({})", self.counts.len()),
+                format!(
+                    "{} count and {} squared-weight corrections",
+                    self.corrections.counts.len(),
+                    self.corrections.sum_squared_weights.len()
+                ),
+            ));
+        }
+
         for (index, edges) in self.bin_edges.windows(2).enumerate() {
             if edges[1] <= edges[0] {
                 return Err(LadduPhysicsError::invalid_relation(format!(
@@ -704,6 +1044,15 @@ impl Histogram {
         }
 
         Self::validate_errors(&self.errors)?;
+        for (index, sum_squared_weights) in self.sum_squared_weights.iter().enumerate() {
+            if !sum_squared_weights.is_finite() || *sum_squared_weights < 0.0 {
+                return Err(LadduPhysicsError::invalid_value(
+                    format!("histogram sum of squared weights {index}"),
+                    "finite and nonnegative",
+                    *sum_squared_weights,
+                ));
+            }
+        }
 
         if !self.underflow.is_finite() {
             return Err(LadduPhysicsError::invalid_value(
@@ -719,6 +1068,19 @@ impl Histogram {
                 "finite",
                 self.overflow,
             ));
+        }
+
+        if let Some(sum_squared_weights) = self.underflow_sum_squared_weights {
+            Self::validate_error(
+                "histogram underflow sum of squared weights",
+                sum_squared_weights,
+            )?;
+        }
+        if let Some(sum_squared_weights) = self.overflow_sum_squared_weights {
+            Self::validate_error(
+                "histogram overflow sum of squared weights",
+                sum_squared_weights,
+            )?;
         }
 
         Ok(())
@@ -1077,6 +1439,74 @@ mod tests {
     }
 
     #[test]
+    fn disjoint_weighted_histograms_merge_their_empirical_constituents() {
+        let mut left = Histogram::empty(2, (0.0, 1.0)).unwrap();
+        left.fill_weighted(-0.1, -2.0).unwrap();
+        left.fill_weighted(0.25, 3.0).unwrap();
+
+        let mut right = Histogram::empty(2, (0.0, 1.0)).unwrap();
+        right.fill_weighted(0.25, -4.0).unwrap();
+        right.fill_weighted(0.75, 5.0).unwrap();
+        right.fill_weighted(1.0, 6.0).unwrap();
+
+        left.merge(&right).unwrap();
+
+        assert_relative_eq!(left.counts(), &[-1.0, 5.0][..]);
+        assert_relative_eq!(left.sum_squared_weights(), &[25.0, 25.0][..]);
+        assert_relative_eq!(left.errors(), &[5.0, 5.0][..]);
+        assert_relative_eq!(left.underflow(), -2.0);
+        assert_relative_eq!(left.underflow_sum_squared_weights().unwrap(), 4.0);
+        assert_relative_eq!(left.overflow(), 6.0);
+        assert_relative_eq!(left.overflow_sum_squared_weights().unwrap(), 36.0);
+    }
+
+    #[test]
+    fn incompatible_merge_is_atomic() {
+        let mut histogram = Histogram::from_values(&[0.25], 2, (0.0, 1.0), Some(&[2.0])).unwrap();
+        let original = histogram.clone();
+        let incompatible = Histogram::empty_with_edges(vec![0.0, 0.25, 1.0]).unwrap();
+
+        assert!(histogram.merge(&incompatible).is_err());
+        assert_eq!(histogram, original);
+    }
+
+    #[test]
+    fn merge_rejects_incompatible_fill_policies() {
+        let mut empirical = Histogram::empty(2, (0.0, 1.0)).unwrap();
+        let manual = Histogram::new(vec![0.0, 0.0], vec![0.0, 0.5, 1.0]).unwrap();
+        let original = empirical.clone();
+
+        assert!(empirical.merge(&manual).is_err());
+        assert_eq!(empirical, original);
+    }
+
+    #[test]
+    fn deterministic_disjoint_merges_match_single_pass_and_ignore_empty_chunks() {
+        let values = [-0.2, 0.1, 0.4, 0.6, 0.9, 1.2];
+        let weights = [2.0, 1.0e16, -1.0e16, 3.0, -4.0, 5.0];
+        let single = Histogram::from_values(&values, 2, (0.0, 1.0), Some(&weights)).unwrap();
+        let mut merged = Histogram::empty(2, (0.0, 1.0)).unwrap();
+
+        for (value_chunk, weight_chunk) in values.chunks(2).zip(weights.chunks(2)) {
+            let partial =
+                Histogram::from_values(value_chunk, 2, (0.0, 1.0), Some(weight_chunk)).unwrap();
+            merged.merge(&partial).unwrap();
+        }
+        merged
+            .merge(&Histogram::empty(2, (0.0, 1.0)).unwrap())
+            .unwrap();
+
+        assert_relative_eq!(merged.counts(), single.counts(), max_relative = 1e-15);
+        assert_relative_eq!(
+            merged.sum_squared_weights(),
+            single.sum_squared_weights(),
+            max_relative = 1e-15
+        );
+        assert_relative_eq!(merged.underflow(), single.underflow(), max_relative = 1e-15);
+        assert_relative_eq!(merged.overflow(), single.overflow(), max_relative = 1e-15);
+    }
+
+    #[test]
     fn explicit_fill_errors_accumulate_in_quadrature() {
         let mut hist = Histogram::empty(1, (0.0, 1.0)).unwrap();
 
@@ -1170,6 +1600,24 @@ mod tests {
         assert_relative_eq!(normalized.overflow(), 0.4);
         assert_relative_eq!(normalized.total_weight(), 0.4);
         assert_relative_eq!(normalized.total_weight_with_flow(), 1.0);
+    }
+
+    #[test]
+    fn normalized_with_flow_scales_empirical_flow_constituents() {
+        let histogram =
+            Histogram::from_values(&[-0.5, 0.5, 1.5], 1, (0.0, 1.0), Some(&[2.0, 3.0, 4.0]))
+                .unwrap();
+
+        let normalized = histogram.normalized_with_flow().unwrap();
+
+        assert_relative_eq!(
+            normalized.underflow_sum_squared_weights().unwrap(),
+            4.0 / 81.0
+        );
+        assert_relative_eq!(
+            normalized.overflow_sum_squared_weights().unwrap(),
+            16.0 / 81.0
+        );
     }
 
     #[test]

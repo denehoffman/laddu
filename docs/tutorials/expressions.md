@@ -187,6 +187,29 @@ parent = ld.Vec4.event("ks1") + ld.Vec4.event("ks2")
 daughter_in_parent_frame = ld.Vec4.event("ks1").boost(-parent.beta())
 ```
 
+An edge's optional `p4` accepts either the legacy event-column name or an
+already-built symbolic four-vector. Strings retain their event-column
+semantics, while constants and expressions composed from event data use the
+same `Vec4` vocabulary:
+
+```python
+target = ld.Vec4(0.938, 0.0, 0.0, 0.0)
+beam = ld.Vec4.event("beam")
+channel = ld.Channel(
+    "fixed target",
+    edges=[
+        ld.Edge("beam", p4=beam),
+        ld.Edge("target", p4=target),
+        ld.Edge("total", p4=beam + target),
+    ],
+    vertices=[],
+)
+```
+
+The expression is retained symbolically when the channel is prepared and in
+channel JSON serialization; required event columns are therefore validated at
+evaluation time through the normal dataset schema checks.
+
 ## Line shapes and coherent amplitudes
 
 Built-in amplitude functions return complex expressions. For an $S$-wave

@@ -189,6 +189,7 @@ macro_rules! laddu_python_module {
             #[pymodule_export]
             use $crate::python::data::{
                 PyBinDataset as BinnedDataset, PyDataset as Dataset,
+                PyDatasetStats as DatasetStats,
                 PyParquetSink as ParquetSink, PyParquetSource as ParquetSource,
                 PyRootSink as RootSink, PyRootSource as RootSource, read_parquet, read_root,
             };
