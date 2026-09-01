@@ -2,7 +2,7 @@ use std::{path::PathBuf, sync::Arc};
 
 use laddu_data::{
     LadduDataError, LadduDataResult,
-    data::{Dataset, EventBatch, MemoryPolicy},
+    data::{Dataset, DatasetStats, EventBatch, MemoryPolicy},
     io::{
         EventBatchIter, EventSource, ReadPlan, SourceCapabilities,
         parquet::{ParquetSink, ParquetSource},
@@ -503,6 +503,58 @@ pub struct PyDataset {
     pub(crate) inner: Dataset,
 }
 
+#[pyclass(name = "DatasetStats", module = "laddu", frozen, skip_from_py_object)]
+#[derive(Clone)]
+/// Cached weight diagnostics for one immutable :class:`Dataset` view.
+///
+/// ``sum_weights`` is signed, while ``positive_weights`` and
+/// ``negative_weights`` report the separated signed contributions. The
+/// squared-weight sum and effective entries are the fill-statistics quantities
+/// used for weighted uncertainty calculations; they are distinct from any
+/// later yield error budget.
+pub struct PyDatasetStats {
+    #[pyo3(get)]
+    events: u64,
+    #[pyo3(get)]
+    sum_weights: f64,
+    #[pyo3(get)]
+    sum_squared_weights: f64,
+    #[pyo3(get)]
+    effective_entries: Option<f64>,
+    #[pyo3(get)]
+    positive_weights: f64,
+    #[pyo3(get)]
+    negative_weights: f64,
+}
+
+impl From<DatasetStats> for PyDatasetStats {
+    fn from(stats: DatasetStats) -> Self {
+        Self {
+            events: stats.events(),
+            sum_weights: stats.sum_weights(),
+            sum_squared_weights: stats.sum_squared_weights(),
+            effective_entries: stats.effective_entries(),
+            positive_weights: stats.positive_weights(),
+            negative_weights: stats.negative_weights(),
+        }
+    }
+}
+
+#[pymethods]
+impl PyDatasetStats {
+    fn __repr__(&self) -> String {
+        format!(
+            "DatasetStats(events={}, sum_weights={}, sum_squared_weights={}, effective_entries={:?}, positive_weights={}, negative_weights={})",
+            self.events,
+            self.sum_weights,
+            self.sum_squared_weights,
+            self.effective_entries,
+            self.positive_weights,
+            self.negative_weights,
+        )
+    }
+}
+
 #[pymethods]
 impl PyDataset {
     /// Create a dataset from a file source.
@@ -761,6 +813,24 @@ impl PyDataset {
     fn sum_weights(&self, py: Python<'_>) -> PyResult<f64> {
         let dataset = self.inner.clone();
         py.detach(move || dataset.sum_weights()).map_err(to_py_err)
+    }
+
+    /// Return cached event and weight diagnostics for this immutable view.
+    ///
+    /// Returns
+    /// -------
+    /// DatasetStats
+    ///     Event count, signed and separated weight totals, squared-weight
+    ///     total, and effective entries.
+    ///
+    /// Raises
+    /// ------
+    /// LadduError
+    ///     If reading or transforming the dataset fails.
+    fn stats(&self, py: Python<'_>) -> PyResult<PyDatasetStats> {
+        let dataset = self.inner.clone();
+        let stats = py.detach(move || dataset.stats()).map_err(to_py_err)?;
+        Ok(stats.into())
     }
 
     /// Materialize the event weights.

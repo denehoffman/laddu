@@ -107,17 +107,37 @@ where
 #[derive(Default)]
 pub(super) struct StatsAccumulator {
     events: u64,
-    sum_weights: f64,
+    sum_weights: CompensatedSum,
+    sum_squared_weights: CompensatedSum,
+    positive_weights: CompensatedSum,
+    negative_weights: CompensatedSum,
+}
+
+#[derive(Default)]
+struct CompensatedSum {
+    value: f64,
     correction: f64,
+}
+
+impl CompensatedSum {
+    fn add(&mut self, value: f64) {
+        let corrected = value - self.correction;
+        let next = self.value + corrected;
+        self.correction = (next - self.value) - corrected;
+        self.value = next;
+    }
 }
 
 impl StatsAccumulator {
     fn observe_weight(&mut self, weight: f64) {
         self.events = self.events.saturating_add(1);
-        let corrected = weight - self.correction;
-        let next = self.sum_weights + corrected;
-        self.correction = (next - self.sum_weights) - corrected;
-        self.sum_weights = next;
+        self.sum_weights.add(weight);
+        self.sum_squared_weights.add(weight * weight);
+        if weight > 0.0 {
+            self.positive_weights.add(weight);
+        } else if weight < 0.0 {
+            self.negative_weights.add(weight);
+        }
     }
 
     fn observe_batch(&mut self, batch: &EventBatch) {
@@ -129,14 +149,20 @@ impl StatsAccumulator {
     fn finish(&self) -> DatasetStats {
         DatasetStats {
             events: self.events,
-            sum_weights: self.sum_weights,
+            sum_weights: self.sum_weights.value,
+            sum_squared_weights: self.sum_squared_weights.value,
+            positive_weights: self.positive_weights.value,
+            negative_weights: self.negative_weights.value,
         }
     }
 
     fn commit(&self, cache: Arc<Mutex<DatasetStatsCache>>) {
         let mut cache = cache.lock().unwrap_or_else(|error| error.into_inner());
         cache.events = Some(self.events);
-        cache.sum_weights = Some(self.sum_weights);
+        cache.sum_weights = Some(self.sum_weights.value);
+        cache.sum_squared_weights = Some(self.sum_squared_weights.value);
+        cache.positive_weights = Some(self.positive_weights.value);
+        cache.negative_weights = Some(self.negative_weights.value);
     }
 }
 

@@ -37,7 +37,7 @@ impl Channel {
             .edge(edge)
             .ok_or_else(|| ResolveFailure::UnknownEdge(edge.to_owned()))?;
         if let Some(p4) = &edge_def.p4 {
-            return Ok(p4.clone());
+            return Ok(p4.expression());
         }
         if stack.iter().any(|candidate| candidate == edge) {
             return Err(ResolveFailure::Cycle(edge.to_owned()));

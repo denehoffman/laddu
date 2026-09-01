@@ -33,6 +33,9 @@ fn next_dataset_identity() -> u64 {
 pub struct DatasetStats {
     events: u64,
     sum_weights: f64,
+    sum_squared_weights: f64,
+    positive_weights: f64,
+    negative_weights: f64,
 }
 
 impl DatasetStats {
@@ -45,12 +48,39 @@ impl DatasetStats {
     pub fn sum_weights(&self) -> f64 {
         self.sum_weights
     }
+
+    /// Returns the accurately accumulated sum of squared event weights.
+    pub fn sum_squared_weights(&self) -> f64 {
+        self.sum_squared_weights
+    }
+
+    /// Returns the effective number of entries, when the squared-weight sum is positive.
+    ///
+    /// Empty, all-zero-weight, and other datasets with a non-positive squared-weight sum have
+    /// no defined effective entries and return `None`.
+    pub fn effective_entries(&self) -> Option<f64> {
+        (self.sum_squared_weights > 0.0)
+            .then(|| self.sum_weights * self.sum_weights / self.sum_squared_weights)
+    }
+
+    /// Returns the sum of positive event weights.
+    pub fn positive_weights(&self) -> f64 {
+        self.positive_weights
+    }
+
+    /// Returns the signed sum of negative event weights.
+    pub fn negative_weights(&self) -> f64 {
+        self.negative_weights
+    }
 }
 
 #[derive(Default)]
 struct DatasetStatsCache {
     events: Option<u64>,
     sum_weights: Option<f64>,
+    sum_squared_weights: Option<f64>,
+    positive_weights: Option<f64>,
+    negative_weights: Option<f64>,
 }
 
 /// Lazy event dataset combining a source, read plan, and row transformations.
@@ -240,26 +270,27 @@ impl Dataset {
     pub fn stats(&self) -> LadduDataResult<DatasetStats> {
         {
             let cache = self.stats.lock().unwrap_or_else(|error| error.into_inner());
-            if let (Some(events), Some(sum_weights)) = (cache.events, cache.sum_weights) {
+            if let (
+                Some(events),
+                Some(sum_weights),
+                Some(sum_squared_weights),
+                Some(positive_weights),
+                Some(negative_weights),
+            ) = (
+                cache.events,
+                cache.sum_weights,
+                cache.sum_squared_weights,
+                cache.positive_weights,
+                cache.negative_weights,
+            ) {
                 return Ok(DatasetStats {
                     events,
                     sum_weights,
+                    sum_squared_weights,
+                    positive_weights,
+                    negative_weights,
                 });
             }
-        }
-
-        if self.ops.is_empty()
-            && let (Some(events), Some(sum_weights)) =
-                (self.source.num_events()?, self.source.weighted_total()?)
-        {
-            let stats = DatasetStats {
-                events,
-                sum_weights,
-            };
-            let mut cache = self.stats.lock().unwrap_or_else(|error| error.into_inner());
-            cache.events = Some(events);
-            cache.sum_weights = Some(sum_weights);
-            return Ok(stats);
         }
 
         let mut executor = self.executor_with_plan(self.plan)?;
@@ -714,6 +745,9 @@ impl Dataset {
             stats: Arc::new(Mutex::new(DatasetStatsCache {
                 events: preserved_events,
                 sum_weights: None,
+                sum_squared_weights: None,
+                positive_weights: None,
+                negative_weights: None,
             })),
             source_traversals: Default::default(),
         }
@@ -819,6 +853,14 @@ mod tests {
         batch.scalar_column(0).to_vec()
     }
 
+    fn stats_dataset(weights: &[f64]) -> Dataset {
+        let schema = schema_with_weight();
+        let events = weights.iter().enumerate().map(|(index, &weight)| {
+            OwnedEvent::weighted(vec![v(index as f64)], vec![index as f64], weight)
+        });
+        Dataset::from_batch(EventBatch::from_events(schema, events).unwrap())
+    }
+
     #[test]
     fn dataset_statistics_are_shared_per_view_and_invalidated_by_selection() {
         let reads = Arc::new(AtomicUsize::new(0));
@@ -831,6 +873,11 @@ mod tests {
         assert_eq!(dataset.num_events().unwrap(), None);
         assert_eq!(dataset.stats().unwrap().events(), 5);
         assert_eq!(clone.sum_weights().unwrap(), 60.0);
+        let stats = clone.stats().unwrap();
+        assert_eq!(stats.sum_squared_weights(), 730.0);
+        assert_eq!(stats.positive_weights(), 60.0);
+        assert_eq!(stats.negative_weights(), 0.0);
+        assert_eq!(stats.effective_entries(), Some(3600.0 / 730.0));
         assert_eq!(clone.num_events().unwrap(), Some(5));
         assert_eq!(reads.load(Ordering::Relaxed), 1);
 
@@ -847,6 +894,60 @@ mod tests {
         assert_eq!(reads.load(Ordering::Relaxed), 2);
         assert_eq!(filtered.stats().unwrap().events(), 3);
         assert_eq!(reads.load(Ordering::Relaxed), 2);
+    }
+
+    #[test]
+    fn dataset_statistics_preserve_signed_and_squared_weight_diagnostics() {
+        let stats = stats_dataset(&[2.0, -1.0, 3.0, -4.0]).stats().unwrap();
+
+        assert_eq!(stats.events(), 4);
+        assert_eq!(stats.sum_weights(), 0.0);
+        assert_eq!(stats.sum_squared_weights(), 30.0);
+        assert_eq!(stats.positive_weights(), 5.0);
+        assert_eq!(stats.negative_weights(), -5.0);
+        assert_eq!(stats.effective_entries(), Some(0.0));
+    }
+
+    #[test]
+    fn dataset_statistics_make_effective_entries_unavailable_without_squared_weight() {
+        let zero = stats_dataset(&[0.0, 0.0]).stats().unwrap();
+        assert_eq!(zero.events(), 2);
+        assert_eq!(zero.sum_weights(), 0.0);
+        assert_eq!(zero.sum_squared_weights(), 0.0);
+        assert_eq!(zero.positive_weights(), 0.0);
+        assert_eq!(zero.negative_weights(), 0.0);
+        assert_eq!(zero.effective_entries(), None);
+
+        let empty = stats_dataset(&[1.0])
+            .empty_derived()
+            .unwrap()
+            .stats()
+            .unwrap();
+        assert_eq!(empty.events(), 0);
+        assert_eq!(empty.sum_weights(), 0.0);
+        assert_eq!(empty.sum_squared_weights(), 0.0);
+        assert_eq!(empty.effective_entries(), None);
+    }
+
+    #[test]
+    fn dataset_statistics_match_across_resident_streaming_and_chunked_views() {
+        let resident = Dataset::from_batch(weighted_batch(0, 10));
+        let streaming = Dataset::new(CountingSource {
+            batch: weighted_batch(0, 10),
+            reads: Arc::new(AtomicUsize::new(0)),
+        });
+        let chunked = Dataset::from_batches(
+            (0..10)
+                .map(|index| weighted_batch(index, 1))
+                .collect::<Vec<_>>(),
+        )
+        .unwrap()
+        .chunked(3)
+        .unwrap();
+
+        let expected = resident.stats().unwrap();
+        assert_eq!(streaming.stats().unwrap(), expected);
+        assert_eq!(chunked.stats().unwrap(), expected);
     }
 
     #[test]

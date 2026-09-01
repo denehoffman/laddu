@@ -81,6 +81,25 @@ replica = selected.bootstrap(seed=5)
 Poisson$(1)$ draw while preserving event coordinates. `subsample` selects a
 reproducible subset without changing retained weights.
 
+## Inspect weight statistics
+
+`stats()` evaluates the current immutable view once and caches the result for
+subsequent calls, including after filters, transformations, and chunking:
+
+```python
+summary = selected.stats()
+print(summary.events, summary.sum_weights)
+print(summary.sum_squared_weights, summary.effective_entries)
+print(summary.positive_weights, summary.negative_weights)
+```
+
+`sum_weights` is signed. The positive and negative accessors expose the
+separated signed contributions, while `sum_squared_weights` is nonnegative
+and is the quantity used to derive weighted fill uncertainties. Effective
+entries are `(sum_weights ** 2) / sum_squared_weights`; they are `None` for an
+empty or all-zero-weight view because the denominator is not positive. These
+diagnostics are distinct from any later yield error budget.
+
 ## Bin event data
 
 A bin specification can be uniform or use explicit Python/NumPy edges:

@@ -208,6 +208,30 @@ impl PyHistogram {
         self.inner.overflow()
     }
 
+    /// Return regular-bin, underflow, and overflow squared-weight constituents.
+    ///
+    /// Flow constituents are ``None`` when a histogram was constructed from
+    /// precomputed flow totals without corresponding uncertainty inputs.
+    fn squared_weight_constituents(&self) -> (Vec<f64>, Option<f64>, Option<f64>) {
+        (
+            self.inner.sum_squared_weights().to_vec(),
+            self.inner.underflow_sum_squared_weights(),
+            self.inner.overflow_sum_squared_weights(),
+        )
+    }
+
+    /// Merge a histogram filled from a disjoint event partition.
+    ///
+    /// Both histograms must have identical bin edges, empirical/manual fill
+    /// policy, and flow-constituent availability. The operation is atomic: an
+    /// incompatible or non-finite result leaves this histogram unchanged.
+    fn merge(&mut self, other: &PyHistogram) -> PyResult<()> {
+        let mut merged = self.inner.clone();
+        merged.merge(&other.inner).map_err(to_py_err)?;
+        self.inner = merged;
+        Ok(())
+    }
+
     #[getter]
     /// int: Number of regular bins.
     fn bins(&self) -> usize {

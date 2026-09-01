@@ -1,1 +1,1 @@
-{"counts":[4.0,9.0],"bin_edges":[0.0,1.0,4.0],"underflow":0.5,"overflow":1.25,"errors":[2.0,3.0]}
+{"fill_kind":"manual","counts":[4.0,9.0],"bin_edges":[0.0,1.0,4.0],"underflow":0.5,"overflow":1.25,"errors":[2.0,3.0],"sum_squared_weights":[4.0,9.0],"underflow_sum_squared_weights":null,"overflow_sum_squared_weights":null}
