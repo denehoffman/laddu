@@ -24,6 +24,35 @@ print(histogram.errors)
 Underflow and overflow keep their signed totals and squared-weight
 constituents separately. The final upper edge belongs to overflow.
 
+## Fill directly from a dataset
+
+`Dataset.histogram` evaluates one real scalar expression and fills the same
+`Histogram` in a single bounded traversal. Dataset event weights are included
+by default, so the result follows the same signed-weight convention as
+`Dataset.stats()`:
+
+```python
+x = ld.scalar("x")
+histogram = dataset.histogram(x, bin_edges=[-1.0, 0.0, 1.0])
+```
+
+Set `event_weights=False` for unit base weights. An additional real scalar
+weight expression multiplies whichever base weight is selected:
+
+```python
+corrected = dataset.histogram(
+    x,
+    bin_edges=[-1.0, 0.0, 1.0],
+    weight=ld.scalar("efficiency_correction"),
+)
+```
+
+The observable and optional weight are prepared together before the source is
+read, then evaluated batch by batch. Resident, streaming, selected, and
+explicitly chunked dataset views therefore use the same operation without
+materializing a full value array. Non-finite observables or combined weights
+are errors; they are never silently replaced or discarded.
+
 ## Merge disjoint fills
 
 Histograms filled from disjoint event partitions can be combined without

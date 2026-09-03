@@ -8,6 +8,7 @@ use laddu_data::{
     schema::Schema,
 };
 use laddu_expr::{Expr, ValueKind};
+use laddu_physics::histogram::Histogram;
 use num::complex::Complex64;
 use serde::{Deserialize, Deserializer, Serialize};
 
@@ -270,6 +271,24 @@ pub trait DatasetExprExt {
     /// Returns [`RuntimeError`] when compilation, dataset reading, or
     /// evaluation fails, or the expression is not real scalar-valued.
     fn evaluate_real(&self, expr: &Expr, execution: &Execution) -> RuntimeResult<Vec<f64>>;
+    /// Evaluates and fills one weighted histogram in a bounded dataset traversal.
+    ///
+    /// Dataset event weights are used when `event_weights` is true. When
+    /// `weight` is supplied, its real scalar value multiplies the selected
+    /// event weight (or unit weight when event weights are disabled).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RuntimeError`] when bin validation, expression preparation,
+    /// dataset reading, evaluation, or histogram filling fails.
+    fn histogram(
+        &self,
+        expr: &Expr,
+        bins: BinSpec,
+        event_weights: bool,
+        weight: Option<&Expr>,
+        execution: &Execution,
+    ) -> RuntimeResult<Histogram>;
     /// Creates a lazily filtered dataset containing events that satisfy `predicate`.
     ///
     /// # Errors
@@ -317,6 +336,38 @@ impl DatasetExprExt for Dataset {
             );
         }
         Ok(output)
+    }
+
+    fn histogram(
+        &self,
+        expr: &Expr,
+        bins: BinSpec,
+        event_weights: bool,
+        weight: Option<&Expr>,
+        execution: &Execution,
+    ) -> RuntimeResult<Histogram> {
+        let mut expressions = vec![expr.clone()];
+        expressions.extend(weight.cloned());
+        let query = QueryExprSet::prepare(expressions, execution, true)?;
+        let mut histogram = Histogram::empty_with_edges(bins.edges_slice().to_vec())
+            .map_err(|error| query_error(error.to_string()))?;
+
+        for batch in self.batches().map_err(data_error)? {
+            let batch = batch.map_err(data_error)?;
+            let values = query.evaluate_batch(&batch)?;
+            for row in 0..batch.len() {
+                let base_weight = if event_weights {
+                    batch.weights_at(row)
+                } else {
+                    1.0
+                };
+                let custom_weight = values.get(1).map_or(1.0, |weights| weights[row].re);
+                histogram
+                    .fill_weighted(values[0][row].re, base_weight * custom_weight)
+                    .map_err(|error| query_error(error.to_string()))?;
+            }
+        }
+        Ok(histogram)
     }
 
     fn select(&self, predicate: &Predicate, execution: &Execution) -> RuntimeResult<Dataset> {
@@ -711,6 +762,8 @@ fn data_error(error: impl ToString) -> RuntimeError {
 mod tests {
     use super::*;
     use crate::{CpuOptions, Device, ExecutionOptions, Precision};
+    #[cfg(feature = "jit")]
+    use crate::{JitPolicy, ThreadPolicy};
     use laddu_compile::CompiledModel;
     use laddu_data::{
         data::{EventBatch, OwnedEvent},
@@ -846,6 +899,222 @@ mod tests {
                 .unwrap(),
             vec![1.0, 2.0]
         );
+    }
+
+    #[test]
+    fn dataset_histogram_uses_event_weights_and_excludes_the_final_upper_edge() {
+        let histogram = dataset()
+            .histogram(
+                &event_scalar("x"),
+                BinSpec::edges([0.0, 1.0, 2.0]).unwrap(),
+                true,
+                None,
+                &Execution::default(),
+            )
+            .unwrap();
+
+        assert_eq!(histogram.counts(), [1.0, 1.5]);
+        assert_eq!(histogram.sum_squared_weights(), [1.0, 2.25]);
+        assert_eq!(histogram.underflow(), 0.5);
+        assert_eq!(histogram.underflow_sum_squared_weights(), Some(0.25));
+        assert_eq!(histogram.overflow(), 2.0);
+        assert_eq!(histogram.overflow_sum_squared_weights(), Some(4.0));
+    }
+
+    #[test]
+    fn dataset_histogram_multiplies_the_selected_base_and_custom_weights() {
+        let x = event_scalar("x");
+        let bins = BinSpec::edges([-2.0, 0.0, 2.0]).unwrap();
+        let execution = Execution::default();
+
+        let weighted = dataset()
+            .histogram(&x, bins.clone(), true, Some(&(x.clone() + 2.0)), &execution)
+            .unwrap();
+        assert_eq!(weighted.counts(), [0.5, 6.5]);
+        assert_eq!(weighted.sum_squared_weights(), [0.25, 24.25]);
+        assert_eq!(weighted.overflow(), 8.0);
+
+        let custom_only = dataset()
+            .histogram(&x, bins, false, Some(&(x.clone() + 2.0)), &execution)
+            .unwrap();
+        assert_eq!(custom_only.counts(), [1.0, 5.0]);
+        assert_eq!(custom_only.sum_squared_weights(), [1.0, 13.0]);
+        assert_eq!(custom_only.overflow(), 4.0);
+    }
+
+    #[test]
+    fn dataset_histogram_preserves_view_source_and_memory_semantics() {
+        let source = dataset();
+        let batch = source.batches().unwrap().next().unwrap().unwrap();
+        let reads = Arc::new(AtomicUsize::new(0));
+        let counted = Dataset::new(CountingSource {
+            inner: MemorySource::new(batch),
+            reads: Arc::clone(&reads),
+        })
+        .streaming()
+        .chunked(1)
+        .unwrap();
+        let selected = counted
+            .select(
+                &Predicate::ge(event_scalar("x"), 0.0),
+                &Execution::default(),
+            )
+            .unwrap();
+
+        let histogram = selected
+            .histogram(
+                &event_scalar("x"),
+                BinSpec::edges([0.0, 1.0, 2.0]).unwrap(),
+                true,
+                None,
+                &Execution::default(),
+            )
+            .unwrap();
+
+        assert_eq!(histogram.counts(), [1.0, 1.5]);
+        assert_eq!(histogram.overflow(), 2.0);
+        assert_eq!(reads.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn dataset_histogram_matches_across_memory_policies_and_chunking() {
+        let source = dataset();
+        let bins = BinSpec::edges([0.0, 1.0, 2.0]).unwrap();
+        let execution = Execution::default();
+        let expected = source
+            .clone()
+            .resident()
+            .histogram(&event_scalar("x"), bins.clone(), true, None, &execution)
+            .unwrap();
+
+        for candidate in [
+            source.clone().streaming(),
+            source.clone().resident().chunked(1).unwrap(),
+            source.streaming().chunked(2).unwrap(),
+        ] {
+            let actual = candidate
+                .histogram(&event_scalar("x"), bins.clone(), true, None, &execution)
+                .unwrap();
+            assert_eq!(actual, expected);
+        }
+    }
+
+    #[cfg(feature = "jit")]
+    #[test]
+    fn dataset_histogram_matches_cpu_interpreter_and_jit_backends() {
+        let source = dataset();
+        let bins = BinSpec::edges([0.0, 1.0, 2.0]).unwrap();
+        let execution = |jit| {
+            Execution::local(ExecutionOptions {
+                device: Device::Cpu(CpuOptions {
+                    threads: ThreadPolicy::Serial,
+                    jit,
+                }),
+                precision: Precision::F64,
+                ..ExecutionOptions::default()
+            })
+            .unwrap()
+        };
+        let interpreted = source
+            .histogram(
+                &event_scalar("x"),
+                bins.clone(),
+                true,
+                None,
+                &execution(JitPolicy::Disabled),
+            )
+            .unwrap();
+        let compiled = source
+            .histogram(
+                &event_scalar("x"),
+                bins,
+                true,
+                None,
+                &execution(JitPolicy::Enabled),
+            )
+            .unwrap();
+
+        assert_eq!(compiled, interpreted);
+    }
+
+    #[test]
+    fn dataset_histogram_reports_invalid_values_and_source_failures() {
+        let schema = Arc::new(Schema::new(std::iter::empty::<&str>(), ["x"], true).unwrap());
+        let nonfinite = Dataset::from_events(
+            Arc::clone(&schema),
+            [OwnedEvent::weighted(vec![], vec![f64::NAN], 1.0)],
+        )
+        .unwrap();
+        let error = nonfinite
+            .histogram(
+                &event_scalar("x"),
+                BinSpec::edges([0.0, 1.0]).unwrap(),
+                true,
+                None,
+                &Execution::default(),
+            )
+            .unwrap_err();
+        assert!(
+            error.to_string().contains("expected finite, got NaN"),
+            "unexpected error: {error}",
+        );
+
+        let source_error = Dataset::new(FailingSource { schema })
+            .histogram(
+                &event_scalar("x"),
+                BinSpec::edges([0.0, 1.0]).unwrap(),
+                true,
+                None,
+                &Execution::default(),
+            )
+            .unwrap_err();
+        assert!(source_error.to_string().contains("query source failed"));
+    }
+
+    #[test]
+    fn empty_dataset_histogram_is_a_valid_empirical_histogram() {
+        let histogram = dataset()
+            .empty_derived()
+            .unwrap()
+            .histogram(
+                &event_scalar("x"),
+                BinSpec::edges([0.0, 1.0, 3.0]).unwrap(),
+                true,
+                None,
+                &Execution::default(),
+            )
+            .unwrap();
+
+        assert_eq!(histogram.counts(), [0.0, 0.0]);
+        assert_eq!(histogram.sum_squared_weights(), [0.0, 0.0]);
+        assert_eq!(histogram.underflow_sum_squared_weights(), Some(0.0));
+        assert_eq!(histogram.overflow_sum_squared_weights(), Some(0.0));
+    }
+
+    #[test]
+    fn cancelling_dataset_weights_keep_their_squared_weight_uncertainty() {
+        let schema = Arc::new(Schema::new(std::iter::empty::<&str>(), ["x"], true).unwrap());
+        let cancelling = Dataset::from_events(
+            schema,
+            [
+                OwnedEvent::weighted(vec![], vec![0.5], 1.0),
+                OwnedEvent::weighted(vec![], vec![0.5], -1.0),
+            ],
+        )
+        .unwrap();
+        let histogram = cancelling
+            .histogram(
+                &event_scalar("x"),
+                BinSpec::edges([0.0, 1.0]).unwrap(),
+                true,
+                None,
+                &Execution::default(),
+            )
+            .unwrap();
+
+        assert_eq!(histogram.counts(), [0.0]);
+        assert_eq!(histogram.sum_squared_weights(), [2.0]);
+        assert_eq!(histogram.errors(), [2.0_f64.sqrt()]);
     }
 
     #[test]
@@ -1052,6 +1321,15 @@ mod tests {
         .unwrap();
         let f32_values = dataset().evaluate_real(&x, &f32_execution).unwrap();
         assert_eq!(f32_values, f64_values);
+
+        let bins = BinSpec::edges([-2.0, 0.0, 2.0]).unwrap();
+        let f64_histogram = dataset()
+            .histogram(&x, bins.clone(), true, None, &Execution::default())
+            .unwrap();
+        let f32_histogram = dataset()
+            .histogram(&x, bins, true, None, &f32_execution)
+            .unwrap();
+        assert_eq!(f32_histogram, f64_histogram);
     }
 
     #[test]

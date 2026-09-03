@@ -4,6 +4,7 @@ use laddu_compile::NormalizationStrategy;
 use laddu_likelihood::{
     CrossSectionIntegrals, DatasetDiagnostics, DatasetRole, ExtendedNllTerm, LassoPenalty,
     Likelihood, LikelihoodDiagnostics, LikelihoodProjection, LikelihoodTerm, NllTerm, RidgePenalty,
+    Yield,
 };
 use numpy::PyArray1;
 use pyo3::{
@@ -13,7 +14,7 @@ use pyo3::{
 };
 
 use super::{
-    cross_section::{PyCrossSection, PyEnsemble},
+    cross_section::{PyCrossSection, PyEnsemble, PyYield},
     data::PyDataset,
     error::to_py_err,
     float_vec,
@@ -893,6 +894,36 @@ impl PyLikelihood {
         }
         .map_err(to_py_err)?;
         Ok(PyCrossSection { inner })
+    }
+
+    #[pyo3(signature = (
+        term_name,
+        *,
+        generated_mc,
+        parameters: "Sequence[float] | numpy.typing.NDArray[numpy.float32 | numpy.float64] | dict[str, float]",
+        ensemble=None
+    ))]
+    /// Prepare an immutable scalar yield context for one intensity term.
+    ///
+    /// The context exposes selected yield, accepted and generated fitted
+    /// yields, fitted acceptance, corrected observed yield, and rate closure.
+    fn yield_context(
+        &self,
+        term_name: &str,
+        generated_mc: &PyDataset,
+        parameters: &Bound<'_, PyAny>,
+        ensemble: Option<&PyEnsemble>,
+    ) -> PyResult<PyYield> {
+        let parameters = free_values(&self.inner, parameters)?;
+        let inner = Yield::with_ensemble(
+            Arc::clone(&self.inner),
+            term_name,
+            generated_mc.inner.clone(),
+            parameters,
+            ensemble.map(|value| value.inner.clone()),
+        )
+        .map_err(to_py_err)?;
+        Ok(inner.into())
     }
 
     #[pyo3(signature = (term_name, *, generated_mc, tags=None))]

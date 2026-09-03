@@ -724,6 +724,16 @@ impl Likelihood {
         Ok((&term.data_source, &term.accepted_mc_source))
     }
 
+    pub(crate) fn intensity_model_digest(&self, term_name: &str) -> LikelihoodResult<u64> {
+        let Some(term) = self.terms.iter().find(|term| term.name() == term_name) else {
+            return Err(LikelihoodError::MissingTerm(term_name.to_owned()));
+        };
+        let Some(term) = term.as_intensity() else {
+            return Err(LikelihoodError::NotIntensityTerm(term_name.to_owned()));
+        };
+        Ok(term.model.optimized_digest())
+    }
+
     /// Projects an intensity term onto selected model tags over generated Monte Carlo.
     ///
     /// # Errors
@@ -2052,6 +2062,11 @@ impl LikelihoodProjection {
 }
 
 impl CrossSectionIntegrals {
+    /// Returns whether the source likelihood term determines an absolute rate.
+    pub fn has_absolute_rate(&self) -> bool {
+        self.has_absolute_rate
+    }
+
     /// Returns retained prepared-dataset bytes used by these integrals.
     pub fn resident_bytes(&self) -> usize {
         let dataset_bytes = self

@@ -113,7 +113,11 @@ impl core::clone::Clone for laddu_data::data::dataset::Dataset
 pub fn laddu_data::data::dataset::Dataset::clone(&self) -> laddu_data::data::dataset::Dataset
 pub struct laddu_data::data::dataset::DatasetStats
 impl laddu_data::data::dataset::DatasetStats
+pub fn laddu_data::data::dataset::DatasetStats::effective_entries(&self) -> core::option::Option<f64>
 pub fn laddu_data::data::dataset::DatasetStats::events(&self) -> u64
+pub fn laddu_data::data::dataset::DatasetStats::negative_weights(&self) -> f64
+pub fn laddu_data::data::dataset::DatasetStats::positive_weights(&self) -> f64
+pub fn laddu_data::data::dataset::DatasetStats::sum_squared_weights(&self) -> f64
 pub fn laddu_data::data::dataset::DatasetStats::sum_weights(&self) -> f64
 impl core::clone::Clone for laddu_data::data::dataset::DatasetStats
 pub fn laddu_data::data::dataset::DatasetStats::clone(&self) -> laddu_data::data::dataset::DatasetStats
@@ -290,6 +294,22 @@ pub fn laddu_data::data::dataset::Dataset::with_memory_budget(self, laddu_memory
 pub fn laddu_data::data::dataset::Dataset::write_to<S: laddu_data::io::EventSink>(&self, &mut S) -> laddu_data::LadduDataResult<()>
 impl core::clone::Clone for laddu_data::data::dataset::Dataset
 pub fn laddu_data::data::dataset::Dataset::clone(&self) -> laddu_data::data::dataset::Dataset
+pub struct laddu_data::data::DatasetStats
+impl laddu_data::data::dataset::DatasetStats
+pub fn laddu_data::data::dataset::DatasetStats::effective_entries(&self) -> core::option::Option<f64>
+pub fn laddu_data::data::dataset::DatasetStats::events(&self) -> u64
+pub fn laddu_data::data::dataset::DatasetStats::negative_weights(&self) -> f64
+pub fn laddu_data::data::dataset::DatasetStats::positive_weights(&self) -> f64
+pub fn laddu_data::data::dataset::DatasetStats::sum_squared_weights(&self) -> f64
+pub fn laddu_data::data::dataset::DatasetStats::sum_weights(&self) -> f64
+impl core::clone::Clone for laddu_data::data::dataset::DatasetStats
+pub fn laddu_data::data::dataset::DatasetStats::clone(&self) -> laddu_data::data::dataset::DatasetStats
+impl core::cmp::PartialEq for laddu_data::data::dataset::DatasetStats
+pub fn laddu_data::data::dataset::DatasetStats::eq(&self, &laddu_data::data::dataset::DatasetStats) -> bool
+impl core::fmt::Debug for laddu_data::data::dataset::DatasetStats
+pub fn laddu_data::data::dataset::DatasetStats::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for laddu_data::data::dataset::DatasetStats
+impl core::marker::StructuralPartialEq for laddu_data::data::dataset::DatasetStats
 pub struct laddu_data::data::Event<'a>
 impl<'a> laddu_data::data::event::Event<'a>
 pub fn laddu_data::data::event::Event<'a>::p4(&self, usize) -> laddu_physics::vectors::RealVec4

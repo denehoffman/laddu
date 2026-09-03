@@ -1,5 +1,16 @@
 pub mod laddu_physics
 pub mod laddu_physics::channel
+pub enum laddu_physics::channel::EdgeP4
+pub laddu_physics::channel::EdgeP4::EventColumn(alloc::string::String)
+pub laddu_physics::channel::EdgeP4::Expression(laddu_physics::vectors::Vec4)
+impl core::clone::Clone for laddu_physics::channel::EdgeP4
+pub fn laddu_physics::channel::EdgeP4::clone(&self) -> laddu_physics::channel::EdgeP4
+impl core::fmt::Debug for laddu_physics::channel::EdgeP4
+pub fn laddu_physics::channel::EdgeP4::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for laddu_physics::channel::EdgeP4
+pub fn laddu_physics::channel::EdgeP4::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for laddu_physics::channel::EdgeP4
+pub fn laddu_physics::channel::EdgeP4::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
 pub struct laddu_physics::channel::Channel
 impl laddu_physics::channel::Channel
 pub fn laddu_physics::channel::Channel::edge(&mut self, impl core::convert::Into<alloc::string::String>) -> laddu_physics::channel::EdgeHandle<'_>
@@ -27,6 +38,7 @@ impl<'de> serde_core::de::Deserialize<'de> for laddu_physics::channel::Channel
 pub fn laddu_physics::channel::Channel::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
 pub struct laddu_physics::channel::Edge
 impl laddu_physics::channel::Edge
+pub fn laddu_physics::channel::Edge::explicit_p4(&self) -> core::option::Option<&laddu_physics::channel::EdgeP4>
 pub fn laddu_physics::channel::Edge::has_explicit_p4(&self) -> bool
 pub fn laddu_physics::channel::Edge::initial_momentum(&self) -> core::option::Option<&laddu_physics::generation::InitialMomentum>
 pub fn laddu_physics::channel::Edge::is_output(&self) -> bool
@@ -44,6 +56,7 @@ pub fn laddu_physics::channel::Edge::deserialize<__D>(__D) -> core::result::Resu
 pub struct laddu_physics::channel::EdgeHandle<'a>
 impl laddu_physics::channel::EdgeHandle<'_>
 pub fn laddu_physics::channel::EdgeHandle<'_>::edge_mut(&mut self) -> &mut laddu_physics::channel::Edge
+pub fn laddu_physics::channel::EdgeHandle<'_>::event_p4(&mut self, impl core::convert::Into<alloc::string::String>) -> &mut Self
 pub fn laddu_physics::channel::EdgeHandle<'_>::generated_only(&mut self) -> &mut Self
 pub fn laddu_physics::channel::EdgeHandle<'_>::initial(&mut self, laddu_physics::generation::InitialMomentum) -> &mut Self
 pub fn laddu_physics::channel::EdgeHandle<'_>::initial_energy_direction(&mut self, f64, laddu_physics::vectors::RealVec3) -> &mut Self
@@ -306,20 +319,24 @@ pub fn laddu_physics::histogram::Histogram::fill_with_error(&mut self, f64, f64)
 pub fn laddu_physics::histogram::Histogram::from_values(&[f64], usize, (f64, f64), core::option::Option<&[f64]>) -> laddu_physics::LadduPhysicsResult<Self>
 pub fn laddu_physics::histogram::Histogram::from_values_with_edges(&[f64], alloc::vec::Vec<f64>, core::option::Option<&[f64]>) -> laddu_physics::LadduPhysicsResult<Self>
 pub fn laddu_physics::histogram::Histogram::limits(&self) -> (f64, f64)
+pub fn laddu_physics::histogram::Histogram::merge(&mut self, &Self) -> laddu_physics::LadduPhysicsResult<()>
 pub fn laddu_physics::histogram::Histogram::new(alloc::vec::Vec<f64>, alloc::vec::Vec<f64>) -> laddu_physics::LadduPhysicsResult<Self>
 pub fn laddu_physics::histogram::Histogram::new_with_flow(alloc::vec::Vec<f64>, alloc::vec::Vec<f64>, f64, f64) -> laddu_physics::LadduPhysicsResult<Self>
 pub fn laddu_physics::histogram::Histogram::normalized(&self) -> laddu_physics::LadduPhysicsResult<Self>
 pub fn laddu_physics::histogram::Histogram::normalized_with_flow(&self) -> laddu_physics::LadduPhysicsResult<Self>
 pub fn laddu_physics::histogram::Histogram::overflow(&self) -> f64
+pub fn laddu_physics::histogram::Histogram::overflow_sum_squared_weights(&self) -> core::option::Option<f64>
 pub fn laddu_physics::histogram::Histogram::sample(&self, &mut fastrand::Rng) -> laddu_physics::LadduPhysicsResult<f64>
 pub fn laddu_physics::histogram::Histogram::set_count(&mut self, usize, f64) -> laddu_physics::LadduPhysicsResult<()>
 pub fn laddu_physics::histogram::Histogram::set_counts(&mut self, &[f64]) -> laddu_physics::LadduPhysicsResult<()>
 pub fn laddu_physics::histogram::Histogram::set_error(&mut self, usize, f64) -> laddu_physics::LadduPhysicsResult<()>
 pub fn laddu_physics::histogram::Histogram::set_errors(&mut self, &[f64]) -> laddu_physics::LadduPhysicsResult<()>
 pub fn laddu_physics::histogram::Histogram::signed_density(&self) -> laddu_physics::LadduPhysicsResult<Self>
+pub fn laddu_physics::histogram::Histogram::sum_squared_weights(&self) -> &[f64]
 pub fn laddu_physics::histogram::Histogram::total_weight(&self) -> f64
 pub fn laddu_physics::histogram::Histogram::total_weight_with_flow(&self) -> f64
 pub fn laddu_physics::histogram::Histogram::underflow(&self) -> f64
+pub fn laddu_physics::histogram::Histogram::underflow_sum_squared_weights(&self) -> core::option::Option<f64>
 impl core::clone::Clone for laddu_physics::histogram::Histogram
 pub fn laddu_physics::histogram::Histogram::clone(&self) -> laddu_physics::histogram::Histogram
 impl core::cmp::PartialEq for laddu_physics::histogram::Histogram
@@ -330,7 +347,7 @@ impl core::marker::StructuralPartialEq for laddu_physics::histogram::Histogram
 impl serde_core::ser::Serialize for laddu_physics::histogram::Histogram
 pub fn laddu_physics::histogram::Histogram::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
 impl<'de> serde_core::de::Deserialize<'de> for laddu_physics::histogram::Histogram
-pub fn laddu_physics::histogram::Histogram::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub fn laddu_physics::histogram::Histogram::deserialize<D>(D) -> core::result::Result<Self, <D as serde_core::de::Deserializer>::Error> where D: serde_core::de::Deserializer<'de>
 pub mod laddu_physics::math
 pub enum laddu_physics::math::BarrierKind
 pub laddu_physics::math::BarrierKind::Full

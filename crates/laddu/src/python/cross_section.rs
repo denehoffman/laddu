@@ -4,6 +4,7 @@ use std::collections::HashMap;
 
 use laddu_likelihood::{
     Axis, BinnedEstimate, CrossSection, DifferentialCrossSection, Ensemble, Estimate, Projection,
+    RateClosure, RateClosureStatus, Yield,
 };
 use numpy::{PyArray1, PyArray2};
 use pyo3::{
@@ -166,6 +167,147 @@ impl PyEstimate {
 
     fn __truediv__(&self, other: &Bound<'_, PyAny>) -> PyResult<Self> {
         estimate_binary(self, other, |left, right| left / right)
+    }
+}
+
+#[pyclass(name = "RateClosure", module = "laddu", frozen, skip_from_py_object)]
+#[derive(Clone)]
+/// Inspectable rate-closure diagnostic for an absolute-rate yield context.
+pub struct PyRateClosure {
+    #[pyo3(get)]
+    selected_yield: PyEstimate,
+    #[pyo3(get)]
+    accepted_fitted_yield: Option<PyEstimate>,
+    #[pyo3(get)]
+    generated_fitted_yield: Option<PyEstimate>,
+    #[pyo3(get)]
+    corrected_observed_yield: Option<PyEstimate>,
+    #[pyo3(get)]
+    accepted_residual: Option<f64>,
+    #[pyo3(get)]
+    corrected_residual: Option<f64>,
+    #[pyo3(get)]
+    accepted_absolute_residual: Option<f64>,
+    #[pyo3(get)]
+    corrected_absolute_residual: Option<f64>,
+    #[pyo3(get)]
+    accepted_relative_residual: Option<f64>,
+    #[pyo3(get)]
+    corrected_relative_residual: Option<f64>,
+    #[pyo3(get)]
+    accepted_residual_draws: Vec<f64>,
+    #[pyo3(get)]
+    corrected_residual_draws: Vec<f64>,
+    #[pyo3(get)]
+    absolute_tolerance: f64,
+    #[pyo3(get)]
+    relative_tolerance: f64,
+    #[pyo3(get)]
+    status: String,
+    #[pyo3(get)]
+    reason: Option<String>,
+}
+
+impl From<RateClosure> for PyRateClosure {
+    fn from(inner: RateClosure) -> Self {
+        let status = match inner.status() {
+            RateClosureStatus::Closed => "closed",
+            RateClosureStatus::Failed => "failed",
+            RateClosureStatus::NotApplicable => "not_applicable",
+        }
+        .to_owned();
+        Self {
+            selected_yield: inner.selected_yield().clone().into(),
+            accepted_fitted_yield: inner.accepted_fitted_yield().cloned().map(Into::into),
+            generated_fitted_yield: inner.generated_fitted_yield().cloned().map(Into::into),
+            corrected_observed_yield: inner.corrected_observed_yield().cloned().map(Into::into),
+            accepted_residual: inner.accepted_residual(),
+            corrected_residual: inner.corrected_residual(),
+            accepted_absolute_residual: inner.accepted_absolute_residual(),
+            corrected_absolute_residual: inner.corrected_absolute_residual(),
+            accepted_relative_residual: inner.accepted_relative_residual(),
+            corrected_relative_residual: inner.corrected_relative_residual(),
+            accepted_residual_draws: inner.accepted_residual_draws().to_vec(),
+            corrected_residual_draws: inner.corrected_residual_draws().to_vec(),
+            absolute_tolerance: inner.absolute_tolerance(),
+            relative_tolerance: inner.relative_tolerance(),
+            status,
+            reason: inner.reason().map(str::to_owned),
+        }
+    }
+}
+
+#[pymethods]
+impl PyRateClosure {
+    fn is_closed(&self) -> bool {
+        self.status == "closed"
+    }
+}
+
+#[pyclass(name = "Yield", module = "laddu", frozen, skip_from_py_object)]
+#[derive(Clone)]
+/// Immutable scalar selected, fitted, and acceptance-corrected yield context.
+pub struct PyYield {
+    pub(crate) inner: Yield,
+    selected_yield: PyEstimate,
+    fitted_acceptance: PyEstimate,
+    corrected_observed_yield: PyEstimate,
+    rate_closure: PyRateClosure,
+    #[pyo3(get)]
+    term_name: String,
+    #[pyo3(get)]
+    parameters: Vec<f64>,
+    #[pyo3(get)]
+    has_absolute_rate: bool,
+}
+
+impl From<Yield> for PyYield {
+    fn from(inner: Yield) -> Self {
+        Self {
+            term_name: inner.term_name().to_owned(),
+            parameters: inner.parameters().to_vec(),
+            has_absolute_rate: inner.has_absolute_rate(),
+            selected_yield: inner.selected_yield().clone().into(),
+            fitted_acceptance: inner.fitted_acceptance().clone().into(),
+            corrected_observed_yield: inner.corrected_observed_yield().clone().into(),
+            rate_closure: inner.rate_closure().into(),
+            inner,
+        }
+    }
+}
+
+#[pymethods]
+impl PyYield {
+    fn selected_yield(&self) -> PyEstimate {
+        self.selected_yield.clone()
+    }
+
+    fn accepted_fitted_yield(&self) -> PyResult<PyEstimate> {
+        Ok(self
+            .inner
+            .accepted_fitted_yield()
+            .map_err(to_py_err)?
+            .into())
+    }
+
+    fn generated_fitted_yield(&self) -> PyResult<PyEstimate> {
+        Ok(self
+            .inner
+            .generated_fitted_yield()
+            .map_err(to_py_err)?
+            .into())
+    }
+
+    fn fitted_acceptance(&self) -> PyEstimate {
+        self.fitted_acceptance.clone()
+    }
+
+    fn corrected_observed_yield(&self) -> PyEstimate {
+        self.corrected_observed_yield.clone()
+    }
+
+    fn rate_closure(&self) -> PyRateClosure {
+        self.rate_closure.clone()
     }
 }
 

@@ -1782,6 +1782,7 @@ dependencies = [
  "laddu-expr",
  "laddu-kernel",
  "laddu-memory",
+ "laddu-physics",
  "laddu-wgpu",
  "mpi",
  "nalgebra",
