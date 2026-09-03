@@ -66,6 +66,36 @@ yield. Constraints, regularization, model mismatch, or evaluation away from the
 optimum can make them differ. A shape-only `NLL` cannot define
 $\sigma_\mathrm{fit}$ and the fitted pathway therefore returns an error.
 
+## Inspect scalar yields and rate closure
+
+Build a `Yield` context when you want to inspect normalization before applying
+luminosity:
+
+```python
+yield_context = likelihood.yield_context(
+    "signal",
+    generated_mc=generated_mc,
+    parameters=fit.x,
+)
+
+selected = yield_context.selected_yield()                  # D
+accepted = yield_context.accepted_fitted_yield()           # A
+generated = yield_context.generated_fitted_yield()         # G
+acceptance = yield_context.fitted_acceptance()              # A / G
+corrected = yield_context.corrected_observed_yield()        # D G / A
+closure = yield_context.rate_closure()
+```
+
+Each quantity is a separate `Estimate`; ensemble draws retain their input
+ordering and source identity. `closure.status` is `"closed"`, `"failed"`, or
+`"not_applicable"`, with signed, absolute, and relative residuals available
+for inspection. Evaluation away from an optimum reports a failed diagnostic—it
+does not rescale any quantity to manufacture closure.
+
+For a shape-only `NLL`, fitted acceptance and corrected observed yield remain
+defined because the common scale cancels. Absolute accepted/generated fitted
+yields are unavailable and rate closure is explicitly not applicable.
+
 ## Construct a cross-section analysis
 
 Continue from a fitted likelihood with named term `"signal"`:

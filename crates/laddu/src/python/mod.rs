@@ -184,7 +184,7 @@ macro_rules! laddu_python_module {
                 PyAxis as Axis, PyBinnedEstimate as BinnedEstimate,
                 PyCrossSection as CrossSection,
                 PyDifferentialCrossSection as DifferentialCrossSection, PyEnsemble as Ensemble,
-                PyEstimate as Estimate,
+                PyEstimate as Estimate, PyRateClosure as RateClosure, PyYield as Yield,
             };
             #[pymodule_export]
             use $crate::python::data::{

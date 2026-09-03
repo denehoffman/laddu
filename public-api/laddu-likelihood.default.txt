@@ -36,11 +36,17 @@ pub laddu_likelihood::LikelihoodError::InvalidCrossSection(alloc::string::String
 pub laddu_likelihood::LikelihoodError::InvalidPenaltyWeight
 pub laddu_likelihood::LikelihoodError::InvalidPenaltyWeight::lambda: f64
 pub laddu_likelihood::LikelihoodError::InvalidPenaltyWeight::term: alloc::string::String
+pub laddu_likelihood::LikelihoodError::MissingAcceptedSupport
+pub laddu_likelihood::LikelihoodError::MissingGeneratedSupport
 pub laddu_likelihood::LikelihoodError::MissingParameter
 pub laddu_likelihood::LikelihoodError::MissingParameter::parameter: alloc::string::String
 pub laddu_likelihood::LikelihoodError::MissingParameter::term: alloc::string::String
 pub laddu_likelihood::LikelihoodError::MissingTerm(alloc::string::String)
+pub laddu_likelihood::LikelihoodError::NonFiniteYield
+pub laddu_likelihood::LikelihoodError::NonFiniteYield::quantity: &'static str
+pub laddu_likelihood::LikelihoodError::NonFiniteYield::value: f64
 pub laddu_likelihood::LikelihoodError::NonPositiveAcceptedIntegral(f64)
+pub laddu_likelihood::LikelihoodError::NonPositiveGeneratedIntegral(f64)
 pub laddu_likelihood::LikelihoodError::NonPositiveIntensity
 pub laddu_likelihood::LikelihoodError::NonPositiveIntensity::dataset: &'static str
 pub laddu_likelihood::LikelihoodError::NonPositiveIntensity::value: f64
@@ -50,6 +56,8 @@ pub laddu_likelihood::LikelihoodError::ParameterLayoutMismatch
 pub laddu_likelihood::LikelihoodError::Params(laddu_expr::error::ParamError)
 pub laddu_likelihood::LikelihoodError::Runtime(laddu_runtime::error::RuntimeError)
 pub laddu_likelihood::LikelihoodError::UnresolvedTerm(alloc::string::String)
+pub laddu_likelihood::LikelihoodError::ZeroAcceptedIntegral
+pub laddu_likelihood::LikelihoodError::ZeroGeneratedIntegral
 impl core::clone::Clone for laddu_likelihood::LikelihoodError
 pub fn laddu_likelihood::LikelihoodError::clone(&self) -> laddu_likelihood::LikelihoodError
 impl core::convert::From<laddu_data::error::LadduDataError> for laddu_likelihood::LikelihoodError
@@ -77,6 +85,19 @@ impl<'a> core::convert::From<&'a alloc::vec::Vec<f64>> for laddu_likelihood::Par
 pub fn laddu_likelihood::Parameters<'a>::from(&'a alloc::vec::Vec<f64>) -> Self
 impl<'a> core::convert::From<&'a laddu_expr::parameters::ParamValues> for laddu_likelihood::Parameters<'a>
 pub fn laddu_likelihood::Parameters<'a>::from(&'a laddu_expr::parameters::ParamValues) -> Self
+pub enum laddu_likelihood::RateClosureStatus
+pub laddu_likelihood::RateClosureStatus::Closed
+pub laddu_likelihood::RateClosureStatus::Failed
+pub laddu_likelihood::RateClosureStatus::NotApplicable
+impl core::clone::Clone for laddu_likelihood::RateClosureStatus
+pub fn laddu_likelihood::RateClosureStatus::clone(&self) -> laddu_likelihood::RateClosureStatus
+impl core::cmp::Eq for laddu_likelihood::RateClosureStatus
+impl core::cmp::PartialEq for laddu_likelihood::RateClosureStatus
+pub fn laddu_likelihood::RateClosureStatus::eq(&self, &laddu_likelihood::RateClosureStatus) -> bool
+impl core::fmt::Debug for laddu_likelihood::RateClosureStatus
+pub fn laddu_likelihood::RateClosureStatus::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for laddu_likelihood::RateClosureStatus
+impl core::marker::StructuralPartialEq for laddu_likelihood::RateClosureStatus
 pub struct laddu_likelihood::Axis
 impl laddu_likelihood::Axis
 pub fn laddu_likelihood::Axis::bins(&self) -> usize
@@ -154,6 +175,7 @@ pub fn laddu_likelihood::CrossSectionIntegrals::generated_integral(&self, &[f64]
 pub fn laddu_likelihood::CrossSectionIntegrals::generated_intensities(&self, &[f64]) -> laddu_likelihood::LikelihoodResult<alloc::vec::Vec<f64>>
 pub fn laddu_likelihood::CrossSectionIntegrals::generated_mc(&self) -> &laddu_runtime::backend::PreparedDataset
 pub fn laddu_likelihood::CrossSectionIntegrals::generated_mc_source(&self) -> &laddu_data::data::dataset::Dataset
+pub fn laddu_likelihood::CrossSectionIntegrals::has_absolute_rate(&self) -> bool
 pub fn laddu_likelihood::CrossSectionIntegrals::name(&self) -> &str
 pub fn laddu_likelihood::CrossSectionIntegrals::observed_cross_section(&self, &[f64], f64) -> laddu_likelihood::LikelihoodResult<f64>
 pub fn laddu_likelihood::CrossSectionIntegrals::resident_bytes(&self) -> usize
@@ -494,6 +516,32 @@ impl core::clone::Clone for laddu_likelihood::ProjectionSet
 pub fn laddu_likelihood::ProjectionSet::clone(&self) -> laddu_likelihood::ProjectionSet
 impl core::fmt::Debug for laddu_likelihood::ProjectionSet
 pub fn laddu_likelihood::ProjectionSet::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub struct laddu_likelihood::RateClosure
+impl laddu_likelihood::RateClosure
+pub fn laddu_likelihood::RateClosure::absolute_tolerance(&self) -> f64
+pub fn laddu_likelihood::RateClosure::accepted_absolute_residual(&self) -> core::option::Option<f64>
+pub fn laddu_likelihood::RateClosure::accepted_fitted_yield(&self) -> core::option::Option<&laddu_likelihood::Estimate>
+pub fn laddu_likelihood::RateClosure::accepted_relative_residual(&self) -> core::option::Option<f64>
+pub fn laddu_likelihood::RateClosure::accepted_residual(&self) -> core::option::Option<f64>
+pub fn laddu_likelihood::RateClosure::accepted_residual_draws(&self) -> &[f64]
+pub fn laddu_likelihood::RateClosure::corrected_absolute_residual(&self) -> core::option::Option<f64>
+pub fn laddu_likelihood::RateClosure::corrected_observed_yield(&self) -> core::option::Option<&laddu_likelihood::Estimate>
+pub fn laddu_likelihood::RateClosure::corrected_relative_residual(&self) -> core::option::Option<f64>
+pub fn laddu_likelihood::RateClosure::corrected_residual(&self) -> core::option::Option<f64>
+pub fn laddu_likelihood::RateClosure::corrected_residual_draws(&self) -> &[f64]
+pub fn laddu_likelihood::RateClosure::generated_fitted_yield(&self) -> core::option::Option<&laddu_likelihood::Estimate>
+pub fn laddu_likelihood::RateClosure::is_closed(&self) -> bool
+pub fn laddu_likelihood::RateClosure::reason(&self) -> core::option::Option<&str>
+pub fn laddu_likelihood::RateClosure::relative_tolerance(&self) -> f64
+pub fn laddu_likelihood::RateClosure::selected_yield(&self) -> &laddu_likelihood::Estimate
+pub fn laddu_likelihood::RateClosure::status(&self) -> laddu_likelihood::RateClosureStatus
+impl core::clone::Clone for laddu_likelihood::RateClosure
+pub fn laddu_likelihood::RateClosure::clone(&self) -> laddu_likelihood::RateClosure
+impl core::cmp::PartialEq for laddu_likelihood::RateClosure
+pub fn laddu_likelihood::RateClosure::eq(&self, &laddu_likelihood::RateClosure) -> bool
+impl core::fmt::Debug for laddu_likelihood::RateClosure
+pub fn laddu_likelihood::RateClosure::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for laddu_likelihood::RateClosure
 pub struct laddu_likelihood::RidgePenalty
 impl laddu_likelihood::RidgePenalty
 pub fn laddu_likelihood::RidgePenalty::new(impl core::convert::Into<alloc::string::String>, impl core::iter::traits::collect::IntoIterator<Item = impl core::convert::Into<alloc::string::String>>, f64) -> laddu_likelihood::LikelihoodResult<Self>
@@ -514,6 +562,27 @@ pub fn laddu_likelihood::RidgePenalty::nll_with_gradient(&self, &laddu_expr::par
 pub fn laddu_likelihood::RidgePenalty::register_params(&self, &mut laddu_expr::parameters::ParamRegistry) -> laddu_likelihood::LikelihoodResult<()>
 pub fn laddu_likelihood::RidgePenalty::resolve(&mut self, alloc::sync::Arc<laddu_expr::parameters::ParamLayout>, &laddu_runtime::execution::Execution) -> laddu_likelihood::LikelihoodResult<()>
 pub fn laddu_likelihood::RidgePenalty::stochastic_nll_with_gradient(&self, &laddu_expr::parameters::ParamValues, &mut [f64], &laddu_runtime::execution::Execution, f64, u64) -> laddu_likelihood::LikelihoodResult<f64>
+pub struct laddu_likelihood::Yield
+impl laddu_likelihood::Yield
+pub fn laddu_likelihood::Yield::accepted_fitted_yield(&self) -> laddu_likelihood::LikelihoodResult<laddu_likelihood::Estimate>
+pub fn laddu_likelihood::Yield::accepted_mc(&self) -> &laddu_data::data::dataset::Dataset
+pub fn laddu_likelihood::Yield::corrected_observed_yield(&self) -> &laddu_likelihood::Estimate
+pub fn laddu_likelihood::Yield::ensemble(&self) -> core::option::Option<&laddu_likelihood::Ensemble>
+pub fn laddu_likelihood::Yield::fitted_acceptance(&self) -> &laddu_likelihood::Estimate
+pub fn laddu_likelihood::Yield::generated_fitted_yield(&self) -> laddu_likelihood::LikelihoodResult<laddu_likelihood::Estimate>
+pub fn laddu_likelihood::Yield::generated_mc(&self) -> &laddu_data::data::dataset::Dataset
+pub fn laddu_likelihood::Yield::has_absolute_rate(&self) -> bool
+pub fn laddu_likelihood::Yield::likelihood(&self) -> &alloc::sync::Arc<laddu_likelihood::Likelihood>
+pub fn laddu_likelihood::Yield::observed_data(&self) -> &laddu_data::data::dataset::Dataset
+pub fn laddu_likelihood::Yield::parameters(&self) -> &[f64]
+pub fn laddu_likelihood::Yield::rate_closure(&self) -> laddu_likelihood::RateClosure
+pub fn laddu_likelihood::Yield::selected_yield(&self) -> &laddu_likelihood::Estimate
+pub fn laddu_likelihood::Yield::term_name(&self) -> &str
+pub fn laddu_likelihood::Yield::with_ensemble(alloc::sync::Arc<laddu_likelihood::Likelihood>, impl core::convert::Into<alloc::string::String>, laddu_data::data::dataset::Dataset, alloc::vec::Vec<f64>, core::option::Option<laddu_likelihood::Ensemble>) -> laddu_likelihood::LikelihoodResult<Self>
+impl core::clone::Clone for laddu_likelihood::Yield
+pub fn laddu_likelihood::Yield::clone(&self) -> laddu_likelihood::Yield
+impl core::fmt::Debug for laddu_likelihood::Yield
+pub fn laddu_likelihood::Yield::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub trait laddu_likelihood::LikelihoodTerm: core::fmt::Debug + core::marker::Send + core::marker::Sync
 pub fn laddu_likelihood::LikelihoodTerm::append_diagnostics(&self, &mut alloc::vec::Vec<laddu_likelihood::DatasetDiagnostics>)
 pub fn laddu_likelihood::LikelihoodTerm::as_intensity(&self) -> core::option::Option<&laddu_likelihood::NllTerm>

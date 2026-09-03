@@ -11,7 +11,7 @@ use laddu_data::{
     schema::Schema,
 };
 use laddu_physics::vectors::RealVec4;
-use laddu_runtime::{DatasetExprExt, MemoryBudget};
+use laddu_runtime::{BinSpec, DatasetExprExt, MemoryBudget};
 use numpy::{PyArray1, PyReadonlyArray1, PyReadonlyArray2, PyUntypedArrayMethods};
 use pyo3::{
     exceptions::{PyTypeError, PyValueError},
@@ -23,6 +23,7 @@ use super::{
     error::to_py_err,
     expr::PyExpr,
     float_vec,
+    histogram::PyHistogram,
     query::{PyBin, PyPredicate},
     runtime::{PyExecution, memory_decision_dict, parse_memory_budget},
 };
@@ -802,6 +803,74 @@ impl PyDataset {
                 .map_err(to_py_err)?;
             Ok(PyArray1::from_vec(py, values).into_any())
         }
+    }
+
+    #[pyo3(signature = (
+        expr,
+        *,
+        bin_edges,
+        event_weights=true,
+        weight=None,
+        execution=None
+    ))]
+    /// Evaluate a real scalar expression and fill a weighted histogram.
+    ///
+    /// The dataset is traversed once in bounded batches. Dataset event weights
+    /// are enabled by default; ``weight`` multiplies either those weights or
+    /// unit weights when ``event_weights`` is false. All upper edges are
+    /// exclusive; the final upper edge belongs to overflow.
+    ///
+    /// Parameters
+    /// ----------
+    /// expr : Expr
+    ///     Real scalar observable to histogram.
+    /// bin_edges : sequence of float
+    ///     Strictly increasing finite bin edges.
+    /// event_weights : bool, default=True
+    ///     Include the dataset's event weights.
+    /// weight : Expr, optional
+    ///     Additional real scalar weight multiplied event by event.
+    /// execution : Execution, optional
+    ///     Runtime configuration. Automatic local execution is used by default.
+    ///
+    /// Returns
+    /// -------
+    /// Histogram
+    ///     Empirical weighted histogram with squared-weight uncertainties.
+    ///
+    /// Raises
+    /// ------
+    /// LadduError
+    ///     If edges, expressions, evaluated values, or the dataset are invalid.
+    fn histogram(
+        &self,
+        py: Python<'_>,
+        expr: &PyExpr,
+        bin_edges: &Bound<'_, PyAny>,
+        event_weights: bool,
+        weight: Option<&PyExpr>,
+        execution: Option<&PyExecution>,
+    ) -> PyResult<PyHistogram> {
+        let execution = execution
+            .cloned()
+            .map(Ok)
+            .unwrap_or_else(PyExecution::default_inner)?;
+        let bins = BinSpec::edges(float_vec(bin_edges)?).map_err(to_py_err)?;
+        let dataset = self.inner.clone();
+        let expr = expr.inner.clone();
+        let weight = weight.map(|weight| weight.inner.clone());
+        let inner = py
+            .detach(move || {
+                dataset.histogram(
+                    &expr,
+                    bins,
+                    event_weights,
+                    weight.as_ref(),
+                    &execution.inner,
+                )
+            })
+            .map_err(to_py_err)?;
+        Ok(PyHistogram { inner })
     }
 
     /// Sum the event weights.

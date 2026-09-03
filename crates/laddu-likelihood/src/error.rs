@@ -29,6 +29,29 @@ pub enum LikelihoodError {
     /// The accepted Monte Carlo integral was non-positive.
     #[error("accepted MC integral must be positive for acceptance correction, got {0}")]
     NonPositiveAcceptedIntegral(f64),
+    /// The accepted Monte Carlo sample has no fitted support.
+    #[error("accepted MC sample has zero fitted support")]
+    MissingAcceptedSupport,
+    /// The accepted Monte Carlo fitted integral was exactly zero.
+    #[error("accepted MC fitted integral is zero")]
+    ZeroAcceptedIntegral,
+    /// The generated Monte Carlo integral was not positive.
+    #[error("generated MC integral must be positive for yield evaluation, got {0}")]
+    NonPositiveGeneratedIntegral(f64),
+    /// The generated Monte Carlo sample has no fitted support.
+    #[error("generated MC sample has zero fitted support")]
+    MissingGeneratedSupport,
+    /// The generated Monte Carlo fitted integral was exactly zero.
+    #[error("generated MC fitted integral is zero")]
+    ZeroGeneratedIntegral,
+    /// A scalar yield quantity was not finite.
+    #[error("{quantity} must be finite for yield evaluation, got {value}")]
+    NonFiniteYield {
+        /// Quantity whose evaluation was non-finite.
+        quantity: &'static str,
+        /// Non-finite value returned by the evaluator.
+        value: f64,
+    },
     /// A cross-section calculation received non-positive luminosity.
     #[error("luminosity must be positive for a cross section, got {0}")]
     NonPositiveLuminosity(f64),

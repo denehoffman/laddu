@@ -157,6 +157,7 @@ pub use laddu::prelude::CrossSectionIntegrals
 pub use laddu::prelude::Dataset
 pub use laddu::prelude::DatasetBin
 pub use laddu::prelude::DatasetExprExt
+pub use laddu::prelude::DatasetStats
 pub use laddu::prelude::Device
 pub use laddu::prelude::DeviceIdentity
 pub use laddu::prelude::DifferentialCrossSection
@@ -259,6 +260,8 @@ pub use laddu::prelude::ProjectionSet
 pub use laddu::prelude::ProposalResult
 pub use laddu::prelude::ProposalRng
 pub use laddu::prelude::ProvenEnvelopeReport
+pub use laddu::prelude::RateClosure
+pub use laddu::prelude::RateClosureStatus
 pub use laddu::prelude::ReadPlan
 pub use laddu::prelude::RealVec3
 pub use laddu::prelude::RealVec4
@@ -287,6 +290,7 @@ pub use laddu::prelude::VertexProposal
 pub use laddu::prelude::VertexView
 pub use laddu::prelude::WeightedConfig
 pub use laddu::prelude::WritePlan
+pub use laddu::prelude::Yield
 pub use laddu::prelude::acos
 pub use laddu::prelude::atan2
 pub use laddu::prelude::blatt_weisskopf_barriers
@@ -746,6 +750,84 @@ pub type laddu::python::cross_section::PyEstimate::Output = pyo3::instance::Boun
 pub type laddu::python::cross_section::PyEstimate::Target = laddu::python::cross_section::PyEstimate
 pub const laddu::python::cross_section::PyEstimate::OUTPUT_TYPE: pyo3::inspect::PyStaticExpr
 pub fn laddu::python::cross_section::PyEstimate::into_pyobject(self, pyo3::marker::Python<'py>) -> core::result::Result<<Self as pyo3::conversion::IntoPyObject<'_>>::Output, <Self as pyo3::conversion::IntoPyObject<'_>>::Error>
+pub struct laddu::python::cross_section::PyRateClosure
+impl core::clone::Clone for laddu::python::cross_section::PyRateClosure
+pub fn laddu::python::cross_section::PyRateClosure::clone(&self) -> laddu::python::cross_section::PyRateClosure
+impl core::convert::From<laddu_likelihood::yield_context::RateClosure> for laddu::python::cross_section::PyRateClosure
+pub fn laddu::python::cross_section::PyRateClosure::from(laddu_likelihood::yield_context::RateClosure) -> Self
+impl pyo3::impl_::pyclass::PyClassImpl for laddu::python::cross_section::PyRateClosure
+pub type laddu::python::cross_section::PyRateClosure::BaseNativeType = pyo3::types::any::PyAny
+pub type laddu::python::cross_section::PyRateClosure::BaseType = pyo3::types::any::PyAny
+pub type laddu::python::cross_section::PyRateClosure::Dict = pyo3::impl_::pyclass::PyClassDummySlot
+pub type laddu::python::cross_section::PyRateClosure::Inventory = Pyo3MethodsInventoryForPyRateClosure
+pub type laddu::python::cross_section::PyRateClosure::Layout = <<laddu::python::cross_section::PyRateClosure as pyo3::impl_::pyclass::PyClassImpl>::BaseNativeType as pyo3::impl_::pyclass::PyClassBaseType>::Layout
+pub type laddu::python::cross_section::PyRateClosure::PyClassMutability = <<pyo3::types::any::PyAny as pyo3::impl_::pyclass::PyClassBaseType>::PyClassMutability as pyo3::pycell::impl_::PyClassMutability>::ImmutableChild
+pub type laddu::python::cross_section::PyRateClosure::ThreadChecker = pyo3::impl_::pyclass::NoopThreadChecker
+pub type laddu::python::cross_section::PyRateClosure::WeakRef = pyo3::impl_::pyclass::PyClassDummySlot
+pub const laddu::python::cross_section::PyRateClosure::DOC: &'static core::ffi::c_str::CStr
+pub const laddu::python::cross_section::PyRateClosure::IS_BASETYPE: bool
+pub const laddu::python::cross_section::PyRateClosure::IS_IMMUTABLE_TYPE: bool
+pub const laddu::python::cross_section::PyRateClosure::IS_MAPPING: bool
+pub const laddu::python::cross_section::PyRateClosure::IS_SEQUENCE: bool
+pub const laddu::python::cross_section::PyRateClosure::IS_SUBCLASS: bool
+pub const laddu::python::cross_section::PyRateClosure::MODULE: core::option::Option<&str>
+pub const laddu::python::cross_section::PyRateClosure::RAW_DOC: &'static core::ffi::c_str::CStr
+pub fn laddu::python::cross_section::PyRateClosure::items_iter() -> pyo3::impl_::pyclass::PyClassItemsIter
+pub fn laddu::python::cross_section::PyRateClosure::lazy_type_object() -> &'static pyo3::impl_::pyclass::lazy_type_object::LazyTypeObject<Self>
+impl pyo3::pyclass::PyClass for laddu::python::cross_section::PyRateClosure
+pub type laddu::python::cross_section::PyRateClosure::Frozen = pyo3::pyclass::boolean_struct::True
+pub const laddu::python::cross_section::PyRateClosure::NAME: &str
+impl pyo3::type_object::PyTypeInfo for laddu::python::cross_section::PyRateClosure
+pub const laddu::python::cross_section::PyRateClosure::MODULE: core::option::Option<&str>
+pub const laddu::python::cross_section::PyRateClosure::NAME: &str
+pub const laddu::python::cross_section::PyRateClosure::TYPE_HINT: pyo3::inspect::PyStaticExpr
+pub fn laddu::python::cross_section::PyRateClosure::type_object_raw(pyo3::marker::Python<'_>) -> *mut pyo3_ffi::cpython::object::PyTypeObject
+impl pyo3::types::DerefToPyAny for laddu::python::cross_section::PyRateClosure
+impl<'py> pyo3::conversion::IntoPyObject<'py> for laddu::python::cross_section::PyRateClosure
+pub type laddu::python::cross_section::PyRateClosure::Error = pyo3::err::PyErr
+pub type laddu::python::cross_section::PyRateClosure::Output = pyo3::instance::Bound<'py, <laddu::python::cross_section::PyRateClosure as pyo3::conversion::IntoPyObject<'py>>::Target>
+pub type laddu::python::cross_section::PyRateClosure::Target = laddu::python::cross_section::PyRateClosure
+pub const laddu::python::cross_section::PyRateClosure::OUTPUT_TYPE: pyo3::inspect::PyStaticExpr
+pub fn laddu::python::cross_section::PyRateClosure::into_pyobject(self, pyo3::marker::Python<'py>) -> core::result::Result<<Self as pyo3::conversion::IntoPyObject<'_>>::Output, <Self as pyo3::conversion::IntoPyObject<'_>>::Error>
+pub struct laddu::python::cross_section::PyYield
+impl core::clone::Clone for laddu::python::cross_section::PyYield
+pub fn laddu::python::cross_section::PyYield::clone(&self) -> laddu::python::cross_section::PyYield
+impl core::convert::From<laddu_likelihood::yield_context::Yield> for laddu::python::cross_section::PyYield
+pub fn laddu::python::cross_section::PyYield::from(laddu_likelihood::yield_context::Yield) -> Self
+impl pyo3::impl_::pyclass::PyClassImpl for laddu::python::cross_section::PyYield
+pub type laddu::python::cross_section::PyYield::BaseNativeType = pyo3::types::any::PyAny
+pub type laddu::python::cross_section::PyYield::BaseType = pyo3::types::any::PyAny
+pub type laddu::python::cross_section::PyYield::Dict = pyo3::impl_::pyclass::PyClassDummySlot
+pub type laddu::python::cross_section::PyYield::Inventory = Pyo3MethodsInventoryForPyYield
+pub type laddu::python::cross_section::PyYield::Layout = <<laddu::python::cross_section::PyYield as pyo3::impl_::pyclass::PyClassImpl>::BaseNativeType as pyo3::impl_::pyclass::PyClassBaseType>::Layout
+pub type laddu::python::cross_section::PyYield::PyClassMutability = <<pyo3::types::any::PyAny as pyo3::impl_::pyclass::PyClassBaseType>::PyClassMutability as pyo3::pycell::impl_::PyClassMutability>::ImmutableChild
+pub type laddu::python::cross_section::PyYield::ThreadChecker = pyo3::impl_::pyclass::NoopThreadChecker
+pub type laddu::python::cross_section::PyYield::WeakRef = pyo3::impl_::pyclass::PyClassDummySlot
+pub const laddu::python::cross_section::PyYield::DOC: &'static core::ffi::c_str::CStr
+pub const laddu::python::cross_section::PyYield::IS_BASETYPE: bool
+pub const laddu::python::cross_section::PyYield::IS_IMMUTABLE_TYPE: bool
+pub const laddu::python::cross_section::PyYield::IS_MAPPING: bool
+pub const laddu::python::cross_section::PyYield::IS_SEQUENCE: bool
+pub const laddu::python::cross_section::PyYield::IS_SUBCLASS: bool
+pub const laddu::python::cross_section::PyYield::MODULE: core::option::Option<&str>
+pub const laddu::python::cross_section::PyYield::RAW_DOC: &'static core::ffi::c_str::CStr
+pub fn laddu::python::cross_section::PyYield::items_iter() -> pyo3::impl_::pyclass::PyClassItemsIter
+pub fn laddu::python::cross_section::PyYield::lazy_type_object() -> &'static pyo3::impl_::pyclass::lazy_type_object::LazyTypeObject<Self>
+impl pyo3::pyclass::PyClass for laddu::python::cross_section::PyYield
+pub type laddu::python::cross_section::PyYield::Frozen = pyo3::pyclass::boolean_struct::True
+pub const laddu::python::cross_section::PyYield::NAME: &str
+impl pyo3::type_object::PyTypeInfo for laddu::python::cross_section::PyYield
+pub const laddu::python::cross_section::PyYield::MODULE: core::option::Option<&str>
+pub const laddu::python::cross_section::PyYield::NAME: &str
+pub const laddu::python::cross_section::PyYield::TYPE_HINT: pyo3::inspect::PyStaticExpr
+pub fn laddu::python::cross_section::PyYield::type_object_raw(pyo3::marker::Python<'_>) -> *mut pyo3_ffi::cpython::object::PyTypeObject
+impl pyo3::types::DerefToPyAny for laddu::python::cross_section::PyYield
+impl<'py> pyo3::conversion::IntoPyObject<'py> for laddu::python::cross_section::PyYield
+pub type laddu::python::cross_section::PyYield::Error = pyo3::err::PyErr
+pub type laddu::python::cross_section::PyYield::Output = pyo3::instance::Bound<'py, <laddu::python::cross_section::PyYield as pyo3::conversion::IntoPyObject<'py>>::Target>
+pub type laddu::python::cross_section::PyYield::Target = laddu::python::cross_section::PyYield
+pub const laddu::python::cross_section::PyYield::OUTPUT_TYPE: pyo3::inspect::PyStaticExpr
+pub fn laddu::python::cross_section::PyYield::into_pyobject(self, pyo3::marker::Python<'py>) -> core::result::Result<<Self as pyo3::conversion::IntoPyObject<'_>>::Output, <Self as pyo3::conversion::IntoPyObject<'_>>::Error>
 pub mod laddu::python::data
 pub mod laddu::python::data::data
 pub struct laddu::python::data::PyBinDataset
@@ -822,6 +904,45 @@ pub type laddu::python::data::PyDataset::Output = pyo3::instance::Bound<'py, <la
 pub type laddu::python::data::PyDataset::Target = laddu::python::data::PyDataset
 pub const laddu::python::data::PyDataset::OUTPUT_TYPE: pyo3::inspect::PyStaticExpr
 pub fn laddu::python::data::PyDataset::into_pyobject(self, pyo3::marker::Python<'py>) -> core::result::Result<<Self as pyo3::conversion::IntoPyObject<'_>>::Output, <Self as pyo3::conversion::IntoPyObject<'_>>::Error>
+pub struct laddu::python::data::PyDatasetStats
+impl core::clone::Clone for laddu::python::data::PyDatasetStats
+pub fn laddu::python::data::PyDatasetStats::clone(&self) -> laddu::python::data::PyDatasetStats
+impl core::convert::From<laddu_data::data::dataset::DatasetStats> for laddu::python::data::PyDatasetStats
+pub fn laddu::python::data::PyDatasetStats::from(laddu_data::data::dataset::DatasetStats) -> Self
+impl pyo3::impl_::pyclass::PyClassImpl for laddu::python::data::PyDatasetStats
+pub type laddu::python::data::PyDatasetStats::BaseNativeType = pyo3::types::any::PyAny
+pub type laddu::python::data::PyDatasetStats::BaseType = pyo3::types::any::PyAny
+pub type laddu::python::data::PyDatasetStats::Dict = pyo3::impl_::pyclass::PyClassDummySlot
+pub type laddu::python::data::PyDatasetStats::Inventory = Pyo3MethodsInventoryForPyDatasetStats
+pub type laddu::python::data::PyDatasetStats::Layout = <<laddu::python::data::PyDatasetStats as pyo3::impl_::pyclass::PyClassImpl>::BaseNativeType as pyo3::impl_::pyclass::PyClassBaseType>::Layout
+pub type laddu::python::data::PyDatasetStats::PyClassMutability = <<pyo3::types::any::PyAny as pyo3::impl_::pyclass::PyClassBaseType>::PyClassMutability as pyo3::pycell::impl_::PyClassMutability>::ImmutableChild
+pub type laddu::python::data::PyDatasetStats::ThreadChecker = pyo3::impl_::pyclass::NoopThreadChecker
+pub type laddu::python::data::PyDatasetStats::WeakRef = pyo3::impl_::pyclass::PyClassDummySlot
+pub const laddu::python::data::PyDatasetStats::DOC: &'static core::ffi::c_str::CStr
+pub const laddu::python::data::PyDatasetStats::IS_BASETYPE: bool
+pub const laddu::python::data::PyDatasetStats::IS_IMMUTABLE_TYPE: bool
+pub const laddu::python::data::PyDatasetStats::IS_MAPPING: bool
+pub const laddu::python::data::PyDatasetStats::IS_SEQUENCE: bool
+pub const laddu::python::data::PyDatasetStats::IS_SUBCLASS: bool
+pub const laddu::python::data::PyDatasetStats::MODULE: core::option::Option<&str>
+pub const laddu::python::data::PyDatasetStats::RAW_DOC: &'static core::ffi::c_str::CStr
+pub fn laddu::python::data::PyDatasetStats::items_iter() -> pyo3::impl_::pyclass::PyClassItemsIter
+pub fn laddu::python::data::PyDatasetStats::lazy_type_object() -> &'static pyo3::impl_::pyclass::lazy_type_object::LazyTypeObject<Self>
+impl pyo3::pyclass::PyClass for laddu::python::data::PyDatasetStats
+pub type laddu::python::data::PyDatasetStats::Frozen = pyo3::pyclass::boolean_struct::True
+pub const laddu::python::data::PyDatasetStats::NAME: &str
+impl pyo3::type_object::PyTypeInfo for laddu::python::data::PyDatasetStats
+pub const laddu::python::data::PyDatasetStats::MODULE: core::option::Option<&str>
+pub const laddu::python::data::PyDatasetStats::NAME: &str
+pub const laddu::python::data::PyDatasetStats::TYPE_HINT: pyo3::inspect::PyStaticExpr
+pub fn laddu::python::data::PyDatasetStats::type_object_raw(pyo3::marker::Python<'_>) -> *mut pyo3_ffi::cpython::object::PyTypeObject
+impl pyo3::types::DerefToPyAny for laddu::python::data::PyDatasetStats
+impl<'py> pyo3::conversion::IntoPyObject<'py> for laddu::python::data::PyDatasetStats
+pub type laddu::python::data::PyDatasetStats::Error = pyo3::err::PyErr
+pub type laddu::python::data::PyDatasetStats::Output = pyo3::instance::Bound<'py, <laddu::python::data::PyDatasetStats as pyo3::conversion::IntoPyObject<'py>>::Target>
+pub type laddu::python::data::PyDatasetStats::Target = laddu::python::data::PyDatasetStats
+pub const laddu::python::data::PyDatasetStats::OUTPUT_TYPE: pyo3::inspect::PyStaticExpr
+pub fn laddu::python::data::PyDatasetStats::into_pyobject(self, pyo3::marker::Python<'py>) -> core::result::Result<<Self as pyo3::conversion::IntoPyObject<'_>>::Output, <Self as pyo3::conversion::IntoPyObject<'_>>::Error>
 pub struct laddu::python::data::PyParquetSink
 impl core::clone::Clone for laddu::python::data::PyParquetSink
 pub fn laddu::python::data::PyParquetSink::clone(&self) -> laddu::python::data::PyParquetSink
@@ -1059,6 +1180,7 @@ pub fn laddu::python::expr::acos(&pyo3::instance::Bound<'_, pyo3::types::any::Py
 pub fn laddu::python::expr::atan2(&pyo3::instance::Bound<'_, pyo3::types::any::PyAny>, &pyo3::instance::Bound<'_, pyo3::types::any::PyAny>) -> pyo3::err::PyResult<laddu::python::expr::PyExpr>
 pub fn laddu::python::expr::cis(&pyo3::instance::Bound<'_, pyo3::types::any::PyAny>) -> pyo3::err::PyResult<laddu::python::expr::PyExpr>
 pub fn laddu::python::expr::complex(&pyo3::instance::Bound<'_, pyo3::types::any::PyAny>, &pyo3::instance::Bound<'_, pyo3::types::any::PyAny>) -> pyo3::err::PyResult<laddu::python::expr::PyExpr>
+pub fn laddu::python::expr::cparameter(alloc::string::String, core::option::Option<&pyo3::instance::Bound<'_, pyo3::types::any::PyAny>>, &str, core::option::Option<(alloc::string::String, alloc::string::String)>, core::option::Option<&pyo3::instance::Bound<'_, pyo3::types::any::PyAny>>, core::option::Option<&pyo3::instance::Bound<'_, pyo3::types::any::PyAny>>, core::option::Option<&pyo3::instance::Bound<'_, pyo3::types::any::PyAny>>, core::option::Option<&pyo3::instance::Bound<'_, pyo3::types::any::PyAny>>, core::option::Option<&pyo3::instance::Bound<'_, pyo3::types::any::PyAny>>, core::option::Option<&pyo3::instance::Bound<'_, pyo3::types::any::PyAny>>, core::option::Option<&pyo3::instance::Bound<'_, pyo3::types::any::PyAny>>) -> pyo3::err::PyResult<laddu::python::expr::PyExpr>
 pub fn laddu::python::expr::dot(&pyo3::instance::Bound<'_, pyo3::types::any::PyAny>, &pyo3::instance::Bound<'_, pyo3::types::any::PyAny>) -> pyo3::err::PyResult<laddu::python::expr::PyExpr>
 pub fn laddu::python::expr::extract_expr(&pyo3::instance::Bound<'_, pyo3::types::any::PyAny>) -> pyo3::err::PyResult<laddu_expr::expression::Expr>
 pub fn laddu::python::expr::matmul(&pyo3::instance::Bound<'_, pyo3::types::any::PyAny>, &pyo3::instance::Bound<'_, pyo3::types::any::PyAny>) -> pyo3::err::PyResult<laddu::python::expr::PyExpr>

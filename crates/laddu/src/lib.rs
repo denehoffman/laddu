@@ -132,7 +132,8 @@ pub mod prelude {
         CrossSectionIntegrals, DifferentialCrossSection, Ensemble, Estimate, ExtendedNllTerm,
         LassoPenalty, Likelihood, LikelihoodError, LikelihoodEvaluation, LikelihoodName,
         LikelihoodProjection, LikelihoodResult, LikelihoodTerm, NllTerm, Objective, Projection,
-        ProjectionSet, RidgePenalty, StochasticObjective, next_uncertainty_source_id,
+        ProjectionSet, RateClosure, RateClosureStatus, RidgePenalty, StochasticObjective, Yield,
+        next_uncertainty_source_id,
     };
     pub use laddu_physics::quantum::builtin as particles;
     pub use laddu_physics::{

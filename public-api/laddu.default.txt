@@ -150,6 +150,7 @@ pub use laddu::prelude::CrossSectionIntegrals
 pub use laddu::prelude::Dataset
 pub use laddu::prelude::DatasetBin
 pub use laddu::prelude::DatasetExprExt
+pub use laddu::prelude::DatasetStats
 pub use laddu::prelude::Device
 pub use laddu::prelude::DeviceIdentity
 pub use laddu::prelude::DifferentialCrossSection
@@ -251,6 +252,8 @@ pub use laddu::prelude::ProjectionSet
 pub use laddu::prelude::ProposalResult
 pub use laddu::prelude::ProposalRng
 pub use laddu::prelude::ProvenEnvelopeReport
+pub use laddu::prelude::RateClosure
+pub use laddu::prelude::RateClosureStatus
 pub use laddu::prelude::ReadPlan
 pub use laddu::prelude::RealVec3
 pub use laddu::prelude::RealVec4
@@ -279,6 +282,7 @@ pub use laddu::prelude::VertexProposal
 pub use laddu::prelude::VertexView
 pub use laddu::prelude::WeightedConfig
 pub use laddu::prelude::WritePlan
+pub use laddu::prelude::Yield
 pub use laddu::prelude::acos
 pub use laddu::prelude::atan2
 pub use laddu::prelude::blatt_weisskopf_barriers

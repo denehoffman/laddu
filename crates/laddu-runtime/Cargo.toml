@@ -23,6 +23,7 @@ laddu-data.workspace = true
 laddu-expr.workspace = true
 laddu-kernel.workspace = true
 laddu-memory.workspace = true
+laddu-physics.workspace = true
 laddu-wgpu = { workspace = true, optional = true }
 mpi = { workspace = true, optional = true }
 nalgebra.workspace = true
