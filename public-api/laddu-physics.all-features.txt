@@ -348,6 +348,48 @@ impl serde_core::ser::Serialize for laddu_physics::histogram::Histogram
 pub fn laddu_physics::histogram::Histogram::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
 impl<'de> serde_core::de::Deserialize<'de> for laddu_physics::histogram::Histogram
 pub fn laddu_physics::histogram::Histogram::deserialize<D>(D) -> core::result::Result<Self, <D as serde_core::de::Deserializer>::Error> where D: serde_core::de::Deserializer<'de>
+pub mod laddu_physics::joint_histogram
+pub struct laddu_physics::joint_histogram::JointHistogram
+impl laddu_physics::joint_histogram::JointHistogram
+pub fn laddu_physics::joint_histogram::JointHistogram::axes(&self) -> &[alloc::vec::Vec<f64>]
+pub fn laddu_physics::joint_histogram::JointHistogram::diagnostics(&self) -> &laddu_physics::joint_histogram::JointHistogramDiagnostics
+pub fn laddu_physics::joint_histogram::JointHistogram::empty(alloc::vec::Vec<alloc::vec::Vec<f64>>) -> laddu_physics::LadduPhysicsResult<Self>
+pub fn laddu_physics::joint_histogram::JointHistogram::errors(&self) -> alloc::vec::Vec<f64>
+pub fn laddu_physics::joint_histogram::JointHistogram::fill_weighted(&mut self, &[f64], f64) -> laddu_physics::LadduPhysicsResult<()>
+pub fn laddu_physics::joint_histogram::JointHistogram::merge(&mut self, &Self) -> laddu_physics::LadduPhysicsResult<()>
+pub fn laddu_physics::joint_histogram::JointHistogram::shape(&self) -> &[usize]
+pub fn laddu_physics::joint_histogram::JointHistogram::sum_squared_weights(&self) -> &[f64]
+pub fn laddu_physics::joint_histogram::JointHistogram::values(&self) -> &[f64]
+impl core::clone::Clone for laddu_physics::joint_histogram::JointHistogram
+pub fn laddu_physics::joint_histogram::JointHistogram::clone(&self) -> laddu_physics::joint_histogram::JointHistogram
+impl core::cmp::PartialEq for laddu_physics::joint_histogram::JointHistogram
+pub fn laddu_physics::joint_histogram::JointHistogram::eq(&self, &laddu_physics::joint_histogram::JointHistogram) -> bool
+impl core::fmt::Debug for laddu_physics::joint_histogram::JointHistogram
+pub fn laddu_physics::joint_histogram::JointHistogram::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for laddu_physics::joint_histogram::JointHistogram
+impl serde_core::ser::Serialize for laddu_physics::joint_histogram::JointHistogram
+pub fn laddu_physics::joint_histogram::JointHistogram::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for laddu_physics::joint_histogram::JointHistogram
+pub fn laddu_physics::joint_histogram::JointHistogram::deserialize<D>(D) -> core::result::Result<Self, <D as serde_core::de::Deserializer>::Error> where D: serde_core::de::Deserializer<'de>
+pub struct laddu_physics::joint_histogram::JointHistogramDiagnostics
+impl laddu_physics::joint_histogram::JointHistogramDiagnostics
+pub fn laddu_physics::joint_histogram::JointHistogramDiagnostics::nonfinite_count(&self) -> u64
+pub fn laddu_physics::joint_histogram::JointHistogramDiagnostics::nonfinite_weight(&self) -> f64
+pub fn laddu_physics::joint_histogram::JointHistogramDiagnostics::out_of_range_count(&self) -> u64
+pub fn laddu_physics::joint_histogram::JointHistogramDiagnostics::out_of_range_weight(&self) -> f64
+impl core::clone::Clone for laddu_physics::joint_histogram::JointHistogramDiagnostics
+pub fn laddu_physics::joint_histogram::JointHistogramDiagnostics::clone(&self) -> laddu_physics::joint_histogram::JointHistogramDiagnostics
+impl core::cmp::PartialEq for laddu_physics::joint_histogram::JointHistogramDiagnostics
+pub fn laddu_physics::joint_histogram::JointHistogramDiagnostics::eq(&self, &laddu_physics::joint_histogram::JointHistogramDiagnostics) -> bool
+impl core::default::Default for laddu_physics::joint_histogram::JointHistogramDiagnostics
+pub fn laddu_physics::joint_histogram::JointHistogramDiagnostics::default() -> laddu_physics::joint_histogram::JointHistogramDiagnostics
+impl core::fmt::Debug for laddu_physics::joint_histogram::JointHistogramDiagnostics
+pub fn laddu_physics::joint_histogram::JointHistogramDiagnostics::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for laddu_physics::joint_histogram::JointHistogramDiagnostics
+impl serde_core::ser::Serialize for laddu_physics::joint_histogram::JointHistogramDiagnostics
+pub fn laddu_physics::joint_histogram::JointHistogramDiagnostics::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for laddu_physics::joint_histogram::JointHistogramDiagnostics
+pub fn laddu_physics::joint_histogram::JointHistogramDiagnostics::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
 pub mod laddu_physics::math
 pub enum laddu_physics::math::BarrierKind
 pub laddu_physics::math::BarrierKind::Full

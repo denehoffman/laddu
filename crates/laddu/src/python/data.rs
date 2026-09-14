@@ -23,7 +23,7 @@ use super::{
     error::to_py_err,
     expr::PyExpr,
     float_vec,
-    histogram::PyHistogram,
+    histogram::{PyHistogram, PyJointHistogram},
     query::{PyBin, PyPredicate},
     runtime::{PyExecution, memory_decision_dict, parse_memory_budget},
 };
@@ -871,6 +871,59 @@ impl PyDataset {
             })
             .map_err(to_py_err)?;
         Ok(PyHistogram { inner })
+    }
+
+    #[pyo3(signature = (
+        axes,
+        *,
+        bin_edges,
+        event_weights=true,
+        weight=None,
+        execution=None
+    ))]
+    /// Evaluate ordered real scalar axes and fill a bounded joint histogram.
+    ///
+    /// The returned values are flattened in row-major order (the last axis
+    /// varies fastest). Nonfinite events take precedence over range diagnostics.
+    fn joint_histogram(
+        &self,
+        py: Python<'_>,
+        axes: &Bound<'_, PyAny>,
+        bin_edges: &Bound<'_, PyAny>,
+        event_weights: bool,
+        weight: Option<&PyExpr>,
+        execution: Option<&PyExecution>,
+    ) -> PyResult<PyJointHistogram> {
+        let axes = PyIterator::from_object(axes)?
+            .map(|axis| -> PyResult<_> {
+                let axis = axis?;
+                Ok(axis.extract::<PyRef<'_, PyExpr>>()?.inner.clone())
+            })
+            .collect::<PyResult<Vec<_>>>()?;
+        let bins = PyIterator::from_object(bin_edges)?
+            .map(|edges| -> PyResult<_> {
+                let edges = edges?;
+                BinSpec::edges(float_vec(&edges)?).map_err(to_py_err)
+            })
+            .collect::<PyResult<Vec<_>>>()?;
+        let execution = execution
+            .cloned()
+            .map(Ok)
+            .unwrap_or_else(PyExecution::default_inner)?;
+        let dataset = self.inner.clone();
+        let weight = weight.map(|weight| weight.inner.clone());
+        let inner = py
+            .detach(move || {
+                dataset.joint_histogram(
+                    &axes,
+                    bins,
+                    event_weights,
+                    weight.as_ref(),
+                    &execution.inner,
+                )
+            })
+            .map_err(to_py_err)?;
+        Ok(PyJointHistogram { inner })
     }
 
     /// Sum the event weights.

@@ -1,6 +1,8 @@
 pub mod laddu_runtime
 pub use laddu_runtime::CapacitySource
 pub use laddu_runtime::DeviceIdentity
+pub use laddu_runtime::JointHistogram
+pub use laddu_runtime::JointHistogramDiagnostics
 pub use laddu_runtime::MemoryBudget
 pub use laddu_runtime::MemoryDecision
 pub use laddu_runtime::MemoryError
@@ -602,12 +604,14 @@ pub fn laddu_runtime::DatasetExprExt::bin_by(&self, &laddu_expr::expression::Exp
 pub fn laddu_runtime::DatasetExprExt::evaluate_expr(&self, &laddu_expr::expression::Expr, &laddu_runtime::Execution) -> laddu_runtime::RuntimeResult<alloc::vec::Vec<num_complex::Complex64>>
 pub fn laddu_runtime::DatasetExprExt::evaluate_real(&self, &laddu_expr::expression::Expr, &laddu_runtime::Execution) -> laddu_runtime::RuntimeResult<alloc::vec::Vec<f64>>
 pub fn laddu_runtime::DatasetExprExt::histogram(&self, &laddu_expr::expression::Expr, laddu_runtime::BinSpec, bool, core::option::Option<&laddu_expr::expression::Expr>, &laddu_runtime::Execution) -> laddu_runtime::RuntimeResult<laddu_physics::histogram::Histogram>
+pub fn laddu_runtime::DatasetExprExt::joint_histogram(&self, &[laddu_expr::expression::Expr], alloc::vec::Vec<laddu_runtime::BinSpec>, bool, core::option::Option<&laddu_expr::expression::Expr>, &laddu_runtime::Execution) -> laddu_runtime::RuntimeResult<laddu_physics::joint_histogram::JointHistogram>
 pub fn laddu_runtime::DatasetExprExt::select(&self, &laddu_runtime::Predicate, &laddu_runtime::Execution) -> laddu_runtime::RuntimeResult<laddu_data::data::dataset::Dataset>
 impl laddu_runtime::DatasetExprExt for laddu_data::data::dataset::Dataset
 pub fn laddu_data::data::dataset::Dataset::bin_by(&self, &laddu_expr::expression::Expr, laddu_runtime::BinSpec, &laddu_runtime::Execution) -> laddu_runtime::RuntimeResult<alloc::vec::Vec<laddu_runtime::DatasetBin>>
 pub fn laddu_data::data::dataset::Dataset::evaluate_expr(&self, &laddu_expr::expression::Expr, &laddu_runtime::Execution) -> laddu_runtime::RuntimeResult<alloc::vec::Vec<num_complex::Complex64>>
 pub fn laddu_data::data::dataset::Dataset::evaluate_real(&self, &laddu_expr::expression::Expr, &laddu_runtime::Execution) -> laddu_runtime::RuntimeResult<alloc::vec::Vec<f64>>
 pub fn laddu_data::data::dataset::Dataset::histogram(&self, &laddu_expr::expression::Expr, laddu_runtime::BinSpec, bool, core::option::Option<&laddu_expr::expression::Expr>, &laddu_runtime::Execution) -> laddu_runtime::RuntimeResult<laddu_physics::histogram::Histogram>
+pub fn laddu_data::data::dataset::Dataset::joint_histogram(&self, &[laddu_expr::expression::Expr], alloc::vec::Vec<laddu_runtime::BinSpec>, bool, core::option::Option<&laddu_expr::expression::Expr>, &laddu_runtime::Execution) -> laddu_runtime::RuntimeResult<laddu_physics::joint_histogram::JointHistogram>
 pub fn laddu_data::data::dataset::Dataset::select(&self, &laddu_runtime::Predicate, &laddu_runtime::Execution) -> laddu_runtime::RuntimeResult<laddu_data::data::dataset::Dataset>
 pub trait laddu_runtime::EventLookup
 pub fn laddu_runtime::EventLookup::p4_component(&self, &str, laddu_expr::expression::P4Component) -> core::option::Option<f64>

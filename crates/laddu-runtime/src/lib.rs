@@ -22,6 +22,7 @@ pub use laddu_memory::{
     MemoryPlan, MemoryPool, MemoryPoolReport, MemoryReport, MemoryResource, MemoryResourceKind,
     MemoryState, ProcessMemoryReport,
 };
+pub use laddu_physics::joint_histogram::{JointHistogram, JointHistogramDiagnostics};
 pub use normalization::{PreparedNormalization, PreparedNormalizationDiagnostics};
 pub use query::{BinSpec, Comparison, DatasetBin, DatasetExprExt, IntervalClosure, Predicate};
 

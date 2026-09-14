@@ -1,0 +1,12 @@
+{
+  "axes": [[0.0, 1.0, 2.0], [-1.0, 1.0]],
+  "shape": [2, 1],
+  "values": [-2.0, 0.0],
+  "sum_squared_weights": [4.0, 0.0],
+  "diagnostics": {
+    "nonfinite_count": 0,
+    "nonfinite_weight": 0.0,
+    "out_of_range_count": 1,
+    "out_of_range_weight": 1.5
+  }
+}

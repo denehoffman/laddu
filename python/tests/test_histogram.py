@@ -7,9 +7,36 @@ import numpy as np
 import pytest
 
 EXPECTED_OVERFLOW = 2.0
+EXPECTED_JOINT_OUT_OF_RANGE_COUNT = 2
+EXPECTED_JOINT_OUT_OF_RANGE_WEIGHT = 3.5
 
 
 class HistogramTests(unittest.TestCase):
+    def test_joint_histogram_exposes_row_major_shape_and_diagnostics(self) -> None:
+        dataset = ld.Dataset.from_arrays(
+            p4s={},
+            scalars={
+                'x': np.array([0.0, 1.0, 0.0, np.nan]),
+                'y': np.array([10.0, 10.0, 20.0, 10.0]),
+            },
+            weights=np.array([1.0, -2.0, 3.0, 4.0]),
+        )
+
+        histogram = dataset.joint_histogram(
+            [ld.scalar('x'), ld.scalar('y')],
+            bin_edges=[[0.0, 1.0, 2.0], [0.0, 15.0, 25.0]],
+        )
+
+        assert histogram.shape == [2, 2]
+        np.testing.assert_array_equal(histogram.values, [[1.0, 3.0], [-2.0, 0.0]])
+        np.testing.assert_array_equal(histogram.errors, [[1.0, 3.0], [2.0, 0.0]])
+        np.testing.assert_array_equal(
+            histogram.squared_weight_constituents,
+            [[1.0, 9.0], [4.0, 0.0]],
+        )
+        assert histogram.diagnostics.nonfinite_count == 1
+        assert histogram.diagnostics.out_of_range_count == 0
+
     def test_dataset_histogram_evaluates_observable_and_weight_expressions(self) -> None:
         dataset = ld.Dataset.from_arrays(
             p4s={},
@@ -58,6 +85,39 @@ class HistogramTests(unittest.TestCase):
         assert histogram.counts == [1.0, 1.5]
         assert histogram.overflow == EXPECTED_OVERFLOW
         assert histogram.squared_weight_constituents() == ([1.0, 2.25], 0.0, 4.0)
+
+        joint = selected.joint_histogram(
+            [ld.scalar('x'), ld.scalar('x') + 1.0],
+            bin_edges=[[0.0, 1.0, 2.0], [0.0, 1.0, 2.0]],
+        )
+        assert joint.shape == [2, 2]
+        np.testing.assert_array_equal(joint.values, [[0.0, 1.0], [0.0, 0.0]])
+        assert joint.diagnostics.out_of_range_count == EXPECTED_JOINT_OUT_OF_RANGE_COUNT
+        assert joint.diagnostics.out_of_range_weight == EXPECTED_JOINT_OUT_OF_RANGE_WEIGHT
+
+        resident = ld.Dataset.from_arrays(p4s={}, scalars={'x': [0.0, 1.0, 2.0]}, weights=[1.0, 1.5, 2.0])
+        resident_joint = resident.joint_histogram(
+            [ld.scalar('x'), ld.scalar('x') + 1.0],
+            bin_edges=[[0.0, 1.0, 2.0], [0.0, 1.0, 2.0]],
+        )
+        assert resident_joint.to_json() == joint.to_json()
+
+    def test_joint_histogram_merge_is_atomic_and_roundtrips(self) -> None:
+        left_data = ld.Dataset.from_arrays(p4s={}, scalars={'x': [0.0]}, weights=[2.0])
+        right_data = ld.Dataset.from_arrays(p4s={}, scalars={'x': [1.0]}, weights=[-3.0])
+        left = left_data.joint_histogram([ld.scalar('x')], bin_edges=[[0.0, 1.0, 2.0]])
+        right = right_data.joint_histogram([ld.scalar('x')], bin_edges=[[0.0, 1.0, 2.0]])
+
+        left.merge(right)
+        np.testing.assert_array_equal(left.values, [2.0, -3.0])
+        np.testing.assert_array_equal(left.squared_weight_constituents, [4.0, 9.0])
+        assert ld.JointHistogram.from_json(left.to_json()).to_json() == left.to_json()
+
+        incompatible = right_data.joint_histogram([ld.scalar('x')], bin_edges=[[0.0, 2.0]])
+        before = left.to_json()
+        with pytest.raises(ld.LadduError, match='identical ordered axes'):
+            left.merge(incompatible)
+        assert left.to_json() == before
 
     def test_dataset_histogram_rejects_invalid_edges_values_and_weights(self) -> None:
         dataset = ld.Dataset.from_arrays(p4s={}, scalars={'x': [0.0]}, weights=[1.0])
