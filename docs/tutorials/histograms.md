@@ -53,6 +53,44 @@ explicitly chunked dataset views therefore use the same operation without
 materializing a full value array. Non-finite observables or combined weights
 are errors; they are never silently replaced or discarded.
 
+## Joint histograms
+
+`Dataset.joint_histogram` bins any non-empty ordered collection of real scalar
+axes in one bounded traversal:
+
+```python
+joint = dataset.joint_histogram(
+    [ld.scalar("mass"), ld.scalar("angle")],
+    bin_edges=[[1.0, 1.5, 2.0], [-1.0, 0.0, 1.0]],
+)
+```
+
+`joint.shape` gives the bin count for each axis. In Python, `joint.values`,
+`joint.errors`, and `joint.squared_weight_constituents` are NumPy arrays with
+that shape, so bins can be indexed naturally by axis. Rust and the serialized
+representation retain row-major flattened storage, with the last axis varying
+fastest. Every axis is lower-inclusive and upper-exclusive, including its final
+upper edge.
+
+Unlike the one-dimensional `Histogram`, a `JointHistogram` has no flow lattice.
+It reports aggregate `nonfinite` and `out_of_range` diagnostics instead. If an
+event has both a nonfinite coordinate or weight and an out-of-range coordinate,
+the nonfinite category takes precedence. Finite signed weights excluded from
+the regular bins are retained in the corresponding diagnostic weight total.
+
+Compatible joint histograms filled from disjoint partitions can be merged.
+Ordered axes and shape must match exactly, and a failed merge leaves the left
+operand unchanged.
+
+### Compatibility
+
+`JointHistogram.to_json()` stores ordered axis edges, shape, flattened values,
+squared-weight constituents, and aggregate diagnostics. Laddu validates those
+relationships when loading with `JointHistogram.from_json()`; malformed or
+nonfinite stored accumulators are rejected. This is a new type and does not
+change the serialized or numerical contract of the existing one-dimensional
+`Histogram`.
+
 ## Merge disjoint fills
 
 Histograms filled from disjoint event partitions can be combined without

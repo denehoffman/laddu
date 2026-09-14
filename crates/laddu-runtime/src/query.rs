@@ -8,7 +8,7 @@ use laddu_data::{
     schema::Schema,
 };
 use laddu_expr::{Expr, ValueKind};
-use laddu_physics::histogram::Histogram;
+use laddu_physics::{histogram::Histogram, joint_histogram::JointHistogram};
 use num::complex::Complex64;
 use serde::{Deserialize, Deserializer, Serialize};
 
@@ -289,6 +289,20 @@ pub trait DatasetExprExt {
         weight: Option<&Expr>,
         execution: &Execution,
     ) -> RuntimeResult<Histogram>;
+    /// Evaluates ordered scalar axes and fills one bounded row-major joint histogram.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RuntimeError`] for missing or mismatched axes, invalid edges,
+    /// non-scalar expressions, evaluation failures, or source read failures.
+    fn joint_histogram(
+        &self,
+        axes: &[Expr],
+        bins: Vec<BinSpec>,
+        event_weights: bool,
+        weight: Option<&Expr>,
+        execution: &Execution,
+    ) -> RuntimeResult<JointHistogram>;
     /// Creates a lazily filtered dataset containing events that satisfy `predicate`.
     ///
     /// # Errors
@@ -364,6 +378,52 @@ impl DatasetExprExt for Dataset {
                 let custom_weight = values.get(1).map_or(1.0, |weights| weights[row].re);
                 histogram
                     .fill_weighted(values[0][row].re, base_weight * custom_weight)
+                    .map_err(|error| query_error(error.to_string()))?;
+            }
+        }
+        Ok(histogram)
+    }
+
+    fn joint_histogram(
+        &self,
+        axes: &[Expr],
+        bins: Vec<BinSpec>,
+        event_weights: bool,
+        weight: Option<&Expr>,
+        execution: &Execution,
+    ) -> RuntimeResult<JointHistogram> {
+        if axes.is_empty() || axes.len() != bins.len() {
+            return Err(query_error(
+                "joint histogram requires one bin specification per non-empty ordered axis",
+            ));
+        }
+        let edge_vectors = bins
+            .iter()
+            .map(|bins| bins.edges_slice().to_vec())
+            .collect();
+        let mut histogram =
+            JointHistogram::empty(edge_vectors).map_err(|error| query_error(error.to_string()))?;
+        let mut expressions = axes.to_vec();
+        expressions.extend(weight.cloned());
+        let query = QueryExprSet::prepare(expressions, execution, true)?;
+        let mut coordinates = vec![0.0; axes.len()];
+        for batch in self.batches().map_err(data_error)? {
+            let batch = batch.map_err(data_error)?;
+            let values = query.evaluate_batch(&batch)?;
+            for row in 0..batch.len() {
+                for (axis, coordinate) in coordinates.iter_mut().enumerate() {
+                    *coordinate = values[axis][row].re;
+                }
+                let base_weight = if event_weights {
+                    batch.weights_at(row)
+                } else {
+                    1.0
+                };
+                let custom_weight = values
+                    .get(axes.len())
+                    .map_or(1.0, |weights| weights[row].re);
+                histogram
+                    .fill_weighted(&coordinates, base_weight * custom_weight)
                     .map_err(|error| query_error(error.to_string()))?;
             }
         }
@@ -919,6 +979,40 @@ mod tests {
         assert_eq!(histogram.underflow_sum_squared_weights(), Some(0.25));
         assert_eq!(histogram.overflow(), 2.0);
         assert_eq!(histogram.overflow_sum_squared_weights(), Some(4.0));
+    }
+
+    #[test]
+    fn dataset_joint_histogram_uses_row_major_bins_and_aggregates_invalid_events() {
+        let schema = Arc::new(Schema::new(std::iter::empty::<&str>(), ["x", "y"], true).unwrap());
+        let dataset = Dataset::from_events(
+            schema,
+            [
+                OwnedEvent::weighted(vec![], vec![0.0, 10.0], 1.0),
+                OwnedEvent::weighted(vec![], vec![1.0, 10.0], -2.0),
+                OwnedEvent::weighted(vec![], vec![0.0, 20.0], 3.0),
+                OwnedEvent::weighted(vec![], vec![f64::NAN, 10.0], 4.0),
+            ],
+        )
+        .unwrap();
+
+        let histogram = dataset
+            .joint_histogram(
+                &[event_scalar("x"), event_scalar("y")],
+                vec![
+                    BinSpec::edges([0.0, 1.0, 2.0]).unwrap(),
+                    BinSpec::edges([0.0, 15.0, 25.0]).unwrap(),
+                ],
+                true,
+                None,
+                &Execution::default(),
+            )
+            .unwrap();
+
+        assert_eq!(histogram.shape(), [2, 2]);
+        assert_eq!(histogram.values(), [1.0, 3.0, -2.0, 0.0]);
+        assert_eq!(histogram.sum_squared_weights(), [1.0, 9.0, 4.0, 0.0]);
+        assert_eq!(histogram.diagnostics().nonfinite_count(), 1);
+        assert_eq!(histogram.diagnostics().out_of_range_count(), 0);
     }
 
     #[test]

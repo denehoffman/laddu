@@ -1,5 +1,12 @@
-use laddu_physics::histogram::Histogram;
-use pyo3::{prelude::*, types::PyAny};
+use laddu_physics::{
+    histogram::Histogram,
+    joint_histogram::{JointHistogram, JointHistogramDiagnostics},
+};
+use numpy::{
+    IntoPyArray, PyArrayDyn,
+    ndarray::{ArrayD, IxDyn},
+};
+use pyo3::{exceptions::PyValueError, prelude::*, types::PyAny};
 
 use super::{error::to_py_err, float_vec};
 
@@ -312,3 +319,95 @@ impl PyHistogram {
 }
 
 impl_json_methods!(PyHistogram);
+
+#[pyclass(
+    name = "JointHistogramDiagnostics",
+    module = "laddu",
+    frozen,
+    skip_from_py_object
+)]
+#[derive(Clone)]
+/// Aggregate diagnostics for events excluded from a joint histogram.
+pub struct PyJointHistogramDiagnostics {
+    pub(crate) inner: JointHistogramDiagnostics,
+}
+
+#[pymethods]
+impl PyJointHistogramDiagnostics {
+    #[getter]
+    fn nonfinite_count(&self) -> u64 {
+        self.inner.nonfinite_count()
+    }
+    #[getter]
+    fn nonfinite_weight(&self) -> f64 {
+        self.inner.nonfinite_weight()
+    }
+    #[getter]
+    fn out_of_range_count(&self) -> u64 {
+        self.inner.out_of_range_count()
+    }
+    #[getter]
+    fn out_of_range_weight(&self) -> f64 {
+        self.inner.out_of_range_weight()
+    }
+}
+
+#[pyclass(name = "JointHistogram", module = "laddu", skip_from_py_object)]
+#[derive(Clone)]
+/// An N-dimensional empirical histogram with row-major flattened values.
+pub struct PyJointHistogram {
+    pub(crate) inner: JointHistogram,
+}
+
+#[pymethods]
+impl PyJointHistogram {
+    #[getter]
+    fn axes(&self) -> Vec<Vec<f64>> {
+        self.inner.axes().to_vec()
+    }
+    #[getter]
+    fn shape(&self) -> Vec<usize> {
+        self.inner.shape().to_vec()
+    }
+    #[getter]
+    fn values<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArrayDyn<f64>>> {
+        joint_array(py, self.inner.shape(), self.inner.values().to_vec())
+    }
+    #[getter]
+    fn errors<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArrayDyn<f64>>> {
+        joint_array(py, self.inner.shape(), self.inner.errors())
+    }
+    #[getter]
+    fn squared_weight_constituents<'py>(
+        &self,
+        py: Python<'py>,
+    ) -> PyResult<Bound<'py, PyArrayDyn<f64>>> {
+        joint_array(
+            py,
+            self.inner.shape(),
+            self.inner.sum_squared_weights().to_vec(),
+        )
+    }
+    #[getter]
+    fn diagnostics(&self) -> PyJointHistogramDiagnostics {
+        PyJointHistogramDiagnostics {
+            inner: self.inner.diagnostics().clone(),
+        }
+    }
+    /// Merge a compatible histogram filled from a disjoint event partition.
+    fn merge(&mut self, other: &PyJointHistogram) -> PyResult<()> {
+        self.inner.merge(&other.inner).map_err(to_py_err)
+    }
+}
+
+fn joint_array<'py>(
+    py: Python<'py>,
+    shape: &[usize],
+    values: Vec<f64>,
+) -> PyResult<Bound<'py, PyArrayDyn<f64>>> {
+    ArrayD::from_shape_vec(IxDyn(shape), values)
+        .map(|array| array.into_pyarray(py))
+        .map_err(|error| PyValueError::new_err(format!("invalid joint histogram shape: {error}")))
+}
+
+impl_json_methods!(PyJointHistogram);

@@ -658,6 +658,7 @@ impl_json_methods!(PyModel);
 #[cfg(test)]
 mod tests {
     use laddu_expr::event_scalar;
+    use laddu_runtime::GpuOptions;
 
     use super::*;
 
@@ -688,5 +689,21 @@ mod tests {
         assert!(std::fs::read_to_string(&path).unwrap().contains("<svg"));
         std::fs::remove_file(path).unwrap();
         assert_eq!(model.__str__(), model.equation(None, None).unwrap());
+    }
+
+    #[test]
+    fn dataset_free_validation_rejects_gpu_without_initializing_hardware() {
+        Python::initialize();
+        let expression: laddu_expr::Expr = laddu_expr::parameter!("x").into();
+        let model = PyModel::new(&PyExpr::from(expression)).unwrap();
+        let error = model
+            .validate_without_dataset(&Device::Gpu(GpuOptions::default()))
+            .unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("model evaluation without a dataset is not supported by the GPU backend")
+        );
     }
 }

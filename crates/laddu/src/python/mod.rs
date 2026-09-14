@@ -208,7 +208,10 @@ macro_rules! laddu_python_module {
                 PyVertexProposal as VertexProposal,
             };
             #[pymodule_export]
-            use $crate::python::histogram::PyHistogram as Histogram;
+            use $crate::python::histogram::{
+                PyHistogram as Histogram, PyJointHistogram as JointHistogram,
+                PyJointHistogramDiagnostics as JointHistogramDiagnostics,
+            };
             #[pymodule_export]
             use $crate::python::likelihood::{
                 PyCrossSectionIntegrals as CrossSectionIntegrals,

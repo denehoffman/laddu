@@ -4,6 +4,7 @@ use laddu_physics::{
     LadduPhysicsError,
     generation::{MassProposal, ProposalRng, ScalarSource},
     histogram::Histogram,
+    joint_histogram::JointHistogram,
     quantum::ParticleProperties,
     vectors::{RealVec3, RealVec4},
 };
@@ -50,6 +51,10 @@ fn public_physics_types_match_stable_json_fixtures() {
         &Histogram::new_with_flow(vec![4.0, 9.0], vec![0.0, 1.0, 4.0], 0.5, 1.25).unwrap(),
         include_str!("fixtures/histogram.json"),
     );
+    let mut joint = JointHistogram::empty(vec![vec![0.0, 1.0, 2.0], vec![-1.0, 1.0]]).unwrap();
+    joint.fill_weighted(&[0.5, 0.0], -2.0).unwrap();
+    joint.fill_weighted(&[3.0, 0.0], 1.5).unwrap();
+    assert_json_fixture(&joint, include_str!("fixtures/joint_histogram.json"));
     assert_json_fixture(
         &ParticleProperties::unknown()
             .with_name("contract particle")
