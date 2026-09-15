@@ -1,6 +1,8 @@
 pub mod laddu_runtime
+pub use laddu_runtime::BinningAxis
 pub use laddu_runtime::CapacitySource
 pub use laddu_runtime::DeviceIdentity
+pub use laddu_runtime::FinalUpperEdge
 pub use laddu_runtime::JointHistogram
 pub use laddu_runtime::JointHistogramDiagnostics
 pub use laddu_runtime::MemoryBudget
@@ -15,6 +17,10 @@ pub use laddu_runtime::MemoryResource
 pub use laddu_runtime::MemoryResourceKind
 pub use laddu_runtime::MemoryState
 pub use laddu_runtime::ProcessMemoryReport
+pub use laddu_runtime::bin_shape
+pub use laddu_runtime::checked_bin_count
+pub use laddu_runtime::flat_bin_index
+pub use laddu_runtime::flat_bin_index_for_event
 pub enum laddu_runtime::Comparison
 pub laddu_runtime::Comparison::Eq
 pub laddu_runtime::Comparison::Ge

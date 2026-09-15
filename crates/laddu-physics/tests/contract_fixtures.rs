@@ -2,6 +2,7 @@
 
 use laddu_physics::{
     LadduPhysicsError,
+    binning::BinningAxis,
     generation::{MassProposal, ProposalRng, ScalarSource},
     histogram::Histogram,
     joint_histogram::JointHistogram,
@@ -23,6 +24,10 @@ where
 
 #[test]
 fn public_physics_types_match_stable_json_fixtures() {
+    assert_json_fixture(
+        &BinningAxis::new([-1.0, 0.0, 2.0]).unwrap(),
+        include_str!("fixtures/binning_axis.json"),
+    );
     assert_json_fixture(
         &RealVec3::new(1.25, -2.5, 0.75),
         include_str!("fixtures/real_vec3.json"),
@@ -51,10 +56,20 @@ fn public_physics_types_match_stable_json_fixtures() {
         &Histogram::new_with_flow(vec![4.0, 9.0], vec![0.0, 1.0, 4.0], 0.5, 1.25).unwrap(),
         include_str!("fixtures/histogram.json"),
     );
+    let histogram =
+        Histogram::from_values_with_edges(&[0.5], vec![0.0, 1.0], Some(&[2.0])).unwrap();
+    assert_json_fixture(
+        &histogram.add(&histogram).unwrap(),
+        include_str!("fixtures/histogram_arithmetic.json"),
+    );
     let mut joint = JointHistogram::empty(vec![vec![0.0, 1.0, 2.0], vec![-1.0, 1.0]]).unwrap();
     joint.fill_weighted(&[0.5, 0.0], -2.0).unwrap();
     joint.fill_weighted(&[3.0, 0.0], 1.5).unwrap();
     assert_json_fixture(&joint, include_str!("fixtures/joint_histogram.json"));
+    assert_json_fixture(
+        &joint.subtract(&joint).unwrap(),
+        include_str!("fixtures/joint_histogram_arithmetic.json"),
+    );
     assert_json_fixture(
         &ParticleProperties::unknown()
             .with_name("contract particle")

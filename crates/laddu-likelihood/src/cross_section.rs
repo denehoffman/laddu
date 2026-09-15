@@ -11,7 +11,10 @@ use std::{
 use auto_ops::impl_op_ex;
 use laddu_data::data::Dataset;
 use laddu_expr::{Expr, ExprNodeStructuralKey};
-use laddu_runtime::{DatasetExprExt, Execution};
+use laddu_runtime::{
+    BinningAxis, DatasetExprExt, Execution, FinalUpperEdge, checked_bin_count,
+    flat_bin_index_for_event,
+};
 use rayon::prelude::*;
 
 use crate::{CrossSectionIntegrals, Likelihood, LikelihoodError, LikelihoodResult};
@@ -505,7 +508,7 @@ impl_op_ex!(/ |left: &Estimate, right: &f64| -> Estimate {
 #[derive(Clone, Debug)]
 pub struct Axis {
     expression: Expr,
-    edges: Vec<f64>,
+    binning: BinningAxis,
 }
 
 impl Axis {
@@ -514,15 +517,13 @@ impl Axis {
     /// # Errors
     /// Returns an error unless edges are finite and strictly increasing.
     pub fn new(expression: Expr, edges: Vec<f64>) -> LikelihoodResult<Self> {
-        if edges.len() < 2
-            || edges.iter().any(|value| !value.is_finite())
-            || edges.windows(2).any(|pair| pair[0] >= pair[1])
-        {
-            return Err(invalid(
-                "axis edges must contain at least two finite increasing values",
-            ));
-        }
-        Ok(Self { expression, edges })
+        let binning = BinningAxis::new(edges.iter().copied()).map_err(|_| {
+            invalid("axis edges must contain at least two finite increasing values")
+        })?;
+        Ok(Self {
+            expression,
+            binning,
+        })
     }
 
     /// Axis expression.
@@ -532,12 +533,12 @@ impl Axis {
 
     /// Bin edges.
     pub fn edges(&self) -> &[f64] {
-        &self.edges
+        self.binning.edges()
     }
 
     /// Number of bins.
     pub fn bins(&self) -> usize {
-        self.edges.len() - 1
+        self.binning.bin_count()
     }
 }
 
@@ -674,6 +675,12 @@ impl Projection {
         }
         if axes.is_empty() {
             return Err(invalid("each projection must contain at least one axis"));
+        }
+        let bin_axes: Vec<_> = axes.iter().map(|axis| axis.binning.clone()).collect();
+        if checked_bin_count(&bin_axes).is_none() {
+            return Err(invalid(
+                "projection axis shape exceeds addressable bin count",
+            ));
         }
         Ok(Self { name, axes })
     }
@@ -871,7 +878,12 @@ impl ProjectionKey {
                             .iter()
                             .map(|node| node.structural_key())
                             .collect(),
-                        edges: axis.edges.iter().map(|edge| edge.to_bits()).collect(),
+                        edges: axis
+                            .binning
+                            .edges()
+                            .iter()
+                            .map(|edge| edge.to_bits())
+                            .collect(),
                     }
                 })
                 .collect(),
@@ -918,6 +930,7 @@ struct ProjectionReplica {
 impl BinAssignments {
     fn new(values: &[Vec<f64>], axes: &[Axis]) -> Self {
         let event_count = values.first().map_or(0, Vec::len);
+        let bin_axes: Vec<_> = axes.iter().map(|axis| axis.binning.clone()).collect();
         debug_assert!(
             values
                 .iter()
@@ -925,17 +938,12 @@ impl BinAssignments {
         );
         let indices = (0..event_count)
             .map(|event| {
-                axes.iter()
-                    .zip(values)
-                    .try_fold(0, |flat, (axis, coordinates)| {
-                        bin_index(coordinates[event], &axis.edges)
-                            .map(|index| flat * axis.bins() + index)
-                    })
+                flat_bin_index_for_event(&bin_axes, values, event, FinalUpperEdge::Exclusive)
             })
             .collect();
         Self {
             indices,
-            count: axes.iter().map(Axis::bins).product(),
+            count: checked_bin_count(&bin_axes).expect("projection shape was validated"),
         }
     }
 
@@ -1643,13 +1651,13 @@ impl CrossSection {
         axes: &[Axis],
         components: &HashMap<String, Vec<String>>,
     ) -> LikelihoodResult<DifferentialCrossSection> {
-        if axes.is_empty() {
-            return Err(invalid("at least one differential axis is required"));
-        }
-        let projection = Projection {
-            name: "differential".to_owned(),
-            axes: axes.to_vec(),
-        };
+        let projection = Projection::new("differential", axes.to_vec()).map_err(|error| {
+            if axes.is_empty() {
+                invalid("at least one differential axis is required")
+            } else {
+                error
+            }
+        })?;
         let mut entries = self
             .projection_set(std::slice::from_ref(&projection), components)?
             .entries;
@@ -1889,7 +1897,7 @@ impl CrossSection {
                         axes: projection
                             .axes()
                             .iter()
-                            .map(|axis| axis.edges.clone())
+                            .map(|axis| axis.binning.edges().to_vec())
                             .collect(),
                         shape: projection.axes().iter().map(Axis::bins).collect(),
                         volumes: bin_volumes(projection.axes()),
@@ -2261,7 +2269,7 @@ impl CrossSection {
                     axes: projection
                         .axes()
                         .iter()
-                        .map(|axis| axis.edges.clone())
+                        .map(|axis| axis.binning.edges().to_vec())
                         .collect(),
                     shape: projection.axes().iter().map(Axis::bins).collect(),
                     data: BinnedEstimate::new(data, data_draws),
@@ -2445,19 +2453,13 @@ fn bin_volumes(axes: &[Axis]) -> Vec<f64> {
         volumes
             .into_iter()
             .flat_map(|volume| {
-                axis.edges
+                axis.binning
+                    .edges()
                     .windows(2)
                     .map(move |pair| volume * (pair[1] - pair[0]))
             })
             .collect()
     })
-}
-
-fn bin_index(value: f64, edges: &[f64]) -> Option<usize> {
-    if !value.is_finite() || value < edges[0] || value >= *edges.last()? {
-        return None;
-    }
-    edges.windows(2).position(|pair| value < pair[1])
 }
 
 #[cfg(test)]
@@ -2602,9 +2604,50 @@ mod tests {
 
     #[test]
     fn bin_lookup_uses_half_open_intervals() {
-        assert_eq!(bin_index(0.0, &[0.0, 1.0, 2.0]), Some(0));
-        assert_eq!(bin_index(1.0, &[0.0, 1.0, 2.0]), Some(1));
-        assert_eq!(bin_index(2.0, &[0.0, 1.0, 2.0]), None);
+        let axis = BinningAxis::new([0.0, 1.0, 2.0]).unwrap();
+        assert_eq!(axis.index(0.0, FinalUpperEdge::Exclusive), Some(0));
+        assert_eq!(axis.index(1.0, FinalUpperEdge::Exclusive), Some(1));
+        assert_eq!(axis.index(2.0, FinalUpperEdge::Exclusive), None);
+    }
+
+    #[test]
+    fn projection_assignments_match_shared_one_and_multi_axis_contracts() {
+        let x = Axis::new(event_scalar("x"), vec![0.0, 1.0, 2.0]).unwrap();
+        let y = Axis::new(event_scalar("y"), vec![-1.0, 0.0, 2.0]).unwrap();
+        let values = vec![vec![0.0, 1.5, 2.0, f64::NAN], vec![-0.5, 1.0, 0.0, 0.0]];
+
+        let one = BinAssignments::new(&values[..1], std::slice::from_ref(&x));
+        let expected_one: Vec<_> = values[0]
+            .iter()
+            .map(|value| x.binning.index(*value, FinalUpperEdge::Exclusive))
+            .collect();
+        assert_eq!(one.indices, expected_one);
+
+        let axes = [x, y];
+        let shared_axes: Vec<_> = axes.iter().map(|axis| axis.binning.clone()).collect();
+        let multi = BinAssignments::new(&values, &axes);
+        let expected_multi: Vec<_> = (0..values[0].len())
+            .map(|event| {
+                laddu_runtime::flat_bin_index(
+                    &shared_axes,
+                    &[values[0][event], values[1][event]],
+                    FinalUpperEdge::Exclusive,
+                )
+            })
+            .collect();
+        assert_eq!(multi.indices, expected_multi);
+    }
+
+    #[test]
+    fn projection_shape_overflow_is_rejected_during_specification() {
+        let axes = (0..usize::BITS)
+            .map(|_| Axis::new(event_scalar("x"), vec![0.0, 1.0, 2.0]).unwrap())
+            .collect();
+        let error = Projection::new("overflow", axes).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "invalid cross-section analysis: projection axis shape exceeds addressable bin count"
+        );
     }
 
     #[test]
@@ -2650,6 +2693,63 @@ mod tests {
         assert_eq!(differential.shape(), &[2, 2]);
         assert_eq!(&differential.data().values()[..3], &[1.0, 2.0, -3.0]);
         assert!(differential.data().values()[3].is_nan());
+    }
+
+    #[cfg(feature = "jit")]
+    #[test]
+    fn projections_match_cpu_interpreter_and_jit_backends() {
+        use laddu_runtime::{
+            CpuOptions, Device, ExecutionOptions, JitPolicy, Precision, ThreadPolicy,
+        };
+
+        let model = CompiledModel::from_expr(&(event_scalar("x") + 1.0)).unwrap();
+        let data = weighted_dataset_2d(&[(0.25, 0.25, 1.0), (1.25, 1.25, -2.0)]);
+        let accepted = weighted_dataset_2d(&[(0.25, 0.25, 1.0), (1.25, 1.25, 1.0)]);
+        let generated = weighted_dataset_2d(&[(0.25, 0.25, 1.0), (1.25, 1.25, 1.0)]);
+        let axes = [
+            Axis::new(event_scalar("x"), vec![0.0, 1.0, 2.0]).unwrap(),
+            Axis::new(event_scalar("y"), vec![0.0, 1.0, 2.0]).unwrap(),
+        ];
+        let execution = |jit| {
+            Execution::local(ExecutionOptions {
+                device: Device::Cpu(CpuOptions {
+                    threads: ThreadPolicy::Serial,
+                    jit,
+                }),
+                precision: Precision::F64,
+                ..ExecutionOptions::default()
+            })
+            .unwrap()
+        };
+        let evaluate = |jit| {
+            let likelihood = Arc::new(
+                Likelihood::with_execution(
+                    [crate::NllTerm::new("signal", &model, &data, &accepted).unwrap()],
+                    &execution(jit),
+                )
+                .unwrap(),
+            );
+            likelihood
+                .cross_section("signal", generated.clone(), 1.0, Vec::new())
+                .unwrap()
+                .differential(&axes, &HashMap::new())
+                .unwrap()
+        };
+
+        let interpreted = evaluate(JitPolicy::Disabled);
+        let compiled = evaluate(JitPolicy::Enabled);
+        for (actual, expected) in compiled
+            .data()
+            .values()
+            .iter()
+            .zip(interpreted.data().values())
+        {
+            if expected.is_nan() {
+                assert!(actual.is_nan());
+            } else {
+                assert_relative_eq!(actual, expected, epsilon = 1.0e-12);
+            }
+        }
     }
 
     #[test]

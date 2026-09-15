@@ -1,6 +1,10 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{LadduPhysicsError, LadduPhysicsResult};
+use crate::{
+    LadduPhysicsError, LadduPhysicsResult,
+    binning::{BinningAxis, FinalUpperEdge, bin_shape, flat_bin_index},
+    histogram::{HistogramUncertaintyStatus, uncertainty_is_available},
+};
 
 /// Aggregate diagnostics for events that could not be placed in a joint histogram.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -37,10 +41,14 @@ impl JointHistogramDiagnostics {
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct JointHistogram {
     axes: Vec<Vec<f64>>,
+    #[serde(skip)]
+    bin_axes: Vec<BinningAxis>,
     shape: Vec<usize>,
     values: Vec<f64>,
     sum_squared_weights: Vec<f64>,
     diagnostics: JointHistogramDiagnostics,
+    #[serde(default, skip_serializing_if = "uncertainty_is_available")]
+    uncertainty_status: HistogramUncertaintyStatus,
     #[serde(skip)]
     value_corrections: Vec<f64>,
     #[serde(skip)]
@@ -54,6 +62,8 @@ struct SerializedJointHistogram {
     values: Vec<f64>,
     sum_squared_weights: Vec<f64>,
     diagnostics: JointHistogramDiagnostics,
+    #[serde(default)]
+    uncertainty_status: HistogramUncertaintyStatus,
 }
 
 impl<'de> Deserialize<'de> for JointHistogram {
@@ -90,6 +100,7 @@ impl<'de> Deserialize<'de> for JointHistogram {
         histogram.values = serialized.values;
         histogram.sum_squared_weights = serialized.sum_squared_weights;
         histogram.diagnostics = serialized.diagnostics;
+        histogram.uncertainty_status = serialized.uncertainty_status;
         Ok(histogram)
     }
 }
@@ -109,25 +120,18 @@ impl JointHistogram {
                 0,
             ));
         }
-        let mut shape = Vec::with_capacity(axes.len());
-        for (axis, edges) in axes.iter().enumerate() {
-            if edges.len() < 2 {
-                return Err(LadduPhysicsError::invalid_length(
-                    format!("joint histogram axis {axis} edges"),
-                    "at least 2",
-                    edges.len(),
-                ));
-            }
-            if edges.iter().any(|edge| !edge.is_finite())
-                || edges.windows(2).any(|pair| pair[0] >= pair[1])
-            {
-                return Err(LadduPhysicsError::invalid_relation(format!(
-                    "joint histogram axis {axis} edges must be finite and strictly increasing"
-                )));
-            }
-            let axis_bins = edges.len() - 1;
-            shape.push(axis_bins);
-        }
+        let bin_axes = axes
+            .iter()
+            .enumerate()
+            .map(|(axis, edges)| {
+                BinningAxis::new(edges.iter().copied()).map_err(|_| {
+                    LadduPhysicsError::invalid_relation(format!(
+                        "joint histogram axis {axis} edges must contain at least two finite, strictly increasing values"
+                    ))
+                })
+            })
+            .collect::<LadduPhysicsResult<Vec<_>>>()?;
+        let shape = bin_shape(&bin_axes);
         let bins = checked_bin_count(&shape)?;
         let values = zeroed(bins)?;
         let sum_squared_weights = zeroed(bins)?;
@@ -135,10 +139,12 @@ impl JointHistogram {
         let squared_weight_corrections = zeroed(bins)?;
         Ok(Self {
             axes,
+            bin_axes,
             shape,
             values,
             sum_squared_weights,
             diagnostics: JointHistogramDiagnostics::default(),
+            uncertainty_status: HistogramUncertaintyStatus::Available,
             value_corrections,
             squared_weight_corrections,
         })
@@ -166,6 +172,14 @@ impl JointHistogram {
             .iter()
             .map(|value| value.sqrt())
             .collect()
+    }
+    /// Return errors only when the stored constituents define an honest uncertainty.
+    pub fn reported_errors(&self) -> Option<Vec<f64>> {
+        (self.uncertainty_status == HistogramUncertaintyStatus::Available).then(|| self.errors())
+    }
+    /// Return whether covariance information is sufficient to report errors.
+    pub fn uncertainty_status(&self) -> HistogramUncertaintyStatus {
+        self.uncertainty_status
     }
     /// Aggregate invalid-event diagnostics.
     pub fn diagnostics(&self) -> &JointHistogramDiagnostics {
@@ -207,22 +221,18 @@ impl JointHistogram {
                 squared_weight,
             ));
         }
-        let mut flat = 0usize;
-        for ((value, edges), axis_bins) in coordinates.iter().zip(&self.axes).zip(&self.shape) {
-            if *value < edges[0] || *value >= edges[edges.len() - 1] {
-                self.diagnostics.out_of_range_count += 1;
-                let next_weight = self.diagnostics.out_of_range_weight + weight;
-                if !next_weight.is_finite() {
-                    return Err(LadduPhysicsError::invalid_relation(
-                        "joint histogram out-of-range weight overflow",
-                    ));
-                }
-                self.diagnostics.out_of_range_weight = next_weight;
-                return Ok(());
+        let Some(flat) = flat_bin_index(&self.bin_axes, coordinates, FinalUpperEdge::Exclusive)
+        else {
+            self.diagnostics.out_of_range_count += 1;
+            let next_weight = self.diagnostics.out_of_range_weight + weight;
+            if !next_weight.is_finite() {
+                return Err(LadduPhysicsError::invalid_relation(
+                    "joint histogram out-of-range weight overflow",
+                ));
             }
-            let upper = edges.partition_point(|edge| *edge <= *value);
-            flat = flat * axis_bins + (upper - 1);
-        }
+            self.diagnostics.out_of_range_weight = next_weight;
+            return Ok(());
+        };
         if self.value_corrections.len() != self.values.len() {
             self.value_corrections.resize(self.values.len(), 0.0);
         }
@@ -261,6 +271,9 @@ impl JointHistogram {
             ));
         }
         let mut merged = self.clone();
+        if other.uncertainty_status == HistogramUncertaintyStatus::UnavailableCovariance {
+            merged.uncertainty_status = HistogramUncertaintyStatus::UnavailableCovariance;
+        }
         merged.value_corrections.resize(merged.values.len(), 0.0);
         merged
             .squared_weight_corrections
@@ -308,6 +321,142 @@ impl JointHistogram {
         *self = merged;
         Ok(())
     }
+
+    /// Add a compatible histogram without assuming the inputs are independent.
+    ///
+    /// # Errors
+    /// Returns an error for incompatible geometry or non-finite output.
+    pub fn add(&self, other: &Self) -> LadduPhysicsResult<Self> {
+        self.combine(other, 1.0, false)
+    }
+    /// Add a compatible histogram with an explicit caller assertion of independence.
+    ///
+    /// # Errors
+    /// Returns an error for incompatible geometry or non-finite output.
+    pub fn add_independent(&self, other: &Self) -> LadduPhysicsResult<Self> {
+        self.combine(other, 1.0, true)
+    }
+    /// Subtract a compatible histogram without assuming the inputs are independent.
+    ///
+    /// # Errors
+    /// Returns an error for incompatible geometry or non-finite output.
+    pub fn subtract(&self, other: &Self) -> LadduPhysicsResult<Self> {
+        self.combine(other, -1.0, false)
+    }
+    /// Subtract a compatible histogram with an explicit caller assertion of independence.
+    ///
+    /// # Errors
+    /// Returns an error for incompatible geometry or non-finite output.
+    pub fn subtract_independent(&self, other: &Self) -> LadduPhysicsResult<Self> {
+        self.combine(other, -1.0, true)
+    }
+
+    fn combine(
+        &self,
+        other: &Self,
+        sign: f64,
+        assert_independent: bool,
+    ) -> LadduPhysicsResult<Self> {
+        if self.axes != other.axes || self.shape != other.shape {
+            return Err(LadduPhysicsError::invalid_relation(
+                "joint histogram arithmetic requires identical ordered axes and shape",
+            ));
+        }
+        let mut result = self.clone();
+        result.value_corrections.resize(result.values.len(), 0.0);
+        result
+            .squared_weight_corrections
+            .resize(result.values.len(), 0.0);
+        for index in 0..result.values.len() {
+            compensated_add(
+                &mut result.values[index],
+                &mut result.value_corrections[index],
+                sign * other.values[index],
+            );
+            compensated_add(
+                &mut result.sum_squared_weights[index],
+                &mut result.squared_weight_corrections[index],
+                other.sum_squared_weights[index],
+            );
+        }
+        result.diagnostics.nonfinite_count = result
+            .diagnostics
+            .nonfinite_count
+            .checked_add(other.diagnostics.nonfinite_count)
+            .ok_or_else(|| {
+                LadduPhysicsError::invalid_relation("joint histogram diagnostic count overflow")
+            })?;
+        result.diagnostics.out_of_range_count = result
+            .diagnostics
+            .out_of_range_count
+            .checked_add(other.diagnostics.out_of_range_count)
+            .ok_or_else(|| {
+                LadduPhysicsError::invalid_relation("joint histogram diagnostic count overflow")
+            })?;
+        result.diagnostics.nonfinite_weight += sign * other.diagnostics.nonfinite_weight;
+        result.diagnostics.out_of_range_weight += sign * other.diagnostics.out_of_range_weight;
+        result.uncertainty_status = if self.uncertainty_status
+            == HistogramUncertaintyStatus::Available
+            && other.uncertainty_status == HistogramUncertaintyStatus::Available
+            && assert_independent
+        {
+            HistogramUncertaintyStatus::Available
+        } else {
+            HistogramUncertaintyStatus::UnavailableCovariance
+        };
+        if result
+            .values
+            .iter()
+            .chain(&result.sum_squared_weights)
+            .any(|value| !value.is_finite())
+            || !result.diagnostics.nonfinite_weight.is_finite()
+            || !result.diagnostics.out_of_range_weight.is_finite()
+        {
+            return Err(LadduPhysicsError::invalid_relation(
+                "joint histogram arithmetic produced a non-finite accumulator",
+            ));
+        }
+        Ok(result)
+    }
+
+    /// Scale central values, diagnostic weights, and uncertainty constituents.
+    ///
+    /// # Errors
+    /// Returns an error when the factor or scaled output is non-finite.
+    pub fn scaled(&self, factor: f64) -> LadduPhysicsResult<Self> {
+        if !factor.is_finite() {
+            return Err(LadduPhysicsError::invalid_value(
+                "joint histogram scale",
+                "finite",
+                factor,
+            ));
+        }
+        let mut result = self.clone();
+        let variance_scale = factor * factor;
+        for value in &mut result.values {
+            *value *= factor;
+        }
+        for value in &mut result.sum_squared_weights {
+            *value *= variance_scale;
+        }
+        result.diagnostics.nonfinite_weight *= factor;
+        result.diagnostics.out_of_range_weight *= factor;
+        result.value_corrections.fill(0.0);
+        result.squared_weight_corrections.fill(0.0);
+        if result
+            .values
+            .iter()
+            .chain(&result.sum_squared_weights)
+            .any(|value| !value.is_finite())
+            || !result.diagnostics.nonfinite_weight.is_finite()
+            || !result.diagnostics.out_of_range_weight.is_finite()
+        {
+            return Err(LadduPhysicsError::invalid_relation(
+                "joint histogram scaling produced a non-finite accumulator",
+            ));
+        }
+        Ok(result)
+    }
 }
 
 fn zeroed(len: usize) -> LadduPhysicsResult<Vec<f64>> {
@@ -339,6 +488,71 @@ fn compensated_add(sum: &mut f64, correction: &mut f64, value: f64) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn arithmetic_distinguishes_proven_independence_from_shared_sources() {
+        let mut left = JointHistogram::empty(vec![vec![0.0, 1.0]]).unwrap();
+        left.fill_weighted(&[0.5], 2.0).unwrap();
+        let mut independent = JointHistogram::empty(vec![vec![0.0, 1.0]]).unwrap();
+        independent.fill_weighted(&[0.5], 3.0).unwrap();
+
+        let conservative_sum = left.add(&independent).unwrap();
+        assert_eq!(conservative_sum.values(), [5.0]);
+        assert_eq!(
+            conservative_sum.uncertainty_status(),
+            HistogramUncertaintyStatus::UnavailableCovariance
+        );
+        assert!(conservative_sum.reported_errors().is_none());
+
+        let asserted = left.add_independent(&independent).unwrap();
+        assert_eq!(asserted.reported_errors().unwrap(), [13.0_f64.sqrt()]);
+
+        let correlated_sum = left.add(&left).unwrap();
+        assert_eq!(correlated_sum.values(), [4.0]);
+        assert_eq!(
+            correlated_sum.uncertainty_status(),
+            HistogramUncertaintyStatus::UnavailableCovariance
+        );
+        assert!(correlated_sum.reported_errors().is_none());
+    }
+
+    #[test]
+    fn arithmetic_scales_serializes_and_rejects_incompatible_axes() {
+        let mut histogram = JointHistogram::empty(vec![vec![0.0, 1.0]]).unwrap();
+        histogram.fill_weighted(&[0.5], -2.0).unwrap();
+        let scaled = histogram.scaled(-3.0).unwrap();
+        assert_eq!(scaled.values(), [6.0]);
+        assert_eq!(scaled.sum_squared_weights(), [36.0]);
+
+        let unavailable = histogram.subtract(&histogram).unwrap();
+        let restored: JointHistogram =
+            serde_json::from_str(&serde_json::to_string(&unavailable).unwrap()).unwrap();
+        assert_eq!(
+            restored.uncertainty_status(),
+            HistogramUncertaintyStatus::UnavailableCovariance
+        );
+        assert!(restored.reported_errors().is_none());
+
+        let incompatible = JointHistogram::empty(vec![vec![0.0, 2.0]]).unwrap();
+        assert!(histogram.add(&incompatible).is_err());
+        assert!(histogram.scaled(f64::NAN).is_err());
+    }
+
+    #[test]
+    fn repeated_arithmetic_uses_deterministic_compensated_accumulation() {
+        let mut large = JointHistogram::empty(vec![vec![0.0, 1.0]]).unwrap();
+        large.fill_weighted(&[0.5], 1.0e16).unwrap();
+        let mut unit = JointHistogram::empty(vec![vec![0.0, 1.0]]).unwrap();
+        unit.fill_weighted(&[0.5], 1.0).unwrap();
+
+        let result = large
+            .add_independent(&unit)
+            .unwrap()
+            .add_independent(&unit)
+            .unwrap();
+
+        assert_eq!(result.values(), [1.0e16 + 2.0]);
+    }
 
     #[test]
     fn validates_shape_and_merges_disjoint_fills() {

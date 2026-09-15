@@ -1,0 +1,13 @@
+{
+  "axes": [[0.0, 1.0, 2.0], [-1.0, 1.0]],
+  "shape": [2, 1],
+  "values": [0.0, 0.0],
+  "sum_squared_weights": [8.0, 0.0],
+  "diagnostics": {
+    "nonfinite_count": 0,
+    "nonfinite_weight": 0.0,
+    "out_of_range_count": 2,
+    "out_of_range_weight": 0.0
+  },
+  "uncertainty_status": "unavailable_covariance"
+}

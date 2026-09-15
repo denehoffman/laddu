@@ -12,6 +12,35 @@ EXPECTED_JOINT_OUT_OF_RANGE_WEIGHT = 3.5
 
 
 class HistogramTests(unittest.TestCase):
+    def test_arithmetic_reports_only_honest_uncertainties(self) -> None:
+        left = ld.Histogram.from_values([0.25], bins=1, limits=(0.0, 1.0), weights=[2.0])
+        right = ld.Histogram.from_values([0.25], bins=1, limits=(0.0, 1.0), weights=[3.0])
+
+        conservative = left + right
+        assert conservative.counts == [5.0]
+        assert conservative.uncertainty_status == 'unavailable_covariance'
+        assert conservative.reported_errors is None
+
+        correlated = left + left
+        assert correlated.counts == [4.0]
+        assert correlated.uncertainty_status == 'unavailable_covariance'
+        assert correlated.reported_errors is None
+
+        asserted = left.add(right, independent=True)
+        assert asserted.reported_errors == [13.0**0.5]
+        assert (left.scaled(-2.0)).counts == [-4.0]
+
+        joint_left = ld.Dataset.from_arrays(p4s={}, scalars={'x': [0.25]}, weights=[2.0]).joint_histogram(
+            [ld.scalar('x')], bin_edges=[[0.0, 1.0]]
+        )
+        joint_correlated = joint_left - joint_left
+        assert joint_correlated.uncertainty_status == 'unavailable_covariance'
+        assert joint_correlated.reported_errors is None
+
+        incompatible = ld.Histogram.from_values([0.25], bins=1, limits=(0.0, 2.0))
+        with pytest.raises(ld.LadduError, match='identical bin edges'):
+            _ = left + incompatible
+
     def test_joint_histogram_exposes_row_major_shape_and_diagnostics(self) -> None:
         dataset = ld.Dataset.from_arrays(
             p4s={},

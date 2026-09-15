@@ -8,7 +8,11 @@ use laddu_data::{
     schema::Schema,
 };
 use laddu_expr::{Expr, ValueKind};
-use laddu_physics::{histogram::Histogram, joint_histogram::JointHistogram};
+use laddu_physics::{
+    binning::{BinningAxis, FinalUpperEdge},
+    histogram::Histogram,
+    joint_histogram::JointHistogram,
+};
 use num::complex::Complex64;
 use serde::{Deserialize, Deserializer, Serialize};
 
@@ -149,7 +153,7 @@ impl std::ops::Not for Predicate {
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(transparent)]
 pub struct BinSpec {
-    edges: Arc<[f64]>,
+    axis: BinningAxis,
 }
 
 impl<'de> Deserialize<'de> for BinSpec {
@@ -170,13 +174,10 @@ impl BinSpec {
     /// Returns [`RuntimeError`] when `count` is zero or the bounds are
     /// non-finite or not increasing.
     pub fn uniform(count: usize, min: f64, max: f64) -> RuntimeResult<Self> {
-        if count == 0 || !min.is_finite() || !max.is_finite() || min >= max {
-            return Err(query_error(
-                "uniform bins require a positive count and finite min < max",
-            ));
-        }
-        let width = (max - min) / count as f64;
-        Self::edges((0..=count).map(|i| min + i as f64 * width))
+        Ok(Self {
+            axis: BinningAxis::uniform(count, min, max)
+                .map_err(|error| query_error(error.to_string()))?,
+        })
     }
 
     /// Creates bins from explicit, strictly increasing finite edges.
@@ -186,40 +187,22 @@ impl BinSpec {
     /// Returns [`RuntimeError`] when fewer than two edges are supplied or an
     /// edge is non-finite or not strictly increasing.
     pub fn edges(edges: impl IntoIterator<Item = f64>) -> RuntimeResult<Self> {
-        let edges: Vec<_> = edges.into_iter().collect();
-        if edges.len() < 2
-            || edges.iter().any(|x| !x.is_finite())
-            || edges.windows(2).any(|w| w[0] >= w[1])
-        {
-            return Err(query_error(
-                "bin edges must contain at least two finite, strictly increasing values",
-            ));
-        }
         Ok(Self {
-            edges: edges.into(),
+            axis: BinningAxis::new(edges).map_err(|error| query_error(error.to_string()))?,
         })
     }
 
     /// Returns the number of bins.
     pub fn bin_count(&self) -> usize {
-        self.edges.len() - 1
+        self.axis.bin_count()
     }
     /// Returns the validated bin edges.
     pub fn edges_slice(&self) -> &[f64] {
-        &self.edges
+        self.axis.edges()
     }
 
     fn index(&self, value: f64) -> Option<usize> {
-        if !value.is_finite() || value < self.edges[0] || value > *self.edges.last()? {
-            return None;
-        }
-        if value == *self.edges.last()? {
-            return Some(self.bin_count() - 1);
-        }
-        let upper = self.edges.partition_point(|edge| *edge <= value);
-        upper
-            .checked_sub(1)
-            .filter(|index| *index < self.bin_count())
+        self.axis.index(value, FinalUpperEdge::Inclusive)
     }
 }
 
@@ -473,8 +456,8 @@ impl DatasetExprExt for Dataset {
                 };
                 Ok(DatasetBin {
                     index,
-                    lower: bins.edges[index],
-                    upper: bins.edges[index + 1],
+                    lower: bins.edges_slice()[index],
+                    upper: bins.edges_slice()[index + 1],
                     dataset: self.with_derived_source(source),
                 })
             })

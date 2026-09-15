@@ -2,7 +2,25 @@ use fastrand::Rng;
 use fastrand_contrib::RngExt;
 use serde::{Deserialize, Serialize};
 
-use crate::{LadduPhysicsError, LadduPhysicsResult};
+use crate::{
+    LadduPhysicsError, LadduPhysicsResult,
+    binning::{BinningAxis, FinalUpperEdge},
+};
+
+/// Whether a histogram's stored constituents define reportable uncertainties.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HistogramUncertaintyStatus {
+    /// The operands were independent, or independence was explicitly asserted.
+    #[default]
+    Available,
+    /// At least one source was shared or unknown, so covariance is unavailable.
+    UnavailableCovariance,
+}
+
+pub(crate) fn uncertainty_is_available(status: &HistogramUncertaintyStatus) -> bool {
+    *status == HistogramUncertaintyStatus::Available
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -17,14 +35,17 @@ pub struct Histogram {
     fill_kind: HistogramFillKind,
     /// The number of counts in each bin (can be [`f64`]s since these might be weighted counts)
     counts: Vec<f64>,
-    /// The edges of each bin (length is one greater than `counts`)
-    bin_edges: Vec<f64>,
+    /// The validated edges of each bin (length is one greater than `counts`).
+    #[serde(rename = "bin_edges")]
+    axis: BinningAxis,
     underflow: f64,
     overflow: f64,
     errors: Vec<f64>,
     sum_squared_weights: Vec<f64>,
     underflow_sum_squared_weights: Option<f64>,
     overflow_sum_squared_weights: Option<f64>,
+    #[serde(default, skip_serializing_if = "uncertainty_is_available")]
+    uncertainty_status: HistogramUncertaintyStatus,
     #[serde(skip)]
     corrections: Box<HistogramCorrections>,
 }
@@ -63,6 +84,8 @@ struct SerializedHistogram {
     sum_squared_weights: Vec<f64>,
     underflow_sum_squared_weights: Option<f64>,
     overflow_sum_squared_weights: Option<f64>,
+    #[serde(default)]
+    uncertainty_status: HistogramUncertaintyStatus,
 }
 
 impl<'de> Deserialize<'de> for Histogram {
@@ -80,6 +103,7 @@ impl<'de> Deserialize<'de> for Histogram {
             sum_squared_weights,
             underflow_sum_squared_weights,
             overflow_sum_squared_weights,
+            uncertainty_status,
         } = SerializedHistogram::deserialize(deserializer)?;
         let errors = sum_squared_weights
             .iter()
@@ -100,16 +124,18 @@ impl<'de> Deserialize<'de> for Histogram {
             ));
         }
         let bins = counts.len();
+        let axis = Self::axis_for_edges(&bin_edges).map_err(serde::de::Error::custom)?;
         let histogram = Self {
             fill_kind,
             counts,
-            bin_edges,
+            axis,
             underflow,
             overflow,
             errors,
             sum_squared_weights,
             underflow_sum_squared_weights,
             overflow_sum_squared_weights,
+            uncertainty_status,
             corrections: Box::new(HistogramCorrections::new(bins)),
         };
         histogram
@@ -164,6 +190,33 @@ struct TransformPolicy {
 }
 
 impl Histogram {
+    fn axis_for_edges(edges: &[f64]) -> LadduPhysicsResult<BinningAxis> {
+        if edges.len() < 2 {
+            return Err(LadduPhysicsError::invalid_length(
+                "histogram bin edges",
+                "at least 2",
+                edges.len(),
+            ));
+        }
+        for (index, edge) in edges.iter().enumerate() {
+            if !edge.is_finite() {
+                return Err(LadduPhysicsError::invalid_value(
+                    format!("histogram bin edge {index}"),
+                    "finite",
+                    *edge,
+                ));
+            }
+        }
+        for (index, pair) in edges.windows(2).enumerate() {
+            if pair[1] <= pair[0] {
+                return Err(LadduPhysicsError::invalid_relation(format!(
+                    "histogram bin edges must be strictly increasing at edge pair {index}"
+                )));
+            }
+        }
+        BinningAxis::new(edges.iter().copied())
+    }
+
     /// Construct and validate a histogram from weighted bin counts and bin edges.
     ///
     /// The argument order matches `numpy.histogram`, so its result can be forwarded directly.
@@ -189,16 +242,18 @@ impl Histogram {
         overflow: f64,
     ) -> LadduPhysicsResult<Self> {
         let bins = counts.len();
+        let axis = Self::axis_for_edges(&bin_edges)?;
         let histogram = Self {
             fill_kind: HistogramFillKind::Manual,
             counts: counts.clone(),
-            bin_edges,
+            axis,
             underflow,
             overflow,
             errors: counts.iter().map(|count| count.abs().sqrt()).collect(),
             sum_squared_weights: counts.into_iter().map(f64::abs).collect(),
             underflow_sum_squared_weights: None,
             overflow_sum_squared_weights: None,
+            uncertainty_status: HistogramUncertaintyStatus::Available,
             corrections: Box::new(HistogramCorrections::new(bins)),
         };
         histogram.validate_requirements(HistogramRequirements::VALID)?;
@@ -226,16 +281,18 @@ impl Histogram {
     /// increasing edges are supplied.
     pub fn empty_with_edges(bin_edges: Vec<f64>) -> LadduPhysicsResult<Self> {
         let bins = bin_edges.len().saturating_sub(1);
+        let axis = Self::axis_for_edges(&bin_edges)?;
         let histogram = Self {
             fill_kind: HistogramFillKind::Empirical,
             counts: vec![0.0; bins],
-            bin_edges,
+            axis,
             underflow: 0.0,
             overflow: 0.0,
             errors: vec![0.0; bins],
             sum_squared_weights: vec![0.0; bins],
             underflow_sum_squared_weights: Some(0.0),
             overflow_sum_squared_weights: Some(0.0),
+            uncertainty_status: HistogramUncertaintyStatus::Available,
             corrections: Box::new(HistogramCorrections::new(bins)),
         };
         histogram.validate_requirements(HistogramRequirements::VALID)?;
@@ -448,9 +505,9 @@ impl Histogram {
     }
 
     fn fill_target(&self, value: f64) -> Option<FillTarget> {
-        if value < self.bin_edges[0] {
+        if value < self.axis.edges()[0] {
             Some(FillTarget::Underflow)
-        } else if value >= self.bin_edges[self.bin_edges.len() - 1] {
+        } else if value >= self.axis.edges()[self.axis.edges().len() - 1] {
             Some(FillTarget::Overflow)
         } else {
             self.bin_index(value).map(FillTarget::Bin)
@@ -555,6 +612,16 @@ impl Histogram {
         &self.errors
     }
 
+    /// Return errors only when the stored constituents define an honest uncertainty.
+    pub fn reported_errors(&self) -> Option<&[f64]> {
+        (self.uncertainty_status == HistogramUncertaintyStatus::Available).then_some(self.errors())
+    }
+
+    /// Return whether covariance information is sufficient to report errors.
+    pub fn uncertainty_status(&self) -> HistogramUncertaintyStatus {
+        self.uncertainty_status
+    }
+
     /// Return the empirical squared-weight constituent for every regular bin.
     pub fn sum_squared_weights(&self) -> &[f64] {
         &self.sum_squared_weights
@@ -562,7 +629,7 @@ impl Histogram {
 
     /// Return the bin edges.
     pub fn bin_edges(&self) -> &[f64] {
-        &self.bin_edges
+        self.axis.edges()
     }
 
     /// Return the accumulated underflow weight.
@@ -599,7 +666,7 @@ impl Histogram {
     pub fn merge(&mut self, other: &Self) -> LadduPhysicsResult<()> {
         self.validate_requirements(HistogramRequirements::VALID)?;
         other.validate_requirements(HistogramRequirements::VALID)?;
-        if self.bin_edges != other.bin_edges {
+        if self.axis != other.axis {
             return Err(LadduPhysicsError::invalid_relation(
                 "histogram merge requires identical bin edges",
             ));
@@ -616,6 +683,9 @@ impl Histogram {
         }
 
         let mut merged = self.clone();
+        if other.uncertainty_status == HistogramUncertaintyStatus::UnavailableCovariance {
+            merged.uncertainty_status = HistogramUncertaintyStatus::UnavailableCovariance;
+        }
         for index in 0..merged.counts.len() {
             Self::add_compensated(
                 &mut merged.counts[index],
@@ -694,6 +764,137 @@ impl Histogram {
         Ok(())
     }
 
+    /// Add a compatible histogram without assuming the inputs are independent.
+    ///
+    /// # Errors
+    /// Returns an error for incompatible geometry, fill policy, or non-finite output.
+    pub fn add(&self, other: &Self) -> LadduPhysicsResult<Self> {
+        self.combine(other, 1.0, false)
+    }
+
+    /// Add a compatible histogram with an explicit caller assertion of independence.
+    ///
+    /// # Errors
+    /// Returns an error for incompatible geometry, fill policy, or non-finite output.
+    pub fn add_independent(&self, other: &Self) -> LadduPhysicsResult<Self> {
+        self.combine(other, 1.0, true)
+    }
+
+    /// Subtract a compatible histogram without assuming the inputs are independent.
+    ///
+    /// # Errors
+    /// Returns an error for incompatible geometry, fill policy, or non-finite output.
+    pub fn subtract(&self, other: &Self) -> LadduPhysicsResult<Self> {
+        self.combine(other, -1.0, false)
+    }
+
+    /// Subtract a compatible histogram with an explicit caller assertion of independence.
+    ///
+    /// # Errors
+    /// Returns an error for incompatible geometry, fill policy, or non-finite output.
+    pub fn subtract_independent(&self, other: &Self) -> LadduPhysicsResult<Self> {
+        self.combine(other, -1.0, true)
+    }
+
+    fn combine(
+        &self,
+        other: &Self,
+        sign: f64,
+        assert_independent: bool,
+    ) -> LadduPhysicsResult<Self> {
+        self.validate_requirements(HistogramRequirements::VALID)?;
+        other.validate_requirements(HistogramRequirements::VALID)?;
+        if self.axis != other.axis || self.fill_kind != other.fill_kind {
+            return Err(LadduPhysicsError::invalid_relation(
+                "histogram arithmetic requires identical bin edges and fill policy",
+            ));
+        }
+        if self.underflow_sum_squared_weights.is_some()
+            != other.underflow_sum_squared_weights.is_some()
+            || self.overflow_sum_squared_weights.is_some()
+                != other.overflow_sum_squared_weights.is_some()
+        {
+            return Err(LadduPhysicsError::invalid_relation(
+                "histogram arithmetic requires matching flow uncertainty constituents",
+            ));
+        }
+        let mut result = self.clone();
+        for index in 0..result.counts.len() {
+            Self::add_compensated(
+                &mut result.counts[index],
+                &mut result.corrections.counts[index],
+                sign * other.counts[index],
+            );
+            Self::add_compensated(
+                &mut result.sum_squared_weights[index],
+                &mut result.corrections.sum_squared_weights[index],
+                other.sum_squared_weights[index],
+            );
+            result.errors[index] = result.sum_squared_weights[index].sqrt();
+        }
+        Self::add_compensated(
+            &mut result.underflow,
+            &mut result.corrections.underflow,
+            sign * other.underflow,
+        );
+        Self::add_compensated(
+            &mut result.overflow,
+            &mut result.corrections.overflow,
+            sign * other.overflow,
+        );
+        result.underflow_sum_squared_weights = self
+            .underflow_sum_squared_weights
+            .zip(other.underflow_sum_squared_weights)
+            .map(|(left, right)| left + right);
+        result.overflow_sum_squared_weights = self
+            .overflow_sum_squared_weights
+            .zip(other.overflow_sum_squared_weights)
+            .map(|(left, right)| left + right);
+        result.uncertainty_status = if self.uncertainty_status
+            == HistogramUncertaintyStatus::Available
+            && other.uncertainty_status == HistogramUncertaintyStatus::Available
+            && assert_independent
+        {
+            HistogramUncertaintyStatus::Available
+        } else {
+            HistogramUncertaintyStatus::UnavailableCovariance
+        };
+        result.validate_requirements(HistogramRequirements::VALID)?;
+        Ok(result)
+    }
+
+    /// Scale central values and uncertainty constituents by a finite factor.
+    ///
+    /// # Errors
+    /// Returns an error when the factor or scaled output is non-finite.
+    pub fn scaled(&self, factor: f64) -> LadduPhysicsResult<Self> {
+        if !factor.is_finite() {
+            return Err(LadduPhysicsError::invalid_value(
+                "histogram scale",
+                "finite",
+                factor,
+            ));
+        }
+        let mut result = self.clone();
+        let variance_scale = factor * factor;
+        for index in 0..result.counts.len() {
+            result.counts[index] *= factor;
+            result.sum_squared_weights[index] *= variance_scale;
+            result.errors[index] *= factor.abs();
+        }
+        result.underflow *= factor;
+        result.overflow *= factor;
+        result.underflow_sum_squared_weights = result
+            .underflow_sum_squared_weights
+            .map(|v| v * variance_scale);
+        result.overflow_sum_squared_weights = result
+            .overflow_sum_squared_weights
+            .map(|v| v * variance_scale);
+        result.corrections = Box::new(HistogramCorrections::new(result.bins()));
+        result.validate_requirements(HistogramRequirements::VALID)?;
+        Ok(result)
+    }
+
     /// Return the total histogram weight.
     pub fn total_weight(&self) -> f64 {
         self.counts.iter().sum()
@@ -706,7 +907,10 @@ impl Histogram {
 
     /// Return the lowest and highest bin edges.
     pub fn limits(&self) -> (f64, f64) {
-        (self.bin_edges[0], self.bin_edges[self.bin_edges.len() - 1])
+        (
+            self.axis.edges()[0],
+            self.axis.edges()[self.axis.edges().len() - 1],
+        )
     }
 
     /// Return the number of bins.
@@ -718,29 +922,7 @@ impl Histogram {
     ///
     /// The lower edge is inclusive and the upper edge is exclusive.
     pub fn bin_index(&self, value: f64) -> Option<usize> {
-        let (&first, remaining) = self.bin_edges.split_first()?;
-        let &last = remaining.last()?;
-        if !value.is_finite() {
-            return None;
-        }
-
-        if value < first || value >= last {
-            return None;
-        }
-
-        match self
-            .bin_edges
-            .binary_search_by(|edge| edge.total_cmp(&value))
-        {
-            Ok(index) => {
-                if index == self.counts.len() {
-                    None
-                } else {
-                    Some(index)
-                }
-            }
-            Err(index) => Some(index - 1),
-        }
+        self.axis.index(value, FinalUpperEdge::Exclusive)
     }
 
     /// Return a normalized histogram whose in-range bin counts sum to 1.
@@ -833,7 +1015,7 @@ impl Histogram {
     fn transformed(&self, policy: TransformPolicy, total_weight: f64) -> LadduPhysicsResult<Self> {
         let scale = |index: usize| {
             if policy.divide_by_bin_width {
-                total_weight * (self.bin_edges[index + 1] - self.bin_edges[index])
+                total_weight * (self.axis.edges()[index + 1] - self.axis.edges()[index])
             } else {
                 total_weight
             }
@@ -877,13 +1059,14 @@ impl Histogram {
         let histogram = Self {
             fill_kind: self.fill_kind,
             counts,
-            bin_edges: self.bin_edges.clone(),
+            axis: self.axis.clone(),
             underflow,
             overflow,
             errors,
             sum_squared_weights,
             underflow_sum_squared_weights,
             overflow_sum_squared_weights,
+            uncertainty_status: self.uncertainty_status,
             corrections: Box::new(HistogramCorrections::new(bins)),
         };
         histogram.validate_requirements(HistogramRequirements::VALID)?;
@@ -908,15 +1091,15 @@ impl Histogram {
             threshold -= count;
 
             if threshold <= 0.0 {
-                let low = self.bin_edges[i];
-                let high = self.bin_edges[i + 1];
+                let low = self.axis.edges()[i];
+                let high = self.axis.edges()[i + 1];
                 return Ok(rng.f64_range(low..high));
             }
         }
 
         // Handles tiny floating-point roundoff.
         let last = self.counts.len() - 1;
-        Ok(rng.f64_range(self.bin_edges[last]..self.bin_edges[last + 1]))
+        Ok(rng.f64_range(self.axis.edges()[last]..self.axis.edges()[last + 1]))
     }
 
     /// Return the center of a bin.
@@ -929,7 +1112,7 @@ impl Histogram {
     }
 
     fn bin_center_unchecked(&self, index: usize) -> f64 {
-        0.5 * (self.bin_edges[index] + self.bin_edges[index + 1])
+        0.5 * (self.axis.edges()[index] + self.axis.edges()[index + 1])
     }
 
     fn validate_bins(bins: usize) -> LadduPhysicsResult<()> {
@@ -962,22 +1145,22 @@ impl Histogram {
     }
 
     fn validate_structure(&self) -> LadduPhysicsResult<()> {
-        if self.bin_edges.len() < 2 {
+        if self.axis.edges().len() < 2 {
             return Err(LadduPhysicsError::invalid_length(
                 "histogram bin edges",
                 "at least 2",
-                self.bin_edges.len(),
+                self.axis.edges().len(),
             ));
         }
 
-        if self.counts.len() + 1 != self.bin_edges.len() {
+        if self.counts.len() + 1 != self.axis.edges().len() {
             return Err(LadduPhysicsError::invalid_length(
                 "histogram counts/bin_edges",
                 "counts.len() + 1 == bin_edges.len()",
                 format!(
                     "{} counts and {} edges",
                     self.counts.len(),
-                    self.bin_edges.len()
+                    self.axis.edges().len()
                 ),
             ));
         }
@@ -1011,7 +1194,7 @@ impl Histogram {
             ));
         }
 
-        for (index, edges) in self.bin_edges.windows(2).enumerate() {
+        for (index, edges) in self.axis.edges().windows(2).enumerate() {
             if edges[1] <= edges[0] {
                 return Err(LadduPhysicsError::invalid_relation(format!(
                     "histogram bin edges must be strictly increasing at edge pair {index}"
@@ -1023,7 +1206,7 @@ impl Histogram {
     }
 
     fn validate_finite(&self) -> LadduPhysicsResult<()> {
-        for (index, edge) in self.bin_edges.iter().enumerate() {
+        for (index, edge) in self.axis.edges().iter().enumerate() {
             if !edge.is_finite() {
                 return Err(LadduPhysicsError::invalid_value(
                     format!("histogram bin edge {index}"),
@@ -1195,6 +1378,84 @@ mod tests {
     use approx::assert_relative_eq;
 
     use super::*;
+
+    #[test]
+    fn arithmetic_distinguishes_proven_independence_from_shared_sources() {
+        let left =
+            Histogram::from_values_with_edges(&[0.25], vec![0.0, 1.0], Some(&[2.0])).unwrap();
+        let independent =
+            Histogram::from_values_with_edges(&[0.25], vec![0.0, 1.0], Some(&[3.0])).unwrap();
+
+        let conservative_sum = left.add(&independent).unwrap();
+        assert_eq!(conservative_sum.counts(), [5.0]);
+        assert_eq!(
+            conservative_sum.uncertainty_status(),
+            HistogramUncertaintyStatus::UnavailableCovariance
+        );
+        assert!(conservative_sum.reported_errors().is_none());
+
+        let correlated_sum = left.add(&left).unwrap();
+        assert_eq!(correlated_sum.counts(), [4.0]);
+        assert_eq!(
+            correlated_sum.uncertainty_status(),
+            HistogramUncertaintyStatus::UnavailableCovariance
+        );
+        assert!(correlated_sum.reported_errors().is_none());
+
+        let asserted = left.add_independent(&independent).unwrap();
+        assert_eq!(asserted.errors(), [13.0_f64.sqrt()]);
+        let asserted = left.add_independent(&left).unwrap();
+        assert_eq!(asserted.reported_errors().unwrap(), [8.0_f64.sqrt()]);
+    }
+
+    #[test]
+    fn subtraction_scaling_and_serialization_preserve_uncertainty_semantics() {
+        let left =
+            Histogram::from_values_with_edges(&[0.25], vec![0.0, 1.0], Some(&[-2.0])).unwrap();
+        let right =
+            Histogram::from_values_with_edges(&[0.25], vec![0.0, 1.0], Some(&[3.0])).unwrap();
+
+        let difference = left.subtract_independent(&right).unwrap();
+        assert_eq!(difference.counts(), [-5.0]);
+        assert_eq!(difference.reported_errors().unwrap(), [13.0_f64.sqrt()]);
+        let scaled = difference.scaled(-2.0).unwrap();
+        assert_eq!(scaled.counts(), [10.0]);
+        assert_eq!(scaled.sum_squared_weights(), [52.0]);
+
+        let unavailable = left.subtract(&left).unwrap();
+        let json = serde_json::to_string(&unavailable).unwrap();
+        let restored: Histogram = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            restored.uncertainty_status(),
+            HistogramUncertaintyStatus::UnavailableCovariance
+        );
+        assert!(restored.reported_errors().is_none());
+    }
+
+    #[test]
+    fn arithmetic_rejects_incompatible_geometry_and_fill_policy() {
+        let empirical = Histogram::empty_with_edges(vec![0.0, 1.0]).unwrap();
+        let different_edges = Histogram::empty_with_edges(vec![0.0, 2.0]).unwrap();
+        let manual = Histogram::new(vec![0.0], vec![0.0, 1.0]).unwrap();
+
+        assert!(empirical.add(&different_edges).is_err());
+        assert!(empirical.subtract(&manual).is_err());
+        assert!(empirical.scaled(f64::INFINITY).is_err());
+    }
+
+    #[test]
+    fn repeated_arithmetic_uses_deterministic_compensated_accumulation() {
+        let large = Histogram::new(vec![1.0e16], vec![0.0, 1.0]).unwrap();
+        let unit = Histogram::new(vec![1.0], vec![0.0, 1.0]).unwrap();
+
+        let result = large
+            .add_independent(&unit)
+            .unwrap()
+            .add_independent(&unit)
+            .unwrap();
+
+        assert_eq!(result.counts(), [1.0e16 + 2.0]);
+    }
 
     #[test]
     fn new_accepts_valid_histograms() {

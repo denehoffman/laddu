@@ -1,4 +1,41 @@
 pub mod laddu_physics
+pub mod laddu_physics::binning
+pub enum laddu_physics::binning::FinalUpperEdge
+pub laddu_physics::binning::FinalUpperEdge::Exclusive
+pub laddu_physics::binning::FinalUpperEdge::Inclusive
+impl core::clone::Clone for laddu_physics::binning::FinalUpperEdge
+pub fn laddu_physics::binning::FinalUpperEdge::clone(&self) -> laddu_physics::binning::FinalUpperEdge
+impl core::cmp::Eq for laddu_physics::binning::FinalUpperEdge
+impl core::cmp::PartialEq for laddu_physics::binning::FinalUpperEdge
+pub fn laddu_physics::binning::FinalUpperEdge::eq(&self, &laddu_physics::binning::FinalUpperEdge) -> bool
+impl core::default::Default for laddu_physics::binning::FinalUpperEdge
+pub fn laddu_physics::binning::FinalUpperEdge::default() -> laddu_physics::binning::FinalUpperEdge
+impl core::fmt::Debug for laddu_physics::binning::FinalUpperEdge
+pub fn laddu_physics::binning::FinalUpperEdge::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for laddu_physics::binning::FinalUpperEdge
+impl core::marker::StructuralPartialEq for laddu_physics::binning::FinalUpperEdge
+pub struct laddu_physics::binning::BinningAxis
+impl laddu_physics::binning::BinningAxis
+pub fn laddu_physics::binning::BinningAxis::bin_count(&self) -> usize
+pub fn laddu_physics::binning::BinningAxis::edges(&self) -> &[f64]
+pub fn laddu_physics::binning::BinningAxis::index(&self, f64, laddu_physics::binning::FinalUpperEdge) -> core::option::Option<usize>
+pub fn laddu_physics::binning::BinningAxis::new(impl core::iter::traits::collect::IntoIterator<Item = f64>) -> laddu_physics::LadduPhysicsResult<Self>
+pub fn laddu_physics::binning::BinningAxis::uniform(usize, f64, f64) -> laddu_physics::LadduPhysicsResult<Self>
+impl core::clone::Clone for laddu_physics::binning::BinningAxis
+pub fn laddu_physics::binning::BinningAxis::clone(&self) -> laddu_physics::binning::BinningAxis
+impl core::cmp::PartialEq for laddu_physics::binning::BinningAxis
+pub fn laddu_physics::binning::BinningAxis::eq(&self, &laddu_physics::binning::BinningAxis) -> bool
+impl core::fmt::Debug for laddu_physics::binning::BinningAxis
+pub fn laddu_physics::binning::BinningAxis::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for laddu_physics::binning::BinningAxis
+impl serde_core::ser::Serialize for laddu_physics::binning::BinningAxis
+pub fn laddu_physics::binning::BinningAxis::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for laddu_physics::binning::BinningAxis
+pub fn laddu_physics::binning::BinningAxis::deserialize<D>(D) -> core::result::Result<Self, <D as serde_core::de::Deserializer>::Error> where D: serde_core::de::Deserializer<'de>
+pub fn laddu_physics::binning::bin_shape(&[laddu_physics::binning::BinningAxis]) -> alloc::vec::Vec<usize>
+pub fn laddu_physics::binning::checked_bin_count(&[laddu_physics::binning::BinningAxis]) -> core::option::Option<usize>
+pub fn laddu_physics::binning::flat_bin_index(&[laddu_physics::binning::BinningAxis], &[f64], laddu_physics::binning::FinalUpperEdge) -> core::option::Option<usize>
+pub fn laddu_physics::binning::flat_bin_index_for_event(&[laddu_physics::binning::BinningAxis], &[alloc::vec::Vec<f64>], usize, laddu_physics::binning::FinalUpperEdge) -> core::option::Option<usize>
 pub mod laddu_physics::channel
 pub enum laddu_physics::channel::EdgeP4
 pub laddu_physics::channel::EdgeP4::EventColumn(alloc::string::String)
@@ -301,8 +338,28 @@ pub fn laddu_physics::generation::TwoBodyScattering::serialize<__S>(&self, __S) 
 impl<'de> serde_core::de::Deserialize<'de> for laddu_physics::generation::TwoBodyScattering
 pub fn laddu_physics::generation::TwoBodyScattering::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
 pub mod laddu_physics::histogram
+pub enum laddu_physics::histogram::HistogramUncertaintyStatus
+pub laddu_physics::histogram::HistogramUncertaintyStatus::Available
+pub laddu_physics::histogram::HistogramUncertaintyStatus::UnavailableCovariance
+impl core::clone::Clone for laddu_physics::histogram::HistogramUncertaintyStatus
+pub fn laddu_physics::histogram::HistogramUncertaintyStatus::clone(&self) -> laddu_physics::histogram::HistogramUncertaintyStatus
+impl core::cmp::Eq for laddu_physics::histogram::HistogramUncertaintyStatus
+impl core::cmp::PartialEq for laddu_physics::histogram::HistogramUncertaintyStatus
+pub fn laddu_physics::histogram::HistogramUncertaintyStatus::eq(&self, &laddu_physics::histogram::HistogramUncertaintyStatus) -> bool
+impl core::default::Default for laddu_physics::histogram::HistogramUncertaintyStatus
+pub fn laddu_physics::histogram::HistogramUncertaintyStatus::default() -> laddu_physics::histogram::HistogramUncertaintyStatus
+impl core::fmt::Debug for laddu_physics::histogram::HistogramUncertaintyStatus
+pub fn laddu_physics::histogram::HistogramUncertaintyStatus::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for laddu_physics::histogram::HistogramUncertaintyStatus
+impl core::marker::StructuralPartialEq for laddu_physics::histogram::HistogramUncertaintyStatus
+impl serde_core::ser::Serialize for laddu_physics::histogram::HistogramUncertaintyStatus
+pub fn laddu_physics::histogram::HistogramUncertaintyStatus::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for laddu_physics::histogram::HistogramUncertaintyStatus
+pub fn laddu_physics::histogram::HistogramUncertaintyStatus::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
 pub struct laddu_physics::histogram::Histogram
 impl laddu_physics::histogram::Histogram
+pub fn laddu_physics::histogram::Histogram::add(&self, &Self) -> laddu_physics::LadduPhysicsResult<Self>
+pub fn laddu_physics::histogram::Histogram::add_independent(&self, &Self) -> laddu_physics::LadduPhysicsResult<Self>
 pub fn laddu_physics::histogram::Histogram::bin_center(&self, usize) -> core::option::Option<f64>
 pub fn laddu_physics::histogram::Histogram::bin_edges(&self) -> &[f64]
 pub fn laddu_physics::histogram::Histogram::bin_index(&self, f64) -> core::option::Option<usize>
@@ -326,15 +383,20 @@ pub fn laddu_physics::histogram::Histogram::normalized(&self) -> laddu_physics::
 pub fn laddu_physics::histogram::Histogram::normalized_with_flow(&self) -> laddu_physics::LadduPhysicsResult<Self>
 pub fn laddu_physics::histogram::Histogram::overflow(&self) -> f64
 pub fn laddu_physics::histogram::Histogram::overflow_sum_squared_weights(&self) -> core::option::Option<f64>
+pub fn laddu_physics::histogram::Histogram::reported_errors(&self) -> core::option::Option<&[f64]>
 pub fn laddu_physics::histogram::Histogram::sample(&self, &mut fastrand::Rng) -> laddu_physics::LadduPhysicsResult<f64>
+pub fn laddu_physics::histogram::Histogram::scaled(&self, f64) -> laddu_physics::LadduPhysicsResult<Self>
 pub fn laddu_physics::histogram::Histogram::set_count(&mut self, usize, f64) -> laddu_physics::LadduPhysicsResult<()>
 pub fn laddu_physics::histogram::Histogram::set_counts(&mut self, &[f64]) -> laddu_physics::LadduPhysicsResult<()>
 pub fn laddu_physics::histogram::Histogram::set_error(&mut self, usize, f64) -> laddu_physics::LadduPhysicsResult<()>
 pub fn laddu_physics::histogram::Histogram::set_errors(&mut self, &[f64]) -> laddu_physics::LadduPhysicsResult<()>
 pub fn laddu_physics::histogram::Histogram::signed_density(&self) -> laddu_physics::LadduPhysicsResult<Self>
+pub fn laddu_physics::histogram::Histogram::subtract(&self, &Self) -> laddu_physics::LadduPhysicsResult<Self>
+pub fn laddu_physics::histogram::Histogram::subtract_independent(&self, &Self) -> laddu_physics::LadduPhysicsResult<Self>
 pub fn laddu_physics::histogram::Histogram::sum_squared_weights(&self) -> &[f64]
 pub fn laddu_physics::histogram::Histogram::total_weight(&self) -> f64
 pub fn laddu_physics::histogram::Histogram::total_weight_with_flow(&self) -> f64
+pub fn laddu_physics::histogram::Histogram::uncertainty_status(&self) -> laddu_physics::histogram::HistogramUncertaintyStatus
 pub fn laddu_physics::histogram::Histogram::underflow(&self) -> f64
 pub fn laddu_physics::histogram::Histogram::underflow_sum_squared_weights(&self) -> core::option::Option<f64>
 impl core::clone::Clone for laddu_physics::histogram::Histogram
@@ -351,14 +413,21 @@ pub fn laddu_physics::histogram::Histogram::deserialize<D>(D) -> core::result::R
 pub mod laddu_physics::joint_histogram
 pub struct laddu_physics::joint_histogram::JointHistogram
 impl laddu_physics::joint_histogram::JointHistogram
+pub fn laddu_physics::joint_histogram::JointHistogram::add(&self, &Self) -> laddu_physics::LadduPhysicsResult<Self>
+pub fn laddu_physics::joint_histogram::JointHistogram::add_independent(&self, &Self) -> laddu_physics::LadduPhysicsResult<Self>
 pub fn laddu_physics::joint_histogram::JointHistogram::axes(&self) -> &[alloc::vec::Vec<f64>]
 pub fn laddu_physics::joint_histogram::JointHistogram::diagnostics(&self) -> &laddu_physics::joint_histogram::JointHistogramDiagnostics
 pub fn laddu_physics::joint_histogram::JointHistogram::empty(alloc::vec::Vec<alloc::vec::Vec<f64>>) -> laddu_physics::LadduPhysicsResult<Self>
 pub fn laddu_physics::joint_histogram::JointHistogram::errors(&self) -> alloc::vec::Vec<f64>
 pub fn laddu_physics::joint_histogram::JointHistogram::fill_weighted(&mut self, &[f64], f64) -> laddu_physics::LadduPhysicsResult<()>
 pub fn laddu_physics::joint_histogram::JointHistogram::merge(&mut self, &Self) -> laddu_physics::LadduPhysicsResult<()>
+pub fn laddu_physics::joint_histogram::JointHistogram::reported_errors(&self) -> core::option::Option<alloc::vec::Vec<f64>>
+pub fn laddu_physics::joint_histogram::JointHistogram::scaled(&self, f64) -> laddu_physics::LadduPhysicsResult<Self>
 pub fn laddu_physics::joint_histogram::JointHistogram::shape(&self) -> &[usize]
+pub fn laddu_physics::joint_histogram::JointHistogram::subtract(&self, &Self) -> laddu_physics::LadduPhysicsResult<Self>
+pub fn laddu_physics::joint_histogram::JointHistogram::subtract_independent(&self, &Self) -> laddu_physics::LadduPhysicsResult<Self>
 pub fn laddu_physics::joint_histogram::JointHistogram::sum_squared_weights(&self) -> &[f64]
+pub fn laddu_physics::joint_histogram::JointHistogram::uncertainty_status(&self) -> laddu_physics::histogram::HistogramUncertaintyStatus
 pub fn laddu_physics::joint_histogram::JointHistogram::values(&self) -> &[f64]
 impl core::clone::Clone for laddu_physics::joint_histogram::JointHistogram
 pub fn laddu_physics::joint_histogram::JointHistogram::clone(&self) -> laddu_physics::joint_histogram::JointHistogram

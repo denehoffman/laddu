@@ -24,6 +24,15 @@ print(histogram.errors)
 Underflow and overflow keep their signed totals and squared-weight
 constituents separately. The final upper edge belongs to overflow.
 
+Rust callers that need to share exactly the same geometry across layers can use
+`laddu_physics::binning::BinningAxis`. It validates finite, strictly increasing
+edges once and applies lower-inclusive, upper-exclusive internal bins. Its
+`FinalUpperEdge` argument makes the outer boundary deliberate: histogram and
+differential-projection filling use `Exclusive`, while bounded dataset
+partitioning uses `Inclusive` so the final event is not lost. This low-level
+axis is geometry and assignment policy only; it is not an accumulator or a
+projection expression.
+
 ## Fill directly from a dataset
 
 `Dataset.histogram` evaluates one real scalar expression and fills the same
@@ -82,6 +91,30 @@ Compatible joint histograms filled from disjoint partitions can be merged.
 Ordered axes and shape must match exactly, and a failed merge leaves the left
 operand unchanged.
 
+## Arithmetic and uncertainty provenance
+
+Both histogram types support `+`, `-`, and multiplication by a scalar. Addition
+and subtraction require identical geometry (including joint-axis order), and
+scaling multiplies squared-weight constituents by the square of the factor.
+The named `add`, `subtract`, and `scaled` methods provide the same operations.
+
+Distinct histogram fills are not proof of statistical independence: they may
+still evaluate the same events. Ordinary addition and subtraction therefore
+preserve central values and squared-weight constituents but set the status to
+`"unavailable_covariance"`; `reported_errors` is then `None`. The existing
+`errors` property remains the square root of the retained constituents and is
+not a reportable combined uncertainty in that state.
+
+When independence is known outside Laddu, state it explicitly:
+
+```python
+combined = first.add(second, independent=True)
+```
+
+That assertion applies only to the two operands. It cannot recover covariance
+already lost inside an operand. Paired fit ensembles and their covariance belong
+to the higher-level yield and cross-section APIs, not histogram arithmetic.
+
 ### Compatibility
 
 `JointHistogram.to_json()` stores ordered axis edges, shape, flattened values,
@@ -106,10 +139,10 @@ histogram as manual. Validation happens before the left-hand histogram is
 changed, so a failed merge is atomic. Laddu combines bin contents, flow
 weights, and squared-weight constituents field by field.
 
-`Histogram` does not retain event identities. Calling `merge` therefore states
-that the caller knows the fills are disjoint; merging overlapping or correlated
-fills would incorrectly assume independent fill statistics. Correlated
-ensemble arithmetic belongs in higher-level estimate objects.
+Calling `merge` states that the caller knows the fills are disjoint. It remains
+an accumulation operation, separate from arithmetic. Histogram objects do not
+retain event identities, so later arithmetic remains conservative unless the
+caller explicitly asserts independence.
 
 Histograms constructed from precomputed counts keep the established
 `sqrt(abs(count))` default. Supplying or assigning `errors` deliberately sets

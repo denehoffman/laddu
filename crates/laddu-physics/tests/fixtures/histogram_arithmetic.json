@@ -1,0 +1,12 @@
+{
+  "fill_kind": "empirical",
+  "counts": [4.0],
+  "bin_edges": [0.0, 1.0],
+  "underflow": 0.0,
+  "overflow": 0.0,
+  "errors": [2.8284271247461903],
+  "sum_squared_weights": [8.0],
+  "underflow_sum_squared_weights": 0.0,
+  "overflow_sum_squared_weights": 0.0,
+  "uncertainty_status": "unavailable_covariance"
+}
