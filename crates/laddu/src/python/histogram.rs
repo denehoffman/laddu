@@ -161,6 +161,18 @@ impl PyHistogram {
         self.inner.errors().to_vec()
     }
 
+    #[getter]
+    /// list of float or None: Reportable uncertainties, if covariance is known.
+    fn reported_errors(&self) -> Option<Vec<f64>> {
+        self.inner.reported_errors().map(<[f64]>::to_vec)
+    }
+
+    #[getter]
+    /// str: ``available`` or ``unavailable_covariance``.
+    fn uncertainty_status(&self) -> &'static str {
+        uncertainty_status_name(self.inner.uncertainty_status())
+    }
+
     #[setter(errors)]
     /// Replace all regular-bin uncertainties.
     fn set_errors(&mut self, errors: &Bound<'_, PyAny>) -> PyResult<()> {
@@ -237,6 +249,55 @@ impl PyHistogram {
         merged.merge(&other.inner).map_err(to_py_err)?;
         self.inner = merged;
         Ok(())
+    }
+
+    #[pyo3(signature = (other, *, independent=false))]
+    /// Return the sum of two compatible histograms.
+    fn add(&self, other: &PyHistogram, independent: bool) -> PyResult<Self> {
+        let inner = if independent {
+            self.inner.add_independent(&other.inner)
+        } else {
+            self.inner.add(&other.inner)
+        };
+        Ok(Self {
+            inner: inner.map_err(to_py_err)?,
+        })
+    }
+
+    #[pyo3(signature = (other, *, independent=false))]
+    /// Return the difference of two compatible histograms.
+    fn subtract(&self, other: &PyHistogram, independent: bool) -> PyResult<Self> {
+        let inner = if independent {
+            self.inner.subtract_independent(&other.inner)
+        } else {
+            self.inner.subtract(&other.inner)
+        };
+        Ok(Self {
+            inner: inner.map_err(to_py_err)?,
+        })
+    }
+
+    /// Return a copy scaled by a finite factor.
+    fn scaled(&self, factor: f64) -> PyResult<Self> {
+        Ok(Self {
+            inner: self.inner.scaled(factor).map_err(to_py_err)?,
+        })
+    }
+
+    fn __add__(&self, other: &PyHistogram) -> PyResult<Self> {
+        self.add(other, false)
+    }
+
+    fn __sub__(&self, other: &PyHistogram) -> PyResult<Self> {
+        self.subtract(other, false)
+    }
+
+    fn __mul__(&self, factor: f64) -> PyResult<Self> {
+        self.scaled(factor)
+    }
+
+    fn __rmul__(&self, factor: f64) -> PyResult<Self> {
+        self.scaled(factor)
     }
 
     #[getter]
@@ -378,6 +439,20 @@ impl PyJointHistogram {
         joint_array(py, self.inner.shape(), self.inner.errors())
     }
     #[getter]
+    fn reported_errors<'py>(
+        &self,
+        py: Python<'py>,
+    ) -> PyResult<Option<Bound<'py, PyArrayDyn<f64>>>> {
+        self.inner
+            .reported_errors()
+            .map(|values| joint_array(py, self.inner.shape(), values))
+            .transpose()
+    }
+    #[getter]
+    fn uncertainty_status(&self) -> &'static str {
+        uncertainty_status_name(self.inner.uncertainty_status())
+    }
+    #[getter]
     fn squared_weight_constituents<'py>(
         &self,
         py: Python<'py>,
@@ -397,6 +472,56 @@ impl PyJointHistogram {
     /// Merge a compatible histogram filled from a disjoint event partition.
     fn merge(&mut self, other: &PyJointHistogram) -> PyResult<()> {
         self.inner.merge(&other.inner).map_err(to_py_err)
+    }
+    #[pyo3(signature = (other, *, independent=false))]
+    fn add(&self, other: &PyJointHistogram, independent: bool) -> PyResult<Self> {
+        let inner = if independent {
+            self.inner.add_independent(&other.inner)
+        } else {
+            self.inner.add(&other.inner)
+        };
+        Ok(Self {
+            inner: inner.map_err(to_py_err)?,
+        })
+    }
+    #[pyo3(signature = (other, *, independent=false))]
+    fn subtract(&self, other: &PyJointHistogram, independent: bool) -> PyResult<Self> {
+        let inner = if independent {
+            self.inner.subtract_independent(&other.inner)
+        } else {
+            self.inner.subtract(&other.inner)
+        };
+        Ok(Self {
+            inner: inner.map_err(to_py_err)?,
+        })
+    }
+    fn scaled(&self, factor: f64) -> PyResult<Self> {
+        Ok(Self {
+            inner: self.inner.scaled(factor).map_err(to_py_err)?,
+        })
+    }
+    fn __add__(&self, other: &PyJointHistogram) -> PyResult<Self> {
+        self.add(other, false)
+    }
+    fn __sub__(&self, other: &PyJointHistogram) -> PyResult<Self> {
+        self.subtract(other, false)
+    }
+    fn __mul__(&self, factor: f64) -> PyResult<Self> {
+        self.scaled(factor)
+    }
+    fn __rmul__(&self, factor: f64) -> PyResult<Self> {
+        self.scaled(factor)
+    }
+}
+
+fn uncertainty_status_name(
+    status: laddu_physics::histogram::HistogramUncertaintyStatus,
+) -> &'static str {
+    match status {
+        laddu_physics::histogram::HistogramUncertaintyStatus::Available => "available",
+        laddu_physics::histogram::HistogramUncertaintyStatus::UnavailableCovariance => {
+            "unavailable_covariance"
+        }
     }
 }
 

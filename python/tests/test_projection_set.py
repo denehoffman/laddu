@@ -56,6 +56,20 @@ class ProjectionSetTests(unittest.TestCase):
         assert results['joint'].shape == [2, 1]
         assert set(results['fine'].components) == set(results['joint'].components)
 
+    def test_projection_bins_match_dataset_histogram_assignments(self) -> None:
+        cross_section = self.cross_section()
+        fine = ld.Axis(ld.scalar('x'), edges=[0.0, 1.0, 2.0])
+
+        results = cross_section.projection_set({'fine': fine, 'joint': [fine, fine]})
+
+        expected = [1.5, 1.3265306122448979]
+        np.testing.assert_allclose(results['fine'].data.central, expected)
+        np.testing.assert_allclose(
+            results['joint'].data.central,
+            [expected[0], np.nan, np.nan, expected[1]],
+            equal_nan=True,
+        )
+
     def test_invalid_projection_mappings_fail_without_partial_results(self) -> None:
         cross_section = self.cross_section()
         axis = ld.Axis(ld.scalar('x'), edges=[0.0, 1.0, 2.0])

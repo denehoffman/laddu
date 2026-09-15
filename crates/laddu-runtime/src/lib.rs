@@ -22,6 +22,10 @@ pub use laddu_memory::{
     MemoryPlan, MemoryPool, MemoryPoolReport, MemoryReport, MemoryResource, MemoryResourceKind,
     MemoryState, ProcessMemoryReport,
 };
+pub use laddu_physics::binning::{
+    BinningAxis, FinalUpperEdge, bin_shape, checked_bin_count, flat_bin_index,
+    flat_bin_index_for_event,
+};
 pub use laddu_physics::joint_histogram::{JointHistogram, JointHistogramDiagnostics};
 pub use normalization::{PreparedNormalization, PreparedNormalizationDiagnostics};
 pub use query::{BinSpec, Comparison, DatasetBin, DatasetExprExt, IntervalClosure, Predicate};

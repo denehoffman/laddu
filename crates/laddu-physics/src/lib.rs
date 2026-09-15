@@ -1,6 +1,8 @@
 //! Physics primitives for kinematic expressions, reaction channels, event
 //! generation, histograms, and particle quantum numbers.
 
+/// Validated axes and shared bin-assignment semantics.
+pub mod binning;
 /// Reaction-graph construction and frame-dependent kinematics.
 pub mod channel;
 mod error;
