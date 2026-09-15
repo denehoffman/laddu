@@ -1520,6 +1520,16 @@ impl CrossSection {
         self.observed_total_selected(None)
     }
 
+    /// Full-model observed-yield-normalized cross section without uncertainty draws.
+    ///
+    /// This operation does not prepare or evaluate ensemble replicas.
+    ///
+    /// # Errors
+    /// Returns an error when model integrals or central evaluation fail.
+    pub fn observed_total_central(&self) -> LikelihoodResult<Estimate> {
+        self.observed_total_central_selected(None)
+    }
+
     /// Returns integral-cache hit, miss, count, and retained-byte diagnostics.
     pub fn diagnostics(&self) -> CrossSectionDiagnostics {
         let cache = self
@@ -1545,6 +1555,16 @@ impl CrossSection {
         self.observed_total_selected(Some(tags))
     }
 
+    /// Tag-narrowed observed-yield-normalized cross section without uncertainty draws.
+    ///
+    /// This operation does not prepare or evaluate ensemble replicas.
+    ///
+    /// # Errors
+    /// Returns an error when tag projection, integrals, or central evaluation fail.
+    pub fn observed_total_central_with_tags(&self, tags: &[String]) -> LikelihoodResult<Estimate> {
+        self.observed_total_central_selected(Some(tags))
+    }
+
     fn observed_total_selected(&self, tags: Option<&[String]>) -> LikelihoodResult<Estimate> {
         if self.members.is_some() {
             return self.combined_total(tags);
@@ -1552,6 +1572,19 @@ impl CrossSection {
         self.evaluate_estimate(tags, |integrals, parameters| {
             integrals.observed_cross_section(parameters, self.luminosity)
         })
+    }
+
+    fn observed_total_central_selected(
+        &self,
+        tags: Option<&[String]>,
+    ) -> LikelihoodResult<Estimate> {
+        let value = if self.members.is_some() {
+            self.combined_central_value(tags)?
+        } else {
+            let integrals = self.integrals_for(&self.likelihood, tags)?;
+            integrals.observed_cross_section(&self.parameters, self.luminosity)?
+        };
+        Estimate::central(value)
     }
 
     /// Full-model fitted cross section from an absolute-rate likelihood term.
@@ -1749,7 +1782,15 @@ impl CrossSection {
                         let replica_integrals = ensemble
                             .replicas
                             .get(index)
-                            .map(|likelihood| self.integrals_for(likelihood, tags))
+                            .map(|likelihood| {
+                                if ensemble.replicas_share_event_rows {
+                                    likelihood
+                                        .intensity_data_weight_sum(&self.term_name)
+                                        .map(|sum| integrals.with_data_weight_sum(sum))
+                                } else {
+                                    self.integrals_for(likelihood, tags)
+                                }
+                            })
                             .transpose()?;
                         function(replica_integrals.as_ref().unwrap_or(&integrals), draw)
                     })
@@ -1792,18 +1833,7 @@ impl CrossSection {
             .members
             .as_ref()
             .ok_or_else(|| invalid("CrossSection is not combined"))?;
-        let central = members.iter().try_fold(
-            (0.0, 0.0),
-            |(yield_sum, exposure_sum), (member, factor)| {
-                let (yield_value, exposure) = member.selected_measurement_for(
-                    &member.likelihood,
-                    &member.parameters,
-                    tags,
-                    factor.central,
-                )?;
-                Ok::<_, LikelihoodError>((yield_sum + yield_value, exposure_sum + exposure))
-            },
-        )?;
+        let central = self.combined_central_measurement(tags)?;
         let draw_count = member_draw_count(members);
         let reference_source = member_reference_source(members);
         let mut draws = Vec::with_capacity(draw_count);
@@ -1863,6 +1893,32 @@ impl CrossSection {
             draws,
             Some(next_uncertainty_source_id()),
         ))
+    }
+
+    fn combined_central_measurement(
+        &self,
+        tags: Option<&[String]>,
+    ) -> LikelihoodResult<(f64, f64)> {
+        let members = self
+            .members
+            .as_ref()
+            .ok_or_else(|| invalid("CrossSection is not combined"))?;
+        members
+            .iter()
+            .try_fold((0.0, 0.0), |(yield_sum, exposure_sum), (member, factor)| {
+                let (yield_value, exposure) = member.selected_measurement_for(
+                    &member.likelihood,
+                    &member.parameters,
+                    tags,
+                    factor.central,
+                )?;
+                Ok((yield_sum + yield_value, exposure_sum + exposure))
+            })
+    }
+
+    fn combined_central_value(&self, tags: Option<&[String]>) -> LikelihoodResult<f64> {
+        let (yield_sum, exposure_sum) = self.combined_central_measurement(tags)?;
+        Ok(yield_sum / exposure_sum)
     }
 
     fn single_projection_set(
@@ -2500,6 +2556,22 @@ mod tests {
         Dataset::from_batches(vec![batch]).unwrap()
     }
 
+    fn bootstrap_total_fixture(samples: usize) -> (Arc<Likelihood>, Dataset, Ensemble) {
+        let model = CompiledModel::from_expr(&(event_scalar("x") + 1.0)).unwrap();
+        let data = weighted_dataset(&[(0.25, 1.0), (1.25, 2.0)]);
+        let accepted = weighted_dataset(&[(0.25, 1.0), (1.25, 1.0)]);
+        let generated = weighted_dataset(&[(0.25, 1.0), (1.25, 1.0), (1.75, 1.0)]);
+        let likelihood = Arc::new(
+            Likelihood::new([crate::NllTerm::new("signal", &model, &data, &accepted).unwrap()])
+                .unwrap(),
+        );
+        let ensemble = Ensemble::bootstrap_fit(&likelihood, samples, 42, |replica, _| {
+            Ok::<_, std::convert::Infallible>(replica.default_params())
+        })
+        .unwrap();
+        (likelihood, generated, ensemble)
+    }
+
     struct CanonicalSelectionFixture {
         likelihood: Arc<Likelihood>,
         generated: Dataset,
@@ -2788,6 +2860,83 @@ mod tests {
         .unwrap();
         assert_eq!(ensemble.len(), 3);
         assert_eq!(ensemble.replicas().len(), 3);
+    }
+
+    #[test]
+    fn native_bootstrap_totals_share_mc_preparation_and_preserve_paired_weights() {
+        let (likelihood, generated, ensemble) = bootstrap_total_fixture(3);
+        let expected_draws = ensemble
+            .draws()
+            .iter()
+            .zip(ensemble.replicas())
+            .map(|(parameters, replica)| {
+                replica
+                    .cross_section("signal", generated.clone(), 10.0, parameters.clone())
+                    .unwrap()
+                    .observed_total()
+                    .unwrap()
+                    .value()
+            })
+            .collect::<Vec<_>>();
+        let cross_section = likelihood
+            .cross_section_with_ensemble(
+                "signal",
+                generated,
+                10.0,
+                likelihood.default_params(),
+                ensemble.clone(),
+            )
+            .unwrap();
+
+        let total = cross_section.observed_total().unwrap();
+
+        assert_eq!(total.draws(), expected_draws);
+        assert_eq!(total.source_id(), Some(ensemble.source_id()));
+        assert_eq!(cross_section.diagnostics().cached_integrals(), 1);
+    }
+
+    #[test]
+    fn unknown_replica_provenance_keeps_per_replica_preparation() {
+        let (likelihood, generated, native) = bootstrap_total_fixture(2);
+        let unknown = Ensemble::with_replicas(
+            native.parameter_names().to_vec(),
+            native.draws().to_vec(),
+            native.replicas().to_vec(),
+        )
+        .unwrap();
+        let cross_section = likelihood
+            .cross_section_with_ensemble(
+                "signal",
+                generated,
+                10.0,
+                likelihood.default_params(),
+                unknown,
+            )
+            .unwrap();
+
+        cross_section.observed_total().unwrap();
+
+        assert_eq!(cross_section.diagnostics().cached_integrals(), 3);
+    }
+
+    #[test]
+    fn central_only_total_skips_bootstrap_draw_preparation() {
+        let (likelihood, generated, ensemble) = bootstrap_total_fixture(3);
+        let cross_section = likelihood
+            .cross_section_with_ensemble(
+                "signal",
+                generated,
+                10.0,
+                likelihood.default_params(),
+                ensemble,
+            )
+            .unwrap();
+
+        let total = cross_section.observed_total_central().unwrap();
+
+        assert!(total.draws().is_empty());
+        assert_eq!(total.source_id(), None);
+        assert_eq!(cross_section.diagnostics().cached_integrals(), 1);
     }
 
     #[test]

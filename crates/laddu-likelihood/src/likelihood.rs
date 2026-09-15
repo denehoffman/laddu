@@ -677,6 +677,16 @@ impl Likelihood {
         term.cross_section_integrals(generated_mc, &self.execution, has_absolute_rate)
     }
 
+    pub(crate) fn intensity_data_weight_sum(&self, term_name: &str) -> LikelihoodResult<f64> {
+        let Some(term) = self.terms.iter().find(|term| term.name() == term_name) else {
+            return Err(LikelihoodError::MissingTerm(term_name.to_owned()));
+        };
+        let Some(term) = term.as_intensity() else {
+            return Err(LikelihoodError::NotIntensityTerm(term_name.to_owned()));
+        };
+        term.data_weight_sum()
+    }
+
     /// Prepares tag-narrowed accepted and generated Monte Carlo integrals.
     ///
     /// The selected tags define the numerator contribution. Cross sections
@@ -2062,6 +2072,12 @@ impl LikelihoodProjection {
 }
 
 impl CrossSectionIntegrals {
+    pub(crate) fn with_data_weight_sum(&self, data_weight_sum: f64) -> Self {
+        let mut integrals = self.clone();
+        integrals.data_weight_sum = data_weight_sum;
+        integrals
+    }
+
     /// Returns whether the source likelihood term determines an absolute rate.
     pub fn has_absolute_rate(&self) -> bool {
         self.has_absolute_rate

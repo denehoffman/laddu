@@ -85,6 +85,100 @@ class ProjectionSetTests(unittest.TestCase):
         with self.assertRaisesRegex(TypeError, 'Axis or a sequence'):
             cross_section.projection_set({'bad': cast('Any', object())})
 
+    def test_central_observed_total_skips_ensemble_draws(self) -> None:
+        cross_section = self.cross_section()
+        central = cross_section.observed_total_central()
+
+        assert central.central == cross_section.observed_total().central
+        assert len(central.draws) == 0
+        assert central.source_id is None
+        assert cross_section.diagnostics()['cached_integrals'] == 1
+
+    def test_native_bootstrap_totals_share_preparation_under_small_budget(self) -> None:
+        x = ld.scalar('x')
+        model = ld.Model((ld.parameter('scale', initial=1.0) * x + 1.0).norm_sqr())
+
+        values = np.linspace(0.1, 1.9, 20)
+
+        def dataset(weights: np.ndarray[Any, np.dtype[np.float64]]) -> ld.Dataset:
+            return ld.Dataset.from_arrays(
+                p4s={},
+                scalars={'x': values},
+                weights=weights,
+            )
+
+        execution = ld.Execution(
+            'cpu',
+            threads=1,
+            memory=ld.MemoryPlan(host='1 MiB'),
+        )
+        data = dataset(np.linspace(1.0, 2.0, 20))
+        accepted = dataset(np.ones(20))
+        generated = dataset(np.ones(20))
+        likelihood = ld.Likelihood(
+            [
+                ld.NLL(
+                    model,
+                    data=data,
+                    accepted_mc=accepted,
+                    name='signal',
+                )
+            ],
+            execution=execution,
+        )
+        replica_count = 3
+        ensemble = likelihood.bootstrap_fit(
+            replica_count,
+            initial=[1.0],
+            seed=42,
+            terminators=[ld.ganesh.MaxSteps(1)],
+        )
+        cross_section = likelihood.cross_section(
+            'signal',
+            generated_mc=generated,
+            luminosity=10.0,
+            parameters=[1.0],
+            ensemble=ensemble,
+        )
+
+        total = cross_section.observed_total()
+        expected_draws = []
+        for index in range(replica_count):
+            replica = ld.Likelihood(
+                [
+                    ld.NLL(
+                        model,
+                        data=data.bootstrap(seed=42 + index),
+                        accepted_mc=accepted,
+                        name='signal',
+                    )
+                ],
+                execution=execution,
+            )
+            fit = replica.fit(
+                initial=[1.0],
+                terminators=[ld.ganesh.MaxSteps(1)],
+            )
+            expected_draws.append(
+                replica.cross_section(
+                    'signal',
+                    generated_mc=generated,
+                    luminosity=10.0,
+                    parameters=fit.x,
+                )
+                .observed_total()
+                .central
+            )
+
+        assert len(total.draws) == replica_count
+        np.testing.assert_allclose(
+            total.central,
+            cross_section.observed_total_central().central,
+        )
+        np.testing.assert_allclose(total.draws, expected_draws)
+        assert total.source_id == ensemble.source_id
+        assert cross_section.diagnostics()['cached_integrals'] == 1
+
 
 if __name__ == '__main__':
     unittest.main()

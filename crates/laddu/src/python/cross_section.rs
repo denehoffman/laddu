@@ -514,6 +514,18 @@ impl PyCrossSection {
     }
 
     #[pyo3(signature = (*, tags=None))]
+    /// Return the central observed-yield-normalized cross section without
+    /// preparing or evaluating uncertainty draws.
+    fn observed_total_central(&self, tags: Option<Vec<String>>) -> PyResult<PyEstimate> {
+        match tags {
+            Some(tags) => self.inner.observed_total_central_with_tags(&tags),
+            None => self.inner.observed_total_central(),
+        }
+        .map(Into::into)
+        .map_err(to_py_err)
+    }
+
+    #[pyo3(signature = (*, tags=None))]
     /// Return the fitted cross section from an absolute-rate likelihood term.
     fn fitted_total(&self, tags: Option<Vec<String>>) -> PyResult<PyEstimate> {
         match tags {

@@ -278,6 +278,10 @@ low, high = cross_section.observed_total().interval(0.68)
 covariance = cross_section.differential(mass_axis).model.covariance()
 ```
 
+When only the normalization central value is needed, use
+`cross_section.observed_total_central()`. It returns an `Estimate` without draws
+and does not prepare or evaluate bootstrap replicas.
+
 For posterior samples, adapt the retained chain explicitly:
 
 ```python
