@@ -142,6 +142,107 @@ pub struct Yield {
     scalars: YieldScalars,
 }
 
+/// Provenance for an explicitly supplied reference-acceptance correction.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ReferenceCorrectionProvenance {
+    reference_term_name: String,
+    reference_model_digest: u64,
+    accepted_dataset_identity: u64,
+    generated_dataset_identity: u64,
+    reference_parameters: Vec<f64>,
+    reference_draw_parameters: Vec<Vec<f64>>,
+    reference_replica_accepted_dataset_identities: Vec<u64>,
+    selected_uncertainty_source: Option<u64>,
+    reference_uncertainty_source: Option<u64>,
+}
+
+impl ReferenceCorrectionProvenance {
+    /// Returns the reference intensity-term name.
+    pub fn reference_term_name(&self) -> &str {
+        &self.reference_term_name
+    }
+
+    /// Returns the process-local structural digest of the reference model.
+    pub fn reference_model_digest(&self) -> u64 {
+        self.reference_model_digest
+    }
+
+    /// Returns the identity of the accepted sample used by the reference.
+    pub fn accepted_dataset_identity(&self) -> u64 {
+        self.accepted_dataset_identity
+    }
+
+    /// Returns the identity of the generated sample used by the reference.
+    pub fn generated_dataset_identity(&self) -> u64 {
+        self.generated_dataset_identity
+    }
+
+    /// Returns the central free-parameter values for the reference intensity.
+    pub fn reference_parameters(&self) -> &[f64] {
+        &self.reference_parameters
+    }
+
+    /// Returns reference free-parameter rows in uncertainty-draw order.
+    pub fn reference_draw_parameters(&self) -> &[Vec<f64>] {
+        &self.reference_draw_parameters
+    }
+
+    /// Returns accepted-sample identities for paired reference replicas.
+    pub fn reference_replica_accepted_dataset_identities(&self) -> &[u64] {
+        &self.reference_replica_accepted_dataset_identities
+    }
+
+    /// Returns the selected-yield uncertainty source, when present.
+    pub fn selected_uncertainty_source(&self) -> Option<u64> {
+        self.selected_uncertainty_source
+    }
+
+    /// Returns the reference uncertainty source, when present.
+    pub fn reference_uncertainty_source(&self) -> Option<u64> {
+        self.reference_uncertainty_source
+    }
+}
+
+/// An observed yield corrected by an explicitly supplied reference acceptance.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ReferenceCorrectedYield {
+    value: Estimate,
+    acceptance: Estimate,
+    provenance: ReferenceCorrectionProvenance,
+}
+
+impl ReferenceCorrectedYield {
+    /// Returns the reference-corrected observed yield.
+    pub fn value(&self) -> &Estimate {
+        &self.value
+    }
+
+    /// Returns the reference acceptance used for the correction.
+    pub fn acceptance(&self) -> &Estimate {
+        &self.acceptance
+    }
+
+    /// Returns the complete correction provenance.
+    pub fn provenance(&self) -> &ReferenceCorrectionProvenance {
+        &self.provenance
+    }
+
+    /// Returns the reference intensity-term name.
+    pub fn reference_term_name(&self) -> &str {
+        self.provenance.reference_term_name()
+    }
+
+    /// Returns the process-local structural digest of the reference model.
+    pub fn reference_model_digest(&self) -> u64 {
+        self.provenance.reference_model_digest()
+    }
+
+    /// Reference corrections do not carry a fitted rate-closure claim.
+    pub const fn has_rate_closure(&self) -> bool {
+        false
+    }
+}
+
 #[derive(Clone, Debug)]
 struct YieldScalars {
     selected: Estimate,
@@ -391,6 +492,138 @@ impl Yield {
         &self.scalars.corrected
     }
 
+    /// Corrects the selected observed yield with an explicit reference intensity.
+    ///
+    /// This result is separate from the fitted correction and never carries a
+    /// fitted rate-closure claim. When both the selected yield and reference
+    /// have draws, estimate arithmetic retains their distinct source identity
+    /// and applies the library's deterministic independent-source pairing.
+    ///
+    /// # Errors
+    /// Returns an error for incompatible parameters, samples, replica
+    /// provenance, non-finite evaluation, or non-positive reference support.
+    pub fn reference_corrected(
+        &self,
+        reference_likelihood: Arc<Likelihood>,
+        reference_term_name: impl Into<String>,
+        reference_generated_mc: Dataset,
+        reference_parameters: Vec<f64>,
+        reference_ensemble: Option<Ensemble>,
+    ) -> LikelihoodResult<ReferenceCorrectedYield> {
+        reference_likelihood
+            .params()
+            .validate_free_values(&reference_parameters)?;
+        let reference_term_name = reference_term_name.into();
+        let reference_model_digest =
+            reference_likelihood.intensity_model_digest(&reference_term_name)?;
+        let (_, reference_accepted_mc) =
+            reference_likelihood.intensity_datasets(&reference_term_name)?;
+        let mut reference_replica_accepted_dataset_identities = Vec::new();
+        if let Some(ensemble) = &reference_ensemble {
+            let names = reference_likelihood
+                .params()
+                .free_params()
+                .iter()
+                .map(|id| reference_likelihood.params().name(*id).map(str::to_owned))
+                .collect::<Result<Vec<_>, _>>()?;
+            if names != ensemble.parameter_names() {
+                return Err(LikelihoodError::InvalidCrossSection(
+                    "reference ensemble parameter names do not match the reference likelihood"
+                        .to_owned(),
+                ));
+            }
+            for parameters in ensemble.draws() {
+                reference_likelihood
+                    .params()
+                    .validate_free_values(parameters)?;
+            }
+            for replica in ensemble.replicas() {
+                if replica.intensity_model_digest(&reference_term_name)? != reference_model_digest {
+                    return Err(LikelihoodError::InvalidCrossSection(
+                        "reference ensemble replica model does not match the reference likelihood"
+                            .to_owned(),
+                    ));
+                }
+                let replica_names = replica
+                    .params()
+                    .free_params()
+                    .iter()
+                    .map(|id| replica.params().name(*id).map(str::to_owned))
+                    .collect::<Result<Vec<_>, _>>()?;
+                if replica_names != names {
+                    return Err(LikelihoodError::InvalidCrossSection(
+                        "reference ensemble replica parameter names do not match the reference likelihood"
+                            .to_owned(),
+                    ));
+                }
+                let (_, replica_accepted) = replica.intensity_datasets(&reference_term_name)?;
+                reference_replica_accepted_dataset_identities.push(replica_accepted.identity());
+            }
+        }
+        let integrals = reference_likelihood
+            .cross_section_integrals(&reference_term_name, &reference_generated_mc)?;
+        let mut replica_integrals = Vec::new();
+        if let Some(ensemble) = &reference_ensemble {
+            for replica in ensemble.replicas() {
+                let replica_integral = if ensemble.replicas_share_event_rows() {
+                    integrals.clone()
+                } else {
+                    replica
+                        .cross_section_integrals(&reference_term_name, &reference_generated_mc)?
+                };
+                replica_integrals.push(replica_integral);
+            }
+        }
+        let accepted = evaluate_estimate(
+            &integrals,
+            &reference_parameters,
+            reference_ensemble.as_ref(),
+            &replica_integrals,
+            |integrals, parameters| {
+                positive_reference_accepted(
+                    integrals.accepted_integral(parameters)?,
+                    integrals.accepted_mc_source().stats()?.events() > 0,
+                )
+            },
+        )?;
+        let generated = evaluate_estimate(
+            &integrals,
+            &reference_parameters,
+            reference_ensemble.as_ref(),
+            &replica_integrals,
+            |integrals, parameters| {
+                positive_reference_generated(
+                    integrals.generated_integral(parameters)?,
+                    integrals.generated_mc_source().stats()?.events() > 0,
+                )
+            },
+        )?;
+        let acceptance = finite_estimate("reference acceptance", &accepted / &generated)?;
+        let value = finite_estimate(
+            "reference-corrected observed yield",
+            self.selected_yield() / &acceptance,
+        )?;
+        let provenance = ReferenceCorrectionProvenance {
+            reference_term_name,
+            reference_model_digest,
+            accepted_dataset_identity: reference_accepted_mc.identity(),
+            generated_dataset_identity: reference_generated_mc.identity(),
+            reference_parameters,
+            reference_draw_parameters: reference_ensemble
+                .as_ref()
+                .map(|ensemble| ensemble.draws().to_vec())
+                .unwrap_or_default(),
+            reference_replica_accepted_dataset_identities,
+            selected_uncertainty_source: self.selected_yield().source_id(),
+            reference_uncertainty_source: reference_ensemble.as_ref().map(Ensemble::source_id),
+        };
+        Ok(ReferenceCorrectedYield {
+            value,
+            acceptance,
+            provenance,
+        })
+    }
+
     /// Compares accepted fitted and corrected observed yields to their observed/generated counterparts.
     pub fn rate_closure(&self) -> RateClosure {
         let scalars = self.scalars.clone();
@@ -512,7 +745,15 @@ fn finite_estimate(quantity: &'static str, estimate: Estimate) -> LikelihoodResu
 }
 
 fn positive_accepted(value: f64, has_support: bool) -> LikelihoodResult<f64> {
-    finite("accepted fitted yield", value)?;
+    positive_accepted_named("accepted fitted yield", value, has_support)
+}
+
+fn positive_accepted_named(
+    quantity: &'static str,
+    value: f64,
+    has_support: bool,
+) -> LikelihoodResult<f64> {
+    finite(quantity, value)?;
     if value > 0.0 {
         Ok(value)
     } else if !has_support {
@@ -525,7 +766,15 @@ fn positive_accepted(value: f64, has_support: bool) -> LikelihoodResult<f64> {
 }
 
 fn positive_generated(value: f64, has_support: bool) -> LikelihoodResult<f64> {
-    finite("generated fitted yield", value)?;
+    positive_generated_named("generated fitted yield", value, has_support)
+}
+
+fn positive_generated_named(
+    quantity: &'static str,
+    value: f64,
+    has_support: bool,
+) -> LikelihoodResult<f64> {
+    finite(quantity, value)?;
     if value > 0.0 {
         Ok(value)
     } else if !has_support {
@@ -535,6 +784,14 @@ fn positive_generated(value: f64, has_support: bool) -> LikelihoodResult<f64> {
     } else {
         Err(LikelihoodError::NonPositiveGeneratedIntegral(value))
     }
+}
+
+fn positive_reference_accepted(value: f64, has_support: bool) -> LikelihoodResult<f64> {
+    positive_accepted_named("reference accepted yield", value, has_support)
+}
+
+fn positive_reference_generated(value: f64, has_support: bool) -> LikelihoodResult<f64> {
+    positive_generated_named("reference generated yield", value, has_support)
 }
 
 fn within_tolerance(residual: f64, reference: f64) -> bool {
@@ -602,6 +859,245 @@ mod tests {
             yield_context.selected_yield(),
             yield_context.selected_yield()
         );
+    }
+
+    #[test]
+    fn reference_correction_is_distinct_and_preserves_its_source() {
+        let fitted_model =
+            CompiledModel::from_expr(&(event_scalar("x") * parameter!("scale", initial: 0.25)))
+                .unwrap();
+        let reference_model = CompiledModel::from_expr(
+            &(event_scalar("x") * parameter!("reference_scale", initial: 0.25)),
+        )
+        .unwrap();
+        let data = weighted_dataset(&[(2.0, 1.0), (3.0, 2.0)]);
+        let accepted = weighted_dataset(&[(4.0, 1.0)]);
+        let fitted_generated = weighted_dataset(&[(6.0, 1.0)]);
+        let reference_generated = weighted_dataset(&[(8.0, 1.0)]);
+        let fitted = Arc::new(
+            Likelihood::new([
+                ExtendedNllTerm::new("fitted", &fitted_model, &data, &accepted).unwrap(),
+            ])
+            .unwrap(),
+        );
+        let reference = Arc::new(
+            Likelihood::new([ExtendedNllTerm::new(
+                "reference",
+                &reference_model,
+                &data,
+                &accepted,
+            )
+            .unwrap()])
+            .unwrap(),
+        );
+        let yield_context =
+            Yield::with_ensemble(fitted, "fitted", fitted_generated, vec![0.25], None).unwrap();
+
+        let corrected = yield_context
+            .reference_corrected(
+                reference,
+                "reference",
+                reference_generated,
+                vec![0.25],
+                None,
+            )
+            .unwrap();
+
+        assert_relative_eq!(yield_context.corrected_observed_yield().value(), 4.5);
+        assert_relative_eq!(corrected.value().value(), 6.0);
+        assert_relative_eq!(corrected.acceptance().value(), 0.5);
+        assert_eq!(corrected.reference_term_name(), "reference");
+        assert!(!corrected.has_rate_closure());
+        assert_ne!(
+            corrected.reference_model_digest(),
+            yield_context
+                .likelihood()
+                .intensity_model_digest("fitted")
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn reference_correction_keeps_independent_uncertainty_sources_visible() {
+        let fitted_model =
+            CompiledModel::from_expr(&(event_scalar("x") * parameter!("scale", initial: 0.25)))
+                .unwrap();
+        let reference_model =
+            CompiledModel::from_expr(&(event_scalar("x") + parameter!("offset", initial: 0.25)))
+                .unwrap();
+        let data = weighted_dataset(&[(2.0, 1.0), (3.0, 2.0)]);
+        let accepted = weighted_dataset(&[(4.0, 1.0)]);
+        let fitted = Arc::new(
+            Likelihood::new([
+                ExtendedNllTerm::new("fitted", &fitted_model, &data, &accepted).unwrap(),
+            ])
+            .unwrap(),
+        );
+        let reference = Arc::new(
+            Likelihood::new([ExtendedNllTerm::new(
+                "reference",
+                &reference_model,
+                &data,
+                &accepted,
+            )
+            .unwrap()])
+            .unwrap(),
+        );
+        let fitted_ensemble =
+            Ensemble::with_source_id(vec!["scale".into()], vec![vec![0.5], vec![0.75]], 11)
+                .unwrap();
+        let reference_ensemble =
+            Ensemble::with_source_id(vec!["offset".into()], vec![vec![0.5], vec![1.0]], 22)
+                .unwrap();
+        let yield_context = Yield::with_ensemble(
+            fitted,
+            "fitted",
+            weighted_dataset(&[(6.0, 1.0)]),
+            vec![0.25],
+            Some(fitted_ensemble),
+        )
+        .unwrap();
+
+        let corrected = yield_context
+            .reference_corrected(
+                reference,
+                "reference",
+                weighted_dataset(&[(8.0, 1.0)]),
+                vec![0.25],
+                Some(reference_ensemble),
+            )
+            .unwrap();
+
+        assert_eq!(
+            corrected.provenance().selected_uncertainty_source(),
+            Some(11)
+        );
+        assert_eq!(
+            corrected.provenance().reference_uncertainty_source(),
+            Some(22)
+        );
+        assert_ne!(corrected.value().source_id(), Some(11));
+        assert_ne!(corrected.value().source_id(), Some(22));
+        assert_eq!(
+            corrected.provenance().reference_draw_parameters(),
+            &[vec![0.5], vec![1.0]]
+        );
+        assert_eq!(corrected.acceptance().draws(), &[4.5 / 8.5, 5.0 / 9.0]);
+        assert_eq!(
+            corrected.value().draws(),
+            &[3.0 / (5.0 / 9.0), 3.0 / (4.5 / 8.5)]
+        );
+    }
+
+    #[test]
+    fn reference_correction_rejects_missing_generated_support() {
+        let model = CompiledModel::from_expr(&event_scalar("x")).unwrap();
+        let data = weighted_dataset(&[(2.0, 1.0)]);
+        let accepted = weighted_dataset(&[(4.0, 1.0)]);
+        let likelihood = Arc::new(
+            Likelihood::new([ExtendedNllTerm::new("signal", &model, &data, &accepted).unwrap()])
+                .unwrap(),
+        );
+        let yield_context = Yield::with_ensemble(
+            Arc::clone(&likelihood),
+            "signal",
+            weighted_dataset(&[(6.0, 1.0)]),
+            Vec::new(),
+            None,
+        )
+        .unwrap();
+
+        let error = yield_context
+            .reference_corrected(
+                likelihood,
+                "signal",
+                weighted_dataset(&[]),
+                Vec::new(),
+                None,
+            )
+            .unwrap_err();
+
+        assert!(matches!(error, LikelihoodError::MissingGeneratedSupport));
+    }
+
+    #[test]
+    fn reference_correction_rejects_nonpositive_and_nonfinite_intensities() {
+        let model = CompiledModel::from_expr(&event_scalar("x")).unwrap();
+        let data = weighted_dataset(&[(2.0, 1.0)]);
+        let accepted = weighted_dataset(&[(4.0, 1.0)]);
+        let fitted = Arc::new(
+            Likelihood::new([ExtendedNllTerm::new("fitted", &model, &data, &accepted).unwrap()])
+                .unwrap(),
+        );
+        let yield_context = Yield::with_ensemble(
+            fitted,
+            "fitted",
+            weighted_dataset(&[(6.0, 1.0)]),
+            Vec::new(),
+            None,
+        )
+        .unwrap();
+        let reference = |accepted: Dataset, model: &CompiledModel| {
+            Arc::new(
+                Likelihood::new([
+                    ExtendedNllTerm::new("reference", model, &data, &accepted).unwrap()
+                ])
+                .unwrap(),
+            )
+        };
+
+        let zero = yield_context
+            .reference_corrected(
+                reference(weighted_dataset(&[(0.0, 1.0)]), &model),
+                "reference",
+                weighted_dataset(&[(1.0, 1.0)]),
+                Vec::new(),
+                None,
+            )
+            .unwrap_err();
+        assert!(
+            matches!(
+                zero,
+                LikelihoodError::NonPositiveIntensity {
+                    dataset: "accepted MC",
+                    value: 0.0
+                }
+            ),
+            "unexpected error: {zero:?}"
+        );
+
+        let negative = yield_context
+            .reference_corrected(
+                reference(weighted_dataset(&[(-1.0, 1.0)]), &model),
+                "reference",
+                weighted_dataset(&[(1.0, 1.0)]),
+                Vec::new(),
+                None,
+            )
+            .unwrap_err();
+        assert!(matches!(
+            negative,
+            LikelihoodError::NonPositiveIntensity {
+                dataset: "accepted MC",
+                value
+            } if value < 0.0
+        ));
+
+        let nonfinite_model =
+            CompiledModel::from_expr(&(1.0 / (event_scalar("x") - event_scalar("x")))).unwrap();
+        let nonfinite = yield_context
+            .reference_corrected(
+                reference(weighted_dataset(&[(1.0, 1.0)]), &nonfinite_model),
+                "reference",
+                weighted_dataset(&[(2.0, 1.0)]),
+                Vec::new(),
+                None,
+            )
+            .unwrap_err();
+        assert!(matches!(
+            nonfinite,
+            LikelihoodError::NonPositiveIntensity { value, .. } if !value.is_finite()
+        ));
     }
 
     #[test]

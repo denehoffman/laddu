@@ -96,6 +96,35 @@ For a shape-only `NLL`, fitted acceptance and corrected observed yield remain
 defined because the common scale cancels. Absolute accepted/generated fitted
 yields are unavailable and rate closure is explicitly not applicable.
 
+### Correct with an explicit reference intensity
+
+When an analysis must reproduce a correction derived from a separate reference
+model, keep that result distinct from the fitted correction:
+
+```python
+reference_corrected = yield_context.reference_corrected(
+    reference_likelihood,
+    "reference",
+    generated_mc=reference_generated_mc,
+    parameters=reference_parameters,
+    ensemble=reference_ensemble,  # optional reference uncertainty
+)
+
+value = reference_corrected.value
+reference_acceptance = reference_corrected.acceptance
+source = reference_corrected.provenance
+```
+
+This operation always requires an explicit reference likelihood, term, generated
+sample, and parameter values. Its provenance records the reference model and
+accepted/generated sample identities, parameters, and both uncertainty sources.
+It applies the reference acceptance to the selected observed yield, including
+signed event weights. Independent fitted and reference ensembles remain visible
+as separate sources and produce derived provenance through deterministic draw
+pairing. A reference correction is an analysis-reproducibility product: it does
+not inherit the fitted rate-closure guarantee and is not an arbitrary rescaling
+API.
+
 ## Construct a cross-section analysis
 
 Continue from a fitted likelihood with named term `"signal"`:

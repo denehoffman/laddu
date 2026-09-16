@@ -4,7 +4,8 @@ use std::collections::HashMap;
 
 use laddu_likelihood::{
     Axis, BinnedEstimate, CrossSection, DifferentialCrossSection, Ensemble, Estimate, Projection,
-    RateClosure, RateClosureStatus, TotalSet, Yield,
+    RateClosure, RateClosureStatus, ReferenceCorrectedYield, ReferenceCorrectionProvenance,
+    TotalSet, Yield,
 };
 use numpy::{PyArray1, PyArray2};
 use pyo3::{
@@ -13,7 +14,13 @@ use pyo3::{
     types::{PyAny, PyDict},
 };
 
-use super::{error::to_py_err, expr::PyExpr, float_matrix, float_tensor3, float_vec};
+use super::{
+    data::PyDataset,
+    error::to_py_err,
+    expr::PyExpr,
+    float_matrix, float_tensor3, float_vec,
+    likelihood::{PyLikelihood, free_values},
+};
 
 #[pyclass(name = "Ensemble", module = "laddu", frozen, skip_from_py_object)]
 #[derive(Clone)]
@@ -293,6 +300,110 @@ pub struct PyYield {
     has_absolute_rate: bool,
 }
 
+#[pyclass(
+    name = "ReferenceCorrectionProvenance",
+    module = "laddu",
+    frozen,
+    skip_from_py_object
+)]
+#[derive(Clone)]
+/// Identifies every source used by a reference-acceptance correction.
+pub struct PyReferenceCorrectionProvenance {
+    inner: ReferenceCorrectionProvenance,
+}
+
+#[pymethods]
+impl PyReferenceCorrectionProvenance {
+    #[getter]
+    fn reference_term_name(&self) -> &str {
+        self.inner.reference_term_name()
+    }
+
+    #[getter]
+    fn reference_model_digest(&self) -> u64 {
+        self.inner.reference_model_digest()
+    }
+
+    #[getter]
+    fn accepted_dataset_identity(&self) -> u64 {
+        self.inner.accepted_dataset_identity()
+    }
+
+    #[getter]
+    fn generated_dataset_identity(&self) -> u64 {
+        self.inner.generated_dataset_identity()
+    }
+
+    #[getter]
+    fn reference_parameters(&self) -> Vec<f64> {
+        self.inner.reference_parameters().to_vec()
+    }
+
+    #[getter]
+    fn reference_draw_parameters(&self) -> Vec<Vec<f64>> {
+        self.inner.reference_draw_parameters().to_vec()
+    }
+
+    #[getter]
+    fn reference_replica_accepted_dataset_identities(&self) -> Vec<u64> {
+        self.inner
+            .reference_replica_accepted_dataset_identities()
+            .to_vec()
+    }
+
+    #[getter]
+    fn selected_uncertainty_source(&self) -> Option<u64> {
+        self.inner.selected_uncertainty_source()
+    }
+
+    #[getter]
+    fn reference_uncertainty_source(&self) -> Option<u64> {
+        self.inner.reference_uncertainty_source()
+    }
+}
+
+#[pyclass(
+    name = "ReferenceCorrectedYield",
+    module = "laddu",
+    frozen,
+    skip_from_py_object
+)]
+#[derive(Clone)]
+/// An observed yield corrected with an explicit reference acceptance.
+pub struct PyReferenceCorrectedYield {
+    inner: ReferenceCorrectedYield,
+}
+
+#[pymethods]
+impl PyReferenceCorrectedYield {
+    #[getter]
+    fn value(&self) -> PyEstimate {
+        self.inner.value().clone().into()
+    }
+
+    #[getter]
+    fn acceptance(&self) -> PyEstimate {
+        self.inner.acceptance().clone().into()
+    }
+
+    #[getter]
+    fn provenance(&self) -> PyReferenceCorrectionProvenance {
+        PyReferenceCorrectionProvenance {
+            inner: self.inner.provenance().clone(),
+        }
+    }
+
+    #[getter]
+    fn reference_term_name(&self) -> &str {
+        self.inner.reference_term_name()
+    }
+
+    #[getter]
+    fn rate_closure_status(&self) -> &'static str {
+        "not_applicable"
+    }
+}
+
 impl From<Yield> for PyYield {
     fn from(inner: Yield) -> Self {
         Self {
@@ -340,6 +451,37 @@ impl PyYield {
 
     fn rate_closure(&self) -> PyRateClosure {
         self.rate_closure.clone()
+    }
+
+    #[pyo3(signature = (
+        reference_likelihood,
+        reference_term_name,
+        *,
+        generated_mc,
+        parameters: "Sequence[float] | numpy.typing.NDArray[numpy.float32 | numpy.float64] | dict[str, float]",
+        ensemble=None
+    ))]
+    /// Correct the selected observed yield using an explicit reference intensity.
+    fn reference_corrected(
+        &self,
+        reference_likelihood: &PyLikelihood,
+        reference_term_name: &str,
+        generated_mc: &PyDataset,
+        parameters: &Bound<'_, PyAny>,
+        ensemble: Option<&PyEnsemble>,
+    ) -> PyResult<PyReferenceCorrectedYield> {
+        let parameters = free_values(&reference_likelihood.inner, parameters)?;
+        let inner = self
+            .inner
+            .reference_corrected(
+                std::sync::Arc::clone(&reference_likelihood.inner),
+                reference_term_name,
+                generated_mc.inner.clone(),
+                parameters,
+                ensemble.map(|value| value.inner.clone()),
+            )
+            .map_err(to_py_err)?;
+        Ok(PyReferenceCorrectedYield { inner })
     }
 }
 
