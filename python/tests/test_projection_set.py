@@ -115,6 +115,22 @@ class ProjectionSetTests(unittest.TestCase):
         cross_section.clear_integral_cache()
         assert np.isfinite(cross_section.observed_total().central)
 
+    def test_combined_integral_limit_covers_all_members(self) -> None:
+        first = self.cross_section()
+        second = self.cross_section()
+        first.observed_total(tags=['signal'])
+        second.observed_total(tags=['signal'])
+        combined = ld.CrossSection.combine([first, second])
+        assert combined.diagnostics()['prepared_bytes'] == (
+            first.diagnostics()['prepared_bytes'] + second.diagnostics()['prepared_bytes']
+        )
+
+        max_bytes = first.diagnostics()['prepared_bytes']
+        combined.configure_integral_retention(max_bytes=max_bytes)
+        combined.observed_total(tags=['signal'])
+
+        assert combined.diagnostics()['prepared_bytes'] <= max_bytes
+
     def test_native_bootstrap_totals_share_preparation_under_small_budget(self) -> None:
         x = ld.scalar('x')
         model = ld.Model((ld.parameter('scale', initial=1.0) * x + 1.0).norm_sqr().tagged('signal'))

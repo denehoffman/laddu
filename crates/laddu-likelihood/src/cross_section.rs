@@ -1654,6 +1654,25 @@ impl CrossSection {
 
     /// Returns integral-cache hit, miss, count, and retained-byte diagnostics.
     pub fn diagnostics(&self) -> CrossSectionDiagnostics {
+        if let Some(members) = &self.members {
+            return members.iter().fold(
+                CrossSectionDiagnostics {
+                    cache_hits: 0,
+                    cache_misses: 0,
+                    cached_integrals: 0,
+                    prepared_bytes: 0,
+                },
+                |mut total, (member, _)| {
+                    let part = member.diagnostics();
+                    total.cache_hits = total.cache_hits.saturating_add(part.cache_hits);
+                    total.cache_misses = total.cache_misses.saturating_add(part.cache_misses);
+                    total.cached_integrals =
+                        total.cached_integrals.saturating_add(part.cached_integrals);
+                    total.prepared_bytes = total.prepared_bytes.saturating_add(part.prepared_bytes);
+                    total
+                },
+            );
+        }
         let cache = self
             .integral_cache
             .lock()
@@ -1669,9 +1688,18 @@ impl CrossSection {
     /// Changes the integral-retention policy and immediately enforces its bound.
     pub fn set_integral_retention(&self, policy: IntegralRetentionPolicy) {
         if let Some(members) = &self.members {
+            let member_policy = match policy {
+                IntegralRetentionPolicy::Bounded { max_bytes } => {
+                    IntegralRetentionPolicy::Bounded {
+                        max_bytes: max_bytes / members.len(),
+                    }
+                }
+                other => other,
+            };
             for (member, _) in members.iter() {
-                member.set_integral_retention(policy);
+                member.set_integral_retention(member_policy);
             }
+            return;
         }
         let mut cache = self
             .integral_cache
@@ -1695,6 +1723,7 @@ impl CrossSection {
             for (member, _) in members.iter() {
                 member.clear_integral_cache();
             }
+            return;
         }
         self.integral_cache
             .lock()
@@ -3598,6 +3627,33 @@ mod tests {
 
         assert_eq!(first.diagnostics().cached_integrals(), 0);
         assert_eq!(second.diagnostics().cached_integrals(), 0);
+    }
+
+    #[test]
+    fn combined_integral_limit_and_diagnostics_cover_all_members() {
+        let fixture = canonical_selection_fixture();
+        let first = fixture
+            .likelihood
+            .cross_section("signal", fixture.generated.clone(), 2.0, vec![1.5, 0.75])
+            .unwrap();
+        let second = fixture
+            .likelihood
+            .cross_section("signal", fixture.generated, 3.0, vec![1.5, 0.75])
+            .unwrap();
+        let combined = CrossSection::combine(vec![first.clone(), second.clone()]).unwrap();
+        let tag = ["signal".to_owned()];
+        first.observed_total_with_tags(&tag).unwrap();
+        second.observed_total_with_tags(&tag).unwrap();
+        assert_eq!(
+            combined.diagnostics().prepared_bytes(),
+            first.diagnostics().prepared_bytes() + second.diagnostics().prepared_bytes()
+        );
+
+        let max_bytes = first.diagnostics().prepared_bytes();
+        combined.set_integral_retention(IntegralRetentionPolicy::Bounded { max_bytes });
+        combined.observed_total_with_tags(&tag).unwrap();
+
+        assert!(combined.diagnostics().prepared_bytes() <= max_bytes);
     }
 
     #[test]
