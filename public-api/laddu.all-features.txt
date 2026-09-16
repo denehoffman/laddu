@@ -279,6 +279,7 @@ pub use laddu::prelude::StochasticObjective
 pub use laddu::prelude::TComponent
 pub use laddu::prelude::TDistribution
 pub use laddu::prelude::ThreadPolicy
+pub use laddu::prelude::TotalSet
 pub use laddu::prelude::TwoBodyScattering
 pub use laddu::prelude::UnaryOp
 pub use laddu::prelude::UnweightedConfig
@@ -789,6 +790,117 @@ pub type laddu::python::cross_section::PyRateClosure::Output = pyo3::instance::B
 pub type laddu::python::cross_section::PyRateClosure::Target = laddu::python::cross_section::PyRateClosure
 pub const laddu::python::cross_section::PyRateClosure::OUTPUT_TYPE: pyo3::inspect::PyStaticExpr
 pub fn laddu::python::cross_section::PyRateClosure::into_pyobject(self, pyo3::marker::Python<'py>) -> core::result::Result<<Self as pyo3::conversion::IntoPyObject<'_>>::Output, <Self as pyo3::conversion::IntoPyObject<'_>>::Error>
+pub struct laddu::python::cross_section::PyReferenceCorrectedYield
+impl core::clone::Clone for laddu::python::cross_section::PyReferenceCorrectedYield
+pub fn laddu::python::cross_section::PyReferenceCorrectedYield::clone(&self) -> laddu::python::cross_section::PyReferenceCorrectedYield
+impl pyo3::impl_::pyclass::PyClassImpl for laddu::python::cross_section::PyReferenceCorrectedYield
+pub type laddu::python::cross_section::PyReferenceCorrectedYield::BaseNativeType = pyo3::types::any::PyAny
+pub type laddu::python::cross_section::PyReferenceCorrectedYield::BaseType = pyo3::types::any::PyAny
+pub type laddu::python::cross_section::PyReferenceCorrectedYield::Dict = pyo3::impl_::pyclass::PyClassDummySlot
+pub type laddu::python::cross_section::PyReferenceCorrectedYield::Inventory = Pyo3MethodsInventoryForPyReferenceCorrectedYield
+pub type laddu::python::cross_section::PyReferenceCorrectedYield::Layout = <<laddu::python::cross_section::PyReferenceCorrectedYield as pyo3::impl_::pyclass::PyClassImpl>::BaseNativeType as pyo3::impl_::pyclass::PyClassBaseType>::Layout
+pub type laddu::python::cross_section::PyReferenceCorrectedYield::PyClassMutability = <<pyo3::types::any::PyAny as pyo3::impl_::pyclass::PyClassBaseType>::PyClassMutability as pyo3::pycell::impl_::PyClassMutability>::ImmutableChild
+pub type laddu::python::cross_section::PyReferenceCorrectedYield::ThreadChecker = pyo3::impl_::pyclass::NoopThreadChecker
+pub type laddu::python::cross_section::PyReferenceCorrectedYield::WeakRef = pyo3::impl_::pyclass::PyClassDummySlot
+pub const laddu::python::cross_section::PyReferenceCorrectedYield::DOC: &'static core::ffi::c_str::CStr
+pub const laddu::python::cross_section::PyReferenceCorrectedYield::IS_BASETYPE: bool
+pub const laddu::python::cross_section::PyReferenceCorrectedYield::IS_IMMUTABLE_TYPE: bool
+pub const laddu::python::cross_section::PyReferenceCorrectedYield::IS_MAPPING: bool
+pub const laddu::python::cross_section::PyReferenceCorrectedYield::IS_SEQUENCE: bool
+pub const laddu::python::cross_section::PyReferenceCorrectedYield::IS_SUBCLASS: bool
+pub const laddu::python::cross_section::PyReferenceCorrectedYield::MODULE: core::option::Option<&str>
+pub const laddu::python::cross_section::PyReferenceCorrectedYield::RAW_DOC: &'static core::ffi::c_str::CStr
+pub fn laddu::python::cross_section::PyReferenceCorrectedYield::items_iter() -> pyo3::impl_::pyclass::PyClassItemsIter
+pub fn laddu::python::cross_section::PyReferenceCorrectedYield::lazy_type_object() -> &'static pyo3::impl_::pyclass::lazy_type_object::LazyTypeObject<Self>
+impl pyo3::pyclass::PyClass for laddu::python::cross_section::PyReferenceCorrectedYield
+pub type laddu::python::cross_section::PyReferenceCorrectedYield::Frozen = pyo3::pyclass::boolean_struct::True
+pub const laddu::python::cross_section::PyReferenceCorrectedYield::NAME: &str
+impl pyo3::type_object::PyTypeInfo for laddu::python::cross_section::PyReferenceCorrectedYield
+pub const laddu::python::cross_section::PyReferenceCorrectedYield::MODULE: core::option::Option<&str>
+pub const laddu::python::cross_section::PyReferenceCorrectedYield::NAME: &str
+pub const laddu::python::cross_section::PyReferenceCorrectedYield::TYPE_HINT: pyo3::inspect::PyStaticExpr
+pub fn laddu::python::cross_section::PyReferenceCorrectedYield::type_object_raw(pyo3::marker::Python<'_>) -> *mut pyo3_ffi::cpython::object::PyTypeObject
+impl pyo3::types::DerefToPyAny for laddu::python::cross_section::PyReferenceCorrectedYield
+impl<'py> pyo3::conversion::IntoPyObject<'py> for laddu::python::cross_section::PyReferenceCorrectedYield
+pub type laddu::python::cross_section::PyReferenceCorrectedYield::Error = pyo3::err::PyErr
+pub type laddu::python::cross_section::PyReferenceCorrectedYield::Output = pyo3::instance::Bound<'py, <laddu::python::cross_section::PyReferenceCorrectedYield as pyo3::conversion::IntoPyObject<'py>>::Target>
+pub type laddu::python::cross_section::PyReferenceCorrectedYield::Target = laddu::python::cross_section::PyReferenceCorrectedYield
+pub const laddu::python::cross_section::PyReferenceCorrectedYield::OUTPUT_TYPE: pyo3::inspect::PyStaticExpr
+pub fn laddu::python::cross_section::PyReferenceCorrectedYield::into_pyobject(self, pyo3::marker::Python<'py>) -> core::result::Result<<Self as pyo3::conversion::IntoPyObject<'_>>::Output, <Self as pyo3::conversion::IntoPyObject<'_>>::Error>
+pub struct laddu::python::cross_section::PyReferenceCorrectionProvenance
+impl core::clone::Clone for laddu::python::cross_section::PyReferenceCorrectionProvenance
+pub fn laddu::python::cross_section::PyReferenceCorrectionProvenance::clone(&self) -> laddu::python::cross_section::PyReferenceCorrectionProvenance
+impl pyo3::impl_::pyclass::PyClassImpl for laddu::python::cross_section::PyReferenceCorrectionProvenance
+pub type laddu::python::cross_section::PyReferenceCorrectionProvenance::BaseNativeType = pyo3::types::any::PyAny
+pub type laddu::python::cross_section::PyReferenceCorrectionProvenance::BaseType = pyo3::types::any::PyAny
+pub type laddu::python::cross_section::PyReferenceCorrectionProvenance::Dict = pyo3::impl_::pyclass::PyClassDummySlot
+pub type laddu::python::cross_section::PyReferenceCorrectionProvenance::Inventory = Pyo3MethodsInventoryForPyReferenceCorrectionProvenance
+pub type laddu::python::cross_section::PyReferenceCorrectionProvenance::Layout = <<laddu::python::cross_section::PyReferenceCorrectionProvenance as pyo3::impl_::pyclass::PyClassImpl>::BaseNativeType as pyo3::impl_::pyclass::PyClassBaseType>::Layout
+pub type laddu::python::cross_section::PyReferenceCorrectionProvenance::PyClassMutability = <<pyo3::types::any::PyAny as pyo3::impl_::pyclass::PyClassBaseType>::PyClassMutability as pyo3::pycell::impl_::PyClassMutability>::ImmutableChild
+pub type laddu::python::cross_section::PyReferenceCorrectionProvenance::ThreadChecker = pyo3::impl_::pyclass::NoopThreadChecker
+pub type laddu::python::cross_section::PyReferenceCorrectionProvenance::WeakRef = pyo3::impl_::pyclass::PyClassDummySlot
+pub const laddu::python::cross_section::PyReferenceCorrectionProvenance::DOC: &'static core::ffi::c_str::CStr
+pub const laddu::python::cross_section::PyReferenceCorrectionProvenance::IS_BASETYPE: bool
+pub const laddu::python::cross_section::PyReferenceCorrectionProvenance::IS_IMMUTABLE_TYPE: bool
+pub const laddu::python::cross_section::PyReferenceCorrectionProvenance::IS_MAPPING: bool
+pub const laddu::python::cross_section::PyReferenceCorrectionProvenance::IS_SEQUENCE: bool
+pub const laddu::python::cross_section::PyReferenceCorrectionProvenance::IS_SUBCLASS: bool
+pub const laddu::python::cross_section::PyReferenceCorrectionProvenance::MODULE: core::option::Option<&str>
+pub const laddu::python::cross_section::PyReferenceCorrectionProvenance::RAW_DOC: &'static core::ffi::c_str::CStr
+pub fn laddu::python::cross_section::PyReferenceCorrectionProvenance::items_iter() -> pyo3::impl_::pyclass::PyClassItemsIter
+pub fn laddu::python::cross_section::PyReferenceCorrectionProvenance::lazy_type_object() -> &'static pyo3::impl_::pyclass::lazy_type_object::LazyTypeObject<Self>
+impl pyo3::pyclass::PyClass for laddu::python::cross_section::PyReferenceCorrectionProvenance
+pub type laddu::python::cross_section::PyReferenceCorrectionProvenance::Frozen = pyo3::pyclass::boolean_struct::True
+pub const laddu::python::cross_section::PyReferenceCorrectionProvenance::NAME: &str
+impl pyo3::type_object::PyTypeInfo for laddu::python::cross_section::PyReferenceCorrectionProvenance
+pub const laddu::python::cross_section::PyReferenceCorrectionProvenance::MODULE: core::option::Option<&str>
+pub const laddu::python::cross_section::PyReferenceCorrectionProvenance::NAME: &str
+pub const laddu::python::cross_section::PyReferenceCorrectionProvenance::TYPE_HINT: pyo3::inspect::PyStaticExpr
+pub fn laddu::python::cross_section::PyReferenceCorrectionProvenance::type_object_raw(pyo3::marker::Python<'_>) -> *mut pyo3_ffi::cpython::object::PyTypeObject
+impl pyo3::types::DerefToPyAny for laddu::python::cross_section::PyReferenceCorrectionProvenance
+impl<'py> pyo3::conversion::IntoPyObject<'py> for laddu::python::cross_section::PyReferenceCorrectionProvenance
+pub type laddu::python::cross_section::PyReferenceCorrectionProvenance::Error = pyo3::err::PyErr
+pub type laddu::python::cross_section::PyReferenceCorrectionProvenance::Output = pyo3::instance::Bound<'py, <laddu::python::cross_section::PyReferenceCorrectionProvenance as pyo3::conversion::IntoPyObject<'py>>::Target>
+pub type laddu::python::cross_section::PyReferenceCorrectionProvenance::Target = laddu::python::cross_section::PyReferenceCorrectionProvenance
+pub const laddu::python::cross_section::PyReferenceCorrectionProvenance::OUTPUT_TYPE: pyo3::inspect::PyStaticExpr
+pub fn laddu::python::cross_section::PyReferenceCorrectionProvenance::into_pyobject(self, pyo3::marker::Python<'py>) -> core::result::Result<<Self as pyo3::conversion::IntoPyObject<'_>>::Output, <Self as pyo3::conversion::IntoPyObject<'_>>::Error>
+pub struct laddu::python::cross_section::PyTotalSet
+impl core::clone::Clone for laddu::python::cross_section::PyTotalSet
+pub fn laddu::python::cross_section::PyTotalSet::clone(&self) -> laddu::python::cross_section::PyTotalSet
+impl pyo3::impl_::pyclass::PyClassImpl for laddu::python::cross_section::PyTotalSet
+pub type laddu::python::cross_section::PyTotalSet::BaseNativeType = pyo3::types::any::PyAny
+pub type laddu::python::cross_section::PyTotalSet::BaseType = pyo3::types::any::PyAny
+pub type laddu::python::cross_section::PyTotalSet::Dict = pyo3::impl_::pyclass::PyClassDummySlot
+pub type laddu::python::cross_section::PyTotalSet::Inventory = Pyo3MethodsInventoryForPyTotalSet
+pub type laddu::python::cross_section::PyTotalSet::Layout = <<laddu::python::cross_section::PyTotalSet as pyo3::impl_::pyclass::PyClassImpl>::BaseNativeType as pyo3::impl_::pyclass::PyClassBaseType>::Layout
+pub type laddu::python::cross_section::PyTotalSet::PyClassMutability = <<pyo3::types::any::PyAny as pyo3::impl_::pyclass::PyClassBaseType>::PyClassMutability as pyo3::pycell::impl_::PyClassMutability>::ImmutableChild
+pub type laddu::python::cross_section::PyTotalSet::ThreadChecker = pyo3::impl_::pyclass::NoopThreadChecker
+pub type laddu::python::cross_section::PyTotalSet::WeakRef = pyo3::impl_::pyclass::PyClassDummySlot
+pub const laddu::python::cross_section::PyTotalSet::DOC: &'static core::ffi::c_str::CStr
+pub const laddu::python::cross_section::PyTotalSet::IS_BASETYPE: bool
+pub const laddu::python::cross_section::PyTotalSet::IS_IMMUTABLE_TYPE: bool
+pub const laddu::python::cross_section::PyTotalSet::IS_MAPPING: bool
+pub const laddu::python::cross_section::PyTotalSet::IS_SEQUENCE: bool
+pub const laddu::python::cross_section::PyTotalSet::IS_SUBCLASS: bool
+pub const laddu::python::cross_section::PyTotalSet::MODULE: core::option::Option<&str>
+pub const laddu::python::cross_section::PyTotalSet::RAW_DOC: &'static core::ffi::c_str::CStr
+pub fn laddu::python::cross_section::PyTotalSet::items_iter() -> pyo3::impl_::pyclass::PyClassItemsIter
+pub fn laddu::python::cross_section::PyTotalSet::lazy_type_object() -> &'static pyo3::impl_::pyclass::lazy_type_object::LazyTypeObject<Self>
+impl pyo3::pyclass::PyClass for laddu::python::cross_section::PyTotalSet
+pub type laddu::python::cross_section::PyTotalSet::Frozen = pyo3::pyclass::boolean_struct::True
+pub const laddu::python::cross_section::PyTotalSet::NAME: &str
+impl pyo3::type_object::PyTypeInfo for laddu::python::cross_section::PyTotalSet
+pub const laddu::python::cross_section::PyTotalSet::MODULE: core::option::Option<&str>
+pub const laddu::python::cross_section::PyTotalSet::NAME: &str
+pub const laddu::python::cross_section::PyTotalSet::TYPE_HINT: pyo3::inspect::PyStaticExpr
+pub fn laddu::python::cross_section::PyTotalSet::type_object_raw(pyo3::marker::Python<'_>) -> *mut pyo3_ffi::cpython::object::PyTypeObject
+impl pyo3::types::DerefToPyAny for laddu::python::cross_section::PyTotalSet
+impl<'py> pyo3::conversion::IntoPyObject<'py> for laddu::python::cross_section::PyTotalSet
+pub type laddu::python::cross_section::PyTotalSet::Error = pyo3::err::PyErr
+pub type laddu::python::cross_section::PyTotalSet::Output = pyo3::instance::Bound<'py, <laddu::python::cross_section::PyTotalSet as pyo3::conversion::IntoPyObject<'py>>::Target>
+pub type laddu::python::cross_section::PyTotalSet::Target = laddu::python::cross_section::PyTotalSet
+pub const laddu::python::cross_section::PyTotalSet::OUTPUT_TYPE: pyo3::inspect::PyStaticExpr
+pub fn laddu::python::cross_section::PyTotalSet::into_pyobject(self, pyo3::marker::Python<'py>) -> core::result::Result<<Self as pyo3::conversion::IntoPyObject<'_>>::Output, <Self as pyo3::conversion::IntoPyObject<'_>>::Error>
 pub struct laddu::python::cross_section::PyYield
 impl core::clone::Clone for laddu::python::cross_section::PyYield
 pub fn laddu::python::cross_section::PyYield::clone(&self) -> laddu::python::cross_section::PyYield
@@ -1476,6 +1588,14 @@ pub const laddu::python::histogram::PyHistogram::MODULE: core::option::Option<&s
 pub const laddu::python::histogram::PyHistogram::RAW_DOC: &'static core::ffi::c_str::CStr
 pub fn laddu::python::histogram::PyHistogram::items_iter() -> pyo3::impl_::pyclass::PyClassItemsIter
 pub fn laddu::python::histogram::PyHistogram::lazy_type_object() -> &'static pyo3::impl_::pyclass::lazy_type_object::LazyTypeObject<Self>
+impl pyo3::impl_::pyclass::PyClass__add__SlotFragment<laddu::python::histogram::PyHistogram> for pyo3::impl_::pyclass::PyClassImplCollector<laddu::python::histogram::PyHistogram>
+pub unsafe fn pyo3::impl_::pyclass::PyClassImplCollector<laddu::python::histogram::PyHistogram>::__add__(self, pyo3::marker::Python<'_>, *mut pyo3_ffi::object::PyObject, *mut pyo3_ffi::object::PyObject) -> pyo3::err::PyResult<*mut pyo3_ffi::object::PyObject>
+impl pyo3::impl_::pyclass::PyClass__mul__SlotFragment<laddu::python::histogram::PyHistogram> for pyo3::impl_::pyclass::PyClassImplCollector<laddu::python::histogram::PyHistogram>
+pub unsafe fn pyo3::impl_::pyclass::PyClassImplCollector<laddu::python::histogram::PyHistogram>::__mul__(self, pyo3::marker::Python<'_>, *mut pyo3_ffi::object::PyObject, *mut pyo3_ffi::object::PyObject) -> pyo3::err::PyResult<*mut pyo3_ffi::object::PyObject>
+impl pyo3::impl_::pyclass::PyClass__rmul__SlotFragment<laddu::python::histogram::PyHistogram> for pyo3::impl_::pyclass::PyClassImplCollector<laddu::python::histogram::PyHistogram>
+pub unsafe fn pyo3::impl_::pyclass::PyClassImplCollector<laddu::python::histogram::PyHistogram>::__rmul__(self, pyo3::marker::Python<'_>, *mut pyo3_ffi::object::PyObject, *mut pyo3_ffi::object::PyObject) -> pyo3::err::PyResult<*mut pyo3_ffi::object::PyObject>
+impl pyo3::impl_::pyclass::PyClass__sub__SlotFragment<laddu::python::histogram::PyHistogram> for pyo3::impl_::pyclass::PyClassImplCollector<laddu::python::histogram::PyHistogram>
+pub unsafe fn pyo3::impl_::pyclass::PyClassImplCollector<laddu::python::histogram::PyHistogram>::__sub__(self, pyo3::marker::Python<'_>, *mut pyo3_ffi::object::PyObject, *mut pyo3_ffi::object::PyObject) -> pyo3::err::PyResult<*mut pyo3_ffi::object::PyObject>
 impl pyo3::impl_::pyclass::doc::PyClassNewTextSignature for laddu::python::histogram::PyHistogram
 pub const laddu::python::histogram::PyHistogram::TEXT_SIGNATURE: &'static str
 impl pyo3::pyclass::PyClass for laddu::python::histogram::PyHistogram
@@ -1493,6 +1613,88 @@ pub type laddu::python::histogram::PyHistogram::Output = pyo3::instance::Bound<'
 pub type laddu::python::histogram::PyHistogram::Target = laddu::python::histogram::PyHistogram
 pub const laddu::python::histogram::PyHistogram::OUTPUT_TYPE: pyo3::inspect::PyStaticExpr
 pub fn laddu::python::histogram::PyHistogram::into_pyobject(self, pyo3::marker::Python<'py>) -> core::result::Result<<Self as pyo3::conversion::IntoPyObject<'_>>::Output, <Self as pyo3::conversion::IntoPyObject<'_>>::Error>
+pub struct laddu::python::histogram::PyJointHistogram
+impl core::clone::Clone for laddu::python::histogram::PyJointHistogram
+pub fn laddu::python::histogram::PyJointHistogram::clone(&self) -> laddu::python::histogram::PyJointHistogram
+impl pyo3::impl_::pyclass::PyClassImpl for laddu::python::histogram::PyJointHistogram
+pub type laddu::python::histogram::PyJointHistogram::BaseNativeType = pyo3::types::any::PyAny
+pub type laddu::python::histogram::PyJointHistogram::BaseType = pyo3::types::any::PyAny
+pub type laddu::python::histogram::PyJointHistogram::Dict = pyo3::impl_::pyclass::PyClassDummySlot
+pub type laddu::python::histogram::PyJointHistogram::Inventory = Pyo3MethodsInventoryForPyJointHistogram
+pub type laddu::python::histogram::PyJointHistogram::Layout = <<laddu::python::histogram::PyJointHistogram as pyo3::impl_::pyclass::PyClassImpl>::BaseNativeType as pyo3::impl_::pyclass::PyClassBaseType>::Layout
+pub type laddu::python::histogram::PyJointHistogram::PyClassMutability = <<pyo3::types::any::PyAny as pyo3::impl_::pyclass::PyClassBaseType>::PyClassMutability as pyo3::pycell::impl_::PyClassMutability>::MutableChild
+pub type laddu::python::histogram::PyJointHistogram::ThreadChecker = pyo3::impl_::pyclass::NoopThreadChecker
+pub type laddu::python::histogram::PyJointHistogram::WeakRef = pyo3::impl_::pyclass::PyClassDummySlot
+pub const laddu::python::histogram::PyJointHistogram::DOC: &'static core::ffi::c_str::CStr
+pub const laddu::python::histogram::PyJointHistogram::IS_BASETYPE: bool
+pub const laddu::python::histogram::PyJointHistogram::IS_IMMUTABLE_TYPE: bool
+pub const laddu::python::histogram::PyJointHistogram::IS_MAPPING: bool
+pub const laddu::python::histogram::PyJointHistogram::IS_SEQUENCE: bool
+pub const laddu::python::histogram::PyJointHistogram::IS_SUBCLASS: bool
+pub const laddu::python::histogram::PyJointHistogram::MODULE: core::option::Option<&str>
+pub const laddu::python::histogram::PyJointHistogram::RAW_DOC: &'static core::ffi::c_str::CStr
+pub fn laddu::python::histogram::PyJointHistogram::items_iter() -> pyo3::impl_::pyclass::PyClassItemsIter
+pub fn laddu::python::histogram::PyJointHistogram::lazy_type_object() -> &'static pyo3::impl_::pyclass::lazy_type_object::LazyTypeObject<Self>
+impl pyo3::impl_::pyclass::PyClass__add__SlotFragment<laddu::python::histogram::PyJointHistogram> for pyo3::impl_::pyclass::PyClassImplCollector<laddu::python::histogram::PyJointHistogram>
+pub unsafe fn pyo3::impl_::pyclass::PyClassImplCollector<laddu::python::histogram::PyJointHistogram>::__add__(self, pyo3::marker::Python<'_>, *mut pyo3_ffi::object::PyObject, *mut pyo3_ffi::object::PyObject) -> pyo3::err::PyResult<*mut pyo3_ffi::object::PyObject>
+impl pyo3::impl_::pyclass::PyClass__mul__SlotFragment<laddu::python::histogram::PyJointHistogram> for pyo3::impl_::pyclass::PyClassImplCollector<laddu::python::histogram::PyJointHistogram>
+pub unsafe fn pyo3::impl_::pyclass::PyClassImplCollector<laddu::python::histogram::PyJointHistogram>::__mul__(self, pyo3::marker::Python<'_>, *mut pyo3_ffi::object::PyObject, *mut pyo3_ffi::object::PyObject) -> pyo3::err::PyResult<*mut pyo3_ffi::object::PyObject>
+impl pyo3::impl_::pyclass::PyClass__rmul__SlotFragment<laddu::python::histogram::PyJointHistogram> for pyo3::impl_::pyclass::PyClassImplCollector<laddu::python::histogram::PyJointHistogram>
+pub unsafe fn pyo3::impl_::pyclass::PyClassImplCollector<laddu::python::histogram::PyJointHistogram>::__rmul__(self, pyo3::marker::Python<'_>, *mut pyo3_ffi::object::PyObject, *mut pyo3_ffi::object::PyObject) -> pyo3::err::PyResult<*mut pyo3_ffi::object::PyObject>
+impl pyo3::impl_::pyclass::PyClass__sub__SlotFragment<laddu::python::histogram::PyJointHistogram> for pyo3::impl_::pyclass::PyClassImplCollector<laddu::python::histogram::PyJointHistogram>
+pub unsafe fn pyo3::impl_::pyclass::PyClassImplCollector<laddu::python::histogram::PyJointHistogram>::__sub__(self, pyo3::marker::Python<'_>, *mut pyo3_ffi::object::PyObject, *mut pyo3_ffi::object::PyObject) -> pyo3::err::PyResult<*mut pyo3_ffi::object::PyObject>
+impl pyo3::pyclass::PyClass for laddu::python::histogram::PyJointHistogram
+pub type laddu::python::histogram::PyJointHistogram::Frozen = pyo3::pyclass::boolean_struct::False
+pub const laddu::python::histogram::PyJointHistogram::NAME: &str
+impl pyo3::type_object::PyTypeInfo for laddu::python::histogram::PyJointHistogram
+pub const laddu::python::histogram::PyJointHistogram::MODULE: core::option::Option<&str>
+pub const laddu::python::histogram::PyJointHistogram::NAME: &str
+pub const laddu::python::histogram::PyJointHistogram::TYPE_HINT: pyo3::inspect::PyStaticExpr
+pub fn laddu::python::histogram::PyJointHistogram::type_object_raw(pyo3::marker::Python<'_>) -> *mut pyo3_ffi::cpython::object::PyTypeObject
+impl pyo3::types::DerefToPyAny for laddu::python::histogram::PyJointHistogram
+impl<'py> pyo3::conversion::IntoPyObject<'py> for laddu::python::histogram::PyJointHistogram
+pub type laddu::python::histogram::PyJointHistogram::Error = pyo3::err::PyErr
+pub type laddu::python::histogram::PyJointHistogram::Output = pyo3::instance::Bound<'py, <laddu::python::histogram::PyJointHistogram as pyo3::conversion::IntoPyObject<'py>>::Target>
+pub type laddu::python::histogram::PyJointHistogram::Target = laddu::python::histogram::PyJointHistogram
+pub const laddu::python::histogram::PyJointHistogram::OUTPUT_TYPE: pyo3::inspect::PyStaticExpr
+pub fn laddu::python::histogram::PyJointHistogram::into_pyobject(self, pyo3::marker::Python<'py>) -> core::result::Result<<Self as pyo3::conversion::IntoPyObject<'_>>::Output, <Self as pyo3::conversion::IntoPyObject<'_>>::Error>
+pub struct laddu::python::histogram::PyJointHistogramDiagnostics
+impl core::clone::Clone for laddu::python::histogram::PyJointHistogramDiagnostics
+pub fn laddu::python::histogram::PyJointHistogramDiagnostics::clone(&self) -> laddu::python::histogram::PyJointHistogramDiagnostics
+impl pyo3::impl_::pyclass::PyClassImpl for laddu::python::histogram::PyJointHistogramDiagnostics
+pub type laddu::python::histogram::PyJointHistogramDiagnostics::BaseNativeType = pyo3::types::any::PyAny
+pub type laddu::python::histogram::PyJointHistogramDiagnostics::BaseType = pyo3::types::any::PyAny
+pub type laddu::python::histogram::PyJointHistogramDiagnostics::Dict = pyo3::impl_::pyclass::PyClassDummySlot
+pub type laddu::python::histogram::PyJointHistogramDiagnostics::Inventory = Pyo3MethodsInventoryForPyJointHistogramDiagnostics
+pub type laddu::python::histogram::PyJointHistogramDiagnostics::Layout = <<laddu::python::histogram::PyJointHistogramDiagnostics as pyo3::impl_::pyclass::PyClassImpl>::BaseNativeType as pyo3::impl_::pyclass::PyClassBaseType>::Layout
+pub type laddu::python::histogram::PyJointHistogramDiagnostics::PyClassMutability = <<pyo3::types::any::PyAny as pyo3::impl_::pyclass::PyClassBaseType>::PyClassMutability as pyo3::pycell::impl_::PyClassMutability>::ImmutableChild
+pub type laddu::python::histogram::PyJointHistogramDiagnostics::ThreadChecker = pyo3::impl_::pyclass::NoopThreadChecker
+pub type laddu::python::histogram::PyJointHistogramDiagnostics::WeakRef = pyo3::impl_::pyclass::PyClassDummySlot
+pub const laddu::python::histogram::PyJointHistogramDiagnostics::DOC: &'static core::ffi::c_str::CStr
+pub const laddu::python::histogram::PyJointHistogramDiagnostics::IS_BASETYPE: bool
+pub const laddu::python::histogram::PyJointHistogramDiagnostics::IS_IMMUTABLE_TYPE: bool
+pub const laddu::python::histogram::PyJointHistogramDiagnostics::IS_MAPPING: bool
+pub const laddu::python::histogram::PyJointHistogramDiagnostics::IS_SEQUENCE: bool
+pub const laddu::python::histogram::PyJointHistogramDiagnostics::IS_SUBCLASS: bool
+pub const laddu::python::histogram::PyJointHistogramDiagnostics::MODULE: core::option::Option<&str>
+pub const laddu::python::histogram::PyJointHistogramDiagnostics::RAW_DOC: &'static core::ffi::c_str::CStr
+pub fn laddu::python::histogram::PyJointHistogramDiagnostics::items_iter() -> pyo3::impl_::pyclass::PyClassItemsIter
+pub fn laddu::python::histogram::PyJointHistogramDiagnostics::lazy_type_object() -> &'static pyo3::impl_::pyclass::lazy_type_object::LazyTypeObject<Self>
+impl pyo3::pyclass::PyClass for laddu::python::histogram::PyJointHistogramDiagnostics
+pub type laddu::python::histogram::PyJointHistogramDiagnostics::Frozen = pyo3::pyclass::boolean_struct::True
+pub const laddu::python::histogram::PyJointHistogramDiagnostics::NAME: &str
+impl pyo3::type_object::PyTypeInfo for laddu::python::histogram::PyJointHistogramDiagnostics
+pub const laddu::python::histogram::PyJointHistogramDiagnostics::MODULE: core::option::Option<&str>
+pub const laddu::python::histogram::PyJointHistogramDiagnostics::NAME: &str
+pub const laddu::python::histogram::PyJointHistogramDiagnostics::TYPE_HINT: pyo3::inspect::PyStaticExpr
+pub fn laddu::python::histogram::PyJointHistogramDiagnostics::type_object_raw(pyo3::marker::Python<'_>) -> *mut pyo3_ffi::cpython::object::PyTypeObject
+impl pyo3::types::DerefToPyAny for laddu::python::histogram::PyJointHistogramDiagnostics
+impl<'py> pyo3::conversion::IntoPyObject<'py> for laddu::python::histogram::PyJointHistogramDiagnostics
+pub type laddu::python::histogram::PyJointHistogramDiagnostics::Error = pyo3::err::PyErr
+pub type laddu::python::histogram::PyJointHistogramDiagnostics::Output = pyo3::instance::Bound<'py, <laddu::python::histogram::PyJointHistogramDiagnostics as pyo3::conversion::IntoPyObject<'py>>::Target>
+pub type laddu::python::histogram::PyJointHistogramDiagnostics::Target = laddu::python::histogram::PyJointHistogramDiagnostics
+pub const laddu::python::histogram::PyJointHistogramDiagnostics::OUTPUT_TYPE: pyo3::inspect::PyStaticExpr
+pub fn laddu::python::histogram::PyJointHistogramDiagnostics::into_pyobject(self, pyo3::marker::Python<'py>) -> core::result::Result<<Self as pyo3::conversion::IntoPyObject<'_>>::Output, <Self as pyo3::conversion::IntoPyObject<'_>>::Error>
 pub mod laddu::python::likelihood
 pub mod laddu::python::likelihood::likelihood
 pub struct laddu::python::likelihood::PyCrossSectionIntegrals

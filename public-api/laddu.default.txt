@@ -271,6 +271,7 @@ pub use laddu::prelude::StochasticObjective
 pub use laddu::prelude::TComponent
 pub use laddu::prelude::TDistribution
 pub use laddu::prelude::ThreadPolicy
+pub use laddu::prelude::TotalSet
 pub use laddu::prelude::TwoBodyScattering
 pub use laddu::prelude::UnaryOp
 pub use laddu::prelude::UnweightedConfig

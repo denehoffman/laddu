@@ -6,6 +6,8 @@ import pytest
 EXPECTED_SELECTED_YIELD = 3.0
 EXPECTED_GENERATED_YIELD = 1.5
 EXPECTED_CORRECTED_YIELD = 4.5
+EXPECTED_REFERENCE_CORRECTED_YIELD = 6.0
+EXPECTED_REFERENCE_ACCEPTANCE = 0.5
 EXPECTED_ACCEPTED_RESIDUAL = -2.0
 EXPECTED_ACCEPTED_ABSOLUTE_RESIDUAL = 2.0
 ENSEMBLE_SOURCE_ID = 88
@@ -101,3 +103,101 @@ def test_yield_preserves_ensemble_draw_order_and_source() -> None:
     closure = result.rate_closure()
     assert closure.accepted_residual_draws == [-1.0, 0.0]
     assert closure.corrected_residual_draws == [1.5, 0.0]
+
+
+def test_reference_correction_is_explicit_distinct_and_inspectable() -> None:
+    data = dataset([2.0, 3.0], [1.0, 2.0])
+    accepted = dataset([4.0], [1.0])
+    fitted = ld.Likelihood(
+        [
+            ld.ExtendedNLL(
+                ld.Model(ld.scalar('x') * ld.parameter('scale', initial=0.25)),
+                data=data,
+                accepted_mc=accepted,
+                name='fitted',
+            )
+        ]
+    ).yield_context(
+        'fitted',
+        generated_mc=dataset([6.0], [1.0]),
+        parameters=[0.25],
+    )
+    reference = ld.Likelihood(
+        [
+            ld.ExtendedNLL(
+                ld.Model(ld.scalar('x') * ld.parameter('reference_scale', initial=0.25)),
+                data=data,
+                accepted_mc=accepted,
+                name='reference',
+            )
+        ]
+    )
+
+    corrected = fitted.reference_corrected(
+        reference,
+        'reference',
+        generated_mc=dataset([8.0], [1.0]),
+        parameters=[0.25],
+    )
+
+    assert isinstance(corrected, ld.ReferenceCorrectedYield)
+    assert fitted.corrected_observed_yield().central == EXPECTED_CORRECTED_YIELD
+    assert corrected.value.central == EXPECTED_REFERENCE_CORRECTED_YIELD
+    assert corrected.acceptance.central == EXPECTED_REFERENCE_ACCEPTANCE
+    assert corrected.reference_term_name == 'reference'
+    assert corrected.provenance.reference_parameters == [0.25]
+    assert corrected.rate_closure_status == 'not_applicable'
+
+
+def test_reference_correction_reports_invalid_contexts() -> None:
+    data = dataset([2.0], [1.0])
+    fitted_likelihood = ld.Likelihood(
+        [
+            ld.ExtendedNLL(
+                ld.Model(ld.scalar('x')),
+                data=data,
+                accepted_mc=dataset([4.0], [1.0]),
+                name='fitted',
+            )
+        ]
+    )
+    fitted = fitted_likelihood.yield_context('fitted', generated_mc=dataset([6.0], [1.0]), parameters=[])
+    empty_support = ld.Likelihood(
+        [
+            ld.ExtendedNLL(
+                ld.Model(ld.scalar('x')),
+                data=data,
+                accepted_mc=dataset([], []),
+                name='reference',
+            )
+        ]
+    )
+
+    with pytest.raises(ld.LadduError, match='accepted MC sample has zero fitted support'):
+        fitted.reference_corrected(
+            empty_support,
+            'reference',
+            generated_mc=dataset([8.0], [1.0]),
+            parameters=[],
+        )
+
+    parameterized = ld.Likelihood(
+        [
+            ld.ExtendedNLL(
+                ld.Model(ld.scalar('x') + ld.parameter('offset')),
+                data=data,
+                accepted_mc=dataset([4.0], [1.0]),
+                name='reference',
+            )
+        ]
+    )
+    with pytest.raises(ld.LadduError, match='got NaN'):
+        fitted.reference_corrected(
+            parameterized,
+            'reference',
+            generated_mc=dataset([8.0], [1.0]),
+            parameters=[float('nan')],
+        )
+
+    with pytest.raises(TypeError):
+        fitted.reference_corrected()
