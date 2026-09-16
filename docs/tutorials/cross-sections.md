@@ -327,7 +327,9 @@ dropped. A preparation that exceeds the cache limit can still be evaluated
 transiently. The execution memory budget remains authoritative, so a transient
 preparation that cannot fit still raises the usual budget error. Native paired
 bootstrap replicas share Monte Carlo event rows; arbitrary replicas whose row
-identity is not proven are evaluated against their own preparations.
+identity is not proven are evaluated against their own preparations. For a
+combined `CrossSection`, the byte limit and diagnostics cover all members in
+aggregate.
 
 For posterior samples, adapt the retained chain explicitly:
 
