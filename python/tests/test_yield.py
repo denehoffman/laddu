@@ -1,5 +1,7 @@
 # ruff: noqa: S101
 
+from typing import Any, cast
+
 import laddu as ld
 import pytest
 
@@ -200,4 +202,4 @@ def test_reference_correction_reports_invalid_contexts() -> None:
         )
 
     with pytest.raises(TypeError):
-        fitted.reference_corrected()
+        cast('Any', fitted).reference_corrected()

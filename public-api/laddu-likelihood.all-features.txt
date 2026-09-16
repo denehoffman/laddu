@@ -24,6 +24,22 @@ impl core::fmt::Debug for laddu_likelihood::DatasetRole
 pub fn laddu_likelihood::DatasetRole::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::Copy for laddu_likelihood::DatasetRole
 impl core::marker::StructuralPartialEq for laddu_likelihood::DatasetRole
+pub enum laddu_likelihood::IntegralRetentionPolicy
+pub laddu_likelihood::IntegralRetentionPolicy::Bounded
+pub laddu_likelihood::IntegralRetentionPolicy::Bounded::max_bytes: usize
+pub laddu_likelihood::IntegralRetentionPolicy::None
+pub laddu_likelihood::IntegralRetentionPolicy::Unbounded
+impl core::clone::Clone for laddu_likelihood::IntegralRetentionPolicy
+pub fn laddu_likelihood::IntegralRetentionPolicy::clone(&self) -> laddu_likelihood::IntegralRetentionPolicy
+impl core::cmp::Eq for laddu_likelihood::IntegralRetentionPolicy
+impl core::cmp::PartialEq for laddu_likelihood::IntegralRetentionPolicy
+pub fn laddu_likelihood::IntegralRetentionPolicy::eq(&self, &laddu_likelihood::IntegralRetentionPolicy) -> bool
+impl core::default::Default for laddu_likelihood::IntegralRetentionPolicy
+pub fn laddu_likelihood::IntegralRetentionPolicy::default() -> laddu_likelihood::IntegralRetentionPolicy
+impl core::fmt::Debug for laddu_likelihood::IntegralRetentionPolicy
+pub fn laddu_likelihood::IntegralRetentionPolicy::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for laddu_likelihood::IntegralRetentionPolicy
+impl core::marker::StructuralPartialEq for laddu_likelihood::IntegralRetentionPolicy
 pub enum laddu_likelihood::LikelihoodError
 pub laddu_likelihood::LikelihoodError::AbsoluteRateUnavailable(alloc::string::String)
 pub laddu_likelihood::LikelihoodError::Data(laddu_data::error::LadduDataError)
@@ -125,6 +141,7 @@ pub struct laddu_likelihood::CrossSection
 impl laddu_likelihood::CrossSection
 pub fn laddu_likelihood::CrossSection::acceptance(&self) -> laddu_likelihood::LikelihoodResult<laddu_likelihood::Estimate>
 pub fn laddu_likelihood::CrossSection::acceptance_with_tags(&self, &[alloc::string::String]) -> laddu_likelihood::LikelihoodResult<laddu_likelihood::Estimate>
+pub fn laddu_likelihood::CrossSection::clear_integral_cache(&self)
 pub fn laddu_likelihood::CrossSection::combine(alloc::vec::Vec<laddu_likelihood::CrossSection>) -> laddu_likelihood::LikelihoodResult<Self>
 pub fn laddu_likelihood::CrossSection::combine_with_factors(alloc::vec::Vec<laddu_likelihood::CrossSection>, alloc::vec::Vec<laddu_likelihood::Estimate>) -> laddu_likelihood::LikelihoodResult<Self>
 pub fn laddu_likelihood::CrossSection::corrected_yield(&self) -> laddu_likelihood::LikelihoodResult<laddu_likelihood::Estimate>
@@ -139,6 +156,7 @@ pub fn laddu_likelihood::CrossSection::observed_total_central(&self) -> laddu_li
 pub fn laddu_likelihood::CrossSection::observed_total_central_with_tags(&self, &[alloc::string::String]) -> laddu_likelihood::LikelihoodResult<laddu_likelihood::Estimate>
 pub fn laddu_likelihood::CrossSection::observed_total_with_tags(&self, &[alloc::string::String]) -> laddu_likelihood::LikelihoodResult<laddu_likelihood::Estimate>
 pub fn laddu_likelihood::CrossSection::projection_set(&self, &[laddu_likelihood::Projection], &std::collections::hash::map::HashMap<alloc::string::String, alloc::vec::Vec<alloc::string::String>>) -> laddu_likelihood::LikelihoodResult<laddu_likelihood::ProjectionSet>
+pub fn laddu_likelihood::CrossSection::set_integral_retention(&self, laddu_likelihood::IntegralRetentionPolicy)
 pub fn laddu_likelihood::CrossSection::total(&self) -> laddu_likelihood::LikelihoodResult<laddu_likelihood::Estimate>
 pub fn laddu_likelihood::CrossSection::total_set(&self, &std::collections::hash::map::HashMap<alloc::string::String, alloc::vec::Vec<alloc::string::String>>) -> laddu_likelihood::LikelihoodResult<laddu_likelihood::TotalSet>
 pub fn laddu_likelihood::CrossSection::total_with_tags(&self, &[alloc::string::String]) -> laddu_likelihood::LikelihoodResult<laddu_likelihood::Estimate>
