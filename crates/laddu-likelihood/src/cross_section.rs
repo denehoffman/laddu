@@ -813,30 +813,31 @@ impl IntegralCacheState {
 
     fn evict_to(&mut self, max_bytes: usize) {
         while self.retained_bytes() > max_bytes {
-            let Some(key) = self
-                .entries
-                .iter()
-                .min_by_key(|(_, entry)| entry.last_used)
-                .map(|(key, _)| key.clone())
-            else {
+            if !self.evict_lru() {
                 break;
-            };
-            self.entries.remove(&key);
+            }
         }
     }
 
     fn evict_for_transient(&mut self, required_bytes: u64, pool: &laddu_runtime::MemoryPool) {
         while pool.report().remaining_bytes < required_bytes {
-            let Some(key) = self
-                .entries
-                .iter()
-                .min_by_key(|(_, entry)| entry.last_used)
-                .map(|(key, _)| key.clone())
-            else {
+            if !self.evict_lru() {
                 break;
-            };
-            self.entries.remove(&key);
+            }
         }
+    }
+
+    fn evict_lru(&mut self) -> bool {
+        let Some(key) = self
+            .entries
+            .iter()
+            .min_by_key(|(_, entry)| entry.last_used)
+            .map(|(key, _)| key.clone())
+        else {
+            return false;
+        };
+        self.entries.remove(&key);
+        true
     }
 
     fn get(&mut self, key: &IntegralCacheKey) -> Option<CrossSectionIntegrals> {
@@ -2053,14 +2054,35 @@ impl CrossSection {
                 );
             }
         }
-        let integrals = match key_tags.as_ref() {
-            Some(tags) => likelihood.cross_section_integrals_with_tags(
-                &self.term_name,
-                &self.generated_mc,
-                tags.as_slice().iter().map(String::as_str),
-            ),
-            None => likelihood.cross_section_integrals(&self.term_name, &self.generated_mc),
-        }?;
+        let integrals = loop {
+            let prepared = match key_tags.as_ref() {
+                Some(tags) => likelihood.cross_section_integrals_with_tags(
+                    &self.term_name,
+                    &self.generated_mc,
+                    tags.as_slice().iter().map(String::as_str),
+                ),
+                None => likelihood.cross_section_integrals(&self.term_name, &self.generated_mc),
+            };
+            match prepared {
+                Ok(integrals) => break integrals,
+                Err(
+                    error @ LikelihoodError::Runtime(laddu_runtime::RuntimeError::Memory(
+                        laddu_runtime::MemoryError::BudgetExceeded { .. },
+                    )),
+                ) => {
+                    let mut cache = self
+                        .integral_cache
+                        .lock()
+                        .unwrap_or_else(|poison| poison.into_inner());
+                    if !matches!(cache.policy, IntegralRetentionPolicy::Bounded { .. })
+                        || !cache.evict_lru()
+                    {
+                        return Err(error);
+                    }
+                }
+                Err(error) => return Err(error),
+            }
+        };
         self.integral_cache
             .lock()
             .unwrap_or_else(|error| error.into_inner())
@@ -3451,18 +3473,26 @@ mod tests {
     #[test]
     fn bounded_arbitrary_replica_totals_match_explicit_evaluation() {
         let model = CompiledModel::from_expr(&(event_scalar("x") + 1.0)).unwrap();
-        let accepted = weighted_dataset(&[(0.25, 1.0), (1.25, 1.0)]);
         let generated = weighted_dataset(&[(0.25, 1.0), (1.25, 1.0)]);
-        let make_likelihood = |data: Dataset| {
+        let make_likelihood = |data: Dataset, accepted: Dataset| {
             Arc::new(
                 Likelihood::new([crate::NllTerm::new("signal", &model, &data, &accepted).unwrap()])
                     .unwrap(),
             )
         };
-        let likelihood = make_likelihood(weighted_dataset(&[(0.25, 1.0), (1.25, 1.0)]));
+        let likelihood = make_likelihood(
+            weighted_dataset(&[(0.25, 1.0), (1.25, 1.0)]),
+            weighted_dataset(&[(0.25, 1.0), (1.25, 1.0)]),
+        );
         let replicas = vec![
-            make_likelihood(weighted_dataset(&[(0.25, 2.0)])),
-            make_likelihood(weighted_dataset(&[(1.25, 3.0)])),
+            make_likelihood(
+                weighted_dataset(&[(0.25, 2.0)]),
+                weighted_dataset(&[(0.25, 1.0), (0.75, 1.0), (1.25, 1.0)]),
+            ),
+            make_likelihood(
+                weighted_dataset(&[(1.25, 3.0)]),
+                weighted_dataset(&[(0.25, 1.0), (1.25, 1.0), (1.75, 1.0)]),
+            ),
         ];
         let expected = replicas
             .iter()
