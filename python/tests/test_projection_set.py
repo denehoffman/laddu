@@ -96,6 +96,25 @@ class ProjectionSetTests(unittest.TestCase):
         assert central.source_id is None
         assert cross_section.diagnostics()['cached_integrals'] == 1
 
+    def test_integral_retention_can_be_disabled_and_cleared(self) -> None:
+        cross_section = self.cross_section()
+        max_bytes = cross_section.diagnostics()['prepared_bytes']
+        cross_section.configure_integral_retention(max_bytes=None)
+        cross_section.clear_integral_cache()
+
+        expected = cross_section.observed_total(tags=['signal']).central
+
+        assert np.isfinite(expected)
+        assert cross_section.diagnostics()['cached_integrals'] == 0
+        cross_section.configure_integral_retention(max_bytes=max_bytes)
+        np.testing.assert_allclose(
+            cross_section.observed_total(tags=['signal']).central,
+            expected,
+        )
+        assert cross_section.diagnostics()['prepared_bytes'] <= max_bytes
+        cross_section.clear_integral_cache()
+        assert np.isfinite(cross_section.observed_total().central)
+
     def test_native_bootstrap_totals_share_preparation_under_small_budget(self) -> None:
         x = ld.scalar('x')
         model = ld.Model((ld.parameter('scale', initial=1.0) * x + 1.0).norm_sqr().tagged('signal'))
