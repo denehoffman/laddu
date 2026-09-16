@@ -2227,6 +2227,21 @@ impl CrossSectionIntegrals {
         Ok(())
     }
 
+    pub(crate) fn generated_integrals_many(
+        &self,
+        free: &[&[f64]],
+        parameter_contexts: &[String],
+    ) -> LikelihoodResult<Vec<f64>> {
+        self.visit_prepared_intensities_many(
+            free,
+            parameter_contexts,
+            &self.generated_mc,
+            &self.generated_mc_source,
+            Some(ReductionPlan::weighted_positive_real()),
+            |_, _, _| {},
+        )
+    }
+
     /// Returns the accepted-to-generated integral ratio.
     ///
     /// # Errors

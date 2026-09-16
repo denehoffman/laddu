@@ -227,8 +227,12 @@ impl Yield {
                 for parameters in ensemble.draws() {
                     replica.params().validate_free_values(parameters)?;
                 }
-                let replica_integral =
-                    replica.cross_section_integrals(&term_name, &generated_mc)?;
+                let replica_integral = if ensemble.replicas_share_event_rows() {
+                    let data_weight_sum = replica.intensity_data_weight_sum(&term_name)?;
+                    integrals.with_data_weight_sum(data_weight_sum)
+                } else {
+                    replica.cross_section_integrals(&term_name, &generated_mc)?
+                };
                 if replica_integral.has_absolute_rate() != has_absolute_rate {
                     return Err(LikelihoodError::InvalidCrossSection(
                         "ensemble replica rate semantics do not match the likelihood".to_owned(),
@@ -553,6 +557,7 @@ mod tests {
         schema::Schema,
     };
     use laddu_expr::{event_scalar, parameter};
+    use laddu_runtime::Execution;
     #[cfg(feature = "jit")]
     use laddu_runtime::{CpuOptions, Device, ExecutionOptions, JitPolicy, Precision, ThreadPolicy};
 
@@ -744,6 +749,43 @@ mod tests {
             yield_context.accepted_fitted_yield().unwrap().draws(),
             &[2.0]
         );
+    }
+
+    #[test]
+    fn native_bootstrap_yield_retains_one_mc_preparation_for_any_replica_count() {
+        let retained_growth = |samples| {
+            let execution = Execution::default();
+            let model = CompiledModel::from_expr(&(event_scalar("x") + 1.0)).unwrap();
+            let data = weighted_dataset(&[(0.25, 1.0), (1.25, 2.0)]);
+            let accepted = weighted_dataset(&[(0.25, 1.0), (1.25, 1.0)]);
+            let generated = weighted_dataset(&[(0.25, 1.0), (1.25, 1.0), (1.75, 1.0)]);
+            let likelihood = Arc::new(
+                Likelihood::with_execution(
+                    [NllTerm::new("signal", &model, &data, &accepted).unwrap()],
+                    &execution,
+                )
+                .unwrap(),
+            );
+            let ensemble = Ensemble::bootstrap_fit(&likelihood, samples, 42, |replica, _| {
+                Ok::<_, std::convert::Infallible>(replica.default_params())
+            })
+            .unwrap();
+            let before = execution.memory_pool_reports()[0].reserved_bytes;
+
+            let yield_context = Yield::with_ensemble(
+                likelihood.clone(),
+                "signal",
+                generated,
+                likelihood.default_params(),
+                Some(ensemble),
+            )
+            .unwrap();
+            assert_eq!(yield_context.selected_yield().draws().len(), samples);
+
+            execution.memory_pool_reports()[0].reserved_bytes - before
+        };
+
+        assert_eq!(retained_growth(8), retained_growth(1));
     }
 
     #[test]

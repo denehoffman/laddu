@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use laddu_likelihood::{
     Axis, BinnedEstimate, CrossSection, DifferentialCrossSection, Ensemble, Estimate, Projection,
-    RateClosure, RateClosureStatus, Yield,
+    RateClosure, RateClosureStatus, TotalSet, Yield,
 };
 use numpy::{PyArray1, PyArray2};
 use pyo3::{
@@ -91,6 +91,38 @@ pub struct PyEstimate {
 impl From<Estimate> for PyEstimate {
     fn from(inner: Estimate) -> Self {
         Self { inner }
+    }
+}
+
+#[pyclass(name = "TotalSet", module = "laddu", frozen, skip_from_py_object)]
+#[derive(Clone)]
+/// Full-model and named tagged scalar totals from one shared request.
+pub struct PyTotalSet {
+    inner: TotalSet,
+}
+
+#[pymethods]
+impl PyTotalSet {
+    #[getter]
+    fn full(&self) -> PyEstimate {
+        self.inner.full().clone().into()
+    }
+
+    #[getter]
+    fn components(&self) -> HashMap<String, PyEstimate> {
+        self.inner
+            .components()
+            .iter()
+            .map(|(name, estimate)| (name.clone(), estimate.clone().into()))
+            .collect()
+    }
+
+    fn __getitem__(&self, name: &str) -> PyResult<PyEstimate> {
+        self.inner
+            .get(name)
+            .cloned()
+            .map(Into::into)
+            .ok_or_else(|| pyo3::exceptions::PyKeyError::new_err(name.to_owned()))
     }
 }
 
@@ -540,6 +572,14 @@ impl PyCrossSection {
     /// Alias for :meth:`observed_total`.
     fn total(&self, tags: Option<Vec<String>>) -> PyResult<PyEstimate> {
         self.observed_total(tags)
+    }
+
+    /// Return the full-model and named tagged totals from one shared request.
+    fn total_set(&self, components: HashMap<String, Vec<String>>) -> PyResult<PyTotalSet> {
+        self.inner
+            .total_set(&components)
+            .map(|inner| PyTotalSet { inner })
+            .map_err(to_py_err)
     }
 
     #[pyo3(signature = (*, tags=None))]
