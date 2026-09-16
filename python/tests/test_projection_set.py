@@ -9,6 +9,8 @@ import numpy as np
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+EXPECTED_TOTAL_SET_CACHE_COUNT = 2
+
 
 class ProjectionSetTests(unittest.TestCase):
     @staticmethod
@@ -96,7 +98,7 @@ class ProjectionSetTests(unittest.TestCase):
 
     def test_native_bootstrap_totals_share_preparation_under_small_budget(self) -> None:
         x = ld.scalar('x')
-        model = ld.Model((ld.parameter('scale', initial=1.0) * x + 1.0).norm_sqr())
+        model = ld.Model((ld.parameter('scale', initial=1.0) * x + 1.0).norm_sqr().tagged('signal'))
 
         values = np.linspace(0.1, 1.9, 20)
 
@@ -141,7 +143,13 @@ class ProjectionSetTests(unittest.TestCase):
             ensemble=ensemble,
         )
 
-        total = cross_section.observed_total()
+        totals = cross_section.total_set(
+            {
+                'signal': ['signal'],
+                'signal_alias': ['signal', 'signal'],
+            }
+        )
+        total = totals.full
         expected_draws = []
         for index in range(replica_count):
             replica = ld.Likelihood(
@@ -176,8 +184,10 @@ class ProjectionSetTests(unittest.TestCase):
             cross_section.observed_total_central().central,
         )
         np.testing.assert_allclose(total.draws, expected_draws)
+        np.testing.assert_allclose(totals['signal'].draws, totals['signal_alias'].draws)
+        assert set(totals.components) == {'signal', 'signal_alias'}
         assert total.source_id == ensemble.source_id
-        assert cross_section.diagnostics()['cached_integrals'] == 1
+        assert cross_section.diagnostics()['cached_integrals'] == EXPECTED_TOTAL_SET_CACHE_COUNT
 
 
 if __name__ == '__main__':

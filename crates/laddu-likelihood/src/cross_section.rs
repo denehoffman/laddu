@@ -272,6 +272,10 @@ impl Ensemble {
         &self.replicas
     }
 
+    pub(crate) fn replicas_share_event_rows(&self) -> bool {
+        self.replicas_share_event_rows
+    }
+
     fn replica_bin_assignments(
         &self,
         dataset: Option<&Dataset>,
@@ -725,6 +729,30 @@ impl ProjectionSet {
         self.entries
             .iter()
             .map(|(name, result)| (name.as_str(), result))
+    }
+}
+
+/// Full-model and named tagged scalar totals evaluated as one request.
+#[derive(Clone, Debug)]
+pub struct TotalSet {
+    full: Estimate,
+    components: HashMap<String, Estimate>,
+}
+
+impl TotalSet {
+    /// Returns the full-model total.
+    pub fn full(&self) -> &Estimate {
+        &self.full
+    }
+
+    /// Returns every named component total.
+    pub fn components(&self) -> &HashMap<String, Estimate> {
+        &self.components
+    }
+
+    /// Looks up a named component total.
+    pub fn get(&self, name: &str) -> Option<&Estimate> {
+        self.components.get(name)
     }
 }
 
@@ -1625,6 +1653,140 @@ impl CrossSection {
     /// Returns an error when tag projection, integrals, or ensemble evaluation fail.
     pub fn total_with_tags(&self, tags: &[String]) -> LikelihoodResult<Estimate> {
         self.observed_total_with_tags(tags)
+    }
+
+    /// Evaluates the full-model total and named tagged component totals together.
+    ///
+    /// Reordered and repeated forms of the same tag selection are evaluated once.
+    ///
+    /// # Errors
+    /// Returns an error when a component selection or its scalar evaluation fails.
+    pub fn total_set(
+        &self,
+        components: &HashMap<String, Vec<String>>,
+    ) -> LikelihoodResult<TotalSet> {
+        if components.keys().any(String::is_empty) {
+            return Err(invalid("component names must not be empty"));
+        }
+        if self.members.is_none()
+            && self.ensemble.as_ref().is_none_or(|ensemble| {
+                ensemble.replicas().is_empty() || ensemble.replicas_share_event_rows()
+            })
+        {
+            return self.single_total_set(components);
+        }
+        self.fallback_total_set(components)
+    }
+
+    fn single_total_set(
+        &self,
+        components: &HashMap<String, Vec<String>>,
+    ) -> LikelihoodResult<TotalSet> {
+        let parameter_sets = std::iter::once(self.parameters.as_slice())
+            .chain(
+                self.ensemble
+                    .as_ref()
+                    .into_iter()
+                    .flat_map(|ensemble| ensemble.draws().iter().map(Vec::as_slice)),
+            )
+            .collect::<Vec<_>>();
+        let parameter_contexts = std::iter::once("central parameters".to_owned())
+            .chain(
+                (0..parameter_sets.len().saturating_sub(1))
+                    .map(|index| format!("ensemble draw {index}")),
+            )
+            .collect::<Vec<_>>();
+        let full_integrals = self.integrals_for(&self.likelihood, None)?;
+        let full_accepted = if full_integrals.has_absolute_rate() {
+            parameter_sets
+                .iter()
+                .map(|parameters| full_integrals.full_accepted_integral(parameters))
+                .collect::<LikelihoodResult<Vec<_>>>()?
+        } else {
+            record_prepared_intensity_evaluation();
+            full_integrals.visit_accepted_prepared_intensities_many(
+                &parameter_sets,
+                &parameter_contexts,
+                |_, _, _| {},
+            )?
+        };
+        let data_weight_sums = std::iter::once(Ok(full_integrals.data_weight_sum()))
+            .chain(
+                self.ensemble
+                    .as_ref()
+                    .into_iter()
+                    .flat_map(|ensemble| ensemble.replicas().iter())
+                    .map(|replica| replica.intensity_data_weight_sum(&self.term_name)),
+            )
+            .collect::<LikelihoodResult<Vec<_>>>()?;
+        let data_weight_sums = if data_weight_sums.len() == parameter_sets.len() {
+            data_weight_sums
+        } else {
+            vec![full_integrals.data_weight_sum(); parameter_sets.len()]
+        };
+        let evaluate = |integrals: &CrossSectionIntegrals| -> LikelihoodResult<Estimate> {
+            record_prepared_intensity_evaluation();
+            let generated =
+                integrals.generated_integrals_many(&parameter_sets, &parameter_contexts)?;
+            let values = generated
+                .iter()
+                .zip(&full_accepted)
+                .zip(&data_weight_sums)
+                .map(|((generated, accepted), data)| {
+                    if *accepted <= 0.0 {
+                        return Err(LikelihoodError::NonPositiveAcceptedIntegral(*accepted));
+                    }
+                    Ok(data * generated / accepted / self.luminosity)
+                })
+                .collect::<LikelihoodResult<Vec<_>>>()?;
+            Ok(Estimate::from_evaluation(
+                values[0],
+                values[1..].to_vec(),
+                self.ensemble.as_ref().map(Ensemble::source_id),
+            ))
+        };
+        let full = evaluate(&full_integrals)?;
+        self.assemble_total_set(full, components, |canonical| {
+            let integrals = self.integrals_for(&self.likelihood, Some(canonical.as_slice()))?;
+            evaluate(&integrals)
+        })
+    }
+
+    fn fallback_total_set(
+        &self,
+        components: &HashMap<String, Vec<String>>,
+    ) -> LikelihoodResult<TotalSet> {
+        let full = self.observed_total_selected(None)?;
+        self.assemble_total_set(full.clone(), components, |canonical| {
+            let value = self.observed_total_selected(Some(canonical.as_slice()))?;
+            Estimate::with_source_id(value.value(), value.draws().to_vec(), full.source_id())
+        })
+    }
+
+    fn assemble_total_set(
+        &self,
+        full: Estimate,
+        components: &HashMap<String, Vec<String>>,
+        mut evaluate: impl FnMut(&CanonicalTags) -> LikelihoodResult<Estimate>,
+    ) -> LikelihoodResult<TotalSet> {
+        let mut canonical_values = HashMap::<CanonicalTags, Estimate>::new();
+        let mut values = HashMap::with_capacity(components.len());
+        for (name, tags) in components {
+            let canonical = CanonicalTags::new(tags);
+            let value = match canonical_values.get(&canonical) {
+                Some(value) => value.clone(),
+                None => {
+                    let value = evaluate(&canonical)?;
+                    canonical_values.insert(canonical, value.clone());
+                    value
+                }
+            };
+            values.insert(name.clone(), value);
+        }
+        Ok(TotalSet {
+            full,
+            components: values,
+        })
     }
 
     /// Full-model acceptance.
@@ -2572,6 +2734,27 @@ mod tests {
         (likelihood, generated, ensemble)
     }
 
+    fn bootstrap_tagged_scalar_fixture(samples: usize) -> (Arc<Likelihood>, Dataset, Ensemble) {
+        let signal =
+            (Expr::from(parameter!("scale", initial: 0.5)) * event_scalar("x")).tagged("signal");
+        let background = Expr::from(1.0).tagged("background");
+        let model = CompiledModel::from_expr(&(signal + background).norm_sqr()).unwrap();
+        let data = weighted_dataset(&[(0.25, 1.0), (1.25, 2.0)]);
+        let accepted = weighted_dataset(&[(0.25, 1.0), (1.25, 1.0)]);
+        let generated = weighted_dataset(&[(0.25, 1.0), (1.25, 1.0), (1.75, 1.0)]);
+        let likelihood = Arc::new(
+            Likelihood::new([
+                crate::ExtendedNllTerm::new("signal", &model, &data, &accepted).unwrap(),
+            ])
+            .unwrap(),
+        );
+        let ensemble = Ensemble::bootstrap_fit(&likelihood, samples, 42, |_replica, index| {
+            Ok::<_, std::convert::Infallible>(vec![0.4 + index as f64 * 0.1])
+        })
+        .unwrap();
+        (likelihood, generated, ensemble)
+    }
+
     struct CanonicalSelectionFixture {
         likelihood: Arc<Likelihood>,
         generated: Dataset,
@@ -2893,6 +3076,204 @@ mod tests {
         assert_eq!(total.draws(), expected_draws);
         assert_eq!(total.source_id(), Some(ensemble.source_id()));
         assert_eq!(cross_section.diagnostics().cached_integrals(), 1);
+    }
+
+    #[test]
+    fn native_bootstrap_shares_preparation_across_every_scalar_operation() {
+        let (likelihood, generated, ensemble) = bootstrap_tagged_scalar_fixture(3);
+        let tags = vec!["signal".to_owned()];
+        let explicit = ensemble
+            .draws()
+            .iter()
+            .zip(ensemble.replicas())
+            .map(|(parameters, replica)| {
+                let cross_section = replica
+                    .cross_section("signal", generated.clone(), 10.0, parameters.clone())
+                    .unwrap();
+                [
+                    cross_section.fitted_total().unwrap().value(),
+                    cross_section.acceptance().unwrap().value(),
+                    cross_section.corrected_yield().unwrap().value(),
+                    cross_section.fitted_total_with_tags(&tags).unwrap().value(),
+                    cross_section.acceptance_with_tags(&tags).unwrap().value(),
+                    cross_section
+                        .corrected_yield_with_tags(&tags)
+                        .unwrap()
+                        .value(),
+                ]
+            })
+            .collect::<Vec<_>>();
+        let cross_section = likelihood
+            .cross_section_with_ensemble(
+                "signal",
+                generated,
+                10.0,
+                likelihood.default_params(),
+                ensemble,
+            )
+            .unwrap();
+        let actual = [
+            cross_section.fitted_total().unwrap(),
+            cross_section.acceptance().unwrap(),
+            cross_section.corrected_yield().unwrap(),
+            cross_section.fitted_total_with_tags(&tags).unwrap(),
+            cross_section.acceptance_with_tags(&tags).unwrap(),
+            cross_section.corrected_yield_with_tags(&tags).unwrap(),
+        ];
+
+        for (quantity, quantity_index) in actual.iter().zip(0..) {
+            let expected = explicit
+                .iter()
+                .map(|values| values[quantity_index])
+                .collect::<Vec<_>>();
+            assert_eq!(quantity.draws(), expected);
+        }
+        assert_eq!(cross_section.diagnostics().cached_integrals(), 2);
+    }
+
+    #[test]
+    fn total_set_matches_separate_totals_and_canonicalizes_component_aliases() {
+        let fixture = canonical_selection_fixture();
+        let ensemble = Ensemble::new(
+            vec!["a".into(), "b".into()],
+            vec![vec![1.6, 0.7], vec![1.4, 0.8]],
+        )
+        .unwrap();
+        let cross_section = fixture
+            .likelihood
+            .cross_section_with_ensemble(
+                "signal",
+                fixture.generated,
+                2.0,
+                fixture.likelihood.default_params(),
+                ensemble,
+            )
+            .unwrap();
+        let components = HashMap::from([
+            ("ordered".into(), vec!["background".into(), "signal".into()]),
+            (
+                "reordered".into(),
+                vec!["signal".into(), "background".into()],
+            ),
+            (
+                "repeated".into(),
+                vec!["signal".into(), "background".into(), "signal".into()],
+            ),
+        ]);
+        let expected_full = cross_section.observed_total().unwrap();
+        let expected_component = cross_section
+            .observed_total_with_tags(&components["ordered"])
+            .unwrap();
+
+        reset_projection_evaluation_counts();
+        let totals = cross_section.total_set(&components).unwrap();
+
+        assert_relative_eq!(totals.full().value(), expected_full.value());
+        for (actual, expected) in totals.full().draws().iter().zip(expected_full.draws()) {
+            assert_relative_eq!(actual, expected, epsilon = 1.0e-12);
+        }
+        for name in components.keys() {
+            let actual = totals.get(name).unwrap();
+            assert_relative_eq!(actual.value(), expected_component.value());
+            for (actual, expected) in actual.draws().iter().zip(expected_component.draws()) {
+                assert_relative_eq!(actual, expected, epsilon = 1.0e-12);
+            }
+        }
+        assert_eq!(cross_section.diagnostics().cached_integrals(), 2);
+        assert_eq!(projection_evaluation_counts(), (3, 0));
+    }
+
+    #[test]
+    fn combined_total_set_preserves_exposure_pooling_and_draw_pairing() {
+        let fixture = canonical_selection_fixture();
+        let ensemble_a = Ensemble::new(
+            vec!["a".into(), "b".into()],
+            vec![vec![1.6, 0.7], vec![1.4, 0.8]],
+        )
+        .unwrap();
+        let ensemble_b = Ensemble::new(
+            vec!["a".into(), "b".into()],
+            vec![vec![1.7, 0.6], vec![1.3, 0.9]],
+        )
+        .unwrap();
+        let factor_source = ensemble_a.source_id();
+        let members = [(10.0, ensemble_a), (15.0, ensemble_b)]
+            .into_iter()
+            .map(|(luminosity, ensemble)| {
+                fixture
+                    .likelihood
+                    .cross_section_with_ensemble(
+                        "signal",
+                        fixture.generated.clone(),
+                        luminosity,
+                        fixture.likelihood.default_params(),
+                        ensemble,
+                    )
+                    .unwrap()
+            })
+            .collect();
+        let combined = CrossSection::combine_with_factors(
+            members,
+            vec![
+                Estimate::with_source_id(1.0, vec![1.1, 0.9], Some(factor_source)).unwrap(),
+                Estimate::central(2.0).unwrap(),
+            ],
+        )
+        .unwrap();
+        let components = HashMap::from([("signal".into(), vec!["signal".into()])]);
+        let expected_full = combined.observed_total().unwrap();
+        let expected_signal = combined
+            .observed_total_with_tags(&components["signal"])
+            .unwrap();
+
+        let totals = combined.total_set(&components).unwrap();
+
+        assert_relative_eq!(totals.full().value(), expected_full.value());
+        assert_eq!(totals.full().draws(), expected_full.draws());
+        assert_relative_eq!(
+            totals.get("signal").unwrap().value(),
+            expected_signal.value()
+        );
+        assert_eq!(
+            totals.get("signal").unwrap().draws(),
+            expected_signal.draws()
+        );
+        assert_eq!(
+            totals.get("signal").unwrap().source_id(),
+            totals.full().source_id()
+        );
+    }
+
+    #[test]
+    fn absolute_rate_total_set_matches_separate_normalized_totals() {
+        let (likelihood, generated, ensemble) = bootstrap_tagged_scalar_fixture(3);
+        let cross_section = likelihood
+            .cross_section_with_ensemble(
+                "signal",
+                generated,
+                10.0,
+                likelihood.default_params(),
+                ensemble,
+            )
+            .unwrap();
+        let components = HashMap::from([("signal".into(), vec!["signal".into()])]);
+        let expected_full = cross_section.observed_total().unwrap();
+        let expected_signal = cross_section
+            .observed_total_with_tags(&components["signal"])
+            .unwrap();
+
+        let totals = cross_section.total_set(&components).unwrap();
+
+        assert_relative_eq!(totals.full().value(), expected_full.value());
+        assert_eq!(totals.full().draws(), expected_full.draws());
+        assert_relative_eq!(
+            totals.get("signal").unwrap().value(),
+            expected_signal.value()
+        );
+        assert_eq!(
+            totals.get("signal").unwrap().draws(),
+            expected_signal.draws()
+        );
     }
 
     #[test]
