@@ -774,7 +774,100 @@ impl CanonicalTags {
 }
 
 type IntegralCacheKey = (usize, Option<CanonicalTags>);
-type IntegralCache = Arc<Mutex<HashMap<IntegralCacheKey, CrossSectionIntegrals>>>;
+
+/// Policy controlling retention of prepared cross-section integrals.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub enum IntegralRetentionPolicy {
+    /// Preserve the historical behavior and retain every preparation.
+    #[default]
+    Unbounded,
+    /// Retain preparations up to the given aggregate resident-byte bound.
+    Bounded {
+        /// Maximum aggregate resident bytes retained by the integral cache.
+        max_bytes: usize,
+    },
+    /// Evaluate preparations transiently without retaining cache entries.
+    None,
+}
+
+#[derive(Clone)]
+struct IntegralCacheEntry {
+    integrals: CrossSectionIntegrals,
+    last_used: u64,
+}
+
+#[derive(Default)]
+struct IntegralCacheState {
+    entries: HashMap<IntegralCacheKey, IntegralCacheEntry>,
+    policy: IntegralRetentionPolicy,
+    clock: u64,
+}
+
+impl IntegralCacheState {
+    fn retained_bytes(&self) -> usize {
+        self.entries
+            .values()
+            .map(|entry| entry.integrals.resident_bytes())
+            .fold(0, usize::saturating_add)
+    }
+
+    fn evict_to(&mut self, max_bytes: usize) {
+        while self.retained_bytes() > max_bytes {
+            let Some(key) = self
+                .entries
+                .iter()
+                .min_by_key(|(_, entry)| entry.last_used)
+                .map(|(key, _)| key.clone())
+            else {
+                break;
+            };
+            self.entries.remove(&key);
+        }
+    }
+
+    fn evict_for_transient(&mut self, required_bytes: u64, pool: &laddu_runtime::MemoryPool) {
+        while pool.report().remaining_bytes < required_bytes {
+            let Some(key) = self
+                .entries
+                .iter()
+                .min_by_key(|(_, entry)| entry.last_used)
+                .map(|(key, _)| key.clone())
+            else {
+                break;
+            };
+            self.entries.remove(&key);
+        }
+    }
+
+    fn get(&mut self, key: &IntegralCacheKey) -> Option<CrossSectionIntegrals> {
+        self.clock = self.clock.wrapping_add(1);
+        let entry = self.entries.get_mut(key)?;
+        entry.last_used = self.clock;
+        Some(entry.integrals.clone())
+    }
+
+    fn insert(&mut self, key: IntegralCacheKey, integrals: CrossSectionIntegrals) {
+        let max_bytes = match self.policy {
+            IntegralRetentionPolicy::Unbounded => usize::MAX,
+            IntegralRetentionPolicy::Bounded { max_bytes } => max_bytes,
+            IntegralRetentionPolicy::None => return,
+        };
+        if integrals.resident_bytes() > max_bytes {
+            return;
+        }
+        self.clock = self.clock.wrapping_add(1);
+        self.entries.insert(
+            key,
+            IntegralCacheEntry {
+                integrals,
+                last_used: self.clock,
+            },
+        );
+        self.evict_to(max_bytes);
+    }
+}
+
+type IntegralCache = Arc<Mutex<IntegralCacheState>>;
 
 /// A prepared total, tagged, differential, and combinable cross-section analysis.
 #[derive(Clone)]
@@ -1476,7 +1569,7 @@ impl CrossSection {
         }
         let full_integrals = likelihood.cross_section_integrals(&term_name, &generated_mc)?;
         let likelihood_key = Arc::as_ptr(&likelihood) as usize;
-        let mut integral_cache = HashMap::new();
+        let mut integral_cache = IntegralCacheState::default();
         integral_cache.insert((likelihood_key, None), full_integrals.clone());
         Ok(Self {
             likelihood,
@@ -1567,12 +1660,46 @@ impl CrossSection {
         CrossSectionDiagnostics {
             cache_hits: self.cache_hits.load(Ordering::Relaxed),
             cache_misses: self.cache_misses.load(Ordering::Relaxed),
-            cached_integrals: cache.len(),
-            prepared_bytes: cache
-                .values()
-                .map(CrossSectionIntegrals::resident_bytes)
-                .sum(),
+            cached_integrals: cache.entries.len(),
+            prepared_bytes: cache.retained_bytes(),
         }
+    }
+
+    /// Changes the integral-retention policy and immediately enforces its bound.
+    pub fn set_integral_retention(&self, policy: IntegralRetentionPolicy) {
+        if let Some(members) = &self.members {
+            for (member, _) in members.iter() {
+                member.set_integral_retention(policy);
+            }
+        }
+        let mut cache = self
+            .integral_cache
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        cache.policy = policy;
+        match policy {
+            IntegralRetentionPolicy::Unbounded => {}
+            IntegralRetentionPolicy::Bounded { max_bytes } => cache.evict_to(max_bytes),
+            IntegralRetentionPolicy::None => cache.entries.clear(),
+        }
+    }
+
+    /// Drops all eligible retained integral preparations.
+    ///
+    /// The original full-model preparation remains owned by the cross section so
+    /// the analysis remains usable; subsequent tagged or replica preparations
+    /// follow the current retention policy.
+    pub fn clear_integral_cache(&self) {
+        if let Some(members) = &self.members {
+            for (member, _) in members.iter() {
+                member.clear_integral_cache();
+            }
+        }
+        self.integral_cache
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .entries
+            .clear();
     }
 
     /// Tag-narrowed observed-yield-normalized cross section.
@@ -1899,12 +2026,33 @@ impl CrossSection {
             .lock()
             .unwrap_or_else(|error| error.into_inner())
             .get(&key)
-            .cloned()
         {
             self.cache_hits.fetch_add(1, Ordering::Relaxed);
             return Ok(integrals);
         }
         self.cache_misses.fetch_add(1, Ordering::Relaxed);
+        if key_tags.is_none() && std::ptr::eq(likelihood, self.likelihood.as_ref()) {
+            let integrals = self.full_integrals.clone();
+            self.integral_cache
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .insert(key, integrals.clone());
+            return Ok(integrals);
+        }
+        {
+            let mut cache = self
+                .integral_cache
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            if matches!(cache.policy, IntegralRetentionPolicy::Bounded { .. }) {
+                // Keep at least one baseline-sized preparation available. A larger
+                // request still receives the normal pool budget error.
+                cache.evict_for_transient(
+                    self.full_integrals.resident_bytes() as u64,
+                    likelihood.execution().host_memory(),
+                );
+            }
+        }
         let integrals = match key_tags.as_ref() {
             Some(tags) => likelihood.cross_section_integrals_with_tags(
                 &self.term_name,
@@ -3298,6 +3446,128 @@ mod tests {
         cross_section.observed_total().unwrap();
 
         assert_eq!(cross_section.diagnostics().cached_integrals(), 3);
+    }
+
+    #[test]
+    fn bounded_arbitrary_replica_totals_match_explicit_evaluation() {
+        let model = CompiledModel::from_expr(&(event_scalar("x") + 1.0)).unwrap();
+        let accepted = weighted_dataset(&[(0.25, 1.0), (1.25, 1.0)]);
+        let generated = weighted_dataset(&[(0.25, 1.0), (1.25, 1.0)]);
+        let make_likelihood = |data: Dataset| {
+            Arc::new(
+                Likelihood::new([crate::NllTerm::new("signal", &model, &data, &accepted).unwrap()])
+                    .unwrap(),
+            )
+        };
+        let likelihood = make_likelihood(weighted_dataset(&[(0.25, 1.0), (1.25, 1.0)]));
+        let replicas = vec![
+            make_likelihood(weighted_dataset(&[(0.25, 2.0)])),
+            make_likelihood(weighted_dataset(&[(1.25, 3.0)])),
+        ];
+        let expected = replicas
+            .iter()
+            .map(|replica| {
+                replica
+                    .cross_section("signal", generated.clone(), 1.0, Vec::new())
+                    .unwrap()
+                    .observed_total()
+                    .unwrap()
+                    .value()
+            })
+            .collect::<Vec<_>>();
+        let ensemble =
+            Ensemble::with_replicas(Vec::new(), vec![Vec::new(), Vec::new()], replicas).unwrap();
+        let cross_section = likelihood
+            .cross_section_with_ensemble("signal", generated, 1.0, Vec::new(), ensemble)
+            .unwrap();
+        let max_bytes = cross_section.diagnostics().prepared_bytes();
+        cross_section.set_integral_retention(IntegralRetentionPolicy::Bounded { max_bytes });
+
+        assert_eq!(cross_section.observed_total().unwrap().draws(), expected);
+        assert!(cross_section.diagnostics().prepared_bytes() <= max_bytes);
+        assert!(cross_section.diagnostics().cached_integrals() <= 1);
+    }
+
+    #[test]
+    fn integral_retention_can_be_disabled_cleared_and_bounded() {
+        let fixture = canonical_selection_fixture();
+        let cross_section = fixture
+            .likelihood
+            .cross_section("signal", fixture.generated, 2.0, vec![1.5, 0.75])
+            .unwrap();
+        let tags = vec!["signal".to_owned()];
+
+        cross_section.set_integral_retention(IntegralRetentionPolicy::None);
+        cross_section.clear_integral_cache();
+        assert_eq!(cross_section.diagnostics().cached_integrals(), 0);
+        let expected = cross_section.observed_total_with_tags(&tags).unwrap();
+        assert_eq!(cross_section.diagnostics().cached_integrals(), 0);
+
+        let baseline_bytes = cross_section.full_integrals.resident_bytes();
+        cross_section.set_integral_retention(IntegralRetentionPolicy::Bounded {
+            max_bytes: baseline_bytes,
+        });
+        assert_relative_eq!(
+            cross_section
+                .observed_total_with_tags(&tags)
+                .unwrap()
+                .value(),
+            expected.value()
+        );
+        let diagnostics = cross_section.diagnostics();
+        assert!(diagnostics.prepared_bytes() <= baseline_bytes);
+
+        cross_section.clear_integral_cache();
+        assert_eq!(cross_section.diagnostics().cached_integrals(), 0);
+        assert!(cross_section.observed_total().unwrap().value().is_finite());
+    }
+
+    #[test]
+    fn clearing_retained_integrals_releases_pool_reservations() {
+        let fixture = canonical_selection_fixture();
+        let pool = fixture.likelihood.execution().host_memory().clone();
+        let cross_section = fixture
+            .likelihood
+            .cross_section("signal", fixture.generated, 2.0, vec![1.5, 0.75])
+            .unwrap();
+        let baseline = pool.report().reserved_bytes;
+        cross_section
+            .observed_total_with_tags(&["signal".to_owned()])
+            .unwrap();
+        let retained = pool.report().reserved_bytes;
+        assert!(retained > baseline);
+
+        cross_section.clear_integral_cache();
+
+        assert!(pool.report().reserved_bytes < retained);
+        assert_eq!(cross_section.diagnostics().cached_integrals(), 0);
+    }
+
+    #[test]
+    fn combined_cache_policy_applies_to_each_member() {
+        let fixture = canonical_selection_fixture();
+        let first = fixture
+            .likelihood
+            .cross_section("signal", fixture.generated.clone(), 2.0, vec![1.5, 0.75])
+            .unwrap();
+        let second = fixture
+            .likelihood
+            .cross_section("signal", fixture.generated, 3.0, vec![1.5, 0.75])
+            .unwrap();
+        let combined = CrossSection::combine(vec![first.clone(), second.clone()]).unwrap();
+
+        combined.set_integral_retention(IntegralRetentionPolicy::None);
+        combined.clear_integral_cache();
+        assert!(
+            combined
+                .observed_total_with_tags(&["signal".to_owned()])
+                .unwrap()
+                .value()
+                .is_finite()
+        );
+
+        assert_eq!(first.diagnostics().cached_integrals(), 0);
+        assert_eq!(second.diagnostics().cached_integrals(), 0);
     }
 
     #[test]

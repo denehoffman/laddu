@@ -3,9 +3,9 @@
 use std::collections::HashMap;
 
 use laddu_likelihood::{
-    Axis, BinnedEstimate, CrossSection, DifferentialCrossSection, Ensemble, Estimate, Projection,
-    RateClosure, RateClosureStatus, ReferenceCorrectedYield, ReferenceCorrectionProvenance,
-    TotalSet, Yield,
+    Axis, BinnedEstimate, CrossSection, DifferentialCrossSection, Ensemble, Estimate,
+    IntegralRetentionPolicy, Projection, RateClosure, RateClosureStatus, ReferenceCorrectedYield,
+    ReferenceCorrectionProvenance, TotalSet, Yield,
 };
 use numpy::{PyArray1, PyArray2};
 use pyo3::{
@@ -634,6 +634,22 @@ impl PyCrossSection {
         out.set_item("cached_integrals", diagnostics.cached_integrals())?;
         out.set_item("prepared_bytes", diagnostics.prepared_bytes())?;
         Ok(out)
+    }
+
+    #[pyo3(signature = (*, max_bytes))]
+    /// Configure bounded integral retention, or disable retention with ``None``.
+    fn configure_integral_retention(&self, max_bytes: Option<usize>) {
+        self.inner.set_integral_retention(match max_bytes {
+            Some(max_bytes) => IntegralRetentionPolicy::Bounded { max_bytes },
+            None => IntegralRetentionPolicy::None,
+        });
+    }
+
+    /// Drop all eligible retained integral preparations.
+    ///
+    /// The full-model baseline remains owned so the cross section stays usable.
+    fn clear_integral_cache(&self) {
+        self.inner.clear_integral_cache();
     }
 
     #[staticmethod]

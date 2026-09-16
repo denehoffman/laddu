@@ -311,6 +311,24 @@ When only the normalization central value is needed, use
 `cross_section.observed_total_central()`. It returns an `Estimate` without draws
 and does not prepare or evaluate bootstrap replicas.
 
+Integral preparations are retained by default. For a long-lived analysis with
+many tagged selections or arbitrary paired replicas, set a byte limit:
+
+```python
+cross_section.configure_integral_retention(max_bytes=32 * 1024 * 1024)
+cross_section.clear_integral_cache()
+```
+
+The cache evicts least-recently-used preparations when the limit is exceeded.
+`max_bytes=None` disables retention for subsequent evaluations. Clearing drops
+eligible cached preparations and releases their pool reservations; the original
+full-model preparation remains owned by the usable `CrossSection` until it is
+dropped. A preparation that exceeds the cache limit can still be evaluated
+transiently. The execution memory budget remains authoritative, so a transient
+preparation that cannot fit still raises the usual budget error. Native paired
+bootstrap replicas share Monte Carlo event rows; arbitrary replicas whose row
+identity is not proven are evaluated against their own preparations.
+
 For posterior samples, adapt the retained chain explicitly:
 
 ```python
