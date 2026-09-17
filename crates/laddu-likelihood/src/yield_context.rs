@@ -1450,6 +1450,13 @@ mod tests {
         let source_accepted = weighted_dataset(&[(4.0, 1.0)]);
         let source_generated = weighted_dataset(&[(6.0, 1.0)]);
         let mut values = Vec::new();
+        let mut projections = Vec::new();
+        let comparable = |values: &[f64]| {
+            values
+                .iter()
+                .map(|value| value.is_finite().then_some(*value))
+                .collect::<Vec<_>>()
+        };
 
         for (data, accepted, generated) in [
             (
@@ -1476,6 +1483,21 @@ mod tests {
             );
             let result =
                 Yield::with_ensemble(likelihood, "signal", generated, vec![0.25], None).unwrap();
+            let projection = result
+                .projection(&[crate::Axis::new(event_scalar("x"), vec![0.0, 5.0, 10.0]).unwrap()])
+                .unwrap();
+            projections.push((
+                projection.shape().to_vec(),
+                projection.selected().to_vec(),
+                comparable(projection.accepted()),
+                comparable(projection.generated()),
+                projection.validity().to_vec(),
+                projection
+                    .corrected()
+                    .iter()
+                    .map(|value| value.is_nan())
+                    .collect::<Vec<_>>(),
+            ));
             values.push((
                 result.selected_yield().value(),
                 result.accepted_fitted_yield().unwrap().value(),
@@ -1486,6 +1508,7 @@ mod tests {
         }
 
         assert!(values.windows(2).all(|pair| pair[0] == pair[1]));
+        assert!(projections.windows(2).all(|pair| pair[0] == pair[1]));
     }
 
     #[cfg(feature = "jit")]

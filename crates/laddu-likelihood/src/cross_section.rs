@@ -1,7 +1,7 @@
 //! High-level cross-section analyses and uncertainty propagation.
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     sync::{
         Arc, Mutex,
         atomic::{AtomicU64, Ordering},
@@ -11,13 +11,12 @@ use std::{
 use auto_ops::impl_op_ex;
 use laddu_data::data::Dataset;
 use laddu_expr::{Expr, ExprNodeStructuralKey};
-use laddu_runtime::{
-    BinningAxis, DatasetExprExt, Execution, FinalUpperEdge, checked_bin_count,
-    flat_bin_index_for_event,
-};
+#[cfg(test)]
+use laddu_runtime::flat_bin_index_for_event;
+use laddu_runtime::{BinningAxis, DatasetExprExt, Execution, FinalUpperEdge, checked_bin_count};
 use rayon::prelude::*;
 
-use crate::{CrossSectionIntegrals, Likelihood, LikelihoodError, LikelihoodResult};
+use crate::{CrossSectionIntegrals, Likelihood, LikelihoodError, LikelihoodResult, Yield};
 
 static NEXT_SOURCE_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -706,6 +705,485 @@ pub struct ProjectionSet {
     entries: Vec<(String, DifferentialCrossSection)>,
 }
 
+/// Why a binned acceptance correction is undefined.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum YieldBinValidity {
+    /// The bin has sufficient finite model support; zero selected yield is valid.
+    Valid,
+    /// No generated Monte Carlo event belongs to this bin.
+    MissingGeneratedSupport,
+    /// No accepted Monte Carlo event belongs to this bin.
+    MissingAcceptedSupport,
+    /// Accepted model support is zero or negative.
+    NonPositiveAcceptedSupport,
+    /// Generated model support is zero or negative.
+    NonPositiveGeneratedSupport,
+    /// Generated integration weights do not define positive local exposure.
+    InvalidExposure,
+    /// A weighted sum or model intensity was nonfinite.
+    NonFiniteEvaluation,
+}
+
+/// Counts of coordinates excluded from a central yield projection.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct YieldProjectionDiagnostics {
+    /// Selected-data rows with nonfinite coordinates.
+    pub selected_nonfinite: usize,
+    /// Selected-data rows outside the joint axes.
+    pub selected_out_of_range: usize,
+    /// Accepted Monte Carlo rows with nonfinite coordinates.
+    pub accepted_nonfinite: usize,
+    /// Accepted Monte Carlo rows outside the joint axes.
+    pub accepted_out_of_range: usize,
+    /// Generated Monte Carlo rows with nonfinite coordinates.
+    pub generated_nonfinite: usize,
+    /// Generated Monte Carlo rows outside the joint axes.
+    pub generated_out_of_range: usize,
+}
+
+/// Central row-major histogram values with their ordered geometry.
+#[derive(Clone, Debug, PartialEq)]
+pub struct YieldHistogramView {
+    axes: Vec<Vec<f64>>,
+    shape: Vec<usize>,
+    values: Vec<f64>,
+}
+
+impl YieldHistogramView {
+    /// Ordered bin edges.
+    pub fn axes(&self) -> &[Vec<f64>] {
+        &self.axes
+    }
+    /// Bin count for each axis, with the last axis varying fastest.
+    pub fn shape(&self) -> &[usize] {
+        &self.shape
+    }
+    /// Central row-major bin values.
+    pub fn values(&self) -> &[f64] {
+        &self.values
+    }
+}
+
+/// Coherent central selected and fitted yields over one joint set of axes.
+#[derive(Clone, Debug)]
+pub struct YieldProjection {
+    axes: Vec<Vec<f64>>,
+    shape: Vec<usize>,
+    selected: Vec<f64>,
+    accepted: Vec<f64>,
+    generated: Vec<f64>,
+    acceptance: Vec<f64>,
+    corrected: Vec<f64>,
+    validity: Vec<YieldBinValidity>,
+    diagnostics: YieldProjectionDiagnostics,
+    has_absolute_rate: bool,
+}
+
+impl YieldProjection {
+    /// Ordered bin edges.
+    pub fn axes(&self) -> &[Vec<f64>] {
+        &self.axes
+    }
+    /// Row-major shape; the last axis varies fastest.
+    pub fn shape(&self) -> &[usize] {
+        &self.shape
+    }
+    /// Selected data yield, D, including signed event weights.
+    pub fn selected(&self) -> &[f64] {
+        &self.selected
+    }
+    /// Accepted fitted yield, A, or NaN for a shape-only term.
+    pub fn accepted(&self) -> &[f64] {
+        &self.accepted
+    }
+    /// Generated fitted yield, G, or NaN for a shape-only term.
+    pub fn generated(&self) -> &[f64] {
+        &self.generated
+    }
+    /// Fitted per-bin acceptance, A/G, where defined.
+    pub fn acceptance(&self) -> &[f64] {
+        &self.acceptance
+    }
+    /// Fitted-acceptance-corrected selected yield, DG/A, where defined.
+    pub fn corrected(&self) -> &[f64] {
+        &self.corrected
+    }
+    /// Per-bin correction validity.
+    pub fn validity(&self) -> &[YieldBinValidity] {
+        &self.validity
+    }
+    /// Coordinate exclusion diagnostics for each sample.
+    pub fn diagnostics(&self) -> &YieldProjectionDiagnostics {
+        &self.diagnostics
+    }
+    /// Whether the source likelihood defines absolute fitted yields.
+    pub fn has_absolute_rate(&self) -> bool {
+        self.has_absolute_rate
+    }
+    /// Materialize a central selected-data histogram view.
+    pub fn selected_histogram(&self) -> YieldHistogramView {
+        self.histogram(&self.selected)
+    }
+    /// Materialize a central accepted-model histogram view.
+    pub fn accepted_histogram(&self) -> YieldHistogramView {
+        self.histogram(&self.accepted)
+    }
+    /// Materialize a central generated-model histogram view.
+    pub fn generated_histogram(&self) -> YieldHistogramView {
+        self.histogram(&self.generated)
+    }
+    /// Materialize a central corrected-yield histogram view.
+    pub fn corrected_histogram(&self) -> YieldHistogramView {
+        self.histogram(&self.corrected)
+    }
+    fn histogram(&self, values: &[f64]) -> YieldHistogramView {
+        YieldHistogramView {
+            axes: self.axes.clone(),
+            shape: self.shape.clone(),
+            values: values.to_vec(),
+        }
+    }
+}
+
+/// Named central yield projections in request order.
+#[derive(Clone, Debug)]
+pub struct YieldProjectionSet {
+    entries: Vec<(String, YieldProjection)>,
+}
+
+impl YieldProjectionSet {
+    /// Number of projections.
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+    /// Whether the request produced no projections.
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+    /// Lookup by request name.
+    pub fn get(&self, name: &str) -> Option<&YieldProjection> {
+        self.entries
+            .iter()
+            .find_map(|(candidate, result)| (candidate == name).then_some(result))
+    }
+    /// Iterate in request order.
+    pub fn iter(&self) -> impl ExactSizeIterator<Item = (&str, &YieldProjection)> {
+        self.entries
+            .iter()
+            .map(|(name, result)| (name.as_str(), result))
+    }
+}
+
+impl Yield {
+    /// Evaluate one central joint yield projection on demand.
+    ///
+    /// # Errors
+    /// Returns an error for invalid geometry, coordinates, or model evaluation.
+    pub fn projection(&self, axes: &[Axis]) -> LikelihoodResult<YieldProjection> {
+        let request = Projection::new("yield", axes.to_vec())?;
+        Ok(self.projection_set(&[request])?.entries.remove(0).1)
+    }
+
+    /// Evaluate independent named central yield projections in request order.
+    /// Identical axis groups share bin assignments and intensity traversal.
+    ///
+    /// # Errors
+    /// Returns an error before event traversal for an empty request, repeated
+    /// names, or invalid bin volumes. Failed model evaluation is atomic.
+    pub fn projection_set(
+        &self,
+        projections: &[Projection],
+    ) -> LikelihoodResult<YieldProjectionSet> {
+        if projections.is_empty() {
+            return Err(invalid("at least one projection is required"));
+        }
+        let mut names = HashSet::new();
+        for projection in projections {
+            if !names.insert(projection.name()) {
+                return Err(invalid(format!(
+                    "duplicate projection name: {}",
+                    projection.name()
+                )));
+            }
+            if !valid_bin_volumes(projection.axes()) {
+                return Err(invalid(format!(
+                    "projection `{}` has invalid bin volume",
+                    projection.name()
+                )));
+            }
+        }
+        let execution = self.likelihood().execution();
+        let mut seen_expressions = HashSet::new();
+        let mut expressions = Vec::new();
+        for projection in projections {
+            for axis in projection.axes() {
+                let graph = axis.expression.to_graph();
+                let key = (
+                    graph.root().index(),
+                    graph
+                        .nodes()
+                        .iter()
+                        .map(|node| node.structural_key())
+                        .collect::<Vec<_>>(),
+                );
+                if seen_expressions.insert(key) {
+                    expressions.push(axis.expression.clone());
+                }
+            }
+        }
+        self.observed_data()
+            .validate_real_expressions(&expressions, execution)?;
+        let integrals = self
+            .likelihood()
+            .cross_section_integrals(self.term_name(), self.generated_mc())?;
+        let data = self.observed_data();
+        let accepted = integrals.accepted_mc_source();
+        let generated = integrals.generated_mc_source();
+        let (unique, indexes) = deduplicate_projections(projections);
+        let sample_events = [data, accepted, generated]
+            .iter()
+            .map(|sample| {
+                usize::try_from(sample.stats()?.events())
+                    .map_err(|_| invalid("projection event count exceeds addressable memory"))
+            })
+            .collect::<LikelihoodResult<Vec<_>>>()?;
+        let event_total = sample_events
+            .iter()
+            .try_fold(0usize, |sum, count| sum.checked_add(*count))
+            .ok_or_else(|| invalid("projection workspace size overflow"))?;
+        let bins_total = unique
+            .iter()
+            .try_fold(0usize, |sum, projection| {
+                let bins = checked_bin_count(
+                    &projection
+                        .axes()
+                        .iter()
+                        .map(|axis| axis.binning.clone())
+                        .collect::<Vec<_>>(),
+                )?;
+                sum.checked_add(bins)
+            })
+            .ok_or_else(|| invalid("projection workspace size overflow"))?;
+        let output_bins = projections
+            .iter()
+            .try_fold(0usize, |sum, projection| {
+                let bins = checked_bin_count(
+                    &projection
+                        .axes()
+                        .iter()
+                        .map(|axis| axis.binning.clone())
+                        .collect::<Vec<_>>(),
+                )?;
+                sum.checked_add(bins)
+            })
+            .ok_or_else(|| invalid("projection workspace size overflow"))?;
+        let largest_sample = sample_events.iter().copied().max().unwrap_or(0);
+        let distinct_axes = expressions.len();
+        let workspace_bytes = event_total
+            .checked_mul(unique.len())
+            .and_then(|count| count.checked_mul(std::mem::size_of::<Option<usize>>() + 1))
+            .and_then(|bytes| {
+                bytes.checked_add(event_total.checked_mul(std::mem::size_of::<f64>())?)
+            })
+            .and_then(|bytes| {
+                bytes.checked_add(bins_total.checked_mul(3 * std::mem::size_of::<f64>())?)
+            })
+            .and_then(|bytes| {
+                bytes.checked_add(output_bins.checked_mul(7 * std::mem::size_of::<f64>())?)
+            })
+            .and_then(|bytes| {
+                bytes.checked_add(
+                    distinct_axes
+                        .checked_mul(largest_sample.min(8192))?
+                        .checked_mul(32)?,
+                )
+            })
+            .ok_or_else(|| invalid("projection workspace size overflow"))?;
+        let workspace_bytes = u64::try_from(workspace_bytes)
+            .map_err(|_| invalid("projection workspace size overflow"))?;
+        let _workspace_lease =
+            execution
+                .host_memory()
+                .reserve(workspace_bytes)
+                .map_err(|error| {
+                    LikelihoodError::Runtime(laddu_runtime::RuntimeError::Memory(error))
+                })?;
+        let data_weights = dataset_weights(data)?;
+        let accepted_weights = dataset_weights(accepted)?;
+        let generated_weights = dataset_weights(generated)?;
+        let data_assignments = evaluate_bin_assignments_many(data, &unique, execution)?;
+        let accepted_assignments = evaluate_bin_assignments_many(accepted, &unique, execution)?;
+        let generated_assignments = evaluate_bin_assignments_many(generated, &unique, execution)?;
+        let plans = unique
+            .iter()
+            .zip(data_assignments)
+            .zip(accepted_assignments)
+            .zip(generated_assignments)
+            .map(
+                |(((projection, data_bins), accepted_bins), generated_bins)| {
+                    Ok(PreparedProjection {
+                        name: projection.name().to_owned(),
+                        request_axes: projection.axes().to_vec(),
+                        axes: projection
+                            .axes()
+                            .iter()
+                            .map(|axis| axis.edges().to_vec())
+                            .collect(),
+                        shape: projection.axes().iter().map(Axis::bins).collect(),
+                        volumes: bin_volumes(projection.axes()),
+                        data_bins,
+                        accepted_bins,
+                        generated_bins,
+                    })
+                },
+            )
+            .collect::<LikelihoodResult<Vec<_>>>()?;
+        let mut accepted_sums = plans
+            .iter()
+            .map(|plan| vec![0.0; plan.accepted_bins.count])
+            .collect::<Vec<_>>();
+        let mut generated_sums = plans
+            .iter()
+            .map(|plan| vec![0.0; plan.generated_bins.count])
+            .collect::<Vec<_>>();
+        let parameters = [self.parameters()];
+        let contexts = ["central yield projection".to_owned()];
+        integrals.visit_accepted_raw_prepared_intensities_many(
+            &parameters,
+            &contexts,
+            |offset, _, intensities| {
+                for (plan, sums) in plans.iter().zip(&mut accepted_sums) {
+                    plan.accepted_bins.accumulate_weighted_block(
+                        offset,
+                        &accepted_weights,
+                        intensities,
+                        sums,
+                    );
+                }
+            },
+        )?;
+        integrals.visit_generated_prepared_intensities_many(
+            &parameters,
+            &contexts,
+            |offset, _, intensities| {
+                for (plan, sums) in plans.iter().zip(&mut generated_sums) {
+                    plan.generated_bins.accumulate_weighted_block(
+                        offset,
+                        &generated_weights,
+                        intensities,
+                        sums,
+                    );
+                }
+            },
+        )?;
+        let unique_results = plans
+            .iter()
+            .enumerate()
+            .map(|(plan_index, plan)| {
+                let mut selected = plan.data_bins.accumulate_products(&data_weights, None);
+                let accepted_raw = &accepted_sums[plan_index];
+                let generated_raw = &generated_sums[plan_index];
+                let accepted_counts = plan.accepted_bins.support_counts();
+                let generated_counts = plan.generated_bins.support_counts();
+                let generated_exposure = plan
+                    .generated_bins
+                    .accumulate_products(&generated_weights, None);
+                let mut validity = Vec::with_capacity(selected.len());
+                let mut acceptance = Vec::with_capacity(selected.len());
+                let mut corrected = Vec::with_capacity(selected.len());
+                for bin in 0..selected.len() {
+                    let d = selected[bin];
+                    let a = accepted_raw[bin];
+                    let g = generated_raw[bin];
+                    let status = if !d.is_finite() || !a.is_finite() || !g.is_finite() {
+                        YieldBinValidity::NonFiniteEvaluation
+                    } else if generated_counts[bin] == 0 {
+                        YieldBinValidity::MissingGeneratedSupport
+                    } else if !generated_exposure[bin].is_finite() || generated_exposure[bin] <= 0.0
+                    {
+                        YieldBinValidity::InvalidExposure
+                    } else if accepted_counts[bin] == 0 {
+                        YieldBinValidity::MissingAcceptedSupport
+                    } else if a <= 0.0 {
+                        YieldBinValidity::NonPositiveAcceptedSupport
+                    } else if g <= 0.0 {
+                        YieldBinValidity::NonPositiveGeneratedSupport
+                    } else {
+                        YieldBinValidity::Valid
+                    };
+                    validity.push(status);
+                    if !d.is_finite() {
+                        selected[bin] = f64::NAN;
+                    }
+                    if status == YieldBinValidity::Valid {
+                        acceptance.push(a / g);
+                        corrected.push(d * g / a);
+                    } else {
+                        acceptance.push(f64::NAN);
+                        corrected.push(f64::NAN);
+                    }
+                }
+                YieldProjection {
+                    axes: plan.axes.clone(),
+                    shape: plan.shape.clone(),
+                    selected,
+                    accepted: accepted_raw
+                        .iter()
+                        .enumerate()
+                        .map(|(bin, &value)| {
+                            if self.has_absolute_rate()
+                                && accepted_counts[bin] > 0
+                                && value.is_finite()
+                                && value > 0.0
+                            {
+                                value
+                            } else {
+                                f64::NAN
+                            }
+                        })
+                        .collect(),
+                    generated: generated_raw
+                        .iter()
+                        .enumerate()
+                        .map(|(bin, &value)| {
+                            if self.has_absolute_rate()
+                                && generated_counts[bin] > 0
+                                && generated_exposure[bin].is_finite()
+                                && generated_exposure[bin] > 0.0
+                                && value.is_finite()
+                                && value > 0.0
+                            {
+                                value
+                            } else {
+                                f64::NAN
+                            }
+                        })
+                        .collect(),
+                    acceptance,
+                    corrected,
+                    validity,
+                    diagnostics: YieldProjectionDiagnostics {
+                        selected_nonfinite: plan.data_bins.nonfinite_count,
+                        selected_out_of_range: plan.data_bins.out_of_range_count,
+                        accepted_nonfinite: plan.accepted_bins.nonfinite_count,
+                        accepted_out_of_range: plan.accepted_bins.out_of_range_count,
+                        generated_nonfinite: plan.generated_bins.nonfinite_count,
+                        generated_out_of_range: plan.generated_bins.out_of_range_count,
+                    },
+                    has_absolute_rate: self.has_absolute_rate(),
+                }
+            })
+            .collect::<Vec<_>>();
+        Ok(YieldProjectionSet {
+            entries: projections
+                .iter()
+                .zip(indexes)
+                .map(|(request, index)| (request.name().to_owned(), unique_results[index].clone()))
+                .collect(),
+        })
+    }
+}
+
 impl ProjectionSet {
     /// Number of named projection results.
     pub fn len(&self) -> usize {
@@ -801,6 +1279,7 @@ struct IntegralCacheState {
     entries: HashMap<IntegralCacheKey, IntegralCacheEntry>,
     policy: IntegralRetentionPolicy,
     clock: u64,
+    evictions: u64,
 }
 
 impl IntegralCacheState {
@@ -837,6 +1316,7 @@ impl IntegralCacheState {
             return false;
         };
         self.entries.remove(&key);
+        self.evictions = self.evictions.saturating_add(1);
         true
     }
 
@@ -884,15 +1364,29 @@ pub struct CrossSection {
     integral_cache: IntegralCache,
     cache_hits: Arc<AtomicU64>,
     cache_misses: Arc<AtomicU64>,
+    full_requests: Arc<AtomicU64>,
+    tagged_requests: Arc<AtomicU64>,
+    central_requests: Arc<AtomicU64>,
+    shared_bootstrap_requests: Arc<AtomicU64>,
+    arbitrary_replica_requests: Arc<AtomicU64>,
 }
 
 /// Integral-preparation cache statistics for a cross-section analysis.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub struct CrossSectionDiagnostics {
     cache_hits: u64,
     cache_misses: u64,
     cached_integrals: usize,
     prepared_bytes: usize,
+    cache_evictions: u64,
+    reserved_bytes: u64,
+    high_water_bytes: u64,
+    estimated_prepared_bytes: usize,
+    full_requests: u64,
+    tagged_requests: u64,
+    central_requests: u64,
+    shared_bootstrap_requests: u64,
+    arbitrary_replica_requests: u64,
 }
 
 impl CrossSectionDiagnostics {
@@ -908,9 +1402,45 @@ impl CrossSectionDiagnostics {
     pub fn cached_integrals(&self) -> usize {
         self.cached_integrals
     }
-    /// Returns the summed prepared bytes reported by cached integral records.
+    /// Returns estimated resident bytes of retained integral records.
     pub fn prepared_bytes(&self) -> usize {
         self.prepared_bytes
+    }
+    /// Number of integral records evicted by retention or memory pressure.
+    pub fn cache_evictions(&self) -> u64 {
+        self.cache_evictions
+    }
+    /// Current reservation in the analysis host-memory pool, including other users of that pool.
+    pub fn reserved_bytes(&self) -> u64 {
+        self.reserved_bytes
+    }
+    /// Highest concurrent reservation observed by that pool, including other users.
+    pub fn high_water_bytes(&self) -> u64 {
+        self.high_water_bytes
+    }
+    /// Estimated prepared bytes still owned by the analysis, including its baseline.
+    pub fn estimated_prepared_bytes(&self) -> usize {
+        self.estimated_prepared_bytes
+    }
+    /// Full-model integral requests.
+    pub fn full_requests(&self) -> u64 {
+        self.full_requests
+    }
+    /// Tagged integral requests.
+    pub fn tagged_requests(&self) -> u64 {
+        self.tagged_requests
+    }
+    /// Requests using the central likelihood.
+    pub fn central_requests(&self) -> u64 {
+        self.central_requests
+    }
+    /// Bootstrap replicas reusing central prepared rows.
+    pub fn shared_bootstrap_requests(&self) -> u64 {
+        self.shared_bootstrap_requests
+    }
+    /// Replica requests requiring their own integral preparation.
+    pub fn arbitrary_replica_requests(&self) -> u64 {
+        self.arbitrary_replica_requests
     }
 }
 
@@ -975,6 +1505,8 @@ impl CanonicalComponents {
 struct BinAssignments {
     indices: Vec<Option<usize>>,
     count: usize,
+    nonfinite_count: usize,
+    out_of_range_count: usize,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -1050,6 +1582,7 @@ struct ProjectionReplica {
 }
 
 impl BinAssignments {
+    #[cfg(test)]
     fn new(values: &[Vec<f64>], axes: &[Axis]) -> Self {
         let event_count = values.first().map_or(0, Vec::len);
         let bin_axes: Vec<_> = axes.iter().map(|axis| axis.binning.clone()).collect();
@@ -1058,15 +1591,36 @@ impl BinAssignments {
                 .iter()
                 .all(|coordinates| coordinates.len() == event_count)
         );
+        let mut nonfinite_count = 0;
+        let mut out_of_range_count = 0;
         let indices = (0..event_count)
             .map(|event| {
-                flat_bin_index_for_event(&bin_axes, values, event, FinalUpperEdge::Exclusive)
+                if values.iter().any(|axis| !axis[event].is_finite()) {
+                    nonfinite_count += 1;
+                    return None;
+                }
+                let index =
+                    flat_bin_index_for_event(&bin_axes, values, event, FinalUpperEdge::Exclusive);
+                if index.is_none() {
+                    out_of_range_count += 1;
+                }
+                index
             })
             .collect();
         Self {
             indices,
             count: checked_bin_count(&bin_axes).expect("projection shape was validated"),
+            nonfinite_count,
+            out_of_range_count,
         }
+    }
+
+    fn support_counts(&self) -> Vec<usize> {
+        let mut counts = vec![0; self.count];
+        for index in self.indices.iter().flatten() {
+            counts[*index] += 1;
+        }
+        counts
     }
 
     fn accumulate_weighted_block(
@@ -1584,6 +2138,11 @@ impl CrossSection {
             integral_cache: Arc::new(Mutex::new(integral_cache)),
             cache_hits: Default::default(),
             cache_misses: Arc::new(AtomicU64::new(1)),
+            full_requests: Arc::new(AtomicU64::new(1)),
+            tagged_requests: Default::default(),
+            central_requests: Arc::new(AtomicU64::new(1)),
+            shared_bootstrap_requests: Default::default(),
+            arbitrary_replica_requests: Default::default(),
         })
     }
 
@@ -1631,6 +2190,11 @@ impl CrossSection {
             integral_cache: template.integral_cache,
             cache_hits: template.cache_hits,
             cache_misses: template.cache_misses,
+            full_requests: template.full_requests,
+            tagged_requests: template.tagged_requests,
+            central_requests: template.central_requests,
+            shared_bootstrap_requests: template.shared_bootstrap_requests,
+            arbitrary_replica_requests: template.arbitrary_replica_requests,
         })
     }
 
@@ -1654,35 +2218,77 @@ impl CrossSection {
 
     /// Returns integral-cache hit, miss, count, and retained-byte diagnostics.
     pub fn diagnostics(&self) -> CrossSectionDiagnostics {
-        if let Some(members) = &self.members {
-            return members.iter().fold(
-                CrossSectionDiagnostics {
-                    cache_hits: 0,
-                    cache_misses: 0,
-                    cached_integrals: 0,
-                    prepared_bytes: 0,
-                },
-                |mut total, (member, _)| {
-                    let part = member.diagnostics();
-                    total.cache_hits = total.cache_hits.saturating_add(part.cache_hits);
-                    total.cache_misses = total.cache_misses.saturating_add(part.cache_misses);
-                    total.cached_integrals =
-                        total.cached_integrals.saturating_add(part.cached_integrals);
-                    total.prepared_bytes = total.prepared_bytes.saturating_add(part.prepared_bytes);
-                    total
-                },
-            );
+        fn collect<'a>(section: &'a CrossSection, leaves: &mut Vec<&'a CrossSection>) {
+            if let Some(members) = &section.members {
+                for (member, _) in members.iter() {
+                    collect(member, leaves);
+                }
+            } else {
+                leaves.push(section);
+            }
         }
-        let cache = self
-            .integral_cache
-            .lock()
-            .unwrap_or_else(|error| error.into_inner());
-        CrossSectionDiagnostics {
-            cache_hits: self.cache_hits.load(Ordering::Relaxed),
-            cache_misses: self.cache_misses.load(Ordering::Relaxed),
-            cached_integrals: cache.entries.len(),
-            prepared_bytes: cache.retained_bytes(),
+        let mut leaves = Vec::new();
+        collect(self, &mut leaves);
+        let mut seen_caches = HashSet::new();
+        let mut seen_pools = Vec::new();
+        let mut total = CrossSectionDiagnostics::default();
+        for section in leaves {
+            if seen_caches.insert(Arc::as_ptr(&section.integral_cache)) {
+                let cache = section
+                    .integral_cache
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner());
+                total.cached_integrals = total.cached_integrals.saturating_add(cache.entries.len());
+                let bytes = cache.retained_bytes();
+                total.prepared_bytes = total.prepared_bytes.saturating_add(bytes);
+                let baseline = section.full_integrals.resident_bytes();
+                total.estimated_prepared_bytes = total.estimated_prepared_bytes.saturating_add(
+                    if cache
+                        .entries
+                        .contains_key(&(Arc::as_ptr(&section.likelihood) as usize, None))
+                    {
+                        bytes
+                    } else {
+                        bytes.saturating_add(baseline)
+                    },
+                );
+                total.cache_evictions = total.cache_evictions.saturating_add(cache.evictions);
+                total.cache_hits = total
+                    .cache_hits
+                    .saturating_add(section.cache_hits.load(Ordering::Relaxed));
+                total.cache_misses = total
+                    .cache_misses
+                    .saturating_add(section.cache_misses.load(Ordering::Relaxed));
+                total.full_requests = total
+                    .full_requests
+                    .saturating_add(section.full_requests.load(Ordering::Relaxed));
+                total.tagged_requests = total
+                    .tagged_requests
+                    .saturating_add(section.tagged_requests.load(Ordering::Relaxed));
+                total.central_requests = total
+                    .central_requests
+                    .saturating_add(section.central_requests.load(Ordering::Relaxed));
+                total.shared_bootstrap_requests = total
+                    .shared_bootstrap_requests
+                    .saturating_add(section.shared_bootstrap_requests.load(Ordering::Relaxed));
+                total.arbitrary_replica_requests = total
+                    .arbitrary_replica_requests
+                    .saturating_add(section.arbitrary_replica_requests.load(Ordering::Relaxed));
+            }
+            let pool = section.likelihood.execution().host_memory();
+            if !seen_pools
+                .iter()
+                .any(|seen: &laddu_runtime::MemoryPool| seen.shares_reservations_with(pool))
+            {
+                seen_pools.push(pool.clone());
+                let report = pool.report();
+                total.reserved_bytes = total.reserved_bytes.saturating_add(report.reserved_bytes);
+                total.high_water_bytes = total
+                    .high_water_bytes
+                    .saturating_add(report.high_water_bytes);
+            }
         }
+        total
     }
 
     /// Changes the integral-retention policy and immediately enforces its bound.
@@ -1883,6 +2489,12 @@ impl CrossSection {
         };
         let evaluate = |integrals: &CrossSectionIntegrals| -> LikelihoodResult<Estimate> {
             record_prepared_intensity_evaluation();
+            if let Some(ensemble) = &self.ensemble {
+                if ensemble.replicas_share_event_rows() {
+                    self.shared_bootstrap_requests
+                        .fetch_add(ensemble.replicas().len() as u64, Ordering::Relaxed);
+                }
+            }
             let generated =
                 integrals.generated_integrals_many(&parameter_sets, &parameter_contexts)?;
             let values = generated
@@ -2049,6 +2661,17 @@ impl CrossSection {
         likelihood: &Likelihood,
         tags: Option<&[String]>,
     ) -> LikelihoodResult<CrossSectionIntegrals> {
+        if tags.is_some() {
+            self.tagged_requests.fetch_add(1, Ordering::Relaxed);
+        } else {
+            self.full_requests.fetch_add(1, Ordering::Relaxed);
+        }
+        if std::ptr::eq(likelihood, self.likelihood.as_ref()) {
+            self.central_requests.fetch_add(1, Ordering::Relaxed);
+        } else {
+            self.arbitrary_replica_requests
+                .fetch_add(1, Ordering::Relaxed);
+        }
         let key_tags = tags.map(CanonicalTags::new);
         let key = (likelihood as *const Likelihood as usize, key_tags.clone());
         if let Some(integrals) = self
@@ -2145,6 +2768,8 @@ impl CrossSection {
                             .get(index)
                             .map(|likelihood| {
                                 if ensemble.replicas_share_event_rows {
+                                    self.shared_bootstrap_requests
+                                        .fetch_add(1, Ordering::Relaxed);
                                     likelihood
                                         .intensity_data_weight_sum(&self.term_name)
                                         .map(|sum| integrals.with_data_weight_sum(sum))
@@ -2830,16 +3455,129 @@ fn pool_binned<'a>(
         .collect()
 }
 
-fn evaluate_coordinates(
+fn evaluate_bin_assignments_many(
     dataset: &Dataset,
-    axes: &[Axis],
+    projections: &[&Projection],
     execution: &Execution,
-) -> LikelihoodResult<Vec<Vec<f64>>> {
-    axes.iter()
-        .map(|axis| {
-            dataset
-                .evaluate_real(&axis.expression, execution)
-                .map_err(Into::into)
+) -> LikelihoodResult<Vec<BinAssignments>> {
+    #[derive(Copy, Clone, PartialEq, Eq)]
+    enum CoordinateStatus {
+        InRange,
+        OutOfRange,
+        Nonfinite,
+    }
+    record_bin_assignment_evaluation();
+    let events = usize::try_from(dataset.stats()?.events())
+        .map_err(|_| invalid("projection event count exceeds addressable memory"))?;
+    let mut expression_indexes = HashMap::new();
+    let mut expressions = Vec::new();
+    let axes_by_projection = projections
+        .iter()
+        .map(|projection| {
+            projection
+                .axes()
+                .iter()
+                .map(|axis| {
+                    let graph = axis.expression.to_graph();
+                    let key = (
+                        graph.root().index(),
+                        graph
+                            .nodes()
+                            .iter()
+                            .map(|node| node.structural_key())
+                            .collect::<Vec<_>>(),
+                    );
+                    *expression_indexes.entry(key).or_insert_with(|| {
+                        let index = expressions.len();
+                        expressions.push(axis.expression.clone());
+                        index
+                    })
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+    let mut indices = projections
+        .iter()
+        .map(|_| vec![Some(0usize); events])
+        .collect::<Vec<_>>();
+    let mut statuses = projections
+        .iter()
+        .map(|_| vec![CoordinateStatus::InRange; events])
+        .collect::<Vec<_>>();
+    let mut visited = 0;
+    dataset.visit_real_chunks(&expressions, execution, 8192, |offset, coordinates| {
+        let chunk_len = coordinates.first().map_or(0, Vec::len);
+        if coordinates.len() != expressions.len()
+            || coordinates.iter().any(|values| {
+                values.len() != chunk_len
+                    || offset
+                        .checked_add(values.len())
+                        .is_none_or(|end| end > events)
+            })
+        {
+            return Err(laddu_runtime::RuntimeError::InvalidShape {
+                index: 0,
+                message: "projection coordinates do not match the dataset shape".into(),
+            });
+        }
+        visited = offset + chunk_len;
+        for (projection_index, projection) in projections.iter().enumerate() {
+            let assignments = &mut indices[projection_index];
+            let status = &mut statuses[projection_index];
+            for (axis, &coordinate_index) in projection
+                .axes()
+                .iter()
+                .zip(&axes_by_projection[projection_index])
+            {
+                for (row, &value) in coordinates[coordinate_index].iter().enumerate() {
+                    let event = offset + row;
+                    if !value.is_finite() {
+                        status[event] = CoordinateStatus::Nonfinite;
+                        assignments[event] = None;
+                    } else if status[event] == CoordinateStatus::InRange {
+                        if let Some(bin) = axis.binning.index(value, FinalUpperEdge::Exclusive) {
+                            assignments[event] = assignments[event]
+                                .and_then(|index| index.checked_mul(axis.bins())?.checked_add(bin));
+                        } else {
+                            status[event] = CoordinateStatus::OutOfRange;
+                            assignments[event] = None;
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
+    })?;
+    if visited != events {
+        return Err(invalid(
+            "projection coordinate count does not match dataset events",
+        ));
+    }
+    projections
+        .iter()
+        .zip(indices)
+        .zip(statuses)
+        .map(|((projection, indices), status)| {
+            let count = checked_bin_count(
+                &projection
+                    .axes()
+                    .iter()
+                    .map(|axis| axis.binning.clone())
+                    .collect::<Vec<_>>(),
+            )
+            .ok_or_else(|| invalid("projection axis shape exceeds addressable bin count"))?;
+            Ok(BinAssignments {
+                indices,
+                count,
+                nonfinite_count: status
+                    .iter()
+                    .filter(|&&value| value == CoordinateStatus::Nonfinite)
+                    .count(),
+                out_of_range_count: status
+                    .iter()
+                    .filter(|&&value| value == CoordinateStatus::OutOfRange)
+                    .count(),
+            })
         })
         .collect()
 }
@@ -2849,11 +3587,80 @@ fn evaluate_bin_assignments(
     axes: &[Axis],
     execution: &Execution,
 ) -> LikelihoodResult<BinAssignments> {
+    #[derive(Copy, Clone, PartialEq, Eq)]
+    enum CoordinateStatus {
+        InRange,
+        OutOfRange,
+        Nonfinite,
+    }
     record_bin_assignment_evaluation();
-    Ok(BinAssignments::new(
-        &evaluate_coordinates(dataset, axes, execution)?,
-        axes,
-    ))
+    let events = usize::try_from(dataset.stats()?.events())
+        .map_err(|_| invalid("projection event count exceeds addressable memory"))?;
+    let mut indices = vec![Some(0usize); events];
+    let mut status = vec![CoordinateStatus::InRange; events];
+    let expressions = axes
+        .iter()
+        .map(|axis| axis.expression.clone())
+        .collect::<Vec<_>>();
+    let mut visited = 0;
+    dataset.visit_real_chunks(&expressions, execution, 8192, |offset, coordinates| {
+        if coordinates.len() != axes.len()
+            || coordinates.iter().any(|values| {
+                values.len() != coordinates[0].len()
+                    || offset
+                        .checked_add(values.len())
+                        .is_none_or(|end| end > events)
+            })
+        {
+            return Err(laddu_runtime::RuntimeError::InvalidShape {
+                index: 0,
+                message: "projection coordinates do not match the dataset shape".into(),
+            });
+        }
+        visited = offset + coordinates[0].len();
+        for (axis, values) in axes.iter().zip(coordinates) {
+            for (row, &value) in values.iter().enumerate() {
+                let event = offset + row;
+                if !value.is_finite() {
+                    status[event] = CoordinateStatus::Nonfinite;
+                    indices[event] = None;
+                } else if status[event] == CoordinateStatus::InRange {
+                    if let Some(bin) = axis.binning.index(value, FinalUpperEdge::Exclusive) {
+                        indices[event] = indices[event]
+                            .and_then(|index| index.checked_mul(axis.bins())?.checked_add(bin));
+                    } else {
+                        status[event] = CoordinateStatus::OutOfRange;
+                        indices[event] = None;
+                    }
+                }
+            }
+        }
+        Ok(())
+    })?;
+    if visited != events {
+        return Err(invalid(
+            "projection coordinate count does not match dataset events",
+        ));
+    }
+    let count = checked_bin_count(
+        &axes
+            .iter()
+            .map(|axis| axis.binning.clone())
+            .collect::<Vec<_>>(),
+    )
+    .ok_or_else(|| invalid("projection axis shape exceeds addressable bin count"))?;
+    Ok(BinAssignments {
+        indices,
+        count,
+        nonfinite_count: status
+            .iter()
+            .filter(|&&value| value == CoordinateStatus::Nonfinite)
+            .count(),
+        out_of_range_count: status
+            .iter()
+            .filter(|&&value| value == CoordinateStatus::OutOfRange)
+            .count(),
+    })
 }
 
 fn dataset_weights(dataset: &Dataset) -> LikelihoodResult<Vec<f64>> {
@@ -2877,6 +3684,29 @@ fn bin_volumes(axes: &[Axis]) -> Vec<f64> {
             })
             .collect()
     })
+}
+
+fn valid_bin_volumes(axes: &[Axis]) -> bool {
+    !axes.is_empty()
+        && axes
+            .iter()
+            .try_fold((1.0_f64, 1.0_f64), |(min_volume, max_volume), axis| {
+                let (min_width, max_width) = axis.binning.edges().windows(2).fold(
+                    (f64::INFINITY, 0.0_f64),
+                    |(min_width, max_width), pair| {
+                        let width = pair[1] - pair[0];
+                        (min_width.min(width), max_width.max(width))
+                    },
+                );
+                let min_volume = min_volume * min_width;
+                let max_volume = max_volume * max_width;
+                (min_volume.is_finite()
+                    && min_volume > 0.0
+                    && max_volume.is_finite()
+                    && max_volume > 0.0)
+                    .then_some((min_volume, max_volume))
+            })
+            .is_some()
 }
 
 #[cfg(test)]
@@ -3183,20 +4013,44 @@ mod tests {
                 )
                 .unwrap(),
             );
-            likelihood
+            let yield_projection = Yield::with_ensemble(
+                likelihood.clone(),
+                "signal",
+                generated.clone(),
+                Vec::new(),
+                None,
+            )
+            .unwrap()
+            .projection(&axes)
+            .unwrap();
+            let differential = likelihood
                 .cross_section("signal", generated.clone(), 1.0, Vec::new())
                 .unwrap()
                 .differential(&axes, &HashMap::new())
-                .unwrap()
+                .unwrap();
+            (differential, yield_projection)
         };
 
-        let interpreted = evaluate(JitPolicy::Disabled);
-        let compiled = evaluate(JitPolicy::Enabled);
+        let (interpreted, interpreted_yield) = evaluate(JitPolicy::Disabled);
+        let (compiled, compiled_yield) = evaluate(JitPolicy::Enabled);
         for (actual, expected) in compiled
             .data()
             .values()
             .iter()
             .zip(interpreted.data().values())
+        {
+            if expected.is_nan() {
+                assert!(actual.is_nan());
+            } else {
+                assert_relative_eq!(actual, expected, epsilon = 1.0e-12);
+            }
+        }
+        assert_eq!(compiled_yield.shape(), interpreted_yield.shape());
+        assert_eq!(compiled_yield.validity(), interpreted_yield.validity());
+        for (actual, expected) in compiled_yield
+            .corrected()
+            .iter()
+            .zip(interpreted_yield.corrected())
         {
             if expected.is_nan() {
                 assert!(actual.is_nan());
@@ -3275,6 +4129,8 @@ mod tests {
         assert_eq!(total.draws(), expected_draws);
         assert_eq!(total.source_id(), Some(ensemble.source_id()));
         assert_eq!(cross_section.diagnostics().cached_integrals(), 1);
+        assert_eq!(cross_section.diagnostics().shared_bootstrap_requests(), 3);
+        assert_eq!(cross_section.diagnostics().arbitrary_replica_requests(), 0);
     }
 
     #[test]
@@ -3364,6 +4220,7 @@ mod tests {
             .observed_total_with_tags(&components["ordered"])
             .unwrap();
 
+        let before = cross_section.diagnostics();
         reset_projection_evaluation_counts();
         let totals = cross_section.total_set(&components).unwrap();
 
@@ -3379,6 +4236,14 @@ mod tests {
             }
         }
         assert_eq!(cross_section.diagnostics().cached_integrals(), 2);
+        assert_eq!(
+            cross_section.diagnostics().full_requests(),
+            before.full_requests() + 1
+        );
+        assert_eq!(
+            cross_section.diagnostics().tagged_requests(),
+            before.tagged_requests() + 1
+        );
         assert_eq!(projection_evaluation_counts(), (3, 0));
     }
 
@@ -3545,6 +4410,7 @@ mod tests {
         assert_eq!(cross_section.observed_total().unwrap().draws(), expected);
         assert!(cross_section.diagnostics().prepared_bytes() <= max_bytes);
         assert!(cross_section.diagnostics().cached_integrals() <= 1);
+        assert!(cross_section.diagnostics().arbitrary_replica_requests() >= 2);
     }
 
     #[test]
@@ -3654,6 +4520,276 @@ mod tests {
         combined.observed_total_with_tags(&tag).unwrap();
 
         assert!(combined.diagnostics().prepared_bytes() <= max_bytes);
+    }
+
+    #[test]
+    fn diagnostics_deduplicate_shared_cache_and_report_evaluation_paths() {
+        let fixture = canonical_selection_fixture();
+        let section = fixture
+            .likelihood
+            .cross_section("signal", fixture.generated, 2.0, vec![1.5, 0.75])
+            .unwrap();
+        let combined = CrossSection::combine(vec![section.clone(), section.clone()]).unwrap();
+        let initial = section.diagnostics();
+        assert_eq!(combined.diagnostics(), initial);
+        assert_eq!(initial.full_requests(), 1);
+        assert_eq!(initial.central_requests(), 1);
+        assert!(initial.estimated_prepared_bytes() >= initial.prepared_bytes());
+
+        section
+            .observed_total_with_tags(&["signal".to_owned()])
+            .unwrap();
+        let after = section.diagnostics();
+        assert_eq!(combined.diagnostics(), after);
+        assert_eq!(after.tagged_requests(), 1);
+        assert_eq!(after.central_requests(), 2);
+        assert!(after.reserved_bytes() >= initial.reserved_bytes());
+        assert!(after.high_water_bytes() >= after.reserved_bytes());
+
+        section.set_integral_retention(IntegralRetentionPolicy::Bounded { max_bytes: 0 });
+        assert_eq!(section.diagnostics().cached_integrals(), 0);
+        assert!(section.diagnostics().cache_evictions() >= 1);
+        assert!(section.diagnostics().estimated_prepared_bytes() > 0);
+    }
+
+    #[test]
+    fn dropping_cross_section_releases_its_pool_reservations() {
+        let fixture = canonical_selection_fixture();
+        let pool = fixture.likelihood.execution().host_memory().clone();
+        let baseline = pool.report().reserved_bytes;
+        {
+            let section = fixture
+                .likelihood
+                .cross_section("signal", fixture.generated, 2.0, vec![1.5, 0.75])
+                .unwrap();
+            section
+                .observed_total_with_tags(&["signal".to_owned()])
+                .unwrap();
+            assert!(pool.report().reserved_bytes > baseline);
+        }
+        assert_eq!(pool.report().reserved_bytes, baseline);
+    }
+
+    #[test]
+    fn central_yield_projection_keeps_joint_bins_and_invalid_support_visible() {
+        let fixture = canonical_selection_fixture();
+        let yield_context = Yield::with_ensemble(
+            fixture.likelihood.clone(),
+            "signal",
+            fixture.generated,
+            vec![1.5, 0.75],
+            None,
+        )
+        .unwrap();
+        let joint = yield_context
+            .projection(&[fixture.axis.clone(), fixture.axis.clone()])
+            .unwrap();
+        assert_eq!(joint.shape(), &[2, 2]);
+        assert_eq!(joint.selected(), &[3.0, 0.0, 0.0, 1.0]);
+        assert_eq!(joint.selected_histogram().values(), joint.selected());
+        assert_eq!(
+            joint.validity(),
+            &[
+                YieldBinValidity::Valid,
+                YieldBinValidity::MissingGeneratedSupport,
+                YieldBinValidity::MissingGeneratedSupport,
+                YieldBinValidity::Valid
+            ]
+        );
+        assert!(joint.corrected()[1].is_nan());
+        assert_eq!(joint.diagnostics().generated_out_of_range, 0);
+
+        let projections = [
+            Projection::new("joint", vec![fixture.axis.clone(), fixture.axis.clone()]).unwrap(),
+            Projection::new("single", vec![fixture.axis]).unwrap(),
+        ];
+        reset_projection_evaluation_counts();
+        let results = yield_context.projection_set(&projections).unwrap();
+        assert_eq!(projection_evaluation_counts().1, 3);
+        assert_eq!(
+            results.iter().map(|(name, _)| name).collect::<Vec<_>>(),
+            vec!["joint", "single"]
+        );
+        assert_eq!(results.get("single").unwrap().selected(), &[3.0, 1.0]);
+    }
+
+    #[test]
+    fn central_yield_projection_preserves_distinct_rate_quantities() {
+        let x = event_scalar("x");
+        let model =
+            CompiledModel::from_expr(&(x.clone() * parameter!("scale", initial: 0.25))).unwrap();
+        let data = weighted_dataset(&[(2.0, 1.0), (3.0, 2.0)]);
+        let accepted = weighted_dataset(&[(4.0, 1.0)]);
+        let generated = weighted_dataset(&[(6.0, 1.0)]);
+        let likelihood = Arc::new(
+            Likelihood::new([
+                crate::ExtendedNllTerm::new("signal", &model, &data, &accepted).unwrap(),
+            ])
+            .unwrap(),
+        );
+        let context =
+            Yield::with_ensemble(likelihood, "signal", generated, vec![0.25], None).unwrap();
+        let projection = context
+            .projection(&[Axis::new(x, vec![0.0, 5.0, 10.0]).unwrap()])
+            .unwrap();
+        assert_eq!(projection.selected(), &[3.0, 0.0]);
+        assert_relative_eq!(projection.accepted()[0], 1.0);
+        assert_relative_eq!(projection.generated()[1], 1.5);
+        assert_eq!(
+            projection.validity(),
+            &[
+                YieldBinValidity::MissingGeneratedSupport,
+                YieldBinValidity::MissingAcceptedSupport,
+            ]
+        );
+        assert!(projection.corrected().iter().all(|value| value.is_nan()));
+
+        let all = context
+            .projection(&[Axis::new(event_scalar("x"), vec![0.0, 10.0]).unwrap()])
+            .unwrap();
+        assert_eq!(all.validity(), &[YieldBinValidity::Valid]);
+        assert_relative_eq!(all.selected()[0], 3.0);
+        assert_relative_eq!(all.accepted()[0], 1.0);
+        assert_relative_eq!(all.generated()[0], 1.5);
+        assert_relative_eq!(all.acceptance()[0], 2.0 / 3.0);
+        assert_relative_eq!(all.corrected()[0], 4.5);
+    }
+
+    #[test]
+    fn central_yield_projection_preserves_signed_and_empty_observations() {
+        let x = event_scalar("x");
+        let model = CompiledModel::from_expr(&Expr::from(1.0)).unwrap();
+        let data = weighted_dataset(&[(0.25, -2.0), (0.25, 1.0)]);
+        let accepted = weighted_dataset(&[(0.25, 1.0), (1.25, 1.0)]);
+        let generated = accepted.clone();
+        let likelihood = Arc::new(
+            Likelihood::new([crate::NllTerm::new("signal", &model, &data, &accepted).unwrap()])
+                .unwrap(),
+        );
+        let context = Yield::with_ensemble(likelihood, "signal", generated, vec![], None).unwrap();
+        let projection = context
+            .projection(&[Axis::new(x, vec![0.0, 1.0, 2.0]).unwrap()])
+            .unwrap();
+        assert_eq!(projection.selected(), &[-1.0, 0.0]);
+        assert_eq!(
+            projection.validity(),
+            &[YieldBinValidity::Valid, YieldBinValidity::Valid]
+        );
+        assert_eq!(projection.corrected(), &[-1.0, 0.0]);
+        assert!(projection.accepted().iter().all(|value| value.is_nan()));
+    }
+
+    #[test]
+    fn central_yield_projection_reports_coordinate_exclusions_and_validates_volumes() {
+        let model = CompiledModel::from_expr(&Expr::from(1.0)).unwrap();
+        let data = weighted_dataset(&[(0.25, 1.0), (f64::NAN, 1.0), (3.0, 1.0)]);
+        let accepted = weighted_dataset(&[(0.25, 1.0)]);
+        let generated = accepted.clone();
+        let likelihood = Arc::new(
+            Likelihood::new([crate::NllTerm::new("signal", &model, &data, &accepted).unwrap()])
+                .unwrap(),
+        );
+        let context = Yield::with_ensemble(likelihood, "signal", generated, vec![], None).unwrap();
+        let projection = context
+            .projection(&[Axis::new(event_scalar("x"), vec![0.0, 1.0]).unwrap()])
+            .unwrap();
+        assert_eq!(projection.selected(), &[1.0]);
+        assert_eq!(projection.diagnostics().selected_nonfinite, 1);
+        assert_eq!(projection.diagnostics().selected_out_of_range, 1);
+        assert_eq!(projection.validity(), &[YieldBinValidity::Valid]);
+        let invalid = Axis::new(event_scalar("x"), vec![-f64::MAX, f64::MAX]).unwrap();
+        assert!(context.projection(&[invalid]).is_err());
+    }
+
+    #[test]
+    fn central_yield_projection_marks_nonpositive_local_acceptance() {
+        let model = CompiledModel::from_expr(&Expr::from(1.0)).unwrap();
+        let data = weighted_dataset(&[(0.25, 1.0), (1.25, 1.0)]);
+        let accepted = weighted_dataset(&[(0.25, -1.0), (1.25, 2.0)]);
+        let generated = weighted_dataset(&[(0.25, 1.0), (1.25, 1.0)]);
+        let likelihood = Arc::new(
+            Likelihood::new([crate::NllTerm::new("signal", &model, &data, &accepted).unwrap()])
+                .unwrap(),
+        );
+        let context = Yield::with_ensemble(likelihood, "signal", generated, vec![], None).unwrap();
+        let projection = context
+            .projection(&[Axis::new(event_scalar("x"), vec![0.0, 1.0, 2.0]).unwrap()])
+            .unwrap();
+        assert_eq!(
+            projection.validity(),
+            &[
+                YieldBinValidity::NonPositiveAcceptedSupport,
+                YieldBinValidity::Valid,
+            ]
+        );
+        assert!(projection.corrected()[0].is_nan());
+    }
+
+    #[test]
+    fn central_yield_projection_marks_invalid_local_exposure() {
+        let model = CompiledModel::from_expr(&Expr::from(1.0)).unwrap();
+        let data = weighted_dataset(&[(0.25, 1.0), (1.25, 1.0)]);
+        let accepted = weighted_dataset(&[(0.25, 1.0), (1.25, 1.0)]);
+        let generated = weighted_dataset(&[(0.25, -1.0), (1.25, 2.0)]);
+        let likelihood = Arc::new(
+            Likelihood::new([crate::NllTerm::new("signal", &model, &data, &accepted).unwrap()])
+                .unwrap(),
+        );
+        let context = Yield::with_ensemble(likelihood, "signal", generated, vec![], None).unwrap();
+        let projection = context
+            .projection(&[Axis::new(event_scalar("x"), vec![0.0, 1.0, 2.0]).unwrap()])
+            .unwrap();
+        assert_eq!(
+            projection.validity(),
+            &[YieldBinValidity::InvalidExposure, YieldBinValidity::Valid]
+        );
+        assert!(projection.corrected()[0].is_nan());
+    }
+
+    #[test]
+    fn central_yield_projection_rejects_oversized_workspace_atomically() {
+        use laddu_runtime::{ExecutionOptions, MemoryBudget, MemoryPlan};
+
+        let model = CompiledModel::from_expr(&Expr::from(1.0)).unwrap();
+        let data = weighted_dataset(&[(0.25, 1.0), (1.25, 1.0)]);
+        let accepted = data.clone();
+        let generated = data.clone();
+        let execution = Execution::local(ExecutionOptions {
+            memory: MemoryPlan::host_device(MemoryBudget::Bytes(128 * 1024), MemoryBudget::Auto),
+            ..ExecutionOptions::default()
+        })
+        .unwrap();
+        let likelihood = Arc::new(
+            Likelihood::with_execution(
+                [crate::NllTerm::new("signal", &model, &data, &accepted).unwrap()],
+                &execution,
+            )
+            .unwrap(),
+        );
+        let context = Yield::with_ensemble(likelihood, "signal", generated, vec![], None).unwrap();
+        let baseline = execution.host_memory().report().reserved_bytes;
+        let requests = (0..1000)
+            .map(|index| {
+                Projection::new(
+                    format!("projection-{index}"),
+                    vec![
+                        Axis::new(
+                            event_scalar("x"),
+                            vec![0.0, 1.0 + index as f64 * 1.0e-6, 2.0],
+                        )
+                        .unwrap(),
+                    ],
+                )
+                .unwrap()
+            })
+            .collect::<Vec<_>>();
+        assert!(context.projection_set(&requests).is_err());
+        assert_eq!(execution.host_memory().report().reserved_bytes, baseline);
+        assert!(
+            context
+                .projection(&[Axis::new(event_scalar("x"), vec![0.0, 2.0]).unwrap()])
+                .is_ok()
+        );
     }
 
     #[test]

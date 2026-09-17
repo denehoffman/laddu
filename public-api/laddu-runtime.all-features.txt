@@ -612,6 +612,8 @@ pub fn laddu_runtime::DatasetExprExt::evaluate_real(&self, &laddu_expr::expressi
 pub fn laddu_runtime::DatasetExprExt::histogram(&self, &laddu_expr::expression::Expr, laddu_runtime::BinSpec, bool, core::option::Option<&laddu_expr::expression::Expr>, &laddu_runtime::Execution) -> laddu_runtime::RuntimeResult<laddu_physics::histogram::Histogram>
 pub fn laddu_runtime::DatasetExprExt::joint_histogram(&self, &[laddu_expr::expression::Expr], alloc::vec::Vec<laddu_runtime::BinSpec>, bool, core::option::Option<&laddu_expr::expression::Expr>, &laddu_runtime::Execution) -> laddu_runtime::RuntimeResult<laddu_physics::joint_histogram::JointHistogram>
 pub fn laddu_runtime::DatasetExprExt::select(&self, &laddu_runtime::Predicate, &laddu_runtime::Execution) -> laddu_runtime::RuntimeResult<laddu_data::data::dataset::Dataset>
+pub fn laddu_runtime::DatasetExprExt::validate_real_expressions(&self, &[laddu_expr::expression::Expr], &laddu_runtime::Execution) -> laddu_runtime::RuntimeResult<()>
+pub fn laddu_runtime::DatasetExprExt::visit_real_chunks(&self, &[laddu_expr::expression::Expr], &laddu_runtime::Execution, usize, impl core::ops::function::FnMut(usize, &[alloc::vec::Vec<f64>]) -> laddu_runtime::RuntimeResult<()>) -> laddu_runtime::RuntimeResult<()>
 impl laddu_runtime::DatasetExprExt for laddu_data::data::dataset::Dataset
 pub fn laddu_data::data::dataset::Dataset::bin_by(&self, &laddu_expr::expression::Expr, laddu_runtime::BinSpec, &laddu_runtime::Execution) -> laddu_runtime::RuntimeResult<alloc::vec::Vec<laddu_runtime::DatasetBin>>
 pub fn laddu_data::data::dataset::Dataset::evaluate_expr(&self, &laddu_expr::expression::Expr, &laddu_runtime::Execution) -> laddu_runtime::RuntimeResult<alloc::vec::Vec<num_complex::Complex64>>
@@ -619,6 +621,8 @@ pub fn laddu_data::data::dataset::Dataset::evaluate_real(&self, &laddu_expr::exp
 pub fn laddu_data::data::dataset::Dataset::histogram(&self, &laddu_expr::expression::Expr, laddu_runtime::BinSpec, bool, core::option::Option<&laddu_expr::expression::Expr>, &laddu_runtime::Execution) -> laddu_runtime::RuntimeResult<laddu_physics::histogram::Histogram>
 pub fn laddu_data::data::dataset::Dataset::joint_histogram(&self, &[laddu_expr::expression::Expr], alloc::vec::Vec<laddu_runtime::BinSpec>, bool, core::option::Option<&laddu_expr::expression::Expr>, &laddu_runtime::Execution) -> laddu_runtime::RuntimeResult<laddu_physics::joint_histogram::JointHistogram>
 pub fn laddu_data::data::dataset::Dataset::select(&self, &laddu_runtime::Predicate, &laddu_runtime::Execution) -> laddu_runtime::RuntimeResult<laddu_data::data::dataset::Dataset>
+pub fn laddu_data::data::dataset::Dataset::validate_real_expressions(&self, &[laddu_expr::expression::Expr], &laddu_runtime::Execution) -> laddu_runtime::RuntimeResult<()>
+pub fn laddu_data::data::dataset::Dataset::visit_real_chunks(&self, &[laddu_expr::expression::Expr], &laddu_runtime::Execution, usize, impl core::ops::function::FnMut(usize, &[alloc::vec::Vec<f64>]) -> laddu_runtime::RuntimeResult<()>) -> laddu_runtime::RuntimeResult<()>
 pub trait laddu_runtime::EventLookup
 pub fn laddu_runtime::EventLookup::p4_component(&self, &str, laddu_expr::expression::P4Component) -> core::option::Option<f64>
 pub fn laddu_runtime::EventLookup::scalar(&self, &str) -> core::option::Option<f64>

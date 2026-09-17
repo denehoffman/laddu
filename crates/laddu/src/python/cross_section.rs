@@ -5,7 +5,8 @@ use std::collections::HashMap;
 use laddu_likelihood::{
     Axis, BinnedEstimate, CrossSection, DifferentialCrossSection, Ensemble, Estimate,
     IntegralRetentionPolicy, Projection, RateClosure, RateClosureStatus, ReferenceCorrectedYield,
-    ReferenceCorrectionProvenance, TotalSet, Yield,
+    ReferenceCorrectionProvenance, TotalSet, Yield, YieldBinValidity, YieldHistogramView,
+    YieldProjection,
 };
 use numpy::{PyArray1, PyArray2};
 use pyo3::{
@@ -453,6 +454,37 @@ impl PyYield {
         self.rate_closure.clone()
     }
 
+    #[pyo3(signature = (axes: "Axis | Sequence[Axis]"))]
+    /// Evaluate a central joint yield projection.
+    fn projection(&self, py: Python<'_>, axes: &Bound<'_, PyAny>) -> PyResult<PyYieldProjection> {
+        let axes = extract_axes(py, axes)?;
+        Ok(self.inner.projection(&axes).map_err(to_py_err)?.into())
+    }
+
+    #[pyo3(signature = (projections: "dict[str, Axis | Sequence[Axis]]"))]
+    /// Evaluate named central yield projections in request order.
+    fn projection_set<'py>(
+        &self,
+        py: Python<'py>,
+        projections: &Bound<'_, PyAny>,
+    ) -> PyResult<Bound<'py, PyDict>> {
+        let projections = extract_projections(py, projections)?;
+        let results = self.inner.projection_set(&projections).map_err(to_py_err)?;
+        let output = PyDict::new(py);
+        for (name, result) in results.iter() {
+            output.set_item(
+                name,
+                Py::new(
+                    py,
+                    PyYieldProjection {
+                        inner: result.clone(),
+                    },
+                )?,
+            )?;
+        }
+        Ok(output)
+    }
+
     #[pyo3(signature = (
         reference_likelihood,
         reference_term_name,
@@ -482,6 +514,141 @@ impl PyYield {
             )
             .map_err(to_py_err)?;
         Ok(PyReferenceCorrectedYield { inner })
+    }
+}
+
+#[pyclass(
+    name = "YieldHistogramView",
+    module = "laddu",
+    frozen,
+    skip_from_py_object
+)]
+#[derive(Clone)]
+/// Central row-major histogram view over a yield projection's axes.
+pub struct PyYieldHistogramView {
+    inner: YieldHistogramView,
+}
+
+#[pymethods]
+impl PyYieldHistogramView {
+    #[getter]
+    fn axes(&self) -> Vec<Vec<f64>> {
+        self.inner.axes().to_vec()
+    }
+    #[getter]
+    fn shape(&self) -> Vec<usize> {
+        self.inner.shape().to_vec()
+    }
+    #[getter]
+    fn values(&self) -> Vec<f64> {
+        self.inner.values().to_vec()
+    }
+}
+
+#[pyclass(
+    name = "YieldProjection",
+    module = "laddu",
+    frozen,
+    skip_from_py_object
+)]
+#[derive(Clone)]
+/// Coherent central selected, fitted, and corrected yields on shared axes.
+pub struct PyYieldProjection {
+    inner: YieldProjection,
+}
+
+impl From<YieldProjection> for PyYieldProjection {
+    fn from(inner: YieldProjection) -> Self {
+        Self { inner }
+    }
+}
+
+fn validity_name(validity: YieldBinValidity) -> &'static str {
+    match validity {
+        YieldBinValidity::Valid => "valid",
+        YieldBinValidity::MissingGeneratedSupport => "missing_generated_support",
+        YieldBinValidity::MissingAcceptedSupport => "missing_accepted_support",
+        YieldBinValidity::NonPositiveAcceptedSupport => "nonpositive_accepted_support",
+        YieldBinValidity::NonPositiveGeneratedSupport => "nonpositive_generated_support",
+        YieldBinValidity::InvalidExposure => "invalid_exposure",
+        YieldBinValidity::NonFiniteEvaluation => "nonfinite_evaluation",
+    }
+}
+
+#[pymethods]
+impl PyYieldProjection {
+    #[getter]
+    fn axes(&self) -> Vec<Vec<f64>> {
+        self.inner.axes().to_vec()
+    }
+    #[getter]
+    fn shape(&self) -> Vec<usize> {
+        self.inner.shape().to_vec()
+    }
+    #[getter]
+    fn selected(&self) -> Vec<f64> {
+        self.inner.selected().to_vec()
+    }
+    #[getter]
+    fn accepted(&self) -> Vec<f64> {
+        self.inner.accepted().to_vec()
+    }
+    #[getter]
+    fn generated(&self) -> Vec<f64> {
+        self.inner.generated().to_vec()
+    }
+    #[getter]
+    fn acceptance(&self) -> Vec<f64> {
+        self.inner.acceptance().to_vec()
+    }
+    #[getter]
+    fn corrected(&self) -> Vec<f64> {
+        self.inner.corrected().to_vec()
+    }
+    #[getter]
+    fn validity(&self) -> Vec<&'static str> {
+        self.inner
+            .validity()
+            .iter()
+            .copied()
+            .map(validity_name)
+            .collect()
+    }
+    #[getter]
+    fn has_absolute_rate(&self) -> bool {
+        self.inner.has_absolute_rate()
+    }
+    #[getter]
+    fn diagnostics<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        let value = self.inner.diagnostics();
+        let out = PyDict::new(py);
+        out.set_item("selected_nonfinite", value.selected_nonfinite)?;
+        out.set_item("selected_out_of_range", value.selected_out_of_range)?;
+        out.set_item("accepted_nonfinite", value.accepted_nonfinite)?;
+        out.set_item("accepted_out_of_range", value.accepted_out_of_range)?;
+        out.set_item("generated_nonfinite", value.generated_nonfinite)?;
+        out.set_item("generated_out_of_range", value.generated_out_of_range)?;
+        Ok(out)
+    }
+    fn selected_histogram(&self) -> PyYieldHistogramView {
+        PyYieldHistogramView {
+            inner: self.inner.selected_histogram(),
+        }
+    }
+    fn accepted_histogram(&self) -> PyYieldHistogramView {
+        PyYieldHistogramView {
+            inner: self.inner.accepted_histogram(),
+        }
+    }
+    fn generated_histogram(&self) -> PyYieldHistogramView {
+        PyYieldHistogramView {
+            inner: self.inner.generated_histogram(),
+        }
+    }
+    fn corrected_histogram(&self) -> PyYieldHistogramView {
+        PyYieldHistogramView {
+            inner: self.inner.corrected_histogram(),
+        }
     }
 }
 
@@ -633,6 +800,24 @@ impl PyCrossSection {
         out.set_item("cache_misses", diagnostics.cache_misses())?;
         out.set_item("cached_integrals", diagnostics.cached_integrals())?;
         out.set_item("prepared_bytes", diagnostics.prepared_bytes())?;
+        out.set_item("cache_evictions", diagnostics.cache_evictions())?;
+        out.set_item("reserved_bytes", diagnostics.reserved_bytes())?;
+        out.set_item("high_water_bytes", diagnostics.high_water_bytes())?;
+        out.set_item(
+            "estimated_prepared_bytes",
+            diagnostics.estimated_prepared_bytes(),
+        )?;
+        out.set_item("full_requests", diagnostics.full_requests())?;
+        out.set_item("tagged_requests", diagnostics.tagged_requests())?;
+        out.set_item("central_requests", diagnostics.central_requests())?;
+        out.set_item(
+            "shared_bootstrap_requests",
+            diagnostics.shared_bootstrap_requests(),
+        )?;
+        out.set_item(
+            "arbitrary_replica_requests",
+            diagnostics.arbitrary_replica_requests(),
+        )?;
         Ok(out)
     }
 

@@ -160,6 +160,7 @@ pub fn laddu_memory::MemoryPool::report(&self) -> laddu_memory::MemoryPoolReport
 pub fn laddu_memory::MemoryPool::requested(&self) -> laddu_memory::MemoryBudget
 pub fn laddu_memory::MemoryPool::reserve(&self, u64) -> laddu_memory::MemoryResult<laddu_memory::MemoryLease>
 pub fn laddu_memory::MemoryPool::reserved(&self) -> u64
+pub fn laddu_memory::MemoryPool::shares_reservations_with(&self, &Self) -> bool
 impl core::clone::Clone for laddu_memory::MemoryPool
 pub fn laddu_memory::MemoryPool::clone(&self) -> laddu_memory::MemoryPool
 impl core::fmt::Debug for laddu_memory::MemoryPool

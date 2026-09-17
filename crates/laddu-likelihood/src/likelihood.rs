@@ -2198,6 +2198,26 @@ impl CrossSectionIntegrals {
         )
     }
 
+    pub(crate) fn visit_accepted_raw_prepared_intensities_many<F>(
+        &self,
+        free: &[&[f64]],
+        parameter_contexts: &[String],
+        consume: F,
+    ) -> LikelihoodResult<()>
+    where
+        F: FnMut(usize, usize, &[f64]) + Send,
+    {
+        self.visit_prepared_intensities_many(
+            free,
+            parameter_contexts,
+            &self.accepted_mc,
+            &self.accepted_mc_source,
+            None,
+            consume,
+        )?;
+        Ok(())
+    }
+
     /// Returns selected intensities over generated Monte Carlo.
     ///
     /// # Errors

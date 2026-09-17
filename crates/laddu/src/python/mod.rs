@@ -188,6 +188,8 @@ macro_rules! laddu_python_module {
                 PyReferenceCorrectedYield as ReferenceCorrectedYield,
                 PyReferenceCorrectionProvenance as ReferenceCorrectionProvenance,
                 PyTotalSet as TotalSet, PyYield as Yield,
+                PyYieldHistogramView as YieldHistogramView,
+                PyYieldProjection as YieldProjection,
             };
             #[pymodule_export]
             use $crate::python::data::{
