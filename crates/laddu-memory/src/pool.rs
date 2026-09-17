@@ -180,6 +180,10 @@ impl Drop for ReservationToken {
 }
 
 impl MemoryPool {
+    /// Whether two pool handles charge the same reservation account.
+    pub fn shares_reservations_with(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.inner.accounting, &other.inner.accounting)
+    }
     /// Requested budget specification.
     pub fn requested(&self) -> MemoryBudget {
         self.inner.requested

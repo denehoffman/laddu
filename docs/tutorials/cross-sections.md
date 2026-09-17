@@ -96,6 +96,33 @@ For a shape-only `NLL`, fitted acceptance and corrected observed yield remain
 defined because the common scale cancels. Absolute accepted/generated fitted
 yields are unavailable and rate closure is explicitly not applicable.
 
+### Project central yields into bins
+
+Use one `Axis` for a one-dimensional yield projection, or an ordered list of
+axes for a joint projection. Results keep D, A, G, A/G, and DG/A together on
+the same row-major bin grid:
+
+```python
+mass_axis = ld.Axis(ld.scalar("mass"), edges=[1.0, 1.5, 2.0])
+angle_axis = ld.Axis(ld.scalar("angle"), edges=[-1.0, 0.0, 1.0])
+projected = yield_context.projection(mass_axis)
+corrected_bins = projected.corrected
+validity = projected.validity
+selected_histogram = projected.selected_histogram()
+
+named = yield_context.projection_set({"mass": mass_axis, "joint": [mass_axis, angle_axis]})
+```
+
+`projection_set` preserves request order. Every entry is independent; axes
+inside one entry form one joint histogram. A valid bin may have zero selected
+yield. Bins without accepted or generated support have a specific validity
+string and `NaN` for any undefined fitted yield, acceptance, or corrected value. For shape-only
+terms, `accepted` and `generated` contain `NaN` because absolute fitted yields
+are unavailable, while their ratio and the corrected selected yield remain
+defined where support is positive. The `diagnostics` mapping reports nonfinite
+and out-of-range coordinate counts for each sample. Histogram views copy the
+central values and geometry; they do not remove the surrounding yield bundle.
+
 ### Correct with an explicit reference intensity
 
 When an analysis must reproduce a correction derived from a separate reference
@@ -330,6 +357,19 @@ bootstrap replicas share Monte Carlo event rows; arbitrary replicas whose row
 identity is not proven are evaluated against their own preparations. For a
 combined `CrossSection`, the byte limit and diagnostics cover all members in
 aggregate.
+
+`cross_section.diagnostics()` reports `cache_hits`, `cache_misses`,
+`cache_evictions`, `cached_integrals`, and `prepared_bytes` for retained
+integrals. `estimated_prepared_bytes` also includes the full-model preparation
+held by the analysis after the cache is cleared. `reserved_bytes` and
+`high_water_bytes` come from the host memory pools; these include other users
+of the same pools, so they are useful for budget inspection rather than as an
+exclusive size of this analysis. Combined diagnostics count each shared cache
+and pool reservation account once. `full_requests`, `tagged_requests`,
+`central_requests`, `shared_bootstrap_requests`, and
+`arbitrary_replica_requests` show which evaluation paths ran. Request counts
+include the initial full-model preparation. The high-water value is historical
+for the pool and does not decrease when a cache entry is evicted or dropped.
 
 For posterior samples, adapt the retained chain explicitly:
 

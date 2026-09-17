@@ -131,6 +131,26 @@ class ProjectionSetTests(unittest.TestCase):
 
         assert combined.diagnostics()['prepared_bytes'] <= max_bytes
 
+    def test_diagnostics_show_cache_memory_and_evaluation_paths(self) -> None:
+        section = self.cross_section()
+        combined = ld.CrossSection.combine([section, section])
+        before = section.diagnostics()
+        assert combined.diagnostics()['cached_integrals'] == before['cached_integrals']
+        assert before['full_requests'] == 1
+        assert before['central_requests'] == 1
+        assert before['estimated_prepared_bytes'] >= before['prepared_bytes']
+
+        section.observed_total(tags=['signal'])
+        after = section.diagnostics()
+        assert after['tagged_requests'] == 1
+        assert after['central_requests'] == before['central_requests'] + 1
+        assert combined.diagnostics()['prepared_bytes'] == after['prepared_bytes']
+        assert after['high_water_bytes'] >= after['reserved_bytes']
+
+        section.configure_integral_retention(max_bytes=0)
+        assert section.diagnostics()['cache_evictions'] >= 1
+        assert section.diagnostics()['cached_integrals'] == 0
+
     def test_native_bootstrap_totals_share_preparation_under_small_budget(self) -> None:
         x = ld.scalar('x')
         model = ld.Model((ld.parameter('scale', initial=1.0) * x + 1.0).norm_sqr().tagged('signal'))

@@ -21,6 +21,8 @@ snapshot_root="$project_root/public-api"
 temporary_root="$(mktemp -d)"
 trap 'rm -rf "$temporary_root"' EXIT
 public_api_toolchain="${PUBLIC_API_TOOLCHAIN:-nightly-2026-07-21}"
+public_api_rustc="$(rustup which rustc --toolchain "$public_api_toolchain")"
+public_api_rustdoc="$(rustup which rustdoc --toolchain "$public_api_toolchain")"
 
 # Keep this list explicit: adding a public Rust crate requires deciding whether
 # it belongs to the workspace's compatibility contract.
@@ -48,7 +50,7 @@ status=0
 for package in "${packages[@]}"; do
     for feature_set in "${feature_sets[@]}"; do
         public_api_args=(
-            --manifest-path "$project_root/Cargo.toml"
+            --manifest-path "$project_root/crates/$package/Cargo.toml"
             --package "$package"
             --omit blanket-impls
             --omit auto-trait-impls
@@ -61,7 +63,7 @@ for package in "${packages[@]}"; do
         actual="$temporary_root/$package.$feature_set.txt"
         expected="$snapshot_root/$package.$feature_set.txt"
         command_log="$temporary_root/$package.$feature_set.log"
-        if ! cargo "+$public_api_toolchain" public-api "${public_api_args[@]}" \
+        if ! RUSTC="$public_api_rustc" RUSTDOC="$public_api_rustdoc" CARGO_TARGET_DIR="$project_root/target/public-api" rustup run "$public_api_toolchain" cargo public-api "${public_api_args[@]}" \
             >"$actual" 2>"$command_log"; then
             echo "failed to generate public API for $package ($feature_set)" >&2
             cat "$command_log" >&2

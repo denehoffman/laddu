@@ -1,6 +1,13 @@
 # ruff: noqa: S101
 
-from typing import Any, cast
+from __future__ import annotations
+
+import math
+import sys
+from typing import TYPE_CHECKING, Any, cast
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 import laddu as ld
 import pytest
@@ -50,6 +57,55 @@ def test_yield_exposes_scalar_spaces_and_failed_closure_without_rescaling() -> N
     assert closure.accepted_relative_residual == pytest.approx(2.0 / 3.0)
     assert closure.selected_yield.central == EXPECTED_SELECTED_YIELD
     assert not closure.is_closed()
+
+
+def test_yield_projection_keeps_rate_spaces_and_invalid_bins_visible() -> None:
+    model = ld.Model(ld.scalar('x') * ld.parameter('scale', initial=0.25))
+    likelihood = ld.Likelihood(
+        [ld.ExtendedNLL(model, data=dataset([2.0, 3.0], [1.0, 2.0]), accepted_mc=dataset([4.0], [1.0]), name='signal')]
+    )
+    result = likelihood.yield_context('signal', generated_mc=dataset([6.0], [1.0]), parameters=[0.25])
+    axis = ld.Axis(ld.scalar('x'), edges=[0.0, 5.0, 10.0])
+    projection = result.projection(axis)
+    assert projection.shape == [2]
+    assert projection.selected == [3.0, 0.0]
+    assert projection.accepted[0] == pytest.approx(1.0)
+    assert projection.generated[1] == pytest.approx(1.5)
+    assert projection.validity == ['missing_generated_support', 'missing_accepted_support']
+    assert all(math.isnan(value) for value in projection.corrected)
+    assert projection.selected_histogram().values == projection.selected
+
+    full = result.projection(ld.Axis(ld.scalar('x'), edges=[0.0, 10.0]))
+    assert full.validity == ['valid']
+    assert full.acceptance == pytest.approx([2.0 / 3.0])
+    assert full.corrected == pytest.approx([4.5])
+    projections = result.projection_set({'joint': [axis, axis], 'single': axis})
+    assert list(projections) == ['joint', 'single']
+    assert projections['joint'].shape == [2, 2]
+    assert projections['joint'].selected == [3.0, 0.0, 0.0, 0.0]
+    aliases = result.projection_set({'single': axis, 'same': [axis]})
+    assert list(aliases) == ['single', 'same']
+    assert aliases['single'].selected == aliases['same'].selected
+
+    invalid = ld.Axis(ld.scalar('x'), edges=[-sys.float_info.max, sys.float_info.max])
+    with pytest.raises(ld.LadduError, match='invalid bin volume'):
+        result.projection_set({'valid': axis, 'invalid': invalid})
+
+
+def test_yield_projection_rejects_workspace_over_budget_and_stays_usable() -> None:
+    x = ld.scalar('x')
+    data = dataset([0.25, 1.25], [1.0, 1.0])
+    likelihood = ld.Likelihood(
+        [ld.NLL(ld.Model(x * 0.0 + 1.0), data=data, accepted_mc=data, name='signal')],
+        execution=ld.Execution('cpu', threads=1, memory=ld.MemoryPlan(host='128 KiB')),
+    )
+    result = likelihood.yield_context('signal', generated_mc=data, parameters=[])
+    requests: dict[str, ld.Axis | Sequence[ld.Axis]] = {
+        f'projection-{index}': ld.Axis(x, edges=[0.0, 1.0 + index * 1.0e-6, 2.0]) for index in range(1000)
+    }
+    with pytest.raises(ld.LadduError, match=r'memory|budget'):
+        result.projection_set(requests)
+    assert result.projection(ld.Axis(x, edges=[0.0, 2.0])).selected == [2.0]
 
 
 def test_yield_reports_closed_and_shape_only_contexts_explicitly() -> None:

@@ -240,6 +240,16 @@ impl DatasetBin {
 
 /// Expression-based query operations for datasets.
 pub trait DatasetExprExt {
+    /// Validates real scalar query expressions without reading dataset events.
+    ///
+    /// # Errors
+    /// Returns an error for empty, parameter-dependent, or non-real expressions,
+    /// or preparation failure.
+    fn validate_real_expressions(
+        &self,
+        expressions: &[Expr],
+        execution: &Execution,
+    ) -> RuntimeResult<()>;
     /// Evaluates a scalar expression for every event.
     ///
     /// # Errors
@@ -254,6 +264,20 @@ pub trait DatasetExprExt {
     /// Returns [`RuntimeError`] when compilation, dataset reading, or
     /// evaluation fails, or the expression is not real scalar-valued.
     fn evaluate_real(&self, expr: &Expr, execution: &Execution) -> RuntimeResult<Vec<f64>>;
+    /// Visits real scalar expression values in bounded event chunks.
+    /// The offset is the first event's global row number and expressions retain
+    /// their requested order within each callback.
+    ///
+    /// # Errors
+    /// Returns an error for zero chunk size, invalid expressions, dataset access,
+    /// evaluation, or a callback failure.
+    fn visit_real_chunks(
+        &self,
+        expressions: &[Expr],
+        execution: &Execution,
+        chunk_size: usize,
+        consume: impl FnMut(usize, &[Vec<f64>]) -> RuntimeResult<()>,
+    ) -> RuntimeResult<()>;
     /// Evaluates and fills one weighted histogram in a bounded dataset traversal.
     ///
     /// Dataset event weights are used when `event_weights` is true. When
@@ -308,6 +332,20 @@ pub trait DatasetExprExt {
 }
 
 impl DatasetExprExt for Dataset {
+    fn validate_real_expressions(
+        &self,
+        expressions: &[Expr],
+        execution: &Execution,
+    ) -> RuntimeResult<()> {
+        if expressions.is_empty() {
+            return Err(query_error(
+                "real expression validation needs at least one expression",
+            ));
+        }
+        QueryExprSet::prepare(expressions.to_vec(), execution, true)?;
+        Ok(())
+    }
+
     fn evaluate_expr(&self, expr: &Expr, execution: &Execution) -> RuntimeResult<Vec<Complex64>> {
         let query = QueryExprSet::prepare(vec![expr.clone()], execution, false)?;
         let mut output = Vec::new();
@@ -333,6 +371,36 @@ impl DatasetExprExt for Dataset {
             );
         }
         Ok(output)
+    }
+
+    fn visit_real_chunks(
+        &self,
+        expressions: &[Expr],
+        execution: &Execution,
+        chunk_size: usize,
+        mut consume: impl FnMut(usize, &[Vec<f64>]) -> RuntimeResult<()>,
+    ) -> RuntimeResult<()> {
+        if chunk_size == 0 || expressions.is_empty() {
+            return Err(query_error(
+                "real chunk evaluation needs expressions and positive chunk size",
+            ));
+        }
+        let query = QueryExprSet::prepare(expressions.to_vec(), execution, true)?;
+        let mut offset = 0;
+        for batch in self.batches().map_err(data_error)? {
+            let batch = batch.map_err(data_error)?;
+            for start in (0..batch.len()).step_by(chunk_size) {
+                let end = (start + chunk_size).min(batch.len());
+                let values = query
+                    .evaluate_batch(&batch.slice(start, end))?
+                    .into_iter()
+                    .map(|column| column.into_iter().map(|value| value.re).collect::<Vec<_>>())
+                    .collect::<Vec<_>>();
+                consume(offset, &values)?;
+                offset += end - start;
+            }
+        }
+        Ok(())
     }
 
     fn histogram(
