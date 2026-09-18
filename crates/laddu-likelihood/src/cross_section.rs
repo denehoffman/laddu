@@ -16,13 +16,24 @@ use laddu_runtime::flat_bin_index_for_event;
 use laddu_runtime::{BinningAxis, DatasetExprExt, Execution, FinalUpperEdge, checked_bin_count};
 use rayon::prelude::*;
 
-use crate::{CrossSectionIntegrals, Likelihood, LikelihoodError, LikelihoodResult, Yield};
+use crate::{
+    CrossSectionIntegrals, Likelihood, LikelihoodError, LikelihoodResult,
+    ReferenceCorrectionProvenance, Yield,
+};
 
 static NEXT_SOURCE_ID: AtomicU64 = AtomicU64::new(1);
+const GENERATED_SOURCE_NAMESPACE: u64 = 1 << 63;
 
 /// Returns a process-local identifier for an independent uncertainty source.
+/// Generated identifiers occupy the upper half of `u64`; caller-assigned IDs
+/// should use the lower half, except when deliberately reusing a returned ID.
 pub fn next_uncertainty_source_id() -> u64 {
-    NEXT_SOURCE_ID.fetch_add(1, Ordering::Relaxed)
+    let sequence = NEXT_SOURCE_ID.fetch_add(1, Ordering::Relaxed);
+    assert!(
+        sequence < GENERATED_SOURCE_NAMESPACE,
+        "uncertainty source IDs exhausted"
+    );
+    GENERATED_SOURCE_NAMESPACE | sequence
 }
 
 fn invalid(message: impl Into<String>) -> LikelihoodError {
@@ -302,6 +313,10 @@ impl Ensemble {
 }
 
 /// A central scalar estimate with optional uncertainty draws.
+///
+/// Use `checked_add`, `checked_sub`, `checked_mul`, and `checked_div` when
+/// combining independent results. Arithmetic operators panic on mismatched
+/// nonempty draw counts; checked methods return a recoverable error.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Estimate {
     central: f64,
@@ -310,6 +325,39 @@ pub struct Estimate {
 }
 
 impl Estimate {
+    /// Add with explicit draw-count validation.
+    pub fn checked_add(&self, other: &Self) -> LikelihoodResult<Self> {
+        self.checked_binary(other, |a, b| a + b)
+    }
+
+    /// Subtract with explicit draw-count validation.
+    pub fn checked_sub(&self, other: &Self) -> LikelihoodResult<Self> {
+        self.checked_binary(other, |a, b| a - b)
+    }
+
+    /// Multiply with explicit draw-count validation.
+    pub fn checked_mul(&self, other: &Self) -> LikelihoodResult<Self> {
+        self.checked_binary(other, |a, b| a * b)
+    }
+
+    /// Divide with explicit draw-count validation.
+    pub fn checked_div(&self, other: &Self) -> LikelihoodResult<Self> {
+        self.checked_binary(other, |a, b| a / b)
+    }
+
+    fn checked_binary(&self, other: &Self, op: impl Fn(f64, f64) -> f64) -> LikelihoodResult<Self> {
+        if !self.draws.is_empty()
+            && !other.draws.is_empty()
+            && self.draws.len() != other.draws.len()
+        {
+            return Err(invalid("estimate draw counts do not match"));
+        }
+        let result = self.binary(other, op);
+        if !result.central.is_finite() || result.draws.iter().any(|value| !value.is_finite()) {
+            return Err(invalid("estimate arithmetic produced a nonfinite value"));
+        }
+        Ok(result)
+    }
     /// Constructs a central-only estimate.
     ///
     /// # Errors
@@ -439,6 +487,12 @@ impl Estimate {
     }
 
     fn binary(&self, other: &Self, op: impl Fn(f64, f64) -> f64) -> Self {
+        assert!(
+            self.draws.is_empty()
+                || other.draws.is_empty()
+                || self.draws.len() == other.draws.len(),
+            "estimate draw counts do not match; use checked arithmetic for a recoverable error"
+        );
         let count = match (self.draws.len(), other.draws.len()) {
             (0, 0) => 0,
             (0, right) => right,
@@ -448,11 +502,10 @@ impl Estimate {
         let draws = (0..count)
             .map(|index| {
                 let left = self.draws.get(index).copied().unwrap_or(self.central);
-                let right_index = if self.source_id == other.source_id {
+                let right_index = if self.source_id.is_some() && self.source_id == other.source_id {
                     index
                 } else {
-                    (index.wrapping_mul(6364136223846793005usize).wrapping_add(1))
-                        % other.draws.len().max(1)
+                    (index + 1) % other.draws.len().max(1)
                 };
                 let right = other
                     .draws
@@ -465,7 +518,9 @@ impl Estimate {
         let source_id = match (self.draws.is_empty(), other.draws.is_empty()) {
             (false, true) => self.source_id,
             (true, false) => other.source_id,
-            (false, false) if self.source_id == other.source_id => self.source_id,
+            (false, false) if self.source_id.is_some() && self.source_id == other.source_id => {
+                self.source_id
+            }
             (false, false) => Some(next_uncertainty_source_id()),
             (true, true) => None,
         };
@@ -550,11 +605,162 @@ impl Axis {
 pub struct BinnedEstimate {
     central: Vec<f64>,
     draws: Vec<Vec<f64>>,
+    source_id: Option<u64>,
+    source_ids: Vec<u64>,
+    axes: Option<Vec<Vec<f64>>>,
+    unit: BinnedEstimateUnit,
+}
+
+/// Physical interpretation of binned values.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum BinnedEstimateUnit {
+    /// Dimensionless ratio or factor.
+    Unitless,
+    /// Weighted event yield.
+    Yield,
+    /// Cross section normalized by exposure.
+    CrossSection,
 }
 
 impl BinnedEstimate {
-    fn new(central: Vec<f64>, draws: Vec<Vec<f64>>) -> Self {
-        Self { central, draws }
+    fn projected(
+        central: Vec<f64>,
+        draws: Vec<Vec<f64>>,
+        source_id: Option<u64>,
+        axes: Vec<Vec<f64>>,
+        unit: BinnedEstimateUnit,
+    ) -> Self {
+        Self {
+            central,
+            draws,
+            source_id,
+            source_ids: source_id.into_iter().collect(),
+            axes: Some(axes),
+            unit,
+        }
+    }
+
+    fn with_sources(mut self, source_ids: Vec<u64>) -> Self {
+        self.source_ids = source_ids;
+        self
+    }
+
+    /// Physical interpretation of these values.
+    pub fn unit(&self) -> BinnedEstimateUnit {
+        self.unit
+    }
+
+    /// Correlation source for the ensemble draws, if any.
+    pub fn source_id(&self) -> Option<u64> {
+        self.source_id
+    }
+
+    /// Original uncertainty source IDs contributing to these draws.
+    pub fn source_ids(&self) -> &[u64] {
+        &self.source_ids
+    }
+
+    /// Ordered axes, when this estimate came from a yield projection.
+    pub fn axes(&self) -> Option<&[Vec<f64>]> {
+        self.axes.as_deref()
+    }
+
+    /// Add another estimate with compatible geometry and uncertainty draws.
+    pub fn checked_add(&self, other: &Self) -> LikelihoodResult<Self> {
+        self.checked_binary(other, self.same_unit(other)?, |left, right| left + right)
+    }
+
+    /// Subtract another estimate with compatible geometry and uncertainty draws.
+    pub fn checked_sub(&self, other: &Self) -> LikelihoodResult<Self> {
+        self.checked_binary(other, self.same_unit(other)?, |left, right| left - right)
+    }
+
+    /// Multiply by another estimate with compatible geometry and uncertainty draws.
+    pub fn checked_mul(&self, other: &Self) -> LikelihoodResult<Self> {
+        let unit = match (self.unit, other.unit) {
+            (BinnedEstimateUnit::Unitless, unit) | (unit, BinnedEstimateUnit::Unitless) => unit,
+            _ => return Err(invalid("multiplication requires a dimensionless operand")),
+        };
+        self.checked_binary(other, unit, |left, right| left * right)
+    }
+
+    /// Divide by another estimate with compatible geometry and uncertainty draws.
+    pub fn checked_div(&self, other: &Self) -> LikelihoodResult<Self> {
+        let unit = if self.unit == other.unit {
+            BinnedEstimateUnit::Unitless
+        } else if other.unit == BinnedEstimateUnit::Unitless {
+            self.unit
+        } else {
+            return Err(invalid("binned estimate division has incompatible units"));
+        };
+        self.checked_binary(other, unit, |left, right| left / right)
+    }
+
+    fn same_unit(&self, other: &Self) -> LikelihoodResult<BinnedEstimateUnit> {
+        if self.unit != other.unit {
+            return Err(invalid("binned estimate units do not match"));
+        }
+        Ok(self.unit)
+    }
+
+    fn checked_binary(
+        &self,
+        other: &Self,
+        unit: BinnedEstimateUnit,
+        op: impl Fn(f64, f64) -> f64,
+    ) -> LikelihoodResult<Self> {
+        if self.central.len() != other.central.len() || self.axes != other.axes {
+            return Err(invalid("binned estimate geometry does not match"));
+        }
+        if !self.draws.is_empty()
+            && !other.draws.is_empty()
+            && self.draws.len() != other.draws.len()
+        {
+            return Err(invalid("binned estimate draw counts do not match"));
+        }
+        let count = self.draws.len().max(other.draws.len());
+        let draws = (0..count)
+            .map(|index| {
+                let left = self.draws.get(index).unwrap_or(&self.central);
+                let right_index = if self.source_id.is_some() && self.source_id == other.source_id {
+                    index
+                } else {
+                    (index + 1) % other.draws.len().max(1)
+                };
+                let right = other.draws.get(right_index).unwrap_or(&other.central);
+                left.iter().zip(right).map(|(&a, &b)| op(a, b)).collect()
+            })
+            .collect();
+        let source_id = match (self.draws.is_empty(), other.draws.is_empty()) {
+            (true, true) => None,
+            (false, true) => self.source_id,
+            (true, false) => other.source_id,
+            (false, false) if self.source_id.is_some() && self.source_id == other.source_id => {
+                self.source_id
+            }
+            (false, false) => Some(next_uncertainty_source_id()),
+        };
+        Ok(Self {
+            central: self
+                .central
+                .iter()
+                .zip(&other.central)
+                .map(|(&a, &b)| op(a, b))
+                .collect(),
+            draws,
+            source_id,
+            source_ids: {
+                let mut sources = self.source_ids.clone();
+                for source in &other.source_ids {
+                    if !sources.contains(source) {
+                        sources.push(*source);
+                    }
+                }
+                sources
+            },
+            axes: self.axes.clone(),
+            unit,
+        })
     }
 
     /// Central flattened bin values.
@@ -809,7 +1015,7 @@ impl YieldHistogramView {
     }
 }
 
-/// Coherent central selected and fitted yields over one joint set of axes.
+/// Coherent selected and fitted yields with paired ensemble draws over joint axes.
 #[derive(Clone, Debug)]
 pub struct YieldProjection {
     axes: Vec<Vec<f64>>,
@@ -823,6 +1029,13 @@ pub struct YieldProjection {
     diagnostics: YieldProjectionDiagnostics,
     has_absolute_rate: bool,
     components: HashMap<String, ComponentYieldProjection>,
+    source_id: Option<u64>,
+    has_replica_datasets: bool,
+    selected_draws: Vec<Vec<f64>>,
+    accepted_draws: Vec<Vec<f64>>,
+    generated_draws: Vec<Vec<f64>>,
+    acceptance_draws: Vec<Vec<f64>>,
+    corrected_draws: Vec<Vec<f64>>,
 }
 
 /// Model-only coherent fitted yields for a named tag selection. Interfering
@@ -835,9 +1048,32 @@ pub struct ComponentYieldProjection {
     accepted: Vec<f64>,
     generated: Vec<f64>,
     validity: Vec<YieldBinValidity>,
+    accepted_draws: Vec<Vec<f64>>,
+    generated_draws: Vec<Vec<f64>>,
+    source_id: Option<u64>,
 }
 
 impl ComponentYieldProjection {
+    /// Accepted-space fitted yield with paired draws.
+    pub fn accepted_estimate(&self) -> BinnedEstimate {
+        BinnedEstimate::projected(
+            self.accepted.clone(),
+            self.accepted_draws.clone(),
+            self.source_id,
+            self.axes.clone(),
+            BinnedEstimateUnit::Yield,
+        )
+    }
+    /// Generated-space fitted yield with paired draws.
+    pub fn generated_estimate(&self) -> BinnedEstimate {
+        BinnedEstimate::projected(
+            self.generated.clone(),
+            self.generated_draws.clone(),
+            self.source_id,
+            self.axes.clone(),
+            BinnedEstimateUnit::Yield,
+        )
+    }
     /// Canonical sorted tags defining this coherent model selection.
     pub fn tags(&self) -> &[String] {
         &self.tags
@@ -857,6 +1093,14 @@ impl ComponentYieldProjection {
     /// Generated-space fitted model yield.
     pub fn generated(&self) -> &[f64] {
         &self.generated
+    }
+    /// Accepted-space values in paired ensemble draw order.
+    pub fn accepted_draws(&self) -> &[Vec<f64>] {
+        &self.accepted_draws
+    }
+    /// Generated-space values in paired ensemble draw order.
+    pub fn generated_draws(&self) -> &[Vec<f64>] {
+        &self.generated_draws
     }
     /// Per-bin model support validity.
     pub fn validity(&self) -> &[YieldBinValidity] {
@@ -881,6 +1125,84 @@ impl ComponentYieldProjection {
 }
 
 impl YieldProjection {
+    /// Selected-data yield with paired draws.
+    pub fn selected_estimate(&self) -> BinnedEstimate {
+        BinnedEstimate::projected(
+            self.selected.clone(),
+            self.selected_draws.clone(),
+            self.source_id,
+            self.axes.clone(),
+            BinnedEstimateUnit::Yield,
+        )
+    }
+    /// Accepted-space fitted yield with paired draws.
+    pub fn accepted_estimate(&self) -> BinnedEstimate {
+        BinnedEstimate::projected(
+            self.accepted.clone(),
+            self.accepted_draws.clone(),
+            self.source_id,
+            self.axes.clone(),
+            BinnedEstimateUnit::Yield,
+        )
+    }
+    /// Generated-space fitted yield with paired draws.
+    pub fn generated_estimate(&self) -> BinnedEstimate {
+        BinnedEstimate::projected(
+            self.generated.clone(),
+            self.generated_draws.clone(),
+            self.source_id,
+            self.axes.clone(),
+            BinnedEstimateUnit::Yield,
+        )
+    }
+    /// Fitted acceptance with paired draws.
+    pub fn acceptance_estimate(&self) -> BinnedEstimate {
+        BinnedEstimate::projected(
+            self.acceptance.clone(),
+            self.acceptance_draws.clone(),
+            self.source_id,
+            self.axes.clone(),
+            BinnedEstimateUnit::Unitless,
+        )
+    }
+    /// Corrected selected yield with paired draws.
+    pub fn corrected_estimate(&self) -> BinnedEstimate {
+        BinnedEstimate::projected(
+            self.corrected.clone(),
+            self.corrected_draws.clone(),
+            self.source_id,
+            self.axes.clone(),
+            BinnedEstimateUnit::Yield,
+        )
+    }
+    /// Ensemble source shared by every draw constituent, if present.
+    pub fn source_id(&self) -> Option<u64> {
+        self.source_id
+    }
+    /// Whether each parameter draw has a matching resampled likelihood dataset.
+    pub fn has_replica_datasets(&self) -> bool {
+        self.has_replica_datasets
+    }
+    /// Selected-data values in paired ensemble draw order.
+    pub fn selected_draws(&self) -> &[Vec<f64>] {
+        &self.selected_draws
+    }
+    /// Accepted-model values in paired ensemble draw order.
+    pub fn accepted_draws(&self) -> &[Vec<f64>] {
+        &self.accepted_draws
+    }
+    /// Generated-model values in paired ensemble draw order.
+    pub fn generated_draws(&self) -> &[Vec<f64>] {
+        &self.generated_draws
+    }
+    /// Fitted acceptance in paired ensemble draw order.
+    pub fn acceptance_draws(&self) -> &[Vec<f64>] {
+        &self.acceptance_draws
+    }
+    /// Corrected selected values in paired ensemble draw order.
+    pub fn corrected_draws(&self) -> &[Vec<f64>] {
+        &self.corrected_draws
+    }
     /// Ordered bin edges.
     pub fn axes(&self) -> &[Vec<f64>] {
         &self.axes
@@ -957,6 +1279,34 @@ pub struct YieldProjectionSet {
     entries: Vec<(String, YieldProjection)>,
 }
 
+/// Binned observed yield corrected by an explicitly supplied reference model.
+#[derive(Clone, Debug)]
+pub struct ReferenceCorrectedYieldProjection {
+    value: BinnedEstimate,
+    acceptance: BinnedEstimate,
+    provenance: ReferenceCorrectionProvenance,
+    validity: Vec<YieldBinValidity>,
+}
+
+impl ReferenceCorrectedYieldProjection {
+    /// Corrected observed yield with paired draws.
+    pub fn value(&self) -> &BinnedEstimate {
+        &self.value
+    }
+    /// Reference-model acceptance with paired draws.
+    pub fn acceptance(&self) -> &BinnedEstimate {
+        &self.acceptance
+    }
+    /// Identity of the selected and reference sources.
+    pub fn provenance(&self) -> &ReferenceCorrectionProvenance {
+        &self.provenance
+    }
+    /// Per-bin reference support and selected-data validity.
+    pub fn validity(&self) -> &[YieldBinValidity] {
+        &self.validity
+    }
+}
+
 impl YieldProjectionSet {
     /// Number of projections.
     pub fn len(&self) -> usize {
@@ -981,6 +1331,57 @@ impl YieldProjectionSet {
 }
 
 impl Yield {
+    /// Correct a binned selected yield using an explicit reference acceptance.
+    /// The selected and reference ensembles are paired by source ID and draw
+    /// count, with central-only quantities broadcast across the other draws.
+    pub fn reference_corrected_projection(
+        &self,
+        axes: &[Axis],
+        reference_likelihood: Arc<Likelihood>,
+        reference_term_name: impl Into<String>,
+        reference_generated_mc: Dataset,
+        reference_parameters: Vec<f64>,
+        reference_ensemble: Option<Ensemble>,
+    ) -> LikelihoodResult<ReferenceCorrectedYieldProjection> {
+        let reference_term_name = reference_term_name.into();
+        let scalar = self.reference_corrected(
+            reference_likelihood.clone(),
+            reference_term_name.clone(),
+            reference_generated_mc.clone(),
+            reference_parameters.clone(),
+            reference_ensemble.clone(),
+        )?;
+        let reference = Yield::with_ensemble(
+            reference_likelihood,
+            reference_term_name,
+            reference_generated_mc,
+            reference_parameters,
+            reference_ensemble,
+        )?;
+        let selected = self.projection(axes)?;
+        let reference = reference.projection(axes)?;
+        let acceptance = reference.acceptance_estimate();
+        let value = selected.selected_estimate().checked_div(&acceptance)?;
+        let validity = selected
+            .selected()
+            .iter()
+            .zip(reference.validity())
+            .map(|(selected, &reference)| {
+                if !selected.is_finite() {
+                    YieldBinValidity::NonFiniteEvaluation
+                } else {
+                    reference
+                }
+            })
+            .collect();
+        Ok(ReferenceCorrectedYieldProjection {
+            value,
+            acceptance,
+            provenance: scalar.provenance().clone(),
+            validity,
+        })
+    }
+
     /// Evaluate one central joint yield projection on demand.
     ///
     /// # Errors
@@ -1387,7 +1788,7 @@ impl Yield {
                 }
             }
         }
-        let unique_results = plans
+        let mut unique_results = plans
             .iter()
             .enumerate()
             .map(|(plan_index, plan)| {
@@ -1457,6 +1858,13 @@ impl Yield {
                         generated_out_of_range: plan.generated_bins.out_of_range_count,
                     },
                     has_absolute_rate: self.has_absolute_rate(),
+                    source_id: None,
+                    has_replica_datasets: false,
+                    selected_draws: Vec::new(),
+                    accepted_draws: Vec::new(),
+                    generated_draws: Vec::new(),
+                    acceptance_draws: Vec::new(),
+                    corrected_draws: Vec::new(),
                     components: component_aliases
                         .iter()
                         .map(|(name, tags)| {
@@ -1495,6 +1903,9 @@ impl Yield {
                                     accepted,
                                     generated,
                                     validity,
+                                    accepted_draws: Vec::new(),
+                                    generated_draws: Vec::new(),
+                                    source_id: None,
                                 },
                             )
                         })
@@ -1502,6 +1913,45 @@ impl Yield {
                 }
             })
             .collect::<Vec<_>>();
+        if let Some(ensemble) = self.ensemble() {
+            let draw_requests = unique
+                .iter()
+                .map(|request| (*request).clone())
+                .collect::<Vec<_>>();
+            for (draw_index, parameters) in ensemble.draws().iter().enumerate() {
+                let likelihood = ensemble
+                    .replicas()
+                    .get(draw_index)
+                    .cloned()
+                    .unwrap_or_else(|| self.likelihood().clone());
+                let draw_context = Yield::with_ensemble(
+                    likelihood,
+                    self.term_name(),
+                    self.generated_mc().clone(),
+                    parameters.clone(),
+                    None,
+                )?;
+                let draw_results =
+                    draw_context.projection_set_with_components(&draw_requests, components)?;
+                for (result, (_, draw)) in unique_results.iter_mut().zip(draw_results.entries) {
+                    result.source_id = Some(ensemble.source_id());
+                    result.has_replica_datasets = !ensemble.replicas().is_empty();
+                    result.selected_draws.push(draw.selected);
+                    result.accepted_draws.push(draw.accepted);
+                    result.generated_draws.push(draw.generated);
+                    result.acceptance_draws.push(draw.acceptance);
+                    result.corrected_draws.push(draw.corrected);
+                    for (name, draw_component) in draw.components {
+                        let component = result.components.get_mut(&name).ok_or_else(|| {
+                            invalid(format!("missing component `{name}` in paired draw"))
+                        })?;
+                        component.accepted_draws.push(draw_component.accepted);
+                        component.generated_draws.push(draw_component.generated);
+                        component.source_id = Some(ensemble.source_id());
+                    }
+                }
+            }
+        }
         Ok(YieldProjectionSet {
             entries: projections
                 .iter()
@@ -1689,6 +2139,8 @@ pub struct CrossSection {
     parameters: Vec<f64>,
     ensemble: Option<Ensemble>,
     members: Option<Arc<Vec<(CrossSection, Estimate)>>>,
+    combined_source_id: Option<u64>,
+    combined_sources: Vec<u64>,
     integral_cache: IntegralCache,
     cache_hits: Arc<AtomicU64>,
     cache_misses: Arc<AtomicU64>,
@@ -2463,6 +2915,8 @@ impl CrossSection {
             parameters,
             ensemble,
             members: None,
+            combined_source_id: None,
+            combined_sources: Vec::new(),
             integral_cache: Arc::new(Mutex::new(integral_cache)),
             cache_hits: Default::default(),
             cache_misses: Arc::new(AtomicU64::new(1)),
@@ -2496,6 +2950,12 @@ impl CrossSection {
         if members.is_empty() {
             return Err(invalid("at least one CrossSection is required"));
         }
+        if members
+            .iter()
+            .any(|member| member.members.is_some() && member.combined_source_id.is_some())
+        {
+            return Err(invalid("nested combinations with draws are unsupported"));
+        }
         if factors.len() != members.len()
             || factors.iter().any(|factor| {
                 factor.central <= 0.0 || factor.draws.iter().any(|value| *value <= 0.0)
@@ -2504,6 +2964,39 @@ impl CrossSection {
             return Err(invalid(
                 "factors must contain one positive estimate per member",
             ));
+        }
+        let draw_counts = members
+            .iter()
+            .filter_map(|member| member.ensemble.as_ref().map(Ensemble::len))
+            .chain(
+                factors
+                    .iter()
+                    .filter_map(|factor| (!factor.draws.is_empty()).then_some(factor.draws.len())),
+            )
+            .collect::<Vec<_>>();
+        let draw_count = consistent_draw_count(&draw_counts)?;
+        let mut combined_sources = Vec::new();
+        for member in &members {
+            if let Some(ensemble) = &member.ensemble {
+                if !combined_sources.contains(&ensemble.source_id()) {
+                    combined_sources.push(ensemble.source_id());
+                }
+            }
+            for source in &member.combined_sources {
+                if !combined_sources.contains(source) {
+                    combined_sources.push(*source);
+                }
+            }
+        }
+        for factor in &factors {
+            if let Some(source) = (!factor.draws().is_empty())
+                .then(|| factor.source_id())
+                .flatten()
+            {
+                if !combined_sources.contains(&source) {
+                    combined_sources.push(source);
+                }
+            }
         }
         let template = members[0].clone();
         Ok(Self {
@@ -2515,6 +3008,8 @@ impl CrossSection {
             parameters: template.parameters,
             ensemble: None,
             members: Some(Arc::new(members.into_iter().zip(factors).collect())),
+            combined_source_id: (draw_count > 0).then(next_uncertainty_source_id),
+            combined_sources,
             integral_cache: template.integral_cache,
             cache_hits: template.cache_hits,
             cache_misses: template.cache_misses,
@@ -3148,7 +3643,7 @@ impl CrossSection {
             .as_ref()
             .ok_or_else(|| invalid("CrossSection is not combined"))?;
         let central = self.combined_central_measurement(tags)?;
-        let draw_count = member_draw_count(members);
+        let draw_count = member_draw_count(members)?;
         let reference_source = member_reference_source(members);
         let mut draws = Vec::with_capacity(draw_count);
         for index in 0..draw_count {
@@ -3512,16 +4007,38 @@ impl CrossSection {
                         component_draws.entry(name).or_default().push(values);
                     }
                 }
+                let source_id = self.ensemble.as_ref().map(Ensemble::source_id);
                 Ok(DifferentialCrossSection {
                     axes: plan.axes.clone(),
                     shape: plan.shape.clone(),
-                    data: BinnedEstimate::new(data_cross_section, data_draws),
-                    model: BinnedEstimate::new(model, model_draws),
+                    data: BinnedEstimate::projected(
+                        data_cross_section,
+                        data_draws,
+                        source_id,
+                        plan.axes.clone(),
+                        BinnedEstimateUnit::CrossSection,
+                    ),
+                    model: BinnedEstimate::projected(
+                        model,
+                        model_draws,
+                        source_id,
+                        plan.axes.clone(),
+                        BinnedEstimateUnit::CrossSection,
+                    ),
                     components: component_values
                         .into_iter()
                         .map(|(name, central)| {
                             let draws = component_draws.remove(&name).unwrap_or_default();
-                            (name, BinnedEstimate::new(central, draws))
+                            (
+                                name,
+                                BinnedEstimate::projected(
+                                    central,
+                                    draws,
+                                    source_id,
+                                    plan.axes.clone(),
+                                    BinnedEstimateUnit::CrossSection,
+                                ),
+                            )
                         })
                         .collect(),
                 })
@@ -3563,7 +4080,7 @@ impl CrossSection {
                     })
             })
             .collect::<LikelihoodResult<Vec<_>>>()?;
-        let draw_count = member_draw_count(members);
+        let draw_count = member_draw_count(members)?;
         let reference_source = member_reference_source(members);
         let member_values = members
             .iter()
@@ -3635,20 +4152,45 @@ impl CrossSection {
                         ));
                     }
                 }
+                let axes: Vec<Vec<f64>> = projection
+                    .axes()
+                    .iter()
+                    .map(|axis| axis.binning.edges().to_vec())
+                    .collect();
                 DifferentialCrossSection {
-                    axes: projection
-                        .axes()
-                        .iter()
-                        .map(|axis| axis.binning.edges().to_vec())
-                        .collect(),
+                    axes: axes.clone(),
                     shape: projection.axes().iter().map(Axis::bins).collect(),
-                    data: BinnedEstimate::new(data, data_draws),
-                    model: BinnedEstimate::new(model, model_draws),
+                    data: BinnedEstimate::projected(
+                        data,
+                        data_draws,
+                        self.combined_source_id,
+                        axes.clone(),
+                        BinnedEstimateUnit::CrossSection,
+                    )
+                    .with_sources(self.combined_sources.clone()),
+                    model: BinnedEstimate::projected(
+                        model,
+                        model_draws,
+                        self.combined_source_id,
+                        axes.clone(),
+                        BinnedEstimateUnit::CrossSection,
+                    )
+                    .with_sources(self.combined_sources.clone()),
                     components: component_central
                         .into_iter()
                         .map(|(name, central)| {
                             let draws = component_draws.remove(&name).unwrap_or_default();
-                            (name, BinnedEstimate::new(central, draws))
+                            (
+                                name,
+                                BinnedEstimate::projected(
+                                    central,
+                                    draws,
+                                    self.combined_source_id,
+                                    axes.clone(),
+                                    BinnedEstimateUnit::CrossSection,
+                                )
+                                .with_sources(self.combined_sources.clone()),
+                            )
                         })
                         .collect(),
                 }
@@ -3708,8 +4250,8 @@ impl Likelihood {
     }
 }
 
-fn member_draw_count(members: &[(CrossSection, Estimate)]) -> usize {
-    members
+fn member_draw_count(members: &[(CrossSection, Estimate)]) -> LikelihoodResult<usize> {
+    let counts = members
         .iter()
         .flat_map(|(member, factor)| {
             [
@@ -3718,8 +4260,15 @@ fn member_draw_count(members: &[(CrossSection, Estimate)]) -> usize {
             ]
         })
         .flatten()
-        .min()
-        .unwrap_or(0)
+        .collect::<Vec<_>>();
+    consistent_draw_count(&counts)
+}
+
+fn consistent_draw_count(counts: &[usize]) -> LikelihoodResult<usize> {
+    if counts.windows(2).any(|pair| pair[0] != pair[1]) {
+        return Err(invalid("combined cross-section draw counts do not match"));
+    }
+    Ok(counts.first().copied().unwrap_or(0))
 }
 
 fn member_reference_source(members: &[(CrossSection, Estimate)]) -> Option<u64> {
@@ -3739,10 +4288,10 @@ fn paired_draw_index(
     source_id: Option<u64>,
     reference_source: Option<u64>,
 ) -> usize {
-    if source_id == reference_source {
+    if source_id.is_some() && source_id == reference_source {
         index % draw_count
     } else {
-        (index.wrapping_mul(2 * position + 1) + position) % draw_count
+        (index + position) % draw_count
     }
 }
 
@@ -4637,6 +5186,52 @@ mod tests {
     }
 
     #[test]
+    fn combined_cross_section_rejects_mismatched_draw_counts() {
+        let fixture = canonical_selection_fixture();
+        let ensemble = Ensemble::new(
+            vec!["a".into(), "b".into()],
+            vec![vec![1.6, 0.7], vec![1.4, 0.8]],
+        )
+        .unwrap();
+        let member = fixture
+            .likelihood
+            .cross_section_with_ensemble(
+                "signal",
+                fixture.generated,
+                10.0,
+                fixture.likelihood.default_params(),
+                ensemble,
+            )
+            .unwrap();
+        let factor = Estimate::new(1.0, vec![1.1]).unwrap();
+        let error = CrossSection::combine_with_factors(vec![member], vec![factor]).unwrap_err();
+        assert!(error.to_string().contains("draw counts do not match"));
+    }
+
+    #[test]
+    fn nested_combination_is_rejected_before_dropping_draws() {
+        let fixture = canonical_selection_fixture();
+        let ensemble = Ensemble::new(
+            vec!["a".into(), "b".into()],
+            vec![vec![1.6, 0.7], vec![1.4, 0.8]],
+        )
+        .unwrap();
+        let member = fixture
+            .likelihood
+            .cross_section_with_ensemble(
+                "signal",
+                fixture.generated,
+                10.0,
+                fixture.likelihood.default_params(),
+                ensemble,
+            )
+            .unwrap();
+        let flat = CrossSection::combine(vec![member]).unwrap();
+        let error = CrossSection::combine(vec![flat]).unwrap_err();
+        assert!(error.to_string().contains("nested combinations with draws"));
+    }
+
+    #[test]
     fn absolute_rate_total_set_matches_separate_normalized_totals() {
         let (likelihood, generated, ensemble) = bootstrap_tagged_scalar_fixture(3);
         let cross_section = likelihood
@@ -4981,6 +5576,190 @@ mod tests {
         assert_relative_eq!(all.generated()[0], 1.5);
         assert_relative_eq!(all.acceptance()[0], 2.0 / 3.0);
         assert_relative_eq!(all.corrected()[0], 4.5);
+    }
+
+    #[test]
+    fn yield_projection_draws_match_independent_parameter_evaluations() {
+        let x = event_scalar("x");
+        let model =
+            CompiledModel::from_expr(&(x.clone() * parameter!("scale", initial: 1.0))).unwrap();
+        let data = weighted_dataset(&[(1.0, 2.0)]);
+        let accepted = weighted_dataset(&[(1.0, 1.0)]);
+        let generated = weighted_dataset(&[(1.0, 1.0)]);
+        let likelihood = Arc::new(
+            Likelihood::new([
+                crate::ExtendedNllTerm::new("signal", &model, &data, &accepted).unwrap(),
+            ])
+            .unwrap(),
+        );
+        let ensemble =
+            Ensemble::with_source_id(vec!["scale".to_owned()], vec![vec![2.0], vec![3.0]], 42)
+                .unwrap();
+        let context = Yield::with_ensemble(
+            likelihood.clone(),
+            "signal",
+            generated.clone(),
+            vec![1.0],
+            Some(ensemble),
+        )
+        .unwrap();
+        let axes = [Axis::new(x, vec![0.0, 2.0]).unwrap()];
+        let projected = context.projection(&axes).unwrap();
+        assert_eq!(projected.source_id(), Some(42));
+        assert!(!projected.has_replica_datasets());
+        for (index, parameter) in [2.0, 3.0].into_iter().enumerate() {
+            let expected = Yield::with_ensemble(
+                likelihood.clone(),
+                "signal",
+                generated.clone(),
+                vec![parameter],
+                None,
+            )
+            .unwrap()
+            .projection(&axes)
+            .unwrap();
+            assert_eq!(projected.selected_draws()[index], expected.selected());
+            assert_eq!(projected.accepted_draws()[index], expected.accepted());
+            assert_eq!(projected.generated_draws()[index], expected.generated());
+            assert_eq!(projected.acceptance_draws()[index], expected.acceptance());
+            assert_eq!(projected.corrected_draws()[index], expected.corrected());
+        }
+        assert_eq!(projected.corrected_estimate().source_id(), Some(42));
+    }
+
+    #[test]
+    fn yield_projection_uses_paired_replica_rows_and_weights() {
+        let x = event_scalar("x");
+        let model =
+            CompiledModel::from_expr(&(x.clone() * parameter!("scale", initial: 1.0))).unwrap();
+        let accepted = weighted_dataset(&[(1.0, 1.0), (3.0, 1.0)]);
+        let generated = accepted.clone();
+        let central = Arc::new(
+            Likelihood::new([crate::ExtendedNllTerm::new(
+                "signal",
+                &model,
+                &weighted_dataset(&[(1.0, 1.0)]),
+                &accepted,
+            )
+            .unwrap()])
+            .unwrap(),
+        );
+        let replica = Arc::new(
+            Likelihood::new([crate::ExtendedNllTerm::new(
+                "signal",
+                &model,
+                &weighted_dataset(&[(3.0, 2.0)]),
+                &accepted,
+            )
+            .unwrap()])
+            .unwrap(),
+        );
+        let ensemble =
+            Ensemble::with_replicas(vec!["scale".to_owned()], vec![vec![2.0]], vec![replica])
+                .unwrap();
+        let context =
+            Yield::with_ensemble(central, "signal", generated, vec![1.0], Some(ensemble)).unwrap();
+        let projection = context
+            .projection(&[Axis::new(x, vec![0.0, 2.0, 4.0]).unwrap()])
+            .unwrap();
+        assert!(projection.has_replica_datasets());
+        assert_eq!(projection.selected(), &[1.0, 0.0]);
+        assert_eq!(projection.selected_draws(), &[vec![0.0, 2.0]]);
+    }
+
+    #[test]
+    fn projected_estimate_arithmetic_pairs_sources_and_rejects_mismatched_axes() {
+        let x = event_scalar("x");
+        let model =
+            CompiledModel::from_expr(&(x.clone() * parameter!("scale", initial: 1.0))).unwrap();
+        let data = weighted_dataset(&[(1.0, 1.0)]);
+        let likelihood = Arc::new(
+            Likelihood::new([crate::ExtendedNllTerm::new("signal", &model, &data, &data).unwrap()])
+                .unwrap(),
+        );
+        let axes = [Axis::new(x, vec![0.0, 2.0]).unwrap()];
+        let make = |source_id| {
+            Yield::with_ensemble(
+                likelihood.clone(),
+                "signal",
+                data.clone(),
+                vec![1.0],
+                Some(
+                    Ensemble::with_source_id(
+                        vec!["scale".to_owned()],
+                        vec![vec![2.0], vec![3.0]],
+                        source_id,
+                    )
+                    .unwrap(),
+                ),
+            )
+            .unwrap()
+            .projection(&axes)
+            .unwrap()
+        };
+        let first = make(41);
+        let same = make(41);
+        let paired = first
+            .accepted_estimate()
+            .checked_add(&same.generated_estimate())
+            .unwrap();
+        assert_eq!(paired.source_id(), Some(41));
+        assert_eq!(
+            paired.draws()[0][0],
+            first.accepted_draws()[0][0] + same.generated_draws()[0][0]
+        );
+        let distinct = make(42);
+        let unpaired = first
+            .accepted_estimate()
+            .checked_add(&distinct.generated_estimate())
+            .unwrap();
+        assert_ne!(unpaired.source_id(), Some(41));
+        assert_ne!(unpaired.source_id(), Some(42));
+        let short = Yield::with_ensemble(
+            likelihood.clone(),
+            "signal",
+            data.clone(),
+            vec![1.0],
+            Some(Ensemble::with_source_id(vec!["scale".to_owned()], vec![vec![2.0]], 41).unwrap()),
+        )
+        .unwrap()
+        .projection(&axes)
+        .unwrap();
+        assert!(
+            first
+                .accepted_estimate()
+                .checked_add(&short.accepted_estimate())
+                .is_err()
+        );
+        let other_axes = Yield::with_ensemble(likelihood, "signal", data, vec![1.0], None)
+            .unwrap()
+            .projection(&[Axis::new(event_scalar("x"), vec![0.0, 1.0, 2.0]).unwrap()])
+            .unwrap();
+        assert!(
+            first
+                .selected_estimate()
+                .checked_add(&other_axes.selected_estimate())
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn scalar_checked_arithmetic_rejects_mismatched_draw_counts() {
+        let left = Estimate::with_source_id(1.0, vec![2.0, 3.0], Some(7)).unwrap();
+        let right = Estimate::with_source_id(2.0, vec![4.0], Some(7)).unwrap();
+        assert!(left.checked_add(&right).is_err());
+        let central = Estimate::central(2.0).unwrap();
+        let broadcast = left.checked_mul(&central).unwrap();
+        assert_eq!(broadcast.draws(), &[4.0, 6.0]);
+        assert_eq!(broadcast.source_id(), Some(7));
+    }
+
+    #[test]
+    #[should_panic(expected = "estimate draw counts do not match")]
+    fn scalar_operator_never_truncates_mismatched_draws() {
+        let left = Estimate::new(1.0, vec![1.0, 2.0]).unwrap();
+        let right = Estimate::new(1.0, vec![1.0]).unwrap();
+        let _ = &left + &right;
     }
 
     #[test]
@@ -5791,6 +6570,22 @@ mod tests {
             .unwrap()
             .differential(std::slice::from_ref(&axis), &components)
             .unwrap();
+        assert!(propagated.data().source_id().is_some());
+        assert_eq!(propagated.data().source_ids(), &[ensemble.source_id()]);
+        assert_eq!(
+            propagated.data().source_id(),
+            propagated.model().source_id()
+        );
+        let paired_sum = propagated.data().checked_add(propagated.model()).unwrap();
+        assert_eq!(paired_sum.source_id(), propagated.data().source_id());
+        for index in 0..ensemble.len() {
+            for bin in 0..paired_sum.values().len() {
+                assert_relative_eq!(
+                    paired_sum.draws()[index][bin],
+                    propagated.data().draws()[index][bin] + propagated.model().draws()[index][bin]
+                );
+            }
+        }
 
         for (index, (replica, parameters)) in
             ensemble.replicas().iter().zip(ensemble.draws()).enumerate()

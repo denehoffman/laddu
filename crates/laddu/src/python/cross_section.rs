@@ -3,10 +3,11 @@
 use std::collections::HashMap;
 
 use laddu_likelihood::{
-    Axis, BinnedEstimate, ComponentYieldProjection, CrossSection, DifferentialCrossSection,
-    Ensemble, Estimate, IntegralRetentionPolicy, Projection, RateClosure, RateClosureStatus,
-    ReferenceCorrectedYield, ReferenceCorrectionProvenance, TotalSet, Yield, YieldBinValidity,
-    YieldHistogramView, YieldProjection,
+    Axis, BinnedEstimate, BinnedEstimateUnit, ComponentYieldProjection, CrossSection,
+    DifferentialCrossSection, Ensemble, Estimate, IntegralRetentionPolicy, Projection, RateClosure,
+    RateClosureStatus, ReferenceCorrectedYield, ReferenceCorrectedYieldProjection,
+    ReferenceCorrectionProvenance, TotalSet, Yield, YieldBinValidity, YieldHistogramView,
+    YieldProjection,
 };
 use numpy::{PyArray1, PyArray2};
 use pyo3::{
@@ -194,19 +195,19 @@ impl PyEstimate {
     }
 
     fn __add__(&self, other: &Bound<'_, PyAny>) -> PyResult<Self> {
-        estimate_binary(self, other, |left, right| left + right)
+        estimate_binary(self, other, Estimate::checked_add)
     }
 
     fn __sub__(&self, other: &Bound<'_, PyAny>) -> PyResult<Self> {
-        estimate_binary(self, other, |left, right| left - right)
+        estimate_binary(self, other, Estimate::checked_sub)
     }
 
     fn __mul__(&self, other: &Bound<'_, PyAny>) -> PyResult<Self> {
-        estimate_binary(self, other, |left, right| left * right)
+        estimate_binary(self, other, Estimate::checked_mul)
     }
 
     fn __truediv__(&self, other: &Bound<'_, PyAny>) -> PyResult<Self> {
-        estimate_binary(self, other, |left, right| left / right)
+        estimate_binary(self, other, Estimate::checked_div)
     }
 }
 
@@ -528,6 +529,81 @@ impl PyYield {
             .map_err(to_py_err)?;
         Ok(PyReferenceCorrectedYield { inner })
     }
+
+    #[pyo3(signature = (
+        axes: "Axis | Sequence[Axis]",
+        reference_likelihood,
+        reference_term_name,
+        *,
+        generated_mc,
+        parameters: "Sequence[float] | numpy.typing.NDArray[numpy.float32 | numpy.float64] | dict[str, float]",
+        ensemble=None
+    ))]
+    /// Correct a selected-data projection with an explicit reference acceptance.
+    fn reference_corrected_projection(
+        &self,
+        py: Python<'_>,
+        axes: &Bound<'_, PyAny>,
+        reference_likelihood: &PyLikelihood,
+        reference_term_name: &str,
+        generated_mc: &PyDataset,
+        parameters: &Bound<'_, PyAny>,
+        ensemble: Option<&PyEnsemble>,
+    ) -> PyResult<PyReferenceCorrectedYieldProjection> {
+        let axes = extract_axes(py, axes)?;
+        let parameters = free_values(&reference_likelihood.inner, parameters)?;
+        let inner = self
+            .inner
+            .reference_corrected_projection(
+                &axes,
+                std::sync::Arc::clone(&reference_likelihood.inner),
+                reference_term_name,
+                generated_mc.inner.clone(),
+                parameters,
+                ensemble.map(|value| value.inner.clone()),
+            )
+            .map_err(to_py_err)?;
+        Ok(PyReferenceCorrectedYieldProjection { inner })
+    }
+}
+
+#[pyclass(
+    name = "ReferenceCorrectedYieldProjection",
+    module = "laddu",
+    frozen,
+    skip_from_py_object
+)]
+#[derive(Clone)]
+/// Binned selected yield corrected by an explicit reference model.
+pub struct PyReferenceCorrectedYieldProjection {
+    inner: ReferenceCorrectedYieldProjection,
+}
+
+#[pymethods]
+impl PyReferenceCorrectedYieldProjection {
+    #[getter]
+    fn value(&self) -> PyBinnedEstimate {
+        self.inner.value().clone().into()
+    }
+    #[getter]
+    fn acceptance(&self) -> PyBinnedEstimate {
+        self.inner.acceptance().clone().into()
+    }
+    #[getter]
+    fn provenance(&self) -> PyReferenceCorrectionProvenance {
+        PyReferenceCorrectionProvenance {
+            inner: self.inner.provenance().clone(),
+        }
+    }
+    #[getter]
+    fn validity(&self) -> Vec<&'static str> {
+        self.inner
+            .validity()
+            .iter()
+            .copied()
+            .map(validity_name)
+            .collect()
+    }
 }
 
 #[pyclass(
@@ -565,7 +641,7 @@ impl PyYieldHistogramView {
     skip_from_py_object
 )]
 #[derive(Clone)]
-/// Coherent central selected, fitted, and corrected yields on shared axes.
+/// Coherent selected, fitted, and corrected yields with paired draws on shared axes.
 pub struct PyYieldProjection {
     inner: YieldProjection,
 }
@@ -584,6 +660,22 @@ pub struct PyComponentYieldProjection {
 
 #[pymethods]
 impl PyComponentYieldProjection {
+    #[getter]
+    fn accepted_estimate(&self) -> PyBinnedEstimate {
+        self.inner.accepted_estimate().into()
+    }
+    #[getter]
+    fn generated_estimate(&self) -> PyBinnedEstimate {
+        self.inner.generated_estimate().into()
+    }
+    #[getter]
+    fn accepted_draws(&self) -> Vec<Vec<f64>> {
+        self.inner.accepted_draws().to_vec()
+    }
+    #[getter]
+    fn generated_draws(&self) -> Vec<Vec<f64>> {
+        self.inner.generated_draws().to_vec()
+    }
     #[getter]
     fn tags(&self) -> Vec<String> {
         self.inner.tags().to_vec()
@@ -645,6 +737,54 @@ fn validity_name(validity: YieldBinValidity) -> &'static str {
 
 #[pymethods]
 impl PyYieldProjection {
+    #[getter]
+    fn has_replica_datasets(&self) -> bool {
+        self.inner.has_replica_datasets()
+    }
+    #[getter]
+    fn selected_estimate(&self) -> PyBinnedEstimate {
+        self.inner.selected_estimate().into()
+    }
+    #[getter]
+    fn accepted_estimate(&self) -> PyBinnedEstimate {
+        self.inner.accepted_estimate().into()
+    }
+    #[getter]
+    fn generated_estimate(&self) -> PyBinnedEstimate {
+        self.inner.generated_estimate().into()
+    }
+    #[getter]
+    fn acceptance_estimate(&self) -> PyBinnedEstimate {
+        self.inner.acceptance_estimate().into()
+    }
+    #[getter]
+    fn corrected_estimate(&self) -> PyBinnedEstimate {
+        self.inner.corrected_estimate().into()
+    }
+    #[getter]
+    fn source_id(&self) -> Option<u64> {
+        self.inner.source_id()
+    }
+    #[getter]
+    fn selected_draws(&self) -> Vec<Vec<f64>> {
+        self.inner.selected_draws().to_vec()
+    }
+    #[getter]
+    fn accepted_draws(&self) -> Vec<Vec<f64>> {
+        self.inner.accepted_draws().to_vec()
+    }
+    #[getter]
+    fn generated_draws(&self) -> Vec<Vec<f64>> {
+        self.inner.generated_draws().to_vec()
+    }
+    #[getter]
+    fn acceptance_draws(&self) -> Vec<Vec<f64>> {
+        self.inner.acceptance_draws().to_vec()
+    }
+    #[getter]
+    fn corrected_draws(&self) -> Vec<Vec<f64>> {
+        self.inner.corrected_draws().to_vec()
+    }
     #[getter]
     fn components(&self) -> HashMap<String, PyComponentYieldProjection> {
         self.inner
@@ -738,14 +878,16 @@ impl PyYieldProjection {
 fn estimate_binary(
     left: &PyEstimate,
     right: &Bound<'_, PyAny>,
-    op: impl Fn(&Estimate, &Estimate) -> Estimate,
+    op: impl Fn(&Estimate, &Estimate) -> laddu_likelihood::LikelihoodResult<Estimate>,
 ) -> PyResult<PyEstimate> {
     if let Ok(right) = right.extract::<PyRef<'_, PyEstimate>>() {
-        return Ok(op(&left.inner, &right.inner).into());
+        return op(&left.inner, &right.inner)
+            .map(Into::into)
+            .map_err(to_py_err);
     }
     if let Ok(right) = right.extract::<f64>() {
         let right = Estimate::central(right).map_err(to_py_err)?;
-        return Ok(op(&left.inner, &right).into());
+        return op(&left.inner, &right).map(Into::into).map_err(to_py_err);
     }
     Err(PyTypeError::new_err("expected Estimate or float"))
 }
@@ -792,6 +934,53 @@ impl From<BinnedEstimate> for PyBinnedEstimate {
 
 #[pymethods]
 impl PyBinnedEstimate {
+    #[getter]
+    fn unit(&self) -> &'static str {
+        match self.inner.unit() {
+            BinnedEstimateUnit::Unitless => "unitless",
+            BinnedEstimateUnit::Yield => "yield",
+            BinnedEstimateUnit::CrossSection => "cross_section",
+        }
+    }
+    #[getter]
+    fn source_id(&self) -> Option<u64> {
+        self.inner.source_id()
+    }
+
+    #[getter]
+    fn source_ids(&self) -> Vec<u64> {
+        self.inner.source_ids().to_vec()
+    }
+
+    #[getter]
+    fn axes(&self) -> Option<Vec<Vec<f64>>> {
+        self.inner.axes().map(<[Vec<f64>]>::to_vec)
+    }
+
+    fn __add__(&self, other: &PyBinnedEstimate) -> PyResult<Self> {
+        self.inner
+            .checked_add(&other.inner)
+            .map(Into::into)
+            .map_err(to_py_err)
+    }
+    fn __sub__(&self, other: &PyBinnedEstimate) -> PyResult<Self> {
+        self.inner
+            .checked_sub(&other.inner)
+            .map(Into::into)
+            .map_err(to_py_err)
+    }
+    fn __mul__(&self, other: &PyBinnedEstimate) -> PyResult<Self> {
+        self.inner
+            .checked_mul(&other.inner)
+            .map(Into::into)
+            .map_err(to_py_err)
+    }
+    fn __truediv__(&self, other: &PyBinnedEstimate) -> PyResult<Self> {
+        self.inner
+            .checked_div(&other.inner)
+            .map(Into::into)
+            .map_err(to_py_err)
+    }
     #[getter]
     fn central(&self) -> Vec<f64> {
         self.inner.values().to_vec()

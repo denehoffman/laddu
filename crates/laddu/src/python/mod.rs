@@ -186,6 +186,7 @@ macro_rules! laddu_python_module {
                 PyDifferentialCrossSection as DifferentialCrossSection, PyEnsemble as Ensemble,
                 PyEstimate as Estimate, PyRateClosure as RateClosure,
                 PyReferenceCorrectedYield as ReferenceCorrectedYield,
+                PyReferenceCorrectedYieldProjection as ReferenceCorrectedYieldProjection,
                 PyReferenceCorrectionProvenance as ReferenceCorrectionProvenance,
                 PyTotalSet as TotalSet, PyYield as Yield,
                 PyComponentYieldProjection as ComponentYieldProjection,

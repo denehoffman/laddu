@@ -375,11 +375,13 @@ impl Yield {
         )?;
         let acceptance = finite_estimate(
             "fitted acceptance",
-            &accepted_integral / &generated_integral,
+            accepted_integral.checked_div(&generated_integral)?,
         )?;
         let corrected = finite_estimate(
             "corrected observed yield",
-            &(&selected * &generated_integral) / &accepted_integral,
+            selected
+                .checked_mul(&generated_integral)?
+                .checked_div(&accepted_integral)?,
         )?;
         let scalars = YieldScalars {
             selected,
@@ -598,10 +600,11 @@ impl Yield {
                 )
             },
         )?;
-        let acceptance = finite_estimate("reference acceptance", &accepted / &generated)?;
+        let acceptance =
+            finite_estimate("reference acceptance", accepted.checked_div(&generated)?)?;
         let value = finite_estimate(
             "reference-corrected observed yield",
-            self.selected_yield() / &acceptance,
+            self.selected_yield().checked_div(&acceptance)?,
         )?;
         let provenance = ReferenceCorrectionProvenance {
             reference_term_name,
