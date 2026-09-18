@@ -92,6 +92,37 @@ def test_yield_projection_keeps_rate_spaces_and_invalid_bins_visible() -> None:
         result.projection_set({'valid': axis, 'invalid': invalid})
 
 
+def test_yield_projection_exposes_paired_draws_and_binned_arithmetic() -> None:
+    source_id = 42
+    x = ld.scalar('x')
+    model = ld.Model(x * ld.parameter('scale', initial=1.0))
+    data = dataset([1.0], [2.0])
+    likelihood = ld.Likelihood([ld.ExtendedNLL(model, data=data, accepted_mc=data, name='signal')])
+    ensemble = ld.Ensemble.from_arrays([[2.0], [3.0]], parameter_names=['scale'], source_id=source_id)
+    result = likelihood.yield_context('signal', generated_mc=data, parameters=[1.0], ensemble=ensemble)
+    projection = result.projection(ld.Axis(x, edges=[0.0, 2.0]))
+    assert projection.source_id == source_id
+    assert not projection.has_replica_datasets
+    assert projection.accepted_estimate.unit == 'yield'
+    assert projection.accepted_estimate.source_ids == [source_id]
+    assert projection.acceptance_estimate.unit == 'unitless'
+    assert projection.accepted_draws == [[4.0], [6.0]]
+    assert projection.corrected_estimate.draws == projection.corrected_draws
+    summed = projection.accepted_estimate + projection.generated_estimate
+    assert summed.source_id == source_id
+    assert summed.draws == [[8.0], [12.0]]
+    with pytest.raises(ld.LadduError, match='units do not match'):
+        _ = projection.accepted_estimate + projection.acceptance_estimate
+
+
+def test_scalar_arithmetic_rejects_mismatched_draw_counts() -> None:
+    left = ld.Estimate(1.0, draws=[2.0, 3.0], source_id=7)
+    right = ld.Estimate(2.0, draws=[4.0], source_id=7)
+    with pytest.raises(ld.LadduError, match='draw counts do not match'):
+        _ = left + right
+    assert (left * ld.Estimate(2.0)).draws.tolist() == [4.0, 6.0]
+
+
 def test_component_yield_projection_is_model_only_and_coherent() -> None:
     x = ld.scalar('x')
     signal = (ld.parameter('a', initial=1.0) * x).tagged('signal')
@@ -241,6 +272,25 @@ def test_reference_correction_is_explicit_distinct_and_inspectable() -> None:
     assert corrected.reference_term_name == 'reference'
     assert corrected.provenance.reference_parameters == [0.25]
     assert corrected.rate_closure_status == 'not_applicable'
+
+    reference_source_id = 91
+    projected = fitted.reference_corrected_projection(
+        ld.Axis(ld.scalar('x'), edges=[0.0, 10.0]),
+        reference,
+        'reference',
+        generated_mc=dataset([8.0], [1.0]),
+        parameters=[0.25],
+        ensemble=ld.Ensemble.from_arrays(
+            [[0.5], [0.75]], parameter_names=['reference_scale'], source_id=reference_source_id
+        ),
+    )
+    assert isinstance(projected, ld.ReferenceCorrectedYieldProjection)
+    assert projected.value.central == [EXPECTED_REFERENCE_CORRECTED_YIELD]
+    assert projected.value.draws == [[EXPECTED_REFERENCE_CORRECTED_YIELD]] * 2
+    assert projected.acceptance.central == [EXPECTED_REFERENCE_ACCEPTANCE]
+    assert projected.validity == ['valid']
+    assert projected.provenance.reference_uncertainty_source == reference_source_id
+    assert projected.value.source_ids == [reference_source_id]
 
 
 def test_reference_correction_reports_invalid_contexts() -> None:

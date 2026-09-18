@@ -96,7 +96,7 @@ For a shape-only `NLL`, fitted acceptance and corrected observed yield remain
 defined because the common scale cancels. Absolute accepted/generated fitted
 yields are unavailable and rate closure is explicitly not applicable.
 
-### Project central yields into bins
+### Project yields into bins
 
 Use one `Axis` for a one-dimensional yield projection, or an ordered list of
 axes for a joint projection. Results keep D, A, G, A/G, and DG/A together on
@@ -118,6 +118,16 @@ with_components = yield_context.projection(
 )
 signal_accepted = with_components.components["signal"].accepted
 signal_generated = with_components.components["signal"].generated
+
+# An ensemble preserves the same draw order for all five quantities.
+draws = projected.corrected_draws
+source_id = projected.source_id
+corrected_estimate = projected.corrected_estimate
+if len(draws) >= 2:
+    covariance = corrected_estimate.covariance()
+
+# Select individual quantities before arithmetic.
+model_yield = projected.accepted_estimate + projected.generated_estimate
 ```
 
 `projection_set` preserves request order. Every entry is independent; axes
@@ -129,6 +139,17 @@ are unavailable, while their ratio and the corrected selected yield remain
 defined where support is positive. The `diagnostics` mapping reports nonfinite
 and out-of-range coordinate counts for each sample. Histogram views copy the
 central values and geometry; they do not remove the surrounding yield bundle.
+The estimate accessors retain central values, paired draws, axes, and units.
+`source_ids` lists the original uncertainty sources, including every source
+that contributes to an exposure-combined result.
+Arithmetic on individual estimates checks geometry, units, and draw counts;
+central-only estimates broadcast across the other operand's draws. Draws with
+the same source ID pair by index. Distinct sources use a deterministic cyclic
+pairing and receive a new source ID. `has_replica_datasets` distinguishes paired
+bootstrap replicas from parameter-only ensembles. Whole projection bundles do
+not support arithmetic. Caller-assigned source IDs should use the lower half of
+the `u64` range; generated IDs use the upper half. Reuse a returned generated ID
+only to declare that draws share the same source.
 Component yield projections are model-only: observed data stay with the full
 selection and are never assigned to components. Their `accepted` and
 `generated` arrays, validity, shape, and histogram views use the parent's bins.
@@ -154,6 +175,17 @@ reference_corrected = yield_context.reference_corrected(
 value = reference_corrected.value
 reference_acceptance = reference_corrected.acceptance
 source = reference_corrected.provenance
+
+reference_bins = yield_context.reference_corrected_projection(
+    mass_axis,
+    reference_likelihood,
+    "reference",
+    generated_mc=reference_generated_mc,
+    parameters=reference_parameters,
+    ensemble=reference_ensemble,
+)
+corrected_bin_values = reference_bins.value.central
+corrected_bin_draws = reference_bins.value.draws
 ```
 
 This operation always requires an explicit reference likelihood, term, generated
@@ -164,7 +196,8 @@ signed event weights. Independent fitted and reference ensembles remain visible
 as separate sources and produce derived provenance through deterministic draw
 pairing. A reference correction is an analysis-reproducibility product: it does
 not inherit the fitted rate-closure guarantee and is not an arbitrary rescaling
-API.
+API. Its binned form uses the same axes for selected data and reference
+acceptance and retains per-bin validity and both source identities.
 
 ## Construct a cross-section analysis
 
@@ -416,7 +449,9 @@ all_modes = ld.CrossSection.combine(
 ```
 
 Factors may be floats or `Estimate` objects. Provenance-aware draws preserve
-known correlations and deterministically pair unrelated ensembles.
+known correlations and deterministically pair unrelated ensembles. Supply
+individual period or mode objects to one `combine` call; nested combinations
+carrying draws are rejected because they cannot preserve the original draw pairing.
 
 ## Low-level integrals
 
