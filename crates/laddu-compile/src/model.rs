@@ -600,6 +600,15 @@ impl CompiledModel {
         Self::from_graph(self.source_graph.project_tags(tags))
     }
 
+    /// Whether the source expression declares the given selection tag.
+    pub fn has_tag(&self, tag: &str) -> bool {
+        (0..self.source_graph.nodes().len()).any(|index| {
+            self.source_graph
+                .metadata(ExprId::from_index(index))
+                .is_some_and(|metadata| metadata.has_tag(tag))
+        })
+    }
+
     /// Compiles an expression with default options.
     ///
     /// # Errors

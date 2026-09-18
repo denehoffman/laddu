@@ -111,6 +111,13 @@ validity = projected.validity
 selected_histogram = projected.selected_histogram()
 
 named = yield_context.projection_set({"mass": mass_axis, "joint": [mass_axis, angle_axis]})
+
+# Named coherent model selections use the same bins and fitted parameters.
+with_components = yield_context.projection(
+    mass_axis, components={"signal": ["signal"], "background": ["background"]}
+)
+signal_accepted = with_components.components["signal"].accepted
+signal_generated = with_components.components["signal"].generated
 ```
 
 `projection_set` preserves request order. Every entry is independent; axes
@@ -122,6 +129,13 @@ are unavailable, while their ratio and the corrected selected yield remain
 defined where support is positive. The `diagnostics` mapping reports nonfinite
 and out-of-range coordinate counts for each sample. Histogram views copy the
 central values and geometry; they do not remove the surrounding yield bundle.
+Component yield projections are model-only: observed data stay with the full
+selection and are never assigned to components. Their `accepted` and
+`generated` arrays, validity, shape, and histogram views use the parent's bins.
+Coherent interference means component yields generally do not add up to the
+full fitted yield. Reordered or repeated tags select the same coherent
+subexpression; each requested name remains available in `components` with
+its canonical `tags`.
 
 ### Correct with an explicit reference intensity
 

@@ -154,6 +154,20 @@ pub fn laddu_likelihood::BinnedEstimate::eq(&self, &laddu_likelihood::BinnedEsti
 impl core::fmt::Debug for laddu_likelihood::BinnedEstimate
 pub fn laddu_likelihood::BinnedEstimate::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::StructuralPartialEq for laddu_likelihood::BinnedEstimate
+pub struct laddu_likelihood::ComponentYieldProjection
+impl laddu_likelihood::ComponentYieldProjection
+pub fn laddu_likelihood::ComponentYieldProjection::accepted(&self) -> &[f64]
+pub fn laddu_likelihood::ComponentYieldProjection::accepted_histogram(&self) -> laddu_likelihood::YieldHistogramView
+pub fn laddu_likelihood::ComponentYieldProjection::axes(&self) -> &[alloc::vec::Vec<f64>]
+pub fn laddu_likelihood::ComponentYieldProjection::generated(&self) -> &[f64]
+pub fn laddu_likelihood::ComponentYieldProjection::generated_histogram(&self) -> laddu_likelihood::YieldHistogramView
+pub fn laddu_likelihood::ComponentYieldProjection::shape(&self) -> &[usize]
+pub fn laddu_likelihood::ComponentYieldProjection::tags(&self) -> &[alloc::string::String]
+pub fn laddu_likelihood::ComponentYieldProjection::validity(&self) -> &[laddu_likelihood::YieldBinValidity]
+impl core::clone::Clone for laddu_likelihood::ComponentYieldProjection
+pub fn laddu_likelihood::ComponentYieldProjection::clone(&self) -> laddu_likelihood::ComponentYieldProjection
+impl core::fmt::Debug for laddu_likelihood::ComponentYieldProjection
+pub fn laddu_likelihood::ComponentYieldProjection::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub struct laddu_likelihood::CrossSection
 impl laddu_likelihood::CrossSection
 pub fn laddu_likelihood::CrossSection::acceptance(&self) -> laddu_likelihood::LikelihoodResult<laddu_likelihood::Estimate>
@@ -674,6 +688,8 @@ pub fn laddu_likelihood::Yield::with_ensemble(alloc::sync::Arc<laddu_likelihood:
 impl laddu_likelihood::Yield
 pub fn laddu_likelihood::Yield::projection(&self, &[laddu_likelihood::Axis]) -> laddu_likelihood::LikelihoodResult<laddu_likelihood::YieldProjection>
 pub fn laddu_likelihood::Yield::projection_set(&self, &[laddu_likelihood::Projection]) -> laddu_likelihood::LikelihoodResult<laddu_likelihood::YieldProjectionSet>
+pub fn laddu_likelihood::Yield::projection_set_with_components(&self, &[laddu_likelihood::Projection], &std::collections::hash::map::HashMap<alloc::string::String, alloc::vec::Vec<alloc::string::String>>) -> laddu_likelihood::LikelihoodResult<laddu_likelihood::YieldProjectionSet>
+pub fn laddu_likelihood::Yield::projection_with_components(&self, &[laddu_likelihood::Axis], &std::collections::hash::map::HashMap<alloc::string::String, alloc::vec::Vec<alloc::string::String>>) -> laddu_likelihood::LikelihoodResult<laddu_likelihood::YieldProjection>
 impl core::clone::Clone for laddu_likelihood::Yield
 pub fn laddu_likelihood::Yield::clone(&self) -> laddu_likelihood::Yield
 impl core::fmt::Debug for laddu_likelihood::Yield
@@ -696,6 +712,7 @@ pub fn laddu_likelihood::YieldProjection::acceptance(&self) -> &[f64]
 pub fn laddu_likelihood::YieldProjection::accepted(&self) -> &[f64]
 pub fn laddu_likelihood::YieldProjection::accepted_histogram(&self) -> laddu_likelihood::YieldHistogramView
 pub fn laddu_likelihood::YieldProjection::axes(&self) -> &[alloc::vec::Vec<f64>]
+pub fn laddu_likelihood::YieldProjection::components(&self) -> &std::collections::hash::map::HashMap<alloc::string::String, laddu_likelihood::ComponentYieldProjection>
 pub fn laddu_likelihood::YieldProjection::corrected(&self) -> &[f64]
 pub fn laddu_likelihood::YieldProjection::corrected_histogram(&self) -> laddu_likelihood::YieldHistogramView
 pub fn laddu_likelihood::YieldProjection::diagnostics(&self) -> &laddu_likelihood::YieldProjectionDiagnostics
