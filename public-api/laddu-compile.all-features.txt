@@ -611,6 +611,7 @@ pub fn laddu_compile::CompiledModel::from_expr_with_options(&laddu_expr::express
 pub fn laddu_compile::CompiledModel::from_graph(laddu_expr::expression::ExprGraph) -> laddu_compile::CompileResult<Self>
 pub fn laddu_compile::CompiledModel::from_graph_with_options(laddu_expr::expression::ExprGraph, &laddu_compile::CompileOptions) -> laddu_compile::CompileResult<Self>
 pub fn laddu_compile::CompiledModel::graph(&self) -> &laddu_expr::expression::ExprGraph
+pub fn laddu_compile::CompiledModel::has_tag(&self, &str) -> bool
 pub fn laddu_compile::CompiledModel::node_facts(&self, laddu_expr::expression::ExprId) -> core::option::Option<&laddu_compile::facts::NodeFacts>
 pub fn laddu_compile::CompiledModel::normalization_diagnostics(&self) -> &laddu_compile::NormalizationDiagnostics
 pub fn laddu_compile::CompiledModel::parameter_polynomial_degree(&self) -> core::option::Option<usize>

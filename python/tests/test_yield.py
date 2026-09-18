@@ -92,6 +92,42 @@ def test_yield_projection_keeps_rate_spaces_and_invalid_bins_visible() -> None:
         result.projection_set({'valid': axis, 'invalid': invalid})
 
 
+def test_component_yield_projection_is_model_only_and_coherent() -> None:
+    x = ld.scalar('x')
+    signal = (ld.parameter('a', initial=1.0) * x).tagged('signal')
+    background = ld.parameter('b', initial=1.0).tagged('background')
+    model = ld.Model((signal + background).norm_sqr())
+    data = dataset([1.0], [2.0])
+    accepted = dataset([1.0], [1.0])
+    likelihood = ld.Likelihood([ld.ExtendedNLL(model, data=data, accepted_mc=accepted, name='signal')])
+    result = likelihood.yield_context('signal', generated_mc=accepted, parameters=[1.0, 1.0])
+    axis = ld.Axis(x, edges=[0.0, 2.0])
+    projected = result.projection_set(
+        {'one': axis},
+        components={'signal': ['signal'], 'background': ['background'], 'alias': ['signal', 'signal']},
+    )['one']
+    assert projected.selected == [2.0]
+    assert projected.accepted == [4.0]
+    assert projected.components['signal'].accepted == [1.0]
+    assert projected.components['background'].accepted == [1.0]
+    assert projected.components['alias'].tags == ['signal']
+    assert projected.components['alias'].generated == projected.components['signal'].generated
+    assert projected.components['signal'].shape == projected.shape
+    assert projected.components['signal'].validity == projected.validity
+    assert projected.components['signal'].accepted_histogram().values == [1.0]
+    assert not hasattr(projected.components['signal'], 'selected')
+    scalar_component = likelihood.cross_section(
+        'signal', generated_mc=accepted, luminosity=1.0, parameters=[1.0, 1.0]
+    ).fitted_total(tags=['signal'])
+    assert projected.components['signal'].generated == pytest.approx([scalar_component.central])
+    gap = result.projection(ld.Axis(x, edges=[0.0, 2.0, 4.0]), components={'signal': ['signal']})
+    assert gap.components['signal'].validity[1] == 'missing_generated_support'
+    assert math.isnan(gap.components['signal'].accepted[1])
+    assert result.projection(axis).components == {}
+    with pytest.raises(ld.LadduError, match='unknown model tag'):
+        result.projection(axis, components={'missing': ['unknown']})
+
+
 def test_yield_projection_rejects_workspace_over_budget_and_stays_usable() -> None:
     x = ld.scalar('x')
     data = dataset([0.25, 1.25], [1.0, 1.0])

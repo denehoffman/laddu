@@ -724,6 +724,51 @@ pub enum YieldBinValidity {
     NonFiniteEvaluation,
 }
 
+fn fitted_bin_validity(
+    accepted: f64,
+    generated: f64,
+    accepted_count: usize,
+    generated_count: usize,
+    generated_exposure: f64,
+) -> YieldBinValidity {
+    if !accepted.is_finite() || !generated.is_finite() {
+        YieldBinValidity::NonFiniteEvaluation
+    } else if generated_count == 0 {
+        YieldBinValidity::MissingGeneratedSupport
+    } else if !generated_exposure.is_finite() || generated_exposure <= 0.0 {
+        YieldBinValidity::InvalidExposure
+    } else if accepted_count == 0 {
+        YieldBinValidity::MissingAcceptedSupport
+    } else if accepted <= 0.0 {
+        YieldBinValidity::NonPositiveAcceptedSupport
+    } else if generated <= 0.0 {
+        YieldBinValidity::NonPositiveGeneratedSupport
+    } else {
+        YieldBinValidity::Valid
+    }
+}
+
+fn fitted_bins(
+    values: &[f64],
+    counts: &[usize],
+    exposures: Option<&[f64]>,
+    absolute: bool,
+) -> Vec<f64> {
+    values
+        .iter()
+        .enumerate()
+        .map(|(bin, &value)| {
+            let exposure_valid = exposures
+                .is_none_or(|exposures| exposures[bin].is_finite() && exposures[bin] > 0.0);
+            if absolute && counts[bin] > 0 && exposure_valid && value.is_finite() && value > 0.0 {
+                value
+            } else {
+                f64::NAN
+            }
+        })
+        .collect()
+}
+
 /// Counts of coordinates excluded from a central yield projection.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct YieldProjectionDiagnostics {
@@ -777,6 +822,62 @@ pub struct YieldProjection {
     validity: Vec<YieldBinValidity>,
     diagnostics: YieldProjectionDiagnostics,
     has_absolute_rate: bool,
+    components: HashMap<String, ComponentYieldProjection>,
+}
+
+/// Model-only coherent fitted yields for a named tag selection. Interfering
+/// selections need not sum to the full fitted yield.
+#[derive(Clone, Debug)]
+pub struct ComponentYieldProjection {
+    tags: Vec<String>,
+    axes: Vec<Vec<f64>>,
+    shape: Vec<usize>,
+    accepted: Vec<f64>,
+    generated: Vec<f64>,
+    validity: Vec<YieldBinValidity>,
+}
+
+impl ComponentYieldProjection {
+    /// Canonical sorted tags defining this coherent model selection.
+    pub fn tags(&self) -> &[String] {
+        &self.tags
+    }
+    /// Ordered bin edges shared with the parent projection.
+    pub fn axes(&self) -> &[Vec<f64>] {
+        &self.axes
+    }
+    /// Row-major shape shared with the parent projection.
+    pub fn shape(&self) -> &[usize] {
+        &self.shape
+    }
+    /// Accepted-space fitted model yield.
+    pub fn accepted(&self) -> &[f64] {
+        &self.accepted
+    }
+    /// Generated-space fitted model yield.
+    pub fn generated(&self) -> &[f64] {
+        &self.generated
+    }
+    /// Per-bin model support validity.
+    pub fn validity(&self) -> &[YieldBinValidity] {
+        &self.validity
+    }
+    /// Materialize the accepted-space central histogram.
+    pub fn accepted_histogram(&self) -> YieldHistogramView {
+        YieldHistogramView {
+            axes: self.axes.clone(),
+            shape: self.shape.clone(),
+            values: self.accepted.clone(),
+        }
+    }
+    /// Materialize the generated-space central histogram.
+    pub fn generated_histogram(&self) -> YieldHistogramView {
+        YieldHistogramView {
+            axes: self.axes.clone(),
+            shape: self.shape.clone(),
+            values: self.generated.clone(),
+        }
+    }
 }
 
 impl YieldProjection {
@@ -819,6 +920,11 @@ impl YieldProjection {
     /// Whether the source likelihood defines absolute fitted yields.
     pub fn has_absolute_rate(&self) -> bool {
         self.has_absolute_rate
+    }
+    /// Named model-only component projections. Observed data belong only to
+    /// the full selection and are never assigned to components.
+    pub fn components(&self) -> &HashMap<String, ComponentYieldProjection> {
+        &self.components
     }
     /// Materialize a central selected-data histogram view.
     pub fn selected_histogram(&self) -> YieldHistogramView {
@@ -884,6 +990,21 @@ impl Yield {
         Ok(self.projection_set(&[request])?.entries.remove(0).1)
     }
 
+    /// Evaluate one central projection with named coherent model selections.
+    /// Components have no observed-data constituent and need not be additive.
+    pub fn projection_with_components(
+        &self,
+        axes: &[Axis],
+        components: &HashMap<String, Vec<String>>,
+    ) -> LikelihoodResult<YieldProjection> {
+        let request = Projection::new("yield", axes.to_vec())?;
+        Ok(self
+            .projection_set_with_components(&[request], components)?
+            .entries
+            .remove(0)
+            .1)
+    }
+
     /// Evaluate independent named central yield projections in request order.
     /// Identical axis groups share bin assignments and intensity traversal.
     ///
@@ -893,6 +1014,16 @@ impl Yield {
     pub fn projection_set(
         &self,
         projections: &[Projection],
+    ) -> LikelihoodResult<YieldProjectionSet> {
+        self.projection_set_with_components(projections, &HashMap::new())
+    }
+
+    /// Evaluate named central projections with named coherent tag selections.
+    /// Aliases with identical tag sets share one model evaluation.
+    pub fn projection_set_with_components(
+        &self,
+        projections: &[Projection],
+        components: &HashMap<String, Vec<String>>,
     ) -> LikelihoodResult<YieldProjectionSet> {
         if projections.is_empty() {
             return Err(invalid("at least one projection is required"));
@@ -933,9 +1064,49 @@ impl Yield {
         }
         self.observed_data()
             .validate_real_expressions(&expressions, execution)?;
+        let component_aliases = components
+            .iter()
+            .map(|(name, tags)| {
+                if name.trim().is_empty()
+                    || tags.is_empty()
+                    || tags.iter().any(|tag| tag.trim().is_empty())
+                {
+                    return Err(invalid(format!("invalid component name or tags: `{name}`")));
+                }
+                Ok((name.clone(), CanonicalTags::new(tags)))
+            })
+            .collect::<LikelihoodResult<HashMap<_, _>>>()?;
+        for (name, tags) in &component_aliases {
+            for tag in tags.as_slice() {
+                if !self
+                    .likelihood()
+                    .intensity_model_has_tag(self.term_name(), tag)?
+                {
+                    return Err(invalid(format!(
+                        "component `{name}` has unknown model tag `{tag}`"
+                    )));
+                }
+            }
+        }
         let integrals = self
             .likelihood()
             .cross_section_integrals(self.term_name(), self.generated_mc())?;
+        let mut component_integrals = HashMap::new();
+        for tags in component_aliases.values() {
+            if !component_integrals.contains_key(tags) {
+                let selected = self
+                    .likelihood()
+                    .cross_section_integrals_with_tags(
+                        self.term_name(),
+                        self.generated_mc(),
+                        tags.as_slice().iter().map(String::as_str),
+                    )
+                    .map_err(|error| {
+                        invalid(format!("component {:?}: {error}", tags.as_slice()))
+                    })?;
+                component_integrals.insert(tags.clone(), selected);
+            }
+        }
         let data = self.observed_data();
         let accepted = integrals.accepted_mc_source();
         let generated = integrals.generated_mc_source();
@@ -993,6 +1164,23 @@ impl Yield {
             })
             .and_then(|bytes| {
                 bytes.checked_add(
+                    bins_total
+                        .checked_mul(component_integrals.len())?
+                        .checked_mul(2 * std::mem::size_of::<f64>())?,
+                )
+            })
+            .and_then(|bytes| {
+                bytes.checked_add(
+                    output_bins
+                        .checked_mul(component_aliases.len())?
+                        .checked_mul(
+                            2 * std::mem::size_of::<f64>()
+                                + std::mem::size_of::<YieldBinValidity>(),
+                        )?,
+                )
+            })
+            .and_then(|bytes| {
+                bytes.checked_add(
                     distinct_axes
                         .checked_mul(largest_sample.min(8192))?
                         .checked_mul(32)?,
@@ -1046,36 +1234,159 @@ impl Yield {
             .iter()
             .map(|plan| vec![0.0; plan.generated_bins.count])
             .collect::<Vec<_>>();
-        let parameters = [self.parameters()];
-        let contexts = ["central yield projection".to_owned()];
-        integrals.visit_accepted_raw_prepared_intensities_many(
-            &parameters,
-            &contexts,
-            |offset, _, intensities| {
-                for (plan, sums) in plans.iter().zip(&mut accepted_sums) {
-                    plan.accepted_bins.accumulate_weighted_block(
-                        offset,
-                        &accepted_weights,
-                        intensities,
-                        sums,
-                    );
+        let mut component_sums = component_integrals
+            .keys()
+            .map(|tags| {
+                let accepted = plans
+                    .iter()
+                    .map(|plan| vec![0.0; plan.accepted_bins.count])
+                    .collect::<Vec<_>>();
+                let generated = plans
+                    .iter()
+                    .map(|plan| vec![0.0; plan.generated_bins.count])
+                    .collect::<Vec<_>>();
+                (tags.clone(), (accepted, generated))
+            })
+            .collect::<HashMap<_, _>>();
+        if component_integrals.is_empty() {
+            let parameters = [self.parameters()];
+            let contexts = ["central yield projection".to_owned()];
+            integrals.visit_accepted_raw_prepared_intensities_many(
+                &parameters,
+                &contexts,
+                |offset, _, values| {
+                    for (plan, sums) in plans.iter().zip(&mut accepted_sums) {
+                        plan.accepted_bins.accumulate_weighted_block(
+                            offset,
+                            &accepted_weights,
+                            values,
+                            sums,
+                        );
+                    }
+                },
+            )?;
+            integrals.visit_generated_prepared_intensities_many(
+                &parameters,
+                &contexts,
+                |offset, _, values| {
+                    for (plan, sums) in plans.iter().zip(&mut generated_sums) {
+                        plan.generated_bins.accumulate_weighted_block(
+                            offset,
+                            &generated_weights,
+                            values,
+                            sums,
+                        );
+                    }
+                },
+            )?;
+        } else {
+            let selections = component_integrals.iter().collect::<Vec<_>>();
+            let models = selections
+                .iter()
+                .map(|(_, model)| *model)
+                .collect::<Vec<_>>();
+            let labels = std::iter::once("full model".to_owned())
+                .chain(selections.iter().map(|(tags, _)| {
+                    let aliases = component_aliases
+                        .iter()
+                        .filter_map(|(name, selection)| {
+                            (selection == *tags).then_some(name.as_str())
+                        })
+                        .collect::<Vec<_>>();
+                    format!("component {aliases:?} {:?}", tags.as_slice())
+                }))
+                .collect::<Vec<_>>();
+            let projection_names = projections.iter().map(Projection::name).collect::<Vec<_>>();
+            integrals
+                .visit_shared_source_intensities(
+                    &models,
+                    &labels,
+                    self.parameters(),
+                    false,
+                    |index, offset, values| {
+                        if index == 0 {
+                            for (plan, sums) in plans.iter().zip(&mut accepted_sums) {
+                                plan.accepted_bins.accumulate_weighted_block(
+                                    offset,
+                                    &accepted_weights,
+                                    values,
+                                    sums,
+                                );
+                            }
+                        } else {
+                            let sums = &mut component_sums
+                                .get_mut(selections[index - 1].0)
+                                .expect("prepared component")
+                                .0;
+                            for (plan, bins) in plans.iter().zip(sums) {
+                                plan.accepted_bins.accumulate_weighted_block(
+                                    offset,
+                                    &accepted_weights,
+                                    values,
+                                    bins,
+                                );
+                            }
+                        }
+                    },
+                )
+                .map_err(|error| {
+                    invalid(format!(
+                        "projections {projection_names:?}, accepted MC: {error}"
+                    ))
+                })?;
+            integrals
+                .visit_shared_source_intensities(
+                    &models,
+                    &labels,
+                    self.parameters(),
+                    true,
+                    |index, offset, values| {
+                        if index == 0 {
+                            for (plan, sums) in plans.iter().zip(&mut generated_sums) {
+                                plan.generated_bins.accumulate_weighted_block(
+                                    offset,
+                                    &generated_weights,
+                                    values,
+                                    sums,
+                                );
+                            }
+                        } else {
+                            let sums = &mut component_sums
+                                .get_mut(selections[index - 1].0)
+                                .expect("prepared component")
+                                .1;
+                            for (plan, bins) in plans.iter().zip(sums) {
+                                plan.generated_bins.accumulate_weighted_block(
+                                    offset,
+                                    &generated_weights,
+                                    values,
+                                    bins,
+                                );
+                            }
+                        }
+                    },
+                )
+                .map_err(|error| {
+                    invalid(format!(
+                        "projections {projection_names:?}, generated MC: {error}"
+                    ))
+                })?;
+            for (tags, (accepted, generated)) in &component_sums {
+                for (index, plan) in plans.iter().enumerate() {
+                    if accepted[index]
+                        .iter()
+                        .chain(&generated[index])
+                        .any(|value| !value.is_finite())
+                    {
+                        return Err(invalid(format!(
+                            "projection `{}` component {:?} has non-finite fitted yield",
+                            plan.name,
+                            tags.as_slice()
+                        )));
+                    }
                 }
-            },
-        )?;
-        integrals.visit_generated_prepared_intensities_many(
-            &parameters,
-            &contexts,
-            |offset, _, intensities| {
-                for (plan, sums) in plans.iter().zip(&mut generated_sums) {
-                    plan.generated_bins.accumulate_weighted_block(
-                        offset,
-                        &generated_weights,
-                        intensities,
-                        sums,
-                    );
-                }
-            },
-        )?;
+            }
+        }
         let unique_results = plans
             .iter()
             .enumerate()
@@ -1095,21 +1406,16 @@ impl Yield {
                     let d = selected[bin];
                     let a = accepted_raw[bin];
                     let g = generated_raw[bin];
-                    let status = if !d.is_finite() || !a.is_finite() || !g.is_finite() {
+                    let status = if !d.is_finite() {
                         YieldBinValidity::NonFiniteEvaluation
-                    } else if generated_counts[bin] == 0 {
-                        YieldBinValidity::MissingGeneratedSupport
-                    } else if !generated_exposure[bin].is_finite() || generated_exposure[bin] <= 0.0
-                    {
-                        YieldBinValidity::InvalidExposure
-                    } else if accepted_counts[bin] == 0 {
-                        YieldBinValidity::MissingAcceptedSupport
-                    } else if a <= 0.0 {
-                        YieldBinValidity::NonPositiveAcceptedSupport
-                    } else if g <= 0.0 {
-                        YieldBinValidity::NonPositiveGeneratedSupport
                     } else {
-                        YieldBinValidity::Valid
+                        fitted_bin_validity(
+                            a,
+                            g,
+                            accepted_counts[bin],
+                            generated_counts[bin],
+                            generated_exposure[bin],
+                        )
                     };
                     validity.push(status);
                     if !d.is_finite() {
@@ -1127,38 +1433,18 @@ impl Yield {
                     axes: plan.axes.clone(),
                     shape: plan.shape.clone(),
                     selected,
-                    accepted: accepted_raw
-                        .iter()
-                        .enumerate()
-                        .map(|(bin, &value)| {
-                            if self.has_absolute_rate()
-                                && accepted_counts[bin] > 0
-                                && value.is_finite()
-                                && value > 0.0
-                            {
-                                value
-                            } else {
-                                f64::NAN
-                            }
-                        })
-                        .collect(),
-                    generated: generated_raw
-                        .iter()
-                        .enumerate()
-                        .map(|(bin, &value)| {
-                            if self.has_absolute_rate()
-                                && generated_counts[bin] > 0
-                                && generated_exposure[bin].is_finite()
-                                && generated_exposure[bin] > 0.0
-                                && value.is_finite()
-                                && value > 0.0
-                            {
-                                value
-                            } else {
-                                f64::NAN
-                            }
-                        })
-                        .collect(),
+                    accepted: fitted_bins(
+                        accepted_raw,
+                        &accepted_counts,
+                        None,
+                        self.has_absolute_rate(),
+                    ),
+                    generated: fitted_bins(
+                        generated_raw,
+                        &generated_counts,
+                        Some(&generated_exposure),
+                        self.has_absolute_rate(),
+                    ),
                     acceptance,
                     corrected,
                     validity,
@@ -1171,6 +1457,48 @@ impl Yield {
                         generated_out_of_range: plan.generated_bins.out_of_range_count,
                     },
                     has_absolute_rate: self.has_absolute_rate(),
+                    components: component_aliases
+                        .iter()
+                        .map(|(name, tags)| {
+                            let (accepted_sums, generated_sums) = &component_sums[tags];
+                            let accepted = &accepted_sums[plan_index];
+                            let generated = &generated_sums[plan_index];
+                            let validity = (0..accepted.len())
+                                .map(|bin| {
+                                    fitted_bin_validity(
+                                        accepted[bin],
+                                        generated[bin],
+                                        accepted_counts[bin],
+                                        generated_counts[bin],
+                                        generated_exposure[bin],
+                                    )
+                                })
+                                .collect();
+                            let accepted = fitted_bins(
+                                accepted,
+                                &accepted_counts,
+                                None,
+                                self.has_absolute_rate(),
+                            );
+                            let generated = fitted_bins(
+                                generated,
+                                &generated_counts,
+                                Some(&generated_exposure),
+                                self.has_absolute_rate(),
+                            );
+                            (
+                                name.clone(),
+                                ComponentYieldProjection {
+                                    tags: tags.as_slice().to_vec(),
+                                    axes: plan.axes.clone(),
+                                    shape: plan.shape.clone(),
+                                    accepted,
+                                    generated,
+                                    validity,
+                                },
+                            )
+                        })
+                        .collect(),
                 }
             })
             .collect::<Vec<_>>();
@@ -4653,6 +4981,92 @@ mod tests {
         assert_relative_eq!(all.generated()[0], 1.5);
         assert_relative_eq!(all.acceptance()[0], 2.0 / 3.0);
         assert_relative_eq!(all.corrected()[0], 4.5);
+    }
+
+    #[test]
+    fn component_yield_projections_keep_coherent_model_separate_from_data() {
+        let x = event_scalar("x");
+        let signal = (Expr::from(parameter!("a", initial: 1.0)) * x.clone()).tagged("signal");
+        let background = Expr::from(parameter!("b", initial: 1.0)).tagged("background");
+        let model = CompiledModel::from_expr(&(signal + background).norm_sqr()).unwrap();
+        let data = weighted_dataset(&[(1.0, 2.0)]);
+        let accepted = weighted_dataset(&[(1.0, 1.0)]);
+        let generated = accepted.clone();
+        let likelihood = Arc::new(
+            Likelihood::new([
+                crate::ExtendedNllTerm::new("signal", &model, &data, &accepted).unwrap(),
+            ])
+            .unwrap(),
+        );
+        let context =
+            Yield::with_ensemble(likelihood, "signal", generated, vec![1.0, 1.0], None).unwrap();
+        let axis = Axis::new(x, vec![0.0, 2.0]).unwrap();
+        let projections = [
+            Projection::new("one", vec![axis]).unwrap(),
+            Projection::new(
+                "with_gap",
+                vec![Axis::new(event_scalar("x"), vec![0.0, 2.0, 4.0]).unwrap()],
+            )
+            .unwrap(),
+        ];
+        let components = HashMap::from([
+            ("signal".to_owned(), vec!["signal".to_owned()]),
+            ("background".to_owned(), vec!["background".to_owned()]),
+            (
+                "signal_alias".to_owned(),
+                vec!["signal".to_owned(), "signal".to_owned()],
+            ),
+        ]);
+        let result = context
+            .projection_set_with_components(&projections, &components)
+            .unwrap();
+        let full = result.get("one").unwrap();
+        assert_eq!(full.selected(), &[2.0]);
+        assert_eq!(full.accepted(), &[4.0]);
+        let signal = &full.components()["signal"];
+        let background = &full.components()["background"];
+        assert_eq!(signal.accepted(), &[1.0]);
+        assert_eq!(background.accepted(), &[1.0]);
+        assert_eq!(signal.generated(), &[1.0]);
+        assert_eq!(signal.accepted_histogram().values(), signal.accepted());
+        assert_eq!(signal.axes(), full.axes());
+        assert_eq!(signal.shape(), full.shape());
+        assert_eq!(signal.validity(), full.validity());
+        assert_eq!(
+            full.components()["signal_alias"].tags(),
+            &["signal".to_owned()]
+        );
+        assert_eq!(
+            full.components()["signal_alias"].accepted(),
+            signal.accepted()
+        );
+        assert!(full.accepted()[0] > signal.accepted()[0] + background.accepted()[0]);
+        let scalar = context
+            .likelihood()
+            .cross_section_integrals_with_tags("signal", context.generated_mc(), ["signal"])
+            .unwrap();
+        assert_relative_eq!(
+            signal.accepted()[0],
+            scalar.accepted_integral(context.parameters()).unwrap()
+        );
+        assert_relative_eq!(
+            signal.generated()[0],
+            scalar.generated_integral(context.parameters()).unwrap()
+        );
+        let gap = result.get("with_gap").unwrap();
+        assert_eq!(
+            gap.components()["signal"].validity()[1],
+            YieldBinValidity::MissingGeneratedSupport
+        );
+        assert!(gap.components()["signal"].accepted()[1].is_nan());
+        assert!(
+            context
+                .projection_set_with_components(
+                    &projections,
+                    &HashMap::from([("missing".to_owned(), vec!["unknown".to_owned()])])
+                )
+                .is_err()
+        );
     }
 
     #[test]

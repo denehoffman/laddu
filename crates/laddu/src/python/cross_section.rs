@@ -3,10 +3,10 @@
 use std::collections::HashMap;
 
 use laddu_likelihood::{
-    Axis, BinnedEstimate, CrossSection, DifferentialCrossSection, Ensemble, Estimate,
-    IntegralRetentionPolicy, Projection, RateClosure, RateClosureStatus, ReferenceCorrectedYield,
-    ReferenceCorrectionProvenance, TotalSet, Yield, YieldBinValidity, YieldHistogramView,
-    YieldProjection,
+    Axis, BinnedEstimate, ComponentYieldProjection, CrossSection, DifferentialCrossSection,
+    Ensemble, Estimate, IntegralRetentionPolicy, Projection, RateClosure, RateClosureStatus,
+    ReferenceCorrectedYield, ReferenceCorrectionProvenance, TotalSet, Yield, YieldBinValidity,
+    YieldHistogramView, YieldProjection,
 };
 use numpy::{PyArray1, PyArray2};
 use pyo3::{
@@ -454,22 +454,35 @@ impl PyYield {
         self.rate_closure.clone()
     }
 
-    #[pyo3(signature = (axes: "Axis | Sequence[Axis]"))]
-    /// Evaluate a central joint yield projection.
-    fn projection(&self, py: Python<'_>, axes: &Bound<'_, PyAny>) -> PyResult<PyYieldProjection> {
+    #[pyo3(signature = (axes: "Axis | Sequence[Axis]", *, components=None))]
+    /// Evaluate a central joint yield projection with optional model-only components.
+    fn projection(
+        &self,
+        py: Python<'_>,
+        axes: &Bound<'_, PyAny>,
+        components: Option<HashMap<String, Vec<String>>>,
+    ) -> PyResult<PyYieldProjection> {
         let axes = extract_axes(py, axes)?;
-        Ok(self.inner.projection(&axes).map_err(to_py_err)?.into())
+        Ok(self
+            .inner
+            .projection_with_components(&axes, &components.unwrap_or_default())
+            .map_err(to_py_err)?
+            .into())
     }
 
-    #[pyo3(signature = (projections: "dict[str, Axis | Sequence[Axis]]"))]
-    /// Evaluate named central yield projections in request order.
+    #[pyo3(signature = (projections: "dict[str, Axis | Sequence[Axis]]", *, components=None))]
+    /// Evaluate named central yield projections with optional model-only components.
     fn projection_set<'py>(
         &self,
         py: Python<'py>,
         projections: &Bound<'_, PyAny>,
+        components: Option<HashMap<String, Vec<String>>>,
     ) -> PyResult<Bound<'py, PyDict>> {
         let projections = extract_projections(py, projections)?;
-        let results = self.inner.projection_set(&projections).map_err(to_py_err)?;
+        let results = self
+            .inner
+            .projection_set_with_components(&projections, &components.unwrap_or_default())
+            .map_err(to_py_err)?;
         let output = PyDict::new(py);
         for (name, result) in results.iter() {
             output.set_item(
@@ -557,6 +570,61 @@ pub struct PyYieldProjection {
     inner: YieldProjection,
 }
 
+#[pyclass(
+    name = "ComponentYieldProjection",
+    module = "laddu",
+    frozen,
+    skip_from_py_object
+)]
+#[derive(Clone)]
+/// Coherent model-only fitted yields for one named tag selection.
+pub struct PyComponentYieldProjection {
+    inner: ComponentYieldProjection,
+}
+
+#[pymethods]
+impl PyComponentYieldProjection {
+    #[getter]
+    fn tags(&self) -> Vec<String> {
+        self.inner.tags().to_vec()
+    }
+    #[getter]
+    fn axes(&self) -> Vec<Vec<f64>> {
+        self.inner.axes().to_vec()
+    }
+    #[getter]
+    fn shape(&self) -> Vec<usize> {
+        self.inner.shape().to_vec()
+    }
+    #[getter]
+    fn accepted(&self) -> Vec<f64> {
+        self.inner.accepted().to_vec()
+    }
+    #[getter]
+    fn generated(&self) -> Vec<f64> {
+        self.inner.generated().to_vec()
+    }
+    #[getter]
+    fn validity(&self) -> Vec<&'static str> {
+        self.inner
+            .validity()
+            .iter()
+            .copied()
+            .map(validity_name)
+            .collect()
+    }
+    fn accepted_histogram(&self) -> PyYieldHistogramView {
+        PyYieldHistogramView {
+            inner: self.inner.accepted_histogram(),
+        }
+    }
+    fn generated_histogram(&self) -> PyYieldHistogramView {
+        PyYieldHistogramView {
+            inner: self.inner.generated_histogram(),
+        }
+    }
+}
+
 impl From<YieldProjection> for PyYieldProjection {
     fn from(inner: YieldProjection) -> Self {
         Self { inner }
@@ -577,6 +645,21 @@ fn validity_name(validity: YieldBinValidity) -> &'static str {
 
 #[pymethods]
 impl PyYieldProjection {
+    #[getter]
+    fn components(&self) -> HashMap<String, PyComponentYieldProjection> {
+        self.inner
+            .components()
+            .iter()
+            .map(|(name, inner)| {
+                (
+                    name.clone(),
+                    PyComponentYieldProjection {
+                        inner: inner.clone(),
+                    },
+                )
+            })
+            .collect()
+    }
     #[getter]
     fn axes(&self) -> Vec<Vec<f64>> {
         self.inner.axes().to_vec()

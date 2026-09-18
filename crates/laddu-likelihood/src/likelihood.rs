@@ -744,6 +744,20 @@ impl Likelihood {
         Ok(term.model.optimized_digest())
     }
 
+    pub(crate) fn intensity_model_has_tag(
+        &self,
+        term_name: &str,
+        tag: &str,
+    ) -> LikelihoodResult<bool> {
+        let Some(term) = self.terms.iter().find(|term| term.name() == term_name) else {
+            return Err(LikelihoodError::MissingTerm(term_name.to_owned()));
+        };
+        let Some(term) = term.as_intensity() else {
+            return Err(LikelihoodError::NotIntensityTerm(term_name.to_owned()));
+        };
+        Ok(term.model.has_tag(tag))
+    }
+
     /// Projects an intensity term onto selected model tags over generated Monte Carlo.
     ///
     /// # Errors
@@ -2244,6 +2258,77 @@ impl CrossSectionIntegrals {
             None,
             consume,
         )?;
+        Ok(())
+    }
+
+    /// Evaluate the full selection and compatible tagged selections while each
+    /// source batch is active. The callback receives model index zero for the
+    /// full selection, followed by selections in caller order.
+    pub(crate) fn visit_shared_source_intensities<F>(
+        &self,
+        selections: &[&CrossSectionIntegrals],
+        labels: &[String],
+        free: &[f64],
+        generated: bool,
+        mut consume: F,
+    ) -> LikelihoodResult<()>
+    where
+        F: FnMut(usize, usize, &[f64]),
+    {
+        if labels.len() != selections.len() + 1 {
+            return Err(LikelihoodError::InvalidCrossSection(
+                "model selection labels do not match selections".to_owned(),
+            ));
+        }
+        let source = if generated {
+            &self.generated_mc_source
+        } else {
+            &self.accepted_mc_source
+        };
+        let local = std::iter::once(self)
+            .chain(selections.iter().copied())
+            .map(|selection| {
+                let selected_source = if generated {
+                    &selection.generated_mc_source
+                } else {
+                    &selection.accepted_mc_source
+                };
+                if selected_source.identity() != source.identity() {
+                    return Err(LikelihoodError::InvalidCrossSection(
+                        "component source does not match the full projection".to_owned(),
+                    ));
+                }
+                let global = selection.projection.global_layout.values(free)?;
+                selection.projection.project(&global)
+            })
+            .collect::<LikelihoodResult<Vec<_>>>()?;
+        let mut offset = 0;
+        for batch in source
+            .batches()
+            .map_err(|error| LikelihoodError::Runtime(RuntimeError::Data(error.to_string())))?
+        {
+            let batch = batch
+                .map_err(|error| LikelihoodError::Runtime(RuntimeError::Data(error.to_string())))?;
+            for (index, (selection, parameters)) in std::iter::once(self)
+                .chain(selections.iter().copied())
+                .zip(&local)
+                .enumerate()
+            {
+                let values =
+                    selection
+                        .plan
+                        .evaluate_batch(parameters, &batch)
+                        .map_err(|error| {
+                            LikelihoodError::InvalidCrossSection(format!(
+                                "model selection `{}`: {error}",
+                                labels[index]
+                            ))
+                        })?;
+                let real = values.iter().map(|value| value.re).collect::<Vec<_>>();
+                consume(index, offset, &real);
+            }
+            offset += batch.len();
+        }
         Ok(())
     }
 
