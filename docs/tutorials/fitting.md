@@ -68,8 +68,58 @@ fit = likelihood.fit(
     terminators=[ld.ganesh.MaxSteps(500)],
 )
 
-fitted = dict(zip(fit.parameter_names, fit.x, strict=True))
+fitted = fit.named_parameters
+assert fit.converged
+print(fit.outcome, fit.terminal_message)
 ```
+
+`FitResult` is laddu's stable fit façade. `values`, `parameter_names`,
+`objective`, `outcome`, `converged`, and `diagnostics` do not expose optimizer
+types. `covariance` and `standard_errors` are `None` when the selected method
+did not compute them. Advanced optimizer diagnostics remain available through
+`fit.raw_ganesh_summary`.
+
+Create a passive in-memory record with `artifact = fit.artifact()`. Its schema,
+producer version, parameter names and values, objective, terminal outcome,
+diagnostics, and structural fingerprint remain inspectable without a likelihood
+or any datasets. Binding is explicit: `bound = artifact.bind(likelihood)` checks
+the reconstructed likelihood structure and named parameter schema, then returns
+values in that likelihood's canonical order.
+
+Persist an artifact with `artifact.save("fit.laddu")`; pass
+`overwrite=True` only for an intentional replacement. `FitArtifact.load(...)`
+validates the passive manifest and every binary payload before exposing fields
+or allowing binding. Loading does not import code, construct a model, access a
+dataset, or prepare an execution backend.
+
+Attach uncertainty draws with `artifact.with_ensemble(ensemble)`. The archive
+retains draw order, source identity, bootstrap reconstruction seed when present,
+and structured failed-replica records without storing event rows. Arbitrary
+replica datasets remain explicit external dependencies.
+
+Binding accepts parameter renames only through
+`bind_with_parameter_map(likelihood, mapping)`, which requires a complete
+one-to-one mapping and records it on the bound state. Built-in objective terms
+carry versioned identities. Custom terms must implement the Rust
+`artifact_identity` contract; artifacts with unidentified terms remain
+inspectable but strict binding fails.
+
+After binding, `artifact.yield_context(...)` explicitly reconstructs central
+and ensemble yield evaluation from caller-supplied likelihood and generated MC
+data without running an optimizer. Reference corrections still require their
+reference likelihood and datasets separately.
+
+`AnalysisSnapshot` is a passive object graph for fit artifacts. Aliases retain
+shared object identity, and the embedded object remains the same `FitArtifact`
+with the standalone manifest and payload semantics. Snapshot lookup does not
+bind a model, resolve datasets, prepare a backend, or evaluate the likelihood.
+Save it with `snapshot.save("analysis.laddu")` and inspect it later with
+`AnalysisSnapshot.load(...)`. The archive embeds each shared fit once and
+reports the snapshot path if an embedded fit is corrupt. A fit artifact records
+scientific fit output; an analysis snapshot groups references to such outputs.
+An optimizer checkpoint instead records mutable progress for resuming an
+optimization. Event datasets and replica event rows remain external to both
+passive archive forms, so later yield reconstruction supplies them explicitly.
 
 `initial` may be a Python sequence, a one-dimensional NumPy array of either
 floating dtype, or a partial mapping by parameter name:
@@ -96,7 +146,7 @@ projection = likelihood.projection(
 )
 
 projection_weights = projection.weights(
-    fit.x,
+    fit.values,
     acceptance_corrected=True,
 )
 ```
@@ -112,7 +162,7 @@ replica, and retain the pairing between data and fitted parameters:
 ```python
 bootstrap = likelihood.bootstrap_fit(
     200,
-    initial=fit.x,
+    initial=fit.values,
     seed=12345,
     terminators=[ld.ganesh.MaxSteps(500)],
 )

@@ -125,12 +125,14 @@ pub use laddu::prelude::<<laddu_physics::math::*>>
 pub use laddu::prelude::<<laddu_physics::quantum::*>>
 pub use laddu::prelude::AmplitudeError
 pub use laddu::prelude::AmplitudeResult
+pub use laddu::prelude::AnalysisSnapshot
 pub use laddu::prelude::AutodiffMode
 pub use laddu::prelude::Axis
 pub use laddu::prelude::BinSpec
 pub use laddu::prelude::BinaryOp
 pub use laddu::prelude::BinnedEstimate
 pub use laddu::prelude::BootstrapFitError
+pub use laddu::prelude::BoundFitState
 pub use laddu::prelude::Bounds
 pub use laddu::prelude::CacheStorage
 pub use laddu::prelude::Channel
@@ -144,8 +146,6 @@ pub use laddu::prelude::CompileResult
 pub use laddu::prelude::CompiledModel
 pub use laddu::prelude::ComponentIndex
 pub use laddu::prelude::CpuOptions
-pub use laddu::prelude::CrossSection
-pub use laddu::prelude::CrossSectionDiagnostics
 pub use laddu::prelude::CrossSectionIntegrals
 pub use laddu::prelude::Dataset
 pub use laddu::prelude::DatasetBin
@@ -153,7 +153,6 @@ pub use laddu::prelude::DatasetExprExt
 pub use laddu::prelude::DatasetStats
 pub use laddu::prelude::Device
 pub use laddu::prelude::DeviceIdentity
-pub use laddu::prelude::DifferentialCrossSection
 pub use laddu::prelude::DisplayColor
 pub use laddu::prelude::Edge
 pub use laddu::prelude::EdgeHandle
@@ -181,7 +180,12 @@ pub use laddu::prelude::ExprShape
 pub use laddu::prelude::ExprShapeError
 pub use laddu::prelude::ExprSourceKind
 pub use laddu::prelude::ExtendedNllTerm
+pub use laddu::prelude::FailedReplica
+pub use laddu::prelude::FitArtifact
+pub use laddu::prelude::FitDiagnostics
+pub use laddu::prelude::FitEnsembleArtifact
 pub use laddu::prelude::FitError
+pub use laddu::prelude::FitOutcome
 pub use laddu::prelude::FitProblem
 pub use laddu::prelude::FitResult
 pub use laddu::prelude::FreeParamId
@@ -223,6 +227,7 @@ pub use laddu::prelude::MemoryResourceKind
 pub use laddu::prelude::MemorySink
 pub use laddu::prelude::MemorySource
 pub use laddu::prelude::MemoryState
+pub use laddu::prelude::MinimizationResult
 pub use laddu::prelude::ModelEvaluator
 pub use laddu::prelude::NamedMass
 pub use laddu::prelude::NamedMomentum
@@ -248,7 +253,6 @@ pub use laddu::prelude::Precision
 pub use laddu::prelude::Predicate
 pub use laddu::prelude::ProcessMemoryReport
 pub use laddu::prelude::Projection
-pub use laddu::prelude::ProjectionSet
 pub use laddu::prelude::ProposalResult
 pub use laddu::prelude::ProposalRng
 pub use laddu::prelude::ProvenEnvelopeReport
@@ -271,7 +275,6 @@ pub use laddu::prelude::StochasticObjective
 pub use laddu::prelude::TComponent
 pub use laddu::prelude::TDistribution
 pub use laddu::prelude::ThreadPolicy
-pub use laddu::prelude::TotalSet
 pub use laddu::prelude::TwoBodyScattering
 pub use laddu::prelude::UnaryOp
 pub use laddu::prelude::UnweightedConfig
