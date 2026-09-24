@@ -75,7 +75,7 @@ luminosity:
 yield_context = likelihood.yield_context(
     "signal",
     generated_mc=generated_mc,
-    parameters=fit.x,
+    parameters=fit.values,
 )
 
 selected = yield_context.selected_yield()                  # D
@@ -199,43 +199,54 @@ not inherit the fitted rate-closure guarantee and is not an arbitrary rescaling
 API. Its binned form uses the same axes for selected data and reference
 acceptance and retains per-bin validity and both source identities.
 
-## Construct a cross-section analysis
+## Convert yields with typed luminosity
 
-Continue from a fitted likelihood with named term `"signal"`:
+Prefer converting an existing yield result when its normalization constituents
+must remain inspectable:
 
 ```python
-cross_section = likelihood.cross_section(
-    "signal",
-    generated_mc=generated_mc,
-    luminosity=integrated_luminosity,
-    parameters=fit.x,
+luminosity = ld.Luminosity(12.5, ld.AreaUnit.NANOBARN)
+cross_section = yield_context.to_cross_section(luminosity)
+differential = projected.to_cross_section(luminosity)
+named_differentials = yield_context.cross_section_projection_set(
+    {"mass": mass_axis, "joint": [mass_axis, angle_axis]}, luminosity
 )
-
-observed = cross_section.observed_total()
-acceptance = cross_section.acceptance()
-corrected_yield = cross_section.corrected_yield()
 ```
 
-For an `ExtendedNLL`, the same object also provides
+`AreaUnit` supports barn, millibarn, microbarn, nanobarn, picobarn, and
+femtobarn prefixes. A
+`Luminosity` is finite and positive and represents the reciprocal of its area
+unit. Differential conversion divides by the joint bin measure exactly once.
+Central values, draws, covariance, error-budget constituents, validity, model
+components, reference provenance, and rate-closure diagnostics remain attached
+to the converted result. Experiment-specific luminosity acquisition, flux
+conventions, plotting units, and general unit algebra stay outside this API.
+
+### Combine independent periods by exposure
 
 ```python
-fitted = cross_section.fitted_total()
+combined = ld.YieldCrossSection.combine([(first, 1.0), (second, factor)])
 ```
 
-These methods return {py:class}`laddu.Estimate`. Without an uncertainty
-ensemble only `central` is populated. `total()` remains a compatibility alias
-for `observed_total()`.
+The numerator pools the underlying yields recovered from each member's typed
+luminosity. The denominator sums luminosity times the positive exposure factor.
+This is exposure-aware combination; adding yields, averaging cross sections,
+or applying a generic rescaling does not implement the same operation.
+`ExposureFactor` adds paired factor draws when their uncertainty must propagate.
+Incompatible rate conventions, area prefixes, projection geometry, and component
+sets are rejected before returning a result.
 
 ## Tagged contributions
 
-If amplitudes were tagged before model construction, select a coherent subset:
+If amplitudes were tagged before model construction, request coherent model
+components on a yield projection:
 
 ```python
-reference_observed = cross_section.observed_total(tags=["reference"])
-reference_acceptance = cross_section.acceptance(tags=["reference"])
-
-# ExtendedNLL only:
-reference_fitted = cross_section.fitted_total(tags=["reference"])
+projected = yield_context.projection(
+    mass_axis, components={"reference": ["reference"]}
+)
+reference_accepted = projected.components["reference"].accepted
+reference_generated = projected.components["reference"].generated
 ```
 
 For the observed pathway, the selected generated integral retains the full
@@ -277,24 +288,24 @@ mass_axis = ld.Axis(
     edges=np.linspace(1.0, 2.0, 51, dtype=np.float32),
 )
 
-distribution = cross_section.differential(
+distribution = yield_context.projection(
     mass_axis,
     components={
         "reference": ["reference"],
         "second": ["second"],
     },
-)
+).to_cross_section(luminosity)
 ```
 
-`distribution.data` is the bin-by-bin acceptance-corrected data estimate.
-`distribution.model` is the fitted shape normalized to the total observed
-yield. Tagged model components are in `distribution.components`. Values are
-divided by the bin volume.
+`distribution.observed` is the bin-by-bin acceptance-corrected data estimate.
+`distribution.fitted` is the fitted differential cross section when the term
+has an absolute rate. Tagged model components are in
+`distribution.components`. Values are divided by the bin volume.
 
 Several axes produce a flattened row-major multidimensional result:
 
 ```python
-result = cross_section.differential(
+result = yield_context.projection(
     [
         ld.Axis(
             generation_channel.mass("X"),
@@ -305,9 +316,9 @@ result = cross_section.differential(
             edges=np.linspace(-1.0, 1.0, 41),
         ),
     ]
-)
+).to_cross_section(luminosity)
 
-model_grid = np.asarray(result.model.central).reshape(result.shape)
+model_grid = np.asarray(result.fitted.central).reshape(result.shape)
 ```
 
 `result.axes` stores each edge array and `result.shape` stores the bin counts.
@@ -319,7 +330,7 @@ of one joint histogram. Python accepts an insertion-ordered mapping and returns
 a normal dictionary in the same order:
 
 ```python
-projections = cross_section.projection_set(
+projections = yield_context.cross_section_projection_set(
     {
         "mass": mass_axis,
         "production_angle": ld.Axis(
@@ -333,6 +344,7 @@ projections = cross_section.projection_set(
             ld.Axis(ld.scalar("phi_decay"), edges=np.linspace(-np.pi, np.pi, 41)),
         ],
     },
+    luminosity,
     components={
         "reference": ["reference"],
         "second": ["second"],
@@ -340,7 +352,7 @@ projections = cross_section.projection_set(
 )
 
 mass_distribution = projections["mass"]
-decay_grid = np.asarray(projections["decay_angles"].model.central).reshape(
+decay_grid = np.asarray(projections["decay_angles"].fitted.central).reshape(
     projections["decay_angles"].shape
 )
 ```
@@ -349,6 +361,9 @@ The component mapping applies globally to every entry. Each mapping value may
 be one axis or a sequence of axes; a sequence forms one joint differential
 cross section, while separate names remain independent and share prepared
 event intensities.
+
+These APIs expose the selected, accepted, generated, correction, validity,
+component, and uncertainty provenance before typed luminosity conversion.
 
 The same operation works on combined cross sections. Run-period members retain
 their luminosity factors and ensemble/replica pairing while sharing prepared
@@ -364,26 +379,23 @@ observed dataset. `Likelihood.bootstrap_fit` preserves this relationship:
 ```python
 bootstrap = likelihood.bootstrap_fit(
     200,
-    initial=fit.x,
+    initial=fit.values,
     seed=12345,
     terminators=[ld.ganesh.MaxSteps(500)],
 )
 
-cross_section = likelihood.cross_section(
+yield_context = likelihood.yield_context(
     "signal",
     generated_mc=generated_mc,
-    luminosity=integrated_luminosity,
-    parameters=fit.x,
+    parameters=fit.values,
     ensemble=bootstrap,
 )
+cross_section = yield_context.to_cross_section(luminosity)
+mass_distribution = yield_context.projection(mass_axis).to_cross_section(luminosity)
 
-low, high = cross_section.observed_total().interval(0.68)
-covariance = cross_section.differential(mass_axis).model.covariance()
+low, high = cross_section.observed.interval(0.68)
+covariance = mass_distribution.observed.covariance()
 ```
-
-When only the normalization central value is needed, use
-`cross_section.observed_total_central()`. It returns an `Estimate` without draws
-and does not prepare or evaluate bootstrap replicas.
 
 Integral preparations are retained by default. For a long-lived analysis with
 many tagged selections or arbitrary paired replicas, set a byte limit:
@@ -429,12 +441,14 @@ resampling and gives the wrong uncertainty for observed cross sections.
 
 ## Combining independent datasets
 
-Build one `CrossSection` per period or selection, then pool accepted yields and
-effective exposures:
+Convert one yield per period or selection with typed luminosity, then pool
+underlying yields and effective exposures:
 
 ```python
-combined = ld.CrossSection.combine([period_a, period_b, period_c])
-combined_observed = combined.observed_total()
+combined = ld.YieldCrossSection.combine(
+    [(period_a, 1.0), (period_b, 1.0), (period_c, 1.0)]
+)
+combined_observed = combined.observed
 ```
 
 This is not an arithmetic average of already-corrected cross sections. For
@@ -442,16 +456,14 @@ several decay modes of one produced state, include branching fractions as
 exposure factors:
 
 ```python
-all_modes = ld.CrossSection.combine(
-    [mode_a, mode_b],
-    factors=[branching_fraction_a, branching_fraction_b],
+all_modes = ld.YieldCrossSection.combine_with_factors(
+    [(mode_a, branching_fraction_a), (mode_b, branching_fraction_b)]
 )
 ```
 
-Factors may be floats or `Estimate` objects. Provenance-aware draws preserve
-known correlations and deterministically pair unrelated ensembles. Supply
-individual period or mode objects to one `combine` call; nested combinations
-carrying draws are rejected because they cannot preserve the original draw pairing.
+Factors are explicit `ExposureFactor` objects when they carry uncertainty.
+Provenance-aware draws preserve known correlations and deterministically pair
+unrelated ensembles.
 
 ## Low-level integrals
 
@@ -464,10 +476,10 @@ integrals = likelihood.cross_section_integrals(
     tags=["reference"],
 )
 
-i_acc = integrals.accepted_integral(fit.x)
-i_gen = integrals.generated_integral(fit.x)
+i_acc = integrals.accepted_integral(fit.values)
+i_gen = integrals.generated_integral(fit.values)
 sigma_obs = integrals.observed_cross_section(
-    fit.x,
+    fit.values,
     luminosity=integrated_luminosity,
 )
 ```

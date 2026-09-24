@@ -105,7 +105,7 @@ preserve central values and squared-weight constituents but set the status to
 `errors` property remains the square root of the retained constituents and is
 not a reportable combined uncertainty in that state.
 
-When independence is known outside Laddu, state it explicitly:
+When independence is known outside laddu, state it explicitly:
 
 ```python
 combined = first.add(second, independent=True)
@@ -118,7 +118,7 @@ to the higher-level yield and cross-section APIs, not histogram arithmetic.
 ### Compatibility
 
 `JointHistogram.to_json()` stores ordered axis edges, shape, flattened values,
-squared-weight constituents, and aggregate diagnostics. Laddu validates those
+squared-weight constituents, and aggregate diagnostics. laddu validates those
 relationships when loading with `JointHistogram.from_json()`; malformed or
 nonfinite stored accumulators are rejected. This is a new type and does not
 change the serialized or numerical contract of the existing one-dimensional
@@ -136,7 +136,7 @@ first.merge(second)
 The histograms must have identical bin edges, empirical-versus-manual fill
 policy, and flow-constituent availability. Assigning counts or errors marks a
 histogram as manual. Validation happens before the left-hand histogram is
-changed, so a failed merge is atomic. Laddu combines bin contents, flow
+changed, so a failed merge is atomic. laddu combines bin contents, flow
 weights, and squared-weight constituents field by field.
 
 Calling `merge` states that the caller knows the fills are disjoint. It remains

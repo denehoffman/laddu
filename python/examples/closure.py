@@ -298,7 +298,7 @@ def fit_likelihood(
     max_steps: int,
     *,
     progress: bool = False,
-) -> ld.ganesh.MinimizationSummary:
+) -> ld.FitResult:
     """Fit one likelihood, optionally showing the central fit's progress."""
     observers = [ld.ganesh.ProgressObserver(interval=1)] if progress else []
     return likelihood.fit(
@@ -334,24 +334,27 @@ def plot_closure(
         terminators=[ld.ganesh.MaxSteps(bootstrap_fit_steps)],
     )
     print('bootstrap refits complete; propagating projection uncertainties...', flush=True)
-    cross_section = likelihood.cross_section(
+    yield_context = likelihood.yield_context(
         'ksks',
         generated_mc=normalization,
-        luminosity=1.0,
         parameters=fitted,
         ensemble=ensemble,
     )
-    differential = cross_section.differential(
+    differential = yield_context.projection(
         ld.Axis(mass, edges=edges),
         components={'f0': ['f0'], 'f2': ['f2']},
-    )
+    ).to_cross_section(ld.Luminosity(1.0, ld.AreaUnit.BARN))
+    if differential.fitted is None:
+        message = 'extended likelihood did not produce a fitted cross section'
+        raise RuntimeError(message)
 
-    data_counts = np.asarray(differential.data.central, dtype=float) * widths
-    data_draws = np.asarray(differential.data.draws, dtype=float) * widths
-    fit_counts = np.asarray(differential.model.central, dtype=float) * widths
-    fit_draws = np.asarray(differential.model.draws, dtype=float) * widths
+    data_counts = np.asarray(differential.observed.central, dtype=float) * widths
+    data_draws = np.asarray(differential.observed.draws, dtype=float) * widths
+    fit_counts = np.asarray(differential.fitted.central, dtype=float) * widths
+    fit_draws = np.asarray(differential.fitted.draws, dtype=float) * widths
     component_counts = {
-        name: np.asarray(estimate.central, dtype=float) * widths for name, estimate in differential.components.items()
+        name: np.asarray(component.generated.central, dtype=float) * widths
+        for name, component in differential.components.items()
     }
     data_errors = np.std(data_draws, axis=0, ddof=1)
     fit_lower, fit_upper = np.quantile(fit_draws, [0.16, 0.84], axis=0)
@@ -545,7 +548,7 @@ def main() -> None:  # noqa: PLR0915
     started = time.perf_counter()
     print('preparing likelihood...', flush=True)
     likelihood = ld.Likelihood(
-        [ld.NLL(model, data=data, accepted_mc=normalization, name='ksks')],
+        [ld.ExtendedNLL(model, data=data, accepted_mc=normalization, name='ksks')],
         execution=execution,
     )
     initial = likelihood.sample_parameters(seed=args.seed + 2)
@@ -559,7 +562,7 @@ def main() -> None:  # noqa: PLR0915
     print(f'initial fit completed in {fit_time}s', flush=True)
 
     names = fit.parameter_names or likelihood.parameter_names
-    fitted = dict(zip(names, np.asarray(fit.x, dtype=float), strict=True))
+    fitted = dict(zip(names, np.asarray(fit.values, dtype=float), strict=True))
     magnitude = fitted['f2_magnitude']
     phase = fitted['f2_phase']
 
@@ -587,7 +590,7 @@ def main() -> None:  # noqa: PLR0915
         f'projection and plot {projection_time:.3f}s'
     )
     print(
-        f'NLL: initial {initial_nll:.8e}, final {fit.fx:.8e}; '
+        f'NLL: initial {initial_nll:.8e}, final {fit.objective:.8e}; '
         f'initial gradient norm {np.linalg.norm(initial_gradient):.8e}'
     )
     print('parameter       truth        fitted    bootstrap error      residual')
@@ -613,7 +616,7 @@ def main() -> None:  # noqa: PLR0915
             {
                 'backend': args.backend,
                 'initial_nll': initial_nll,
-                'final_nll': fit.fx,
+                'final_nll': fit.objective,
                 'truth': truth,
                 'fitted': fitted,
                 'bootstrap_samples': args.bootstrap_samples,

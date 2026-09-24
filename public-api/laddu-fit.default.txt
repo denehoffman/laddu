@@ -1,6 +1,7 @@
 pub mod laddu_fit
 pub use laddu_fit::ganesh
 pub enum laddu_fit::FitError
+pub laddu_fit::FitError::Artifact(alloc::string::String)
 pub laddu_fit::FitError::Likelihood(laddu_likelihood::error::LikelihoodError)
 pub laddu_fit::FitError::Optimizer(ganesh::error::GaneshError)
 pub laddu_fit::FitError::ScalarConversion
@@ -26,6 +27,113 @@ pub fn laddu_fit::StochasticFitProblem<'_, O, T, B>::evaluate_with_gradient(&sel
 pub fn laddu_fit::StochasticFitProblem<'_, O, T, B>::gradient(&self, &ganesh::core::linalg::Vector<T, B>, &()) -> laddu_fit::FitResult<ganesh::core::linalg::Vector<T, B>>
 impl<O, T, B> ganesh::traits::numeric_problem::ScalarLogDensity<T, B, (), laddu_fit::FitError> for laddu_fit::FitProblem<'_, O, T, B> where O: laddu_likelihood::likelihood::Objective + ?core::marker::Sized, T: ganesh::core::scalar::RealScalar, B: ganesh::core::linalg::LinearAlgebra<T>
 pub fn laddu_fit::FitProblem<'_, O, T, B>::log_density(&self, &ganesh::core::linalg::Vector<T, B>, &()) -> laddu_fit::FitResult<T>
+pub enum laddu_fit::FitOutcome
+pub laddu_fit::FitOutcome::Converged
+pub laddu_fit::FitOutcome::NotConverged
+impl core::clone::Clone for laddu_fit::FitOutcome
+pub fn laddu_fit::FitOutcome::clone(&self) -> laddu_fit::FitOutcome
+impl core::cmp::Eq for laddu_fit::FitOutcome
+impl core::cmp::PartialEq for laddu_fit::FitOutcome
+pub fn laddu_fit::FitOutcome::eq(&self, &laddu_fit::FitOutcome) -> bool
+impl core::fmt::Debug for laddu_fit::FitOutcome
+pub fn laddu_fit::FitOutcome::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for laddu_fit::FitOutcome
+impl core::marker::StructuralPartialEq for laddu_fit::FitOutcome
+pub struct laddu_fit::AnalysisSnapshot
+impl laddu_fit::AnalysisSnapshot
+pub fn laddu_fit::AnalysisSnapshot::alias_fit(&mut self, impl core::convert::Into<alloc::string::String>, &str) -> laddu_fit::FitResult<()>
+pub fn laddu_fit::AnalysisSnapshot::fit(&self, &str) -> core::option::Option<&alloc::sync::Arc<laddu_fit::FitArtifact>>
+pub fn laddu_fit::AnalysisSnapshot::fit_paths(&self) -> alloc::vec::Vec<&str>
+pub fn laddu_fit::AnalysisSnapshot::insert_fit(&mut self, impl core::convert::Into<alloc::string::String>, alloc::sync::Arc<laddu_fit::FitArtifact>) -> laddu_fit::FitResult<()>
+pub fn laddu_fit::AnalysisSnapshot::load(impl core::convert::AsRef<std::path::Path>) -> laddu_fit::FitResult<Self>
+pub fn laddu_fit::AnalysisSnapshot::new() -> Self
+pub fn laddu_fit::AnalysisSnapshot::save(&self, impl core::convert::AsRef<std::path::Path>, bool) -> laddu_fit::FitResult<()>
+impl core::clone::Clone for laddu_fit::AnalysisSnapshot
+pub fn laddu_fit::AnalysisSnapshot::clone(&self) -> laddu_fit::AnalysisSnapshot
+impl core::default::Default for laddu_fit::AnalysisSnapshot
+pub fn laddu_fit::AnalysisSnapshot::default() -> laddu_fit::AnalysisSnapshot
+impl core::fmt::Debug for laddu_fit::AnalysisSnapshot
+pub fn laddu_fit::AnalysisSnapshot::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub struct laddu_fit::BoundFitState
+impl laddu_fit::BoundFitState
+pub fn laddu_fit::BoundFitState::migration(&self) -> &[(alloc::string::String, alloc::string::String)]
+pub const fn laddu_fit::BoundFitState::objective(&self) -> f64
+pub const fn laddu_fit::BoundFitState::outcome(&self) -> laddu_fit::FitOutcome
+pub fn laddu_fit::BoundFitState::parameter_names(&self) -> &[alloc::string::String]
+pub fn laddu_fit::BoundFitState::values(&self) -> &[f64]
+impl core::clone::Clone for laddu_fit::BoundFitState
+pub fn laddu_fit::BoundFitState::clone(&self) -> laddu_fit::BoundFitState
+impl core::fmt::Debug for laddu_fit::BoundFitState
+pub fn laddu_fit::BoundFitState::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub struct laddu_fit::FailedReplica
+pub laddu_fit::FailedReplica::index: usize
+pub laddu_fit::FailedReplica::message: alloc::string::String
+pub laddu_fit::FailedReplica::seed: core::option::Option<u64>
+impl core::clone::Clone for laddu_fit::FailedReplica
+pub fn laddu_fit::FailedReplica::clone(&self) -> laddu_fit::FailedReplica
+impl core::cmp::Eq for laddu_fit::FailedReplica
+impl core::cmp::PartialEq for laddu_fit::FailedReplica
+pub fn laddu_fit::FailedReplica::eq(&self, &laddu_fit::FailedReplica) -> bool
+impl core::fmt::Debug for laddu_fit::FailedReplica
+pub fn laddu_fit::FailedReplica::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for laddu_fit::FailedReplica
+pub struct laddu_fit::FitArtifact
+impl laddu_fit::FitArtifact
+pub fn laddu_fit::FitArtifact::artifact_kind(&self) -> &str
+pub fn laddu_fit::FitArtifact::bind(&self, &laddu_likelihood::likelihood::Likelihood) -> laddu_fit::FitResult<laddu_fit::BoundFitState>
+pub fn laddu_fit::FitArtifact::bind_with_parameter_map(&self, &laddu_likelihood::likelihood::Likelihood, &std::collections::hash::map::HashMap<alloc::string::String, alloc::string::String>) -> laddu_fit::FitResult<laddu_fit::BoundFitState>
+pub fn laddu_fit::FitArtifact::covariance(&self) -> core::option::Option<&[alloc::vec::Vec<f64>]>
+pub const fn laddu_fit::FitArtifact::diagnostics(&self) -> laddu_fit::FitDiagnostics
+pub const fn laddu_fit::FitArtifact::ensemble(&self) -> core::option::Option<&laddu_fit::FitEnsembleArtifact>
+pub const fn laddu_fit::FitArtifact::fingerprint_version(&self) -> u32
+pub fn laddu_fit::FitArtifact::laddu_version(&self) -> &str
+pub fn laddu_fit::FitArtifact::likelihood_fingerprint(&self) -> &str
+pub const fn laddu_fit::FitArtifact::objective(&self) -> f64
+pub const fn laddu_fit::FitArtifact::outcome(&self) -> laddu_fit::FitOutcome
+pub fn laddu_fit::FitArtifact::parameter_names(&self) -> &[alloc::string::String]
+pub const fn laddu_fit::FitArtifact::schema_version(&self) -> u32
+pub fn laddu_fit::FitArtifact::standard_errors(&self) -> core::option::Option<&[f64]>
+pub const fn laddu_fit::FitArtifact::strong_compatibility(&self) -> bool
+pub fn laddu_fit::FitArtifact::terminal_message(&self) -> &str
+pub fn laddu_fit::FitArtifact::values(&self) -> &[f64]
+pub fn laddu_fit::FitArtifact::with_ensemble(self, &laddu_likelihood::cross_section::Ensemble) -> laddu_fit::FitResult<Self>
+pub fn laddu_fit::FitArtifact::with_failed_replicas(self, alloc::vec::Vec<laddu_fit::FailedReplica>) -> laddu_fit::FitResult<Self>
+impl laddu_fit::FitArtifact
+pub fn laddu_fit::FitArtifact::load(impl core::convert::AsRef<std::path::Path>) -> laddu_fit::FitResult<Self>
+pub fn laddu_fit::FitArtifact::save(&self, impl core::convert::AsRef<std::path::Path>, bool) -> laddu_fit::FitResult<()>
+impl core::clone::Clone for laddu_fit::FitArtifact
+pub fn laddu_fit::FitArtifact::clone(&self) -> laddu_fit::FitArtifact
+impl core::fmt::Debug for laddu_fit::FitArtifact
+pub fn laddu_fit::FitArtifact::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub struct laddu_fit::FitDiagnostics
+impl laddu_fit::FitDiagnostics
+pub const fn laddu_fit::FitDiagnostics::function_evaluations(&self) -> usize
+pub const fn laddu_fit::FitDiagnostics::gradient_evaluations(&self) -> usize
+pub const fn laddu_fit::FitDiagnostics::hessian_evaluations(&self) -> usize
+impl core::clone::Clone for laddu_fit::FitDiagnostics
+pub fn laddu_fit::FitDiagnostics::clone(&self) -> laddu_fit::FitDiagnostics
+impl core::cmp::Eq for laddu_fit::FitDiagnostics
+impl core::cmp::PartialEq for laddu_fit::FitDiagnostics
+pub fn laddu_fit::FitDiagnostics::eq(&self, &laddu_fit::FitDiagnostics) -> bool
+impl core::fmt::Debug for laddu_fit::FitDiagnostics
+pub fn laddu_fit::FitDiagnostics::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for laddu_fit::FitDiagnostics
+impl core::marker::StructuralPartialEq for laddu_fit::FitDiagnostics
+pub struct laddu_fit::FitEnsembleArtifact
+impl laddu_fit::FitEnsembleArtifact
+pub const fn laddu_fit::FitEnsembleArtifact::bootstrap_seed(&self) -> core::option::Option<u64>
+pub fn laddu_fit::FitEnsembleArtifact::draw_ids(&self) -> &[u64]
+pub fn laddu_fit::FitEnsembleArtifact::draws(&self) -> &[alloc::vec::Vec<f64>]
+pub fn laddu_fit::FitEnsembleArtifact::failures(&self) -> &[laddu_fit::FailedReplica]
+pub fn laddu_fit::FitEnsembleArtifact::parameter_names(&self) -> &[alloc::string::String]
+pub const fn laddu_fit::FitEnsembleArtifact::requires_external_datasets(&self) -> bool
+pub const fn laddu_fit::FitEnsembleArtifact::source_id(&self) -> u64
+pub fn laddu_fit::FitEnsembleArtifact::to_ensemble_for(&self, &alloc::sync::Arc<laddu_likelihood::likelihood::Likelihood>) -> laddu_fit::FitResult<laddu_likelihood::cross_section::Ensemble>
+pub fn laddu_fit::FitEnsembleArtifact::to_parameter_ensemble(&self) -> laddu_fit::FitResult<laddu_likelihood::cross_section::Ensemble>
+impl core::clone::Clone for laddu_fit::FitEnsembleArtifact
+pub fn laddu_fit::FitEnsembleArtifact::clone(&self) -> laddu_fit::FitEnsembleArtifact
+impl core::fmt::Debug for laddu_fit::FitEnsembleArtifact
+pub fn laddu_fit::FitEnsembleArtifact::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub struct laddu_fit::FitProblem<'a, O: ?core::marker::Sized, T, B>
 impl<'a, O: laddu_likelihood::likelihood::Objective + ?core::marker::Sized, T, B> laddu_fit::FitProblem<'a, O, T, B>
 pub fn laddu_fit::FitProblem<'a, O, T, B>::minimizer_transform(&self) -> laddu_fit::FitResult<alloc::boxed::Box<dyn ganesh::traits::transform::Transform<T, B>>> where T: ganesh::core::scalar::RealScalar, B: ganesh::core::linalg::LinearAlgebra<T>
@@ -48,6 +156,24 @@ pub fn laddu_fit::FitProblem<'_, O, T, B>::evaluate_with_gradient(&self, &ganesh
 pub fn laddu_fit::FitProblem<'_, O, T, B>::gradient(&self, &ganesh::core::linalg::Vector<T, B>, &()) -> laddu_fit::FitResult<ganesh::core::linalg::Vector<T, B>>
 impl<O, T, B> ganesh::traits::numeric_problem::ScalarLogDensity<T, B, (), laddu_fit::FitError> for laddu_fit::FitProblem<'_, O, T, B> where O: laddu_likelihood::likelihood::Objective + ?core::marker::Sized, T: ganesh::core::scalar::RealScalar, B: ganesh::core::linalg::LinearAlgebra<T>
 pub fn laddu_fit::FitProblem<'_, O, T, B>::log_density(&self, &ganesh::core::linalg::Vector<T, B>, &()) -> laddu_fit::FitResult<T>
+pub struct laddu_fit::MinimizationResult
+impl laddu_fit::MinimizationResult
+pub fn laddu_fit::MinimizationResult::artifact(&self) -> laddu_fit::FitResult<laddu_fit::FitArtifact>
+pub const fn laddu_fit::MinimizationResult::converged(&self) -> bool
+pub fn laddu_fit::MinimizationResult::covariance(&self) -> core::option::Option<&[alloc::vec::Vec<f64>]>
+pub const fn laddu_fit::MinimizationResult::diagnostics(&self) -> laddu_fit::FitDiagnostics
+pub fn laddu_fit::MinimizationResult::from_ganesh(ganesh::core::summary::MinimizationSummary<f64, ganesh::core::linalg::NalgebraProvider>, &[alloc::string::String]) -> Self
+pub const fn laddu_fit::MinimizationResult::objective(&self) -> f64
+pub const fn laddu_fit::MinimizationResult::outcome(&self) -> laddu_fit::FitOutcome
+pub fn laddu_fit::MinimizationResult::parameter_names(&self) -> &[alloc::string::String]
+pub const fn laddu_fit::MinimizationResult::raw_ganesh_summary(&self) -> &ganesh::core::summary::MinimizationSummary<f64, ganesh::core::linalg::NalgebraProvider>
+pub fn laddu_fit::MinimizationResult::standard_errors(&self) -> core::option::Option<&[f64]>
+pub fn laddu_fit::MinimizationResult::terminal_message(&self) -> &str
+pub fn laddu_fit::MinimizationResult::values(&self) -> &[f64]
+pub fn laddu_fit::MinimizationResult::with_likelihood_fingerprint(self, impl core::convert::Into<alloc::string::String>) -> Self
+pub const fn laddu_fit::MinimizationResult::with_strong_compatibility(self, bool) -> Self
+impl core::clone::Clone for laddu_fit::MinimizationResult
+pub fn laddu_fit::MinimizationResult::clone(&self) -> laddu_fit::MinimizationResult
 pub struct laddu_fit::StochasticFitProblem<'a, O: ?core::marker::Sized, T, B>
 impl<'a, O: laddu_likelihood::likelihood::StochasticObjective + ?core::marker::Sized, T, B> laddu_fit::StochasticFitProblem<'a, O, T, B>
 pub fn laddu_fit::StochasticFitProblem<'a, O, T, B>::minimizer_transform(&self) -> laddu_fit::FitResult<alloc::boxed::Box<dyn ganesh::traits::transform::Transform<T, B>>> where T: ganesh::core::scalar::RealScalar, B: ganesh::core::linalg::LinearAlgebra<T>
