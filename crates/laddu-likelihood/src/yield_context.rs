@@ -5,8 +5,45 @@ use std::sync::Arc;
 use laddu_data::data::Dataset;
 
 use crate::{
-    CrossSectionIntegrals, Ensemble, Estimate, Likelihood, LikelihoodError, LikelihoodResult,
+    CrossSectionIntegrals, Ensemble, ErrorComponent, Estimate, Likelihood, LikelihoodError,
+    LikelihoodResult, Luminosity, ReferenceCrossSection, YieldCrossSection,
 };
+
+fn fitted_fill_variance(
+    integrals: &CrossSectionIntegrals,
+    parameters: &[f64],
+    generated: bool,
+) -> LikelihoodResult<f64> {
+    let source = if generated {
+        integrals.generated_mc_source()
+    } else {
+        integrals.accepted_mc_source()
+    };
+    let weights = crate::cross_section::dataset_weights(source)?;
+    let mut variance = 0.0;
+    let parameter_sets = [parameters];
+    let contexts = ["scalar yield error budget".to_owned()];
+    let mut accumulate = |offset: usize, _: usize, intensities: &[f64]| {
+        for (row, intensity) in intensities.iter().enumerate() {
+            let contribution = weights[offset + row] * intensity;
+            variance += contribution * contribution;
+        }
+    };
+    if generated {
+        integrals.visit_generated_prepared_intensities_many(
+            &parameter_sets,
+            &contexts,
+            &mut accumulate,
+        )?;
+    } else {
+        integrals.visit_accepted_raw_prepared_intensities_many(
+            &parameter_sets,
+            &contexts,
+            &mut accumulate,
+        )?;
+    }
+    Ok(variance)
+}
 
 const DEFAULT_ABSOLUTE_CLOSURE_TOLERANCE: f64 = 1.0e-9;
 const DEFAULT_RELATIVE_CLOSURE_TOLERANCE: f64 = 1.0e-9;
@@ -212,6 +249,15 @@ pub struct ReferenceCorrectedYield {
 }
 
 impl ReferenceCorrectedYield {
+    /// Convert the reference-corrected yield with explicit luminosity.
+    pub fn to_cross_section(&self, luminosity: &Luminosity) -> ReferenceCrossSection {
+        ReferenceCrossSection {
+            value: self.value.divided_by_luminosity(luminosity),
+            unit: luminosity.unit(),
+            luminosity: luminosity.clone(),
+            provenance: self.provenance.clone(),
+        }
+    }
     /// Returns the reference-corrected observed yield.
     pub fn value(&self) -> &Estimate {
         &self.value
@@ -272,6 +318,32 @@ impl std::fmt::Debug for Yield {
 }
 
 impl Yield {
+    /// Convert this yield context with explicit integrated luminosity.
+    /// Observed and fitted pathways remain separate and retain rate closure.
+    pub fn to_cross_section(&self, luminosity: &Luminosity) -> LikelihoodResult<YieldCrossSection> {
+        let observed = self
+            .corrected_observed_yield()
+            .divided_by_luminosity(luminosity);
+        let fitted = self
+            .has_absolute_rate
+            .then(|| self.generated_fitted_yield())
+            .transpose()?
+            .map(|estimate| estimate.divided_by_luminosity(luminosity));
+        let accepted_fitted = self
+            .has_absolute_rate
+            .then(|| self.accepted_fitted_yield())
+            .transpose()?
+            .map(|estimate| estimate.divided_by_luminosity(luminosity));
+        Ok(YieldCrossSection {
+            observed,
+            fitted,
+            accepted_fitted,
+            unit: luminosity.unit(),
+            luminosity: luminosity.clone(),
+            closure: self.rate_closure(),
+        })
+    }
+
     /// Constructs a scalar yield context with optional paired uncertainty draws.
     ///
     /// # Errors
@@ -342,13 +414,25 @@ impl Yield {
                 replica_integrals.push(replica_integral);
             }
         }
+        let selected_variance = observed_data.stats()?.sum_squared_weights();
+        let accepted_variance = fitted_fill_variance(&integrals, &parameters, false)?;
+        let generated_variance = fitted_fill_variance(&integrals, &parameters, true)?;
+        let paired_bootstrap = ensemble
+            .as_ref()
+            .is_some_and(|value| !value.replicas().is_empty());
         let selected = evaluate_estimate(
             &integrals,
             &parameters,
             ensemble.as_ref(),
             &replica_integrals,
             |integrals, _| finite("selected yield", integrals.data_weight_sum()),
-        )?;
+        )?
+        .with_fill_variance(
+            ErrorComponent::DataFill,
+            selected_variance,
+            observed_data.identity(),
+        )
+        .with_paired_bootstrap(paired_bootstrap);
         let accepted_integral = evaluate_estimate(
             &integrals,
             &parameters,
@@ -360,7 +444,13 @@ impl Yield {
                     integrals.accepted_mc_source().stats()?.events() > 0,
                 )
             },
-        )?;
+        )?
+        .with_fill_variance(
+            ErrorComponent::AcceptedMcFill,
+            accepted_variance,
+            accepted_mc.identity(),
+        )
+        .with_paired_bootstrap(paired_bootstrap);
         let generated_integral = evaluate_estimate(
             &integrals,
             &parameters,
@@ -372,17 +462,53 @@ impl Yield {
                     integrals.generated_mc_source().stats()?.events() > 0,
                 )
             },
-        )?;
+        )?
+        .with_fill_variance(
+            ErrorComponent::GeneratedMcFill,
+            generated_variance,
+            generated_mc.identity(),
+        )
+        .with_paired_bootstrap(paired_bootstrap);
+        let a = accepted_integral.value();
+        let g = generated_integral.value();
+        let d = selected.value();
         let acceptance = finite_estimate(
             "fitted acceptance",
             accepted_integral.checked_div(&generated_integral)?,
-        )?;
+        )?
+        .with_fill_variance(
+            ErrorComponent::AcceptedMcFill,
+            accepted_variance / (g * g),
+            accepted_mc.identity(),
+        )
+        .with_fill_variance(
+            ErrorComponent::GeneratedMcFill,
+            a * a * generated_variance / g.powi(4),
+            generated_mc.identity(),
+        )
+        .with_paired_bootstrap(paired_bootstrap);
         let corrected = finite_estimate(
             "corrected observed yield",
             selected
                 .checked_mul(&generated_integral)?
                 .checked_div(&accepted_integral)?,
-        )?;
+        )?
+        .with_fill_variance(
+            ErrorComponent::DataFill,
+            (g / a).powi(2) * selected_variance,
+            observed_data.identity(),
+        )
+        .with_fill_variance(
+            ErrorComponent::AcceptedMcFill,
+            (d * g / (a * a)).powi(2) * accepted_variance,
+            accepted_mc.identity(),
+        )
+        .with_fill_variance(
+            ErrorComponent::GeneratedMcFill,
+            (d / a).powi(2) * generated_variance,
+            generated_mc.identity(),
+        )
+        .with_paired_bootstrap(paired_bootstrap);
         let scalars = YieldScalars {
             selected,
             rate: if has_absolute_rate {
@@ -564,6 +690,11 @@ impl Yield {
         }
         let integrals = reference_likelihood
             .cross_section_integrals(&reference_term_name, &reference_generated_mc)?;
+        let accepted_variance = fitted_fill_variance(&integrals, &reference_parameters, false)?;
+        let generated_variance = fitted_fill_variance(&integrals, &reference_parameters, true)?;
+        let paired_bootstrap = reference_ensemble
+            .as_ref()
+            .is_some_and(|value| !value.replicas().is_empty());
         let mut replica_integrals = Vec::new();
         if let Some(ensemble) = &reference_ensemble {
             for replica in ensemble.replicas() {
@@ -600,12 +731,65 @@ impl Yield {
                 )
             },
         )?;
+        let a = accepted.value();
+        let g = generated.value();
+        let d = self.selected_yield().value();
         let acceptance =
-            finite_estimate("reference acceptance", accepted.checked_div(&generated)?)?;
-        let value = finite_estimate(
+            finite_estimate("reference acceptance", accepted.checked_div(&generated)?)?
+                .with_fill_variance(
+                    ErrorComponent::AcceptedMcFill,
+                    accepted_variance / g.powi(2),
+                    reference_accepted_mc.identity(),
+                )
+                .with_fill_variance(
+                    ErrorComponent::GeneratedMcFill,
+                    a.powi(2) * generated_variance / g.powi(4),
+                    reference_generated_mc.identity(),
+                )
+                .with_paired_bootstrap(paired_bootstrap);
+        let mut value = finite_estimate(
             "reference-corrected observed yield",
             self.selected_yield().checked_div(&acceptance)?,
-        )?;
+        )?
+        .with_fill_variance(
+            ErrorComponent::DataFill,
+            (g / a).powi(2) * self.observed_data.stats()?.sum_squared_weights(),
+            self.observed_data.identity(),
+        )
+        .with_fill_variance(
+            ErrorComponent::AcceptedMcFill,
+            (d * g / a.powi(2)).powi(2) * accepted_variance,
+            reference_accepted_mc.identity(),
+        )
+        .with_fill_variance(
+            ErrorComponent::GeneratedMcFill,
+            (d / a).powi(2) * generated_variance,
+            reference_generated_mc.identity(),
+        )
+        .with_paired_bootstrap(
+            paired_bootstrap
+                || self
+                    .ensemble
+                    .as_ref()
+                    .is_some_and(|value| !value.replicas().is_empty()),
+        );
+        if acceptance.draws().len() >= 2 {
+            let draws = acceptance
+                .draws()
+                .iter()
+                .map(|value| d / value)
+                .collect::<Vec<_>>();
+            let mean = draws.iter().sum::<f64>() / draws.len() as f64;
+            let variance = draws
+                .iter()
+                .map(|value| (value - mean).powi(2))
+                .sum::<f64>()
+                / (draws.len() - 1) as f64;
+            if let Some(source_id) = reference_ensemble.as_ref().map(Ensemble::source_id) {
+                value =
+                    value.with_fill_variance(ErrorComponent::ReferenceModel, variance, source_id);
+            }
+        }
         let provenance = ReferenceCorrectionProvenance {
             reference_term_name,
             reference_model_digest,
@@ -854,10 +1038,96 @@ mod tests {
             Yield::with_ensemble(likelihood, "signal", generated, vec![0.25], None).unwrap();
 
         assert_relative_eq!(yield_context.selected_yield().value(), 3.0);
+        assert_relative_eq!(
+            yield_context
+                .selected_yield()
+                .error_with_budget(crate::ErrorBudget::default())
+                .unwrap()
+                .error(),
+            5.0_f64.sqrt()
+        );
         assert_relative_eq!(yield_context.accepted_fitted_yield().unwrap().value(), 1.0);
         assert_relative_eq!(yield_context.generated_fitted_yield().unwrap().value(), 1.5);
         assert_relative_eq!(yield_context.fitted_acceptance().value(), 2.0 / 3.0);
         assert_relative_eq!(yield_context.corrected_observed_yield().value(), 4.5);
+        let luminosity = crate::Luminosity::new(2.0, crate::AreaUnit::Nanobarn).unwrap();
+        let cross_section = yield_context.to_cross_section(&luminosity).unwrap();
+        assert_relative_eq!(cross_section.observed().value(), 2.25);
+        assert_relative_eq!(cross_section.fitted().unwrap().value(), 0.75);
+        assert_eq!(cross_section.unit(), crate::AreaUnit::Nanobarn);
+        let micro = luminosity.to_unit(crate::AreaUnit::Microbarn).unwrap();
+        assert_relative_eq!(micro.value(), 2000.0);
+        assert_relative_eq!(
+            yield_context
+                .to_cross_section(&micro)
+                .unwrap()
+                .observed()
+                .value(),
+            0.00225
+        );
+        let uncertain_luminosity = luminosity
+            .clone()
+            .with_relative_uncertainty(0.1, 77)
+            .unwrap();
+        let uncertain = yield_context
+            .to_cross_section(&uncertain_luminosity)
+            .unwrap();
+        let luminosity_only = crate::ErrorBudget {
+            data_fill: false,
+            accepted_mc_fill: false,
+            generated_mc_fill: false,
+            luminosity: true,
+            ..crate::ErrorBudget::default()
+        };
+        assert_relative_eq!(
+            uncertain
+                .observed()
+                .error_with_budget(luminosity_only)
+                .unwrap()
+                .error(),
+            0.225
+        );
+        assert!(crate::Luminosity::new(0.0, crate::AreaUnit::Barn).is_err());
+        let second_luminosity = crate::Luminosity::new(4.0, crate::AreaUnit::Nanobarn).unwrap();
+        let combined = crate::YieldCrossSection::combine(&[
+            (cross_section.clone(), 1.0),
+            (
+                yield_context.to_cross_section(&second_luminosity).unwrap(),
+                2.0,
+            ),
+        ])
+        .unwrap();
+        assert_relative_eq!(combined.total_effective_exposure(), 10.0);
+        assert_relative_eq!(combined.observed().value(), 0.9);
+        let factor = crate::ExposureFactor::from_estimate(
+            crate::Estimate::with_source_id(2.0, vec![1.0, 3.0], Some(991)).unwrap(),
+        )
+        .unwrap();
+        let uncertain_combined = crate::YieldCrossSection::combine_with_factors(&[
+            (
+                cross_section.clone(),
+                crate::ExposureFactor::new(1.0).unwrap(),
+            ),
+            (
+                yield_context.to_cross_section(&second_luminosity).unwrap(),
+                factor,
+            ),
+        ])
+        .unwrap();
+        assert_eq!(uncertain_combined.observed().draws().len(), 2);
+        assert_ne!(
+            uncertain_combined.observed().draws()[0],
+            uncertain_combined.observed().draws()[1]
+        );
+        assert!(crate::YieldCrossSection::combine(&[]).is_err());
+        assert_relative_eq!(
+            yield_context
+                .corrected_observed_yield()
+                .error_with_budget(crate::ErrorBudget::default())
+                .unwrap()
+                .error(),
+            51.75_f64.sqrt()
+        );
         assert_eq!(
             yield_context.selected_yield(),
             yield_context.selected_yield()

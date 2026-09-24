@@ -1,7 +1,7 @@
 //! High-level cross-section analyses and uncertainty propagation.
 
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
     sync::{
         Arc, Mutex,
         atomic::{AtomicU64, Ordering},
@@ -99,6 +99,7 @@ pub struct Ensemble {
     source_id: u64,
     replicas: Vec<Arc<Likelihood>>,
     replicas_share_event_rows: bool,
+    bootstrap_seed: Option<u64>,
 }
 
 /// Failure while constructing a paired bootstrap-fit ensemble.
@@ -166,6 +167,7 @@ impl Ensemble {
             source_id,
             replicas: Vec::new(),
             replicas_share_event_rows: false,
+            bootstrap_seed: None,
         })
     }
 
@@ -178,7 +180,22 @@ impl Ensemble {
         draws: Vec<Vec<f64>>,
         replicas: Vec<Arc<Likelihood>>,
     ) -> LikelihoodResult<Self> {
-        let mut ensemble = Self::new(parameter_names, draws)?;
+        Self::with_replicas_and_source_id(
+            parameter_names,
+            draws,
+            replicas,
+            next_uncertainty_source_id(),
+        )
+    }
+
+    /// Constructs paired replicas while restoring an existing correlation identity.
+    pub fn with_replicas_and_source_id(
+        parameter_names: Vec<String>,
+        draws: Vec<Vec<f64>>,
+        replicas: Vec<Arc<Likelihood>>,
+        source_id: u64,
+    ) -> LikelihoodResult<Self> {
+        let mut ensemble = Self::with_source_id(parameter_names, draws, source_id)?;
         if replicas.len() != ensemble.draws.len() {
             return Err(invalid(
                 "bootstrap replica count must match the parameter draw count",
@@ -259,6 +276,7 @@ impl Ensemble {
         }
         let mut ensemble = Self::with_replicas(parameter_names, draws, replicas)?;
         ensemble.replicas_share_event_rows = true;
+        ensemble.bootstrap_seed = Some(seed);
         Ok(ensemble)
     }
 
@@ -280,6 +298,16 @@ impl Ensemble {
     /// Paired bootstrap likelihood replicas, if present.
     pub fn replicas(&self) -> &[Arc<Likelihood>] {
         &self.replicas
+    }
+
+    /// Base seed for deterministic Poisson bootstrap replicas, when applicable.
+    pub const fn bootstrap_seed(&self) -> Option<u64> {
+        self.bootstrap_seed
+    }
+
+    /// Whether paired replicas depend on external arbitrary event datasets.
+    pub fn requires_external_replica_datasets(&self) -> bool {
+        !self.replicas.is_empty() && self.bootstrap_seed.is_none()
     }
 
     pub(crate) fn replicas_share_event_rows(&self) -> bool {
@@ -322,6 +350,42 @@ pub struct Estimate {
     central: f64,
     draws: Vec<f64>,
     source_id: Option<u64>,
+    variance_components: BTreeMap<ErrorComponent, f64>,
+    variance_source_ids: BTreeMap<ErrorComponent, u64>,
+    paired_bootstrap: bool,
+}
+
+/// A scalar marginal error and its complete selection diagnostics.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ScalarErrorView {
+    error: f64,
+    budget: ErrorBudget,
+    included: Vec<ErrorComponent>,
+    omitted: Vec<(ErrorComponent, &'static str)>,
+    sources: Vec<(ErrorComponent, u64)>,
+}
+
+impl ScalarErrorView {
+    /// Selected marginal standard error.
+    pub fn error(&self) -> f64 {
+        self.error
+    }
+    /// Exact requested budget.
+    pub fn budget(&self) -> ErrorBudget {
+        self.budget
+    }
+    /// Included variance sources.
+    pub fn included(&self) -> &[ErrorComponent] {
+        &self.included
+    }
+    /// Selected but unavailable sources with machine-readable reasons.
+    pub fn omitted(&self) -> &[(ErrorComponent, &'static str)] {
+        &self.omitted
+    }
+    /// Provenance of included sources.
+    pub fn sources(&self) -> &[(ErrorComponent, u64)] {
+        &self.sources
+    }
 }
 
 impl Estimate {
@@ -391,6 +455,9 @@ impl Estimate {
             central,
             draws,
             source_id,
+            variance_components: BTreeMap::new(),
+            variance_source_ids: BTreeMap::new(),
+            paired_bootstrap: false,
         })
     }
 
@@ -399,7 +466,105 @@ impl Estimate {
             central,
             draws,
             source_id,
+            variance_components: BTreeMap::new(),
+            variance_source_ids: BTreeMap::new(),
+            paired_bootstrap: false,
         }
+    }
+
+    pub(crate) fn with_fill_variance(
+        mut self,
+        component: ErrorComponent,
+        variance: f64,
+        source_id: u64,
+    ) -> Self {
+        self.variance_components.insert(component, variance);
+        self.variance_source_ids.insert(component, source_id);
+        self
+    }
+
+    pub(crate) fn with_paired_bootstrap(mut self, paired: bool) -> Self {
+        self.paired_bootstrap = paired;
+        self
+    }
+
+    pub(crate) fn divided_by_luminosity(&self, luminosity: &Luminosity) -> Self {
+        let mut converted = self.clone();
+        let scale = 1.0 / luminosity.value();
+        converted.central *= scale;
+        for draw in &mut converted.draws {
+            *draw *= scale;
+        }
+        for variance in converted.variance_components.values_mut() {
+            *variance *= scale * scale;
+        }
+        if let (Some(relative), Some(source_id)) =
+            (luminosity.relative_uncertainty(), luminosity.source_id())
+        {
+            let variance = (converted.central * relative).powi(2);
+            converted =
+                converted.with_fill_variance(ErrorComponent::Luminosity, variance, source_id);
+        }
+        converted
+    }
+
+    /// Materialize a scalar marginal error without changing draws or covariance.
+    pub fn error_with_budget(&self, budget: ErrorBudget) -> LikelihoodResult<ScalarErrorView> {
+        if budget.ensemble
+            && budget.reference_model
+            && self
+                .variance_components
+                .contains_key(&ErrorComponent::ReferenceModel)
+        {
+            return Err(invalid(
+                "reference-model variation is already present in ensemble draws",
+            ));
+        }
+        if (budget.ensemble || budget.reference_model)
+            && self.paired_bootstrap
+            && (budget.data_fill || budget.accepted_mc_fill || budget.generated_mc_fill)
+        {
+            return Err(invalid(
+                "paired bootstrap draws already contain fill-statistical variation; disable fill statistics when selecting draw variation",
+            ));
+        }
+        let mut variance = 0.0;
+        let mut included = Vec::new();
+        let mut omitted = Vec::new();
+        let mut sources = Vec::new();
+        for component in budget.selected() {
+            if component == ErrorComponent::Ensemble {
+                if self.draws.len() < 2 {
+                    omitted.push((component, "fewer_than_two_draws"));
+                } else {
+                    variance += self.std()?.powi(2);
+                    included.push(component);
+                    if let Some(source_id) = self.source_id {
+                        sources.push((component, source_id));
+                    }
+                }
+            } else if let Some(value) = self.variance_components.get(&component) {
+                variance += value;
+                included.push(component);
+                if let Some(source_id) = self.variance_source_ids.get(&component) {
+                    sources.push((component, *source_id));
+                }
+            } else {
+                omitted.push((component, "unavailable"));
+            }
+        }
+        let error = if variance.is_finite() && variance >= 0.0 {
+            variance.sqrt()
+        } else {
+            f64::NAN
+        };
+        Ok(ScalarErrorView {
+            error,
+            budget,
+            included,
+            omitted,
+            sources,
+        })
     }
 
     /// Central estimate.
@@ -609,6 +774,78 @@ pub struct BinnedEstimate {
     source_ids: Vec<u64>,
     axes: Option<Vec<Vec<f64>>>,
     unit: BinnedEstimateUnit,
+    variance_components: BTreeMap<ErrorComponent, Vec<f64>>,
+    variance_source_ids: BTreeMap<ErrorComponent, u64>,
+    omitted_components: BTreeMap<ErrorComponent, &'static str>,
+    paired_bootstrap: bool,
+}
+
+/// Independent sources that may contribute to a marginal error.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum ErrorComponent {
+    /// Squared observed-event weights.
+    DataFill,
+    /// Squared accepted Monte Carlo contributions.
+    AcceptedMcFill,
+    /// Squared generated Monte Carlo contributions.
+    GeneratedMcFill,
+    /// Variation across paired parameter or bootstrap draws.
+    Ensemble,
+    /// Luminosity uncertainty, when supplied by a typed conversion.
+    Luminosity,
+    /// Branching or exposure-factor uncertainty.
+    BranchingExposure,
+    /// Reference-model uncertainty.
+    ReferenceModel,
+}
+
+/// Requested sources for marginal histogram errors. Fill statistics are on by default.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ErrorBudget {
+    /// Include observed-event fill statistics.
+    pub data_fill: bool,
+    /// Include accepted Monte Carlo fill statistics.
+    pub accepted_mc_fill: bool,
+    /// Include generated Monte Carlo fill statistics.
+    pub generated_mc_fill: bool,
+    /// Include ensemble variation.
+    pub ensemble: bool,
+    /// Include luminosity variation.
+    pub luminosity: bool,
+    /// Include branching or exposure-factor variation.
+    pub branching_exposure: bool,
+    /// Include reference-model variation.
+    pub reference_model: bool,
+}
+
+impl Default for ErrorBudget {
+    fn default() -> Self {
+        Self {
+            data_fill: true,
+            accepted_mc_fill: true,
+            generated_mc_fill: true,
+            ensemble: false,
+            luminosity: false,
+            branching_exposure: false,
+            reference_model: false,
+        }
+    }
+}
+
+impl ErrorBudget {
+    fn selected(self) -> impl Iterator<Item = ErrorComponent> {
+        [
+            (self.data_fill, ErrorComponent::DataFill),
+            (self.accepted_mc_fill, ErrorComponent::AcceptedMcFill),
+            (self.generated_mc_fill, ErrorComponent::GeneratedMcFill),
+            (self.ensemble, ErrorComponent::Ensemble),
+            (self.luminosity, ErrorComponent::Luminosity),
+            (self.branching_exposure, ErrorComponent::BranchingExposure),
+            (self.reference_model, ErrorComponent::ReferenceModel),
+        ]
+        .into_iter()
+        .filter_map(|(enabled, component)| enabled.then_some(component))
+    }
 }
 
 /// Physical interpretation of binned values.
@@ -620,6 +857,548 @@ pub enum BinnedEstimateUnit {
     Yield,
     /// Cross section normalized by exposure.
     CrossSection,
+}
+
+/// Supported area prefixes for cross-section results and reciprocal luminosity.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum AreaUnit {
+    /// Barn.
+    Barn,
+    /// Millibarn.
+    Millibarn,
+    /// Microbarn.
+    Microbarn,
+    /// Nanobarn.
+    Nanobarn,
+    /// Picobarn.
+    Picobarn,
+    /// Femtobarn.
+    Femtobarn,
+}
+
+impl AreaUnit {
+    fn barns(self) -> f64 {
+        match self {
+            Self::Barn => 1.0,
+            Self::Millibarn => 1.0e-3,
+            Self::Microbarn => 1.0e-6,
+            Self::Nanobarn => 1.0e-9,
+            Self::Picobarn => 1.0e-12,
+            Self::Femtobarn => 1.0e-15,
+        }
+    }
+}
+
+/// Positive integrated luminosity in inverse area units.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Luminosity {
+    value: f64,
+    unit: AreaUnit,
+    relative_uncertainty: Option<f64>,
+    source_id: Option<u64>,
+}
+
+impl Luminosity {
+    /// Construct a finite, positive integrated luminosity.
+    pub fn new(value: f64, unit: AreaUnit) -> LikelihoodResult<Self> {
+        if !value.is_finite() || value <= 0.0 {
+            return Err(invalid("luminosity must be finite and positive"));
+        }
+        Ok(Self {
+            value,
+            unit,
+            relative_uncertainty: None,
+            source_id: None,
+        })
+    }
+
+    /// Attach an independent relative standard uncertainty.
+    pub fn with_relative_uncertainty(
+        mut self,
+        uncertainty: f64,
+        source_id: u64,
+    ) -> LikelihoodResult<Self> {
+        if !uncertainty.is_finite() || uncertainty < 0.0 {
+            return Err(invalid(
+                "luminosity relative uncertainty must be finite and nonnegative",
+            ));
+        }
+        self.relative_uncertainty = Some(uncertainty);
+        self.source_id = Some(source_id);
+        Ok(self)
+    }
+
+    /// Numeric luminosity in the stored reciprocal area unit.
+    pub fn value(&self) -> f64 {
+        self.value
+    }
+    /// Area prefix reciprocal to the luminosity unit.
+    pub fn unit(&self) -> AreaUnit {
+        self.unit
+    }
+    /// Relative standard uncertainty, if supplied.
+    pub fn relative_uncertainty(&self) -> Option<f64> {
+        self.relative_uncertainty
+    }
+    /// Correlation identity of luminosity uncertainty.
+    pub fn source_id(&self) -> Option<u64> {
+        self.source_id
+    }
+
+    /// Convert the same luminosity to another reciprocal area prefix.
+    pub fn to_unit(&self, unit: AreaUnit) -> LikelihoodResult<Self> {
+        let mut converted = self.clone();
+        converted.value = self.value * unit.barns() / self.unit.barns();
+        if !converted.value.is_finite() || converted.value <= 0.0 {
+            return Err(invalid(
+                "luminosity unit conversion produced a nonfinite or nonpositive value",
+            ));
+        }
+        converted.unit = unit;
+        Ok(converted)
+    }
+}
+
+/// Distinct observed and fitted scalar cross sections from one yield context.
+#[derive(Clone, Debug)]
+pub struct YieldCrossSection {
+    pub(crate) observed: Estimate,
+    pub(crate) fitted: Option<Estimate>,
+    pub(crate) accepted_fitted: Option<Estimate>,
+    pub(crate) unit: AreaUnit,
+    pub(crate) luminosity: Luminosity,
+    pub(crate) closure: crate::RateClosure,
+}
+
+impl YieldCrossSection {
+    /// Acceptance-corrected observed cross section.
+    pub fn observed(&self) -> &Estimate {
+        &self.observed
+    }
+    /// Generated-space fitted cross section, when the likelihood has an absolute rate.
+    pub fn fitted(&self) -> Option<&Estimate> {
+        self.fitted.as_ref()
+    }
+    /// Accepted-space fitted cross section, when the likelihood has an absolute rate.
+    pub fn accepted_fitted(&self) -> Option<&Estimate> {
+        self.accepted_fitted.as_ref()
+    }
+    /// Area prefix of all values.
+    pub fn unit(&self) -> AreaUnit {
+        self.unit
+    }
+    /// Luminosity used for this conversion.
+    pub fn luminosity(&self) -> &Luminosity {
+        &self.luminosity
+    }
+    /// Original yield-space closure diagnostic.
+    pub fn rate_closure(&self) -> &crate::RateClosure {
+        &self.closure
+    }
+
+    /// Pool compatible periods through their total effective exposure.
+    pub fn combine(members: &[(Self, f64)]) -> LikelihoodResult<ExposureCombinedCrossSection> {
+        let (first, _) = members
+            .first()
+            .ok_or_else(|| invalid("exposure-aware combination requires at least one member"))?;
+        if members.iter().any(|(member, factor)| {
+            member.unit != first.unit || !factor.is_finite() || *factor <= 0.0
+        }) {
+            return Err(invalid(
+                "combined members must share an area unit and have finite positive exposure factors",
+            ));
+        }
+        if members
+            .iter()
+            .any(|(member, _)| member.fitted.is_some() != first.fitted.is_some())
+        {
+            return Err(invalid(
+                "cannot combine fitted-rate and shape-only cross-section members",
+            ));
+        }
+        let exposures = members
+            .iter()
+            .map(|(member, factor)| member.luminosity.value() * factor)
+            .collect::<Vec<_>>();
+        let total = exposures.iter().sum::<f64>();
+        if !total.is_finite() || total <= 0.0 {
+            return Err(invalid(
+                "total effective exposure must be finite and positive",
+            ));
+        }
+        let combine_estimates = |estimates: Vec<&Estimate>| -> LikelihoodResult<Estimate> {
+            let draw_count = estimates
+                .iter()
+                .map(|estimate| estimate.draws.len())
+                .max()
+                .unwrap_or(0);
+            if estimates
+                .iter()
+                .any(|estimate| !estimate.draws.is_empty() && estimate.draws.len() != draw_count)
+            {
+                return Err(invalid("combined member draw counts do not match"));
+            }
+            let luminosities = members
+                .iter()
+                .map(|(member, _)| member.luminosity.value())
+                .collect::<Vec<_>>();
+            let central = estimates
+                .iter()
+                .zip(&luminosities)
+                .map(|(estimate, luminosity)| estimate.central * luminosity)
+                .sum::<f64>()
+                / total;
+            let draws = (0..draw_count)
+                .map(|index| {
+                    estimates
+                        .iter()
+                        .zip(&luminosities)
+                        .map(|(estimate, luminosity)| {
+                            estimate
+                                .draws
+                                .get(index)
+                                .copied()
+                                .unwrap_or(estimate.central)
+                                * luminosity
+                        })
+                        .sum::<f64>()
+                        / total
+                })
+                .collect();
+            let source_ids = estimates
+                .iter()
+                .filter_map(|estimate| estimate.source_id)
+                .collect::<HashSet<_>>();
+            let source_id = match source_ids.len() {
+                0 => None,
+                1 => source_ids.iter().copied().next(),
+                _ => Some(next_uncertainty_source_id()),
+            };
+            let mut result = Estimate::from_evaluation(central, draws, source_id);
+            for (estimate, luminosity) in estimates.iter().zip(&luminosities) {
+                for (&component, &variance) in &estimate.variance_components {
+                    *result.variance_components.entry(component).or_default() +=
+                        (luminosity / total).powi(2) * variance;
+                }
+            }
+            Ok(result)
+        };
+        let observed =
+            combine_estimates(members.iter().map(|(member, _)| &member.observed).collect())?;
+        let fitted = first
+            .fitted
+            .as_ref()
+            .map(|_| {
+                combine_estimates(
+                    members
+                        .iter()
+                        .map(|(member, _)| member.fitted.as_ref().expect("validated fitted member"))
+                        .collect(),
+                )
+            })
+            .transpose()?;
+        Ok(ExposureCombinedCrossSection {
+            observed,
+            fitted,
+            unit: first.unit,
+            total_effective_exposure: total,
+            member_luminosities: members
+                .iter()
+                .map(|(member, _)| member.luminosity.clone())
+                .collect(),
+            exposure_factors: members.iter().map(|(_, factor)| *factor).collect(),
+            member_closures: members
+                .iter()
+                .map(|(member, _)| member.closure.clone())
+                .collect(),
+        })
+    }
+
+    /// Pool periods with uncertainty-bearing positive exposure factors.
+    pub fn combine_with_factors(
+        members: &[(Self, ExposureFactor)],
+    ) -> LikelihoodResult<ExposureCombinedCrossSection> {
+        let (first, _) = members
+            .first()
+            .ok_or_else(|| invalid("exposure-aware combination requires at least one member"))?;
+        if members.iter().any(|(member, _)| {
+            member.unit != first.unit || member.fitted.is_some() != first.fitted.is_some()
+        }) {
+            return Err(invalid(
+                "combined members must share an area unit and rate convention",
+            ));
+        }
+        let draw_count = members
+            .iter()
+            .flat_map(|(member, factor)| [member.observed.draws.len(), factor.0.draws.len()])
+            .max()
+            .unwrap_or(0);
+        let evaluate = |draw: Option<usize>, fitted: bool| -> LikelihoodResult<f64> {
+            let mut numerator = 0.0;
+            let mut exposure = 0.0;
+            for (member_index, (member, factor)) in members.iter().enumerate() {
+                let estimate = if fitted {
+                    member.fitted.as_ref().expect("validated fitted member")
+                } else {
+                    &member.observed
+                };
+                let value = draw
+                    .and_then(|index| estimate.draws.get(index % estimate.draws.len().max(1)))
+                    .copied()
+                    .unwrap_or(estimate.central);
+                let factor_index = draw.map(|index| {
+                    if estimate.source_id.is_some() && estimate.source_id == factor.0.source_id {
+                        index
+                    } else {
+                        index + member_index + 1
+                    }
+                });
+                let factor_value = factor_index
+                    .and_then(|index| factor.0.draws.get(index % factor.0.draws.len().max(1)))
+                    .copied()
+                    .unwrap_or(factor.0.central);
+                numerator += value * member.luminosity.value();
+                exposure += member.luminosity.value() * factor_value;
+            }
+            if !exposure.is_finite() || exposure <= 0.0 {
+                return Err(invalid(
+                    "total effective exposure must be finite and positive for every draw",
+                ));
+            }
+            Ok(numerator / exposure)
+        };
+        let build = |fitted: bool| -> LikelihoodResult<Estimate> {
+            let central = evaluate(None, fitted)?;
+            let draws = (0..draw_count)
+                .map(|index| evaluate(Some(index), fitted))
+                .collect::<LikelihoodResult<Vec<_>>>()?;
+            let sources = members
+                .iter()
+                .flat_map(|(member, factor)| {
+                    [
+                        if fitted {
+                            member.fitted.as_ref().and_then(|value| value.source_id)
+                        } else {
+                            member.observed.source_id
+                        },
+                        factor.0.source_id,
+                    ]
+                })
+                .flatten()
+                .collect::<HashSet<_>>();
+            Ok(Estimate::from_evaluation(
+                central,
+                draws,
+                match sources.len() {
+                    0 => None,
+                    1 => sources.iter().copied().next(),
+                    _ => Some(next_uncertainty_source_id()),
+                },
+            ))
+        };
+        let total = members
+            .iter()
+            .map(|(member, factor)| member.luminosity.value() * factor.0.central)
+            .sum();
+        Ok(ExposureCombinedCrossSection {
+            observed: build(false)?,
+            fitted: first.fitted.as_ref().map(|_| build(true)).transpose()?,
+            unit: first.unit,
+            total_effective_exposure: total,
+            member_luminosities: members
+                .iter()
+                .map(|(member, _)| member.luminosity.clone())
+                .collect(),
+            exposure_factors: members.iter().map(|(_, factor)| factor.0.central).collect(),
+            member_closures: members
+                .iter()
+                .map(|(member, _)| member.closure.clone())
+                .collect(),
+        })
+    }
+}
+
+/// Result of pooling periods through total effective exposure.
+#[derive(Clone, Debug)]
+pub struct ExposureCombinedCrossSection {
+    observed: Estimate,
+    fitted: Option<Estimate>,
+    unit: AreaUnit,
+    total_effective_exposure: f64,
+    member_luminosities: Vec<Luminosity>,
+    exposure_factors: Vec<f64>,
+    member_closures: Vec<crate::RateClosure>,
+}
+
+/// Positive scalar exposure factor with optional paired uncertainty draws.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ExposureFactor(Estimate);
+
+impl ExposureFactor {
+    /// Construct a central-only positive factor.
+    pub fn new(value: f64) -> LikelihoodResult<Self> {
+        Self::from_estimate(Estimate::central(value)?)
+    }
+    /// Validate an estimate as a positive exposure factor.
+    pub fn from_estimate(estimate: Estimate) -> LikelihoodResult<Self> {
+        if estimate.central <= 0.0 || estimate.draws.iter().any(|value| *value <= 0.0) {
+            return Err(invalid(
+                "exposure factors must be positive in the central value and every draw",
+            ));
+        }
+        Ok(Self(estimate))
+    }
+    /// Underlying central value and paired draws.
+    pub fn estimate(&self) -> &Estimate {
+        &self.0
+    }
+}
+
+impl ExposureCombinedCrossSection {
+    /// Pooled observed cross section.
+    pub fn observed(&self) -> &Estimate {
+        &self.observed
+    }
+    /// Pooled fitted cross section, when every member has an absolute rate.
+    pub fn fitted(&self) -> Option<&Estimate> {
+        self.fitted.as_ref()
+    }
+    /// Shared area prefix.
+    pub fn unit(&self) -> AreaUnit {
+        self.unit
+    }
+    /// Sum of luminosity times exposure factor.
+    pub fn total_effective_exposure(&self) -> f64 {
+        self.total_effective_exposure
+    }
+    /// Original luminosities.
+    pub fn member_luminosities(&self) -> &[Luminosity] {
+        &self.member_luminosities
+    }
+    /// Exposure factors.
+    pub fn exposure_factors(&self) -> &[f64] {
+        &self.exposure_factors
+    }
+    /// Original closure diagnostics.
+    pub fn member_closures(&self) -> &[crate::RateClosure] {
+        &self.member_closures
+    }
+}
+
+/// Reference-corrected scalar cross section with its distinct reference identity.
+#[derive(Clone, Debug)]
+pub struct ReferenceCrossSection {
+    pub(crate) value: Estimate,
+    pub(crate) unit: AreaUnit,
+    pub(crate) luminosity: Luminosity,
+    pub(crate) provenance: ReferenceCorrectionProvenance,
+}
+
+impl ReferenceCrossSection {
+    /// Reference-corrected observed cross section.
+    pub fn value(&self) -> &Estimate {
+        &self.value
+    }
+    /// Area prefix.
+    pub fn unit(&self) -> AreaUnit {
+        self.unit
+    }
+    /// Integrated luminosity used for conversion.
+    pub fn luminosity(&self) -> &Luminosity {
+        &self.luminosity
+    }
+    /// Identity of the reference correction.
+    pub fn provenance(&self) -> &ReferenceCorrectionProvenance {
+        &self.provenance
+    }
+    /// Pool reference-corrected periods while retaining every reference identity.
+    pub fn combine(
+        members: &[(Self, f64)],
+    ) -> LikelihoodResult<ExposureCombinedReferenceCrossSection> {
+        let (first, _) = members.first().ok_or_else(|| {
+            invalid("reference exposure-aware combination requires at least one member")
+        })?;
+        if members.iter().any(|(member, factor)| {
+            member.unit != first.unit || !factor.is_finite() || *factor <= 0.0
+        }) {
+            return Err(invalid(
+                "reference members must share an area unit and positive factors",
+            ));
+        }
+        let total = members
+            .iter()
+            .map(|(member, factor)| member.luminosity.value() * factor)
+            .sum::<f64>();
+        let draw_count = members
+            .iter()
+            .map(|(member, _)| member.value.draws.len())
+            .max()
+            .unwrap_or(0);
+        if members.iter().any(|(member, _)| {
+            !member.value.draws.is_empty() && member.value.draws.len() != draw_count
+        }) {
+            return Err(invalid("reference member draw counts do not match"));
+        }
+        let central = members
+            .iter()
+            .map(|(member, _)| member.value.central * member.luminosity.value())
+            .sum::<f64>()
+            / total;
+        let draws = (0..draw_count)
+            .map(|draw| {
+                members
+                    .iter()
+                    .map(|(member, _)| {
+                        member
+                            .value
+                            .draws
+                            .get(draw)
+                            .copied()
+                            .unwrap_or(member.value.central)
+                            * member.luminosity.value()
+                    })
+                    .sum::<f64>()
+                    / total
+            })
+            .collect();
+        Ok(ExposureCombinedReferenceCrossSection {
+            value: Estimate::from_evaluation(central, draws, Some(next_uncertainty_source_id())),
+            unit: first.unit,
+            total_effective_exposure: total,
+            provenances: members
+                .iter()
+                .map(|(member, _)| member.provenance.clone())
+                .collect(),
+        })
+    }
+}
+
+/// Exposure-combined reference-corrected scalar cross section.
+#[derive(Clone, Debug)]
+pub struct ExposureCombinedReferenceCrossSection {
+    value: Estimate,
+    unit: AreaUnit,
+    total_effective_exposure: f64,
+    provenances: Vec<ReferenceCorrectionProvenance>,
+}
+
+impl ExposureCombinedReferenceCrossSection {
+    /// Pooled reference-corrected cross section.
+    pub fn value(&self) -> &Estimate {
+        &self.value
+    }
+    /// Shared area prefix.
+    pub fn unit(&self) -> AreaUnit {
+        self.unit
+    }
+    /// Total effective exposure.
+    pub fn total_effective_exposure(&self) -> f64 {
+        self.total_effective_exposure
+    }
+    /// Reference identities in member order.
+    pub fn provenances(&self) -> &[ReferenceCorrectionProvenance] {
+        &self.provenances
+    }
 }
 
 impl BinnedEstimate {
@@ -637,7 +1416,82 @@ impl BinnedEstimate {
             source_ids: source_id.into_iter().collect(),
             axes: Some(axes),
             unit,
+            variance_components: BTreeMap::new(),
+            variance_source_ids: BTreeMap::new(),
+            omitted_components: BTreeMap::new(),
+            paired_bootstrap: false,
         }
+    }
+
+    fn with_variance(mut self, component: ErrorComponent, variances: Vec<f64>) -> Self {
+        self.variance_components.insert(component, variances);
+        self
+    }
+
+    fn with_variance_source(mut self, component: ErrorComponent, source_id: u64) -> Self {
+        self.variance_source_ids.insert(component, source_id);
+        self
+    }
+
+    fn with_paired_bootstrap(mut self, paired: bool) -> Self {
+        self.paired_bootstrap = paired;
+        self
+    }
+
+    fn divided_by_luminosity_and_measure(
+        &self,
+        luminosity: &Luminosity,
+        measure: &[f64],
+    ) -> LikelihoodResult<Self> {
+        if measure.len() != self.central.len()
+            || measure
+                .iter()
+                .any(|value| !value.is_finite() || *value <= 0.0)
+        {
+            return Err(invalid(
+                "bin measures must be finite, positive, and match the yield shape",
+            ));
+        }
+        let scale = measure
+            .iter()
+            .map(|value| 1.0 / (luminosity.value() * value))
+            .collect::<Vec<_>>();
+        if scale
+            .iter()
+            .any(|value| !value.is_finite() || *value <= 0.0)
+        {
+            return Err(invalid(
+                "luminosity and bin measure produce a nonfinite cross-section scale",
+            ));
+        }
+        let mut result = self.clone();
+        result.unit = BinnedEstimateUnit::CrossSection;
+        for (value, factor) in result.central.iter_mut().zip(&scale) {
+            *value *= factor;
+        }
+        for draw in &mut result.draws {
+            for (value, factor) in draw.iter_mut().zip(&scale) {
+                *value *= factor;
+            }
+        }
+        for variances in result.variance_components.values_mut() {
+            for (variance, factor) in variances.iter_mut().zip(&scale) {
+                *variance *= factor * factor;
+            }
+        }
+        if let (Some(relative), Some(source_id)) =
+            (luminosity.relative_uncertainty(), luminosity.source_id())
+        {
+            let variances = result
+                .central
+                .iter()
+                .map(|value| (value * relative).powi(2))
+                .collect();
+            result = result
+                .with_variance(ErrorComponent::Luminosity, variances)
+                .with_variance_source(ErrorComponent::Luminosity, source_id);
+        }
+        Ok(result)
     }
 
     fn with_sources(mut self, source_ids: Vec<u64>) -> Self {
@@ -667,12 +1521,22 @@ impl BinnedEstimate {
 
     /// Add another estimate with compatible geometry and uncertainty draws.
     pub fn checked_add(&self, other: &Self) -> LikelihoodResult<Self> {
-        self.checked_binary(other, self.same_unit(other)?, |left, right| left + right)
+        self.checked_binary(
+            other,
+            self.same_unit(other)?,
+            |left, right| left + right,
+            |_, _| (1.0, 1.0),
+        )
     }
 
     /// Subtract another estimate with compatible geometry and uncertainty draws.
     pub fn checked_sub(&self, other: &Self) -> LikelihoodResult<Self> {
-        self.checked_binary(other, self.same_unit(other)?, |left, right| left - right)
+        self.checked_binary(
+            other,
+            self.same_unit(other)?,
+            |left, right| left - right,
+            |_, _| (1.0, -1.0),
+        )
     }
 
     /// Multiply by another estimate with compatible geometry and uncertainty draws.
@@ -681,7 +1545,12 @@ impl BinnedEstimate {
             (BinnedEstimateUnit::Unitless, unit) | (unit, BinnedEstimateUnit::Unitless) => unit,
             _ => return Err(invalid("multiplication requires a dimensionless operand")),
         };
-        self.checked_binary(other, unit, |left, right| left * right)
+        self.checked_binary(
+            other,
+            unit,
+            |left, right| left * right,
+            |left, right| (right, left),
+        )
     }
 
     /// Divide by another estimate with compatible geometry and uncertainty draws.
@@ -693,7 +1562,12 @@ impl BinnedEstimate {
         } else {
             return Err(invalid("binned estimate division has incompatible units"));
         };
-        self.checked_binary(other, unit, |left, right| left / right)
+        self.checked_binary(
+            other,
+            unit,
+            |left, right| left / right,
+            |left, right| (1.0 / right, -left / (right * right)),
+        )
     }
 
     fn same_unit(&self, other: &Self) -> LikelihoodResult<BinnedEstimateUnit> {
@@ -708,6 +1582,7 @@ impl BinnedEstimate {
         other: &Self,
         unit: BinnedEstimateUnit,
         op: impl Fn(f64, f64) -> f64,
+        derivatives: impl Fn(f64, f64) -> (f64, f64),
     ) -> LikelihoodResult<Self> {
         if self.central.len() != other.central.len() || self.axes != other.axes {
             return Err(invalid("binned estimate geometry does not match"));
@@ -740,6 +1615,51 @@ impl BinnedEstimate {
             }
             (false, false) => Some(next_uncertainty_source_id()),
         };
+        let mut variance_components = BTreeMap::new();
+        let mut variance_source_ids = BTreeMap::new();
+        let mut omitted_components = self.omitted_components.clone();
+        omitted_components.extend(
+            other
+                .omitted_components
+                .iter()
+                .map(|(&key, &reason)| (key, reason)),
+        );
+        for component in self
+            .variance_components
+            .keys()
+            .chain(other.variance_components.keys())
+        {
+            if variance_components.contains_key(component)
+                || omitted_components.contains_key(component)
+            {
+                continue;
+            }
+            let left = self.variance_components.get(component);
+            let right = other.variance_components.get(component);
+            if left.is_some() && right.is_some() {
+                omitted_components.insert(*component, "covariance_unavailable");
+                continue;
+            }
+            let variances = self
+                .central
+                .iter()
+                .zip(&other.central)
+                .enumerate()
+                .map(|(bin, (&a, &b))| {
+                    let (da, db) = derivatives(a, b);
+                    left.map_or(0.0, |values| da * da * values[bin])
+                        + right.map_or(0.0, |values| db * db * values[bin])
+                })
+                .collect();
+            variance_components.insert(*component, variances);
+            if let Some(source_id) = self
+                .variance_source_ids
+                .get(component)
+                .or_else(|| other.variance_source_ids.get(component))
+            {
+                variance_source_ids.insert(*component, *source_id);
+            }
+        }
         Ok(Self {
             central: self
                 .central
@@ -760,6 +1680,106 @@ impl BinnedEstimate {
             },
             axes: self.axes.clone(),
             unit,
+            variance_components,
+            variance_source_ids,
+            omitted_components,
+            paired_bootstrap: self.paired_bootstrap || other.paired_bootstrap,
+        })
+    }
+
+    /// Materializes marginal errors from the requested independent sources.
+    /// Full draws and covariance remain on the estimate.
+    pub fn histogram_with_budget(
+        &self,
+        budget: ErrorBudget,
+    ) -> LikelihoodResult<YieldHistogramView> {
+        if budget.ensemble
+            && budget.reference_model
+            && self
+                .variance_components
+                .contains_key(&ErrorComponent::ReferenceModel)
+        {
+            return Err(invalid(
+                "reference-model variation is already present in ensemble draws",
+            ));
+        }
+        if (budget.ensemble || budget.reference_model)
+            && self.paired_bootstrap
+            && (budget.data_fill || budget.accepted_mc_fill || budget.generated_mc_fill)
+        {
+            return Err(invalid(
+                "paired bootstrap draws already contain fill-statistical variation; disable fill statistics when selecting draw variation",
+            ));
+        }
+        let axes = self
+            .axes
+            .clone()
+            .ok_or_else(|| invalid("binned estimate has no histogram axes"))?;
+        let shape = axes.iter().map(|axis| axis.len() - 1).collect();
+        let mut variance = vec![0.0; self.central.len()];
+        let mut included = Vec::new();
+        let mut omitted = Vec::new();
+        for component in budget.selected() {
+            if component == ErrorComponent::Ensemble {
+                if self.draws.len() < 2 {
+                    omitted.push((component, "fewer_than_two_draws"));
+                } else {
+                    let covariance = self.covariance()?;
+                    for (bin, row) in covariance.iter().enumerate() {
+                        variance[bin] += row[bin];
+                    }
+                    included.push(component);
+                }
+            } else if let Some(&reason) = self.omitted_components.get(&component) {
+                omitted.push((component, reason));
+            } else if let Some(values) = self.variance_components.get(&component) {
+                for (total, value) in variance.iter_mut().zip(values) {
+                    *total += value;
+                }
+                included.push(component);
+            } else {
+                omitted.push((component, "unavailable"));
+            }
+        }
+        let unresolved_covariance = omitted
+            .iter()
+            .any(|(_, reason)| *reason == "covariance_unavailable");
+        let errors = variance
+            .iter()
+            .zip(&self.central)
+            .map(|(&value, &central)| {
+                if !unresolved_covariance
+                    && central.is_finite()
+                    && value.is_finite()
+                    && value >= 0.0
+                {
+                    value.sqrt()
+                } else {
+                    f64::NAN
+                }
+            })
+            .collect();
+        let sources = included
+            .iter()
+            .filter_map(|component| {
+                if *component == ErrorComponent::Ensemble {
+                    self.source_id.map(|id| (*component, id))
+                } else {
+                    self.variance_source_ids
+                        .get(component)
+                        .map(|id| (*component, *id))
+                }
+            })
+            .collect();
+        Ok(YieldHistogramView {
+            axes,
+            shape,
+            values: self.central.clone(),
+            errors,
+            budget,
+            included,
+            omitted,
+            sources,
         })
     }
 
@@ -828,7 +1848,7 @@ impl BinnedEstimate {
 
 /// Data, coherent-model, and tagged-component differential cross sections.
 #[derive(Clone, Debug)]
-pub struct DifferentialCrossSection {
+pub(crate) struct DifferentialCrossSection {
     axes: Vec<Vec<f64>>,
     shape: Vec<usize>,
     data: BinnedEstimate,
@@ -907,7 +1927,7 @@ impl Projection {
 
 /// Ordered results from a multi-projection cross-section request.
 #[derive(Clone, Debug)]
-pub struct ProjectionSet {
+pub(crate) struct ProjectionSet {
     entries: Vec<(String, DifferentialCrossSection)>,
 }
 
@@ -998,6 +2018,11 @@ pub struct YieldHistogramView {
     axes: Vec<Vec<f64>>,
     shape: Vec<usize>,
     values: Vec<f64>,
+    errors: Vec<f64>,
+    budget: ErrorBudget,
+    included: Vec<ErrorComponent>,
+    omitted: Vec<(ErrorComponent, &'static str)>,
+    sources: Vec<(ErrorComponent, u64)>,
 }
 
 impl YieldHistogramView {
@@ -1013,6 +2038,26 @@ impl YieldHistogramView {
     pub fn values(&self) -> &[f64] {
         &self.values
     }
+    /// Marginal standard errors for the selected budget.
+    pub fn errors(&self) -> &[f64] {
+        &self.errors
+    }
+    /// Exact selection used for these marginal errors.
+    pub fn budget(&self) -> ErrorBudget {
+        self.budget
+    }
+    /// Sources contributing to the materialized variance.
+    pub fn included(&self) -> &[ErrorComponent] {
+        &self.included
+    }
+    /// Selected sources that were unavailable, with machine-readable reasons.
+    pub fn omitted(&self) -> &[(ErrorComponent, &'static str)] {
+        &self.omitted
+    }
+    /// Source identity of included uncertainty constituents.
+    pub fn sources(&self) -> &[(ErrorComponent, u64)] {
+        &self.sources
+    }
 }
 
 /// Coherent selected and fitted yields with paired ensemble draws over joint axes.
@@ -1020,9 +2065,16 @@ impl YieldHistogramView {
 pub struct YieldProjection {
     axes: Vec<Vec<f64>>,
     shape: Vec<usize>,
+    bin_volumes: Vec<f64>,
+    data_source_id: u64,
+    accepted_source_id: u64,
+    generated_source_id: u64,
     selected: Vec<f64>,
+    selected_fill_variance: Vec<f64>,
     accepted: Vec<f64>,
+    accepted_fill_variance: Vec<f64>,
     generated: Vec<f64>,
+    generated_fill_variance: Vec<f64>,
     acceptance: Vec<f64>,
     corrected: Vec<f64>,
     validity: Vec<YieldBinValidity>,
@@ -1038,6 +2090,366 @@ pub struct YieldProjection {
     corrected_draws: Vec<Vec<f64>>,
 }
 
+/// Differential cross sections converted from one yield projection.
+#[derive(Clone, Debug)]
+pub struct YieldCrossSectionProjection {
+    axes: Vec<Vec<f64>>,
+    shape: Vec<usize>,
+    observed: BinnedEstimate,
+    fitted: Option<BinnedEstimate>,
+    accepted_fitted: Option<BinnedEstimate>,
+    components: HashMap<String, ComponentCrossSectionProjection>,
+    validity: Vec<YieldBinValidity>,
+    luminosity: Luminosity,
+}
+
+impl YieldCrossSectionProjection {
+    /// Ordered projection axes.
+    pub fn axes(&self) -> &[Vec<f64>] {
+        &self.axes
+    }
+    /// Row-major bin shape.
+    pub fn shape(&self) -> &[usize] {
+        &self.shape
+    }
+    /// Acceptance-corrected observed differential cross section.
+    pub fn observed(&self) -> &BinnedEstimate {
+        &self.observed
+    }
+    /// Generated-space fitted differential cross section, if absolute rate exists.
+    pub fn fitted(&self) -> Option<&BinnedEstimate> {
+        self.fitted.as_ref()
+    }
+    /// Accepted-space fitted differential cross section, if absolute rate exists.
+    pub fn accepted_fitted(&self) -> Option<&BinnedEstimate> {
+        self.accepted_fitted.as_ref()
+    }
+    /// Named coherent model-only differential cross sections.
+    pub fn components(&self) -> &HashMap<String, ComponentCrossSectionProjection> {
+        &self.components
+    }
+    /// Original yield-bin validity.
+    pub fn validity(&self) -> &[YieldBinValidity] {
+        &self.validity
+    }
+    /// Explicit luminosity used for conversion.
+    pub fn luminosity(&self) -> &Luminosity {
+        &self.luminosity
+    }
+
+    /// Pool compatible differential periods through total effective exposure.
+    pub fn combine(
+        members: &[(Self, f64)],
+    ) -> LikelihoodResult<ExposureCombinedCrossSectionProjection> {
+        let (first, _) = members.first().ok_or_else(|| {
+            invalid("exposure-aware projection combination requires at least one member")
+        })?;
+        if members.iter().any(|(member, factor)| {
+            member.axes != first.axes
+                || member.shape != first.shape
+                || member.luminosity.unit() != first.luminosity.unit()
+                || !factor.is_finite()
+                || *factor <= 0.0
+        }) {
+            return Err(invalid(
+                "combined projections must share geometry, area unit, and finite positive exposure factors",
+            ));
+        }
+        let total = members
+            .iter()
+            .map(|(member, factor)| member.luminosity.value() * factor)
+            .sum::<f64>();
+        let pool = |estimates: Vec<&BinnedEstimate>| -> LikelihoodResult<BinnedEstimate> {
+            let draws = estimates
+                .iter()
+                .map(|estimate| estimate.draws.len())
+                .max()
+                .unwrap_or(0);
+            if estimates
+                .iter()
+                .any(|estimate| !estimate.draws.is_empty() && estimate.draws.len() != draws)
+            {
+                return Err(invalid("combined projection draw counts do not match"));
+            }
+            let mut result = estimates[0].clone();
+            result.central = (0..result.central.len())
+                .map(|bin| {
+                    members
+                        .iter()
+                        .zip(&estimates)
+                        .map(|((member, _), estimate)| {
+                            member.luminosity.value() * estimate.central[bin]
+                        })
+                        .sum::<f64>()
+                        / total
+                })
+                .collect();
+            result.draws = (0..draws)
+                .map(|draw| {
+                    (0..result.central.len())
+                        .map(|bin| {
+                            members
+                                .iter()
+                                .zip(&estimates)
+                                .map(|((member, _), estimate)| {
+                                    member.luminosity.value()
+                                        * estimate.draws.get(draw).unwrap_or(&estimate.central)[bin]
+                                })
+                                .sum::<f64>()
+                                / total
+                        })
+                        .collect()
+                })
+                .collect();
+            result.variance_components.clear();
+            for ((member, _), estimate) in members.iter().zip(&estimates) {
+                for (&component, values) in &estimate.variance_components {
+                    let output = result
+                        .variance_components
+                        .entry(component)
+                        .or_insert_with(|| vec![0.0; result.central.len()]);
+                    for (sum, variance) in output.iter_mut().zip(values) {
+                        *sum += (member.luminosity.value() / total).powi(2) * variance;
+                    }
+                }
+            }
+            Ok(result)
+        };
+        if members
+            .iter()
+            .any(|(member, _)| member.fitted.is_some() != first.fitted.is_some())
+        {
+            return Err(invalid(
+                "cannot combine fitted-rate and shape-only projections",
+            ));
+        }
+        let observed = pool(members.iter().map(|(member, _)| &member.observed).collect())?;
+        let fitted = first
+            .fitted
+            .as_ref()
+            .map(|_| {
+                pool(
+                    members
+                        .iter()
+                        .map(|(member, _)| {
+                            member.fitted.as_ref().expect("validated fitted projection")
+                        })
+                        .collect(),
+                )
+            })
+            .transpose()?;
+        if members.iter().any(|(member, _)| {
+            member.components.keys().collect::<HashSet<_>>()
+                != first.components.keys().collect::<HashSet<_>>()
+        }) {
+            return Err(invalid(
+                "combined projections must have the same named model components",
+            ));
+        }
+        let mut components = HashMap::new();
+        for (name, first_component) in &first.components {
+            let accepted = pool(
+                members
+                    .iter()
+                    .map(|(member, _)| &member.components[name].accepted)
+                    .collect(),
+            )?;
+            let generated = pool(
+                members
+                    .iter()
+                    .map(|(member, _)| &member.components[name].generated)
+                    .collect(),
+            )?;
+            components.insert(
+                name.clone(),
+                ComponentCrossSectionProjection {
+                    tags: first_component.tags.clone(),
+                    accepted,
+                    generated,
+                    validity: first_component.validity.clone(),
+                },
+            );
+        }
+        Ok(ExposureCombinedCrossSectionProjection {
+            axes: first.axes.clone(),
+            shape: first.shape.clone(),
+            observed,
+            fitted,
+            components,
+            member_validity: members
+                .iter()
+                .map(|(member, _)| member.validity.clone())
+                .collect(),
+            total_effective_exposure: total,
+            unit: first.luminosity.unit(),
+        })
+    }
+
+    /// Pool compatible differential periods with uncertainty-bearing factors.
+    pub fn combine_with_factors(
+        members: &[(Self, ExposureFactor)],
+    ) -> LikelihoodResult<ExposureCombinedCrossSectionProjection> {
+        let central = members
+            .iter()
+            .map(|(member, factor)| (member.clone(), factor.0.central))
+            .collect::<Vec<_>>();
+        let mut result = Self::combine(&central)?;
+        let draw_count = members
+            .iter()
+            .flat_map(|(member, factor)| [member.observed.draws.len(), factor.0.draws.len()])
+            .max()
+            .unwrap_or(0);
+        result.observed.draws = (0..draw_count)
+            .map(|draw| {
+                let exposure = members
+                    .iter()
+                    .enumerate()
+                    .map(|(index, (member, factor))| {
+                        member.luminosity.value()
+                            * factor
+                                .0
+                                .draws
+                                .get((draw + index) % factor.0.draws.len().max(1))
+                                .copied()
+                                .unwrap_or(factor.0.central)
+                    })
+                    .sum::<f64>();
+                (0..result.observed.central.len())
+                    .map(|bin| {
+                        members
+                            .iter()
+                            .map(|(member, _)| {
+                                member.luminosity.value()
+                                    * member
+                                        .observed
+                                        .draws
+                                        .get(draw % member.observed.draws.len().max(1))
+                                        .unwrap_or(&member.observed.central)[bin]
+                            })
+                            .sum::<f64>()
+                            / exposure
+                    })
+                    .collect()
+            })
+            .collect();
+        if let Some(fitted) = &mut result.fitted {
+            fitted.draws = (0..draw_count)
+                .map(|draw| {
+                    let exposure = members
+                        .iter()
+                        .enumerate()
+                        .map(|(index, (member, factor))| {
+                            member.luminosity.value()
+                                * factor
+                                    .0
+                                    .draws
+                                    .get((draw + index) % factor.0.draws.len().max(1))
+                                    .copied()
+                                    .unwrap_or(factor.0.central)
+                        })
+                        .sum::<f64>();
+                    (0..fitted.central.len())
+                        .map(|bin| {
+                            members
+                                .iter()
+                                .map(|(member, _)| {
+                                    let estimate = member
+                                        .fitted
+                                        .as_ref()
+                                        .expect("validated fitted projection");
+                                    member.luminosity.value()
+                                        * estimate
+                                            .draws
+                                            .get(draw % estimate.draws.len().max(1))
+                                            .unwrap_or(&estimate.central)[bin]
+                                })
+                                .sum::<f64>()
+                                / exposure
+                        })
+                        .collect()
+                })
+                .collect();
+        }
+        Ok(result)
+    }
+}
+
+/// Differential result pooled through total effective exposure.
+#[derive(Clone, Debug)]
+pub struct ExposureCombinedCrossSectionProjection {
+    axes: Vec<Vec<f64>>,
+    shape: Vec<usize>,
+    observed: BinnedEstimate,
+    fitted: Option<BinnedEstimate>,
+    components: HashMap<String, ComponentCrossSectionProjection>,
+    member_validity: Vec<Vec<YieldBinValidity>>,
+    total_effective_exposure: f64,
+    unit: AreaUnit,
+}
+
+impl ExposureCombinedCrossSectionProjection {
+    /// Shared axes.
+    pub fn axes(&self) -> &[Vec<f64>] {
+        &self.axes
+    }
+    /// Shared shape.
+    pub fn shape(&self) -> &[usize] {
+        &self.shape
+    }
+    /// Pooled observed differential cross section.
+    pub fn observed(&self) -> &BinnedEstimate {
+        &self.observed
+    }
+    /// Pooled fitted differential cross section.
+    pub fn fitted(&self) -> Option<&BinnedEstimate> {
+        self.fitted.as_ref()
+    }
+    /// Named model-only components remain separate from observed data.
+    pub fn components(&self) -> &HashMap<String, ComponentCrossSectionProjection> {
+        &self.components
+    }
+    /// Original validity arrays in member order.
+    pub fn member_validity(&self) -> &[Vec<YieldBinValidity>] {
+        &self.member_validity
+    }
+    /// Total effective exposure.
+    pub fn total_effective_exposure(&self) -> f64 {
+        self.total_effective_exposure
+    }
+    /// Shared area prefix.
+    pub fn unit(&self) -> AreaUnit {
+        self.unit
+    }
+}
+
+/// Model-only accepted and generated differential cross sections.
+#[derive(Clone, Debug)]
+pub struct ComponentCrossSectionProjection {
+    tags: Vec<String>,
+    accepted: BinnedEstimate,
+    generated: BinnedEstimate,
+    validity: Vec<YieldBinValidity>,
+}
+
+impl ComponentCrossSectionProjection {
+    /// Canonical coherent model selection.
+    pub fn tags(&self) -> &[String] {
+        &self.tags
+    }
+    /// Accepted-space model cross section.
+    pub fn accepted(&self) -> &BinnedEstimate {
+        &self.accepted
+    }
+    /// Generated-space model cross section.
+    pub fn generated(&self) -> &BinnedEstimate {
+        &self.generated
+    }
+    /// Per-bin model support validity.
+    pub fn validity(&self) -> &[YieldBinValidity] {
+        &self.validity
+    }
+}
+
 /// Model-only coherent fitted yields for a named tag selection. Interfering
 /// selections need not sum to the full fitted yield.
 #[derive(Clone, Debug)]
@@ -1045,8 +2457,14 @@ pub struct ComponentYieldProjection {
     tags: Vec<String>,
     axes: Vec<Vec<f64>>,
     shape: Vec<usize>,
+    bin_volumes: Vec<f64>,
+    has_absolute_rate: bool,
+    accepted_source_id: u64,
+    generated_source_id: u64,
     accepted: Vec<f64>,
+    accepted_fill_variance: Vec<f64>,
     generated: Vec<f64>,
+    generated_fill_variance: Vec<f64>,
     validity: Vec<YieldBinValidity>,
     accepted_draws: Vec<Vec<f64>>,
     generated_draws: Vec<Vec<f64>>,
@@ -1054,6 +2472,27 @@ pub struct ComponentYieldProjection {
 }
 
 impl ComponentYieldProjection {
+    /// Convert model-only fitted yields to differential cross sections.
+    pub fn to_cross_section(
+        &self,
+        luminosity: &Luminosity,
+    ) -> LikelihoodResult<ComponentCrossSectionProjection> {
+        if !self.has_absolute_rate {
+            return Err(LikelihoodError::AbsoluteRateUnavailable(
+                "component projection has no absolute fitted rate".to_owned(),
+            ));
+        }
+        Ok(ComponentCrossSectionProjection {
+            tags: self.tags.clone(),
+            accepted: self
+                .accepted_estimate()
+                .divided_by_luminosity_and_measure(luminosity, &self.bin_volumes)?,
+            generated: self
+                .generated_estimate()
+                .divided_by_luminosity_and_measure(luminosity, &self.bin_volumes)?,
+            validity: self.validity.clone(),
+        })
+    }
     /// Accepted-space fitted yield with paired draws.
     pub fn accepted_estimate(&self) -> BinnedEstimate {
         BinnedEstimate::projected(
@@ -1063,6 +2502,11 @@ impl ComponentYieldProjection {
             self.axes.clone(),
             BinnedEstimateUnit::Yield,
         )
+        .with_variance(
+            ErrorComponent::AcceptedMcFill,
+            self.accepted_fill_variance.clone(),
+        )
+        .with_variance_source(ErrorComponent::AcceptedMcFill, self.accepted_source_id)
     }
     /// Generated-space fitted yield with paired draws.
     pub fn generated_estimate(&self) -> BinnedEstimate {
@@ -1073,6 +2517,11 @@ impl ComponentYieldProjection {
             self.axes.clone(),
             BinnedEstimateUnit::Yield,
         )
+        .with_variance(
+            ErrorComponent::GeneratedMcFill,
+            self.generated_fill_variance.clone(),
+        )
+        .with_variance_source(ErrorComponent::GeneratedMcFill, self.generated_source_id)
     }
     /// Canonical sorted tags defining this coherent model selection.
     pub fn tags(&self) -> &[String] {
@@ -1108,23 +2557,57 @@ impl ComponentYieldProjection {
     }
     /// Materialize the accepted-space central histogram.
     pub fn accepted_histogram(&self) -> YieldHistogramView {
-        YieldHistogramView {
-            axes: self.axes.clone(),
-            shape: self.shape.clone(),
-            values: self.accepted.clone(),
-        }
+        self.accepted_estimate()
+            .histogram_with_budget(ErrorBudget::default())
+            .expect("projected estimate has axes")
     }
     /// Materialize the generated-space central histogram.
     pub fn generated_histogram(&self) -> YieldHistogramView {
-        YieldHistogramView {
-            axes: self.axes.clone(),
-            shape: self.shape.clone(),
-            values: self.generated.clone(),
-        }
+        self.generated_estimate()
+            .histogram_with_budget(ErrorBudget::default())
+            .expect("projected estimate has axes")
     }
 }
 
 impl YieldProjection {
+    /// Convert this yield projection to differential cross sections with one explicit luminosity.
+    pub fn to_cross_section(
+        &self,
+        luminosity: &Luminosity,
+    ) -> LikelihoodResult<YieldCrossSectionProjection> {
+        let observed = self
+            .corrected_estimate()
+            .divided_by_luminosity_and_measure(luminosity, &self.bin_volumes)?;
+        let fitted = self
+            .has_absolute_rate
+            .then(|| {
+                self.generated_estimate()
+                    .divided_by_luminosity_and_measure(luminosity, &self.bin_volumes)
+            })
+            .transpose()?;
+        let accepted_fitted = self
+            .has_absolute_rate
+            .then(|| {
+                self.accepted_estimate()
+                    .divided_by_luminosity_and_measure(luminosity, &self.bin_volumes)
+            })
+            .transpose()?;
+        let components = self
+            .components
+            .iter()
+            .map(|(name, component)| Ok((name.clone(), component.to_cross_section(luminosity)?)))
+            .collect::<LikelihoodResult<_>>()?;
+        Ok(YieldCrossSectionProjection {
+            axes: self.axes.clone(),
+            shape: self.shape.clone(),
+            observed,
+            fitted,
+            accepted_fitted,
+            components,
+            validity: self.validity.clone(),
+            luminosity: luminosity.clone(),
+        })
+    }
     /// Selected-data yield with paired draws.
     pub fn selected_estimate(&self) -> BinnedEstimate {
         BinnedEstimate::projected(
@@ -1134,6 +2617,12 @@ impl YieldProjection {
             self.axes.clone(),
             BinnedEstimateUnit::Yield,
         )
+        .with_variance(
+            ErrorComponent::DataFill,
+            self.selected_fill_variance.clone(),
+        )
+        .with_variance_source(ErrorComponent::DataFill, self.data_source_id)
+        .with_paired_bootstrap(self.has_replica_datasets)
     }
     /// Accepted-space fitted yield with paired draws.
     pub fn accepted_estimate(&self) -> BinnedEstimate {
@@ -1144,6 +2633,12 @@ impl YieldProjection {
             self.axes.clone(),
             BinnedEstimateUnit::Yield,
         )
+        .with_variance(
+            ErrorComponent::AcceptedMcFill,
+            self.accepted_fill_variance.clone(),
+        )
+        .with_variance_source(ErrorComponent::AcceptedMcFill, self.accepted_source_id)
+        .with_paired_bootstrap(self.has_replica_datasets)
     }
     /// Generated-space fitted yield with paired draws.
     pub fn generated_estimate(&self) -> BinnedEstimate {
@@ -1154,26 +2649,100 @@ impl YieldProjection {
             self.axes.clone(),
             BinnedEstimateUnit::Yield,
         )
+        .with_variance(
+            ErrorComponent::GeneratedMcFill,
+            self.generated_fill_variance.clone(),
+        )
+        .with_variance_source(ErrorComponent::GeneratedMcFill, self.generated_source_id)
+        .with_paired_bootstrap(self.has_replica_datasets)
     }
     /// Fitted acceptance with paired draws.
     pub fn acceptance_estimate(&self) -> BinnedEstimate {
-        BinnedEstimate::projected(
+        let mut estimate = BinnedEstimate::projected(
             self.acceptance.clone(),
             self.acceptance_draws.clone(),
             self.source_id,
             self.axes.clone(),
             BinnedEstimateUnit::Unitless,
         )
+        .with_paired_bootstrap(self.has_replica_datasets);
+        for (component, inputs) in [
+            (ErrorComponent::AcceptedMcFill, &self.accepted_fill_variance),
+            (
+                ErrorComponent::GeneratedMcFill,
+                &self.generated_fill_variance,
+            ),
+        ] {
+            let variances = (0..self.acceptance.len())
+                .map(|bin| {
+                    if self.validity[bin] != YieldBinValidity::Valid {
+                        return f64::NAN;
+                    }
+                    let a = self.accepted[bin];
+                    let g = self.generated[bin];
+                    let derivative = if component == ErrorComponent::AcceptedMcFill {
+                        1.0 / g
+                    } else {
+                        -a / (g * g)
+                    };
+                    derivative * derivative * inputs[bin]
+                })
+                .collect();
+            estimate = estimate.with_variance(component, variances);
+            let source_id = if component == ErrorComponent::AcceptedMcFill {
+                self.accepted_source_id
+            } else {
+                self.generated_source_id
+            };
+            estimate = estimate.with_variance_source(component, source_id);
+        }
+        estimate
     }
     /// Corrected selected yield with paired draws.
     pub fn corrected_estimate(&self) -> BinnedEstimate {
-        BinnedEstimate::projected(
+        let mut estimate = BinnedEstimate::projected(
             self.corrected.clone(),
             self.corrected_draws.clone(),
             self.source_id,
             self.axes.clone(),
             BinnedEstimateUnit::Yield,
         )
+        .with_paired_bootstrap(self.has_replica_datasets);
+        for (component, inputs) in [
+            (ErrorComponent::DataFill, &self.selected_fill_variance),
+            (ErrorComponent::AcceptedMcFill, &self.accepted_fill_variance),
+            (
+                ErrorComponent::GeneratedMcFill,
+                &self.generated_fill_variance,
+            ),
+        ] {
+            let variances = (0..self.corrected.len())
+                .map(|bin| {
+                    if self.validity[bin] != YieldBinValidity::Valid {
+                        return f64::NAN;
+                    }
+                    let d = self.selected[bin];
+                    let a = self.accepted[bin];
+                    let g = self.generated[bin];
+                    let derivative = match component {
+                        ErrorComponent::DataFill => g / a,
+                        ErrorComponent::AcceptedMcFill => -d * g / (a * a),
+                        ErrorComponent::GeneratedMcFill => d / a,
+                        _ => unreachable!(),
+                    };
+                    derivative * derivative * inputs[bin]
+                })
+                .collect();
+            estimate = estimate.with_variance(component, variances);
+            let source_id = match component {
+                ErrorComponent::DataFill => self.data_source_id,
+                ErrorComponent::AcceptedMcFill => self.accepted_source_id,
+                ErrorComponent::GeneratedMcFill => self.generated_source_id,
+                _ => unreachable!(),
+            };
+            estimate = estimate.with_variance_source(component, source_id);
+        }
+        estimate
     }
     /// Ensemble source shared by every draw constituent, if present.
     pub fn source_id(&self) -> Option<u64> {
@@ -1250,26 +2819,27 @@ impl YieldProjection {
     }
     /// Materialize a central selected-data histogram view.
     pub fn selected_histogram(&self) -> YieldHistogramView {
-        self.histogram(&self.selected)
+        self.selected_estimate()
+            .histogram_with_budget(ErrorBudget::default())
+            .expect("projected estimate has axes")
     }
     /// Materialize a central accepted-model histogram view.
     pub fn accepted_histogram(&self) -> YieldHistogramView {
-        self.histogram(&self.accepted)
+        self.accepted_estimate()
+            .histogram_with_budget(ErrorBudget::default())
+            .expect("projected estimate has axes")
     }
     /// Materialize a central generated-model histogram view.
     pub fn generated_histogram(&self) -> YieldHistogramView {
-        self.histogram(&self.generated)
+        self.generated_estimate()
+            .histogram_with_budget(ErrorBudget::default())
+            .expect("projected estimate has axes")
     }
     /// Materialize a central corrected-yield histogram view.
     pub fn corrected_histogram(&self) -> YieldHistogramView {
-        self.histogram(&self.corrected)
-    }
-    fn histogram(&self, values: &[f64]) -> YieldHistogramView {
-        YieldHistogramView {
-            axes: self.axes.clone(),
-            shape: self.shape.clone(),
-            values: values.to_vec(),
-        }
+        self.corrected_estimate()
+            .histogram_with_budget(ErrorBudget::default())
+            .expect("projected estimate has axes")
     }
 }
 
@@ -1277,6 +2847,35 @@ impl YieldProjection {
 #[derive(Clone, Debug)]
 pub struct YieldProjectionSet {
     entries: Vec<(String, YieldProjection)>,
+}
+
+/// Ordered typed cross-section projections produced from one yield evaluation.
+#[derive(Clone, Debug)]
+pub struct YieldCrossSectionProjectionSet {
+    entries: Vec<(String, YieldCrossSectionProjection)>,
+}
+
+impl YieldCrossSectionProjectionSet {
+    /// Number of named results.
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+    /// Whether there are no results.
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+    /// Lookup by request name.
+    pub fn get(&self, name: &str) -> Option<&YieldCrossSectionProjection> {
+        self.entries
+            .iter()
+            .find_map(|(candidate, value)| (candidate == name).then_some(value))
+    }
+    /// Iterate in request order.
+    pub fn iter(&self) -> impl ExactSizeIterator<Item = (&str, &YieldCrossSectionProjection)> {
+        self.entries
+            .iter()
+            .map(|(name, value)| (name.as_str(), value))
+    }
 }
 
 /// Binned observed yield corrected by an explicitly supplied reference model.
@@ -1288,7 +2887,164 @@ pub struct ReferenceCorrectedYieldProjection {
     validity: Vec<YieldBinValidity>,
 }
 
+/// Reference-corrected differential cross section with source provenance.
+#[derive(Clone, Debug)]
+pub struct ReferenceCrossSectionProjection {
+    value: BinnedEstimate,
+    validity: Vec<YieldBinValidity>,
+    provenance: ReferenceCorrectionProvenance,
+    luminosity: Luminosity,
+}
+
+impl ReferenceCrossSectionProjection {
+    /// Reference-corrected observed differential cross section.
+    pub fn value(&self) -> &BinnedEstimate {
+        &self.value
+    }
+    /// Per-bin support validity.
+    pub fn validity(&self) -> &[YieldBinValidity] {
+        &self.validity
+    }
+    /// Identity of the reference correction.
+    pub fn provenance(&self) -> &ReferenceCorrectionProvenance {
+        &self.provenance
+    }
+    /// Explicit integrated luminosity.
+    pub fn luminosity(&self) -> &Luminosity {
+        &self.luminosity
+    }
+    /// Pool compatible reference-corrected differential periods.
+    pub fn combine(
+        members: &[(Self, f64)],
+    ) -> LikelihoodResult<ExposureCombinedReferenceCrossSectionProjection> {
+        let (first, _) = members.first().ok_or_else(|| {
+            invalid("reference projection combination requires at least one member")
+        })?;
+        if members.iter().any(|(member, factor)| {
+            member.value.axes != first.value.axes
+                || member.luminosity.unit() != first.luminosity.unit()
+                || !factor.is_finite()
+                || *factor <= 0.0
+        }) {
+            return Err(invalid(
+                "reference projections must share geometry, area unit, and positive factors",
+            ));
+        }
+        let total = members
+            .iter()
+            .map(|(member, factor)| member.luminosity.value() * factor)
+            .sum::<f64>();
+        let draw_count = members
+            .iter()
+            .map(|(member, _)| member.value.draws.len())
+            .max()
+            .unwrap_or(0);
+        if members.iter().any(|(member, _)| {
+            !member.value.draws.is_empty() && member.value.draws.len() != draw_count
+        }) {
+            return Err(invalid("reference projection draw counts do not match"));
+        }
+        let mut value = first.value.clone();
+        value.central = (0..value.central.len())
+            .map(|bin| {
+                members
+                    .iter()
+                    .map(|(member, _)| member.value.central[bin] * member.luminosity.value())
+                    .sum::<f64>()
+                    / total
+            })
+            .collect();
+        value.draws = (0..draw_count)
+            .map(|draw| {
+                (0..value.central.len())
+                    .map(|bin| {
+                        members
+                            .iter()
+                            .map(|(member, _)| {
+                                member
+                                    .value
+                                    .draws
+                                    .get(draw)
+                                    .unwrap_or(&member.value.central)[bin]
+                                    * member.luminosity.value()
+                            })
+                            .sum::<f64>()
+                            / total
+                    })
+                    .collect()
+            })
+            .collect();
+        Ok(ExposureCombinedReferenceCrossSectionProjection {
+            value,
+            total_effective_exposure: total,
+            provenances: members
+                .iter()
+                .map(|(member, _)| member.provenance.clone())
+                .collect(),
+            member_validity: members
+                .iter()
+                .map(|(member, _)| member.validity.clone())
+                .collect(),
+        })
+    }
+}
+
+/// Exposure-combined reference-corrected differential cross section.
+#[derive(Clone, Debug)]
+pub struct ExposureCombinedReferenceCrossSectionProjection {
+    value: BinnedEstimate,
+    total_effective_exposure: f64,
+    provenances: Vec<ReferenceCorrectionProvenance>,
+    member_validity: Vec<Vec<YieldBinValidity>>,
+}
+
+impl ExposureCombinedReferenceCrossSectionProjection {
+    /// Pooled reference-corrected differential cross section.
+    pub fn value(&self) -> &BinnedEstimate {
+        &self.value
+    }
+    /// Total effective exposure.
+    pub fn total_effective_exposure(&self) -> f64 {
+        self.total_effective_exposure
+    }
+    /// Reference identities in member order.
+    pub fn provenances(&self) -> &[ReferenceCorrectionProvenance] {
+        &self.provenances
+    }
+    /// Original validity arrays in member order.
+    pub fn member_validity(&self) -> &[Vec<YieldBinValidity>] {
+        &self.member_validity
+    }
+}
+
 impl ReferenceCorrectedYieldProjection {
+    /// Convert the reference-corrected yield to a differential cross section.
+    pub fn to_cross_section(
+        &self,
+        luminosity: &Luminosity,
+    ) -> LikelihoodResult<ReferenceCrossSectionProjection> {
+        let axes = self
+            .value
+            .axes()
+            .ok_or_else(|| invalid("reference projection has no axes"))?;
+        let measure = axes.iter().fold(vec![1.0], |volumes, axis| {
+            volumes
+                .into_iter()
+                .flat_map(|volume| {
+                    axis.windows(2)
+                        .map(move |edges| volume * (edges[1] - edges[0]))
+                })
+                .collect()
+        });
+        Ok(ReferenceCrossSectionProjection {
+            value: self
+                .value
+                .divided_by_luminosity_and_measure(luminosity, &measure)?,
+            validity: self.validity.clone(),
+            provenance: self.provenance.clone(),
+            luminosity: luminosity.clone(),
+        })
+    }
     /// Corrected observed yield with paired draws.
     pub fn value(&self) -> &BinnedEstimate {
         &self.value
@@ -1351,6 +3107,7 @@ impl Yield {
             reference_parameters.clone(),
             reference_ensemble.clone(),
         )?;
+        let reference_source_id = reference_ensemble.as_ref().map(Ensemble::source_id);
         let reference = Yield::with_ensemble(
             reference_likelihood,
             reference_term_name,
@@ -1361,7 +3118,25 @@ impl Yield {
         let selected = self.projection(axes)?;
         let reference = reference.projection(axes)?;
         let acceptance = reference.acceptance_estimate();
-        let value = selected.selected_estimate().checked_div(&acceptance)?;
+        let mut value = selected.selected_estimate().checked_div(&acceptance)?;
+        if reference.acceptance_draws().len() >= 2 {
+            let variances = (0..value.values().len())
+                .map(|bin| {
+                    let draws = reference
+                        .acceptance_draws()
+                        .iter()
+                        .map(|draw| selected.selected()[bin] / draw[bin])
+                        .collect::<Vec<_>>();
+                    let mean = draws.iter().sum::<f64>() / draws.len() as f64;
+                    draws.iter().map(|draw| (draw - mean).powi(2)).sum::<f64>()
+                        / (draws.len() - 1) as f64
+                })
+                .collect();
+            value = value.with_variance(ErrorComponent::ReferenceModel, variances);
+            if let Some(source_id) = reference_source_id {
+                value = value.with_variance_source(ErrorComponent::ReferenceModel, source_id);
+            }
+        }
         let validity = selected
             .selected()
             .iter()
@@ -1417,6 +3192,22 @@ impl Yield {
         projections: &[Projection],
     ) -> LikelihoodResult<YieldProjectionSet> {
         self.projection_set_with_components(projections, &HashMap::new())
+    }
+
+    /// Evaluate named yields once, then convert every result with typed luminosity.
+    pub fn cross_section_projection_set(
+        &self,
+        projections: &[Projection],
+        components: &HashMap<String, Vec<String>>,
+        luminosity: &Luminosity,
+    ) -> LikelihoodResult<YieldCrossSectionProjectionSet> {
+        let yields = self.projection_set_with_components(projections, components)?;
+        let entries = yields
+            .entries
+            .into_iter()
+            .map(|(name, projection)| Ok((name, projection.to_cross_section(luminosity)?)))
+            .collect::<LikelihoodResult<_>>()?;
+        Ok(YieldCrossSectionProjectionSet { entries })
     }
 
     /// Evaluate named central projections with named coherent tag selections.
@@ -1511,6 +3302,9 @@ impl Yield {
         let data = self.observed_data();
         let accepted = integrals.accepted_mc_source();
         let generated = integrals.generated_mc_source();
+        let data_source_id = data.identity();
+        let accepted_source_id = accepted.identity();
+        let generated_source_id = generated.identity();
         let (unique, indexes) = deduplicate_projections(projections);
         let sample_events = [data, accepted, generated]
             .iter()
@@ -1558,16 +3352,16 @@ impl Yield {
                 bytes.checked_add(event_total.checked_mul(std::mem::size_of::<f64>())?)
             })
             .and_then(|bytes| {
-                bytes.checked_add(bins_total.checked_mul(3 * std::mem::size_of::<f64>())?)
+                bytes.checked_add(bins_total.checked_mul(5 * std::mem::size_of::<f64>())?)
             })
             .and_then(|bytes| {
-                bytes.checked_add(output_bins.checked_mul(7 * std::mem::size_of::<f64>())?)
+                bytes.checked_add(output_bins.checked_mul(10 * std::mem::size_of::<f64>())?)
             })
             .and_then(|bytes| {
                 bytes.checked_add(
                     bins_total
                         .checked_mul(component_integrals.len())?
-                        .checked_mul(2 * std::mem::size_of::<f64>())?,
+                        .checked_mul(4 * std::mem::size_of::<f64>())?,
                 )
             })
             .and_then(|bytes| {
@@ -1575,7 +3369,7 @@ impl Yield {
                     output_bins
                         .checked_mul(component_aliases.len())?
                         .checked_mul(
-                            2 * std::mem::size_of::<f64>()
+                            4 * std::mem::size_of::<f64>()
                                 + std::mem::size_of::<YieldBinValidity>(),
                         )?,
                 )
@@ -1635,6 +3429,8 @@ impl Yield {
             .iter()
             .map(|plan| vec![0.0; plan.generated_bins.count])
             .collect::<Vec<_>>();
+        let mut accepted_variances = accepted_sums.clone();
+        let mut generated_variances = generated_sums.clone();
         let mut component_sums = component_integrals
             .keys()
             .map(|tags| {
@@ -1649,6 +3445,7 @@ impl Yield {
                 (tags.clone(), (accepted, generated))
             })
             .collect::<HashMap<_, _>>();
+        let mut component_variances = component_sums.clone();
         if component_integrals.is_empty() {
             let parameters = [self.parameters()];
             let contexts = ["central yield projection".to_owned()];
@@ -1656,12 +3453,22 @@ impl Yield {
                 &parameters,
                 &contexts,
                 |offset, _, values| {
-                    for (plan, sums) in plans.iter().zip(&mut accepted_sums) {
+                    for ((plan, sums), variances) in plans
+                        .iter()
+                        .zip(&mut accepted_sums)
+                        .zip(&mut accepted_variances)
+                    {
                         plan.accepted_bins.accumulate_weighted_block(
                             offset,
                             &accepted_weights,
                             values,
                             sums,
+                        );
+                        plan.accepted_bins.accumulate_weighted_block_squared(
+                            offset,
+                            &accepted_weights,
+                            values,
+                            variances,
                         );
                     }
                 },
@@ -1670,12 +3477,22 @@ impl Yield {
                 &parameters,
                 &contexts,
                 |offset, _, values| {
-                    for (plan, sums) in plans.iter().zip(&mut generated_sums) {
+                    for ((plan, sums), variances) in plans
+                        .iter()
+                        .zip(&mut generated_sums)
+                        .zip(&mut generated_variances)
+                    {
                         plan.generated_bins.accumulate_weighted_block(
                             offset,
                             &generated_weights,
                             values,
                             sums,
+                        );
+                        plan.generated_bins.accumulate_weighted_block_squared(
+                            offset,
+                            &generated_weights,
+                            values,
+                            variances,
                         );
                     }
                 },
@@ -1706,12 +3523,22 @@ impl Yield {
                     false,
                     |index, offset, values| {
                         if index == 0 {
-                            for (plan, sums) in plans.iter().zip(&mut accepted_sums) {
+                            for ((plan, sums), variances) in plans
+                                .iter()
+                                .zip(&mut accepted_sums)
+                                .zip(&mut accepted_variances)
+                            {
                                 plan.accepted_bins.accumulate_weighted_block(
                                     offset,
                                     &accepted_weights,
                                     values,
                                     sums,
+                                );
+                                plan.accepted_bins.accumulate_weighted_block_squared(
+                                    offset,
+                                    &accepted_weights,
+                                    values,
+                                    variances,
                                 );
                             }
                         } else {
@@ -1719,12 +3546,22 @@ impl Yield {
                                 .get_mut(selections[index - 1].0)
                                 .expect("prepared component")
                                 .0;
-                            for (plan, bins) in plans.iter().zip(sums) {
+                            let variances = &mut component_variances
+                                .get_mut(selections[index - 1].0)
+                                .expect("prepared component")
+                                .0;
+                            for ((plan, bins), variance) in plans.iter().zip(sums).zip(variances) {
                                 plan.accepted_bins.accumulate_weighted_block(
                                     offset,
                                     &accepted_weights,
                                     values,
                                     bins,
+                                );
+                                plan.accepted_bins.accumulate_weighted_block_squared(
+                                    offset,
+                                    &accepted_weights,
+                                    values,
+                                    variance,
                                 );
                             }
                         }
@@ -1743,12 +3580,22 @@ impl Yield {
                     true,
                     |index, offset, values| {
                         if index == 0 {
-                            for (plan, sums) in plans.iter().zip(&mut generated_sums) {
+                            for ((plan, sums), variances) in plans
+                                .iter()
+                                .zip(&mut generated_sums)
+                                .zip(&mut generated_variances)
+                            {
                                 plan.generated_bins.accumulate_weighted_block(
                                     offset,
                                     &generated_weights,
                                     values,
                                     sums,
+                                );
+                                plan.generated_bins.accumulate_weighted_block_squared(
+                                    offset,
+                                    &generated_weights,
+                                    values,
+                                    variances,
                                 );
                             }
                         } else {
@@ -1756,12 +3603,22 @@ impl Yield {
                                 .get_mut(selections[index - 1].0)
                                 .expect("prepared component")
                                 .1;
-                            for (plan, bins) in plans.iter().zip(sums) {
+                            let variances = &mut component_variances
+                                .get_mut(selections[index - 1].0)
+                                .expect("prepared component")
+                                .1;
+                            for ((plan, bins), variance) in plans.iter().zip(sums).zip(variances) {
                                 plan.generated_bins.accumulate_weighted_block(
                                     offset,
                                     &generated_weights,
                                     values,
                                     bins,
+                                );
+                                plan.generated_bins.accumulate_weighted_block_squared(
+                                    offset,
+                                    &generated_weights,
+                                    values,
+                                    variance,
                                 );
                             }
                         }
@@ -1833,19 +3690,28 @@ impl Yield {
                 YieldProjection {
                     axes: plan.axes.clone(),
                     shape: plan.shape.clone(),
+                    bin_volumes: plan.volumes.clone(),
+                    data_source_id,
+                    accepted_source_id,
+                    generated_source_id,
                     selected,
+                    selected_fill_variance: plan
+                        .data_bins
+                        .accumulate_products_squared(&data_weights),
                     accepted: fitted_bins(
                         accepted_raw,
                         &accepted_counts,
                         None,
                         self.has_absolute_rate(),
                     ),
+                    accepted_fill_variance: accepted_variances[plan_index].clone(),
                     generated: fitted_bins(
                         generated_raw,
                         &generated_counts,
                         Some(&generated_exposure),
                         self.has_absolute_rate(),
                     ),
+                    generated_fill_variance: generated_variances[plan_index].clone(),
                     acceptance,
                     corrected,
                     validity,
@@ -1894,14 +3760,22 @@ impl Yield {
                                 Some(&generated_exposure),
                                 self.has_absolute_rate(),
                             );
+                            let (accepted_variance, generated_variance) =
+                                &component_variances[tags];
                             (
                                 name.clone(),
                                 ComponentYieldProjection {
                                     tags: tags.as_slice().to_vec(),
                                     axes: plan.axes.clone(),
                                     shape: plan.shape.clone(),
+                                    bin_volumes: plan.volumes.clone(),
+                                    has_absolute_rate: self.has_absolute_rate(),
+                                    accepted_source_id,
+                                    generated_source_id,
                                     accepted,
+                                    accepted_fill_variance: accepted_variance[plan_index].clone(),
                                     generated,
+                                    generated_fill_variance: generated_variance[plan_index].clone(),
                                     validity,
                                     accepted_draws: Vec::new(),
                                     generated_draws: Vec::new(),
@@ -1990,7 +3864,7 @@ impl ProjectionSet {
 
 /// Full-model and named tagged scalar totals evaluated as one request.
 #[derive(Clone, Debug)]
-pub struct TotalSet {
+pub(crate) struct TotalSet {
     full: Estimate,
     components: HashMap<String, Estimate>,
 }
@@ -2130,7 +4004,7 @@ type IntegralCache = Arc<Mutex<IntegralCacheState>>;
 
 /// A prepared total, tagged, differential, and combinable cross-section analysis.
 #[derive(Clone)]
-pub struct CrossSection {
+pub(crate) struct CrossSection {
     likelihood: Arc<Likelihood>,
     term_name: String,
     generated_mc: Dataset,
@@ -2153,7 +4027,7 @@ pub struct CrossSection {
 
 /// Integral-preparation cache statistics for a cross-section analysis.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
-pub struct CrossSectionDiagnostics {
+pub(crate) struct CrossSectionDiagnostics {
     cache_hits: u64,
     cache_misses: u64,
     cached_integrals: usize,
@@ -2458,6 +4332,33 @@ impl BinAssignments {
             }
         }
         bins
+    }
+
+    fn accumulate_products_squared(&self, weights: &[f64]) -> Vec<f64> {
+        debug_assert_eq!(self.indices.len(), weights.len());
+        let mut bins = vec![0.0; self.count];
+        for (&index, &weight) in self.indices.iter().zip(weights) {
+            if let Some(index) = index {
+                bins[index] += weight * weight;
+            }
+        }
+        bins
+    }
+
+    fn accumulate_weighted_block_squared(
+        &self,
+        offset: usize,
+        weights: &[f64],
+        intensities: &[f64],
+        bins: &mut [f64],
+    ) {
+        for (row, &intensity) in intensities.iter().enumerate() {
+            let event = offset + row;
+            if let Some(index) = self.indices[event] {
+                let value = weights[event] * intensity;
+                bins[index] += value * value;
+            }
+        }
     }
 }
 
@@ -4211,7 +6112,7 @@ impl Likelihood {
     ///
     /// # Errors
     /// Returns an error for invalid inputs or likelihood preparation failure.
-    pub fn cross_section(
+    pub(crate) fn cross_section(
         self: &Arc<Self>,
         term_name: impl Into<String>,
         generated_mc: Dataset,
@@ -4231,7 +6132,7 @@ impl Likelihood {
     ///
     /// # Errors
     /// Returns an error for invalid inputs, mismatched draws, or preparation failure.
-    pub fn cross_section_with_ensemble(
+    pub(crate) fn cross_section_with_ensemble(
         self: &Arc<Self>,
         term_name: impl Into<String>,
         generated_mc: Dataset,
@@ -4540,7 +6441,7 @@ fn evaluate_bin_assignments(
     })
 }
 
-fn dataset_weights(dataset: &Dataset) -> LikelihoodResult<Vec<f64>> {
+pub(crate) fn dataset_weights(dataset: &Dataset) -> LikelihoodResult<Vec<f64>> {
     dataset
         .try_fold_events(Vec::new(), |mut weights, event| {
             weights.push(event.weight());
@@ -5511,6 +7412,45 @@ mod tests {
         assert_eq!(joint.selected(), &[3.0, 0.0, 0.0, 1.0]);
         assert_eq!(joint.selected_histogram().values(), joint.selected());
         assert_eq!(
+            joint.selected_histogram().errors(),
+            &[5.0_f64.sqrt(), 0.0, 0.0, 1.0]
+        );
+        let no_fill = joint
+            .selected_estimate()
+            .histogram_with_budget(ErrorBudget {
+                data_fill: false,
+                accepted_mc_fill: false,
+                generated_mc_fill: false,
+                ..ErrorBudget::default()
+            })
+            .unwrap();
+        assert_eq!(no_fill.errors(), &[0.0; 4]);
+        let unavailable = joint
+            .selected_estimate()
+            .histogram_with_budget(ErrorBudget {
+                luminosity: true,
+                ..ErrorBudget::default()
+            })
+            .unwrap();
+        assert!(
+            unavailable
+                .omitted()
+                .contains(&(ErrorComponent::Luminosity, "unavailable"))
+        );
+        let repeated = joint
+            .selected_estimate()
+            .checked_add(&joint.selected_estimate())
+            .unwrap();
+        let repeated_view = repeated
+            .histogram_with_budget(ErrorBudget::default())
+            .unwrap();
+        assert!(
+            repeated_view
+                .omitted()
+                .contains(&(ErrorComponent::DataFill, "covariance_unavailable"))
+        );
+        assert!(repeated_view.errors()[0].is_nan());
+        assert_eq!(
             joint.validity(),
             &[
                 YieldBinValidity::Valid,
@@ -5520,6 +7460,17 @@ mod tests {
             ]
         );
         assert!(joint.corrected()[1].is_nan());
+        let luminosity = Luminosity::new(2.0, AreaUnit::Nanobarn).unwrap();
+        let differential = joint.to_cross_section(&luminosity).unwrap();
+        assert_eq!(differential.shape(), &[2, 2]);
+        assert!(differential.observed().values()[1].is_nan());
+        let combined = YieldCrossSectionProjection::combine(&[
+            (differential.clone(), 1.0),
+            (differential, 2.0),
+        ])
+        .unwrap();
+        assert_eq!(combined.shape(), &[2, 2]);
+        assert_relative_eq!(combined.total_effective_exposure(), 6.0);
         assert_eq!(joint.diagnostics().generated_out_of_range, 0);
 
         let projections = [
@@ -5625,6 +7576,17 @@ mod tests {
             assert_eq!(projected.corrected_draws()[index], expected.corrected());
         }
         assert_eq!(projected.corrected_estimate().source_id(), Some(42));
+        let ensemble_view = projected
+            .corrected_estimate()
+            .histogram_with_budget(ErrorBudget {
+                data_fill: false,
+                accepted_mc_fill: false,
+                generated_mc_fill: false,
+                ensemble: true,
+                ..ErrorBudget::default()
+            })
+            .unwrap();
+        assert_eq!(ensemble_view.included(), &[ErrorComponent::Ensemble]);
     }
 
     #[test]
@@ -5665,6 +7627,15 @@ mod tests {
         assert!(projection.has_replica_datasets());
         assert_eq!(projection.selected(), &[1.0, 0.0]);
         assert_eq!(projection.selected_draws(), &[vec![0.0, 2.0]]);
+        assert!(
+            projection
+                .selected_estimate()
+                .histogram_with_budget(ErrorBudget {
+                    ensemble: true,
+                    ..ErrorBudget::default()
+                })
+                .is_err()
+        );
     }
 
     #[test]
@@ -6151,11 +8122,34 @@ mod tests {
             .unwrap(),
         );
         let cross_section = likelihood
-            .cross_section("signal", generated, 10.0, likelihood.default_params())
+            .cross_section(
+                "signal",
+                generated.clone(),
+                10.0,
+                likelihood.default_params(),
+            )
             .unwrap();
+        let migrated = Yield::with_ensemble(
+            likelihood.clone(),
+            "signal",
+            generated,
+            likelihood.default_params(),
+            None,
+        )
+        .unwrap()
+        .to_cross_section(&Luminosity::new(10.0, AreaUnit::Barn).unwrap())
+        .unwrap();
 
         assert_relative_eq!(cross_section.observed_total().unwrap().value(), 0.3);
         assert_relative_eq!(cross_section.fitted_total().unwrap().value(), 0.15);
+        assert_relative_eq!(
+            cross_section.observed_total().unwrap().value(),
+            migrated.observed().value()
+        );
+        assert_relative_eq!(
+            cross_section.fitted_total().unwrap().value(),
+            migrated.fitted().unwrap().value()
+        );
         assert_relative_eq!(
             cross_section.total().unwrap().value(),
             cross_section.observed_total().unwrap().value()
