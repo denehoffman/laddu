@@ -1,5 +1,5 @@
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     fmt::Debug,
     sync::{
         Arc,
@@ -19,6 +19,36 @@ use laddu_runtime::{
     Execution, PreparedDataset, PreparedModel, PreparedNormalization,
     PreparedNormalizationDiagnostics, RuntimeError,
 };
+
+fn rename_json_strings(value: &mut serde_json::Value, mapping: &HashMap<String, String>) {
+    match value {
+        serde_json::Value::String(text) => {
+            if let Some(replacement) = mapping.get(text) {
+                *text = replacement.clone();
+            }
+        }
+        serde_json::Value::Array(values) => {
+            for value in values {
+                rename_json_strings(value, mapping);
+            }
+        }
+        serde_json::Value::Object(values) => {
+            for value in values.values_mut() {
+                rename_json_strings(value, mapping);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn model_artifact_identity(
+    model: &CompiledModel,
+    mapping: &HashMap<String, String>,
+) -> Option<String> {
+    let mut value = serde_json::to_value(model).ok()?;
+    rename_json_strings(&mut value, mapping);
+    serde_json::to_string(&value).ok()
+}
 
 /// Role of a prepared dataset within a likelihood term.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -197,6 +227,19 @@ pub trait StochasticObjective: Objective {
 pub trait LikelihoodTerm: Debug + Send + Sync {
     /// Returns the unique term name.
     fn name(&self) -> &str;
+
+    /// Stable built-in identity used by versioned fit-artifact binding.
+    fn artifact_identity(&self) -> Option<String> {
+        None
+    }
+
+    /// Stable identity after applying explicit target-name to artifact-name migration.
+    fn artifact_identity_with_parameter_map(
+        &self,
+        _mapping: &HashMap<String, String>,
+    ) -> Option<String> {
+        self.artifact_identity()
+    }
 
     /// Appends preparation diagnostics owned by this term.
     fn append_diagnostics(&self, _diagnostics: &mut Vec<DatasetDiagnostics>) {}
@@ -547,6 +590,62 @@ impl Likelihood {
     /// Returns the execution context used by the likelihood.
     pub fn execution(&self) -> &Execution {
         &self.execution
+    }
+
+    /// Version-one structural fingerprint excluding all event data.
+    pub fn artifact_fingerprint_v1(&self) -> String {
+        self.artifact_fingerprint_v1_with_parameter_map(&HashMap::new())
+    }
+
+    /// Version-one structural fingerprint after explicit parameter-name normalization.
+    pub fn artifact_fingerprint_v1_with_parameter_map(
+        &self,
+        mapping: &HashMap<String, String>,
+    ) -> String {
+        let mut hash = 0xcbf2_9ce4_8422_2325_u64;
+        let mut feed = |text: &str| {
+            for byte in text.as_bytes() {
+                hash ^= u64::from(*byte);
+                hash = hash.wrapping_mul(0x100_0000_01b3);
+            }
+            hash ^= 0xff;
+            hash = hash.wrapping_mul(0x100_0000_01b3);
+        };
+        let mut terms = self
+            .terms
+            .iter()
+            .map(|term| {
+                term.artifact_identity_with_parameter_map(mapping)
+                    .unwrap_or_else(|| format!("unidentified:{}", term.name()))
+            })
+            .collect::<Vec<_>>();
+        terms.sort();
+        for term in terms {
+            feed(&term);
+        }
+        let mut parameters = self
+            .params
+            .specs()
+            .iter()
+            .map(|parameter| {
+                let mut value = serde_json::to_value(parameter)
+                    .expect("parameter definitions are JSON serializable");
+                rename_json_strings(&mut value, mapping);
+                serde_json::to_string(&value).expect("JSON value serialization cannot fail")
+            })
+            .collect::<Vec<_>>();
+        parameters.sort();
+        for parameter in parameters {
+            feed(&parameter);
+        }
+        format!("{hash:016x}")
+    }
+
+    /// Whether every objective component supplied a stable artifact identity.
+    pub fn artifact_compatibility_is_strong(&self) -> bool {
+        self.terms
+            .iter()
+            .all(|term| term.artifact_identity().is_some())
     }
 
     /// Returns a snapshot of preparation and objective-evaluation diagnostics.
@@ -1226,6 +1325,21 @@ impl LikelihoodTerm for NllTerm {
         self.name.as_str()
     }
 
+    fn artifact_identity(&self) -> Option<String> {
+        self.artifact_identity_with_parameter_map(&HashMap::new())
+    }
+
+    fn artifact_identity_with_parameter_map(
+        &self,
+        mapping: &HashMap<String, String>,
+    ) -> Option<String> {
+        Some(format!(
+            "nll-v1:{}:{}",
+            self.name(),
+            model_artifact_identity(&self.model, mapping)?
+        ))
+    }
+
     fn append_diagnostics(&self, diagnostics: &mut Vec<DatasetDiagnostics>) {
         let NllState::Prepared(prepared) = &self.state else {
             return;
@@ -1488,6 +1602,20 @@ impl LikelihoodTerm for ExtendedNllTerm {
         self.inner.name()
     }
 
+    fn artifact_identity(&self) -> Option<String> {
+        Some(format!("extended-v1:{}", self.inner.artifact_identity()?))
+    }
+
+    fn artifact_identity_with_parameter_map(
+        &self,
+        mapping: &HashMap<String, String>,
+    ) -> Option<String> {
+        Some(format!(
+            "extended-v1:{}",
+            self.inner.artifact_identity_with_parameter_map(mapping)?
+        ))
+    }
+
     fn append_diagnostics(&self, diagnostics: &mut Vec<DatasetDiagnostics>) {
         self.inner.append_diagnostics(diagnostics);
     }
@@ -1635,6 +1763,17 @@ impl LikelihoodTerm for RidgePenalty {
         self.inner.name()
     }
 
+    fn artifact_identity(&self) -> Option<String> {
+        self.artifact_identity_with_parameter_map(&HashMap::new())
+    }
+
+    fn artifact_identity_with_parameter_map(
+        &self,
+        mapping: &HashMap<String, String>,
+    ) -> Option<String> {
+        Some(self.inner.artifact_identity("ridge-v1", mapping))
+    }
+
     fn bootstrap_clone(&self, _seed: u64) -> LikelihoodResult<Box<dyn LikelihoodTerm>> {
         Ok(Box::new(self.clone()))
     }
@@ -1694,6 +1833,17 @@ impl LikelihoodTerm for LassoPenalty {
         self.inner.name()
     }
 
+    fn artifact_identity(&self) -> Option<String> {
+        self.artifact_identity_with_parameter_map(&HashMap::new())
+    }
+
+    fn artifact_identity_with_parameter_map(
+        &self,
+        mapping: &HashMap<String, String>,
+    ) -> Option<String> {
+        Some(self.inner.artifact_identity("lasso-v1", mapping))
+    }
+
     fn bootstrap_clone(&self, _seed: u64) -> LikelihoodResult<Box<dyn LikelihoodTerm>> {
         Ok(Box::new(self.clone()))
     }
@@ -1735,6 +1885,21 @@ struct CpuParameterPenalty {
 }
 
 impl CpuParameterPenalty {
+    fn artifact_identity(&self, kind: &str, mapping: &HashMap<String, String>) -> String {
+        let mut names = self
+            .parameter_names
+            .iter()
+            .map(|name| mapping.get(name).unwrap_or(name).clone())
+            .collect::<Vec<_>>();
+        names.sort();
+        format!(
+            "{kind}:{}:{}:{}",
+            self.name(),
+            self.lambda.to_bits(),
+            names.join("\u{1f}")
+        )
+    }
+
     fn new(
         name: impl Into<String>,
         parameter_names: impl IntoIterator<Item = impl Into<String>>,
