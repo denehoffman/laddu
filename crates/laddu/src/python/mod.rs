@@ -181,14 +181,25 @@ macro_rules! laddu_python_module {
             };
             #[pymodule_export]
             use $crate::python::cross_section::{
-                PyAxis as Axis, PyBinnedEstimate as BinnedEstimate,
-                PyCrossSection as CrossSection,
-                PyDifferentialCrossSection as DifferentialCrossSection, PyEnsemble as Ensemble,
+                PyAreaUnit as AreaUnit, PyAxis as Axis, PyBinnedEstimate as BinnedEstimate,
+                PyLuminosity as Luminosity,
+                PyEnsemble as Ensemble,
                 PyEstimate as Estimate, PyRateClosure as RateClosure,
+                PyScalarErrorView as ScalarErrorView,
+                PyYieldCrossSection as YieldCrossSection,
+                PyExposureCombinedCrossSection as ExposureCombinedCrossSection,
+                PyExposureFactor as ExposureFactor,
+                PyExposureCombinedCrossSectionProjection as ExposureCombinedCrossSectionProjection,
+                PyExposureCombinedReferenceCrossSection as ExposureCombinedReferenceCrossSection,
+                PyExposureCombinedReferenceCrossSectionProjection as ExposureCombinedReferenceCrossSectionProjection,
+                PyReferenceCrossSection as ReferenceCrossSection,
+                PyYieldCrossSectionProjection as YieldCrossSectionProjection,
+                PyComponentCrossSectionProjection as ComponentCrossSectionProjection,
+                PyReferenceCrossSectionProjection as ReferenceCrossSectionProjection,
                 PyReferenceCorrectedYield as ReferenceCorrectedYield,
                 PyReferenceCorrectedYieldProjection as ReferenceCorrectedYieldProjection,
                 PyReferenceCorrectionProvenance as ReferenceCorrectionProvenance,
-                PyTotalSet as TotalSet, PyYield as Yield,
+                PyYield as Yield,
                 PyComponentYieldProjection as ComponentYieldProjection,
                 PyYieldHistogramView as YieldHistogramView,
                 PyYieldProjection as YieldProjection,
@@ -202,6 +213,8 @@ macro_rules! laddu_python_module {
             };
             #[pymodule_export]
             use $crate::python::error::LadduError;
+            #[pymodule_export]
+            use $crate::python::fit::{PyAnalysisSnapshot as AnalysisSnapshot, PyBoundFitState as BoundFitState, PyFitArtifact as FitArtifact, PyFitEnsembleArtifact as FitEnsembleArtifact, PyFitResult as FitResult};
             #[pymodule_export]
             use $crate::python::expr::{
                 PyExpr as Expr, acos, atan2, cis, complex, cparameter, dot, matmul, matrix, matvec,
@@ -416,9 +429,7 @@ mod tests {
                 "Axis",
                 "Ensemble",
                 "Estimate",
-                "CrossSection",
                 "BinnedEstimate",
-                "DifferentialCrossSection",
                 "Execution",
                 "Model",
                 "Likelihood",
@@ -483,22 +494,6 @@ mod tests {
                 assert!(
                     projection.getattr(py, method).is_ok(),
                     "missing LikelihoodProjection.{method}"
-                );
-            }
-            let cross_section = module.getattr(py, "CrossSection").unwrap();
-            for method in [
-                "total",
-                "observed_total",
-                "fitted_total",
-                "acceptance",
-                "corrected_yield",
-                "differential",
-                "projection_set",
-                "combine",
-            ] {
-                assert!(
-                    cross_section.getattr(py, method).is_ok(),
-                    "missing CrossSection.{method}"
                 );
             }
             let ensemble = module.getattr(py, "Ensemble").unwrap();

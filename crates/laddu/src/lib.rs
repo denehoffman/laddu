@@ -117,7 +117,11 @@ pub mod prelude {
         matrix_from_flat, matvec, polar_complex, solve, vector,
     };
     #[cfg(feature = "fit")]
-    pub use laddu_fit::{FitError, FitProblem, FitResult, StochasticFitProblem, ganesh};
+    pub use laddu_fit::{
+        AnalysisSnapshot, BoundFitState, FailedReplica, FitArtifact, FitDiagnostics,
+        FitEnsembleArtifact, FitError, FitOutcome, FitProblem, FitResult, MinimizationResult,
+        StochasticFitProblem, ganesh,
+    };
     #[cfg(feature = "generation")]
     pub use laddu_generation::{
         ChannelGenerator, EnvelopeKind, EnvelopeMode, EnvelopeOverflow, GenerationError,
@@ -128,12 +132,11 @@ pub mod prelude {
     };
     #[cfg(feature = "likelihood")]
     pub use laddu_likelihood::{
-        Axis, BinnedEstimate, BootstrapFitError, CrossSection, CrossSectionDiagnostics,
-        CrossSectionIntegrals, DifferentialCrossSection, Ensemble, Estimate, ExtendedNllTerm,
-        LassoPenalty, Likelihood, LikelihoodError, LikelihoodEvaluation, LikelihoodName,
-        LikelihoodProjection, LikelihoodResult, LikelihoodTerm, NllTerm, Objective, Projection,
-        ProjectionSet, RateClosure, RateClosureStatus, RidgePenalty, StochasticObjective, TotalSet,
-        Yield, next_uncertainty_source_id,
+        Axis, BinnedEstimate, BootstrapFitError, CrossSectionIntegrals, Ensemble, Estimate,
+        ExtendedNllTerm, LassoPenalty, Likelihood, LikelihoodError, LikelihoodEvaluation,
+        LikelihoodName, LikelihoodProjection, LikelihoodResult, LikelihoodTerm, NllTerm, Objective,
+        Projection, RateClosure, RateClosureStatus, RidgePenalty, StochasticObjective, Yield,
+        next_uncertainty_source_id,
     };
     pub use laddu_physics::quantum::builtin as particles;
     pub use laddu_physics::{

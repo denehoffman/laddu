@@ -1,4 +1,4 @@
-# ruff: noqa: S101
+# ruff: noqa: FBT003, PLR2004, S101
 
 from __future__ import annotations
 
@@ -45,10 +45,48 @@ def test_yield_exposes_scalar_spaces_and_failed_closure_without_rescaling() -> N
     )
 
     assert result.selected_yield().central == EXPECTED_SELECTED_YIELD
+    assert result.selected_yield().error().error == pytest.approx(math.sqrt(5.0))
+    assert result.selected_yield().error(data_fill=False).error == 0.0
+    with pytest.raises(TypeError):
+        cast('Any', result.selected_yield()).error(False)
     assert result.accepted_fitted_yield().central == 1.0
     assert result.generated_fitted_yield().central == EXPECTED_GENERATED_YIELD
     assert result.fitted_acceptance().central == pytest.approx(2.0 / 3.0)
     assert result.corrected_observed_yield().central == EXPECTED_CORRECTED_YIELD
+    luminosity = ld.Luminosity(2.0, ld.AreaUnit.NANOBARN)
+    section = result.to_cross_section(luminosity)
+    assert section.observed.central == pytest.approx(2.25)
+    assert section.fitted is not None
+    assert section.fitted.central == pytest.approx(0.75)
+    assert section.unit == ld.AreaUnit.NANOBARN
+    assert result.to_cross_section(luminosity.to_unit(ld.AreaUnit.MICROBARN)).observed.central == pytest.approx(0.00225)
+    assert result.to_cross_section(luminosity.to_unit(ld.AreaUnit.PICOBARN)).observed.central == pytest.approx(2250.0)
+    assert result.to_cross_section(luminosity.to_unit(ld.AreaUnit.FEMTOBARN)).observed.central == pytest.approx(
+        2_250_000.0
+    )
+    uncertain = result.to_cross_section(luminosity.with_relative_uncertainty(0.1, source_id=77))
+    assert uncertain.observed.error(
+        data_fill=False, accepted_mc_fill=False, generated_mc_fill=False, luminosity=True
+    ).error == pytest.approx(0.225)
+    combined = ld.YieldCrossSection.combine(
+        [
+            (section, 1.0),
+            (result.to_cross_section(ld.Luminosity(4.0, ld.AreaUnit.NANOBARN)), 2.0),
+        ]
+    )
+    assert combined.total_effective_exposure == 10.0
+    assert combined.observed.central == pytest.approx(0.9)
+    assert combined.exposure_factors == [1.0, 2.0]
+    uncertain_combined = ld.YieldCrossSection.combine_with_factors(
+        [
+            (section, ld.ExposureFactor(1.0)),
+            (
+                result.to_cross_section(ld.Luminosity(4.0, ld.AreaUnit.NANOBARN)),
+                ld.ExposureFactor(2.0, draws=[1.0, 3.0], source_id=991),
+            ),
+        ]
+    )
+    assert len(uncertain_combined.observed.draws) == 2
 
     closure = result.rate_closure()
     assert closure.status == 'failed'
@@ -74,11 +112,32 @@ def test_yield_projection_keeps_rate_spaces_and_invalid_bins_visible() -> None:
     assert projection.validity == ['missing_generated_support', 'missing_accepted_support']
     assert all(math.isnan(value) for value in projection.corrected)
     assert projection.selected_histogram().values == projection.selected
+    assert projection.selected_histogram().errors == pytest.approx([math.sqrt(5.0), 0.0])
+    selected_estimate = projection.selected_estimate
+    assert selected_estimate.histogram(data_fill=False).errors == [0.0, 0.0]
+    with pytest.raises(TypeError):
+        cast('Any', selected_estimate).histogram(False)
 
     full = result.projection(ld.Axis(ld.scalar('x'), edges=[0.0, 10.0]))
     assert full.validity == ['valid']
     assert full.acceptance == pytest.approx([2.0 / 3.0])
     assert full.corrected == pytest.approx([4.5])
+    assert full.corrected_histogram().errors == pytest.approx([math.sqrt(51.75)])
+    differential = full.to_cross_section(ld.Luminosity(2.0, ld.AreaUnit.NANOBARN))
+    assert differential.observed.unit == 'cross_section'
+    assert differential.observed.central == pytest.approx([0.225])
+    assert differential.fitted is not None
+    assert differential.fitted.central == pytest.approx([0.075])
+    combined_differential = ld.YieldCrossSectionProjection.combine([(differential, 1.0), (differential, 2.0)])
+    assert combined_differential.total_effective_exposure == 6.0
+    assert combined_differential.observed.central == pytest.approx([0.15])
+    uncertain_differential = ld.YieldCrossSectionProjection.combine_with_factors(
+        [
+            (differential, ld.ExposureFactor(1.0)),
+            (differential, ld.ExposureFactor(2.0, draws=[1.0, 3.0], source_id=13)),
+        ]
+    )
+    assert len(uncertain_differential.observed.draws) == 2
     projections = result.projection_set({'joint': [axis, axis], 'single': axis})
     assert list(projections) == ['joint', 'single']
     assert projections['joint'].shape == [2, 2]
@@ -86,6 +145,13 @@ def test_yield_projection_keeps_rate_spaces_and_invalid_bins_visible() -> None:
     aliases = result.projection_set({'single': axis, 'same': [axis]})
     assert list(aliases) == ['single', 'same']
     assert aliases['single'].selected == aliases['same'].selected
+    luminosity = ld.Luminosity(2.0, ld.AreaUnit.NANOBARN)
+    section_set = result.cross_section_projection_set({'joint': [axis, axis], 'single': axis}, luminosity)
+    assert list(section_set) == ['joint', 'single']
+    expected_joint = projections['joint'].to_cross_section(luminosity)
+    assert section_set['joint'].validity == expected_joint.validity
+    assert all(math.isnan(value) for value in section_set['joint'].observed.central)
+    assert section_set['single'].validity == projections['single'].validity
 
     invalid = ld.Axis(ld.scalar('x'), edges=[-sys.float_info.max, sys.float_info.max])
     with pytest.raises(ld.LadduError, match='invalid bin volume'):
@@ -146,11 +212,11 @@ def test_component_yield_projection_is_model_only_and_coherent() -> None:
     assert projected.components['signal'].shape == projected.shape
     assert projected.components['signal'].validity == projected.validity
     assert projected.components['signal'].accepted_histogram().values == [1.0]
+    section = projected.to_cross_section(ld.Luminosity(2.0, ld.AreaUnit.NANOBARN))
+    combined = ld.YieldCrossSectionProjection.combine([(section, 1.0), (section, 1.0)])
+    assert combined.components['signal'].generated.central == pytest.approx([0.25])
     assert not hasattr(projected.components['signal'], 'selected')
-    scalar_component = likelihood.cross_section(
-        'signal', generated_mc=accepted, luminosity=1.0, parameters=[1.0, 1.0]
-    ).fitted_total(tags=['signal'])
-    assert projected.components['signal'].generated == pytest.approx([scalar_component.central])
+    assert projected.components['signal'].generated == pytest.approx([1.0])
     gap = result.projection(ld.Axis(x, edges=[0.0, 2.0, 4.0]), components={'signal': ['signal']})
     assert gap.components['signal'].validity[1] == 'missing_generated_support'
     assert math.isnan(gap.components['signal'].accepted[1])
@@ -191,6 +257,9 @@ def test_yield_reports_closed_and_shape_only_contexts_explicitly() -> None:
         'shape', generated_mc=generated, parameters=[]
     )
     assert not shape.has_absolute_rate
+    shape_section = shape.to_cross_section(ld.Luminosity(2.0, ld.AreaUnit.NANOBARN))
+    assert shape_section.fitted is None
+    assert shape_section.observed.central == pytest.approx(2.25)
     assert shape.fitted_acceptance().central == pytest.approx(2.0 / 3.0)
     assert shape.corrected_observed_yield().central == EXPECTED_CORRECTED_YIELD
     with pytest.raises(ld.LadduError, match='does not determine an absolute rate'):
@@ -272,6 +341,12 @@ def test_reference_correction_is_explicit_distinct_and_inspectable() -> None:
     assert corrected.reference_term_name == 'reference'
     assert corrected.provenance.reference_parameters == [0.25]
     assert corrected.rate_closure_status == 'not_applicable'
+    reference_section = corrected.to_cross_section(ld.Luminosity(2.0, ld.AreaUnit.NANOBARN))
+    assert reference_section.value.central == pytest.approx(3.0)
+    assert reference_section.provenance.reference_term_name == 'reference'
+    combined_reference = ld.ReferenceCrossSection.combine([(reference_section, 1.0), (reference_section, 2.0)])
+    assert combined_reference.value.central == pytest.approx(2.0)
+    assert len(combined_reference.provenances) == 2
 
     reference_source_id = 91
     projected = fitted.reference_corrected_projection(
@@ -291,6 +366,14 @@ def test_reference_correction_is_explicit_distinct_and_inspectable() -> None:
     assert projected.validity == ['valid']
     assert projected.provenance.reference_uncertainty_source == reference_source_id
     assert projected.value.source_ids == [reference_source_id]
+    reference_differential = projected.to_cross_section(ld.Luminosity(2.0, ld.AreaUnit.NANOBARN))
+    assert reference_differential.value.central == pytest.approx([0.3])
+    assert reference_differential.provenance.reference_uncertainty_source == reference_source_id
+    combined_reference_differential = ld.ReferenceCrossSectionProjection.combine(
+        [(reference_differential, 1.0), (reference_differential, 2.0)]
+    )
+    assert combined_reference_differential.value.central == pytest.approx([0.2])
+    assert len(combined_reference_differential.provenances) == 2
 
 
 def test_reference_correction_reports_invalid_contexts() -> None:

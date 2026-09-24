@@ -1,10 +1,14 @@
-use std::sync::{
-    Arc,
-    atomic::{AtomicU64, Ordering},
+use std::{
+    collections::HashMap,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
 };
 
 use laddu_fit::{
-    FitError, FitProblem,
+    AnalysisSnapshot, BoundFitState, FitArtifact, FitEnsembleArtifact, FitError, FitOutcome,
+    FitProblem, MinimizationResult,
     ganesh::{
         NalgebraProvider, Vector,
         algorithms::{
@@ -24,14 +28,440 @@ use laddu_fit::{
 use laddu_likelihood::{
     BootstrapFitError, Ensemble, Likelihood, LikelihoodEvaluation, Objective, StochasticObjective,
 };
-use numpy::{PyArray1, PyArray2, PyReadonlyArray1};
-use pyo3::{exceptions::PyTypeError, prelude::*, types::PyAny};
+use numpy::{PyArray1, PyArray2};
+use pyo3::{
+    exceptions::PyTypeError,
+    prelude::*,
+    types::{PyAny, PyDict},
+};
 
 use super::{
-    cross_section::PyEnsemble,
+    cross_section::{PyEnsemble, PyYield},
+    data::PyDataset,
     error::to_py_err,
     likelihood::{PyLikelihood, free_values},
 };
+
+#[pyclass(name = "FitResult", module = "laddu", frozen, skip_from_py_object)]
+#[derive(Clone)]
+/// Stable laddu-owned result of deterministic minimization.
+pub struct PyFitResult {
+    inner: MinimizationResult,
+}
+
+impl PyFitResult {
+    fn from_summary(
+        summary: laddu_fit::ganesh::core::MinimizationSummary,
+        parameter_names: &[String],
+        fingerprint: String,
+        strong_compatibility: bool,
+    ) -> Self {
+        Self {
+            inner: MinimizationResult::from_ganesh(summary, parameter_names)
+                .with_likelihood_fingerprint(fingerprint)
+                .with_strong_compatibility(strong_compatibility),
+        }
+    }
+}
+
+#[pymethods]
+impl PyFitResult {
+    #[getter]
+    fn parameter_names(&self) -> Vec<String> {
+        self.inner.parameter_names().to_vec()
+    }
+    #[getter]
+    fn values<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f64>> {
+        PyArray1::from_vec(py, self.inner.values().to_vec())
+    }
+    #[getter]
+    fn named_parameters<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        let output = PyDict::new(py);
+        for (name, value) in self.inner.parameter_names().iter().zip(self.inner.values()) {
+            output.set_item(name, value)?;
+        }
+        Ok(output)
+    }
+    #[getter]
+    fn objective(&self) -> f64 {
+        self.inner.objective()
+    }
+    #[getter]
+    fn outcome(&self) -> &'static str {
+        match self.inner.outcome() {
+            FitOutcome::Converged => "converged",
+            FitOutcome::NotConverged => "not_converged",
+        }
+    }
+    #[getter]
+    fn converged(&self) -> bool {
+        self.inner.converged()
+    }
+    #[getter]
+    fn terminal_message(&self) -> &str {
+        self.inner.terminal_message()
+    }
+    #[getter]
+    fn covariance<'py>(&self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyArray2<f64>>>> {
+        Ok(self
+            .inner
+            .covariance()
+            .map(|matrix| PyArray2::from_vec2(py, matrix))
+            .transpose()?)
+    }
+    #[getter]
+    fn standard_errors<'py>(&self, py: Python<'py>) -> Option<Bound<'py, PyArray1<f64>>> {
+        self.inner
+            .standard_errors()
+            .map(|values| PyArray1::from_vec(py, values.to_vec()))
+    }
+    #[getter]
+    fn diagnostics<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        let diagnostics = self.inner.diagnostics();
+        let output = PyDict::new(py);
+        output.set_item("function_evaluations", diagnostics.function_evaluations())?;
+        output.set_item("gradient_evaluations", diagnostics.gradient_evaluations())?;
+        output.set_item("hessian_evaluations", diagnostics.hessian_evaluations())?;
+        Ok(output)
+    }
+    #[getter]
+    fn raw_ganesh_summary(&self) -> PyMinimizationSummary {
+        self.inner.raw_ganesh_summary().clone().into()
+    }
+    fn artifact(&self) -> PyResult<PyFitArtifact> {
+        self.inner
+            .artifact()
+            .map(|inner| PyFitArtifact { inner })
+            .map_err(to_py_err)
+    }
+}
+
+#[pyclass(name = "FitArtifact", module = "laddu", frozen, skip_from_py_object)]
+#[derive(Clone)]
+/// Dataset-free, versioned fit artifact.
+pub struct PyFitArtifact {
+    inner: FitArtifact,
+}
+#[pymethods]
+impl PyFitArtifact {
+    #[staticmethod]
+    fn load(path: std::path::PathBuf) -> PyResult<Self> {
+        FitArtifact::load(path)
+            .map(|inner| Self { inner })
+            .map_err(to_py_err)
+    }
+    #[pyo3(signature = (path, *, overwrite=false))]
+    fn save(&self, path: std::path::PathBuf, overwrite: bool) -> PyResult<()> {
+        self.inner.save(path, overwrite).map_err(to_py_err)
+    }
+    fn with_ensemble(&self, ensemble: &PyEnsemble) -> PyResult<Self> {
+        self.inner
+            .clone()
+            .with_ensemble(&ensemble.inner)
+            .map(|inner| Self { inner })
+            .map_err(to_py_err)
+    }
+    fn with_failed_replicas(&self, failures: Vec<(usize, Option<u64>, String)>) -> PyResult<Self> {
+        self.inner
+            .clone()
+            .with_failed_replicas(
+                failures
+                    .into_iter()
+                    .map(|(index, seed, message)| laddu_fit::FailedReplica {
+                        index,
+                        seed,
+                        message,
+                    })
+                    .collect(),
+            )
+            .map(|inner| Self { inner })
+            .map_err(to_py_err)
+    }
+    #[getter]
+    fn ensemble(&self) -> Option<PyFitEnsembleArtifact> {
+        self.inner
+            .ensemble()
+            .cloned()
+            .map(|inner| PyFitEnsembleArtifact { inner })
+    }
+    #[pyo3(signature = (likelihood, term_name, *, generated_mc))]
+    /// Bind explicitly, then reconstruct a yield context without optimization.
+    fn yield_context(
+        &self,
+        likelihood: &PyLikelihood,
+        term_name: &str,
+        generated_mc: &PyDataset,
+    ) -> PyResult<PyYield> {
+        let bound = self.inner.bind(&likelihood.inner).map_err(to_py_err)?;
+        let ensemble = self
+            .inner
+            .ensemble()
+            .map(|ensemble| ensemble.to_ensemble_for(&likelihood.inner))
+            .transpose()
+            .map_err(to_py_err)?;
+        laddu_likelihood::Yield::with_ensemble(
+            std::sync::Arc::clone(&likelihood.inner),
+            term_name,
+            generated_mc.inner.clone(),
+            bound.values().to_vec(),
+            ensemble,
+        )
+        .map(Into::into)
+        .map_err(to_py_err)
+    }
+    #[getter]
+    fn artifact_kind(&self) -> &str {
+        self.inner.artifact_kind()
+    }
+    #[getter]
+    fn schema_version(&self) -> u32 {
+        self.inner.schema_version()
+    }
+    #[getter]
+    fn laddu_version(&self) -> &str {
+        self.inner.laddu_version()
+    }
+    #[getter]
+    fn fingerprint_version(&self) -> u32 {
+        self.inner.fingerprint_version()
+    }
+    #[getter]
+    fn likelihood_fingerprint(&self) -> &str {
+        self.inner.likelihood_fingerprint()
+    }
+    #[getter]
+    fn strong_compatibility(&self) -> bool {
+        self.inner.strong_compatibility()
+    }
+    #[getter]
+    fn parameter_names(&self) -> Vec<String> {
+        self.inner.parameter_names().to_vec()
+    }
+    #[getter]
+    fn values<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f64>> {
+        PyArray1::from_vec(py, self.inner.values().to_vec())
+    }
+    #[getter]
+    fn objective(&self) -> f64 {
+        self.inner.objective()
+    }
+    #[getter]
+    fn outcome(&self) -> &'static str {
+        match self.inner.outcome() {
+            FitOutcome::Converged => "converged",
+            FitOutcome::NotConverged => "not_converged",
+        }
+    }
+    #[getter]
+    fn terminal_message(&self) -> &str {
+        self.inner.terminal_message()
+    }
+    #[getter]
+    fn diagnostics<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        let diagnostics = self.inner.diagnostics();
+        let output = PyDict::new(py);
+        output.set_item("function_evaluations", diagnostics.function_evaluations())?;
+        output.set_item("gradient_evaluations", diagnostics.gradient_evaluations())?;
+        output.set_item("hessian_evaluations", diagnostics.hessian_evaluations())?;
+        Ok(output)
+    }
+    #[getter]
+    fn covariance<'py>(&self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyArray2<f64>>>> {
+        Ok(self
+            .inner
+            .covariance()
+            .map(|matrix| PyArray2::from_vec2(py, matrix))
+            .transpose()?)
+    }
+    #[getter]
+    fn standard_errors<'py>(&self, py: Python<'py>) -> Option<Bound<'py, PyArray1<f64>>> {
+        self.inner
+            .standard_errors()
+            .map(|values| PyArray1::from_vec(py, values.to_vec()))
+    }
+    fn bind(&self, likelihood: &PyLikelihood) -> PyResult<PyBoundFitState> {
+        self.inner
+            .bind(&likelihood.inner)
+            .map(|inner| PyBoundFitState { inner })
+            .map_err(to_py_err)
+    }
+    fn bind_with_parameter_map(
+        &self,
+        likelihood: &PyLikelihood,
+        mapping: HashMap<String, String>,
+    ) -> PyResult<PyBoundFitState> {
+        self.inner
+            .bind_with_parameter_map(&likelihood.inner, &mapping)
+            .map(|inner| PyBoundFitState { inner })
+            .map_err(to_py_err)
+    }
+}
+
+#[pyclass(
+    name = "FitEnsembleArtifact",
+    module = "laddu",
+    frozen,
+    skip_from_py_object
+)]
+#[derive(Clone)]
+/// Dataset-free ordered ensemble contents and pairing identity.
+pub struct PyFitEnsembleArtifact {
+    inner: FitEnsembleArtifact,
+}
+#[pymethods]
+impl PyFitEnsembleArtifact {
+    #[getter]
+    fn source_id(&self) -> u64 {
+        self.inner.source_id()
+    }
+    #[getter]
+    fn parameter_names(&self) -> Vec<String> {
+        self.inner.parameter_names().to_vec()
+    }
+    #[getter]
+    fn draws(&self) -> Vec<Vec<f64>> {
+        self.inner.draws().to_vec()
+    }
+    #[getter]
+    fn draw_ids(&self) -> Vec<u64> {
+        self.inner.draw_ids().to_vec()
+    }
+    #[getter]
+    fn bootstrap_seed(&self) -> Option<u64> {
+        self.inner.bootstrap_seed()
+    }
+    #[getter]
+    fn requires_external_datasets(&self) -> bool {
+        self.inner.requires_external_datasets()
+    }
+    #[getter]
+    fn failures(&self) -> Vec<(usize, Option<u64>, String)> {
+        self.inner
+            .failures()
+            .iter()
+            .map(|failure| (failure.index, failure.seed, failure.message.clone()))
+            .collect()
+    }
+    fn to_ensemble(&self) -> PyResult<PyEnsemble> {
+        self.inner
+            .to_parameter_ensemble()
+            .map(|inner| PyEnsemble { inner })
+            .map_err(to_py_err)
+    }
+}
+
+#[pyclass(name = "BoundFitState", module = "laddu", frozen, skip_from_py_object)]
+#[derive(Clone)]
+/// Fit state validated and reordered for a reconstructed likelihood.
+pub struct PyBoundFitState {
+    inner: BoundFitState,
+}
+
+#[pyclass(name = "AnalysisSnapshot", module = "laddu")]
+#[derive(Default)]
+/// Passive object graph for shared fit-artifact references.
+pub struct PyAnalysisSnapshot {
+    fits: HashMap<String, Py<PyFitArtifact>>,
+}
+#[pymethods]
+impl PyAnalysisSnapshot {
+    #[new]
+    fn new() -> Self {
+        Self::default()
+    }
+    fn add_fit(&mut self, path: String, artifact: Py<PyFitArtifact>) -> PyResult<()> {
+        if path.is_empty() || path.contains("..") {
+            return Err(to_py_err(format!("invalid snapshot object path `{path}`")));
+        }
+        if self.fits.contains_key(&path) {
+            return Err(to_py_err(format!(
+                "duplicate snapshot object path `{path}`"
+            )));
+        }
+        self.fits.insert(path, artifact);
+        Ok(())
+    }
+    fn alias_fit(&mut self, py: Python<'_>, path: String, existing: &str) -> PyResult<()> {
+        let artifact = self
+            .fits
+            .get(existing)
+            .map(|artifact| artifact.clone_ref(py))
+            .ok_or_else(|| to_py_err(format!("snapshot fit path `{existing}` is missing")))?;
+        self.add_fit(path, artifact)
+    }
+    fn fit(&self, py: Python<'_>, path: &str) -> PyResult<Py<PyFitArtifact>> {
+        self.fits
+            .get(path)
+            .map(|artifact| artifact.clone_ref(py))
+            .ok_or_else(|| to_py_err(format!("snapshot fit path `{path}` is missing")))
+    }
+    #[pyo3(signature = (path, *, overwrite=false))]
+    fn save(&self, py: Python<'_>, path: std::path::PathBuf, overwrite: bool) -> PyResult<()> {
+        let mut snapshot = AnalysisSnapshot::new();
+        let mut shared = HashMap::<usize, Arc<FitArtifact>>::new();
+        for (object_path, artifact) in &self.fits {
+            let pointer = artifact.as_ptr() as usize;
+            let inner = shared
+                .entry(pointer)
+                .or_insert_with(|| Arc::new(artifact.borrow(py).inner.clone()))
+                .clone();
+            snapshot
+                .insert_fit(object_path.clone(), inner)
+                .map_err(to_py_err)?;
+        }
+        snapshot.save(path, overwrite).map_err(to_py_err)
+    }
+    #[staticmethod]
+    fn load(py: Python<'_>, path: std::path::PathBuf) -> PyResult<Self> {
+        let snapshot = AnalysisSnapshot::load(path).map_err(to_py_err)?;
+        let mut fits = HashMap::new();
+        let mut shared = HashMap::<usize, Py<PyFitArtifact>>::new();
+        for object_path in snapshot.fit_paths() {
+            let artifact = snapshot.fit(object_path).expect("path came from snapshot");
+            let pointer = Arc::as_ptr(artifact) as usize;
+            let object = if let Some(object) = shared.get(&pointer) {
+                object.clone_ref(py)
+            } else {
+                let object = Py::new(
+                    py,
+                    PyFitArtifact {
+                        inner: artifact.as_ref().clone(),
+                    },
+                )?;
+                shared.insert(pointer, object.clone_ref(py));
+                object
+            };
+            fits.insert(object_path.to_owned(), object);
+        }
+        Ok(Self { fits })
+    }
+}
+#[pymethods]
+impl PyBoundFitState {
+    #[getter]
+    fn parameter_names(&self) -> Vec<String> {
+        self.inner.parameter_names().to_vec()
+    }
+    #[getter]
+    fn values<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f64>> {
+        PyArray1::from_vec(py, self.inner.values().to_vec())
+    }
+    #[getter]
+    fn objective(&self) -> f64 {
+        self.inner.objective()
+    }
+    #[getter]
+    fn outcome(&self) -> &'static str {
+        match self.inner.outcome() {
+            FitOutcome::Converged => "converged",
+            FitOutcome::NotConverged => "not_converged",
+        }
+    }
+    #[getter]
+    fn migration(&self) -> Vec<(String, String)> {
+        self.inner.migration().to_vec()
+    }
+}
 
 #[derive(Clone)]
 struct OwnedProblem {
@@ -296,8 +726,9 @@ impl PyLikelihood {
     ///
     /// Returns
     /// -------
-    /// ganesh.MinimizationSummary
-    ///     Final parameter vector, objective value, and convergence metadata.
+    /// FitResult
+    ///     Stable parameters, objective, terminal outcome, inference metadata,
+    ///     and explicit access to the complete Ganesh summary.
     ///
     /// Raises
     /// ------
@@ -312,7 +743,7 @@ impl PyLikelihood {
         config: Option<&Bound<'_, PyAny>>,
         terminators: Vec<Py<PyAny>>,
         observers: Vec<Py<PyAny>>,
-    ) -> PyResult<PyMinimizationSummary> {
+    ) -> PyResult<PyFitResult> {
         let initial = initial_vector(&self.inner, initial)?;
         let problem = OwnedProblem::new(Arc::clone(&self.inner));
         if let Some(config) = config
@@ -339,7 +770,12 @@ impl PyLikelihood {
                 callbacks,
                 to_py_err,
             )?;
-            return Ok(summary.into());
+            return Ok(PyFitResult::from_summary(
+                summary,
+                &problem.metadata().parameter_names(),
+                self.inner.artifact_fingerprint_v1(),
+                self.inner.artifact_compatibility_is_strong(),
+            ));
         }
         let config = match config {
             Some(config) => config
@@ -375,7 +811,12 @@ impl PyLikelihood {
             callbacks,
             to_py_err,
         )?;
-        Ok(summary.into())
+        Ok(PyFitResult::from_summary(
+            summary,
+            &problem.metadata().parameter_names(),
+            self.inner.artifact_fingerprint_v1(),
+            self.inner.artifact_compatibility_is_strong(),
+        ))
     }
 
     #[pyo3(signature = (
@@ -399,7 +840,7 @@ impl PyLikelihood {
         config: Option<&Bound<'_, PyAny>>,
         seed: u64,
         terminators: Vec<Py<PyAny>>,
-    ) -> PyResult<Vec<PyMinimizationSummary>> {
+    ) -> PyResult<Vec<PyFitResult>> {
         if restarts == 0 {
             return Err(pyo3::exceptions::PyValueError::new_err(
                 "restarts must be positive",
@@ -537,13 +978,7 @@ impl PyLikelihood {
                 .map(|callback| callback.clone_ref(py))
                 .collect();
             let summary = replica_python.fit(py, initial, config, callbacks, Vec::new())?;
-            let summary = Py::new(py, summary)?;
-            Ok(summary
-                .bind(py)
-                .getattr("x")?
-                .extract::<PyReadonlyArray1<'_, f64>>()?
-                .as_array()
-                .to_vec())
+            Ok(summary.inner.values().to_vec())
         })
         .map_err(|error| match error {
             BootstrapFitError::Likelihood(error) => to_py_err(error),
