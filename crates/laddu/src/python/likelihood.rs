@@ -14,7 +14,7 @@ use pyo3::{
 };
 
 use super::{
-    cross_section::{PyCrossSection, PyEnsemble, PyYield},
+    cross_section::{PyEnsemble, PyYield},
     data::PyDataset,
     error::to_py_err,
     float_vec,
@@ -857,43 +857,6 @@ impl PyLikelihood {
             .map_err(to_py_err)?;
         let (value, gradient) = evaluation.into_parts();
         Ok((value, PyArray1::from_vec(py, gradient)))
-    }
-
-    #[pyo3(signature = (
-        term_name,
-        *,
-        generated_mc,
-        luminosity,
-        parameters: "Sequence[float] | numpy.typing.NDArray[numpy.float32 | numpy.float64] | dict[str, float]",
-        ensemble=None
-    ))]
-    /// Prepare the preferred total, tagged, and differential cross-section analysis.
-    fn cross_section(
-        &self,
-        term_name: &str,
-        generated_mc: &PyDataset,
-        luminosity: f64,
-        parameters: &Bound<'_, PyAny>,
-        ensemble: Option<&PyEnsemble>,
-    ) -> PyResult<PyCrossSection> {
-        let parameters = free_values(&self.inner, parameters)?;
-        let inner = match ensemble {
-            Some(ensemble) => self.inner.cross_section_with_ensemble(
-                term_name,
-                generated_mc.inner.clone(),
-                luminosity,
-                parameters,
-                ensemble.inner.clone(),
-            ),
-            None => self.inner.cross_section(
-                term_name,
-                generated_mc.inner.clone(),
-                luminosity,
-                parameters,
-            ),
-        }
-        .map_err(to_py_err)?;
-        Ok(PyCrossSection { inner })
     }
 
     #[pyo3(signature = (

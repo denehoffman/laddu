@@ -3,10 +3,13 @@
 use std::collections::HashMap;
 
 use laddu_likelihood::{
-    Axis, BinnedEstimate, BinnedEstimateUnit, ComponentYieldProjection, CrossSection,
-    DifferentialCrossSection, Ensemble, Estimate, IntegralRetentionPolicy, Projection, RateClosure,
-    RateClosureStatus, ReferenceCorrectedYield, ReferenceCorrectedYieldProjection,
-    ReferenceCorrectionProvenance, TotalSet, Yield, YieldBinValidity, YieldHistogramView,
+    AreaUnit, Axis, BinnedEstimate, BinnedEstimateUnit, ComponentCrossSectionProjection,
+    ComponentYieldProjection, Ensemble, Estimate, ExposureCombinedCrossSection,
+    ExposureCombinedCrossSectionProjection, ExposureCombinedReferenceCrossSection,
+    ExposureCombinedReferenceCrossSectionProjection, ExposureFactor, Luminosity, Projection,
+    RateClosure, RateClosureStatus, ReferenceCorrectedYield, ReferenceCorrectedYieldProjection,
+    ReferenceCorrectionProvenance, ReferenceCrossSection, ReferenceCrossSectionProjection, Yield,
+    YieldBinValidity, YieldCrossSection, YieldCrossSectionProjection, YieldHistogramView,
     YieldProjection,
 };
 use numpy::{PyArray1, PyArray2};
@@ -23,6 +26,599 @@ use super::{
     float_matrix, float_tensor3, float_vec,
     likelihood::{PyLikelihood, free_values},
 };
+
+#[pyclass(
+    name = "AreaUnit",
+    module = "laddu",
+    frozen,
+    eq,
+    eq_int,
+    from_py_object,
+    rename_all = "SCREAMING_SNAKE_CASE"
+)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Area prefix used for cross sections and reciprocal luminosity.
+pub enum PyAreaUnit {
+    /// Barn.
+    Barn,
+    /// Millibarn.
+    Millibarn,
+    /// Microbarn.
+    Microbarn,
+    /// Nanobarn.
+    Nanobarn,
+    /// Picobarn.
+    Picobarn,
+    /// Femtobarn.
+    Femtobarn,
+}
+
+impl From<PyAreaUnit> for AreaUnit {
+    fn from(value: PyAreaUnit) -> Self {
+        match value {
+            PyAreaUnit::Barn => Self::Barn,
+            PyAreaUnit::Millibarn => Self::Millibarn,
+            PyAreaUnit::Microbarn => Self::Microbarn,
+            PyAreaUnit::Nanobarn => Self::Nanobarn,
+            PyAreaUnit::Picobarn => Self::Picobarn,
+            PyAreaUnit::Femtobarn => Self::Femtobarn,
+        }
+    }
+}
+
+impl From<AreaUnit> for PyAreaUnit {
+    fn from(value: AreaUnit) -> Self {
+        match value {
+            AreaUnit::Barn => Self::Barn,
+            AreaUnit::Millibarn => Self::Millibarn,
+            AreaUnit::Microbarn => Self::Microbarn,
+            AreaUnit::Nanobarn => Self::Nanobarn,
+            AreaUnit::Picobarn => Self::Picobarn,
+            AreaUnit::Femtobarn => Self::Femtobarn,
+        }
+    }
+}
+
+#[pyclass(name = "Luminosity", module = "laddu", frozen, skip_from_py_object)]
+#[derive(Clone)]
+/// Positive integrated luminosity in a typed inverse area unit.
+pub struct PyLuminosity {
+    inner: Luminosity,
+}
+
+#[pymethods]
+impl PyLuminosity {
+    #[new]
+    fn new(value: f64, unit: PyAreaUnit) -> PyResult<Self> {
+        Luminosity::new(value, unit.into())
+            .map(|inner| Self { inner })
+            .map_err(to_py_err)
+    }
+    #[getter]
+    fn value(&self) -> f64 {
+        self.inner.value()
+    }
+    #[getter]
+    fn unit(&self) -> PyAreaUnit {
+        self.inner.unit().into()
+    }
+    #[getter]
+    fn relative_uncertainty(&self) -> Option<f64> {
+        self.inner.relative_uncertainty()
+    }
+    #[getter]
+    fn source_id(&self) -> Option<u64> {
+        self.inner.source_id()
+    }
+    fn to_unit(&self, unit: PyAreaUnit) -> PyResult<Self> {
+        self.inner
+            .to_unit(unit.into())
+            .map(|inner| Self { inner })
+            .map_err(to_py_err)
+    }
+    fn with_relative_uncertainty(&self, uncertainty: f64, source_id: u64) -> PyResult<Self> {
+        self.inner
+            .clone()
+            .with_relative_uncertainty(uncertainty, source_id)
+            .map(|inner| Self { inner })
+            .map_err(to_py_err)
+    }
+}
+
+#[pyclass(
+    name = "YieldCrossSection",
+    module = "laddu",
+    frozen,
+    skip_from_py_object
+)]
+#[derive(Clone)]
+/// Scalar cross sections converted from one yield context.
+pub struct PyYieldCrossSection {
+    inner: YieldCrossSection,
+}
+
+#[pymethods]
+impl PyYieldCrossSection {
+    #[staticmethod]
+    fn combine(
+        members: Vec<(PyRef<'_, PyYieldCrossSection>, f64)>,
+    ) -> PyResult<PyExposureCombinedCrossSection> {
+        let members = members
+            .into_iter()
+            .map(|(member, factor)| (member.inner.clone(), factor))
+            .collect::<Vec<_>>();
+        YieldCrossSection::combine(&members)
+            .map(|inner| PyExposureCombinedCrossSection { inner })
+            .map_err(to_py_err)
+    }
+    #[staticmethod]
+    fn combine_with_factors(
+        members: Vec<(PyRef<'_, PyYieldCrossSection>, PyRef<'_, PyExposureFactor>)>,
+    ) -> PyResult<PyExposureCombinedCrossSection> {
+        let members = members
+            .into_iter()
+            .map(|(member, factor)| (member.inner.clone(), factor.inner.clone()))
+            .collect::<Vec<_>>();
+        YieldCrossSection::combine_with_factors(&members)
+            .map(|inner| PyExposureCombinedCrossSection { inner })
+            .map_err(to_py_err)
+    }
+    #[getter]
+    fn observed(&self) -> PyEstimate {
+        self.inner.observed().clone().into()
+    }
+    #[getter]
+    fn fitted(&self) -> Option<PyEstimate> {
+        self.inner.fitted().cloned().map(Into::into)
+    }
+    #[getter]
+    fn accepted_fitted(&self) -> Option<PyEstimate> {
+        self.inner.accepted_fitted().cloned().map(Into::into)
+    }
+    #[getter]
+    fn unit(&self) -> PyAreaUnit {
+        self.inner.unit().into()
+    }
+    #[getter]
+    fn luminosity(&self) -> PyLuminosity {
+        PyLuminosity {
+            inner: self.inner.luminosity().clone(),
+        }
+    }
+    #[getter]
+    fn rate_closure(&self) -> PyRateClosure {
+        self.inner.rate_closure().clone().into()
+    }
+}
+
+#[pyclass(
+    name = "ExposureCombinedCrossSection",
+    module = "laddu",
+    frozen,
+    skip_from_py_object
+)]
+#[derive(Clone)]
+/// Cross sections pooled through total effective exposure.
+pub struct PyExposureCombinedCrossSection {
+    inner: ExposureCombinedCrossSection,
+}
+
+#[pyclass(name = "ExposureFactor", module = "laddu", frozen, skip_from_py_object)]
+#[derive(Clone)]
+/// Positive exposure factor with optional paired draws.
+pub struct PyExposureFactor {
+    inner: ExposureFactor,
+}
+
+#[pymethods]
+impl PyExposureFactor {
+    #[new]
+    #[pyo3(signature = (central, *, draws=None, source_id=None))]
+    fn new(
+        central: f64,
+        draws: Option<&Bound<'_, PyAny>>,
+        source_id: Option<u64>,
+    ) -> PyResult<Self> {
+        let draws = draws.map(float_vec).transpose()?.unwrap_or_default();
+        let estimate = Estimate::with_source_id(central, draws, source_id).map_err(to_py_err)?;
+        ExposureFactor::from_estimate(estimate)
+            .map(|inner| Self { inner })
+            .map_err(to_py_err)
+    }
+    #[getter]
+    fn estimate(&self) -> PyEstimate {
+        self.inner.estimate().clone().into()
+    }
+}
+
+#[pymethods]
+impl PyExposureCombinedCrossSection {
+    #[getter]
+    fn observed(&self) -> PyEstimate {
+        self.inner.observed().clone().into()
+    }
+    #[getter]
+    fn fitted(&self) -> Option<PyEstimate> {
+        self.inner.fitted().cloned().map(Into::into)
+    }
+    #[getter]
+    fn unit(&self) -> PyAreaUnit {
+        self.inner.unit().into()
+    }
+    #[getter]
+    fn total_effective_exposure(&self) -> f64 {
+        self.inner.total_effective_exposure()
+    }
+    #[getter]
+    fn member_luminosities(&self) -> Vec<PyLuminosity> {
+        self.inner
+            .member_luminosities()
+            .iter()
+            .cloned()
+            .map(|inner| PyLuminosity { inner })
+            .collect()
+    }
+    #[getter]
+    fn exposure_factors(&self) -> Vec<f64> {
+        self.inner.exposure_factors().to_vec()
+    }
+}
+
+#[pyclass(
+    name = "ReferenceCrossSection",
+    module = "laddu",
+    frozen,
+    skip_from_py_object
+)]
+#[derive(Clone)]
+/// Reference-corrected scalar cross section.
+pub struct PyReferenceCrossSection {
+    inner: ReferenceCrossSection,
+}
+
+#[pymethods]
+impl PyReferenceCrossSection {
+    #[staticmethod]
+    fn combine(
+        members: Vec<(PyRef<'_, PyReferenceCrossSection>, f64)>,
+    ) -> PyResult<PyExposureCombinedReferenceCrossSection> {
+        let members = members
+            .into_iter()
+            .map(|(member, factor)| (member.inner.clone(), factor))
+            .collect::<Vec<_>>();
+        ReferenceCrossSection::combine(&members)
+            .map(|inner| PyExposureCombinedReferenceCrossSection { inner })
+            .map_err(to_py_err)
+    }
+    #[getter]
+    fn value(&self) -> PyEstimate {
+        self.inner.value().clone().into()
+    }
+    #[getter]
+    fn unit(&self) -> PyAreaUnit {
+        self.inner.unit().into()
+    }
+    #[getter]
+    fn luminosity(&self) -> PyLuminosity {
+        PyLuminosity {
+            inner: self.inner.luminosity().clone(),
+        }
+    }
+    #[getter]
+    fn provenance(&self) -> PyReferenceCorrectionProvenance {
+        PyReferenceCorrectionProvenance {
+            inner: self.inner.provenance().clone(),
+        }
+    }
+}
+
+#[pyclass(
+    name = "ExposureCombinedReferenceCrossSection",
+    module = "laddu",
+    frozen,
+    skip_from_py_object
+)]
+#[derive(Clone)]
+/// Reference-corrected periods pooled through total effective exposure.
+pub struct PyExposureCombinedReferenceCrossSection {
+    inner: ExposureCombinedReferenceCrossSection,
+}
+
+#[pymethods]
+impl PyExposureCombinedReferenceCrossSection {
+    #[getter]
+    fn value(&self) -> PyEstimate {
+        self.inner.value().clone().into()
+    }
+    #[getter]
+    fn unit(&self) -> PyAreaUnit {
+        self.inner.unit().into()
+    }
+    #[getter]
+    fn total_effective_exposure(&self) -> f64 {
+        self.inner.total_effective_exposure()
+    }
+    #[getter]
+    fn provenances(&self) -> Vec<PyReferenceCorrectionProvenance> {
+        self.inner
+            .provenances()
+            .iter()
+            .cloned()
+            .map(|inner| PyReferenceCorrectionProvenance { inner })
+            .collect()
+    }
+}
+
+#[pyclass(
+    name = "YieldCrossSectionProjection",
+    module = "laddu",
+    frozen,
+    skip_from_py_object
+)]
+#[derive(Clone)]
+/// Differential cross sections converted from a yield projection.
+pub struct PyYieldCrossSectionProjection {
+    inner: YieldCrossSectionProjection,
+}
+
+#[pymethods]
+impl PyYieldCrossSectionProjection {
+    #[staticmethod]
+    fn combine(
+        members: Vec<(PyRef<'_, PyYieldCrossSectionProjection>, f64)>,
+    ) -> PyResult<PyExposureCombinedCrossSectionProjection> {
+        let members = members
+            .into_iter()
+            .map(|(member, factor)| (member.inner.clone(), factor))
+            .collect::<Vec<_>>();
+        YieldCrossSectionProjection::combine(&members)
+            .map(|inner| PyExposureCombinedCrossSectionProjection { inner })
+            .map_err(to_py_err)
+    }
+    #[staticmethod]
+    fn combine_with_factors(
+        members: Vec<(
+            PyRef<'_, PyYieldCrossSectionProjection>,
+            PyRef<'_, PyExposureFactor>,
+        )>,
+    ) -> PyResult<PyExposureCombinedCrossSectionProjection> {
+        let members = members
+            .into_iter()
+            .map(|(member, factor)| (member.inner.clone(), factor.inner.clone()))
+            .collect::<Vec<_>>();
+        YieldCrossSectionProjection::combine_with_factors(&members)
+            .map(|inner| PyExposureCombinedCrossSectionProjection { inner })
+            .map_err(to_py_err)
+    }
+    #[getter]
+    fn axes(&self) -> Vec<Vec<f64>> {
+        self.inner.axes().to_vec()
+    }
+    #[getter]
+    fn shape(&self) -> Vec<usize> {
+        self.inner.shape().to_vec()
+    }
+    #[getter]
+    fn observed(&self) -> PyBinnedEstimate {
+        self.inner.observed().clone().into()
+    }
+    #[getter]
+    fn fitted(&self) -> Option<PyBinnedEstimate> {
+        self.inner.fitted().cloned().map(Into::into)
+    }
+    #[getter]
+    fn accepted_fitted(&self) -> Option<PyBinnedEstimate> {
+        self.inner.accepted_fitted().cloned().map(Into::into)
+    }
+    #[getter]
+    fn components(&self) -> HashMap<String, PyComponentCrossSectionProjection> {
+        self.inner
+            .components()
+            .iter()
+            .map(|(name, value)| {
+                (
+                    name.clone(),
+                    PyComponentCrossSectionProjection {
+                        inner: value.clone(),
+                    },
+                )
+            })
+            .collect()
+    }
+    #[getter]
+    fn validity(&self) -> Vec<&'static str> {
+        self.inner
+            .validity()
+            .iter()
+            .copied()
+            .map(validity_name)
+            .collect()
+    }
+    #[getter]
+    fn luminosity(&self) -> PyLuminosity {
+        PyLuminosity {
+            inner: self.inner.luminosity().clone(),
+        }
+    }
+}
+
+#[pyclass(
+    name = "ExposureCombinedCrossSectionProjection",
+    module = "laddu",
+    frozen,
+    skip_from_py_object
+)]
+#[derive(Clone)]
+/// Differential cross sections pooled through total effective exposure.
+pub struct PyExposureCombinedCrossSectionProjection {
+    inner: ExposureCombinedCrossSectionProjection,
+}
+
+#[pymethods]
+impl PyExposureCombinedCrossSectionProjection {
+    #[getter]
+    fn axes(&self) -> Vec<Vec<f64>> {
+        self.inner.axes().to_vec()
+    }
+    #[getter]
+    fn shape(&self) -> Vec<usize> {
+        self.inner.shape().to_vec()
+    }
+    #[getter]
+    fn observed(&self) -> PyBinnedEstimate {
+        self.inner.observed().clone().into()
+    }
+    #[getter]
+    fn fitted(&self) -> Option<PyBinnedEstimate> {
+        self.inner.fitted().cloned().map(Into::into)
+    }
+    #[getter]
+    fn components(&self) -> HashMap<String, PyComponentCrossSectionProjection> {
+        self.inner
+            .components()
+            .iter()
+            .map(|(name, inner)| {
+                (
+                    name.clone(),
+                    PyComponentCrossSectionProjection {
+                        inner: inner.clone(),
+                    },
+                )
+            })
+            .collect()
+    }
+    #[getter]
+    fn total_effective_exposure(&self) -> f64 {
+        self.inner.total_effective_exposure()
+    }
+    #[getter]
+    fn unit(&self) -> PyAreaUnit {
+        self.inner.unit().into()
+    }
+}
+
+#[pyclass(
+    name = "ComponentCrossSectionProjection",
+    module = "laddu",
+    frozen,
+    skip_from_py_object
+)]
+#[derive(Clone)]
+/// Model-only accepted and generated differential cross sections.
+pub struct PyComponentCrossSectionProjection {
+    inner: ComponentCrossSectionProjection,
+}
+
+#[pymethods]
+impl PyComponentCrossSectionProjection {
+    #[getter]
+    fn tags(&self) -> Vec<String> {
+        self.inner.tags().to_vec()
+    }
+    #[getter]
+    fn accepted(&self) -> PyBinnedEstimate {
+        self.inner.accepted().clone().into()
+    }
+    #[getter]
+    fn generated(&self) -> PyBinnedEstimate {
+        self.inner.generated().clone().into()
+    }
+    #[getter]
+    fn validity(&self) -> Vec<&'static str> {
+        self.inner
+            .validity()
+            .iter()
+            .copied()
+            .map(validity_name)
+            .collect()
+    }
+}
+
+#[pyclass(
+    name = "ReferenceCrossSectionProjection",
+    module = "laddu",
+    frozen,
+    skip_from_py_object
+)]
+#[derive(Clone)]
+/// Reference-corrected differential cross section.
+pub struct PyReferenceCrossSectionProjection {
+    inner: ReferenceCrossSectionProjection,
+}
+
+#[pymethods]
+impl PyReferenceCrossSectionProjection {
+    #[staticmethod]
+    fn combine(
+        members: Vec<(PyRef<'_, PyReferenceCrossSectionProjection>, f64)>,
+    ) -> PyResult<PyExposureCombinedReferenceCrossSectionProjection> {
+        let members = members
+            .into_iter()
+            .map(|(member, factor)| (member.inner.clone(), factor))
+            .collect::<Vec<_>>();
+        ReferenceCrossSectionProjection::combine(&members)
+            .map(|inner| PyExposureCombinedReferenceCrossSectionProjection { inner })
+            .map_err(to_py_err)
+    }
+    #[getter]
+    fn value(&self) -> PyBinnedEstimate {
+        self.inner.value().clone().into()
+    }
+    #[getter]
+    fn validity(&self) -> Vec<&'static str> {
+        self.inner
+            .validity()
+            .iter()
+            .copied()
+            .map(validity_name)
+            .collect()
+    }
+    #[getter]
+    fn provenance(&self) -> PyReferenceCorrectionProvenance {
+        PyReferenceCorrectionProvenance {
+            inner: self.inner.provenance().clone(),
+        }
+    }
+    #[getter]
+    fn luminosity(&self) -> PyLuminosity {
+        PyLuminosity {
+            inner: self.inner.luminosity().clone(),
+        }
+    }
+}
+
+#[pyclass(
+    name = "ExposureCombinedReferenceCrossSectionProjection",
+    module = "laddu",
+    frozen,
+    skip_from_py_object
+)]
+#[derive(Clone)]
+/// Reference-corrected differential periods pooled by effective exposure.
+pub struct PyExposureCombinedReferenceCrossSectionProjection {
+    inner: ExposureCombinedReferenceCrossSectionProjection,
+}
+
+#[pymethods]
+impl PyExposureCombinedReferenceCrossSectionProjection {
+    #[getter]
+    fn value(&self) -> PyBinnedEstimate {
+        self.inner.value().clone().into()
+    }
+    #[getter]
+    fn total_effective_exposure(&self) -> f64 {
+        self.inner.total_effective_exposure()
+    }
+    #[getter]
+    fn provenances(&self) -> Vec<PyReferenceCorrectionProvenance> {
+        self.inner
+            .provenances()
+            .iter()
+            .cloned()
+            .map(|inner| PyReferenceCorrectionProvenance { inner })
+            .collect()
+    }
+}
 
 #[pyclass(name = "Ensemble", module = "laddu", frozen, skip_from_py_object)]
 #[derive(Clone)]
@@ -103,40 +699,33 @@ impl From<Estimate> for PyEstimate {
     }
 }
 
-#[pyclass(name = "TotalSet", module = "laddu", frozen, skip_from_py_object)]
-#[derive(Clone)]
-/// Full-model and named tagged scalar totals from one shared request.
-pub struct PyTotalSet {
-    inner: TotalSet,
-}
-
-#[pymethods]
-impl PyTotalSet {
-    #[getter]
-    fn full(&self) -> PyEstimate {
-        self.inner.full().clone().into()
-    }
-
-    #[getter]
-    fn components(&self) -> HashMap<String, PyEstimate> {
-        self.inner
-            .components()
-            .iter()
-            .map(|(name, estimate)| (name.clone(), estimate.clone().into()))
-            .collect()
-    }
-
-    fn __getitem__(&self, name: &str) -> PyResult<PyEstimate> {
-        self.inner
-            .get(name)
-            .cloned()
-            .map(Into::into)
-            .ok_or_else(|| pyo3::exceptions::PyKeyError::new_err(name.to_owned()))
-    }
-}
-
 #[pymethods]
 impl PyEstimate {
+    #[pyo3(signature = (*, data_fill=true, accepted_mc_fill=true, generated_mc_fill=true, ensemble=false, luminosity=false, branching_exposure=false, reference_model=false))]
+    fn error(
+        &self,
+        data_fill: bool,
+        accepted_mc_fill: bool,
+        generated_mc_fill: bool,
+        ensemble: bool,
+        luminosity: bool,
+        branching_exposure: bool,
+        reference_model: bool,
+    ) -> PyResult<PyScalarErrorView> {
+        let budget = laddu_likelihood::ErrorBudget {
+            data_fill,
+            accepted_mc_fill,
+            generated_mc_fill,
+            ensemble,
+            luminosity,
+            branching_exposure,
+            reference_model,
+        };
+        self.inner
+            .error_with_budget(budget)
+            .map(|inner| PyScalarErrorView { inner })
+            .map_err(to_py_err)
+    }
     #[new]
     #[pyo3(signature = (
         central,
@@ -208,6 +797,50 @@ impl PyEstimate {
 
     fn __truediv__(&self, other: &Bound<'_, PyAny>) -> PyResult<Self> {
         estimate_binary(self, other, Estimate::checked_div)
+    }
+}
+
+#[pyclass(
+    name = "ScalarErrorView",
+    module = "laddu",
+    frozen,
+    skip_from_py_object
+)]
+#[derive(Clone)]
+/// Marginal scalar error with included and omitted uncertainty sources.
+pub struct PyScalarErrorView {
+    inner: laddu_likelihood::ScalarErrorView,
+}
+
+#[pymethods]
+impl PyScalarErrorView {
+    #[getter]
+    fn error(&self) -> f64 {
+        self.inner.error()
+    }
+    #[getter]
+    fn included_error_components(&self) -> Vec<&'static str> {
+        self.inner
+            .included()
+            .iter()
+            .map(|component| error_component_name(*component))
+            .collect()
+    }
+    #[getter]
+    fn omitted_error_components(&self) -> Vec<(&'static str, &'static str)> {
+        self.inner
+            .omitted()
+            .iter()
+            .map(|(component, reason)| (error_component_name(*component), *reason))
+            .collect()
+    }
+    #[getter]
+    fn error_component_sources(&self) -> Vec<(&'static str, u64)> {
+        self.inner
+            .sources()
+            .iter()
+            .map(|(component, source)| (error_component_name(*component), *source))
+            .collect()
     }
 }
 
@@ -378,6 +1011,11 @@ pub struct PyReferenceCorrectedYield {
 
 #[pymethods]
 impl PyReferenceCorrectedYield {
+    fn to_cross_section(&self, luminosity: &PyLuminosity) -> PyReferenceCrossSection {
+        PyReferenceCrossSection {
+            inner: self.inner.to_cross_section(&luminosity.inner),
+        }
+    }
     #[getter]
     fn value(&self) -> PyEstimate {
         self.inner.value().clone().into()
@@ -423,6 +1061,12 @@ impl From<Yield> for PyYield {
 
 #[pymethods]
 impl PyYield {
+    fn to_cross_section(&self, luminosity: &PyLuminosity) -> PyResult<PyYieldCrossSection> {
+        self.inner
+            .to_cross_section(&luminosity.inner)
+            .map(|inner| PyYieldCrossSection { inner })
+            .map_err(to_py_err)
+    }
     fn selected_yield(&self) -> PyEstimate {
         self.selected_yield.clone()
     }
@@ -491,6 +1135,44 @@ impl PyYield {
                 Py::new(
                     py,
                     PyYieldProjection {
+                        inner: result.clone(),
+                    },
+                )?,
+            )?;
+        }
+        Ok(output)
+    }
+
+    #[pyo3(signature = (
+        projections: "dict[str, Axis | Sequence[Axis]]",
+        luminosity,
+        *,
+        components: "dict[str, Sequence[str]] | None" = None
+    ))]
+    /// Evaluate named yields once and convert them with typed luminosity.
+    fn cross_section_projection_set<'py>(
+        &self,
+        py: Python<'py>,
+        projections: &Bound<'_, PyAny>,
+        luminosity: &PyLuminosity,
+        components: Option<HashMap<String, Vec<String>>>,
+    ) -> PyResult<Bound<'py, PyDict>> {
+        let projections = extract_projections(py, projections)?;
+        let results = self
+            .inner
+            .cross_section_projection_set(
+                &projections,
+                &components.unwrap_or_default(),
+                &luminosity.inner,
+            )
+            .map_err(to_py_err)?;
+        let output = PyDict::new(py);
+        for (name, result) in results.iter() {
+            output.set_item(
+                name,
+                Py::new(
+                    py,
+                    PyYieldCrossSectionProjection {
                         inner: result.clone(),
                     },
                 )?,
@@ -581,6 +1263,15 @@ pub struct PyReferenceCorrectedYieldProjection {
 
 #[pymethods]
 impl PyReferenceCorrectedYieldProjection {
+    fn to_cross_section(
+        &self,
+        luminosity: &PyLuminosity,
+    ) -> PyResult<PyReferenceCrossSectionProjection> {
+        self.inner
+            .to_cross_section(&luminosity.inner)
+            .map(|inner| PyReferenceCrossSectionProjection { inner })
+            .map_err(to_py_err)
+    }
     #[getter]
     fn value(&self) -> PyBinnedEstimate {
         self.inner.value().clone().into()
@@ -632,6 +1323,47 @@ impl PyYieldHistogramView {
     fn values(&self) -> Vec<f64> {
         self.inner.values().to_vec()
     }
+    #[getter]
+    fn errors(&self) -> Vec<f64> {
+        self.inner.errors().to_vec()
+    }
+    #[getter]
+    fn included_error_components(&self) -> Vec<&'static str> {
+        self.inner
+            .included()
+            .iter()
+            .map(|component| error_component_name(*component))
+            .collect()
+    }
+    #[getter]
+    fn omitted_error_components(&self) -> Vec<(&'static str, &'static str)> {
+        self.inner
+            .omitted()
+            .iter()
+            .map(|(component, reason)| (error_component_name(*component), *reason))
+            .collect()
+    }
+    #[getter]
+    fn error_component_sources(&self) -> Vec<(&'static str, u64)> {
+        self.inner
+            .sources()
+            .iter()
+            .map(|(component, source)| (error_component_name(*component), *source))
+            .collect()
+    }
+}
+
+fn error_component_name(component: laddu_likelihood::ErrorComponent) -> &'static str {
+    use laddu_likelihood::ErrorComponent;
+    match component {
+        ErrorComponent::DataFill => "data_fill",
+        ErrorComponent::AcceptedMcFill => "accepted_mc_fill",
+        ErrorComponent::GeneratedMcFill => "generated_mc_fill",
+        ErrorComponent::Ensemble => "ensemble",
+        ErrorComponent::Luminosity => "luminosity",
+        ErrorComponent::BranchingExposure => "branching_exposure",
+        ErrorComponent::ReferenceModel => "reference_model",
+    }
 }
 
 #[pyclass(
@@ -660,6 +1392,15 @@ pub struct PyComponentYieldProjection {
 
 #[pymethods]
 impl PyComponentYieldProjection {
+    fn to_cross_section(
+        &self,
+        luminosity: &PyLuminosity,
+    ) -> PyResult<PyComponentCrossSectionProjection> {
+        self.inner
+            .to_cross_section(&luminosity.inner)
+            .map(|inner| PyComponentCrossSectionProjection { inner })
+            .map_err(to_py_err)
+    }
     #[getter]
     fn accepted_estimate(&self) -> PyBinnedEstimate {
         self.inner.accepted_estimate().into()
@@ -737,6 +1478,15 @@ fn validity_name(validity: YieldBinValidity) -> &'static str {
 
 #[pymethods]
 impl PyYieldProjection {
+    fn to_cross_section(
+        &self,
+        luminosity: &PyLuminosity,
+    ) -> PyResult<PyYieldCrossSectionProjection> {
+        self.inner
+            .to_cross_section(&luminosity.inner)
+            .map(|inner| PyYieldCrossSectionProjection { inner })
+            .map_err(to_py_err)
+    }
     #[getter]
     fn has_replica_datasets(&self) -> bool {
         self.inner.has_replica_datasets()
@@ -934,6 +1684,31 @@ impl From<BinnedEstimate> for PyBinnedEstimate {
 
 #[pymethods]
 impl PyBinnedEstimate {
+    #[pyo3(signature = (*, data_fill=true, accepted_mc_fill=true, generated_mc_fill=true, ensemble=false, luminosity=false, branching_exposure=false, reference_model=false))]
+    fn histogram(
+        &self,
+        data_fill: bool,
+        accepted_mc_fill: bool,
+        generated_mc_fill: bool,
+        ensemble: bool,
+        luminosity: bool,
+        branching_exposure: bool,
+        reference_model: bool,
+    ) -> PyResult<PyYieldHistogramView> {
+        let budget = laddu_likelihood::ErrorBudget {
+            data_fill,
+            accepted_mc_fill,
+            generated_mc_fill,
+            ensemble,
+            luminosity,
+            branching_exposure,
+            reference_model,
+        };
+        self.inner
+            .histogram_with_budget(budget)
+            .map(|inner| PyYieldHistogramView { inner })
+            .map_err(to_py_err)
+    }
     #[getter]
     fn unit(&self) -> &'static str {
         match self.inner.unit() {
@@ -998,273 +1773,6 @@ impl PyBinnedEstimate {
 
     fn covariance(&self) -> PyResult<Vec<Vec<f64>>> {
         self.inner.covariance().map_err(to_py_err)
-    }
-}
-
-#[pyclass(name = "DifferentialCrossSection", module = "laddu", frozen)]
-/// Data, model, and component differential cross sections.
-pub struct PyDifferentialCrossSection {
-    inner: DifferentialCrossSection,
-}
-
-impl From<DifferentialCrossSection> for PyDifferentialCrossSection {
-    fn from(inner: DifferentialCrossSection) -> Self {
-        Self { inner }
-    }
-}
-
-#[pymethods]
-impl PyDifferentialCrossSection {
-    #[getter]
-    fn edges(&self) -> PyResult<Vec<f64>> {
-        if self.inner.axes().len() != 1 {
-            return Err(PyValueError::new_err(
-                "edges is only defined for one-dimensional results; use axes",
-            ));
-        }
-        Ok(self.inner.axes()[0].clone())
-    }
-
-    #[getter]
-    fn axes(&self) -> Vec<Vec<f64>> {
-        self.inner.axes().to_vec()
-    }
-
-    #[getter]
-    fn shape(&self) -> Vec<usize> {
-        self.inner.shape().to_vec()
-    }
-
-    #[getter]
-    fn data(&self) -> PyBinnedEstimate {
-        self.inner.data().clone().into()
-    }
-
-    #[getter]
-    fn model(&self) -> PyBinnedEstimate {
-        self.inner.model().clone().into()
-    }
-
-    #[getter]
-    fn components(&self) -> HashMap<String, PyBinnedEstimate> {
-        self.inner
-            .components()
-            .iter()
-            .map(|(name, estimate)| (name.clone(), estimate.clone().into()))
-            .collect()
-    }
-}
-
-#[pyclass(name = "CrossSection", module = "laddu", frozen, skip_from_py_object)]
-#[derive(Clone)]
-/// Prepared total, tagged, differential, and combined cross-section analysis.
-pub struct PyCrossSection {
-    pub(crate) inner: CrossSection,
-}
-
-#[pymethods]
-impl PyCrossSection {
-    /// Return integral-cache hit, miss, count, and retained-byte diagnostics.
-    fn diagnostics<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
-        let diagnostics = self.inner.diagnostics();
-        let out = PyDict::new(py);
-        out.set_item("cache_hits", diagnostics.cache_hits())?;
-        out.set_item("cache_misses", diagnostics.cache_misses())?;
-        out.set_item("cached_integrals", diagnostics.cached_integrals())?;
-        out.set_item("prepared_bytes", diagnostics.prepared_bytes())?;
-        out.set_item("cache_evictions", diagnostics.cache_evictions())?;
-        out.set_item("reserved_bytes", diagnostics.reserved_bytes())?;
-        out.set_item("high_water_bytes", diagnostics.high_water_bytes())?;
-        out.set_item(
-            "estimated_prepared_bytes",
-            diagnostics.estimated_prepared_bytes(),
-        )?;
-        out.set_item("full_requests", diagnostics.full_requests())?;
-        out.set_item("tagged_requests", diagnostics.tagged_requests())?;
-        out.set_item("central_requests", diagnostics.central_requests())?;
-        out.set_item(
-            "shared_bootstrap_requests",
-            diagnostics.shared_bootstrap_requests(),
-        )?;
-        out.set_item(
-            "arbitrary_replica_requests",
-            diagnostics.arbitrary_replica_requests(),
-        )?;
-        Ok(out)
-    }
-
-    #[pyo3(signature = (*, max_bytes))]
-    /// Configure bounded integral retention, or disable retention with ``None``.
-    fn configure_integral_retention(&self, max_bytes: Option<usize>) {
-        self.inner.set_integral_retention(match max_bytes {
-            Some(max_bytes) => IntegralRetentionPolicy::Bounded { max_bytes },
-            None => IntegralRetentionPolicy::None,
-        });
-    }
-
-    /// Drop all eligible retained integral preparations.
-    ///
-    /// The full-model baseline remains owned so the cross section stays usable.
-    fn clear_integral_cache(&self) {
-        self.inner.clear_integral_cache();
-    }
-
-    #[staticmethod]
-    #[pyo3(signature = (
-        members,
-        *,
-        factors: "Sequence[Estimate | float] | None" = None
-    ))]
-    fn combine(
-        py: Python<'_>,
-        members: Vec<Py<PyCrossSection>>,
-        factors: Option<Vec<Py<PyAny>>>,
-    ) -> PyResult<Self> {
-        let members = members
-            .into_iter()
-            .map(|member| member.borrow(py).inner.clone())
-            .collect::<Vec<_>>();
-        let inner = match factors {
-            Some(factors) => {
-                let factors = factors
-                    .into_iter()
-                    .map(|factor| {
-                        let factor = factor.bind(py);
-                        if let Ok(value) = factor.extract::<f64>() {
-                            Estimate::central(value).map_err(to_py_err)
-                        } else if let Ok(value) = factor.extract::<PyRef<'_, PyEstimate>>() {
-                            Ok(value.inner.clone())
-                        } else {
-                            Err(PyTypeError::new_err(
-                                "factors must be floats or Estimate objects",
-                            ))
-                        }
-                    })
-                    .collect::<PyResult<Vec<_>>>()?;
-                CrossSection::combine_with_factors(members, factors)
-            }
-            None => CrossSection::combine(members),
-        }
-        .map_err(to_py_err)?;
-        Ok(Self { inner })
-    }
-
-    #[pyo3(signature = (*, tags=None))]
-    /// Return the observed-yield-normalized cross section.
-    fn observed_total(&self, tags: Option<Vec<String>>) -> PyResult<PyEstimate> {
-        match tags {
-            Some(tags) => self.inner.observed_total_with_tags(&tags),
-            None => self.inner.observed_total(),
-        }
-        .map(Into::into)
-        .map_err(to_py_err)
-    }
-
-    #[pyo3(signature = (*, tags=None))]
-    /// Return the central observed-yield-normalized cross section without
-    /// preparing or evaluating uncertainty draws.
-    fn observed_total_central(&self, tags: Option<Vec<String>>) -> PyResult<PyEstimate> {
-        match tags {
-            Some(tags) => self.inner.observed_total_central_with_tags(&tags),
-            None => self.inner.observed_total_central(),
-        }
-        .map(Into::into)
-        .map_err(to_py_err)
-    }
-
-    #[pyo3(signature = (*, tags=None))]
-    /// Return the fitted cross section from an absolute-rate likelihood term.
-    fn fitted_total(&self, tags: Option<Vec<String>>) -> PyResult<PyEstimate> {
-        match tags {
-            Some(tags) => self.inner.fitted_total_with_tags(&tags),
-            None => self.inner.fitted_total(),
-        }
-        .map(Into::into)
-        .map_err(to_py_err)
-    }
-
-    #[pyo3(signature = (*, tags=None))]
-    /// Alias for :meth:`observed_total`.
-    fn total(&self, tags: Option<Vec<String>>) -> PyResult<PyEstimate> {
-        self.observed_total(tags)
-    }
-
-    /// Return the full-model and named tagged totals from one shared request.
-    fn total_set(&self, components: HashMap<String, Vec<String>>) -> PyResult<PyTotalSet> {
-        self.inner
-            .total_set(&components)
-            .map(|inner| PyTotalSet { inner })
-            .map_err(to_py_err)
-    }
-
-    #[pyo3(signature = (*, tags=None))]
-    fn acceptance(&self, tags: Option<Vec<String>>) -> PyResult<PyEstimate> {
-        match tags {
-            Some(tags) => self.inner.acceptance_with_tags(&tags),
-            None => self.inner.acceptance(),
-        }
-        .map(Into::into)
-        .map_err(to_py_err)
-    }
-
-    #[pyo3(signature = (*, tags=None))]
-    fn corrected_yield(&self, tags: Option<Vec<String>>) -> PyResult<PyEstimate> {
-        match tags {
-            Some(tags) => self.inner.corrected_yield_with_tags(&tags),
-            None => self.inner.corrected_yield(),
-        }
-        .map(Into::into)
-        .map_err(to_py_err)
-    }
-
-    #[pyo3(signature = (
-        axes: "Axis | Sequence[Axis]",
-        *,
-        components: "dict[str, Sequence[str]] | None" = None
-    ))]
-    fn differential(
-        &self,
-        py: Python<'_>,
-        axes: &Bound<'_, PyAny>,
-        components: Option<HashMap<String, Vec<String>>>,
-    ) -> PyResult<PyDifferentialCrossSection> {
-        let axes = extract_axes(py, axes)?;
-        self.inner
-            .differential(&axes, &components.unwrap_or_default())
-            .map(Into::into)
-            .map_err(to_py_err)
-    }
-
-    #[pyo3(signature = (
-        projections: "dict[str, Axis | Sequence[Axis]]",
-        *,
-        components: "dict[str, Sequence[str]] | None" = None
-    ))]
-    /// Return independent named differential cross sections in request order.
-    fn projection_set<'py>(
-        &self,
-        py: Python<'py>,
-        projections: &Bound<'_, PyAny>,
-        components: Option<HashMap<String, Vec<String>>>,
-    ) -> PyResult<Bound<'py, PyDict>> {
-        let projections = extract_projections(py, projections)?;
-        let results = self
-            .inner
-            .projection_set(&projections, &components.unwrap_or_default())
-            .map_err(to_py_err)?;
-        let output = PyDict::new(py);
-        for (name, result) in results.iter() {
-            output.set_item(
-                name,
-                Py::new(
-                    py,
-                    PyDifferentialCrossSection {
-                        inner: result.clone(),
-                    },
-                )?,
-            )?;
-        }
-        Ok(output)
     }
 }
 
