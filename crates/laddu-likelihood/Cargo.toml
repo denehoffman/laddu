@@ -24,6 +24,7 @@ laddu-runtime.workspace = true
 mpi = { workspace = true, optional = true }
 num.workspace = true
 rayon.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
