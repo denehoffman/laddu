@@ -1,173 +1,193 @@
 # Fitting a model to unbinned event data
 
-This chapter uses the `model` built in {doc}`expressions`, observed `data`, and
-detector-selected `accepted_mc`. All three must have compatible schemas.
+This example defines its model and datasets in place. The small arrays make the
+workflow runnable; replace them with measured data and detector-selected MC
+for an analysis.
 
-## The normalized event likelihood
-
-For intensity $I(\Omega;\theta)$, laddu's normalized `NLL` minimizes
-
-$$
-\mathcal F(\theta)
-=-\sum_{i\in\mathrm{data}}w_i\log I(\Omega_i;\theta)
-+N_w\log \widehat{\mathcal N}(\theta),
-\qquad
-N_w=\sum_i w_i,
-$$
-
-where the accepted-MC estimate of the normalization is
-
-$$
-\widehat{\mathcal N}(\theta)
-=\sum_{j\in\mathrm{accepted\ MC}}w_j I(\Omega_j;\theta).
-$$
-
-A global rescaling of $I$ cancels. Fix one complex amplitude's magnitude and
-phase to define a convention, as the `reference_wave` did in the preceding
-model.
-
-## Build and inspect the objective
+## Build a likelihood
 
 ```python
+import laddu as ld
+import numpy as np
+
+def events(masses):
+    masses = np.asarray(masses, dtype=float)
+    return ld.Dataset.from_arrays(
+        p4s={}, scalars={"mass": masses}, weights=np.ones(len(masses))
+    )
+
+data = events([1.12, 1.24, 1.39, 1.53, 1.67, 1.83])
+accepted_mc = events(np.linspace(1.05, 1.95, 20))
+generated_mc = events(np.linspace(1.00, 2.00, 25))
+
+mass = ld.scalar("mass")
+x = mass - 1.5
+linear = ld.parameter("linear", initial=0.2, bounds=(-2.0, 2.0))
+curvature = ld.parameter("curvature", initial=0.1, bounds=(-2.0, 2.0))
+reference_wave = (1.0 + linear * x).tagged("reference")
+second_wave = (curvature * x * x).tagged("second")
+model = ld.Model((reference_wave + second_wave).norm_sqr())
+
 term = ld.NLL(model, data=data, accepted_mc=accepted_mc, name="signal")
 likelihood = ld.Likelihood([term])
-
 initial = likelihood.sample_parameters(seed=100)
 value, gradient = likelihood.value_and_gradient(initial)
 ```
 
-Check that the initial objective and every gradient component are finite.
-`likelihood.parameter_names` defines the order of all parameter vectors.
+`NLL` fits the intensity's shape. It minimizes
 
-Parameters may instead be fixed in the expression or in a compiled model:
+$$
+\mathcal F(\theta)
+=-\sum_{i\in\mathrm{data}}w_i\log I(\Omega_i;\theta)
++D\log A(\theta),
+\qquad
+D=\sum_i w_i,
+\qquad
+A(\theta)=\sum_{j\in\mathrm{accepted\ MC}}w_j I(\Omega_j;\theta).
+$$
 
-```python
-reference_re = ld.parameter("reference_re", fixed=1.0)
-reference_im = ld.parameter("reference_im", fixed=0.0)
+Its overall intensity scale cancels. `likelihood.parameter_names` defines the
+order of `initial` and `gradient`. Check that the initial objective and every
+gradient component are finite before fitting.
 
-mass_fixed_model = model.with_parameters({
-    "mass_0": ld.ParameterUpdate(fixed=1.50),
-})
-mass_freed_model = mass_fixed_model.with_parameters({
-    "mass_0": ld.ParameterUpdate(fixed=None),
-})
-```
-
-`with_parameters` returns a new model. Rebuild the likelihood because its
-parameter layout has changed. Several independent updates can be applied in
-one call, and the entire batch is validated atomically.
-
-## Minimize the likelihood
-
-With no optimizer configuration, `fit` uses L-BFGS-B with its default
-settings:
+## Fit and project waves
 
 ```python
 fit = likelihood.fit(
     initial=initial,
     terminators=[ld.ganesh.MaxSteps(500)],
 )
+print(fit.converged, fit.outcome, fit.terminal_message)
+print(fit.named_parameters)
 
-fitted = fit.named_parameters
-assert fit.converged
-print(fit.outcome, fit.terminal_message)
-```
-
-`FitResult` is laddu's stable fit façade. `values`, `parameter_names`,
-`objective`, `outcome`, `converged`, and `diagnostics` do not expose optimizer
-types. `covariance` and `standard_errors` are `None` when the selected method
-did not compute them. Advanced optimizer diagnostics remain available through
-`fit.raw_ganesh_summary`.
-
-Create a passive in-memory record with `artifact = fit.artifact()`. Its schema,
-producer version, parameter names and values, objective, terminal outcome,
-diagnostics, and structural fingerprint remain inspectable without a likelihood
-or any datasets. Binding is explicit: `bound = artifact.bind(likelihood)` checks
-the reconstructed likelihood structure and named parameter schema, then returns
-values in that likelihood's canonical order.
-
-Persist an artifact with `artifact.save("fit.laddu")`; pass
-`overwrite=True` only for an intentional replacement. `FitArtifact.load(...)`
-validates the passive manifest and every binary payload before exposing fields
-or allowing binding. Loading does not import code, construct a model, access a
-dataset, or prepare an execution backend.
-
-Attach uncertainty draws with `artifact.with_ensemble(ensemble)`. The archive
-retains draw order, source identity, bootstrap reconstruction seed when present,
-and structured failed-replica records without storing event rows. Arbitrary
-replica datasets remain explicit external dependencies.
-
-Binding accepts parameter renames only through
-`bind_with_parameter_map(likelihood, mapping)`, which requires a complete
-one-to-one mapping and records it on the bound state. Built-in objective terms
-carry versioned identities. Custom terms must implement the Rust
-`artifact_identity` contract; artifacts with unidentified terms remain
-inspectable but strict binding fails.
-
-After binding, `artifact.yield_context(...)` explicitly reconstructs central
-and ensemble yield evaluation from caller-supplied likelihood and generated MC
-data without running an optimizer. Reference corrections still require their
-reference likelihood and datasets separately.
-
-`AnalysisSnapshot` is a passive object graph for fit artifacts. Aliases retain
-shared object identity, and the embedded object remains the same `FitArtifact`
-with the standalone manifest and payload semantics. Snapshot lookup does not
-bind a model, resolve datasets, prepare a backend, or evaluate the likelihood.
-Save it with `snapshot.save("analysis.laddu")` and inspect it later with
-`AnalysisSnapshot.load(...)`. The archive embeds each shared fit once and
-reports the snapshot path if an embedded fit is corrupt. A fit artifact records
-scientific fit output; an analysis snapshot groups references to such outputs.
-An optimizer checkpoint instead records mutable progress for resuming an
-optimization. Event datasets and replica event rows remain external to both
-passive archive forms, so later yield reconstruction supplies them explicitly.
-
-`initial` may be a Python sequence, a one-dimensional NumPy array of either
-floating dtype, or a partial mapping by parameter name:
-
-```python
-fit = likelihood.fit(
-    initial={"mass_0": 1.52, "width_0": 0.11},
-)
-```
-
-Unknown names are errors. Run several seeded starts and compare objective
-values; periodic phases and symmetry-related solutions need not have identical
-coordinates.
-
-## Project fitted components
-
-Tags attached during model construction define coherent projections:
-
-```python
 projection = likelihood.projection(
+    "signal", generated_mc=generated_mc, tags=["reference", "second"]
+)
+projection_weights = projection.weights(fit.values)
+```
+
+The two tagged waves interfere in this projection. `FitResult` exposes stable
+fields such as `values`, `parameter_names`, `objective`, `converged`, and
+`diagnostics`. `covariance` and `standard_errors` are available when the chosen
+optimizer computed them; its full summary remains at `raw_ganesh_summary`.
+
+To change parameter definitions, make a new model and rebuild the likelihood:
+
+```python
+fixed_model = model.with_parameters({
+    "linear": ld.ParameterUpdate(fixed=0.2),
+})
+fixed_term = ld.NLL(
+    fixed_model, data=data, accepted_mc=accepted_mc, name="signal"
+)
+fixed_likelihood = ld.Likelihood([fixed_term])
+```
+
+## Fit an absolute rate
+
+A shape-only `NLL` cannot determine a cross section. Use `ExtendedNLL` when the
+observed event count should constrain the fitted intensity scale:
+
+```python
+rate_scale = ld.parameter("rate_scale", initial=0.3, bounds=(0.01, None))
+rate_model = ld.Model(rate_scale * (reference_wave + second_wave).norm_sqr())
+rate_term = ld.ExtendedNLL(
+    rate_model, data=data, accepted_mc=accepted_mc, name="signal"
+)
+rate_likelihood = ld.Likelihood([rate_term])
+rate_fit = rate_likelihood.fit(
+    initial=fit.named_parameters,
+    terminators=[ld.ganesh.MaxSteps(500)],
+)
+luminosity = ld.Luminosity(25.0, ld.AreaUnit.PICOBARN)
+section = rate_likelihood.cross_section(
+    "signal", generated_mc, luminosity, rate_fit.values
+)
+print(section.total.central, section.rate_closure.accepted_residual)
+```
+
+`rate_scale` supplies the free overall intensity scale. The partial initial
+mapping `fit.named_parameters` carries the shape fit into the extended fit;
+`rate_scale` keeps its declared initial value.
+
+`section.total` is the fitted generated-MC integral divided by `luminosity`.
+The closure residual compares its accepted-MC integral with the observed yield.
+See {doc}`cross-sections` for joint fits, periods, reaction channels, and
+differential projections.
+
+## Save and reuse a fit artifact
+
+A `FitArtifact` stores results without event rows. Reconstruct the likelihood
+and datasets, then bind the saved result before evaluating it:
+
+```python
+artifact = rate_fit.artifact()
+artifact.save("rate-fit.laddu")
+
+restored = ld.FitArtifact.load("rate-fit.laddu")
+bound = restored.bind(rate_likelihood)
+assert list(bound.values) == list(rate_fit.values)
+
+restored_section = restored.cross_section(
+    rate_likelihood,
     "signal",
     generated_mc=generated_mc,
-    tags=["reference", "second"],
-)
-
-projection_weights = projection.weights(
-    fit.values,
-    acceptance_corrected=True,
+    luminosity=luminosity,
 )
 ```
 
-The selected amplitudes interfere with each other. Adding separately projected
-single-wave intensities generally does not reproduce the coherent projection.
+Binding checks the likelihood structure and parameter names. The artifact can
+also evaluate raw yields with `restored.yield_context(rate_likelihood,
+"signal", generated_mc=generated_mc)`.
 
-## Propagate statistical uncertainty
+## Group fits in an analysis snapshot
 
-For bootstrap uncertainty, laddu can resample each observed dataset, refit the
-replica, and retain the pairing between data and fitted parameters:
+An `AnalysisSnapshot` saves named fit artifacts together. An alias points to
+the same artifact without duplicating it in the archive:
 
 ```python
-bootstrap = likelihood.bootstrap_fit(
-    200,
-    initial=fit.values,
-    seed=12345,
+snapshot = ld.AnalysisSnapshot()
+snapshot.add_fit("fits/shape", fit.artifact())
+snapshot.add_fit("fits/rate", artifact)
+snapshot.alias_fit("fits/preferred", "fits/rate")
+snapshot.save("analysis.laddu")
+
+loaded = ld.AnalysisSnapshot.load("analysis.laddu")
+saved_rate = loaded.fit("fits/preferred")
+saved_values = saved_rate.bind(rate_likelihood).values
+```
+
+A snapshot stores fit results, not optimizer progress. You can start a **new**
+fit from its saved parameter values:
+
+```python
+new_fit = rate_likelihood.fit(
+    initial=saved_values,
     terminators=[ld.ganesh.MaxSteps(500)],
 )
 ```
 
-That pairing is important for yield and cross-section uncertainties. Inspect
-fit termination, gradient size, parameter boundaries, start-to-start
-stability, and bootstrap pull behavior before interpreting parameters.
+This restarts the optimizer at the saved point. It does not resume internal
+optimizer state or recover an interrupted fit that never produced an artifact.
+
+## Propagate statistical uncertainty
+
+`bootstrap_fit` resamples observed events, refits each replica, and keeps the
+parameter draws paired with their data replicas. For a short demonstration:
+
+```python
+bootstrap = rate_likelihood.bootstrap_fit(
+    5,
+    initial=rate_fit.values,
+    seed=12345,
+    terminators=[ld.ganesh.MaxSteps(500)],
+)
+artifact_with_draws = artifact.with_ensemble(bootstrap)
+section_with_draws = rate_likelihood.cross_section(
+    "signal", generated_mc, luminosity, rate_fit.values, ensemble=bootstrap
+)
+```
+
+Use more replicas in an analysis. Check fit termination, parameter boundaries,
+start-to-start stability, and bootstrap behavior before interpreting the
+uncertainties.

@@ -2,7 +2,7 @@
 
 These tutorials are a progressive Python course. Each chapter introduces one
 analysis decision through short, reusable snippets. Complete runnable studies
-belong in the repository examples; the tutorials concentrate on the laddu API,
+belong in the repository examples; the tutorials concentrate on the `laddu` API,
 the mathematics it implements, and the choices an analysis must make.
 
 1. {doc}`data-io` — read, construct, transform, bin, and write event data.

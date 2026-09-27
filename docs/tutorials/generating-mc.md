@@ -9,9 +9,13 @@ intermediate masses, and vertices.
 
 For $\gamma p\to Xp$, $X\to K_S^0K_S^0$, the proposal may sample the photon
 energy, the intermediate mass, a forward-peaked production transfer, and an
-isotropic decay:
+isotropic decay.
+
+The lower mass bound of 1.0 GeV stays above the two-$K_S^0$ threshold.
 
 ```python
+import laddu as ld
+
 generation_channel = ld.Channel(
     "gamma p -> K_S K_S p",
     edges=[
@@ -33,7 +37,7 @@ generation_channel = ld.Channel(
             output=True,
             initial_momentum=ld.InitialMomentum.momentum([0.0, 0.0, 0.0]),
         ),
-        ld.Edge("X", mass_proposal=ld.MassProposal(0.995, high=2.0)),
+        ld.Edge("X", mass_proposal=ld.MassProposal(1.0, high=2.0)),
         ld.Edge(
             "recoil", p4="recoil", particle=ld.particles.PROTON, output=True
         ),
@@ -69,6 +73,36 @@ The proposal density $q(\Omega)$ must cover every region where a later model
 can be nonzero. It need not resemble the physical distribution. A uniform
 mixture in an otherwise forward-peaked proposal protects low-probability
 regions from receiving no samples.
+
+## Unweighted phase space with a certified envelope
+
+When no physical model is available, `generator.unweighted` can sample the
+phase-space proposal itself. Ask `laddu` to prove an upper bound on its event
+weights before rejection sampling:
+
+```python
+certificate = generator.phase_space_envelope()
+unweighted_mc, unweighted_report = generator.unweighted(
+    1_000,
+    proven_envelope=True,
+    seed=18,
+    max_proposals=100_000,
+)
+
+assert unweighted_report.proven_weight_interval == certificate.weight_interval
+assert unweighted_report.maximum_weight <= certificate.maximum_weight
+```
+
+`certificate.maximum_weight` bounds every phase-space proposal weight for
+this generator, so a completed run cannot violate its rejection envelope.
+The separate `phase_space_envelope()` call is for inspecting the certificate;
+`unweighted(proven_envelope=True)` performs the proof itself.
+The returned events have unit weights. The certificate also reports the
+continuous dimensions, piecewise regions, and subdivisions used in the proof;
+the generation report records the same bound and the largest weight actually
+seen. If `laddu` cannot establish a finite bound for the configured proposal,
+the call fails instead of using a guessed maximum. This option applies only
+when `model` is omitted; a later model changes the target weights.
 
 ## Add generated scalar columns
 

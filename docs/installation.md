@@ -1,6 +1,6 @@
 # Installation
 
-laddu supports Python 3.11 and newer.
+`laddu` supports Python 3.11 and newer.
 
 ## Standard installation
 

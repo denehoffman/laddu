@@ -1,6 +1,6 @@
 # Execution backends, memory, and MPI
 
-Every earlier tutorial can use laddu's default execution. Introduce an explicit
+Every earlier tutorial can use `laddu`'s default execution. Introduce an explicit
 {py:class}`laddu.Execution` only when changing performance, precision, memory,
 or distribution. The physics model and likelihood API remain unchanged.
 

@@ -53,7 +53,9 @@ pseudo_data, report = generator.unweighted(
 A pilot envelope is useful while developing a model. For production, prefer a
 validated fixed `max_weight`; if `grow_envelope=True` is used, retain the
 generation report and verify that envelope updates do not reveal inadequate
-proposal coverage.
+proposal coverage. The certified phase-space envelope shown in
+{doc}`generating-mc` applies only when `model` is omitted, because a model
+changes the event weights being bounded.
 
 ## Generated, accepted, and observed samples
 
