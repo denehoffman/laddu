@@ -3,7 +3,10 @@ from __future__ import annotations
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as package_version
 from importlib.util import find_spec
+from os import fsdecode
 from pathlib import Path
+from shutil import which
+from subprocess import DEVNULL, PIPE, CalledProcessError, run
 
 project = 'laddu'
 author = 'Nathaniel Dene Hoffman'
@@ -30,7 +33,33 @@ autodoc_typehints = 'description'
 napoleon_numpy_docstring = True
 myst_enable_extensions = ['amsmath', 'colon_fence', 'dollarmath', 'fieldlist']
 myst_heading_anchors = 3
-exclude_patterns = ['_build', 'adr/**', 'agents/**', 'Thumbs.db', '.DS_Store']
+
+
+def _gitignored_sources() -> list[str]:
+    """Use Git's ignore rules, including each developer's global excludes."""
+    git = which('git')
+    if git is None:
+        return []
+    try:
+        # The executable is resolved on PATH and every argument is fixed here.
+        result = run(  # noqa: S603
+            [git, 'ls-files', '--others', '--ignored', '--exclude-standard', '--directory', '-z', '--', '.'],
+            cwd=Path(__file__).resolve().parent,
+            stdout=PIPE,
+            stderr=DEVNULL,
+            check=True,
+        )
+    except (CalledProcessError, FileNotFoundError):
+        return []
+    return [
+        f'{path.rstrip("/")}/**' if path.endswith('/') else path
+        for entry in result.stdout.split(b'\0')
+        if entry
+        for path in [fsdecode(entry)]
+    ]
+
+
+exclude_patterns = ['_build', 'Thumbs.db', '.DS_Store', *_gitignored_sources()]
 templates_path = ['_templates']
 
 laddu_spec = find_spec('laddu')
