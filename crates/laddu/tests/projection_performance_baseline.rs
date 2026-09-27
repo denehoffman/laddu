@@ -1,10 +1,10 @@
-//! Public differential-cross-section reference behavior for projection benchmarks.
+//! Public fitted-cross-section reference behavior for projection benchmarks.
 
 #[path = "../benches/support/projection.rs"]
 mod projection;
 
 use laddu::prelude::ThreadPolicy;
-use laddu::prelude::{BinnedEstimate, DifferentialCrossSection};
+use laddu::prelude::{BinnedEstimate, CrossSectionProjection};
 use projection::{ProjectionFixture, ProjectionTarget, Storage};
 
 #[test]
@@ -23,8 +23,7 @@ fn representative_projection_fixture_exercises_the_public_differential_contract(
     assert_eq!(projections.len(), 4);
     for projection in &projections {
         assert_eq!(projection.shape(), &[40]);
-        assert_eq!(projection.data().draws().len(), 3);
-        assert_eq!(projection.model().draws().len(), 3);
+        assert_eq!(projection.total().draws().len(), 3);
         assert_eq!(projection.components().len(), 3);
         assert_eq!(
             projection.components()["signal"].values(),
@@ -112,7 +111,7 @@ fn cpu_thread_policies_preserve_single_and_combined_projection_sets() {
 }
 
 #[test]
-fn representative_fixture_captures_complete_legacy_reference_fingerprints() {
+fn representative_fixture_captures_fitted_reference_fingerprints() {
     let projections = ProjectionFixture::new(128, 3, Storage::Resident, ThreadPolicy::Serial)
         .expect("representative fixture should build")
         .evaluate_differentials(ProjectionTarget::Combined, 4)
@@ -120,32 +119,32 @@ fn representative_fixture_captures_complete_legacy_reference_fingerprints() {
     let actual = projections.iter().map(fingerprint).collect::<Vec<_>>();
     let expected = [
         Fingerprint {
-            finite_sum: 1922.5498761698045,
-            weighted_sum: 507508.0526853,
-            square_sum: 8802.073987413241,
+            finite_sum: 4671.549799755016,
+            weighted_sum: 1007804.4313960763,
+            square_sum: 82114.00092961792,
             nan_hash: 14695981039346656037,
-            value_count: 640,
+            value_count: 480,
         },
         Fingerprint {
-            finite_sum: 624.0528287103864,
-            weighted_sum: 166060.96750409793,
-            square_sum: 896.42069045685,
+            finite_sum: 1487.00048506193,
+            weighted_sum: 316567.8641984003,
+            square_sum: 7163.054263733604,
             nan_hash: 14695981039346656037,
-            value_count: 640,
+            value_count: 480,
         },
         Fingerprint {
-            finite_sum: 1964.6290309499093,
-            weighted_sum: 512833.96550840064,
-            square_sum: 8729.792787230928,
+            finite_sum: 4671.549799755015,
+            weighted_sum: 977841.0423124799,
+            square_sum: 71163.60704103019,
             nan_hash: 14695981039346656037,
-            value_count: 640,
+            value_count: 480,
         },
         Fingerprint {
-            finite_sum: 593.7691271480444,
-            weighted_sum: 155274.82300814957,
-            square_sum: 809.6967765671711,
+            finite_sum: 1487.0004850619296,
+            weighted_sum: 313682.5651395642,
+            square_sum: 6818.010906989995,
             nan_hash: 14695981039346656037,
-            value_count: 640,
+            value_count: 480,
         },
     ];
 
@@ -164,10 +163,9 @@ struct Fingerprint {
     value_count: usize,
 }
 
-fn fingerprint(projection: &DifferentialCrossSection) -> Fingerprint {
+fn fingerprint(projection: &CrossSectionProjection) -> Fingerprint {
     let estimates = [
-        projection.data(),
-        projection.model(),
+        projection.total(),
         &projection.components()["background"],
         &projection.components()["signal"],
     ];
@@ -215,11 +213,10 @@ fn assert_values_close(actual: f64, expected: f64) {
     );
 }
 
-fn assert_projection_equal(left: &DifferentialCrossSection, right: &DifferentialCrossSection) {
+fn assert_projection_equal(left: &CrossSectionProjection, right: &CrossSectionProjection) {
     assert_eq!(left.axes(), right.axes());
     assert_eq!(left.shape(), right.shape());
-    assert_estimate_equal(left.data(), right.data());
-    assert_estimate_equal(left.model(), right.model());
+    assert_estimate_equal(left.total(), right.total());
     assert_eq!(left.components().len(), right.components().len());
     for (name, estimate) in left.components() {
         assert_estimate_equal(estimate, &right.components()[name]);

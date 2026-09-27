@@ -1,4 +1,4 @@
-//! Columnar event data, schemas, streaming sources, and sinks for laddu.
+//! Columnar event data, schemas, streaming sources, and sinks for `laddu`.
 
 use std::sync::Arc;
 

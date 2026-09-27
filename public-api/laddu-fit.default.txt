@@ -96,7 +96,7 @@ pub fn laddu_fit::FitArtifact::standard_errors(&self) -> core::option::Option<&[
 pub const fn laddu_fit::FitArtifact::strong_compatibility(&self) -> bool
 pub fn laddu_fit::FitArtifact::terminal_message(&self) -> &str
 pub fn laddu_fit::FitArtifact::values(&self) -> &[f64]
-pub fn laddu_fit::FitArtifact::with_ensemble(self, &laddu_likelihood::cross_section::Ensemble) -> laddu_fit::FitResult<Self>
+pub fn laddu_fit::FitArtifact::with_ensemble(self, &laddu_likelihood::measurement::Ensemble) -> laddu_fit::FitResult<Self>
 pub fn laddu_fit::FitArtifact::with_failed_replicas(self, alloc::vec::Vec<laddu_fit::FailedReplica>) -> laddu_fit::FitResult<Self>
 impl laddu_fit::FitArtifact
 pub fn laddu_fit::FitArtifact::load(impl core::convert::AsRef<std::path::Path>) -> laddu_fit::FitResult<Self>
@@ -128,8 +128,8 @@ pub fn laddu_fit::FitEnsembleArtifact::failures(&self) -> &[laddu_fit::FailedRep
 pub fn laddu_fit::FitEnsembleArtifact::parameter_names(&self) -> &[alloc::string::String]
 pub const fn laddu_fit::FitEnsembleArtifact::requires_external_datasets(&self) -> bool
 pub const fn laddu_fit::FitEnsembleArtifact::source_id(&self) -> u64
-pub fn laddu_fit::FitEnsembleArtifact::to_ensemble_for(&self, &alloc::sync::Arc<laddu_likelihood::likelihood::Likelihood>) -> laddu_fit::FitResult<laddu_likelihood::cross_section::Ensemble>
-pub fn laddu_fit::FitEnsembleArtifact::to_parameter_ensemble(&self) -> laddu_fit::FitResult<laddu_likelihood::cross_section::Ensemble>
+pub fn laddu_fit::FitEnsembleArtifact::to_ensemble_for(&self, &alloc::sync::Arc<laddu_likelihood::likelihood::Likelihood>) -> laddu_fit::FitResult<laddu_likelihood::measurement::Ensemble>
+pub fn laddu_fit::FitEnsembleArtifact::to_parameter_ensemble(&self) -> laddu_fit::FitResult<laddu_likelihood::measurement::Ensemble>
 impl core::clone::Clone for laddu_fit::FitEnsembleArtifact
 pub fn laddu_fit::FitEnsembleArtifact::clone(&self) -> laddu_fit::FitEnsembleArtifact
 impl core::fmt::Debug for laddu_fit::FitEnsembleArtifact

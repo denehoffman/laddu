@@ -60,7 +60,6 @@ pub laddu_likelihood::ErrorComponent::DataFill
 pub laddu_likelihood::ErrorComponent::Ensemble
 pub laddu_likelihood::ErrorComponent::GeneratedMcFill
 pub laddu_likelihood::ErrorComponent::Luminosity
-pub laddu_likelihood::ErrorComponent::ReferenceModel
 impl core::clone::Clone for laddu_likelihood::ErrorComponent
 pub fn laddu_likelihood::ErrorComponent::clone(&self) -> laddu_likelihood::ErrorComponent
 impl core::cmp::Eq for laddu_likelihood::ErrorComponent
@@ -74,22 +73,6 @@ impl core::fmt::Debug for laddu_likelihood::ErrorComponent
 pub fn laddu_likelihood::ErrorComponent::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::Copy for laddu_likelihood::ErrorComponent
 impl core::marker::StructuralPartialEq for laddu_likelihood::ErrorComponent
-pub enum laddu_likelihood::IntegralRetentionPolicy
-pub laddu_likelihood::IntegralRetentionPolicy::Bounded
-pub laddu_likelihood::IntegralRetentionPolicy::Bounded::max_bytes: usize
-pub laddu_likelihood::IntegralRetentionPolicy::None
-pub laddu_likelihood::IntegralRetentionPolicy::Unbounded
-impl core::clone::Clone for laddu_likelihood::IntegralRetentionPolicy
-pub fn laddu_likelihood::IntegralRetentionPolicy::clone(&self) -> laddu_likelihood::IntegralRetentionPolicy
-impl core::cmp::Eq for laddu_likelihood::IntegralRetentionPolicy
-impl core::cmp::PartialEq for laddu_likelihood::IntegralRetentionPolicy
-pub fn laddu_likelihood::IntegralRetentionPolicy::eq(&self, &laddu_likelihood::IntegralRetentionPolicy) -> bool
-impl core::default::Default for laddu_likelihood::IntegralRetentionPolicy
-pub fn laddu_likelihood::IntegralRetentionPolicy::default() -> laddu_likelihood::IntegralRetentionPolicy
-impl core::fmt::Debug for laddu_likelihood::IntegralRetentionPolicy
-pub fn laddu_likelihood::IntegralRetentionPolicy::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::marker::Copy for laddu_likelihood::IntegralRetentionPolicy
-impl core::marker::StructuralPartialEq for laddu_likelihood::IntegralRetentionPolicy
 pub enum laddu_likelihood::LikelihoodError
 pub laddu_likelihood::LikelihoodError::AbsoluteRateUnavailable(alloc::string::String)
 pub laddu_likelihood::LikelihoodError::Data(laddu_data::error::LadduDataError)
@@ -213,16 +196,15 @@ pub fn laddu_likelihood::BinnedEstimate::eq(&self, &laddu_likelihood::BinnedEsti
 impl core::fmt::Debug for laddu_likelihood::BinnedEstimate
 pub fn laddu_likelihood::BinnedEstimate::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::StructuralPartialEq for laddu_likelihood::BinnedEstimate
-pub struct laddu_likelihood::ComponentCrossSectionProjection
-impl laddu_likelihood::ComponentCrossSectionProjection
-pub fn laddu_likelihood::ComponentCrossSectionProjection::accepted(&self) -> &laddu_likelihood::BinnedEstimate
-pub fn laddu_likelihood::ComponentCrossSectionProjection::generated(&self) -> &laddu_likelihood::BinnedEstimate
-pub fn laddu_likelihood::ComponentCrossSectionProjection::tags(&self) -> &[alloc::string::String]
-pub fn laddu_likelihood::ComponentCrossSectionProjection::validity(&self) -> &[laddu_likelihood::YieldBinValidity]
-impl core::clone::Clone for laddu_likelihood::ComponentCrossSectionProjection
-pub fn laddu_likelihood::ComponentCrossSectionProjection::clone(&self) -> laddu_likelihood::ComponentCrossSectionProjection
-impl core::fmt::Debug for laddu_likelihood::ComponentCrossSectionProjection
-pub fn laddu_likelihood::ComponentCrossSectionProjection::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub struct laddu_likelihood::CombinationMember(pub laddu_likelihood::CrossSection, pub laddu_likelihood::Estimate)
+impl core::clone::Clone for laddu_likelihood::CombinationMember
+pub fn laddu_likelihood::CombinationMember::clone(&self) -> laddu_likelihood::CombinationMember
+impl core::convert::From<(laddu_likelihood::CrossSection, f64)> for laddu_likelihood::CombinationMember
+pub fn laddu_likelihood::CombinationMember::from((laddu_likelihood::CrossSection, f64)) -> Self
+impl core::convert::From<(laddu_likelihood::CrossSection, laddu_likelihood::Estimate)> for laddu_likelihood::CombinationMember
+pub fn laddu_likelihood::CombinationMember::from((laddu_likelihood::CrossSection, laddu_likelihood::Estimate)) -> Self
+impl core::convert::From<laddu_likelihood::CrossSection> for laddu_likelihood::CombinationMember
+pub fn laddu_likelihood::CombinationMember::from(laddu_likelihood::CrossSection) -> Self
 pub struct laddu_likelihood::ComponentYieldProjection
 impl laddu_likelihood::ComponentYieldProjection
 pub fn laddu_likelihood::ComponentYieldProjection::accepted(&self) -> &[f64]
@@ -236,36 +218,43 @@ pub fn laddu_likelihood::ComponentYieldProjection::generated_estimate(&self) -> 
 pub fn laddu_likelihood::ComponentYieldProjection::generated_histogram(&self) -> laddu_likelihood::YieldHistogramView
 pub fn laddu_likelihood::ComponentYieldProjection::shape(&self) -> &[usize]
 pub fn laddu_likelihood::ComponentYieldProjection::tags(&self) -> &[alloc::string::String]
-pub fn laddu_likelihood::ComponentYieldProjection::to_cross_section(&self, &laddu_likelihood::Luminosity) -> laddu_likelihood::LikelihoodResult<laddu_likelihood::ComponentCrossSectionProjection>
 pub fn laddu_likelihood::ComponentYieldProjection::validity(&self) -> &[laddu_likelihood::YieldBinValidity]
 impl core::clone::Clone for laddu_likelihood::ComponentYieldProjection
 pub fn laddu_likelihood::ComponentYieldProjection::clone(&self) -> laddu_likelihood::ComponentYieldProjection
 impl core::fmt::Debug for laddu_likelihood::ComponentYieldProjection
 pub fn laddu_likelihood::ComponentYieldProjection::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-pub struct laddu_likelihood::CrossSectionIntegrals
-impl laddu_likelihood::CrossSectionIntegrals
-pub fn laddu_likelihood::CrossSectionIntegrals::acceptance(&self, &[f64]) -> laddu_likelihood::LikelihoodResult<f64>
-pub fn laddu_likelihood::CrossSectionIntegrals::acceptance_corrected_yield(&self, &[f64], f64) -> laddu_likelihood::LikelihoodResult<f64>
-pub fn laddu_likelihood::CrossSectionIntegrals::accepted_integral(&self, &[f64]) -> laddu_likelihood::LikelihoodResult<f64>
-pub fn laddu_likelihood::CrossSectionIntegrals::accepted_intensities(&self, &[f64]) -> laddu_likelihood::LikelihoodResult<alloc::vec::Vec<f64>>
-pub fn laddu_likelihood::CrossSectionIntegrals::accepted_mc(&self) -> &laddu_runtime::backend::PreparedDataset
-pub fn laddu_likelihood::CrossSectionIntegrals::accepted_mc_source(&self) -> &laddu_data::data::dataset::Dataset
-pub fn laddu_likelihood::CrossSectionIntegrals::cross_section(&self, &[f64], f64) -> laddu_likelihood::LikelihoodResult<f64>
-pub fn laddu_likelihood::CrossSectionIntegrals::data_weight_sum(&self) -> f64
-pub fn laddu_likelihood::CrossSectionIntegrals::fitted_cross_section(&self, &[f64], f64) -> laddu_likelihood::LikelihoodResult<f64>
-pub fn laddu_likelihood::CrossSectionIntegrals::full_accepted_integral(&self, &[f64]) -> laddu_likelihood::LikelihoodResult<f64>
-pub fn laddu_likelihood::CrossSectionIntegrals::generated_integral(&self, &[f64]) -> laddu_likelihood::LikelihoodResult<f64>
-pub fn laddu_likelihood::CrossSectionIntegrals::generated_intensities(&self, &[f64]) -> laddu_likelihood::LikelihoodResult<alloc::vec::Vec<f64>>
-pub fn laddu_likelihood::CrossSectionIntegrals::generated_mc(&self) -> &laddu_runtime::backend::PreparedDataset
-pub fn laddu_likelihood::CrossSectionIntegrals::generated_mc_source(&self) -> &laddu_data::data::dataset::Dataset
-pub fn laddu_likelihood::CrossSectionIntegrals::has_absolute_rate(&self) -> bool
-pub fn laddu_likelihood::CrossSectionIntegrals::name(&self) -> &str
-pub fn laddu_likelihood::CrossSectionIntegrals::observed_cross_section(&self, &[f64], f64) -> laddu_likelihood::LikelihoodResult<f64>
-pub fn laddu_likelihood::CrossSectionIntegrals::resident_bytes(&self) -> usize
-impl core::clone::Clone for laddu_likelihood::CrossSectionIntegrals
-pub fn laddu_likelihood::CrossSectionIntegrals::clone(&self) -> laddu_likelihood::CrossSectionIntegrals
-impl core::fmt::Debug for laddu_likelihood::CrossSectionIntegrals
-pub fn laddu_likelihood::CrossSectionIntegrals::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub struct laddu_likelihood::CrossSection
+impl laddu_likelihood::CrossSection
+pub fn laddu_likelihood::CrossSection::accepted_integral(&self) -> core::option::Option<&laddu_likelihood::Estimate>
+pub fn laddu_likelihood::CrossSection::combine<M: core::clone::Clone + core::convert::Into<laddu_likelihood::CombinationMember>>(&[M]) -> laddu_likelihood::LikelihoodResult<Self>
+pub fn laddu_likelihood::CrossSection::combine_with_covariance<M: core::clone::Clone + core::convert::Into<laddu_likelihood::CombinationMember>>(&[M], alloc::vec::Vec<alloc::vec::Vec<f64>>) -> laddu_likelihood::LikelihoodResult<Self>
+pub fn laddu_likelihood::CrossSection::data_yield(&self) -> core::option::Option<&laddu_likelihood::Estimate>
+pub fn laddu_likelihood::CrossSection::generated_integral(&self) -> core::option::Option<&laddu_likelihood::Estimate>
+pub fn laddu_likelihood::CrossSection::members(&self) -> core::option::Option<&[(laddu_likelihood::CrossSection, laddu_likelihood::Estimate)]>
+pub fn laddu_likelihood::CrossSection::new(alloc::sync::Arc<laddu_likelihood::Likelihood>, impl core::convert::Into<alloc::string::String>, laddu_data::data::dataset::Dataset, laddu_likelihood::Luminosity, alloc::vec::Vec<f64>, core::option::Option<laddu_likelihood::Ensemble>) -> laddu_likelihood::LikelihoodResult<Self>
+pub fn laddu_likelihood::CrossSection::project(&self, &[laddu_likelihood::Axis], &std::collections::hash::map::HashMap<alloc::string::String, alloc::vec::Vec<alloc::string::String>>) -> laddu_likelihood::LikelihoodResult<laddu_likelihood::CrossSectionProjection>
+pub fn laddu_likelihood::CrossSection::project_many(&self, &[laddu_likelihood::Projection], &std::collections::hash::map::HashMap<alloc::string::String, alloc::vec::Vec<alloc::string::String>>) -> laddu_likelihood::LikelihoodResult<alloc::vec::Vec<(alloc::string::String, laddu_likelihood::CrossSectionProjection)>>
+pub fn laddu_likelihood::CrossSection::rate_closure(&self) -> core::option::Option<laddu_likelihood::RateClosure>
+pub fn laddu_likelihood::CrossSection::total(&self) -> &laddu_likelihood::Estimate
+pub fn laddu_likelihood::CrossSection::total_effective_exposure(&self) -> f64
+pub fn laddu_likelihood::CrossSection::unit(&self) -> laddu_likelihood::AreaUnit
+impl core::clone::Clone for laddu_likelihood::CrossSection
+pub fn laddu_likelihood::CrossSection::clone(&self) -> laddu_likelihood::CrossSection
+impl core::convert::From<laddu_likelihood::CrossSection> for laddu_likelihood::CombinationMember
+pub fn laddu_likelihood::CombinationMember::from(laddu_likelihood::CrossSection) -> Self
+impl core::fmt::Debug for laddu_likelihood::CrossSection
+pub fn laddu_likelihood::CrossSection::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub struct laddu_likelihood::CrossSectionProjection
+impl laddu_likelihood::CrossSectionProjection
+pub fn laddu_likelihood::CrossSectionProjection::axes(&self) -> &[alloc::vec::Vec<f64>]
+pub fn laddu_likelihood::CrossSectionProjection::components(&self) -> &std::collections::hash::map::HashMap<alloc::string::String, laddu_likelihood::BinnedEstimate>
+pub fn laddu_likelihood::CrossSectionProjection::member_validity(&self) -> &[alloc::vec::Vec<laddu_likelihood::YieldBinValidity>]
+pub fn laddu_likelihood::CrossSectionProjection::shape(&self) -> &[usize]
+pub fn laddu_likelihood::CrossSectionProjection::total(&self) -> &laddu_likelihood::BinnedEstimate
+impl core::clone::Clone for laddu_likelihood::CrossSectionProjection
+pub fn laddu_likelihood::CrossSectionProjection::clone(&self) -> laddu_likelihood::CrossSectionProjection
+impl core::fmt::Debug for laddu_likelihood::CrossSectionProjection
+pub fn laddu_likelihood::CrossSectionProjection::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub struct laddu_likelihood::DatasetDiagnostics
 impl laddu_likelihood::DatasetDiagnostics
 pub fn laddu_likelihood::DatasetDiagnostics::normalization(&self) -> core::option::Option<&laddu_runtime::normalization::PreparedNormalizationDiagnostics>
@@ -308,7 +297,6 @@ pub laddu_likelihood::ErrorBudget::data_fill: bool
 pub laddu_likelihood::ErrorBudget::ensemble: bool
 pub laddu_likelihood::ErrorBudget::generated_mc_fill: bool
 pub laddu_likelihood::ErrorBudget::luminosity: bool
-pub laddu_likelihood::ErrorBudget::reference_model: bool
 impl core::clone::Clone for laddu_likelihood::ErrorBudget
 pub fn laddu_likelihood::ErrorBudget::clone(&self) -> laddu_likelihood::ErrorBudget
 impl core::cmp::Eq for laddu_likelihood::ErrorBudget
@@ -335,9 +323,11 @@ pub fn laddu_likelihood::Estimate::median(&self) -> laddu_likelihood::Likelihood
 pub fn laddu_likelihood::Estimate::new(f64, alloc::vec::Vec<f64>) -> laddu_likelihood::LikelihoodResult<Self>
 pub fn laddu_likelihood::Estimate::quantile(&self, f64) -> laddu_likelihood::LikelihoodResult<f64>
 pub fn laddu_likelihood::Estimate::source_id(&self) -> core::option::Option<u64>
+pub fn laddu_likelihood::Estimate::standard_error(&self) -> core::option::Option<f64>
 pub fn laddu_likelihood::Estimate::std(&self) -> laddu_likelihood::LikelihoodResult<f64>
 pub fn laddu_likelihood::Estimate::value(&self) -> f64
 pub fn laddu_likelihood::Estimate::with_source_id(f64, alloc::vec::Vec<f64>, core::option::Option<u64>) -> laddu_likelihood::LikelihoodResult<Self>
+pub fn laddu_likelihood::Estimate::with_standard_error(self, f64) -> laddu_likelihood::LikelihoodResult<Self>
 impl core::clone::Clone for laddu_likelihood::Estimate
 pub fn laddu_likelihood::Estimate::clone(&self) -> laddu_likelihood::Estimate
 impl core::cmp::PartialEq for laddu_likelihood::Estimate
@@ -441,65 +431,6 @@ pub fn laddu_likelihood::Estimate::sub(self, f64) -> Self::Output
 impl core::ops::arith::Sub<laddu_likelihood::Estimate> for &laddu_likelihood::Estimate
 pub type &laddu_likelihood::Estimate::Output = laddu_likelihood::Estimate
 pub fn &laddu_likelihood::Estimate::sub(self, laddu_likelihood::Estimate) -> Self::Output
-pub struct laddu_likelihood::ExposureCombinedCrossSection
-impl laddu_likelihood::ExposureCombinedCrossSection
-pub fn laddu_likelihood::ExposureCombinedCrossSection::exposure_factors(&self) -> &[f64]
-pub fn laddu_likelihood::ExposureCombinedCrossSection::fitted(&self) -> core::option::Option<&laddu_likelihood::Estimate>
-pub fn laddu_likelihood::ExposureCombinedCrossSection::member_closures(&self) -> &[laddu_likelihood::RateClosure]
-pub fn laddu_likelihood::ExposureCombinedCrossSection::member_luminosities(&self) -> &[laddu_likelihood::Luminosity]
-pub fn laddu_likelihood::ExposureCombinedCrossSection::observed(&self) -> &laddu_likelihood::Estimate
-pub fn laddu_likelihood::ExposureCombinedCrossSection::total_effective_exposure(&self) -> f64
-pub fn laddu_likelihood::ExposureCombinedCrossSection::unit(&self) -> laddu_likelihood::AreaUnit
-impl core::clone::Clone for laddu_likelihood::ExposureCombinedCrossSection
-pub fn laddu_likelihood::ExposureCombinedCrossSection::clone(&self) -> laddu_likelihood::ExposureCombinedCrossSection
-impl core::fmt::Debug for laddu_likelihood::ExposureCombinedCrossSection
-pub fn laddu_likelihood::ExposureCombinedCrossSection::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-pub struct laddu_likelihood::ExposureCombinedCrossSectionProjection
-impl laddu_likelihood::ExposureCombinedCrossSectionProjection
-pub fn laddu_likelihood::ExposureCombinedCrossSectionProjection::axes(&self) -> &[alloc::vec::Vec<f64>]
-pub fn laddu_likelihood::ExposureCombinedCrossSectionProjection::components(&self) -> &std::collections::hash::map::HashMap<alloc::string::String, laddu_likelihood::ComponentCrossSectionProjection>
-pub fn laddu_likelihood::ExposureCombinedCrossSectionProjection::fitted(&self) -> core::option::Option<&laddu_likelihood::BinnedEstimate>
-pub fn laddu_likelihood::ExposureCombinedCrossSectionProjection::member_validity(&self) -> &[alloc::vec::Vec<laddu_likelihood::YieldBinValidity>]
-pub fn laddu_likelihood::ExposureCombinedCrossSectionProjection::observed(&self) -> &laddu_likelihood::BinnedEstimate
-pub fn laddu_likelihood::ExposureCombinedCrossSectionProjection::shape(&self) -> &[usize]
-pub fn laddu_likelihood::ExposureCombinedCrossSectionProjection::total_effective_exposure(&self) -> f64
-pub fn laddu_likelihood::ExposureCombinedCrossSectionProjection::unit(&self) -> laddu_likelihood::AreaUnit
-impl core::clone::Clone for laddu_likelihood::ExposureCombinedCrossSectionProjection
-pub fn laddu_likelihood::ExposureCombinedCrossSectionProjection::clone(&self) -> laddu_likelihood::ExposureCombinedCrossSectionProjection
-impl core::fmt::Debug for laddu_likelihood::ExposureCombinedCrossSectionProjection
-pub fn laddu_likelihood::ExposureCombinedCrossSectionProjection::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-pub struct laddu_likelihood::ExposureCombinedReferenceCrossSection
-impl laddu_likelihood::ExposureCombinedReferenceCrossSection
-pub fn laddu_likelihood::ExposureCombinedReferenceCrossSection::provenances(&self) -> &[laddu_likelihood::ReferenceCorrectionProvenance]
-pub fn laddu_likelihood::ExposureCombinedReferenceCrossSection::total_effective_exposure(&self) -> f64
-pub fn laddu_likelihood::ExposureCombinedReferenceCrossSection::unit(&self) -> laddu_likelihood::AreaUnit
-pub fn laddu_likelihood::ExposureCombinedReferenceCrossSection::value(&self) -> &laddu_likelihood::Estimate
-impl core::clone::Clone for laddu_likelihood::ExposureCombinedReferenceCrossSection
-pub fn laddu_likelihood::ExposureCombinedReferenceCrossSection::clone(&self) -> laddu_likelihood::ExposureCombinedReferenceCrossSection
-impl core::fmt::Debug for laddu_likelihood::ExposureCombinedReferenceCrossSection
-pub fn laddu_likelihood::ExposureCombinedReferenceCrossSection::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-pub struct laddu_likelihood::ExposureCombinedReferenceCrossSectionProjection
-impl laddu_likelihood::ExposureCombinedReferenceCrossSectionProjection
-pub fn laddu_likelihood::ExposureCombinedReferenceCrossSectionProjection::member_validity(&self) -> &[alloc::vec::Vec<laddu_likelihood::YieldBinValidity>]
-pub fn laddu_likelihood::ExposureCombinedReferenceCrossSectionProjection::provenances(&self) -> &[laddu_likelihood::ReferenceCorrectionProvenance]
-pub fn laddu_likelihood::ExposureCombinedReferenceCrossSectionProjection::total_effective_exposure(&self) -> f64
-pub fn laddu_likelihood::ExposureCombinedReferenceCrossSectionProjection::value(&self) -> &laddu_likelihood::BinnedEstimate
-impl core::clone::Clone for laddu_likelihood::ExposureCombinedReferenceCrossSectionProjection
-pub fn laddu_likelihood::ExposureCombinedReferenceCrossSectionProjection::clone(&self) -> laddu_likelihood::ExposureCombinedReferenceCrossSectionProjection
-impl core::fmt::Debug for laddu_likelihood::ExposureCombinedReferenceCrossSectionProjection
-pub fn laddu_likelihood::ExposureCombinedReferenceCrossSectionProjection::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-pub struct laddu_likelihood::ExposureFactor(_)
-impl laddu_likelihood::ExposureFactor
-pub fn laddu_likelihood::ExposureFactor::estimate(&self) -> &laddu_likelihood::Estimate
-pub fn laddu_likelihood::ExposureFactor::from_estimate(laddu_likelihood::Estimate) -> laddu_likelihood::LikelihoodResult<Self>
-pub fn laddu_likelihood::ExposureFactor::new(f64) -> laddu_likelihood::LikelihoodResult<Self>
-impl core::clone::Clone for laddu_likelihood::ExposureFactor
-pub fn laddu_likelihood::ExposureFactor::clone(&self) -> laddu_likelihood::ExposureFactor
-impl core::cmp::PartialEq for laddu_likelihood::ExposureFactor
-pub fn laddu_likelihood::ExposureFactor::eq(&self, &laddu_likelihood::ExposureFactor) -> bool
-impl core::fmt::Debug for laddu_likelihood::ExposureFactor
-pub fn laddu_likelihood::ExposureFactor::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::marker::StructuralPartialEq for laddu_likelihood::ExposureFactor
 pub struct laddu_likelihood::ExtendedNllTerm
 impl laddu_likelihood::ExtendedNllTerm
 pub fn laddu_likelihood::ExtendedNllTerm::accepted_mc(&self) -> laddu_likelihood::LikelihoodResult<&laddu_runtime::backend::PreparedDataset>
@@ -527,6 +458,24 @@ pub fn laddu_likelihood::ExtendedNllTerm::nll_with_gradient(&self, &laddu_expr::
 pub fn laddu_likelihood::ExtendedNllTerm::register_params(&self, &mut laddu_expr::parameters::ParamRegistry) -> laddu_likelihood::LikelihoodResult<()>
 pub fn laddu_likelihood::ExtendedNllTerm::resolve(&mut self, alloc::sync::Arc<laddu_expr::parameters::ParamLayout>, &laddu_runtime::execution::Execution) -> laddu_likelihood::LikelihoodResult<()>
 pub fn laddu_likelihood::ExtendedNllTerm::stochastic_nll_with_gradient(&self, &laddu_expr::parameters::ParamValues, &mut [f64], &laddu_runtime::execution::Execution, f64, u64) -> laddu_likelihood::LikelihoodResult<f64>
+pub struct laddu_likelihood::IntensityIntegrals
+impl laddu_likelihood::IntensityIntegrals
+pub fn laddu_likelihood::IntensityIntegrals::accepted_integral(&self, &[f64]) -> laddu_likelihood::LikelihoodResult<f64>
+pub fn laddu_likelihood::IntensityIntegrals::accepted_intensities(&self, &[f64]) -> laddu_likelihood::LikelihoodResult<alloc::vec::Vec<f64>>
+pub fn laddu_likelihood::IntensityIntegrals::accepted_mc(&self) -> &laddu_runtime::backend::PreparedDataset
+pub fn laddu_likelihood::IntensityIntegrals::accepted_mc_source(&self) -> &laddu_data::data::dataset::Dataset
+pub fn laddu_likelihood::IntensityIntegrals::data_weight_sum(&self) -> f64
+pub fn laddu_likelihood::IntensityIntegrals::generated_integral(&self, &[f64]) -> laddu_likelihood::LikelihoodResult<f64>
+pub fn laddu_likelihood::IntensityIntegrals::generated_intensities(&self, &[f64]) -> laddu_likelihood::LikelihoodResult<alloc::vec::Vec<f64>>
+pub fn laddu_likelihood::IntensityIntegrals::generated_mc(&self) -> &laddu_runtime::backend::PreparedDataset
+pub fn laddu_likelihood::IntensityIntegrals::generated_mc_source(&self) -> &laddu_data::data::dataset::Dataset
+pub fn laddu_likelihood::IntensityIntegrals::has_absolute_rate(&self) -> bool
+pub fn laddu_likelihood::IntensityIntegrals::name(&self) -> &str
+pub fn laddu_likelihood::IntensityIntegrals::resident_bytes(&self) -> usize
+impl core::clone::Clone for laddu_likelihood::IntensityIntegrals
+pub fn laddu_likelihood::IntensityIntegrals::clone(&self) -> laddu_likelihood::IntensityIntegrals
+impl core::fmt::Debug for laddu_likelihood::IntensityIntegrals
+pub fn laddu_likelihood::IntensityIntegrals::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub struct laddu_likelihood::LassoPenalty
 impl laddu_likelihood::LassoPenalty
 pub fn laddu_likelihood::LassoPenalty::new(impl core::convert::Into<alloc::string::String>, impl core::iter::traits::collect::IntoIterator<Item = impl core::convert::Into<alloc::string::String>>, f64) -> laddu_likelihood::LikelihoodResult<Self>
@@ -555,12 +504,12 @@ pub fn laddu_likelihood::Likelihood::artifact_compatibility_is_strong(&self) -> 
 pub fn laddu_likelihood::Likelihood::artifact_fingerprint_v1(&self) -> alloc::string::String
 pub fn laddu_likelihood::Likelihood::artifact_fingerprint_v1_with_parameter_map(&self, &std::collections::hash::map::HashMap<alloc::string::String, alloc::string::String>) -> alloc::string::String
 pub fn laddu_likelihood::Likelihood::bootstrap(&self, u64) -> laddu_likelihood::LikelihoodResult<Self>
-pub fn laddu_likelihood::Likelihood::cross_section_integrals(&self, &str, &laddu_data::data::dataset::Dataset) -> laddu_likelihood::LikelihoodResult<laddu_likelihood::CrossSectionIntegrals>
-pub fn laddu_likelihood::Likelihood::cross_section_integrals_with_tags<'a>(&self, &str, &laddu_data::data::dataset::Dataset, impl core::iter::traits::collect::IntoIterator<Item = &'a str>) -> laddu_likelihood::LikelihoodResult<laddu_likelihood::CrossSectionIntegrals>
 pub fn laddu_likelihood::Likelihood::default_params(&self) -> alloc::vec::Vec<f64>
 pub fn laddu_likelihood::Likelihood::diagnostics(&self) -> laddu_likelihood::LikelihoodDiagnostics
 pub fn laddu_likelihood::Likelihood::execution(&self) -> &laddu_runtime::execution::Execution
 pub fn laddu_likelihood::Likelihood::intensity_datasets(&self, &str) -> laddu_likelihood::LikelihoodResult<(&laddu_data::data::dataset::Dataset, &laddu_data::data::dataset::Dataset)>
+pub fn laddu_likelihood::Likelihood::intensity_integrals(&self, &str, &laddu_data::data::dataset::Dataset) -> laddu_likelihood::LikelihoodResult<laddu_likelihood::IntensityIntegrals>
+pub fn laddu_likelihood::Likelihood::intensity_integrals_with_tags<'a>(&self, &str, &laddu_data::data::dataset::Dataset, impl core::iter::traits::collect::IntoIterator<Item = &'a str>) -> laddu_likelihood::LikelihoodResult<laddu_likelihood::IntensityIntegrals>
 pub fn laddu_likelihood::Likelihood::new<T>(impl core::iter::traits::collect::IntoIterator<Item = T>) -> laddu_likelihood::LikelihoodResult<Self> where T: laddu_likelihood::LikelihoodTerm + 'static
 pub fn laddu_likelihood::Likelihood::new_boxed(impl core::iter::traits::collect::IntoIterator<Item = alloc::boxed::Box<dyn laddu_likelihood::LikelihoodTerm>>) -> laddu_likelihood::LikelihoodResult<Self>
 pub fn laddu_likelihood::Likelihood::nll<'a>(&self, impl core::convert::Into<laddu_likelihood::Parameters<'a>>) -> laddu_likelihood::LikelihoodResult<f64>
@@ -573,6 +522,8 @@ pub fn laddu_likelihood::Likelihood::stochastic_nll_with_gradient(&self, &[f64],
 pub fn laddu_likelihood::Likelihood::terms(&self) -> &[alloc::boxed::Box<dyn laddu_likelihood::LikelihoodTerm>]
 pub fn laddu_likelihood::Likelihood::with_execution<T>(impl core::iter::traits::collect::IntoIterator<Item = T>, &laddu_runtime::execution::Execution) -> laddu_likelihood::LikelihoodResult<Self> where T: laddu_likelihood::LikelihoodTerm + 'static
 pub fn laddu_likelihood::Likelihood::with_execution_boxed(impl core::iter::traits::collect::IntoIterator<Item = alloc::boxed::Box<dyn laddu_likelihood::LikelihoodTerm>>, &laddu_runtime::execution::Execution) -> laddu_likelihood::LikelihoodResult<Self>
+impl laddu_likelihood::Likelihood
+pub fn laddu_likelihood::Likelihood::cross_section(&alloc::sync::Arc<Self>, impl core::convert::Into<alloc::string::String>, laddu_data::data::dataset::Dataset, laddu_likelihood::Luminosity, alloc::vec::Vec<f64>, core::option::Option<laddu_likelihood::Ensemble>) -> laddu_likelihood::LikelihoodResult<laddu_likelihood::CrossSection>
 impl core::fmt::Debug for laddu_likelihood::Likelihood
 pub fn laddu_likelihood::Likelihood::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl laddu_likelihood::Objective for laddu_likelihood::Likelihood
@@ -621,17 +572,11 @@ pub fn laddu_likelihood::LikelihoodName::fmt(&self, &mut core::fmt::Formatter<'_
 impl core::marker::StructuralPartialEq for laddu_likelihood::LikelihoodName
 pub struct laddu_likelihood::LikelihoodProjection
 impl laddu_likelihood::LikelihoodProjection
-pub fn laddu_likelihood::LikelihoodProjection::acceptance(&self, &[f64]) -> laddu_likelihood::LikelihoodResult<f64>
-pub fn laddu_likelihood::LikelihoodProjection::acceptance_corrected_yield(&self, &[f64]) -> laddu_likelihood::LikelihoodResult<f64>
 pub fn laddu_likelihood::LikelihoodProjection::accepted_integral(&self, &[f64]) -> laddu_likelihood::LikelihoodResult<f64>
-pub fn laddu_likelihood::LikelihoodProjection::cross_section(&self, &[f64], f64) -> laddu_likelihood::LikelihoodResult<f64>
-pub fn laddu_likelihood::LikelihoodProjection::fitted_cross_section(&self, &[f64], f64) -> laddu_likelihood::LikelihoodResult<f64>
-pub fn laddu_likelihood::LikelihoodProjection::full_accepted_integral(&self, &[f64]) -> laddu_likelihood::LikelihoodResult<f64>
 pub fn laddu_likelihood::LikelihoodProjection::generated_integral(&self, &[f64]) -> laddu_likelihood::LikelihoodResult<f64>
 pub fn laddu_likelihood::LikelihoodProjection::intensities(&self, &[f64]) -> laddu_likelihood::LikelihoodResult<alloc::vec::Vec<f64>>
 pub fn laddu_likelihood::LikelihoodProjection::name(&self) -> &str
-pub fn laddu_likelihood::LikelihoodProjection::observed_cross_section(&self, &[f64], f64) -> laddu_likelihood::LikelihoodResult<f64>
-pub fn laddu_likelihood::LikelihoodProjection::weights(&self, &[f64], bool) -> laddu_likelihood::LikelihoodResult<alloc::vec::Vec<f64>>
+pub fn laddu_likelihood::LikelihoodProjection::weights(&self, &[f64]) -> laddu_likelihood::LikelihoodResult<alloc::vec::Vec<f64>>
 impl core::clone::Clone for laddu_likelihood::LikelihoodProjection
 pub fn laddu_likelihood::LikelihoodProjection::clone(&self) -> laddu_likelihood::LikelihoodProjection
 pub struct laddu_likelihood::Luminosity
@@ -694,11 +639,6 @@ pub fn laddu_likelihood::RateClosure::accepted_fitted_yield(&self) -> core::opti
 pub fn laddu_likelihood::RateClosure::accepted_relative_residual(&self) -> core::option::Option<f64>
 pub fn laddu_likelihood::RateClosure::accepted_residual(&self) -> core::option::Option<f64>
 pub fn laddu_likelihood::RateClosure::accepted_residual_draws(&self) -> &[f64]
-pub fn laddu_likelihood::RateClosure::corrected_absolute_residual(&self) -> core::option::Option<f64>
-pub fn laddu_likelihood::RateClosure::corrected_observed_yield(&self) -> core::option::Option<&laddu_likelihood::Estimate>
-pub fn laddu_likelihood::RateClosure::corrected_relative_residual(&self) -> core::option::Option<f64>
-pub fn laddu_likelihood::RateClosure::corrected_residual(&self) -> core::option::Option<f64>
-pub fn laddu_likelihood::RateClosure::corrected_residual_draws(&self) -> &[f64]
 pub fn laddu_likelihood::RateClosure::generated_fitted_yield(&self) -> core::option::Option<&laddu_likelihood::Estimate>
 pub fn laddu_likelihood::RateClosure::is_closed(&self) -> bool
 pub fn laddu_likelihood::RateClosure::reason(&self) -> core::option::Option<&str>
@@ -712,73 +652,6 @@ pub fn laddu_likelihood::RateClosure::eq(&self, &laddu_likelihood::RateClosure) 
 impl core::fmt::Debug for laddu_likelihood::RateClosure
 pub fn laddu_likelihood::RateClosure::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::StructuralPartialEq for laddu_likelihood::RateClosure
-pub struct laddu_likelihood::ReferenceCorrectedYield
-impl laddu_likelihood::ReferenceCorrectedYield
-pub fn laddu_likelihood::ReferenceCorrectedYield::acceptance(&self) -> &laddu_likelihood::Estimate
-pub const fn laddu_likelihood::ReferenceCorrectedYield::has_rate_closure(&self) -> bool
-pub fn laddu_likelihood::ReferenceCorrectedYield::provenance(&self) -> &laddu_likelihood::ReferenceCorrectionProvenance
-pub fn laddu_likelihood::ReferenceCorrectedYield::reference_model_digest(&self) -> u64
-pub fn laddu_likelihood::ReferenceCorrectedYield::reference_term_name(&self) -> &str
-pub fn laddu_likelihood::ReferenceCorrectedYield::to_cross_section(&self, &laddu_likelihood::Luminosity) -> laddu_likelihood::ReferenceCrossSection
-pub fn laddu_likelihood::ReferenceCorrectedYield::value(&self) -> &laddu_likelihood::Estimate
-impl core::clone::Clone for laddu_likelihood::ReferenceCorrectedYield
-pub fn laddu_likelihood::ReferenceCorrectedYield::clone(&self) -> laddu_likelihood::ReferenceCorrectedYield
-impl core::cmp::PartialEq for laddu_likelihood::ReferenceCorrectedYield
-pub fn laddu_likelihood::ReferenceCorrectedYield::eq(&self, &laddu_likelihood::ReferenceCorrectedYield) -> bool
-impl core::fmt::Debug for laddu_likelihood::ReferenceCorrectedYield
-pub fn laddu_likelihood::ReferenceCorrectedYield::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::marker::StructuralPartialEq for laddu_likelihood::ReferenceCorrectedYield
-pub struct laddu_likelihood::ReferenceCorrectedYieldProjection
-impl laddu_likelihood::ReferenceCorrectedYieldProjection
-pub fn laddu_likelihood::ReferenceCorrectedYieldProjection::acceptance(&self) -> &laddu_likelihood::BinnedEstimate
-pub fn laddu_likelihood::ReferenceCorrectedYieldProjection::provenance(&self) -> &laddu_likelihood::ReferenceCorrectionProvenance
-pub fn laddu_likelihood::ReferenceCorrectedYieldProjection::to_cross_section(&self, &laddu_likelihood::Luminosity) -> laddu_likelihood::LikelihoodResult<laddu_likelihood::ReferenceCrossSectionProjection>
-pub fn laddu_likelihood::ReferenceCorrectedYieldProjection::validity(&self) -> &[laddu_likelihood::YieldBinValidity]
-pub fn laddu_likelihood::ReferenceCorrectedYieldProjection::value(&self) -> &laddu_likelihood::BinnedEstimate
-impl core::clone::Clone for laddu_likelihood::ReferenceCorrectedYieldProjection
-pub fn laddu_likelihood::ReferenceCorrectedYieldProjection::clone(&self) -> laddu_likelihood::ReferenceCorrectedYieldProjection
-impl core::fmt::Debug for laddu_likelihood::ReferenceCorrectedYieldProjection
-pub fn laddu_likelihood::ReferenceCorrectedYieldProjection::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-pub struct laddu_likelihood::ReferenceCorrectionProvenance
-impl laddu_likelihood::ReferenceCorrectionProvenance
-pub fn laddu_likelihood::ReferenceCorrectionProvenance::accepted_dataset_identity(&self) -> u64
-pub fn laddu_likelihood::ReferenceCorrectionProvenance::generated_dataset_identity(&self) -> u64
-pub fn laddu_likelihood::ReferenceCorrectionProvenance::reference_draw_parameters(&self) -> &[alloc::vec::Vec<f64>]
-pub fn laddu_likelihood::ReferenceCorrectionProvenance::reference_model_digest(&self) -> u64
-pub fn laddu_likelihood::ReferenceCorrectionProvenance::reference_parameters(&self) -> &[f64]
-pub fn laddu_likelihood::ReferenceCorrectionProvenance::reference_replica_accepted_dataset_identities(&self) -> &[u64]
-pub fn laddu_likelihood::ReferenceCorrectionProvenance::reference_term_name(&self) -> &str
-pub fn laddu_likelihood::ReferenceCorrectionProvenance::reference_uncertainty_source(&self) -> core::option::Option<u64>
-pub fn laddu_likelihood::ReferenceCorrectionProvenance::selected_uncertainty_source(&self) -> core::option::Option<u64>
-impl core::clone::Clone for laddu_likelihood::ReferenceCorrectionProvenance
-pub fn laddu_likelihood::ReferenceCorrectionProvenance::clone(&self) -> laddu_likelihood::ReferenceCorrectionProvenance
-impl core::cmp::PartialEq for laddu_likelihood::ReferenceCorrectionProvenance
-pub fn laddu_likelihood::ReferenceCorrectionProvenance::eq(&self, &laddu_likelihood::ReferenceCorrectionProvenance) -> bool
-impl core::fmt::Debug for laddu_likelihood::ReferenceCorrectionProvenance
-pub fn laddu_likelihood::ReferenceCorrectionProvenance::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::marker::StructuralPartialEq for laddu_likelihood::ReferenceCorrectionProvenance
-pub struct laddu_likelihood::ReferenceCrossSection
-impl laddu_likelihood::ReferenceCrossSection
-pub fn laddu_likelihood::ReferenceCrossSection::combine(&[(Self, f64)]) -> laddu_likelihood::LikelihoodResult<laddu_likelihood::ExposureCombinedReferenceCrossSection>
-pub fn laddu_likelihood::ReferenceCrossSection::luminosity(&self) -> &laddu_likelihood::Luminosity
-pub fn laddu_likelihood::ReferenceCrossSection::provenance(&self) -> &laddu_likelihood::ReferenceCorrectionProvenance
-pub fn laddu_likelihood::ReferenceCrossSection::unit(&self) -> laddu_likelihood::AreaUnit
-pub fn laddu_likelihood::ReferenceCrossSection::value(&self) -> &laddu_likelihood::Estimate
-impl core::clone::Clone for laddu_likelihood::ReferenceCrossSection
-pub fn laddu_likelihood::ReferenceCrossSection::clone(&self) -> laddu_likelihood::ReferenceCrossSection
-impl core::fmt::Debug for laddu_likelihood::ReferenceCrossSection
-pub fn laddu_likelihood::ReferenceCrossSection::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-pub struct laddu_likelihood::ReferenceCrossSectionProjection
-impl laddu_likelihood::ReferenceCrossSectionProjection
-pub fn laddu_likelihood::ReferenceCrossSectionProjection::combine(&[(Self, f64)]) -> laddu_likelihood::LikelihoodResult<laddu_likelihood::ExposureCombinedReferenceCrossSectionProjection>
-pub fn laddu_likelihood::ReferenceCrossSectionProjection::luminosity(&self) -> &laddu_likelihood::Luminosity
-pub fn laddu_likelihood::ReferenceCrossSectionProjection::provenance(&self) -> &laddu_likelihood::ReferenceCorrectionProvenance
-pub fn laddu_likelihood::ReferenceCrossSectionProjection::validity(&self) -> &[laddu_likelihood::YieldBinValidity]
-pub fn laddu_likelihood::ReferenceCrossSectionProjection::value(&self) -> &laddu_likelihood::BinnedEstimate
-impl core::clone::Clone for laddu_likelihood::ReferenceCrossSectionProjection
-pub fn laddu_likelihood::ReferenceCrossSectionProjection::clone(&self) -> laddu_likelihood::ReferenceCrossSectionProjection
-impl core::fmt::Debug for laddu_likelihood::ReferenceCrossSectionProjection
-pub fn laddu_likelihood::ReferenceCrossSectionProjection::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub struct laddu_likelihood::RidgePenalty
 impl laddu_likelihood::RidgePenalty
 pub fn laddu_likelihood::RidgePenalty::new(impl core::convert::Into<alloc::string::String>, impl core::iter::traits::collect::IntoIterator<Item = impl core::convert::Into<alloc::string::String>>, f64) -> laddu_likelihood::LikelihoodResult<Self>
@@ -819,9 +692,7 @@ pub struct laddu_likelihood::Yield
 impl laddu_likelihood::Yield
 pub fn laddu_likelihood::Yield::accepted_fitted_yield(&self) -> laddu_likelihood::LikelihoodResult<laddu_likelihood::Estimate>
 pub fn laddu_likelihood::Yield::accepted_mc(&self) -> &laddu_data::data::dataset::Dataset
-pub fn laddu_likelihood::Yield::corrected_observed_yield(&self) -> &laddu_likelihood::Estimate
 pub fn laddu_likelihood::Yield::ensemble(&self) -> core::option::Option<&laddu_likelihood::Ensemble>
-pub fn laddu_likelihood::Yield::fitted_acceptance(&self) -> &laddu_likelihood::Estimate
 pub fn laddu_likelihood::Yield::generated_fitted_yield(&self) -> laddu_likelihood::LikelihoodResult<laddu_likelihood::Estimate>
 pub fn laddu_likelihood::Yield::generated_mc(&self) -> &laddu_data::data::dataset::Dataset
 pub fn laddu_likelihood::Yield::has_absolute_rate(&self) -> bool
@@ -829,62 +700,18 @@ pub fn laddu_likelihood::Yield::likelihood(&self) -> &alloc::sync::Arc<laddu_lik
 pub fn laddu_likelihood::Yield::observed_data(&self) -> &laddu_data::data::dataset::Dataset
 pub fn laddu_likelihood::Yield::parameters(&self) -> &[f64]
 pub fn laddu_likelihood::Yield::rate_closure(&self) -> laddu_likelihood::RateClosure
-pub fn laddu_likelihood::Yield::reference_corrected(&self, alloc::sync::Arc<laddu_likelihood::Likelihood>, impl core::convert::Into<alloc::string::String>, laddu_data::data::dataset::Dataset, alloc::vec::Vec<f64>, core::option::Option<laddu_likelihood::Ensemble>) -> laddu_likelihood::LikelihoodResult<laddu_likelihood::ReferenceCorrectedYield>
 pub fn laddu_likelihood::Yield::selected_yield(&self) -> &laddu_likelihood::Estimate
 pub fn laddu_likelihood::Yield::term_name(&self) -> &str
-pub fn laddu_likelihood::Yield::to_cross_section(&self, &laddu_likelihood::Luminosity) -> laddu_likelihood::LikelihoodResult<laddu_likelihood::YieldCrossSection>
 pub fn laddu_likelihood::Yield::with_ensemble(alloc::sync::Arc<laddu_likelihood::Likelihood>, impl core::convert::Into<alloc::string::String>, laddu_data::data::dataset::Dataset, alloc::vec::Vec<f64>, core::option::Option<laddu_likelihood::Ensemble>) -> laddu_likelihood::LikelihoodResult<Self>
 impl laddu_likelihood::Yield
-pub fn laddu_likelihood::Yield::cross_section_projection_set(&self, &[laddu_likelihood::Projection], &std::collections::hash::map::HashMap<alloc::string::String, alloc::vec::Vec<alloc::string::String>>, &laddu_likelihood::Luminosity) -> laddu_likelihood::LikelihoodResult<laddu_likelihood::YieldCrossSectionProjectionSet>
 pub fn laddu_likelihood::Yield::projection(&self, &[laddu_likelihood::Axis]) -> laddu_likelihood::LikelihoodResult<laddu_likelihood::YieldProjection>
 pub fn laddu_likelihood::Yield::projection_set(&self, &[laddu_likelihood::Projection]) -> laddu_likelihood::LikelihoodResult<laddu_likelihood::YieldProjectionSet>
 pub fn laddu_likelihood::Yield::projection_set_with_components(&self, &[laddu_likelihood::Projection], &std::collections::hash::map::HashMap<alloc::string::String, alloc::vec::Vec<alloc::string::String>>) -> laddu_likelihood::LikelihoodResult<laddu_likelihood::YieldProjectionSet>
 pub fn laddu_likelihood::Yield::projection_with_components(&self, &[laddu_likelihood::Axis], &std::collections::hash::map::HashMap<alloc::string::String, alloc::vec::Vec<alloc::string::String>>) -> laddu_likelihood::LikelihoodResult<laddu_likelihood::YieldProjection>
-pub fn laddu_likelihood::Yield::reference_corrected_projection(&self, &[laddu_likelihood::Axis], alloc::sync::Arc<laddu_likelihood::Likelihood>, impl core::convert::Into<alloc::string::String>, laddu_data::data::dataset::Dataset, alloc::vec::Vec<f64>, core::option::Option<laddu_likelihood::Ensemble>) -> laddu_likelihood::LikelihoodResult<laddu_likelihood::ReferenceCorrectedYieldProjection>
 impl core::clone::Clone for laddu_likelihood::Yield
 pub fn laddu_likelihood::Yield::clone(&self) -> laddu_likelihood::Yield
 impl core::fmt::Debug for laddu_likelihood::Yield
 pub fn laddu_likelihood::Yield::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-pub struct laddu_likelihood::YieldCrossSection
-impl laddu_likelihood::YieldCrossSection
-pub fn laddu_likelihood::YieldCrossSection::accepted_fitted(&self) -> core::option::Option<&laddu_likelihood::Estimate>
-pub fn laddu_likelihood::YieldCrossSection::combine(&[(Self, f64)]) -> laddu_likelihood::LikelihoodResult<laddu_likelihood::ExposureCombinedCrossSection>
-pub fn laddu_likelihood::YieldCrossSection::combine_with_factors(&[(Self, laddu_likelihood::ExposureFactor)]) -> laddu_likelihood::LikelihoodResult<laddu_likelihood::ExposureCombinedCrossSection>
-pub fn laddu_likelihood::YieldCrossSection::fitted(&self) -> core::option::Option<&laddu_likelihood::Estimate>
-pub fn laddu_likelihood::YieldCrossSection::luminosity(&self) -> &laddu_likelihood::Luminosity
-pub fn laddu_likelihood::YieldCrossSection::observed(&self) -> &laddu_likelihood::Estimate
-pub fn laddu_likelihood::YieldCrossSection::rate_closure(&self) -> &laddu_likelihood::RateClosure
-pub fn laddu_likelihood::YieldCrossSection::unit(&self) -> laddu_likelihood::AreaUnit
-impl core::clone::Clone for laddu_likelihood::YieldCrossSection
-pub fn laddu_likelihood::YieldCrossSection::clone(&self) -> laddu_likelihood::YieldCrossSection
-impl core::fmt::Debug for laddu_likelihood::YieldCrossSection
-pub fn laddu_likelihood::YieldCrossSection::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-pub struct laddu_likelihood::YieldCrossSectionProjection
-impl laddu_likelihood::YieldCrossSectionProjection
-pub fn laddu_likelihood::YieldCrossSectionProjection::accepted_fitted(&self) -> core::option::Option<&laddu_likelihood::BinnedEstimate>
-pub fn laddu_likelihood::YieldCrossSectionProjection::axes(&self) -> &[alloc::vec::Vec<f64>]
-pub fn laddu_likelihood::YieldCrossSectionProjection::combine(&[(Self, f64)]) -> laddu_likelihood::LikelihoodResult<laddu_likelihood::ExposureCombinedCrossSectionProjection>
-pub fn laddu_likelihood::YieldCrossSectionProjection::combine_with_factors(&[(Self, laddu_likelihood::ExposureFactor)]) -> laddu_likelihood::LikelihoodResult<laddu_likelihood::ExposureCombinedCrossSectionProjection>
-pub fn laddu_likelihood::YieldCrossSectionProjection::components(&self) -> &std::collections::hash::map::HashMap<alloc::string::String, laddu_likelihood::ComponentCrossSectionProjection>
-pub fn laddu_likelihood::YieldCrossSectionProjection::fitted(&self) -> core::option::Option<&laddu_likelihood::BinnedEstimate>
-pub fn laddu_likelihood::YieldCrossSectionProjection::luminosity(&self) -> &laddu_likelihood::Luminosity
-pub fn laddu_likelihood::YieldCrossSectionProjection::observed(&self) -> &laddu_likelihood::BinnedEstimate
-pub fn laddu_likelihood::YieldCrossSectionProjection::shape(&self) -> &[usize]
-pub fn laddu_likelihood::YieldCrossSectionProjection::validity(&self) -> &[laddu_likelihood::YieldBinValidity]
-impl core::clone::Clone for laddu_likelihood::YieldCrossSectionProjection
-pub fn laddu_likelihood::YieldCrossSectionProjection::clone(&self) -> laddu_likelihood::YieldCrossSectionProjection
-impl core::fmt::Debug for laddu_likelihood::YieldCrossSectionProjection
-pub fn laddu_likelihood::YieldCrossSectionProjection::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-pub struct laddu_likelihood::YieldCrossSectionProjectionSet
-impl laddu_likelihood::YieldCrossSectionProjectionSet
-pub fn laddu_likelihood::YieldCrossSectionProjectionSet::get(&self, &str) -> core::option::Option<&laddu_likelihood::YieldCrossSectionProjection>
-pub fn laddu_likelihood::YieldCrossSectionProjectionSet::is_empty(&self) -> bool
-pub fn laddu_likelihood::YieldCrossSectionProjectionSet::iter(&self) -> impl core::iter::traits::exact_size::ExactSizeIterator<Item = (&str, &laddu_likelihood::YieldCrossSectionProjection)>
-pub fn laddu_likelihood::YieldCrossSectionProjectionSet::len(&self) -> usize
-impl core::clone::Clone for laddu_likelihood::YieldCrossSectionProjectionSet
-pub fn laddu_likelihood::YieldCrossSectionProjectionSet::clone(&self) -> laddu_likelihood::YieldCrossSectionProjectionSet
-impl core::fmt::Debug for laddu_likelihood::YieldCrossSectionProjectionSet
-pub fn laddu_likelihood::YieldCrossSectionProjectionSet::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub struct laddu_likelihood::YieldHistogramView
 impl laddu_likelihood::YieldHistogramView
 pub fn laddu_likelihood::YieldHistogramView::axes(&self) -> &[alloc::vec::Vec<f64>]
@@ -904,19 +731,12 @@ pub fn laddu_likelihood::YieldHistogramView::fmt(&self, &mut core::fmt::Formatte
 impl core::marker::StructuralPartialEq for laddu_likelihood::YieldHistogramView
 pub struct laddu_likelihood::YieldProjection
 impl laddu_likelihood::YieldProjection
-pub fn laddu_likelihood::YieldProjection::acceptance(&self) -> &[f64]
-pub fn laddu_likelihood::YieldProjection::acceptance_draws(&self) -> &[alloc::vec::Vec<f64>]
-pub fn laddu_likelihood::YieldProjection::acceptance_estimate(&self) -> laddu_likelihood::BinnedEstimate
 pub fn laddu_likelihood::YieldProjection::accepted(&self) -> &[f64]
 pub fn laddu_likelihood::YieldProjection::accepted_draws(&self) -> &[alloc::vec::Vec<f64>]
 pub fn laddu_likelihood::YieldProjection::accepted_estimate(&self) -> laddu_likelihood::BinnedEstimate
 pub fn laddu_likelihood::YieldProjection::accepted_histogram(&self) -> laddu_likelihood::YieldHistogramView
 pub fn laddu_likelihood::YieldProjection::axes(&self) -> &[alloc::vec::Vec<f64>]
 pub fn laddu_likelihood::YieldProjection::components(&self) -> &std::collections::hash::map::HashMap<alloc::string::String, laddu_likelihood::ComponentYieldProjection>
-pub fn laddu_likelihood::YieldProjection::corrected(&self) -> &[f64]
-pub fn laddu_likelihood::YieldProjection::corrected_draws(&self) -> &[alloc::vec::Vec<f64>]
-pub fn laddu_likelihood::YieldProjection::corrected_estimate(&self) -> laddu_likelihood::BinnedEstimate
-pub fn laddu_likelihood::YieldProjection::corrected_histogram(&self) -> laddu_likelihood::YieldHistogramView
 pub fn laddu_likelihood::YieldProjection::diagnostics(&self) -> &laddu_likelihood::YieldProjectionDiagnostics
 pub fn laddu_likelihood::YieldProjection::generated(&self) -> &[f64]
 pub fn laddu_likelihood::YieldProjection::generated_draws(&self) -> &[alloc::vec::Vec<f64>]
@@ -930,7 +750,6 @@ pub fn laddu_likelihood::YieldProjection::selected_estimate(&self) -> laddu_like
 pub fn laddu_likelihood::YieldProjection::selected_histogram(&self) -> laddu_likelihood::YieldHistogramView
 pub fn laddu_likelihood::YieldProjection::shape(&self) -> &[usize]
 pub fn laddu_likelihood::YieldProjection::source_id(&self) -> core::option::Option<u64>
-pub fn laddu_likelihood::YieldProjection::to_cross_section(&self, &laddu_likelihood::Luminosity) -> laddu_likelihood::LikelihoodResult<laddu_likelihood::YieldCrossSectionProjection>
 pub fn laddu_likelihood::YieldProjection::validity(&self) -> &[laddu_likelihood::YieldBinValidity]
 impl core::clone::Clone for laddu_likelihood::YieldProjection
 pub fn laddu_likelihood::YieldProjection::clone(&self) -> laddu_likelihood::YieldProjection

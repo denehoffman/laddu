@@ -252,23 +252,43 @@ fn build_projection(
     let f2 = likelihood.projection("ksks", normalization, ["f2"])?;
     let data_histogram =
         Histogram::from_values(&data_masses, bins, (minimum, maximum), Some(&data_weights))?;
+    // Keep the data anchoring local to this closure plot.
+    let scale = data_weights.iter().sum::<f64>()
+        / likelihood
+            .intensity_integrals("ksks", normalization)?
+            .accepted_integral(fitted)?;
+    let coherent_weights = coherent
+        .weights(fitted)?
+        .into_iter()
+        .map(|weight| weight * scale)
+        .collect::<Vec<_>>();
+    let f0_weights = f0
+        .weights(fitted)?
+        .into_iter()
+        .map(|weight| weight * scale)
+        .collect::<Vec<_>>();
+    let f2_weights = f2
+        .weights(fitted)?
+        .into_iter()
+        .map(|weight| weight * scale)
+        .collect::<Vec<_>>();
     let coherent_histogram = Histogram::from_values(
         &normalization_masses,
         bins,
         (minimum, maximum),
-        Some(&coherent.weights(fitted, true)?),
+        Some(&coherent_weights),
     )?;
     let f0_histogram = Histogram::from_values(
         &normalization_masses,
         bins,
         (minimum, maximum),
-        Some(&f0.weights(fitted, true)?),
+        Some(&f0_weights),
     )?;
     let f2_histogram = Histogram::from_values(
         &normalization_masses,
         bins,
         (minimum, maximum),
-        Some(&f2.weights(fitted, true)?),
+        Some(&f2_weights),
     )?;
 
     Ok(ProjectionHistogram {

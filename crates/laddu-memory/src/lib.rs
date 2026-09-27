@@ -1,4 +1,4 @@
-//! Memory discovery, budgeting, reservation, and reporting for laddu.
+//! Memory discovery, budgeting, reservation, and reporting for `laddu`.
 
 mod budget;
 mod decision;

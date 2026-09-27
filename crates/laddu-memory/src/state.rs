@@ -15,7 +15,7 @@ use crate::{
     resource::{DeviceIdentity, MemoryResource, MemoryResourceKind},
 };
 
-/// Live resource discovery and process-wide laddu reservation state.
+/// Live resource discovery and process-wide `laddu` reservation state.
 #[derive(Clone, Debug)]
 pub struct MemoryState {
     inner: Arc<MemoryStateInner>,

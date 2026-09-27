@@ -340,21 +340,23 @@ def plot_closure(
         parameters=fitted,
         ensemble=ensemble,
     )
-    differential = yield_context.projection(
-        ld.Axis(mass, edges=edges),
-        components={'f0': ['f0'], 'f2': ['f2']},
-    ).to_cross_section(ld.Luminosity(1.0, ld.AreaUnit.BARN))
-    if differential.fitted is None:
-        message = 'extended likelihood did not produce a fitted cross section'
-        raise RuntimeError(message)
+    axis = ld.Axis(mass, edges=edges)
+    raw_data = yield_context.projection(axis).selected_estimate
+    section = likelihood.cross_section(
+        'ksks',
+        normalization,
+        ld.Luminosity(1.0, ld.AreaUnit.BARN),
+        fitted,
+        ensemble=ensemble,
+    )
+    differential = section.project([axis], components={'f0': ['f0'], 'f2': ['f2']})
 
-    data_counts = np.asarray(differential.observed.central, dtype=float) * widths
-    data_draws = np.asarray(differential.observed.draws, dtype=float) * widths
-    fit_counts = np.asarray(differential.fitted.central, dtype=float) * widths
-    fit_draws = np.asarray(differential.fitted.draws, dtype=float) * widths
+    data_counts = np.asarray(raw_data.central, dtype=float)
+    data_draws = np.asarray(raw_data.draws, dtype=float)
+    fit_counts = np.asarray(differential.total.central, dtype=float) * widths
+    fit_draws = np.asarray(differential.total.draws, dtype=float) * widths
     component_counts = {
-        name: np.asarray(component.generated.central, dtype=float) * widths
-        for name, component in differential.components.items()
+        name: np.asarray(component.central, dtype=float) * widths for name, component in differential.components.items()
     }
     data_errors = np.std(data_draws, axis=0, ddof=1)
     fit_lower, fit_upper = np.quantile(fit_draws, [0.16, 0.84], axis=0)

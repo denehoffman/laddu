@@ -3,13 +3,9 @@
 use std::collections::HashMap;
 
 use laddu_likelihood::{
-    AreaUnit, Axis, BinnedEstimate, BinnedEstimateUnit, ComponentCrossSectionProjection,
-    ComponentYieldProjection, Ensemble, Estimate, ExposureCombinedCrossSection,
-    ExposureCombinedCrossSectionProjection, ExposureCombinedReferenceCrossSection,
-    ExposureCombinedReferenceCrossSectionProjection, ExposureFactor, Luminosity, Projection,
-    RateClosure, RateClosureStatus, ReferenceCorrectedYield, ReferenceCorrectedYieldProjection,
-    ReferenceCorrectionProvenance, ReferenceCrossSection, ReferenceCrossSectionProjection, Yield,
-    YieldBinValidity, YieldCrossSection, YieldCrossSectionProjection, YieldHistogramView,
+    AreaUnit, Axis, BinnedEstimate, BinnedEstimateUnit, CombinationMember,
+    ComponentYieldProjection, CrossSection, CrossSectionProjection, Ensemble, Estimate, Luminosity,
+    Projection, RateClosure, RateClosureStatus, Yield, YieldBinValidity, YieldHistogramView,
     YieldProjection,
 };
 use numpy::{PyArray1, PyArray2};
@@ -19,13 +15,7 @@ use pyo3::{
     types::{PyAny, PyDict},
 };
 
-use super::{
-    data::PyDataset,
-    error::to_py_err,
-    expr::PyExpr,
-    float_matrix, float_tensor3, float_vec,
-    likelihood::{PyLikelihood, free_values},
-};
+use super::{error::to_py_err, expr::PyExpr, float_matrix, float_tensor3, float_vec};
 
 #[pyclass(
     name = "AreaUnit",
@@ -83,7 +73,7 @@ impl From<AreaUnit> for PyAreaUnit {
 #[derive(Clone)]
 /// Positive integrated luminosity in a typed inverse area unit.
 pub struct PyLuminosity {
-    inner: Luminosity,
+    pub(crate) inner: Luminosity,
 }
 
 #[pymethods]
@@ -125,121 +115,53 @@ impl PyLuminosity {
     }
 }
 
-#[pyclass(
-    name = "YieldCrossSection",
-    module = "laddu",
-    frozen,
-    skip_from_py_object
-)]
+#[pyclass(name = "CrossSection", module = "laddu", frozen, skip_from_py_object)]
 #[derive(Clone)]
-/// Scalar cross sections converted from one yield context.
-pub struct PyYieldCrossSection {
-    inner: YieldCrossSection,
+/// Fitted generated-MC intensity divided by luminosity.
+pub struct PyCrossSection {
+    pub(crate) inner: CrossSection,
 }
 
 #[pymethods]
-impl PyYieldCrossSection {
+impl PyCrossSection {
     #[staticmethod]
+    #[pyo3(signature = (
+        members: "Sequence[CrossSection | tuple[CrossSection, float | Estimate]]",
+        *,
+        factor_covariance: "Sequence[Sequence[float]] | numpy.typing.NDArray[numpy.float32 | numpy.float64] | None" = None
+    ))]
     fn combine(
-        members: Vec<(PyRef<'_, PyYieldCrossSection>, f64)>,
-    ) -> PyResult<PyExposureCombinedCrossSection> {
-        let members = members
-            .into_iter()
-            .map(|(member, factor)| (member.inner.clone(), factor))
-            .collect::<Vec<_>>();
-        YieldCrossSection::combine(&members)
-            .map(|inner| PyExposureCombinedCrossSection { inner })
-            .map_err(to_py_err)
-    }
-    #[staticmethod]
-    fn combine_with_factors(
-        members: Vec<(PyRef<'_, PyYieldCrossSection>, PyRef<'_, PyExposureFactor>)>,
-    ) -> PyResult<PyExposureCombinedCrossSection> {
-        let members = members
-            .into_iter()
-            .map(|(member, factor)| (member.inner.clone(), factor.inner.clone()))
-            .collect::<Vec<_>>();
-        YieldCrossSection::combine_with_factors(&members)
-            .map(|inner| PyExposureCombinedCrossSection { inner })
-            .map_err(to_py_err)
-    }
-    #[getter]
-    fn observed(&self) -> PyEstimate {
-        self.inner.observed().clone().into()
-    }
-    #[getter]
-    fn fitted(&self) -> Option<PyEstimate> {
-        self.inner.fitted().cloned().map(Into::into)
-    }
-    #[getter]
-    fn accepted_fitted(&self) -> Option<PyEstimate> {
-        self.inner.accepted_fitted().cloned().map(Into::into)
-    }
-    #[getter]
-    fn unit(&self) -> PyAreaUnit {
-        self.inner.unit().into()
-    }
-    #[getter]
-    fn luminosity(&self) -> PyLuminosity {
-        PyLuminosity {
-            inner: self.inner.luminosity().clone(),
-        }
-    }
-    #[getter]
-    fn rate_closure(&self) -> PyRateClosure {
-        self.inner.rate_closure().clone().into()
-    }
-}
-
-#[pyclass(
-    name = "ExposureCombinedCrossSection",
-    module = "laddu",
-    frozen,
-    skip_from_py_object
-)]
-#[derive(Clone)]
-/// Cross sections pooled through total effective exposure.
-pub struct PyExposureCombinedCrossSection {
-    inner: ExposureCombinedCrossSection,
-}
-
-#[pyclass(name = "ExposureFactor", module = "laddu", frozen, skip_from_py_object)]
-#[derive(Clone)]
-/// Positive exposure factor with optional paired draws.
-pub struct PyExposureFactor {
-    inner: ExposureFactor,
-}
-
-#[pymethods]
-impl PyExposureFactor {
-    #[new]
-    #[pyo3(signature = (central, *, draws=None, source_id=None))]
-    fn new(
-        central: f64,
-        draws: Option<&Bound<'_, PyAny>>,
-        source_id: Option<u64>,
+        members: &Bound<'_, PyAny>,
+        factor_covariance: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Self> {
-        let draws = draws.map(float_vec).transpose()?.unwrap_or_default();
-        let estimate = Estimate::with_source_id(central, draws, source_id).map_err(to_py_err)?;
-        ExposureFactor::from_estimate(estimate)
-            .map(|inner| Self { inner })
-            .map_err(to_py_err)
+        let mut inputs = Vec::new();
+        for item in members.try_iter()? {
+            let item = item?;
+            if let Ok(section) = item.extract::<PyRef<'_, PyCrossSection>>() {
+                inputs.push(CombinationMember::from(section.inner.clone()));
+            } else {
+                let (section, factor): (PyRef<'_, PyCrossSection>, Bound<'_, PyAny>) =
+                    item.extract()?;
+                let estimate = if let Ok(value) = factor.extract::<f64>() {
+                    Estimate::central(value).map_err(to_py_err)?
+                } else {
+                    factor.extract::<PyRef<'_, PyEstimate>>()?.inner.clone()
+                };
+                inputs.push(CombinationMember::from((section.inner.clone(), estimate)));
+            }
+        }
+        let covariance = factor_covariance.map(float_matrix).transpose()?;
+        match covariance {
+            Some(covariance) => CrossSection::combine_with_covariance(&inputs, covariance),
+            None => CrossSection::combine(&inputs),
+        }
+        .map(|inner| Self { inner })
+        .map_err(to_py_err)
     }
-    #[getter]
-    fn estimate(&self) -> PyEstimate {
-        self.inner.estimate().clone().into()
-    }
-}
 
-#[pymethods]
-impl PyExposureCombinedCrossSection {
     #[getter]
-    fn observed(&self) -> PyEstimate {
-        self.inner.observed().clone().into()
-    }
-    #[getter]
-    fn fitted(&self) -> Option<PyEstimate> {
-        self.inner.fitted().cloned().map(Into::into)
+    fn total(&self) -> PyEstimate {
+        self.inner.total().clone().into()
     }
     #[getter]
     fn unit(&self) -> PyAreaUnit {
@@ -250,146 +172,53 @@ impl PyExposureCombinedCrossSection {
         self.inner.total_effective_exposure()
     }
     #[getter]
-    fn member_luminosities(&self) -> Vec<PyLuminosity> {
+    fn accepted_integral(&self) -> Option<PyEstimate> {
+        self.inner.accepted_integral().cloned().map(Into::into)
+    }
+    #[getter]
+    fn generated_integral(&self) -> Option<PyEstimate> {
+        self.inner.generated_integral().cloned().map(Into::into)
+    }
+    #[getter]
+    fn data_yield(&self) -> Option<PyEstimate> {
+        self.inner.data_yield().cloned().map(Into::into)
+    }
+    #[getter]
+    fn rate_closure(&self) -> Option<PyRateClosure> {
+        self.inner.rate_closure().map(Into::into)
+    }
+
+    #[pyo3(signature = (axes, *, components=None))]
+    fn project(
+        &self,
+        axes: Vec<PyRef<'_, PyAxis>>,
+        components: Option<HashMap<String, Vec<String>>>,
+    ) -> PyResult<PyCrossSectionProjection> {
+        let axes = axes
+            .into_iter()
+            .map(|axis| axis.inner.clone())
+            .collect::<Vec<_>>();
         self.inner
-            .member_luminosities()
-            .iter()
-            .cloned()
-            .map(|inner| PyLuminosity { inner })
-            .collect()
-    }
-    #[getter]
-    fn exposure_factors(&self) -> Vec<f64> {
-        self.inner.exposure_factors().to_vec()
+            .project(&axes, &components.unwrap_or_default())
+            .map(|inner| PyCrossSectionProjection { inner })
+            .map_err(to_py_err)
     }
 }
 
 #[pyclass(
-    name = "ReferenceCrossSection",
+    name = "CrossSectionProjection",
     module = "laddu",
     frozen,
     skip_from_py_object
 )]
 #[derive(Clone)]
-/// Reference-corrected scalar cross section.
-pub struct PyReferenceCrossSection {
-    inner: ReferenceCrossSection,
+/// Differential projection of fitted generated-MC intensity.
+pub struct PyCrossSectionProjection {
+    inner: CrossSectionProjection,
 }
 
 #[pymethods]
-impl PyReferenceCrossSection {
-    #[staticmethod]
-    fn combine(
-        members: Vec<(PyRef<'_, PyReferenceCrossSection>, f64)>,
-    ) -> PyResult<PyExposureCombinedReferenceCrossSection> {
-        let members = members
-            .into_iter()
-            .map(|(member, factor)| (member.inner.clone(), factor))
-            .collect::<Vec<_>>();
-        ReferenceCrossSection::combine(&members)
-            .map(|inner| PyExposureCombinedReferenceCrossSection { inner })
-            .map_err(to_py_err)
-    }
-    #[getter]
-    fn value(&self) -> PyEstimate {
-        self.inner.value().clone().into()
-    }
-    #[getter]
-    fn unit(&self) -> PyAreaUnit {
-        self.inner.unit().into()
-    }
-    #[getter]
-    fn luminosity(&self) -> PyLuminosity {
-        PyLuminosity {
-            inner: self.inner.luminosity().clone(),
-        }
-    }
-    #[getter]
-    fn provenance(&self) -> PyReferenceCorrectionProvenance {
-        PyReferenceCorrectionProvenance {
-            inner: self.inner.provenance().clone(),
-        }
-    }
-}
-
-#[pyclass(
-    name = "ExposureCombinedReferenceCrossSection",
-    module = "laddu",
-    frozen,
-    skip_from_py_object
-)]
-#[derive(Clone)]
-/// Reference-corrected periods pooled through total effective exposure.
-pub struct PyExposureCombinedReferenceCrossSection {
-    inner: ExposureCombinedReferenceCrossSection,
-}
-
-#[pymethods]
-impl PyExposureCombinedReferenceCrossSection {
-    #[getter]
-    fn value(&self) -> PyEstimate {
-        self.inner.value().clone().into()
-    }
-    #[getter]
-    fn unit(&self) -> PyAreaUnit {
-        self.inner.unit().into()
-    }
-    #[getter]
-    fn total_effective_exposure(&self) -> f64 {
-        self.inner.total_effective_exposure()
-    }
-    #[getter]
-    fn provenances(&self) -> Vec<PyReferenceCorrectionProvenance> {
-        self.inner
-            .provenances()
-            .iter()
-            .cloned()
-            .map(|inner| PyReferenceCorrectionProvenance { inner })
-            .collect()
-    }
-}
-
-#[pyclass(
-    name = "YieldCrossSectionProjection",
-    module = "laddu",
-    frozen,
-    skip_from_py_object
-)]
-#[derive(Clone)]
-/// Differential cross sections converted from a yield projection.
-pub struct PyYieldCrossSectionProjection {
-    inner: YieldCrossSectionProjection,
-}
-
-#[pymethods]
-impl PyYieldCrossSectionProjection {
-    #[staticmethod]
-    fn combine(
-        members: Vec<(PyRef<'_, PyYieldCrossSectionProjection>, f64)>,
-    ) -> PyResult<PyExposureCombinedCrossSectionProjection> {
-        let members = members
-            .into_iter()
-            .map(|(member, factor)| (member.inner.clone(), factor))
-            .collect::<Vec<_>>();
-        YieldCrossSectionProjection::combine(&members)
-            .map(|inner| PyExposureCombinedCrossSectionProjection { inner })
-            .map_err(to_py_err)
-    }
-    #[staticmethod]
-    fn combine_with_factors(
-        members: Vec<(
-            PyRef<'_, PyYieldCrossSectionProjection>,
-            PyRef<'_, PyExposureFactor>,
-        )>,
-    ) -> PyResult<PyExposureCombinedCrossSectionProjection> {
-        let members = members
-            .into_iter()
-            .map(|(member, factor)| (member.inner.clone(), factor.inner.clone()))
-            .collect::<Vec<_>>();
-        YieldCrossSectionProjection::combine_with_factors(&members)
-            .map(|inner| PyExposureCombinedCrossSectionProjection { inner })
-            .map_err(to_py_err)
-    }
+impl PyCrossSectionProjection {
     #[getter]
     fn axes(&self) -> Vec<Vec<f64>> {
         self.inner.axes().to_vec()
@@ -399,223 +228,23 @@ impl PyYieldCrossSectionProjection {
         self.inner.shape().to_vec()
     }
     #[getter]
-    fn observed(&self) -> PyBinnedEstimate {
-        self.inner.observed().clone().into()
+    fn total(&self) -> PyBinnedEstimate {
+        self.inner.total().clone().into()
     }
     #[getter]
-    fn fitted(&self) -> Option<PyBinnedEstimate> {
-        self.inner.fitted().cloned().map(Into::into)
-    }
-    #[getter]
-    fn accepted_fitted(&self) -> Option<PyBinnedEstimate> {
-        self.inner.accepted_fitted().cloned().map(Into::into)
-    }
-    #[getter]
-    fn components(&self) -> HashMap<String, PyComponentCrossSectionProjection> {
+    fn components(&self) -> HashMap<String, PyBinnedEstimate> {
         self.inner
             .components()
             .iter()
-            .map(|(name, value)| {
-                (
-                    name.clone(),
-                    PyComponentCrossSectionProjection {
-                        inner: value.clone(),
-                    },
-                )
-            })
+            .map(|(name, estimate)| (name.clone(), estimate.clone().into()))
             .collect()
     }
     #[getter]
-    fn validity(&self) -> Vec<&'static str> {
+    fn member_validity(&self) -> Vec<Vec<&'static str>> {
         self.inner
-            .validity()
+            .member_validity()
             .iter()
-            .copied()
-            .map(validity_name)
-            .collect()
-    }
-    #[getter]
-    fn luminosity(&self) -> PyLuminosity {
-        PyLuminosity {
-            inner: self.inner.luminosity().clone(),
-        }
-    }
-}
-
-#[pyclass(
-    name = "ExposureCombinedCrossSectionProjection",
-    module = "laddu",
-    frozen,
-    skip_from_py_object
-)]
-#[derive(Clone)]
-/// Differential cross sections pooled through total effective exposure.
-pub struct PyExposureCombinedCrossSectionProjection {
-    inner: ExposureCombinedCrossSectionProjection,
-}
-
-#[pymethods]
-impl PyExposureCombinedCrossSectionProjection {
-    #[getter]
-    fn axes(&self) -> Vec<Vec<f64>> {
-        self.inner.axes().to_vec()
-    }
-    #[getter]
-    fn shape(&self) -> Vec<usize> {
-        self.inner.shape().to_vec()
-    }
-    #[getter]
-    fn observed(&self) -> PyBinnedEstimate {
-        self.inner.observed().clone().into()
-    }
-    #[getter]
-    fn fitted(&self) -> Option<PyBinnedEstimate> {
-        self.inner.fitted().cloned().map(Into::into)
-    }
-    #[getter]
-    fn components(&self) -> HashMap<String, PyComponentCrossSectionProjection> {
-        self.inner
-            .components()
-            .iter()
-            .map(|(name, inner)| {
-                (
-                    name.clone(),
-                    PyComponentCrossSectionProjection {
-                        inner: inner.clone(),
-                    },
-                )
-            })
-            .collect()
-    }
-    #[getter]
-    fn total_effective_exposure(&self) -> f64 {
-        self.inner.total_effective_exposure()
-    }
-    #[getter]
-    fn unit(&self) -> PyAreaUnit {
-        self.inner.unit().into()
-    }
-}
-
-#[pyclass(
-    name = "ComponentCrossSectionProjection",
-    module = "laddu",
-    frozen,
-    skip_from_py_object
-)]
-#[derive(Clone)]
-/// Model-only accepted and generated differential cross sections.
-pub struct PyComponentCrossSectionProjection {
-    inner: ComponentCrossSectionProjection,
-}
-
-#[pymethods]
-impl PyComponentCrossSectionProjection {
-    #[getter]
-    fn tags(&self) -> Vec<String> {
-        self.inner.tags().to_vec()
-    }
-    #[getter]
-    fn accepted(&self) -> PyBinnedEstimate {
-        self.inner.accepted().clone().into()
-    }
-    #[getter]
-    fn generated(&self) -> PyBinnedEstimate {
-        self.inner.generated().clone().into()
-    }
-    #[getter]
-    fn validity(&self) -> Vec<&'static str> {
-        self.inner
-            .validity()
-            .iter()
-            .copied()
-            .map(validity_name)
-            .collect()
-    }
-}
-
-#[pyclass(
-    name = "ReferenceCrossSectionProjection",
-    module = "laddu",
-    frozen,
-    skip_from_py_object
-)]
-#[derive(Clone)]
-/// Reference-corrected differential cross section.
-pub struct PyReferenceCrossSectionProjection {
-    inner: ReferenceCrossSectionProjection,
-}
-
-#[pymethods]
-impl PyReferenceCrossSectionProjection {
-    #[staticmethod]
-    fn combine(
-        members: Vec<(PyRef<'_, PyReferenceCrossSectionProjection>, f64)>,
-    ) -> PyResult<PyExposureCombinedReferenceCrossSectionProjection> {
-        let members = members
-            .into_iter()
-            .map(|(member, factor)| (member.inner.clone(), factor))
-            .collect::<Vec<_>>();
-        ReferenceCrossSectionProjection::combine(&members)
-            .map(|inner| PyExposureCombinedReferenceCrossSectionProjection { inner })
-            .map_err(to_py_err)
-    }
-    #[getter]
-    fn value(&self) -> PyBinnedEstimate {
-        self.inner.value().clone().into()
-    }
-    #[getter]
-    fn validity(&self) -> Vec<&'static str> {
-        self.inner
-            .validity()
-            .iter()
-            .copied()
-            .map(validity_name)
-            .collect()
-    }
-    #[getter]
-    fn provenance(&self) -> PyReferenceCorrectionProvenance {
-        PyReferenceCorrectionProvenance {
-            inner: self.inner.provenance().clone(),
-        }
-    }
-    #[getter]
-    fn luminosity(&self) -> PyLuminosity {
-        PyLuminosity {
-            inner: self.inner.luminosity().clone(),
-        }
-    }
-}
-
-#[pyclass(
-    name = "ExposureCombinedReferenceCrossSectionProjection",
-    module = "laddu",
-    frozen,
-    skip_from_py_object
-)]
-#[derive(Clone)]
-/// Reference-corrected differential periods pooled by effective exposure.
-pub struct PyExposureCombinedReferenceCrossSectionProjection {
-    inner: ExposureCombinedReferenceCrossSectionProjection,
-}
-
-#[pymethods]
-impl PyExposureCombinedReferenceCrossSectionProjection {
-    #[getter]
-    fn value(&self) -> PyBinnedEstimate {
-        self.inner.value().clone().into()
-    }
-    #[getter]
-    fn total_effective_exposure(&self) -> f64 {
-        self.inner.total_effective_exposure()
-    }
-    #[getter]
-    fn provenances(&self) -> Vec<PyReferenceCorrectionProvenance> {
-        self.inner
-            .provenances()
-            .iter()
-            .cloned()
-            .map(|inner| PyReferenceCorrectionProvenance { inner })
+            .map(|period| period.iter().copied().map(validity_name).collect())
             .collect()
     }
 }
@@ -701,7 +330,7 @@ impl From<Estimate> for PyEstimate {
 
 #[pymethods]
 impl PyEstimate {
-    #[pyo3(signature = (*, data_fill=true, accepted_mc_fill=true, generated_mc_fill=true, ensemble=false, luminosity=false, branching_exposure=false, reference_model=false))]
+    #[pyo3(signature = (*, data_fill=true, accepted_mc_fill=true, generated_mc_fill=true, ensemble=false, luminosity=false, branching_exposure=false))]
     fn error(
         &self,
         data_fill: bool,
@@ -710,7 +339,6 @@ impl PyEstimate {
         ensemble: bool,
         luminosity: bool,
         branching_exposure: bool,
-        reference_model: bool,
     ) -> PyResult<PyScalarErrorView> {
         let budget = laddu_likelihood::ErrorBudget {
             data_fill,
@@ -719,7 +347,6 @@ impl PyEstimate {
             ensemble,
             luminosity,
             branching_exposure,
-            reference_model,
         };
         self.inner
             .error_with_budget(budget)
@@ -731,19 +358,24 @@ impl PyEstimate {
         central,
         *,
         draws: "Sequence[float] | numpy.typing.NDArray[numpy.float32 | numpy.float64] | None" = None,
-        source_id=None
+        source_id=None,
+        standard_error=None
     ))]
     fn new(
         central: f64,
         draws: Option<&Bound<'_, PyAny>>,
         source_id: Option<u64>,
+        standard_error: Option<f64>,
     ) -> PyResult<Self> {
         let draws = draws.map(float_vec).transpose()?.unwrap_or_default();
-        let inner = match source_id {
+        let mut inner = match source_id {
             Some(source_id) => Estimate::with_source_id(central, draws, Some(source_id)),
             None => Estimate::new(central, draws),
         }
         .map_err(to_py_err)?;
+        if let Some(error) = standard_error {
+            inner = inner.with_standard_error(error).map_err(to_py_err)?;
+        }
         Ok(Self { inner })
     }
 
@@ -760,6 +392,11 @@ impl PyEstimate {
     #[getter]
     fn source_id(&self) -> Option<u64> {
         self.inner.source_id()
+    }
+
+    #[getter]
+    fn standard_error(&self) -> Option<f64> {
+        self.inner.standard_error()
     }
 
     fn mean(&self) -> PyResult<f64> {
@@ -855,23 +492,13 @@ pub struct PyRateClosure {
     #[pyo3(get)]
     generated_fitted_yield: Option<PyEstimate>,
     #[pyo3(get)]
-    corrected_observed_yield: Option<PyEstimate>,
-    #[pyo3(get)]
     accepted_residual: Option<f64>,
-    #[pyo3(get)]
-    corrected_residual: Option<f64>,
     #[pyo3(get)]
     accepted_absolute_residual: Option<f64>,
     #[pyo3(get)]
-    corrected_absolute_residual: Option<f64>,
-    #[pyo3(get)]
     accepted_relative_residual: Option<f64>,
     #[pyo3(get)]
-    corrected_relative_residual: Option<f64>,
-    #[pyo3(get)]
     accepted_residual_draws: Vec<f64>,
-    #[pyo3(get)]
-    corrected_residual_draws: Vec<f64>,
     #[pyo3(get)]
     absolute_tolerance: f64,
     #[pyo3(get)]
@@ -894,15 +521,10 @@ impl From<RateClosure> for PyRateClosure {
             selected_yield: inner.selected_yield().clone().into(),
             accepted_fitted_yield: inner.accepted_fitted_yield().cloned().map(Into::into),
             generated_fitted_yield: inner.generated_fitted_yield().cloned().map(Into::into),
-            corrected_observed_yield: inner.corrected_observed_yield().cloned().map(Into::into),
             accepted_residual: inner.accepted_residual(),
-            corrected_residual: inner.corrected_residual(),
             accepted_absolute_residual: inner.accepted_absolute_residual(),
-            corrected_absolute_residual: inner.corrected_absolute_residual(),
             accepted_relative_residual: inner.accepted_relative_residual(),
-            corrected_relative_residual: inner.corrected_relative_residual(),
             accepted_residual_draws: inner.accepted_residual_draws().to_vec(),
-            corrected_residual_draws: inner.corrected_residual_draws().to_vec(),
             absolute_tolerance: inner.absolute_tolerance(),
             relative_tolerance: inner.relative_tolerance(),
             status,
@@ -920,12 +542,10 @@ impl PyRateClosure {
 
 #[pyclass(name = "Yield", module = "laddu", frozen, skip_from_py_object)]
 #[derive(Clone)]
-/// Immutable scalar selected, fitted, and acceptance-corrected yield context.
+/// Immutable scalar observed and fitted yields for one intensity term.
 pub struct PyYield {
     pub(crate) inner: Yield,
     selected_yield: PyEstimate,
-    fitted_acceptance: PyEstimate,
-    corrected_observed_yield: PyEstimate,
     rate_closure: PyRateClosure,
     #[pyo3(get)]
     term_name: String,
@@ -935,115 +555,6 @@ pub struct PyYield {
     has_absolute_rate: bool,
 }
 
-#[pyclass(
-    name = "ReferenceCorrectionProvenance",
-    module = "laddu",
-    frozen,
-    skip_from_py_object
-)]
-#[derive(Clone)]
-/// Identifies every source used by a reference-acceptance correction.
-pub struct PyReferenceCorrectionProvenance {
-    inner: ReferenceCorrectionProvenance,
-}
-
-#[pymethods]
-impl PyReferenceCorrectionProvenance {
-    #[getter]
-    fn reference_term_name(&self) -> &str {
-        self.inner.reference_term_name()
-    }
-
-    #[getter]
-    fn reference_model_digest(&self) -> u64 {
-        self.inner.reference_model_digest()
-    }
-
-    #[getter]
-    fn accepted_dataset_identity(&self) -> u64 {
-        self.inner.accepted_dataset_identity()
-    }
-
-    #[getter]
-    fn generated_dataset_identity(&self) -> u64 {
-        self.inner.generated_dataset_identity()
-    }
-
-    #[getter]
-    fn reference_parameters(&self) -> Vec<f64> {
-        self.inner.reference_parameters().to_vec()
-    }
-
-    #[getter]
-    fn reference_draw_parameters(&self) -> Vec<Vec<f64>> {
-        self.inner.reference_draw_parameters().to_vec()
-    }
-
-    #[getter]
-    fn reference_replica_accepted_dataset_identities(&self) -> Vec<u64> {
-        self.inner
-            .reference_replica_accepted_dataset_identities()
-            .to_vec()
-    }
-
-    #[getter]
-    fn selected_uncertainty_source(&self) -> Option<u64> {
-        self.inner.selected_uncertainty_source()
-    }
-
-    #[getter]
-    fn reference_uncertainty_source(&self) -> Option<u64> {
-        self.inner.reference_uncertainty_source()
-    }
-}
-
-#[pyclass(
-    name = "ReferenceCorrectedYield",
-    module = "laddu",
-    frozen,
-    skip_from_py_object
-)]
-#[derive(Clone)]
-/// An observed yield corrected with an explicit reference acceptance.
-pub struct PyReferenceCorrectedYield {
-    inner: ReferenceCorrectedYield,
-}
-
-#[pymethods]
-impl PyReferenceCorrectedYield {
-    fn to_cross_section(&self, luminosity: &PyLuminosity) -> PyReferenceCrossSection {
-        PyReferenceCrossSection {
-            inner: self.inner.to_cross_section(&luminosity.inner),
-        }
-    }
-    #[getter]
-    fn value(&self) -> PyEstimate {
-        self.inner.value().clone().into()
-    }
-
-    #[getter]
-    fn acceptance(&self) -> PyEstimate {
-        self.inner.acceptance().clone().into()
-    }
-
-    #[getter]
-    fn provenance(&self) -> PyReferenceCorrectionProvenance {
-        PyReferenceCorrectionProvenance {
-            inner: self.inner.provenance().clone(),
-        }
-    }
-
-    #[getter]
-    fn reference_term_name(&self) -> &str {
-        self.inner.reference_term_name()
-    }
-
-    #[getter]
-    fn rate_closure_status(&self) -> &'static str {
-        "not_applicable"
-    }
-}
-
 impl From<Yield> for PyYield {
     fn from(inner: Yield) -> Self {
         Self {
@@ -1051,8 +562,6 @@ impl From<Yield> for PyYield {
             parameters: inner.parameters().to_vec(),
             has_absolute_rate: inner.has_absolute_rate(),
             selected_yield: inner.selected_yield().clone().into(),
-            fitted_acceptance: inner.fitted_acceptance().clone().into(),
-            corrected_observed_yield: inner.corrected_observed_yield().clone().into(),
             rate_closure: inner.rate_closure().into(),
             inner,
         }
@@ -1061,46 +570,25 @@ impl From<Yield> for PyYield {
 
 #[pymethods]
 impl PyYield {
-    fn to_cross_section(&self, luminosity: &PyLuminosity) -> PyResult<PyYieldCrossSection> {
-        self.inner
-            .to_cross_section(&luminosity.inner)
-            .map(|inner| PyYieldCrossSection { inner })
-            .map_err(to_py_err)
-    }
     fn selected_yield(&self) -> PyEstimate {
         self.selected_yield.clone()
     }
-
     fn accepted_fitted_yield(&self) -> PyResult<PyEstimate> {
-        Ok(self
-            .inner
+        self.inner
             .accepted_fitted_yield()
-            .map_err(to_py_err)?
-            .into())
+            .map(Into::into)
+            .map_err(to_py_err)
     }
-
     fn generated_fitted_yield(&self) -> PyResult<PyEstimate> {
-        Ok(self
-            .inner
+        self.inner
             .generated_fitted_yield()
-            .map_err(to_py_err)?
-            .into())
+            .map(Into::into)
+            .map_err(to_py_err)
     }
-
-    fn fitted_acceptance(&self) -> PyEstimate {
-        self.fitted_acceptance.clone()
-    }
-
-    fn corrected_observed_yield(&self) -> PyEstimate {
-        self.corrected_observed_yield.clone()
-    }
-
     fn rate_closure(&self) -> PyRateClosure {
         self.rate_closure.clone()
     }
-
     #[pyo3(signature = (axes: "Axis | Sequence[Axis]", *, components=None))]
-    /// Evaluate a central joint yield projection with optional model-only components.
     fn projection(
         &self,
         py: Python<'_>,
@@ -1108,15 +596,12 @@ impl PyYield {
         components: Option<HashMap<String, Vec<String>>>,
     ) -> PyResult<PyYieldProjection> {
         let axes = extract_axes(py, axes)?;
-        Ok(self
-            .inner
+        self.inner
             .projection_with_components(&axes, &components.unwrap_or_default())
-            .map_err(to_py_err)?
-            .into())
+            .map(Into::into)
+            .map_err(to_py_err)
     }
-
     #[pyo3(signature = (projections: "dict[str, Axis | Sequence[Axis]]", *, components=None))]
-    /// Evaluate named central yield projections with optional model-only components.
     fn projection_set<'py>(
         &self,
         py: Python<'py>,
@@ -1141,159 +626,6 @@ impl PyYield {
             )?;
         }
         Ok(output)
-    }
-
-    #[pyo3(signature = (
-        projections: "dict[str, Axis | Sequence[Axis]]",
-        luminosity,
-        *,
-        components: "dict[str, Sequence[str]] | None" = None
-    ))]
-    /// Evaluate named yields once and convert them with typed luminosity.
-    fn cross_section_projection_set<'py>(
-        &self,
-        py: Python<'py>,
-        projections: &Bound<'_, PyAny>,
-        luminosity: &PyLuminosity,
-        components: Option<HashMap<String, Vec<String>>>,
-    ) -> PyResult<Bound<'py, PyDict>> {
-        let projections = extract_projections(py, projections)?;
-        let results = self
-            .inner
-            .cross_section_projection_set(
-                &projections,
-                &components.unwrap_or_default(),
-                &luminosity.inner,
-            )
-            .map_err(to_py_err)?;
-        let output = PyDict::new(py);
-        for (name, result) in results.iter() {
-            output.set_item(
-                name,
-                Py::new(
-                    py,
-                    PyYieldCrossSectionProjection {
-                        inner: result.clone(),
-                    },
-                )?,
-            )?;
-        }
-        Ok(output)
-    }
-
-    #[pyo3(signature = (
-        reference_likelihood,
-        reference_term_name,
-        *,
-        generated_mc,
-        parameters: "Sequence[float] | numpy.typing.NDArray[numpy.float32 | numpy.float64] | dict[str, float]",
-        ensemble=None
-    ))]
-    /// Correct the selected observed yield using an explicit reference intensity.
-    fn reference_corrected(
-        &self,
-        reference_likelihood: &PyLikelihood,
-        reference_term_name: &str,
-        generated_mc: &PyDataset,
-        parameters: &Bound<'_, PyAny>,
-        ensemble: Option<&PyEnsemble>,
-    ) -> PyResult<PyReferenceCorrectedYield> {
-        let parameters = free_values(&reference_likelihood.inner, parameters)?;
-        let inner = self
-            .inner
-            .reference_corrected(
-                std::sync::Arc::clone(&reference_likelihood.inner),
-                reference_term_name,
-                generated_mc.inner.clone(),
-                parameters,
-                ensemble.map(|value| value.inner.clone()),
-            )
-            .map_err(to_py_err)?;
-        Ok(PyReferenceCorrectedYield { inner })
-    }
-
-    #[pyo3(signature = (
-        axes: "Axis | Sequence[Axis]",
-        reference_likelihood,
-        reference_term_name,
-        *,
-        generated_mc,
-        parameters: "Sequence[float] | numpy.typing.NDArray[numpy.float32 | numpy.float64] | dict[str, float]",
-        ensemble=None
-    ))]
-    /// Correct a selected-data projection with an explicit reference acceptance.
-    fn reference_corrected_projection(
-        &self,
-        py: Python<'_>,
-        axes: &Bound<'_, PyAny>,
-        reference_likelihood: &PyLikelihood,
-        reference_term_name: &str,
-        generated_mc: &PyDataset,
-        parameters: &Bound<'_, PyAny>,
-        ensemble: Option<&PyEnsemble>,
-    ) -> PyResult<PyReferenceCorrectedYieldProjection> {
-        let axes = extract_axes(py, axes)?;
-        let parameters = free_values(&reference_likelihood.inner, parameters)?;
-        let inner = self
-            .inner
-            .reference_corrected_projection(
-                &axes,
-                std::sync::Arc::clone(&reference_likelihood.inner),
-                reference_term_name,
-                generated_mc.inner.clone(),
-                parameters,
-                ensemble.map(|value| value.inner.clone()),
-            )
-            .map_err(to_py_err)?;
-        Ok(PyReferenceCorrectedYieldProjection { inner })
-    }
-}
-
-#[pyclass(
-    name = "ReferenceCorrectedYieldProjection",
-    module = "laddu",
-    frozen,
-    skip_from_py_object
-)]
-#[derive(Clone)]
-/// Binned selected yield corrected by an explicit reference model.
-pub struct PyReferenceCorrectedYieldProjection {
-    inner: ReferenceCorrectedYieldProjection,
-}
-
-#[pymethods]
-impl PyReferenceCorrectedYieldProjection {
-    fn to_cross_section(
-        &self,
-        luminosity: &PyLuminosity,
-    ) -> PyResult<PyReferenceCrossSectionProjection> {
-        self.inner
-            .to_cross_section(&luminosity.inner)
-            .map(|inner| PyReferenceCrossSectionProjection { inner })
-            .map_err(to_py_err)
-    }
-    #[getter]
-    fn value(&self) -> PyBinnedEstimate {
-        self.inner.value().clone().into()
-    }
-    #[getter]
-    fn acceptance(&self) -> PyBinnedEstimate {
-        self.inner.acceptance().clone().into()
-    }
-    #[getter]
-    fn provenance(&self) -> PyReferenceCorrectionProvenance {
-        PyReferenceCorrectionProvenance {
-            inner: self.inner.provenance().clone(),
-        }
-    }
-    #[getter]
-    fn validity(&self) -> Vec<&'static str> {
-        self.inner
-            .validity()
-            .iter()
-            .copied()
-            .map(validity_name)
-            .collect()
     }
 }
 
@@ -1362,7 +694,6 @@ fn error_component_name(component: laddu_likelihood::ErrorComponent) -> &'static
         ErrorComponent::Ensemble => "ensemble",
         ErrorComponent::Luminosity => "luminosity",
         ErrorComponent::BranchingExposure => "branching_exposure",
-        ErrorComponent::ReferenceModel => "reference_model",
     }
 }
 
@@ -1392,15 +723,6 @@ pub struct PyComponentYieldProjection {
 
 #[pymethods]
 impl PyComponentYieldProjection {
-    fn to_cross_section(
-        &self,
-        luminosity: &PyLuminosity,
-    ) -> PyResult<PyComponentCrossSectionProjection> {
-        self.inner
-            .to_cross_section(&luminosity.inner)
-            .map(|inner| PyComponentCrossSectionProjection { inner })
-            .map_err(to_py_err)
-    }
     #[getter]
     fn accepted_estimate(&self) -> PyBinnedEstimate {
         self.inner.accepted_estimate().into()
@@ -1478,15 +800,6 @@ fn validity_name(validity: YieldBinValidity) -> &'static str {
 
 #[pymethods]
 impl PyYieldProjection {
-    fn to_cross_section(
-        &self,
-        luminosity: &PyLuminosity,
-    ) -> PyResult<PyYieldCrossSectionProjection> {
-        self.inner
-            .to_cross_section(&luminosity.inner)
-            .map(|inner| PyYieldCrossSectionProjection { inner })
-            .map_err(to_py_err)
-    }
     #[getter]
     fn has_replica_datasets(&self) -> bool {
         self.inner.has_replica_datasets()
@@ -1504,14 +817,6 @@ impl PyYieldProjection {
         self.inner.generated_estimate().into()
     }
     #[getter]
-    fn acceptance_estimate(&self) -> PyBinnedEstimate {
-        self.inner.acceptance_estimate().into()
-    }
-    #[getter]
-    fn corrected_estimate(&self) -> PyBinnedEstimate {
-        self.inner.corrected_estimate().into()
-    }
-    #[getter]
     fn source_id(&self) -> Option<u64> {
         self.inner.source_id()
     }
@@ -1526,14 +831,6 @@ impl PyYieldProjection {
     #[getter]
     fn generated_draws(&self) -> Vec<Vec<f64>> {
         self.inner.generated_draws().to_vec()
-    }
-    #[getter]
-    fn acceptance_draws(&self) -> Vec<Vec<f64>> {
-        self.inner.acceptance_draws().to_vec()
-    }
-    #[getter]
-    fn corrected_draws(&self) -> Vec<Vec<f64>> {
-        self.inner.corrected_draws().to_vec()
     }
     #[getter]
     fn components(&self) -> HashMap<String, PyComponentYieldProjection> {
@@ -1569,14 +866,6 @@ impl PyYieldProjection {
     #[getter]
     fn generated(&self) -> Vec<f64> {
         self.inner.generated().to_vec()
-    }
-    #[getter]
-    fn acceptance(&self) -> Vec<f64> {
-        self.inner.acceptance().to_vec()
-    }
-    #[getter]
-    fn corrected(&self) -> Vec<f64> {
-        self.inner.corrected().to_vec()
     }
     #[getter]
     fn validity(&self) -> Vec<&'static str> {
@@ -1616,11 +905,6 @@ impl PyYieldProjection {
     fn generated_histogram(&self) -> PyYieldHistogramView {
         PyYieldHistogramView {
             inner: self.inner.generated_histogram(),
-        }
-    }
-    fn corrected_histogram(&self) -> PyYieldHistogramView {
-        PyYieldHistogramView {
-            inner: self.inner.corrected_histogram(),
         }
     }
 }
@@ -1684,7 +968,7 @@ impl From<BinnedEstimate> for PyBinnedEstimate {
 
 #[pymethods]
 impl PyBinnedEstimate {
-    #[pyo3(signature = (*, data_fill=true, accepted_mc_fill=true, generated_mc_fill=true, ensemble=false, luminosity=false, branching_exposure=false, reference_model=false))]
+    #[pyo3(signature = (*, data_fill=true, accepted_mc_fill=true, generated_mc_fill=true, ensemble=false, luminosity=false, branching_exposure=false))]
     fn histogram(
         &self,
         data_fill: bool,
@@ -1693,7 +977,6 @@ impl PyBinnedEstimate {
         ensemble: bool,
         luminosity: bool,
         branching_exposure: bool,
-        reference_model: bool,
     ) -> PyResult<PyYieldHistogramView> {
         let budget = laddu_likelihood::ErrorBudget {
             data_fill,
@@ -1702,7 +985,6 @@ impl PyBinnedEstimate {
             ensemble,
             luminosity,
             branching_exposure,
-            reference_model,
         };
         self.inner
             .histogram_with_budget(budget)

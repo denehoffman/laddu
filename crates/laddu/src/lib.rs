@@ -1,6 +1,6 @@
 //! Tools for constructing, compiling, and evaluating amplitude-analysis models.
 //!
-//! laddu exposes symbolic expressions, event datasets, particle and decay
+//! `laddu` exposes symbolic expressions, event datasets, particle and decay
 //! topology utilities, execution backends, and optional likelihood, fitting,
 //! generation, amplitude, and GPU support through one facade crate. Most
 //! applications can import [`prelude`] and enable only the Cargo features they
@@ -19,11 +19,13 @@
 //! # Ok::<(), CompileError>(())
 //! ```
 
-/// A global error type for laddu along with re-exported error types for each crate in the laddu suite.
+#![recursion_limit = "256"]
+
+/// A global error type for `laddu` along with re-exported error types for each crate in the `laddu` suite.
 pub mod error;
 
 #[cfg(feature = "python")]
-/// Shared implementation of laddu's Python extension modules.
+/// Shared implementation of `laddu`'s Python extension modules.
 ///
 /// This module is public so the small Maturin distribution crates can expand
 /// [`laddu_python_module!`]. Rust applications should use the crate-level Rust
@@ -132,9 +134,10 @@ pub mod prelude {
     };
     #[cfg(feature = "likelihood")]
     pub use laddu_likelihood::{
-        Axis, BinnedEstimate, BootstrapFitError, CrossSectionIntegrals, Ensemble, Estimate,
-        ExtendedNllTerm, LassoPenalty, Likelihood, LikelihoodError, LikelihoodEvaluation,
-        LikelihoodName, LikelihoodProjection, LikelihoodResult, LikelihoodTerm, NllTerm, Objective,
+        AreaUnit, Axis, BinnedEstimate, BootstrapFitError, CombinationMember, CrossSection,
+        CrossSectionProjection, Ensemble, Estimate, ExtendedNllTerm, IntensityIntegrals,
+        LassoPenalty, Likelihood, LikelihoodError, LikelihoodEvaluation, LikelihoodName,
+        LikelihoodProjection, LikelihoodResult, LikelihoodTerm, Luminosity, NllTerm, Objective,
         Projection, RateClosure, RateClosureStatus, RidgePenalty, StochasticObjective, Yield,
         next_uncertainty_source_id,
     };

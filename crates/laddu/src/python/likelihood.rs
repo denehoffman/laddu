@@ -2,9 +2,8 @@ use std::sync::Arc;
 
 use laddu_compile::NormalizationStrategy;
 use laddu_likelihood::{
-    CrossSectionIntegrals, DatasetDiagnostics, DatasetRole, ExtendedNllTerm, LassoPenalty,
-    Likelihood, LikelihoodDiagnostics, LikelihoodProjection, LikelihoodTerm, NllTerm, RidgePenalty,
-    Yield,
+    DatasetDiagnostics, DatasetRole, ExtendedNllTerm, IntensityIntegrals, LassoPenalty, Likelihood,
+    LikelihoodDiagnostics, LikelihoodProjection, LikelihoodTerm, NllTerm, RidgePenalty, Yield,
 };
 use numpy::PyArray1;
 use pyo3::{
@@ -14,7 +13,7 @@ use pyo3::{
 };
 
 use super::{
-    cross_section::{PyEnsemble, PyYield},
+    cross_section::{PyCrossSection, PyEnsemble, PyLuminosity, PyYield},
     data::PyDataset,
     error::to_py_err,
     float_vec,
@@ -422,75 +421,6 @@ impl PyLikelihoodProjection {
         self.inner.generated_integral(&values).map_err(to_py_err)
     }
 
-    #[pyo3(signature = (parameters: "Sequence[float] | numpy.typing.NDArray[numpy.float32 | numpy.float64] | dict[str, float]"))]
-    /// Evaluate the projected accepted-to-generated integral ratio.
-    fn acceptance(&self, parameters: &Bound<'_, PyAny>) -> PyResult<f64> {
-        let values = free_values(&self.likelihood, parameters)?;
-        self.inner.acceptance(&values).map_err(to_py_err)
-    }
-
-    #[pyo3(signature = (parameters: "Sequence[float] | numpy.typing.NDArray[numpy.float32 | numpy.float64] | dict[str, float]"))]
-    /// Evaluate the full-model accepted-Monte-Carlo integral.
-    fn full_accepted_integral(&self, parameters: &Bound<'_, PyAny>) -> PyResult<f64> {
-        let values = free_values(&self.likelihood, parameters)?;
-        self.inner
-            .full_accepted_integral(&values)
-            .map_err(to_py_err)
-    }
-
-    #[pyo3(signature = (parameters: "Sequence[float] | numpy.typing.NDArray[numpy.float32 | numpy.float64] | dict[str, float]"))]
-    /// Evaluate the projected, acceptance-corrected event yield.
-    fn acceptance_corrected_yield(&self, parameters: &Bound<'_, PyAny>) -> PyResult<f64> {
-        let values = free_values(&self.likelihood, parameters)?;
-        self.inner
-            .acceptance_corrected_yield(&values)
-            .map_err(to_py_err)
-    }
-
-    #[pyo3(signature = (
-        parameters: "Sequence[float] | numpy.typing.NDArray[numpy.float32 | numpy.float64] | dict[str, float]",
-        *,
-        luminosity
-    ))]
-    /// Evaluate the observed-yield-normalized projected cross section.
-    fn observed_cross_section(
-        &self,
-        parameters: &Bound<'_, PyAny>,
-        luminosity: f64,
-    ) -> PyResult<f64> {
-        let values = free_values(&self.likelihood, parameters)?;
-        self.inner
-            .observed_cross_section(&values, luminosity)
-            .map_err(to_py_err)
-    }
-
-    #[pyo3(signature = (
-        parameters: "Sequence[float] | numpy.typing.NDArray[numpy.float32 | numpy.float64] | dict[str, float]",
-        *,
-        luminosity
-    ))]
-    /// Evaluate the fitted projected cross section for an absolute-rate term.
-    fn fitted_cross_section(
-        &self,
-        parameters: &Bound<'_, PyAny>,
-        luminosity: f64,
-    ) -> PyResult<f64> {
-        let values = free_values(&self.likelihood, parameters)?;
-        self.inner
-            .fitted_cross_section(&values, luminosity)
-            .map_err(to_py_err)
-    }
-
-    #[pyo3(signature = (
-        parameters: "Sequence[float] | numpy.typing.NDArray[numpy.float32 | numpy.float64] | dict[str, float]",
-        *,
-        luminosity
-    ))]
-    /// Alias for :meth:`observed_cross_section`.
-    fn cross_section(&self, parameters: &Bound<'_, PyAny>, luminosity: f64) -> PyResult<f64> {
-        self.observed_cross_section(parameters, luminosity)
-    }
-
     #[pyo3(signature = (
         parameters: "Sequence[float] | numpy.typing.NDArray[numpy.float32 | numpy.float64] | dict[str, float]"
     ) -> "Sequence[float]")]
@@ -506,9 +436,7 @@ impl PyLikelihoodProjection {
     }
 
     #[pyo3(signature = (
-        parameters: "Sequence[float] | numpy.typing.NDArray[numpy.float32 | numpy.float64] | dict[str, float]",
-        *,
-        acceptance_corrected=true
+        parameters: "Sequence[float] | numpy.typing.NDArray[numpy.float32 | numpy.float64] | dict[str, float]"
     ) -> "Sequence[float]")]
     /// Evaluate generated-event projection weights.
     ///
@@ -516,8 +444,6 @@ impl PyLikelihoodProjection {
     /// ----------
     /// parameters : sequence of float or dict
     ///     Free values in likelihood order, or a partial mapping by name.
-    /// acceptance_corrected : bool, default=True
-    ///     Include the accepted-Monte-Carlo normalization correction.
     ///
     /// Returns
     /// -------
@@ -534,34 +460,30 @@ impl PyLikelihoodProjection {
         &self,
         py: Python<'py>,
         parameters: &Bound<'_, PyAny>,
-        acceptance_corrected: bool,
     ) -> PyResult<Bound<'py, PyArray1<f64>>> {
         let values = free_values(&self.likelihood, parameters)?;
-        let weights = self
-            .inner
-            .weights(&values, acceptance_corrected)
-            .map_err(to_py_err)?;
+        let weights = self.inner.weights(&values).map_err(to_py_err)?;
         Ok(PyArray1::from_vec(py, weights))
     }
 }
 
 #[pyclass(
-    name = "CrossSectionIntegrals",
+    name = "IntensityIntegrals",
     module = "laddu",
     frozen,
     skip_from_py_object
 )]
-/// Accepted and generated Monte Carlo integrals for cross-section extraction.
+/// Raw accepted and generated Monte Carlo intensity integrals.
 ///
-/// Objects are created by :meth:`Likelihood.cross_section_integrals`. Passing
-/// tags narrows the numerator while preserving the full-model normalization.
-pub struct PyCrossSectionIntegrals {
-    inner: CrossSectionIntegrals,
+/// Objects are created by :meth:`Likelihood.intensity_integrals`. Passing
+/// tags selects a coherent model contribution for both integrals.
+pub struct PyIntensityIntegrals {
+    inner: IntensityIntegrals,
     likelihood: Arc<Likelihood>,
 }
 
 #[pymethods]
-impl PyCrossSectionIntegrals {
+impl PyIntensityIntegrals {
     #[getter]
     /// str: Source likelihood term name.
     fn name(&self) -> &str {
@@ -586,83 +508,6 @@ impl PyCrossSectionIntegrals {
     fn generated_integral(&self, parameters: &Bound<'_, PyAny>) -> PyResult<f64> {
         let values = free_values(&self.likelihood, parameters)?;
         self.inner.generated_integral(&values).map_err(to_py_err)
-    }
-
-    #[pyo3(signature = (parameters: "Sequence[float] | numpy.typing.NDArray[numpy.float32 | numpy.float64] | dict[str, float]"))]
-    /// Evaluate the selected accepted-to-generated integral ratio.
-    fn acceptance(&self, parameters: &Bound<'_, PyAny>) -> PyResult<f64> {
-        let values = free_values(&self.likelihood, parameters)?;
-        self.inner.acceptance(&values).map_err(to_py_err)
-    }
-
-    #[pyo3(signature = (parameters: "Sequence[float] | numpy.typing.NDArray[numpy.float32 | numpy.float64] | dict[str, float]"))]
-    /// Evaluate the full-model accepted-Monte-Carlo integral.
-    fn full_accepted_integral(&self, parameters: &Bound<'_, PyAny>) -> PyResult<f64> {
-        let values = free_values(&self.likelihood, parameters)?;
-        self.inner
-            .full_accepted_integral(&values)
-            .map_err(to_py_err)
-    }
-
-    #[pyo3(signature = (
-        parameters: "Sequence[float] | numpy.typing.NDArray[numpy.float32 | numpy.float64] | dict[str, float]",
-        *,
-        accepted_yield
-    ))]
-    /// Correct an accepted selected-component yield for finite acceptance.
-    fn acceptance_corrected_yield(
-        &self,
-        parameters: &Bound<'_, PyAny>,
-        accepted_yield: f64,
-    ) -> PyResult<f64> {
-        let values = free_values(&self.likelihood, parameters)?;
-        self.inner
-            .acceptance_corrected_yield(&values, accepted_yield)
-            .map_err(to_py_err)
-    }
-
-    #[pyo3(signature = (
-        parameters: "Sequence[float] | numpy.typing.NDArray[numpy.float32 | numpy.float64] | dict[str, float]",
-        *,
-        luminosity
-    ))]
-    /// Evaluate the observed-yield-normalized selected cross section.
-    fn observed_cross_section(
-        &self,
-        parameters: &Bound<'_, PyAny>,
-        luminosity: f64,
-    ) -> PyResult<f64> {
-        let values = free_values(&self.likelihood, parameters)?;
-        self.inner
-            .observed_cross_section(&values, luminosity)
-            .map_err(to_py_err)
-    }
-
-    #[pyo3(signature = (
-        parameters: "Sequence[float] | numpy.typing.NDArray[numpy.float32 | numpy.float64] | dict[str, float]",
-        *,
-        luminosity
-    ))]
-    /// Evaluate the fitted selected cross section for an absolute-rate term.
-    fn fitted_cross_section(
-        &self,
-        parameters: &Bound<'_, PyAny>,
-        luminosity: f64,
-    ) -> PyResult<f64> {
-        let values = free_values(&self.likelihood, parameters)?;
-        self.inner
-            .fitted_cross_section(&values, luminosity)
-            .map_err(to_py_err)
-    }
-
-    #[pyo3(signature = (
-        parameters: "Sequence[float] | numpy.typing.NDArray[numpy.float32 | numpy.float64] | dict[str, float]",
-        *,
-        luminosity
-    ))]
-    /// Alias for :meth:`observed_cross_section`.
-    fn cross_section(&self, parameters: &Bound<'_, PyAny>, luminosity: f64) -> PyResult<f64> {
-        self.observed_cross_section(parameters, luminosity)
     }
 }
 
@@ -889,8 +734,31 @@ impl PyLikelihood {
         Ok(inner.into())
     }
 
+    #[pyo3(signature = (term_name, generated_mc, luminosity, parameters, *, ensemble=None))]
+    /// Fitted generated-MC intensity divided by luminosity. Requires an extended term.
+    fn cross_section(
+        &self,
+        term_name: &str,
+        generated_mc: &PyDataset,
+        luminosity: &PyLuminosity,
+        parameters: &Bound<'_, PyAny>,
+        ensemble: Option<&PyEnsemble>,
+    ) -> PyResult<PyCrossSection> {
+        let parameters = free_values(&self.inner, parameters)?;
+        self.inner
+            .cross_section(
+                term_name,
+                generated_mc.inner.clone(),
+                luminosity.inner.clone(),
+                parameters,
+                ensemble.map(|value| value.inner.clone()),
+            )
+            .map(|inner| PyCrossSection { inner })
+            .map_err(to_py_err)
+    }
+
     #[pyo3(signature = (term_name, *, generated_mc, tags=None))]
-    /// Prepare cross-section integrals for a model-backed term.
+    /// Prepare raw accepted and generated intensity integrals.
     ///
     /// Parameters
     /// ----------
@@ -903,31 +771,31 @@ impl PyLikelihood {
     ///
     /// Returns
     /// -------
-    /// CrossSectionIntegrals
-    ///     Specialized integral and cross-section evaluator.
+    /// IntensityIntegrals
+    ///     Raw accepted and generated intensity evaluator.
     ///
     /// Raises
     /// ------
     /// LadduError
     ///     If the term is unknown, cannot be narrowed, or schemas mismatch.
-    fn cross_section_integrals(
+    fn intensity_integrals(
         &self,
         term_name: &str,
         generated_mc: &PyDataset,
         tags: Option<Vec<String>>,
-    ) -> PyResult<PyCrossSectionIntegrals> {
+    ) -> PyResult<PyIntensityIntegrals> {
         let inner = match tags {
-            Some(tags) => self.inner.cross_section_integrals_with_tags(
+            Some(tags) => self.inner.intensity_integrals_with_tags(
                 term_name,
                 &generated_mc.inner,
                 tags.iter().map(String::as_str),
             ),
             None => self
                 .inner
-                .cross_section_integrals(term_name, &generated_mc.inner),
+                .intensity_integrals(term_name, &generated_mc.inner),
         }
         .map_err(to_py_err)?;
-        Ok(PyCrossSectionIntegrals {
+        Ok(PyIntensityIntegrals {
             inner,
             likelihood: Arc::clone(&self.inner),
         })
@@ -980,7 +848,7 @@ impl PyLikelihood {
 pub mod likelihood {
     #[pymodule_export]
     use super::{
-        PyCrossSectionIntegrals as CrossSectionIntegrals, PyExtendedNll as ExtendedNLL,
+        PyExtendedNll as ExtendedNLL, PyIntensityIntegrals as IntensityIntegrals,
         PyLassoPenalty as LassoPenalty, PyLikelihood as Likelihood,
         PyLikelihoodProjection as LikelihoodProjection, PyNll as NLL,
         PyRidgePenalty as RidgePenalty,
