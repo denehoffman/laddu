@@ -1,6 +1,6 @@
 # Reading, transforming, and writing event data
 
-A laddu {py:class}`laddu.Dataset` is a typed collection of named four-vectors,
+A {py:class}`laddu.Dataset` is a typed collection of named four-vectors,
 named real scalars, and one statistical weight per event. Names form the event
 schema: later expressions request columns by name rather than by position.
 
@@ -8,7 +8,7 @@ schema: later expressions request columns by name rather than by position.
 
 Four-vectors have shape `(events, 4)` in $(E,p_x,p_y,p_z)$ order. Scalar
 columns and weights have shape `(events,)`. Both `float32` and `float64` arrays
-are accepted and converted to laddu's internal real representation.
+are accepted and converted to `laddu`'s internal real representation.
 
 ```python
 import laddu as ld
@@ -33,13 +33,13 @@ All columns must contain the same number of events. Duplicate names, invalid
 four-vector shapes, and length mismatches fail at construction.
 
 ```{note}
-laddu does not infer units. Use one convention—normally GeV and radians—for
+`laddu` does not infer units. Use one convention—normally GeV and radians—for
 input data, particle masses, model parameters, bin edges, and reported results.
 ```
 
 ## Read file-backed data
 
-Convenience readers infer the laddu schema and create lazy datasets:
+Convenience readers infer the `laddu` schema and create lazy datasets:
 
 ```python
 data = ld.read_parquet("accepted/*.parquet")
@@ -64,7 +64,7 @@ data = ld.read_parquet(
 
 ## Evaluate and transform
 
-Expressions keep event loops inside laddu. A scalar column is addressed by
+Expressions keep event loops inside `laddu`. A scalar column is addressed by
 name, while reaction-channel helpers introduced in {doc}`quantum-numbers`
 construct invariant masses and angles from named four-vectors.
 

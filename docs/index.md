@@ -2,7 +2,7 @@
 hide-toc: true
 ---
 
-# laddu
+# `laddu`
 
 <div class="hero">
   <img src="_static/logo.svg" alt="The laddu logo">
@@ -11,7 +11,7 @@ hide-toc: true
   </div>
 </div>
 
-laddu brings the full analysis loop into one coherent interface: describe a reaction, compose a differentiable intensity, generate Monte Carlo, fit accepted data, and project the result. Models remain readable Python expressions while evaluation runs on parallel CPU, JIT-compiled CPU, WGPU, or MPI-backed execution.
+`laddu` brings the full analysis loop into one coherent interface: describe a reaction, compose a differentiable intensity, generate Monte Carlo, fit accepted data, and project the result. Models remain readable Python expressions while evaluation runs on parallel CPU, JIT-compiled CPU, WGPU, or MPI-backed execution.
 
 ```python
 import laddu as ld
@@ -48,14 +48,14 @@ Choose precision, automatic differentiation, CPU/JIT/GPU execution, and MPI part
 :::
 ::::
 
-## Why laddu?
+## Why `laddu`?
 
 - **One symbolic model.** The same expression drives generation, likelihood evaluation, gradients, and projections.
 - **Physics-native building blocks.** Four-vectors, reaction graphs, Wigner functions, relativistic line shapes, and coupled-channel amplitudes are first-class objects.
-- **Expression-based architecture.** All mathematical models are built from expressions, so new users can write complex amplitudes in Python and let laddu handle mathematical optimizations, cached evaluations, and batched execution.
+- **Expression-based architecture.** All mathematical models are built from expressions, so new users can write complex amplitudes in Python and let `laddu` handle mathematical optimizations, cached evaluations, and batched execution.
 - **Reproducible performance choices.** Backends, precision, differentiation strategy, seeds, and partitioning are explicit.
 - **Platform-independent execution.** Pipelines are automatically parallel and can be JIT compiled or even run directly on GPUs without writing a single kernel.
-- **Distributed programming.** Code written in laddu is fully compatible with the MPI protocol for use on high-performance compute systems.
+- **Distributed programming.** Code written in `laddu` is fully compatible with the MPI protocol for use on high-performance compute systems.
 
 ```{toctree}
 :hidden:

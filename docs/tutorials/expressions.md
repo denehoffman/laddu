@@ -1,6 +1,6 @@
 # Expressions, amplitudes, and models
 
-laddu expressions are immutable symbolic graphs. Arithmetic constructs the
+`laddu` expressions are immutable symbolic graphs. Arithmetic constructs the
 graph; a {py:class}`laddu.Model` evaluates it at parameter values, with a dataset
 when the expression needs event inputs.
 

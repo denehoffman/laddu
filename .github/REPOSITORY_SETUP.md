@@ -33,9 +33,9 @@ Complete these settings after rebasing this work onto the upstream repository.
 ## First release
 
 - Keep the `"."` entry in `.release-please-manifest.json` at the currently
-  published Laddu version before enabling the Release Please workflow.
+  published `laddu` version before enabling the Release Please workflow.
 - Keep every workspace package on `version.workspace = true` and declare local
-  Laddu dependencies through the root `[workspace.dependencies]` table. Release
+  `laddu` dependencies through the root `[workspace.dependencies]` table. Release
   Please updates that single version source, its dependency requirements, and
   the matching `Cargo.lock` package entries together.
 - Confirm that all Rust crate owners and the PyPI trusted publisher are current.
