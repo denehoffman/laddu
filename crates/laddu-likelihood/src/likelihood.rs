@@ -598,6 +598,9 @@ impl Likelihood {
     }
 
     /// Version-one structural fingerprint after explicit parameter-name normalization.
+    ///
+    /// # Panics
+    /// Panics if an internal parameter definition cannot be serialized as JSON.
     pub fn artifact_fingerprint_v1_with_parameter_map(
         &self,
         mapping: &HashMap<String, String>,
@@ -761,11 +764,11 @@ impl Likelihood {
     ///
     /// Returns [`LikelihoodError`] when `term_name` is missing or not an
     /// intensity term, or dataset preparation fails.
-    pub fn cross_section_integrals(
+    pub fn intensity_integrals(
         &self,
         term_name: &str,
         generated_mc: &Dataset,
-    ) -> LikelihoodResult<CrossSectionIntegrals> {
+    ) -> LikelihoodResult<IntensityIntegrals> {
         let Some(term) = self.terms.iter().find(|term| term.name() == term_name) else {
             return Err(LikelihoodError::MissingTerm(term_name.to_owned()));
         };
@@ -773,7 +776,7 @@ impl Likelihood {
         let Some(term) = term.as_intensity() else {
             return Err(LikelihoodError::NotIntensityTerm(term_name.to_owned()));
         };
-        term.cross_section_integrals(generated_mc, &self.execution, has_absolute_rate)
+        term.intensity_integrals(generated_mc, &self.execution, has_absolute_rate)
     }
 
     pub(crate) fn intensity_data_weight_sum(&self, term_name: &str) -> LikelihoodResult<f64> {
@@ -788,20 +791,18 @@ impl Likelihood {
 
     /// Prepares tag-narrowed accepted and generated Monte Carlo integrals.
     ///
-    /// The selected tags define the numerator contribution. Cross sections
-    /// retain the full accepted-model normalization, matching
-    /// [`Self::projection`].
+    /// The returned integrals contain only the coherent tagged intensity.
     ///
     /// # Errors
     ///
     /// Returns [`LikelihoodError`] when `term_name` is missing or not an
     /// intensity term, graph projection fails, or dataset preparation fails.
-    pub fn cross_section_integrals_with_tags<'a>(
+    pub fn intensity_integrals_with_tags<'a>(
         &self,
         term_name: &str,
         generated_mc: &Dataset,
         tags: impl IntoIterator<Item = &'a str>,
-    ) -> LikelihoodResult<CrossSectionIntegrals> {
+    ) -> LikelihoodResult<IntensityIntegrals> {
         let Some(term) = self.terms.iter().find(|term| term.name() == term_name) else {
             return Err(LikelihoodError::MissingTerm(term_name.to_owned()));
         };
@@ -809,12 +810,7 @@ impl Likelihood {
         let Some(term) = term.as_intensity() else {
             return Err(LikelihoodError::NotIntensityTerm(term_name.to_owned()));
         };
-        term.cross_section_integrals_with_tags(
-            generated_mc,
-            tags,
-            &self.execution,
-            has_absolute_rate,
-        )
+        term.intensity_integrals_with_tags(generated_mc, tags, &self.execution, has_absolute_rate)
     }
 
     /// Returns the observed and accepted Monte Carlo sources for an intensity term.
@@ -872,11 +868,10 @@ impl Likelihood {
         let Some(term) = self.terms.iter().find(|term| term.name() == term_name) else {
             return Err(LikelihoodError::MissingTerm(term_name.to_owned()));
         };
-        let has_absolute_rate = term.has_absolute_rate();
         let Some(term) = term.as_intensity() else {
             return Err(LikelihoodError::NotIntensityTerm(term_name.to_owned()));
         };
-        term.projection(generated_mc, tags, &self.execution, has_absolute_rate)
+        term.projection(generated_mc, tags, &self.execution)
     }
 }
 
@@ -981,7 +976,6 @@ impl NllTerm {
         generated_mc: &Dataset,
         tags: impl IntoIterator<Item = &'a str>,
         execution: &Execution,
-        has_absolute_rate: bool,
     ) -> LikelihoodResult<LikelihoodProjection> {
         let projected_model =
             self.model
@@ -1004,20 +998,13 @@ impl NllTerm {
         )?;
         Ok(LikelihoodProjection {
             name: self.name.clone(),
-            full_plan: self.plan()?.clone(),
-            full_projection: self.resolved_projection()?.clone(),
-            full_accepted_mc: self.accepted_mc_for_analysis(execution)?,
-            full_normalization: self.compiler_native_normalization()?,
             projected_accepted_mc: projected_plan
                 .prepare_dataset(execution, &self.accepted_mc_source)?,
             projected_normalization,
             projected_generated_mc: projected_plan.prepare_dataset(execution, generated_mc)?,
-            accepted_mc_source: self.accepted_mc_source.clone(),
             generated_mc_source: generated_mc.clone(),
             projected_plan,
             projected_params,
-            data_weight_sum: self.data_weight_sum()?,
-            has_absolute_rate,
             execution: execution.clone(),
         })
     }
@@ -1136,56 +1123,49 @@ impl NllTerm {
         self.normalization_value(&local_params, self.resolved_execution()?)
     }
 
-    fn cross_section_integrals(
+    fn intensity_integrals(
         &self,
         generated_mc: &Dataset,
         execution: &Execution,
         has_absolute_rate: bool,
-    ) -> LikelihoodResult<CrossSectionIntegrals> {
+    ) -> LikelihoodResult<IntensityIntegrals> {
         let plan = self.plan()?.clone();
         let accepted_mc = self.accepted_mc_for_analysis(execution)?;
-        Ok(CrossSectionIntegrals {
+        let generated_mc_prepared = plan.prepare_dataset(execution, generated_mc)?;
+        Ok(IntensityIntegrals {
             name: self.name.clone(),
-            full_plan: plan.clone(),
-            full_projection: self.resolved_projection()?.clone(),
-            full_accepted_mc: accepted_mc.clone(),
-            full_normalization: self.compiler_native_normalization()?,
             accepted_mc_source: self.accepted_mc_source.clone(),
             generated_mc_source: generated_mc.clone(),
-            plan: plan.clone(),
+            plan,
             projection: self.resolved_projection()?.clone(),
             accepted_mc,
             normalization: self.compiler_native_normalization()?,
-            generated_mc: plan.prepare_dataset(execution, generated_mc)?,
+            generated_mc: generated_mc_prepared,
             data_weight_sum: self.data_weight_sum()?,
             has_absolute_rate,
             execution: execution.clone(),
         })
     }
 
-    fn cross_section_integrals_with_tags<'a>(
+    fn intensity_integrals_with_tags<'a>(
         &self,
         generated_mc: &Dataset,
         tags: impl IntoIterator<Item = &'a str>,
         execution: &Execution,
         has_absolute_rate: bool,
-    ) -> LikelihoodResult<CrossSectionIntegrals> {
-        let projection = self.projection(generated_mc, tags, execution, has_absolute_rate)?;
-        Ok(CrossSectionIntegrals {
+    ) -> LikelihoodResult<IntensityIntegrals> {
+        let projection = self.projection(generated_mc, tags, execution)?;
+        Ok(IntensityIntegrals {
             name: projection.name,
-            full_plan: projection.full_plan,
-            full_projection: projection.full_projection,
-            full_accepted_mc: projection.full_accepted_mc,
-            full_normalization: projection.full_normalization,
-            accepted_mc_source: projection.accepted_mc_source,
+            accepted_mc_source: self.accepted_mc_source.clone(),
             generated_mc_source: projection.generated_mc_source,
             plan: projection.projected_plan,
             projection: projection.projected_params,
             accepted_mc: projection.projected_accepted_mc,
             normalization: projection.projected_normalization,
             generated_mc: projection.projected_generated_mc,
-            data_weight_sum: projection.data_weight_sum,
-            has_absolute_rate: projection.has_absolute_rate,
+            data_weight_sum: self.data_weight_sum()?,
+            has_absolute_rate,
             execution: projection.execution,
         })
     }
@@ -2003,12 +1983,8 @@ enum PenaltyKind {
 
 /// Prepared accepted and generated Monte Carlo integrals for an intensity model.
 #[derive(Clone)]
-pub struct CrossSectionIntegrals {
+pub struct IntensityIntegrals {
     name: LikelihoodName,
-    full_plan: PreparedModel,
-    full_projection: ParamProjection,
-    full_accepted_mc: PreparedDataset,
-    full_normalization: Option<Arc<PreparedNormalization>>,
     accepted_mc_source: Dataset,
     generated_mc_source: Dataset,
     plan: PreparedModel,
@@ -2021,10 +1997,10 @@ pub struct CrossSectionIntegrals {
     execution: Execution,
 }
 
-impl std::fmt::Debug for CrossSectionIntegrals {
+impl std::fmt::Debug for IntensityIntegrals {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
-            .debug_struct("CrossSectionIntegrals")
+            .debug_struct("IntensityIntegrals")
             .field("name", &self.name)
             .field("data_weight_sum", &self.data_weight_sum)
             .finish_non_exhaustive()
@@ -2035,19 +2011,12 @@ impl std::fmt::Debug for CrossSectionIntegrals {
 #[derive(Clone)]
 pub struct LikelihoodProjection {
     name: LikelihoodName,
-    full_plan: PreparedModel,
-    full_projection: ParamProjection,
-    full_accepted_mc: PreparedDataset,
-    full_normalization: Option<Arc<PreparedNormalization>>,
     projected_plan: PreparedModel,
     projected_params: ParamProjection,
     projected_accepted_mc: PreparedDataset,
     projected_normalization: Option<Arc<PreparedNormalization>>,
     projected_generated_mc: PreparedDataset,
-    accepted_mc_source: Dataset,
     generated_mc_source: Dataset,
-    data_weight_sum: f64,
-    has_absolute_rate: bool,
     execution: Execution,
 }
 
@@ -2084,107 +2053,13 @@ impl LikelihoodProjection {
         self.projected_integral(free, &self.projected_generated_mc, "generated MC")
     }
 
-    /// Returns the projected acceptance ratio.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`LikelihoodError`] when either accepted or generated integral
-    /// cannot be evaluated or is not positive.
-    pub fn acceptance(&self, free: &[f64]) -> LikelihoodResult<f64> {
-        let generated = positive_integral("generated MC", self.generated_integral(free)?)?;
-        let accepted = positive_integral("accepted MC", self.accepted_integral(free)?)?;
-        Ok(accepted / generated)
-    }
-
-    /// Returns the unprojected accepted Monte Carlo integral.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`LikelihoodError`] when parameters are invalid, runtime
-    /// evaluation fails, or an intensity is not positive.
-    pub fn full_accepted_integral(&self, free: &[f64]) -> LikelihoodResult<f64> {
-        let global = self.full_projection.global_layout.values(free)?;
-        let local = self.full_projection.project(&global)?;
-        if let Some(normalization) = &self.full_normalization {
-            return normalization
-                .value(&local, &self.execution)
-                .map_err(LikelihoodError::from);
-        }
-        self.full_plan
-            .reduce(
-                &self.execution,
-                &local,
-                &self.full_accepted_mc,
-                ReductionPlan::weighted_positive_real(),
-            )
-            .map_err(|error| map_reduction_error("accepted MC", error))
-    }
-
-    /// Returns the projected, acceptance-corrected event yield.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`LikelihoodError`] when accepted or generated integrals cannot
-    /// be evaluated or the accepted integral is not positive.
-    pub fn acceptance_corrected_yield(&self, free: &[f64]) -> LikelihoodResult<f64> {
-        let accepted = positive_integral("accepted MC", self.full_accepted_integral(free)?)?;
-        Ok(self.data_weight_sum * self.generated_integral(free)? / accepted)
-    }
-
-    /// Returns the observed-yield-normalized projected cross section.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`LikelihoodError`] when `luminosity` is not positive or the
-    /// acceptance-corrected yield cannot be evaluated.
-    pub fn observed_cross_section(&self, free: &[f64], luminosity: f64) -> LikelihoodResult<f64> {
-        if !luminosity.is_finite() || luminosity <= 0.0 {
-            return Err(LikelihoodError::NonPositiveLuminosity(luminosity));
-        }
-        Ok(self.acceptance_corrected_yield(free)? / luminosity)
-    }
-
-    /// Returns the fitted projected cross section from an absolute-rate term.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`LikelihoodError::AbsoluteRateUnavailable`] for shape-only
-    /// terms, or [`LikelihoodError`] when luminosity or integral evaluation
-    /// fails.
-    pub fn fitted_cross_section(&self, free: &[f64], luminosity: f64) -> LikelihoodResult<f64> {
-        if !self.has_absolute_rate {
-            return Err(LikelihoodError::AbsoluteRateUnavailable(
-                self.name.as_str().to_owned(),
-            ));
-        }
-        if !luminosity.is_finite() || luminosity <= 0.0 {
-            return Err(LikelihoodError::NonPositiveLuminosity(luminosity));
-        }
-        Ok(self.generated_integral(free)? / luminosity)
-    }
-
-    /// Alias for [`Self::observed_cross_section`].
-    ///
-    /// # Errors
-    ///
-    /// Returns [`LikelihoodError`] when luminosity or integral evaluation fails.
-    pub fn cross_section(&self, free: &[f64], luminosity: f64) -> LikelihoodResult<f64> {
-        self.observed_cross_section(free, luminosity)
-    }
-
     /// Returns per-event projected weights over generated Monte Carlo.
     ///
     /// # Errors
     ///
     /// Returns [`LikelihoodError`] when parameters or integrals are invalid,
     /// generated data cannot be read, or runtime evaluation fails.
-    pub fn weights(&self, free: &[f64], acceptance_corrected: bool) -> LikelihoodResult<Vec<f64>> {
-        let scale = if acceptance_corrected {
-            self.data_weight_sum
-                / positive_integral("accepted MC", self.full_accepted_integral(free)?)?
-        } else {
-            1.0
-        };
+    pub fn weights(&self, free: &[f64]) -> LikelihoodResult<Vec<f64>> {
         let intensities = self.intensities(free)?;
         let mut output = Vec::with_capacity(intensities.len());
         let mut offset = 0;
@@ -2196,8 +2071,7 @@ impl LikelihoodProjection {
             let batch =
                 batch.map_err(|e| LikelihoodError::Runtime(RuntimeError::Data(e.to_string())))?;
             output.extend(
-                (0..batch.len())
-                    .map(|row| batch.weights_at(row) * intensities[offset + row] * scale),
+                (0..batch.len()).map(|row| batch.weights_at(row) * intensities[offset + row]),
             );
             offset += batch.len();
         }
@@ -2250,7 +2124,7 @@ impl LikelihoodProjection {
     }
 }
 
-impl CrossSectionIntegrals {
+impl IntensityIntegrals {
     pub(crate) fn with_data_weight_sum(&self, data_weight_sum: f64) -> Self {
         let mut integrals = self.clone();
         integrals.data_weight_sum = data_weight_sum;
@@ -2262,32 +2136,17 @@ impl CrossSectionIntegrals {
         self.has_absolute_rate
     }
 
-    /// Returns retained prepared-dataset bytes used by these integrals.
+    /// Returns retained prepared-dataset and normalization bytes.
     pub fn resident_bytes(&self) -> usize {
-        let dataset_bytes = self
-            .full_accepted_mc
+        self.accepted_mc
             .stats()
             .resident_bytes()
-            .saturating_add(self.accepted_mc.stats().resident_bytes())
-            .saturating_add(self.generated_mc.stats().resident_bytes());
-        let full_statistics = self
-            .full_normalization
-            .as_ref()
-            .map_or(0, |normalization| normalization.resident_bytes());
-        let projected_statistics = self.normalization.as_ref().map_or(0, |normalization| {
-            if self
-                .full_normalization
-                .as_ref()
-                .is_some_and(|full| Arc::ptr_eq(full, normalization))
-            {
-                0
-            } else {
-                normalization.resident_bytes()
-            }
-        });
-        dataset_bytes
-            .saturating_add(full_statistics)
-            .saturating_add(projected_statistics)
+            .saturating_add(self.generated_mc.stats().resident_bytes())
+            .saturating_add(
+                self.normalization
+                    .as_ref()
+                    .map_or(0, |normalization| normalization.resident_bytes()),
+            )
     }
 
     /// Returns the source likelihood term name.
@@ -2358,25 +2217,6 @@ impl CrossSectionIntegrals {
         self.intensities(free, &self.accepted_mc_source)
     }
 
-    pub(crate) fn visit_accepted_prepared_intensities_many<F>(
-        &self,
-        free: &[&[f64]],
-        parameter_contexts: &[String],
-        consume: F,
-    ) -> LikelihoodResult<Vec<f64>>
-    where
-        F: FnMut(usize, usize, &[f64]) + Send,
-    {
-        self.visit_prepared_intensities_many(
-            free,
-            parameter_contexts,
-            &self.accepted_mc,
-            &self.accepted_mc_source,
-            Some(ReductionPlan::weighted_positive_real()),
-            consume,
-        )
-    }
-
     pub(crate) fn visit_accepted_raw_prepared_intensities_many<F>(
         &self,
         free: &[&[f64]],
@@ -2431,7 +2271,7 @@ impl CrossSectionIntegrals {
     /// full selection, followed by selections in caller order.
     pub(crate) fn visit_shared_source_intensities<F>(
         &self,
-        selections: &[&CrossSectionIntegrals],
+        selections: &[&IntensityIntegrals],
         labels: &[String],
         free: &[f64],
         generated: bool,
@@ -2495,123 +2335,6 @@ impl CrossSectionIntegrals {
             offset += batch.len();
         }
         Ok(())
-    }
-
-    pub(crate) fn generated_integrals_many(
-        &self,
-        free: &[&[f64]],
-        parameter_contexts: &[String],
-    ) -> LikelihoodResult<Vec<f64>> {
-        self.visit_prepared_intensities_many(
-            free,
-            parameter_contexts,
-            &self.generated_mc,
-            &self.generated_mc_source,
-            Some(ReductionPlan::weighted_positive_real()),
-            |_, _, _| {},
-        )
-    }
-
-    /// Returns the accepted-to-generated integral ratio.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`LikelihoodError`] when either integral cannot be evaluated or
-    /// is not positive.
-    pub fn acceptance(&self, free: &[f64]) -> LikelihoodResult<f64> {
-        let generated = positive_integral("generated MC", self.generated_integral(free)?)?;
-        let accepted = positive_integral("accepted MC", self.accepted_integral(free)?)?;
-        Ok(accepted / generated)
-    }
-
-    /// Corrects an accepted yield for finite acceptance.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`LikelihoodError`] when an integral cannot be evaluated or the
-    /// accepted integral is not positive.
-    pub fn acceptance_corrected_yield(
-        &self,
-        free: &[f64],
-        accepted_yield: f64,
-    ) -> LikelihoodResult<f64> {
-        let accepted = self.accepted_integral(free)?;
-        if accepted <= 0.0 {
-            return Err(LikelihoodError::NonPositiveAcceptedIntegral(accepted));
-        }
-        Ok(accepted_yield * self.generated_integral(free)? / accepted)
-    }
-
-    /// Returns the observed-yield-normalized cross section.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`LikelihoodError`] when `luminosity` is not positive or the
-    /// acceptance-corrected yield cannot be evaluated.
-    pub fn observed_cross_section(&self, free: &[f64], luminosity: f64) -> LikelihoodResult<f64> {
-        if !luminosity.is_finite() || luminosity <= 0.0 {
-            return Err(LikelihoodError::NonPositiveLuminosity(luminosity));
-        }
-        let full_accepted = positive_integral("accepted MC", self.full_accepted_integral(free)?)?;
-        Ok(self.data_weight_sum * self.generated_integral(free)? / full_accepted / luminosity)
-    }
-
-    /// Returns the fitted cross section from an absolute-rate term.
-    ///
-    /// For a tagged evaluator this uses the selected generated intensity
-    /// directly, without rescaling it to the observed yield.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`LikelihoodError::AbsoluteRateUnavailable`] for shape-only
-    /// terms, or [`LikelihoodError`] when luminosity or integral evaluation
-    /// fails.
-    pub fn fitted_cross_section(&self, free: &[f64], luminosity: f64) -> LikelihoodResult<f64> {
-        if !self.has_absolute_rate {
-            return Err(LikelihoodError::AbsoluteRateUnavailable(
-                self.name.as_str().to_owned(),
-            ));
-        }
-        if !luminosity.is_finite() || luminosity <= 0.0 {
-            return Err(LikelihoodError::NonPositiveLuminosity(luminosity));
-        }
-        Ok(self.generated_integral(free)? / luminosity)
-    }
-
-    /// Alias for [`Self::observed_cross_section`].
-    ///
-    /// # Errors
-    ///
-    /// Returns [`LikelihoodError`] when luminosity or integral evaluation fails.
-    pub fn cross_section(&self, free: &[f64], luminosity: f64) -> LikelihoodResult<f64> {
-        self.observed_cross_section(free, luminosity)
-    }
-
-    /// Returns the full-model accepted Monte Carlo integral.
-    ///
-    /// This differs from [`Self::accepted_integral`] only when the evaluator
-    /// was narrowed by tags.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`LikelihoodError`] when parameters are invalid, runtime
-    /// evaluation fails, or an intensity is not positive.
-    pub fn full_accepted_integral(&self, free: &[f64]) -> LikelihoodResult<f64> {
-        let params = self.full_projection.global_layout.values(free)?;
-        let local_params = self.full_projection.project(&params)?;
-        if let Some(normalization) = &self.full_normalization {
-            return normalization
-                .value(&local_params, &self.execution)
-                .map_err(LikelihoodError::from);
-        }
-        self.full_plan
-            .reduce(
-                &self.execution,
-                &local_params,
-                &self.full_accepted_mc,
-                ReductionPlan::weighted_positive_real(),
-            )
-            .map_err(|error| map_reduction_error("accepted MC", error))
     }
 
     fn weighted_intensity_sum(
@@ -2979,61 +2702,6 @@ mod tests {
             finite_difference_nll(&likelihood, &params, 0),
             epsilon = 1.0e-8
         );
-    }
-
-    #[test]
-    fn extended_nll_exposes_observed_and_fitted_cross_sections() {
-        let model =
-            CompiledModel::from_expr(&(event_scalar("x") * parameter!("scale", initial: 0.25)))
-                .unwrap();
-        let data = weighted_dataset(&[(2.0, 1.0), (3.0, 1.0)]);
-        let accepted_mc = weighted_dataset(&[(4.0, 1.0)]);
-        let generated_mc = weighted_dataset(&[(6.0, 1.0)]);
-        let likelihood =
-            Likelihood::new([
-                ExtendedNllTerm::new("extended", &model, &data, &accepted_mc).unwrap(),
-            ])
-            .unwrap();
-        let params = likelihood.default_params();
-        let integrals = likelihood
-            .cross_section_integrals("extended", &generated_mc)
-            .unwrap();
-
-        assert_relative_eq!(
-            integrals.observed_cross_section(&params, 10.0).unwrap(),
-            0.3
-        );
-        assert_relative_eq!(integrals.fitted_cross_section(&params, 10.0).unwrap(), 0.15);
-        assert_relative_eq!(
-            integrals.cross_section(&params, 10.0).unwrap(),
-            integrals.observed_cross_section(&params, 10.0).unwrap()
-        );
-        assert_relative_eq!(
-            likelihood
-                .intensity_datasets("extended")
-                .unwrap()
-                .0
-                .sum_weights()
-                .unwrap(),
-            data.sum_weights().unwrap()
-        );
-    }
-
-    #[test]
-    fn fitted_cross_section_rejects_shape_only_nll() {
-        let model = CompiledModel::from_expr(&event_scalar("x")).unwrap();
-        let data = weighted_dataset(&[(2.0, 1.0)]);
-        let accepted_mc = weighted_dataset(&[(4.0, 1.0)]);
-        let generated_mc = weighted_dataset(&[(6.0, 1.0)]);
-        let likelihood = single_term_likelihood("shape", &model, &data, &accepted_mc);
-        let integrals = likelihood
-            .cross_section_integrals("shape", &generated_mc)
-            .unwrap();
-
-        assert!(matches!(
-            integrals.fitted_cross_section(&[], 10.0),
-            Err(LikelihoodError::AbsoluteRateUnavailable(name)) if name == "shape"
-        ));
     }
 
     #[test]
@@ -3792,7 +3460,7 @@ mod tests {
     }
 
     #[test]
-    fn cross_section_integrals_use_named_intensity_term_and_global_params() {
+    fn intensity_integrals_use_named_intensity_term_and_global_params() {
         let model =
             CompiledModel::from_expr(&(event_scalar("x") * parameter!("scale", initial: 2.0)))
                 .unwrap();
@@ -3802,7 +3470,7 @@ mod tests {
         let likelihood = single_term_likelihood("KsKs", &model, &data, &accepted_mc);
         let params = likelihood.default_params();
         let integrals = likelihood
-            .cross_section_integrals("KsKs", &generated_mc)
+            .intensity_integrals("KsKs", &generated_mc)
             .unwrap();
 
         let accepted = 2.0 * 2.0 + 3.0 * 4.0;
@@ -3810,15 +3478,6 @@ mod tests {
         assert_eq!(integrals.name(), "KsKs");
         assert_relative_eq!(integrals.accepted_integral(&params).unwrap(), accepted);
         assert_relative_eq!(integrals.generated_integral(&params).unwrap(), generated);
-        assert_relative_eq!(integrals.acceptance(&params).unwrap(), accepted / generated);
-        assert_relative_eq!(
-            integrals.acceptance_corrected_yield(&params, 20.0).unwrap(),
-            20.0 * generated / accepted
-        );
-        assert_relative_eq!(
-            integrals.cross_section(&params, 5.0).unwrap(),
-            data.sum_weights().unwrap() * generated / accepted / 5.0
-        );
         assert_eq!(integrals.accepted_intensities(&params).unwrap().len(), 2);
         assert_eq!(integrals.generated_intensities(&params).unwrap().len(), 2);
     }
@@ -4154,7 +3813,7 @@ mod tests {
     }
 
     #[test]
-    fn cross_section_integrals_reject_non_intensity_terms() {
+    fn intensity_integrals_reject_non_intensity_terms() {
         let model =
             CompiledModel::from_expr(&(event_scalar("x") * parameter!("scale", initial: 0.5)))
                 .unwrap();
@@ -4169,7 +3828,7 @@ mod tests {
         ])
         .unwrap();
         let err = likelihood
-            .cross_section_integrals("ridge", &generated)
+            .intensity_integrals("ridge", &generated)
             .unwrap_err();
 
         assert!(matches!(err, LikelihoodError::NotIntensityTerm(ref name) if name == "ridge"));
@@ -4326,7 +3985,7 @@ mod tests {
     }
 
     #[test]
-    fn tagged_projection_produces_partial_weights_and_cross_sections() {
+    fn tagged_projection_produces_partial_weights_and_integrals() {
         let x = event_scalar("x");
         let selected = (Expr::from(parameter!("a", initial: 2.0)) * x.clone()).tagged("selected");
         let removed = Expr::from(parameter!("b", initial: 1.0)).tagged("removed");
@@ -4341,28 +4000,14 @@ mod tests {
             .projection("waves", &generated, ["selected"])
             .unwrap();
         let integrals = likelihood
-            .cross_section_integrals_with_tags("waves", &generated, ["selected"])
+            .intensity_integrals_with_tags("waves", &generated, ["selected"])
             .unwrap();
 
-        assert_relative_eq!(projection.full_accepted_integral(&params).unwrap(), 9.0);
         assert_relative_eq!(projection.generated_integral(&params).unwrap(), 16.0);
-        assert_relative_eq!(projection.acceptance(&params).unwrap(), 0.25);
         assert_relative_eq!(projection.intensities(&params).unwrap()[0], 16.0);
-        assert_relative_eq!(
-            projection.acceptance_corrected_yield(&params).unwrap(),
-            16.0 / 3.0
-        );
-        assert_relative_eq!(projection.weights(&params, false).unwrap()[0], 16.0);
-        assert_relative_eq!(projection.weights(&params, true).unwrap()[0], 16.0 / 3.0);
+        assert_relative_eq!(projection.weights(&params).unwrap()[0], 16.0);
         assert_relative_eq!(integrals.accepted_integral(&params).unwrap(), 4.0);
         assert_relative_eq!(integrals.generated_integral(&params).unwrap(), 16.0);
-        assert_relative_eq!(integrals.acceptance(&params).unwrap(), 0.25);
-        assert_relative_eq!(integrals.full_accepted_integral(&params).unwrap(), 9.0);
-        assert_relative_eq!(
-            integrals.acceptance_corrected_yield(&params, 12.0).unwrap(),
-            48.0
-        );
-        assert_relative_eq!(integrals.cross_section(&params, 2.0).unwrap(), 8.0 / 3.0);
     }
 
     #[cfg(feature = "wgpu")]

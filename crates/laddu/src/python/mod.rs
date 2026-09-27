@@ -1,4 +1,4 @@
-//! Python bindings for the public laddu analysis API.
+//! Python bindings for the public `laddu` analysis API.
 
 // Python-facing fallibility is documented with NumPy-style ``Raises`` sections.
 #![allow(clippy::missing_errors_doc)]
@@ -154,7 +154,7 @@ pub mod visualization;
 
 pub use laddu_fit::ganesh::python::ganesh;
 
-/// Define a native module containing laddu's complete Python API.
+/// Define a native module containing `laddu`'s complete Python API.
 ///
 /// Distribution crates invoke this macro so Maturin can extract the same static
 /// type metadata for every backend without maintaining Python or stub files.
@@ -162,7 +162,7 @@ pub use laddu_fit::ganesh::python::ganesh;
 macro_rules! laddu_python_module {
     ($name:ident, $backend:expr $(, $initializer:item)?) => {
         #[pyo3::pymodule(gil_used = false)]
-        #[doc = "laddu's native Python analysis API."]
+        #[doc = "`laddu`'s native Python analysis API."]
         pub mod $name {
             use pyo3::prelude::*;
 
@@ -185,20 +185,9 @@ macro_rules! laddu_python_module {
                 PyLuminosity as Luminosity,
                 PyEnsemble as Ensemble,
                 PyEstimate as Estimate, PyRateClosure as RateClosure,
+                PyCrossSection as CrossSection,
+                PyCrossSectionProjection as CrossSectionProjection,
                 PyScalarErrorView as ScalarErrorView,
-                PyYieldCrossSection as YieldCrossSection,
-                PyExposureCombinedCrossSection as ExposureCombinedCrossSection,
-                PyExposureFactor as ExposureFactor,
-                PyExposureCombinedCrossSectionProjection as ExposureCombinedCrossSectionProjection,
-                PyExposureCombinedReferenceCrossSection as ExposureCombinedReferenceCrossSection,
-                PyExposureCombinedReferenceCrossSectionProjection as ExposureCombinedReferenceCrossSectionProjection,
-                PyReferenceCrossSection as ReferenceCrossSection,
-                PyYieldCrossSectionProjection as YieldCrossSectionProjection,
-                PyComponentCrossSectionProjection as ComponentCrossSectionProjection,
-                PyReferenceCrossSectionProjection as ReferenceCrossSectionProjection,
-                PyReferenceCorrectedYield as ReferenceCorrectedYield,
-                PyReferenceCorrectedYieldProjection as ReferenceCorrectedYieldProjection,
-                PyReferenceCorrectionProvenance as ReferenceCorrectionProvenance,
                 PyYield as Yield,
                 PyComponentYieldProjection as ComponentYieldProjection,
                 PyYieldHistogramView as YieldHistogramView,
@@ -234,7 +223,7 @@ macro_rules! laddu_python_module {
             };
             #[pymodule_export]
             use $crate::python::likelihood::{
-                PyCrossSectionIntegrals as CrossSectionIntegrals,
+                PyIntensityIntegrals as IntensityIntegrals,
                 PyDatasetDiagnostics as DatasetDiagnostics,
                 PyExtendedNll as ExtendedNLL, PyLassoPenalty as LassoPenalty,
                 PyLikelihood as Likelihood, PyLikelihoodDiagnostics as LikelihoodDiagnostics,
@@ -433,7 +422,7 @@ mod tests {
                 "Execution",
                 "Model",
                 "Likelihood",
-                "CrossSectionIntegrals",
+                "IntensityIntegrals",
                 "LikelihoodProjection",
                 "Generator",
                 "ganesh",
@@ -462,12 +451,10 @@ mod tests {
                     );
                 }
             }
-            let cross_sections = module.getattr(py, "CrossSectionIntegrals").unwrap();
+            let cross_sections = module.getattr(py, "IntensityIntegrals").unwrap();
             for method in [
                 "accepted_integral",
                 "generated_integral",
-                "acceptance",
-                "full_accepted_integral",
                 "acceptance_corrected_yield",
                 "observed_cross_section",
                 "fitted_cross_section",
@@ -475,15 +462,13 @@ mod tests {
             ] {
                 assert!(
                     cross_sections.getattr(py, method).is_ok(),
-                    "missing CrossSectionIntegrals.{method}"
+                    "missing IntensityIntegrals.{method}"
                 );
             }
             let projection = module.getattr(py, "LikelihoodProjection").unwrap();
             for method in [
                 "accepted_integral",
                 "generated_integral",
-                "acceptance",
-                "full_accepted_integral",
                 "acceptance_corrected_yield",
                 "observed_cross_section",
                 "fitted_cross_section",

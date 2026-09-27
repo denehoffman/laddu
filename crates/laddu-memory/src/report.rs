@@ -24,7 +24,7 @@ pub struct MemoryPoolReport {
 pub struct MemoryResourceReport {
     /// Resource snapshot.
     pub resource: MemoryResource,
-    /// Currently reserved by laddu.
+    /// Currently reserved by `laddu`.
     pub laddu_reserved_bytes: u64,
     /// Process-state high-water reservation.
     pub laddu_high_water_bytes: u64,

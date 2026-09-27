@@ -126,6 +126,7 @@ pub use laddu::prelude::<<laddu_physics::quantum::*>>
 pub use laddu::prelude::AmplitudeError
 pub use laddu::prelude::AmplitudeResult
 pub use laddu::prelude::AnalysisSnapshot
+pub use laddu::prelude::AreaUnit
 pub use laddu::prelude::AutodiffMode
 pub use laddu::prelude::Axis
 pub use laddu::prelude::BinSpec
@@ -139,6 +140,7 @@ pub use laddu::prelude::Channel
 pub use laddu::prelude::ChannelGenerator
 pub use laddu::prelude::ColorPreset
 pub use laddu::prelude::ColumnType
+pub use laddu::prelude::CombinationMember
 pub use laddu::prelude::Comparison
 pub use laddu::prelude::CompileError
 pub use laddu::prelude::CompileOptions
@@ -146,7 +148,8 @@ pub use laddu::prelude::CompileResult
 pub use laddu::prelude::CompiledModel
 pub use laddu::prelude::ComponentIndex
 pub use laddu::prelude::CpuOptions
-pub use laddu::prelude::CrossSectionIntegrals
+pub use laddu::prelude::CrossSection
+pub use laddu::prelude::CrossSectionProjection
 pub use laddu::prelude::Dataset
 pub use laddu::prelude::DatasetBin
 pub use laddu::prelude::DatasetExprExt
@@ -199,6 +202,7 @@ pub use laddu::prelude::Histogram
 pub use laddu::prelude::InitialMomentum
 pub use laddu::prelude::InitialMomentumResult
 pub use laddu::prelude::InitialSpec
+pub use laddu::prelude::IntensityIntegrals
 pub use laddu::prelude::IntervalClosure
 pub use laddu::prelude::JitPolicy
 pub use laddu::prelude::KMatrixError
@@ -215,6 +219,7 @@ pub use laddu::prelude::LikelihoodName
 pub use laddu::prelude::LikelihoodProjection
 pub use laddu::prelude::LikelihoodResult
 pub use laddu::prelude::LikelihoodTerm
+pub use laddu::prelude::Luminosity
 pub use laddu::prelude::MassProposal
 pub use laddu::prelude::MemoryBudget
 pub use laddu::prelude::MemoryDecision

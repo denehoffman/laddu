@@ -99,7 +99,7 @@ impl ProjectionFixture {
                 DatasetRole::Generated,
                 storage,
             )?);
-            terms.push(NllTerm::new(
+            terms.push(ExtendedNllTerm::new(
                 format!("period_{period}"),
                 &model,
                 &data,
@@ -113,17 +113,22 @@ impl ProjectionFixture {
             .into_iter()
             .enumerate()
             .map(|(period, generated)| {
-                likelihood.cross_section_with_ensemble(
+                likelihood.cross_section(
                     format!("period_{period}"),
                     generated,
-                    10.0 + period as f64 * 2.5,
+                    Luminosity::new(10.0 + period as f64 * 2.5, AreaUnit::Nanobarn)?,
                     parameters.clone(),
-                    ensemble.clone(),
+                    Some(ensemble.clone()),
                 )
             })
             .collect::<Result<Vec<_>, _>>()?;
         let single = members[0].clone();
-        let combined = CrossSection::combine(members)?;
+        let combined = CrossSection::combine(
+            &members
+                .into_iter()
+                .map(|member| (member, 1.0))
+                .collect::<Vec<_>>(),
+        )?;
 
         Ok(Self {
             single,
@@ -165,7 +170,7 @@ impl ProjectionFixture {
         &self,
         target: ProjectionTarget,
         projections: usize,
-    ) -> FixtureResult<Vec<DifferentialCrossSection>> {
+    ) -> FixtureResult<Vec<CrossSectionProjection>> {
         let cross_section = match target {
             ProjectionTarget::Single => &self.single,
             ProjectionTarget::Combined => &self.combined,
@@ -178,7 +183,7 @@ impl ProjectionFixture {
         &self,
         target: ProjectionTarget,
         projections: usize,
-    ) -> FixtureResult<ProjectionSet> {
+    ) -> FixtureResult<Vec<(String, CrossSectionProjection)>> {
         if !matches!(projections, 1 | 4) {
             return Err(format!("projection count must be 1 or 4, got {projections}").into());
         }
@@ -192,7 +197,7 @@ impl ProjectionFixture {
             .map(|(index, axis)| Projection::new(format!("projection_{index}"), vec![axis.clone()]))
             .collect::<LikelihoodResult<Vec<_>>>()?;
         cross_section
-            .projection_set(&projections, &self.selections)
+            .project_many(&projections, &self.selections)
             .map_err(Into::into)
     }
 
@@ -200,7 +205,7 @@ impl ProjectionFixture {
     pub fn evaluate_combined_unique(
         &self,
         projections: usize,
-    ) -> FixtureResult<Vec<DifferentialCrossSection>> {
+    ) -> FixtureResult<Vec<CrossSectionProjection>> {
         let selections = HashMap::from([
             ("signal".to_owned(), vec!["signal".to_owned()]),
             ("background".to_owned(), vec!["background".to_owned()]),
@@ -213,7 +218,7 @@ impl ProjectionFixture {
         cross_section: &CrossSection,
         projections: usize,
         selections: &HashMap<String, Vec<String>>,
-    ) -> FixtureResult<Vec<DifferentialCrossSection>> {
+    ) -> FixtureResult<Vec<CrossSectionProjection>> {
         if !matches!(projections, 1 | 4) {
             return Err(format!("projection count must be 1 or 4, got {projections}").into());
         }
@@ -221,7 +226,7 @@ impl ProjectionFixture {
             .iter()
             .map(|axis| {
                 cross_section
-                    .differential(std::slice::from_ref(axis), selections)
+                    .project(std::slice::from_ref(axis), selections)
                     .map_err(Into::into)
             })
             .collect()

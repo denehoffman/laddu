@@ -226,12 +226,8 @@ def test_artifact_reconstructs_yields_without_refitting(tmp_path: Path) -> None:
     reconstructed = ld.FitArtifact.load(path).yield_context(target, 'signal', generated_mc=generated)
 
     assert reconstructed.selected_yield().central == original.selected_yield().central
-    assert reconstructed.corrected_observed_yield().central == pytest.approx(
-        original.corrected_observed_yield().central
-    )
-    assert reconstructed.corrected_observed_yield().draws.tolist() == pytest.approx(
-        original.corrected_observed_yield().draws.tolist()
-    )
+    assert reconstructed.selected_yield().draws.tolist() == pytest.approx(original.selected_yield().draws.tolist())
+    assert reconstructed.rate_closure().status == original.rate_closure().status
 
 
 def test_explicit_parameter_migration_and_snapshot_identity(tmp_path: Path) -> None:

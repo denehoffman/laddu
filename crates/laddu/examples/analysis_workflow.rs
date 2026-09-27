@@ -30,7 +30,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let model = CompiledModel::from_expr(&(s_wave + d_wave).norm_sqr())?;
     let likelihood = Likelihood::new([NllTerm::new("waves", &model, &selected, &selected)?])?;
     let projection = likelihood.projection("waves", &selected, ["S"])?;
-    let weights = projection.weights(&likelihood.default_params(), true)?;
+    let weights = projection.weights(&likelihood.default_params())?;
 
     println!("{} bins, {} projected weights", bins.len(), weights.len());
     Ok(())

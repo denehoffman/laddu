@@ -1,4 +1,4 @@
-//! WebGPU model execution and resident event-cache support for laddu.
+//! WebGPU model execution and resident event-cache support for `laddu`.
 
 mod adapter;
 mod error;

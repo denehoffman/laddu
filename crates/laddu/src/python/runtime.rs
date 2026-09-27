@@ -281,7 +281,7 @@ impl PyMemoryResource {
 
 #[pyclass(name = "MemoryState", module = "laddu", frozen, skip_from_py_object)]
 #[derive(Clone)]
-/// Live host/device discovery and laddu reservation state.
+/// Live host/device discovery and `laddu` reservation state.
 pub struct PyMemoryState {
     inner: MemoryState,
 }
@@ -644,7 +644,7 @@ impl PyExecution {
         self.inner.is_distributed()
     }
 
-    /// Return physical-resource memory information and laddu high-water usage.
+    /// Return physical-resource memory information and `laddu` high-water usage.
     fn memory_report<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
         let report = memory_report_dict(py, &self.inner.memory_report())?;
         let pools = self

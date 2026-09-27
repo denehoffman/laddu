@@ -136,13 +136,13 @@ def plot_acceptance_diagnostics(
     periods: tuple[Period, ...],
     generated_samples: list[ld.Dataset],
     accepted_samples: list[ld.Dataset],
-    distributions: list[ld.YieldCrossSectionProjection],
+    distributions: list[ld.CrossSectionProjection],
     mass: ld.Expr,
     execution: ld.Execution,
     edges: np.ndarray,
     output: Path,
 ) -> None:
-    """Plot corrected yields and empirical/nominal acceptance for every period."""
+    """Plot fitted generated yields and empirical/nominal acceptance for every period."""
     centers = 0.5 * (edges[:-1] + edges[1:])
     widths = np.diff(edges)
     figure, axes = plt.subplots(2, 2, figsize=(11.0, 8.0), sharex=True, constrained_layout=True)
@@ -180,22 +180,22 @@ def plot_acceptance_diagnostics(
             where=generated_counts > 0.0,
         )
 
-        corrected_yield = np.asarray(distribution.observed.central, dtype=float) * period.luminosity
-        corrected_error = binned_std(distribution.observed) * period.luminosity
+        fitted_yield_density = np.asarray(distribution.total.central, dtype=float) * period.luminosity
+        fitted_error_density = binned_std(distribution.total) * period.luminosity
         axis.errorbar(
             centers,
-            corrected_yield,
+            fitted_yield_density,
             xerr=0.5 * widths,
-            yerr=corrected_error,
+            yerr=fitted_error_density,
             fmt='o',
             color='black',
             markersize=3.5,
             linewidth=1.0,
-            label='Corrected data yield',
+            label='Fitted generated yield',
         )
         axis.set(
             title=rf'$\mathrm{{{period.label}}}$',
-            ylabel=r'Acceptance-corrected events / GeV',
+            ylabel=r'Fitted generated events / GeV',
             ylim=(0.0, None),
         )
         axis.tick_params(direction='in', top=True)
@@ -233,37 +233,15 @@ def plot_acceptance_diagnostics(
 
 
 def plot_combined_cross_section(
-    distribution: ld.ExposureCombinedCrossSectionProjection,
+    distribution: ld.CrossSectionProjection,
     output: Path,
 ) -> None:
-    """Plot combined data and fitted differential cross sections with 1-sigma errors."""
+    """Plot combined fitted differential cross sections with 1-sigma errors."""
     edges = np.asarray(distribution.axes[0], dtype=float)
-    centers = 0.5 * (edges[:-1] + edges[1:])
-    widths = np.diff(edges)
-    data = np.asarray(distribution.observed.central, dtype=float)
-    data_error = binned_std(distribution.observed)
-
     figure, axis = plt.subplots(figsize=(8.0, 5.5), constrained_layout=True)
-    axis.errorbar(
-        centers,
-        data,
-        xerr=0.5 * widths,
-        yerr=data_error,
-        fmt='o',
-        color='black',
-        markersize=4,
-        linewidth=1,
-        capsize=0,
-        label=r'$\mathrm{Acceptance\ corrected\ data}$',
-        zorder=5,
-    )
-
-    if distribution.fitted is None:
-        message = 'extended likelihood did not produce a fitted cross section'
-        raise RuntimeError(message)
     estimates = [
-        ('total', distribution.fitted),
-        *((name, component.generated) for name, component in sorted(distribution.components.items())),
+        ('total', distribution.total),
+        *((name, component) for name, component in sorted(distribution.components.items())),
     ]
     labels = {
         'total': r'$\mathrm{Coherent\ total}$',
@@ -468,14 +446,15 @@ def main() -> None:  # noqa: PLR0915
     print(f'bootstrap ensemble completed in {bootstrap_time:.3f}s', flush=True)
 
     cross_section_started = time.perf_counter()
-    yield_contexts = []
+    sections: list[ld.CrossSection] = []
     for period, generated in zip(periods, generated_samples, strict=True):
-        print(f'{period.label}: preparing yield context...', flush=True)
-        yield_contexts.append(
-            likelihood.yield_context(
+        print(f'{period.label}: evaluating fitted cross section...', flush=True)
+        sections.append(
+            likelihood.cross_section(
                 period.name,
-                generated_mc=generated,
-                parameters=fitted,
+                generated,
+                ld.Luminosity(period.luminosity, ld.AreaUnit.PICOBARN),
+                fitted,
                 ensemble=ensemble,
             )
         )
@@ -488,14 +467,9 @@ def main() -> None:  # noqa: PLR0915
     diagnostic_axis = ld.Axis(mass, edges=diagnostic_edges)
     period_differential_started = time.perf_counter()
     distributions = []
-    for period, yield_context in zip(periods, yield_contexts, strict=True):
-        print(f'{period.label}: propagating the projection set...', flush=True)
-        projection_set = yield_context.cross_section_projection_set(
-            {'mass': diagnostic_axis},
-            ld.Luminosity(period.luminosity, ld.AreaUnit.BARN),
-            components=COMPONENTS,
-        )
-        distributions.append(projection_set['mass'])
+    for period, section in zip(periods, sections, strict=True):
+        print(f'{period.label}: projecting fitted intensity...', flush=True)
+        distributions.append(section.project([diagnostic_axis], components=COMPONENTS))
     period_differential_time = time.perf_counter() - period_differential_started
     print(
         f'period differential cross sections completed in {period_differential_time:.3f}s',
@@ -503,15 +477,8 @@ def main() -> None:  # noqa: PLR0915
     )
     combined_differential_started = time.perf_counter()
     print('propagating the combined differential cross section...', flush=True)
-    period_distributions = [
-        yield_context.projection(axis, components=COMPONENTS).to_cross_section(
-            ld.Luminosity(period.luminosity, ld.AreaUnit.BARN)
-        )
-        for period, yield_context in zip(periods, yield_contexts, strict=True)
-    ]
-    combined_distribution = ld.YieldCrossSectionProjection.combine(
-        [(distribution, 1.0) for distribution in period_distributions]
-    )
+    combined_section = ld.CrossSection.combine(sections)
+    combined_distribution = combined_section.project([axis], components=COMPONENTS)
     combined_differential_time = time.perf_counter() - combined_differential_started
     print(
         f'combined differential cross section completed in {combined_differential_time:.3f}s',
@@ -521,21 +488,17 @@ def main() -> None:  # noqa: PLR0915
     diagnostic_widths = np.diff(diagnostic_edges)
     integrated = {
         period.name: {
-            'total': integrate_binned(distribution.fitted, diagnostic_widths),
-            'f0': integrate_binned(distribution.components['f0'].generated, diagnostic_widths),
-            'f2': integrate_binned(distribution.components['f2'].generated, diagnostic_widths),
+            'total': integrate_binned(distribution.total, diagnostic_widths),
+            'f0': integrate_binned(distribution.components['f0'], diagnostic_widths),
+            'f2': integrate_binned(distribution.components['f2'], diagnostic_widths),
         }
         for period, distribution in zip(periods, distributions, strict=True)
     }
     widths = np.diff(edges)
-    combined_fitted = combined_distribution.fitted
-    if combined_fitted is None:
-        message = 'extended likelihood did not produce a combined fitted cross section'
-        raise RuntimeError(message)
     integrated['combined'] = {
-        'total': integrate_binned(combined_fitted, widths),
-        'f0': integrate_binned(combined_distribution.components['f0'].generated, widths),
-        'f2': integrate_binned(combined_distribution.components['f2'].generated, widths),
+        'total': integrate_binned(combined_distribution.total, widths),
+        'f0': integrate_binned(combined_distribution.components['f0'], widths),
+        'f2': integrate_binned(combined_distribution.components['f2'], widths),
     }
 
     print('\nintegrated cross sections', flush=True)

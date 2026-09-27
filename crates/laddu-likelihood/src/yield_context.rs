@@ -5,12 +5,12 @@ use std::sync::Arc;
 use laddu_data::data::Dataset;
 
 use crate::{
-    CrossSectionIntegrals, Ensemble, ErrorComponent, Estimate, Likelihood, LikelihoodError,
-    LikelihoodResult, Luminosity, ReferenceCrossSection, YieldCrossSection,
+    Ensemble, ErrorComponent, Estimate, IntensityIntegrals, Likelihood, LikelihoodError,
+    LikelihoodResult,
 };
 
 fn fitted_fill_variance(
-    integrals: &CrossSectionIntegrals,
+    integrals: &IntensityIntegrals,
     parameters: &[f64],
     generated: bool,
 ) -> LikelihoodResult<f64> {
@@ -19,7 +19,7 @@ fn fitted_fill_variance(
     } else {
         integrals.accepted_mc_source()
     };
-    let weights = crate::cross_section::dataset_weights(source)?;
+    let weights = crate::yield_projection::dataset_weights(source)?;
     let mut variance = 0.0;
     let parameter_sets = [parameters];
     let contexts = ["scalar yield error budget".to_owned()];
@@ -65,13 +65,9 @@ pub struct RateClosure {
     observed_selected: Estimate,
     accepted_fitted: Option<Estimate>,
     generated_fitted: Option<Estimate>,
-    corrected_observed: Option<Estimate>,
     accepted_residual: Option<f64>,
-    corrected_residual: Option<f64>,
     accepted_relative_residual: Option<f64>,
-    corrected_relative_residual: Option<f64>,
     accepted_residual_draws: Vec<f64>,
-    corrected_residual_draws: Vec<f64>,
     absolute_tolerance: f64,
     relative_tolerance: f64,
     status: RateClosureStatus,
@@ -94,11 +90,6 @@ impl RateClosure {
         self.generated_fitted.as_ref()
     }
 
-    /// Returns the corrected observed yield, when available.
-    pub fn corrected_observed_yield(&self) -> Option<&Estimate> {
-        self.corrected_observed.as_ref()
-    }
-
     /// Returns the central accepted-minus-selected residual.
     pub fn accepted_residual(&self) -> Option<f64> {
         self.accepted_residual
@@ -109,34 +100,14 @@ impl RateClosure {
         self.accepted_residual.map(f64::abs)
     }
 
-    /// Returns the central corrected-observed-minus-generated residual.
-    pub fn corrected_residual(&self) -> Option<f64> {
-        self.corrected_residual
-    }
-
-    /// Returns the central absolute corrected-observed-minus-generated residual.
-    pub fn corrected_absolute_residual(&self) -> Option<f64> {
-        self.corrected_residual.map(f64::abs)
-    }
-
     /// Returns the central relative accepted-yield residual.
     pub fn accepted_relative_residual(&self) -> Option<f64> {
         self.accepted_relative_residual
     }
 
-    /// Returns the central relative corrected-yield residual.
-    pub fn corrected_relative_residual(&self) -> Option<f64> {
-        self.corrected_relative_residual
-    }
-
     /// Returns accepted-minus-selected residuals in ensemble draw order.
     pub fn accepted_residual_draws(&self) -> &[f64] {
         &self.accepted_residual_draws
-    }
-
-    /// Returns corrected-observed-minus-generated residuals in draw order.
-    pub fn corrected_residual_draws(&self) -> &[f64] {
-        &self.corrected_residual_draws
     }
 
     /// Returns the absolute tolerance used by the closure comparison.
@@ -179,129 +150,17 @@ pub struct Yield {
     scalars: YieldScalars,
 }
 
-/// Provenance for an explicitly supplied reference-acceptance correction.
-#[derive(Clone, Debug, PartialEq)]
-pub struct ReferenceCorrectionProvenance {
-    reference_term_name: String,
-    reference_model_digest: u64,
-    accepted_dataset_identity: u64,
-    generated_dataset_identity: u64,
-    reference_parameters: Vec<f64>,
-    reference_draw_parameters: Vec<Vec<f64>>,
-    reference_replica_accepted_dataset_identities: Vec<u64>,
-    selected_uncertainty_source: Option<u64>,
-    reference_uncertainty_source: Option<u64>,
-}
-
-impl ReferenceCorrectionProvenance {
-    /// Returns the reference intensity-term name.
-    pub fn reference_term_name(&self) -> &str {
-        &self.reference_term_name
-    }
-
-    /// Returns the process-local structural digest of the reference model.
-    pub fn reference_model_digest(&self) -> u64 {
-        self.reference_model_digest
-    }
-
-    /// Returns the identity of the accepted sample used by the reference.
-    pub fn accepted_dataset_identity(&self) -> u64 {
-        self.accepted_dataset_identity
-    }
-
-    /// Returns the identity of the generated sample used by the reference.
-    pub fn generated_dataset_identity(&self) -> u64 {
-        self.generated_dataset_identity
-    }
-
-    /// Returns the central free-parameter values for the reference intensity.
-    pub fn reference_parameters(&self) -> &[f64] {
-        &self.reference_parameters
-    }
-
-    /// Returns reference free-parameter rows in uncertainty-draw order.
-    pub fn reference_draw_parameters(&self) -> &[Vec<f64>] {
-        &self.reference_draw_parameters
-    }
-
-    /// Returns accepted-sample identities for paired reference replicas.
-    pub fn reference_replica_accepted_dataset_identities(&self) -> &[u64] {
-        &self.reference_replica_accepted_dataset_identities
-    }
-
-    /// Returns the selected-yield uncertainty source, when present.
-    pub fn selected_uncertainty_source(&self) -> Option<u64> {
-        self.selected_uncertainty_source
-    }
-
-    /// Returns the reference uncertainty source, when present.
-    pub fn reference_uncertainty_source(&self) -> Option<u64> {
-        self.reference_uncertainty_source
-    }
-}
-
-/// An observed yield corrected by an explicitly supplied reference acceptance.
-#[derive(Clone, Debug, PartialEq)]
-pub struct ReferenceCorrectedYield {
-    value: Estimate,
-    acceptance: Estimate,
-    provenance: ReferenceCorrectionProvenance,
-}
-
-impl ReferenceCorrectedYield {
-    /// Convert the reference-corrected yield with explicit luminosity.
-    pub fn to_cross_section(&self, luminosity: &Luminosity) -> ReferenceCrossSection {
-        ReferenceCrossSection {
-            value: self.value.divided_by_luminosity(luminosity),
-            unit: luminosity.unit(),
-            luminosity: luminosity.clone(),
-            provenance: self.provenance.clone(),
-        }
-    }
-    /// Returns the reference-corrected observed yield.
-    pub fn value(&self) -> &Estimate {
-        &self.value
-    }
-
-    /// Returns the reference acceptance used for the correction.
-    pub fn acceptance(&self) -> &Estimate {
-        &self.acceptance
-    }
-
-    /// Returns the complete correction provenance.
-    pub fn provenance(&self) -> &ReferenceCorrectionProvenance {
-        &self.provenance
-    }
-
-    /// Returns the reference intensity-term name.
-    pub fn reference_term_name(&self) -> &str {
-        self.provenance.reference_term_name()
-    }
-
-    /// Returns the process-local structural digest of the reference model.
-    pub fn reference_model_digest(&self) -> u64 {
-        self.provenance.reference_model_digest()
-    }
-
-    /// Reference corrections do not carry a fitted rate-closure claim.
-    pub const fn has_rate_closure(&self) -> bool {
-        false
-    }
-}
-
 #[derive(Clone, Debug)]
 struct YieldScalars {
     selected: Estimate,
     rate: RateScalars,
-    acceptance: Estimate,
-    corrected: Estimate,
 }
 
 #[derive(Clone, Debug)]
 enum RateScalars {
     Absolute {
-        accepted: Estimate,
-        generated: Estimate,
+        accepted: Box<Estimate>,
+        generated: Box<Estimate>,
     },
     ShapeOnly,
 }
@@ -318,32 +177,6 @@ impl std::fmt::Debug for Yield {
 }
 
 impl Yield {
-    /// Convert this yield context with explicit integrated luminosity.
-    /// Observed and fitted pathways remain separate and retain rate closure.
-    pub fn to_cross_section(&self, luminosity: &Luminosity) -> LikelihoodResult<YieldCrossSection> {
-        let observed = self
-            .corrected_observed_yield()
-            .divided_by_luminosity(luminosity);
-        let fitted = self
-            .has_absolute_rate
-            .then(|| self.generated_fitted_yield())
-            .transpose()?
-            .map(|estimate| estimate.divided_by_luminosity(luminosity));
-        let accepted_fitted = self
-            .has_absolute_rate
-            .then(|| self.accepted_fitted_yield())
-            .transpose()?
-            .map(|estimate| estimate.divided_by_luminosity(luminosity));
-        Ok(YieldCrossSection {
-            observed,
-            fitted,
-            accepted_fitted,
-            unit: luminosity.unit(),
-            luminosity: luminosity.clone(),
-            closure: self.rate_closure(),
-        })
-    }
-
     /// Constructs a scalar yield context with optional paired uncertainty draws.
     ///
     /// # Errors
@@ -362,7 +195,7 @@ impl Yield {
         let (observed_data, accepted_mc) = likelihood.intensity_datasets(&term_name)?;
         let observed_data = observed_data.clone();
         let accepted_mc = accepted_mc.clone();
-        let integrals = likelihood.cross_section_integrals(&term_name, &generated_mc)?;
+        let integrals = likelihood.intensity_integrals(&term_name, &generated_mc)?;
         let has_absolute_rate = integrals.has_absolute_rate();
         let mut replica_integrals = Vec::new();
         if let Some(ensemble) = &ensemble {
@@ -404,7 +237,7 @@ impl Yield {
                     let data_weight_sum = replica.intensity_data_weight_sum(&term_name)?;
                     integrals.with_data_weight_sum(data_weight_sum)
                 } else {
-                    replica.cross_section_integrals(&term_name, &generated_mc)?
+                    replica.intensity_integrals(&term_name, &generated_mc)?
                 };
                 if replica_integral.has_absolute_rate() != has_absolute_rate {
                     return Err(LikelihoodError::InvalidCrossSection(
@@ -469,58 +302,16 @@ impl Yield {
             generated_mc.identity(),
         )
         .with_paired_bootstrap(paired_bootstrap);
-        let a = accepted_integral.value();
-        let g = generated_integral.value();
-        let d = selected.value();
-        let acceptance = finite_estimate(
-            "fitted acceptance",
-            accepted_integral.checked_div(&generated_integral)?,
-        )?
-        .with_fill_variance(
-            ErrorComponent::AcceptedMcFill,
-            accepted_variance / (g * g),
-            accepted_mc.identity(),
-        )
-        .with_fill_variance(
-            ErrorComponent::GeneratedMcFill,
-            a * a * generated_variance / g.powi(4),
-            generated_mc.identity(),
-        )
-        .with_paired_bootstrap(paired_bootstrap);
-        let corrected = finite_estimate(
-            "corrected observed yield",
-            selected
-                .checked_mul(&generated_integral)?
-                .checked_div(&accepted_integral)?,
-        )?
-        .with_fill_variance(
-            ErrorComponent::DataFill,
-            (g / a).powi(2) * selected_variance,
-            observed_data.identity(),
-        )
-        .with_fill_variance(
-            ErrorComponent::AcceptedMcFill,
-            (d * g / (a * a)).powi(2) * accepted_variance,
-            accepted_mc.identity(),
-        )
-        .with_fill_variance(
-            ErrorComponent::GeneratedMcFill,
-            (d / a).powi(2) * generated_variance,
-            generated_mc.identity(),
-        )
-        .with_paired_bootstrap(paired_bootstrap);
         let scalars = YieldScalars {
             selected,
             rate: if has_absolute_rate {
                 RateScalars::Absolute {
-                    accepted: accepted_integral,
-                    generated: generated_integral,
+                    accepted: Box::new(accepted_integral),
+                    generated: Box::new(generated_integral),
                 }
             } else {
                 RateScalars::ShapeOnly
             },
-            acceptance,
-            corrected,
         };
         Ok(Self {
             likelihood,
@@ -587,7 +378,7 @@ impl Yield {
     /// non-positive, or a paired draw cannot be evaluated.
     pub fn accepted_fitted_yield(&self) -> LikelihoodResult<Estimate> {
         match &self.scalars.rate {
-            RateScalars::Absolute { accepted, .. } => Ok(accepted.clone()),
+            RateScalars::Absolute { accepted, .. } => Ok((**accepted).clone()),
             RateScalars::ShapeOnly => Err(LikelihoodError::AbsoluteRateUnavailable(format!(
                 "{} (accepted fitted yield)",
                 self.term_name
@@ -602,7 +393,7 @@ impl Yield {
     /// non-positive, or a paired draw cannot be evaluated.
     pub fn generated_fitted_yield(&self) -> LikelihoodResult<Estimate> {
         match &self.scalars.rate {
-            RateScalars::Absolute { generated, .. } => Ok(generated.clone()),
+            RateScalars::Absolute { generated, .. } => Ok((**generated).clone()),
             RateScalars::ShapeOnly => Err(LikelihoodError::AbsoluteRateUnavailable(format!(
                 "{} (generated fitted yield)",
                 self.term_name
@@ -610,224 +401,18 @@ impl Yield {
         }
     }
 
-    /// Returns fitted acceptance, A/G.
-    pub fn fitted_acceptance(&self) -> &Estimate {
-        &self.scalars.acceptance
-    }
-
-    /// Returns the corrected observed yield, DG/A.
-    pub fn corrected_observed_yield(&self) -> &Estimate {
-        &self.scalars.corrected
-    }
-
-    /// Corrects the selected observed yield with an explicit reference intensity.
-    ///
-    /// This result is separate from the fitted correction and never carries a
-    /// fitted rate-closure claim. When both the selected yield and reference
-    /// have draws, estimate arithmetic retains their distinct source identity
-    /// and applies the library's deterministic independent-source pairing.
-    ///
-    /// # Errors
-    /// Returns an error for incompatible parameters, samples, replica
-    /// provenance, non-finite evaluation, or non-positive reference support.
-    pub fn reference_corrected(
-        &self,
-        reference_likelihood: Arc<Likelihood>,
-        reference_term_name: impl Into<String>,
-        reference_generated_mc: Dataset,
-        reference_parameters: Vec<f64>,
-        reference_ensemble: Option<Ensemble>,
-    ) -> LikelihoodResult<ReferenceCorrectedYield> {
-        reference_likelihood
-            .params()
-            .validate_free_values(&reference_parameters)?;
-        let reference_term_name = reference_term_name.into();
-        let reference_model_digest =
-            reference_likelihood.intensity_model_digest(&reference_term_name)?;
-        let (_, reference_accepted_mc) =
-            reference_likelihood.intensity_datasets(&reference_term_name)?;
-        let mut reference_replica_accepted_dataset_identities = Vec::new();
-        if let Some(ensemble) = &reference_ensemble {
-            let names = reference_likelihood
-                .params()
-                .free_params()
-                .iter()
-                .map(|id| reference_likelihood.params().name(*id).map(str::to_owned))
-                .collect::<Result<Vec<_>, _>>()?;
-            if names != ensemble.parameter_names() {
-                return Err(LikelihoodError::InvalidCrossSection(
-                    "reference ensemble parameter names do not match the reference likelihood"
-                        .to_owned(),
-                ));
-            }
-            for parameters in ensemble.draws() {
-                reference_likelihood
-                    .params()
-                    .validate_free_values(parameters)?;
-            }
-            for replica in ensemble.replicas() {
-                if replica.intensity_model_digest(&reference_term_name)? != reference_model_digest {
-                    return Err(LikelihoodError::InvalidCrossSection(
-                        "reference ensemble replica model does not match the reference likelihood"
-                            .to_owned(),
-                    ));
-                }
-                let replica_names = replica
-                    .params()
-                    .free_params()
-                    .iter()
-                    .map(|id| replica.params().name(*id).map(str::to_owned))
-                    .collect::<Result<Vec<_>, _>>()?;
-                if replica_names != names {
-                    return Err(LikelihoodError::InvalidCrossSection(
-                        "reference ensemble replica parameter names do not match the reference likelihood"
-                            .to_owned(),
-                    ));
-                }
-                let (_, replica_accepted) = replica.intensity_datasets(&reference_term_name)?;
-                reference_replica_accepted_dataset_identities.push(replica_accepted.identity());
-            }
-        }
-        let integrals = reference_likelihood
-            .cross_section_integrals(&reference_term_name, &reference_generated_mc)?;
-        let accepted_variance = fitted_fill_variance(&integrals, &reference_parameters, false)?;
-        let generated_variance = fitted_fill_variance(&integrals, &reference_parameters, true)?;
-        let paired_bootstrap = reference_ensemble
-            .as_ref()
-            .is_some_and(|value| !value.replicas().is_empty());
-        let mut replica_integrals = Vec::new();
-        if let Some(ensemble) = &reference_ensemble {
-            for replica in ensemble.replicas() {
-                let replica_integral = if ensemble.replicas_share_event_rows() {
-                    integrals.clone()
-                } else {
-                    replica
-                        .cross_section_integrals(&reference_term_name, &reference_generated_mc)?
-                };
-                replica_integrals.push(replica_integral);
-            }
-        }
-        let accepted = evaluate_estimate(
-            &integrals,
-            &reference_parameters,
-            reference_ensemble.as_ref(),
-            &replica_integrals,
-            |integrals, parameters| {
-                positive_reference_accepted(
-                    integrals.accepted_integral(parameters)?,
-                    integrals.accepted_mc_source().stats()?.events() > 0,
-                )
-            },
-        )?;
-        let generated = evaluate_estimate(
-            &integrals,
-            &reference_parameters,
-            reference_ensemble.as_ref(),
-            &replica_integrals,
-            |integrals, parameters| {
-                positive_reference_generated(
-                    integrals.generated_integral(parameters)?,
-                    integrals.generated_mc_source().stats()?.events() > 0,
-                )
-            },
-        )?;
-        let a = accepted.value();
-        let g = generated.value();
-        let d = self.selected_yield().value();
-        let acceptance =
-            finite_estimate("reference acceptance", accepted.checked_div(&generated)?)?
-                .with_fill_variance(
-                    ErrorComponent::AcceptedMcFill,
-                    accepted_variance / g.powi(2),
-                    reference_accepted_mc.identity(),
-                )
-                .with_fill_variance(
-                    ErrorComponent::GeneratedMcFill,
-                    a.powi(2) * generated_variance / g.powi(4),
-                    reference_generated_mc.identity(),
-                )
-                .with_paired_bootstrap(paired_bootstrap);
-        let mut value = finite_estimate(
-            "reference-corrected observed yield",
-            self.selected_yield().checked_div(&acceptance)?,
-        )?
-        .with_fill_variance(
-            ErrorComponent::DataFill,
-            (g / a).powi(2) * self.observed_data.stats()?.sum_squared_weights(),
-            self.observed_data.identity(),
-        )
-        .with_fill_variance(
-            ErrorComponent::AcceptedMcFill,
-            (d * g / a.powi(2)).powi(2) * accepted_variance,
-            reference_accepted_mc.identity(),
-        )
-        .with_fill_variance(
-            ErrorComponent::GeneratedMcFill,
-            (d / a).powi(2) * generated_variance,
-            reference_generated_mc.identity(),
-        )
-        .with_paired_bootstrap(
-            paired_bootstrap
-                || self
-                    .ensemble
-                    .as_ref()
-                    .is_some_and(|value| !value.replicas().is_empty()),
-        );
-        if acceptance.draws().len() >= 2 {
-            let draws = acceptance
-                .draws()
-                .iter()
-                .map(|value| d / value)
-                .collect::<Vec<_>>();
-            let mean = draws.iter().sum::<f64>() / draws.len() as f64;
-            let variance = draws
-                .iter()
-                .map(|value| (value - mean).powi(2))
-                .sum::<f64>()
-                / (draws.len() - 1) as f64;
-            if let Some(source_id) = reference_ensemble.as_ref().map(Ensemble::source_id) {
-                value =
-                    value.with_fill_variance(ErrorComponent::ReferenceModel, variance, source_id);
-            }
-        }
-        let provenance = ReferenceCorrectionProvenance {
-            reference_term_name,
-            reference_model_digest,
-            accepted_dataset_identity: reference_accepted_mc.identity(),
-            generated_dataset_identity: reference_generated_mc.identity(),
-            reference_parameters,
-            reference_draw_parameters: reference_ensemble
-                .as_ref()
-                .map(|ensemble| ensemble.draws().to_vec())
-                .unwrap_or_default(),
-            reference_replica_accepted_dataset_identities,
-            selected_uncertainty_source: self.selected_yield().source_id(),
-            reference_uncertainty_source: reference_ensemble.as_ref().map(Ensemble::source_id),
-        };
-        Ok(ReferenceCorrectedYield {
-            value,
-            acceptance,
-            provenance,
-        })
-    }
-
-    /// Compares accepted fitted and corrected observed yields to their observed/generated counterparts.
+    /// Compare the accepted fitted yield with the observed yield.
     pub fn rate_closure(&self) -> RateClosure {
-        let scalars = self.scalars.clone();
-        let observed_selected = scalars.selected;
-        let (accepted_fitted, generated_fitted) = match scalars.rate {
+        let observed_selected = self.scalars.selected.clone();
+        let (accepted_fitted, generated_fitted) = match &self.scalars.rate {
             RateScalars::ShapeOnly => {
                 return RateClosure {
                     observed_selected,
                     accepted_fitted: None,
                     generated_fitted: None,
-                    corrected_observed: Some(scalars.corrected),
                     accepted_residual: None,
-                    corrected_residual: None,
                     accepted_relative_residual: None,
-                    corrected_relative_residual: None,
                     accepted_residual_draws: Vec::new(),
-                    corrected_residual_draws: Vec::new(),
                     absolute_tolerance: DEFAULT_ABSOLUTE_CLOSURE_TOLERANCE,
                     relative_tolerance: DEFAULT_RELATIVE_CLOSURE_TOLERANCE,
                     status: RateClosureStatus::NotApplicable,
@@ -837,30 +422,18 @@ impl Yield {
             RateScalars::Absolute {
                 accepted,
                 generated,
-            } => (accepted, generated),
+            } => ((**accepted).clone(), (**generated).clone()),
         };
-        let corrected_observed = scalars.corrected;
         let accepted_residual = accepted_fitted.value() - observed_selected.value();
-        let corrected_residual = corrected_observed.value() - generated_fitted.value();
         let accepted_relative_residual =
             relative_residual(accepted_residual, observed_selected.value());
-        let corrected_relative_residual =
-            relative_residual(corrected_residual, generated_fitted.value());
         let accepted_residual_draws = accepted_fitted
             .draws()
             .iter()
             .zip(observed_selected.draws())
             .map(|(accepted, observed)| accepted - observed)
             .collect::<Vec<_>>();
-        let corrected_residual_draws = corrected_observed
-            .draws()
-            .iter()
-            .zip(generated_fitted.draws())
-            .map(|(corrected, generated)| corrected - generated)
-            .collect::<Vec<_>>();
-        let status = if within_tolerance(accepted_residual, observed_selected.value())
-            && within_tolerance(corrected_residual, generated_fitted.value())
-        {
+        let status = if within_tolerance(accepted_residual, observed_selected.value()) {
             RateClosureStatus::Closed
         } else {
             RateClosureStatus::Failed
@@ -871,13 +444,9 @@ impl Yield {
             observed_selected,
             accepted_fitted: Some(accepted_fitted),
             generated_fitted: Some(generated_fitted),
-            corrected_observed: Some(corrected_observed),
             accepted_residual: Some(accepted_residual),
-            corrected_residual: Some(corrected_residual),
             accepted_relative_residual,
-            corrected_relative_residual,
             accepted_residual_draws,
-            corrected_residual_draws,
             absolute_tolerance: DEFAULT_ABSOLUTE_CLOSURE_TOLERANCE,
             relative_tolerance: DEFAULT_RELATIVE_CLOSURE_TOLERANCE,
             status,
@@ -887,11 +456,11 @@ impl Yield {
 }
 
 fn evaluate_estimate(
-    integrals: &CrossSectionIntegrals,
+    integrals: &IntensityIntegrals,
     parameters: &[f64],
     ensemble: Option<&Ensemble>,
-    replica_integrals: &[CrossSectionIntegrals],
-    function: impl Fn(&CrossSectionIntegrals, &[f64]) -> LikelihoodResult<f64>,
+    replica_integrals: &[IntensityIntegrals],
+    function: impl Fn(&IntensityIntegrals, &[f64]) -> LikelihoodResult<f64>,
 ) -> LikelihoodResult<Estimate> {
     let central = function(integrals, parameters)?;
     let (draws, source_id) = match ensemble {
@@ -917,17 +486,6 @@ fn finite(quantity: &'static str, value: f64) -> LikelihoodResult<f64> {
         Ok(value)
     } else {
         Err(LikelihoodError::NonFiniteYield { quantity, value })
-    }
-}
-
-fn finite_estimate(quantity: &'static str, estimate: Estimate) -> LikelihoodResult<Estimate> {
-    if let Some(value) = std::iter::once(estimate.value())
-        .chain(estimate.draws().iter().copied())
-        .find(|value| !value.is_finite())
-    {
-        Err(LikelihoodError::NonFiniteYield { quantity, value })
-    } else {
-        Ok(estimate)
     }
 }
 
@@ -973,14 +531,6 @@ fn positive_generated_named(
     }
 }
 
-fn positive_reference_accepted(value: f64, has_support: bool) -> LikelihoodResult<f64> {
-    positive_accepted_named("reference accepted yield", value, has_support)
-}
-
-fn positive_reference_generated(value: f64, has_support: bool) -> LikelihoodResult<f64> {
-    positive_generated_named("reference generated yield", value, has_support)
-}
-
 fn within_tolerance(residual: f64, reference: f64) -> bool {
     residual.abs()
         <= DEFAULT_ABSOLUTE_CLOSURE_TOLERANCE + DEFAULT_RELATIVE_CLOSURE_TOLERANCE * reference.abs()
@@ -1022,358 +572,6 @@ mod tests {
     }
 
     #[test]
-    fn scalar_yield_exposes_distinct_rate_quantities() {
-        let model =
-            CompiledModel::from_expr(&(event_scalar("x") * parameter!("scale", initial: 0.25)))
-                .unwrap();
-        let data = weighted_dataset(&[(2.0, 1.0), (3.0, 2.0)]);
-        let accepted = weighted_dataset(&[(4.0, 1.0)]);
-        let generated = weighted_dataset(&[(6.0, 1.0)]);
-        let likelihood = Arc::new(
-            Likelihood::new([ExtendedNllTerm::new("signal", &model, &data, &accepted).unwrap()])
-                .unwrap(),
-        );
-
-        let yield_context =
-            Yield::with_ensemble(likelihood, "signal", generated, vec![0.25], None).unwrap();
-
-        assert_relative_eq!(yield_context.selected_yield().value(), 3.0);
-        assert_relative_eq!(
-            yield_context
-                .selected_yield()
-                .error_with_budget(crate::ErrorBudget::default())
-                .unwrap()
-                .error(),
-            5.0_f64.sqrt()
-        );
-        assert_relative_eq!(yield_context.accepted_fitted_yield().unwrap().value(), 1.0);
-        assert_relative_eq!(yield_context.generated_fitted_yield().unwrap().value(), 1.5);
-        assert_relative_eq!(yield_context.fitted_acceptance().value(), 2.0 / 3.0);
-        assert_relative_eq!(yield_context.corrected_observed_yield().value(), 4.5);
-        let luminosity = crate::Luminosity::new(2.0, crate::AreaUnit::Nanobarn).unwrap();
-        let cross_section = yield_context.to_cross_section(&luminosity).unwrap();
-        assert_relative_eq!(cross_section.observed().value(), 2.25);
-        assert_relative_eq!(cross_section.fitted().unwrap().value(), 0.75);
-        assert_eq!(cross_section.unit(), crate::AreaUnit::Nanobarn);
-        let micro = luminosity.to_unit(crate::AreaUnit::Microbarn).unwrap();
-        assert_relative_eq!(micro.value(), 2000.0);
-        assert_relative_eq!(
-            yield_context
-                .to_cross_section(&micro)
-                .unwrap()
-                .observed()
-                .value(),
-            0.00225
-        );
-        let uncertain_luminosity = luminosity
-            .clone()
-            .with_relative_uncertainty(0.1, 77)
-            .unwrap();
-        let uncertain = yield_context
-            .to_cross_section(&uncertain_luminosity)
-            .unwrap();
-        let luminosity_only = crate::ErrorBudget {
-            data_fill: false,
-            accepted_mc_fill: false,
-            generated_mc_fill: false,
-            luminosity: true,
-            ..crate::ErrorBudget::default()
-        };
-        assert_relative_eq!(
-            uncertain
-                .observed()
-                .error_with_budget(luminosity_only)
-                .unwrap()
-                .error(),
-            0.225
-        );
-        assert!(crate::Luminosity::new(0.0, crate::AreaUnit::Barn).is_err());
-        let second_luminosity = crate::Luminosity::new(4.0, crate::AreaUnit::Nanobarn).unwrap();
-        let combined = crate::YieldCrossSection::combine(&[
-            (cross_section.clone(), 1.0),
-            (
-                yield_context.to_cross_section(&second_luminosity).unwrap(),
-                2.0,
-            ),
-        ])
-        .unwrap();
-        assert_relative_eq!(combined.total_effective_exposure(), 10.0);
-        assert_relative_eq!(combined.observed().value(), 0.9);
-        let factor = crate::ExposureFactor::from_estimate(
-            crate::Estimate::with_source_id(2.0, vec![1.0, 3.0], Some(991)).unwrap(),
-        )
-        .unwrap();
-        let uncertain_combined = crate::YieldCrossSection::combine_with_factors(&[
-            (
-                cross_section.clone(),
-                crate::ExposureFactor::new(1.0).unwrap(),
-            ),
-            (
-                yield_context.to_cross_section(&second_luminosity).unwrap(),
-                factor,
-            ),
-        ])
-        .unwrap();
-        assert_eq!(uncertain_combined.observed().draws().len(), 2);
-        assert_ne!(
-            uncertain_combined.observed().draws()[0],
-            uncertain_combined.observed().draws()[1]
-        );
-        assert!(crate::YieldCrossSection::combine(&[]).is_err());
-        assert_relative_eq!(
-            yield_context
-                .corrected_observed_yield()
-                .error_with_budget(crate::ErrorBudget::default())
-                .unwrap()
-                .error(),
-            51.75_f64.sqrt()
-        );
-        assert_eq!(
-            yield_context.selected_yield(),
-            yield_context.selected_yield()
-        );
-    }
-
-    #[test]
-    fn reference_correction_is_distinct_and_preserves_its_source() {
-        let fitted_model =
-            CompiledModel::from_expr(&(event_scalar("x") * parameter!("scale", initial: 0.25)))
-                .unwrap();
-        let reference_model = CompiledModel::from_expr(
-            &(event_scalar("x") * parameter!("reference_scale", initial: 0.25)),
-        )
-        .unwrap();
-        let data = weighted_dataset(&[(2.0, 1.0), (3.0, 2.0)]);
-        let accepted = weighted_dataset(&[(4.0, 1.0)]);
-        let fitted_generated = weighted_dataset(&[(6.0, 1.0)]);
-        let reference_generated = weighted_dataset(&[(8.0, 1.0)]);
-        let fitted = Arc::new(
-            Likelihood::new([
-                ExtendedNllTerm::new("fitted", &fitted_model, &data, &accepted).unwrap(),
-            ])
-            .unwrap(),
-        );
-        let reference = Arc::new(
-            Likelihood::new([ExtendedNllTerm::new(
-                "reference",
-                &reference_model,
-                &data,
-                &accepted,
-            )
-            .unwrap()])
-            .unwrap(),
-        );
-        let yield_context =
-            Yield::with_ensemble(fitted, "fitted", fitted_generated, vec![0.25], None).unwrap();
-
-        let corrected = yield_context
-            .reference_corrected(
-                reference,
-                "reference",
-                reference_generated,
-                vec![0.25],
-                None,
-            )
-            .unwrap();
-
-        assert_relative_eq!(yield_context.corrected_observed_yield().value(), 4.5);
-        assert_relative_eq!(corrected.value().value(), 6.0);
-        assert_relative_eq!(corrected.acceptance().value(), 0.5);
-        assert_eq!(corrected.reference_term_name(), "reference");
-        assert!(!corrected.has_rate_closure());
-        assert_ne!(
-            corrected.reference_model_digest(),
-            yield_context
-                .likelihood()
-                .intensity_model_digest("fitted")
-                .unwrap()
-        );
-    }
-
-    #[test]
-    fn reference_correction_keeps_independent_uncertainty_sources_visible() {
-        let fitted_model =
-            CompiledModel::from_expr(&(event_scalar("x") * parameter!("scale", initial: 0.25)))
-                .unwrap();
-        let reference_model =
-            CompiledModel::from_expr(&(event_scalar("x") + parameter!("offset", initial: 0.25)))
-                .unwrap();
-        let data = weighted_dataset(&[(2.0, 1.0), (3.0, 2.0)]);
-        let accepted = weighted_dataset(&[(4.0, 1.0)]);
-        let fitted = Arc::new(
-            Likelihood::new([
-                ExtendedNllTerm::new("fitted", &fitted_model, &data, &accepted).unwrap(),
-            ])
-            .unwrap(),
-        );
-        let reference = Arc::new(
-            Likelihood::new([ExtendedNllTerm::new(
-                "reference",
-                &reference_model,
-                &data,
-                &accepted,
-            )
-            .unwrap()])
-            .unwrap(),
-        );
-        let fitted_ensemble =
-            Ensemble::with_source_id(vec!["scale".into()], vec![vec![0.5], vec![0.75]], 11)
-                .unwrap();
-        let reference_ensemble =
-            Ensemble::with_source_id(vec!["offset".into()], vec![vec![0.5], vec![1.0]], 22)
-                .unwrap();
-        let yield_context = Yield::with_ensemble(
-            fitted,
-            "fitted",
-            weighted_dataset(&[(6.0, 1.0)]),
-            vec![0.25],
-            Some(fitted_ensemble),
-        )
-        .unwrap();
-
-        let corrected = yield_context
-            .reference_corrected(
-                reference,
-                "reference",
-                weighted_dataset(&[(8.0, 1.0)]),
-                vec![0.25],
-                Some(reference_ensemble),
-            )
-            .unwrap();
-
-        assert_eq!(
-            corrected.provenance().selected_uncertainty_source(),
-            Some(11)
-        );
-        assert_eq!(
-            corrected.provenance().reference_uncertainty_source(),
-            Some(22)
-        );
-        assert_ne!(corrected.value().source_id(), Some(11));
-        assert_ne!(corrected.value().source_id(), Some(22));
-        assert_eq!(
-            corrected.provenance().reference_draw_parameters(),
-            &[vec![0.5], vec![1.0]]
-        );
-        assert_eq!(corrected.acceptance().draws(), &[4.5 / 8.5, 5.0 / 9.0]);
-        assert_eq!(
-            corrected.value().draws(),
-            &[3.0 / (5.0 / 9.0), 3.0 / (4.5 / 8.5)]
-        );
-    }
-
-    #[test]
-    fn reference_correction_rejects_missing_generated_support() {
-        let model = CompiledModel::from_expr(&event_scalar("x")).unwrap();
-        let data = weighted_dataset(&[(2.0, 1.0)]);
-        let accepted = weighted_dataset(&[(4.0, 1.0)]);
-        let likelihood = Arc::new(
-            Likelihood::new([ExtendedNllTerm::new("signal", &model, &data, &accepted).unwrap()])
-                .unwrap(),
-        );
-        let yield_context = Yield::with_ensemble(
-            Arc::clone(&likelihood),
-            "signal",
-            weighted_dataset(&[(6.0, 1.0)]),
-            Vec::new(),
-            None,
-        )
-        .unwrap();
-
-        let error = yield_context
-            .reference_corrected(
-                likelihood,
-                "signal",
-                weighted_dataset(&[]),
-                Vec::new(),
-                None,
-            )
-            .unwrap_err();
-
-        assert!(matches!(error, LikelihoodError::MissingGeneratedSupport));
-    }
-
-    #[test]
-    fn reference_correction_rejects_nonpositive_and_nonfinite_intensities() {
-        let model = CompiledModel::from_expr(&event_scalar("x")).unwrap();
-        let data = weighted_dataset(&[(2.0, 1.0)]);
-        let accepted = weighted_dataset(&[(4.0, 1.0)]);
-        let fitted = Arc::new(
-            Likelihood::new([ExtendedNllTerm::new("fitted", &model, &data, &accepted).unwrap()])
-                .unwrap(),
-        );
-        let yield_context = Yield::with_ensemble(
-            fitted,
-            "fitted",
-            weighted_dataset(&[(6.0, 1.0)]),
-            Vec::new(),
-            None,
-        )
-        .unwrap();
-        let reference = |accepted: Dataset, model: &CompiledModel| {
-            Arc::new(
-                Likelihood::new([
-                    ExtendedNllTerm::new("reference", model, &data, &accepted).unwrap()
-                ])
-                .unwrap(),
-            )
-        };
-
-        let zero = yield_context
-            .reference_corrected(
-                reference(weighted_dataset(&[(0.0, 1.0)]), &model),
-                "reference",
-                weighted_dataset(&[(1.0, 1.0)]),
-                Vec::new(),
-                None,
-            )
-            .unwrap_err();
-        assert!(
-            matches!(
-                zero,
-                LikelihoodError::NonPositiveIntensity {
-                    dataset: "accepted MC",
-                    value: 0.0
-                }
-            ),
-            "unexpected error: {zero:?}"
-        );
-
-        let negative = yield_context
-            .reference_corrected(
-                reference(weighted_dataset(&[(-1.0, 1.0)]), &model),
-                "reference",
-                weighted_dataset(&[(1.0, 1.0)]),
-                Vec::new(),
-                None,
-            )
-            .unwrap_err();
-        assert!(matches!(
-            negative,
-            LikelihoodError::NonPositiveIntensity {
-                dataset: "accepted MC",
-                value
-            } if value < 0.0
-        ));
-
-        let nonfinite_model =
-            CompiledModel::from_expr(&(1.0 / (event_scalar("x") - event_scalar("x")))).unwrap();
-        let nonfinite = yield_context
-            .reference_corrected(
-                reference(weighted_dataset(&[(1.0, 1.0)]), &nonfinite_model),
-                "reference",
-                weighted_dataset(&[(2.0, 1.0)]),
-                Vec::new(),
-                None,
-            )
-            .unwrap_err();
-        assert!(matches!(
-            nonfinite,
-            LikelihoodError::NonPositiveIntensity { value, .. } if !value.is_finite()
-        ));
-    }
-
-    #[test]
     fn scalar_yield_reports_rate_closure_without_rescaling() {
         let model =
             CompiledModel::from_expr(&(event_scalar("x") * parameter!("scale", initial: 0.75)))
@@ -1394,9 +592,7 @@ mod tests {
         assert_relative_eq!(closure.selected_yield().value(), 3.0);
         assert_relative_eq!(closure.accepted_fitted_yield().unwrap().value(), 3.0);
         assert_relative_eq!(closure.generated_fitted_yield().unwrap().value(), 4.5);
-        assert_relative_eq!(closure.corrected_observed_yield().unwrap().value(), 4.5);
         assert_relative_eq!(closure.accepted_residual().unwrap(), 0.0);
-        assert_relative_eq!(closure.corrected_residual().unwrap(), 0.0);
     }
 
     #[test]
@@ -1420,7 +616,6 @@ mod tests {
         assert!(closure.reason().unwrap().contains("exceeds"));
         assert_relative_eq!(closure.accepted_residual().unwrap(), -2.0);
         assert_relative_eq!(closure.accepted_absolute_residual().unwrap(), 2.0);
-        assert_relative_eq!(closure.corrected_absolute_residual().unwrap(), 3.0);
         assert_relative_eq!(closure.accepted_relative_residual().unwrap(), 2.0 / 3.0);
     }
 
@@ -1444,8 +639,6 @@ mod tests {
             yield_context.generated_fitted_yield(),
             Err(LikelihoodError::AbsoluteRateUnavailable(_))
         ));
-        assert_relative_eq!(yield_context.fitted_acceptance().value(), 2.0 / 3.0);
-        assert_relative_eq!(yield_context.corrected_observed_yield().value(), 4.5);
         let closure = yield_context.rate_closure();
         assert_eq!(closure.status(), RateClosureStatus::NotApplicable);
         assert!(closure.reason().unwrap().contains("absolute rate"));
@@ -1474,10 +667,6 @@ mod tests {
         assert_eq!(accepted.source_id(), Some(88));
         assert_eq!(accepted.draws(), &[2.0, 3.0]);
         assert_eq!(yield_context.selected_yield().draws(), &[3.0, 3.0]);
-        assert_eq!(
-            yield_context.corrected_observed_yield().draws(),
-            &[4.5, 4.5]
-        );
     }
 
     #[test]
@@ -1701,7 +890,6 @@ mod tests {
             Yield::with_ensemble(likelihood, "signal", generated, vec![0.5], None).unwrap();
 
         assert_eq!(yield_context.selected_yield().value(), 0.0);
-        assert_eq!(yield_context.corrected_observed_yield().value(), 0.0);
         assert_eq!(
             yield_context.rate_closure().accepted_relative_residual(),
             None
@@ -1765,18 +953,11 @@ mod tests {
                 comparable(projection.accepted()),
                 comparable(projection.generated()),
                 projection.validity().to_vec(),
-                projection
-                    .corrected()
-                    .iter()
-                    .map(|value| value.is_nan())
-                    .collect::<Vec<_>>(),
             ));
             values.push((
                 result.selected_yield().value(),
                 result.accepted_fitted_yield().unwrap().value(),
                 result.generated_fitted_yield().unwrap().value(),
-                result.fitted_acceptance().value(),
-                result.corrected_observed_yield().value(),
             ));
         }
 
@@ -1821,8 +1002,6 @@ mod tests {
                 result.selected_yield().value(),
                 result.accepted_fitted_yield().unwrap().value(),
                 result.generated_fitted_yield().unwrap().value(),
-                result.fitted_acceptance().value(),
-                result.corrected_observed_yield().value(),
             ));
         }
 

@@ -1,8 +1,8 @@
-//! ganesh-backed minimization and sampling adapters for laddu objectives.
+//! ganesh-backed minimization and sampling adapters for `laddu` objectives.
 //!
 //! [`FitProblem`] implements ganesh's cost, gradient, and log-density traits
 //! for both `f32` and `f64`. The adapter leaves algorithm choice and callbacks
-//! fully exposed while centralizing laddu parameter conversion, metadata, and
+//! fully exposed while centralizing `laddu` parameter conversion, metadata, and
 //! stochastic batching.
 
 pub use ganesh;
@@ -25,7 +25,7 @@ use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-/// Errors raised while adapting a laddu objective to ganesh.
+/// Errors raised while adapting a `laddu` objective to ganesh.
 #[derive(Debug, Error)]
 pub enum FitError {
     /// The likelihood could not be evaluated or prepared.
@@ -42,7 +42,7 @@ pub enum FitError {
     Artifact(String),
 }
 
-/// A result produced by a laddu fitting operation.
+/// A result produced by a `laddu` fitting operation.
 pub type FitResult<T> = Result<T, FitError>;
 
 /// Terminal outcome of a deterministic fit.
@@ -77,7 +77,7 @@ impl FitDiagnostics {
     }
 }
 
-/// laddu-owned façade for a deterministic minimization result.
+/// A deterministic minimization result owned by `laddu`.
 #[derive(Clone)]
 pub struct MinimizationResult {
     parameter_names: Vec<String>,
@@ -158,6 +158,9 @@ impl MinimizationResult {
     }
 
     /// Create a dataset-free, inspectable artifact from this terminal result.
+    ///
+    /// # Errors
+    /// Returns an error if the result has no likelihood fingerprint.
     pub fn artifact(&self) -> FitResult<FitArtifact> {
         let fingerprint = self
             .likelihood_fingerprint
@@ -253,7 +256,7 @@ impl FitArtifact {
     pub const fn schema_version(&self) -> u32 {
         self.schema_version
     }
-    /// Producing laddu crate version.
+    /// Producing `laddu` crate version.
     pub fn laddu_version(&self) -> &str {
         &self.laddu_version
     }
@@ -306,6 +309,9 @@ impl FitArtifact {
         self.strong_compatibility
     }
     /// Return a copy with ordered ensemble metadata and draws attached.
+    ///
+    /// # Errors
+    /// Returns an error when ensemble parameter names differ from the fit.
     pub fn with_ensemble(mut self, ensemble: &laddu_likelihood::Ensemble) -> FitResult<Self> {
         if ensemble.parameter_names() != self.parameter_names {
             return Err(FitError::Artifact(
@@ -324,6 +330,9 @@ impl FitArtifact {
         Ok(self)
     }
     /// Return a copy with structured failed-replica records attached.
+    ///
+    /// # Errors
+    /// Returns an error for missing ensemble metadata or invalid replica indices.
     pub fn with_failed_replicas(mut self, failures: Vec<FailedReplica>) -> FitResult<Self> {
         let ensemble = self.ensemble.as_mut().ok_or_else(|| {
             FitError::Artifact("failed replicas require an attached ensemble".to_owned())
@@ -363,6 +372,9 @@ impl FitArtifact {
     }
 
     /// Bind after exact structure and unique-name schema validation.
+    ///
+    /// # Errors
+    /// Returns an error when artifact and likelihood identities or parameters differ.
     pub fn bind(&self, likelihood: &laddu_likelihood::Likelihood) -> FitResult<BoundFitState> {
         if !self.strong_compatibility || !likelihood.artifact_compatibility_is_strong() {
             return Err(FitError::Artifact(
@@ -450,6 +462,12 @@ impl FitArtifact {
     }
 
     /// Bind with an explicit one-to-one artifact-name to target-name migration.
+    ///
+    /// # Errors
+    /// Returns an error for incompatible identities or invalid parameter mapping.
+    ///
+    /// # Panics
+    /// Panics only if validated target coverage becomes inconsistent internally.
     pub fn bind_with_parameter_map(
         &self,
         likelihood: &laddu_likelihood::Likelihood,
@@ -584,6 +602,9 @@ impl FitEnsembleArtifact {
         &self.failures
     }
     /// Rebuild a parameter-only ensemble with the original source identity.
+    ///
+    /// # Errors
+    /// Returns an error if saved draw metadata is invalid.
     pub fn to_parameter_ensemble(&self) -> FitResult<laddu_likelihood::Ensemble> {
         laddu_likelihood::Ensemble::with_source_id(
             self.parameter_names.clone(),
@@ -593,6 +614,9 @@ impl FitEnsembleArtifact {
         .map_err(FitError::from)
     }
     /// Reconstruct deterministic bootstrap replicas against a compatible likelihood.
+    ///
+    /// # Errors
+    /// Returns an error for incompatible replica metadata or likelihood state.
     pub fn to_ensemble_for(
         &self,
         likelihood: &std::sync::Arc<laddu_likelihood::Likelihood>,
@@ -645,6 +669,9 @@ impl AnalysisSnapshot {
         Self::default()
     }
     /// Insert one artifact object under a unique path.
+    ///
+    /// # Errors
+    /// Returns an error for invalid or duplicate paths.
     pub fn insert_fit(
         &mut self,
         path: impl Into<String>,
@@ -665,6 +692,9 @@ impl AnalysisSnapshot {
         Ok(())
     }
     /// Add another path referencing the exact same artifact object.
+    ///
+    /// # Errors
+    /// Returns an error if the source path is absent or the alias is invalid.
     pub fn alias_fit(&mut self, path: impl Into<String>, existing: &str) -> FitResult<()> {
         let artifact = self.fits.get(existing).cloned().ok_or_else(|| {
             FitError::Artifact(format!("snapshot fit path `{existing}` is missing"))
@@ -684,6 +714,12 @@ impl AnalysisSnapshot {
     }
 
     /// Save a passive snapshot with each shared artifact embedded once.
+    ///
+    /// # Errors
+    /// Returns an error for artifact serialization or filesystem failure.
+    ///
+    /// # Panics
+    /// Panics only if a path returned by this snapshot is absent from its map.
     pub fn save(&self, path: impl AsRef<std::path::Path>, overwrite: bool) -> FitResult<()> {
         use std::io::Write;
         let mut artifact_ids = std::collections::HashMap::<usize, usize>::new();
@@ -760,6 +796,12 @@ impl AnalysisSnapshot {
     }
 
     /// Load a passive snapshot and preserve aliases to shared artifact objects.
+    ///
+    /// # Errors
+    /// Returns an error for invalid snapshot data or filesystem failure.
+    ///
+    /// # Panics
+    /// Panics only if a checked fixed-width header has the wrong length internally.
     pub fn load(path: impl AsRef<std::path::Path>) -> FitResult<Self> {
         const MAX: usize = 256 * 1024 * 1024;
         let bytes = std::fs::read(path.as_ref())
@@ -958,7 +1000,7 @@ fn encode_f64(values: impl IntoIterator<Item = f64>) -> Vec<u8> {
     values.into_iter().flat_map(f64::to_le_bytes).collect()
 }
 fn decode_f64(bytes: &[u8], role: &str) -> FitResult<Vec<f64>> {
-    if bytes.len() % 8 != 0 {
+    if !bytes.len().is_multiple_of(8) {
         return Err(FitError::Artifact(format!(
             "payload `{role}` has invalid byte length"
         )));
@@ -971,6 +1013,9 @@ fn decode_f64(bytes: &[u8], role: &str) -> FitResult<Vec<f64>> {
 
 impl FitArtifact {
     /// Save one passive manifest-plus-binary archive with an atomic rename.
+    ///
+    /// # Errors
+    /// Returns an error for invalid artifact data or filesystem failure.
     pub fn save(&self, path: impl AsRef<std::path::Path>, overwrite: bool) -> FitResult<()> {
         use std::io::Write;
         let path = path.as_ref();
@@ -1108,6 +1153,12 @@ impl FitArtifact {
     }
 
     /// Load and validate a passive archive without constructing a likelihood.
+    ///
+    /// # Errors
+    /// Returns an error for invalid archive contents or filesystem failure.
+    ///
+    /// # Panics
+    /// Panics only if a checked fixed-width header has the wrong length internally.
     pub fn load(path: impl AsRef<std::path::Path>) -> FitResult<Self> {
         use std::io::Read;
         const MAX: u64 = 256 * 1024 * 1024;
@@ -1384,7 +1435,7 @@ impl BoundFitState {
     }
 }
 
-/// Scalar-generic ganesh view of a laddu objective.
+/// Scalar-generic ganesh view of a `laddu` objective.
 #[derive(Clone, Copy, Debug)]
 pub struct FitProblem<'a, O: ?Sized, T = f64, B = ganesh::NalgebraProvider> {
     objective: &'a O,

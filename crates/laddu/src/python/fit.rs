@@ -36,7 +36,7 @@ use pyo3::{
 };
 
 use super::{
-    cross_section::{PyEnsemble, PyYield},
+    cross_section::{PyCrossSection, PyEnsemble, PyLuminosity, PyYield},
     data::PyDataset,
     error::to_py_err,
     likelihood::{PyLikelihood, free_values},
@@ -44,7 +44,7 @@ use super::{
 
 #[pyclass(name = "FitResult", module = "laddu", frozen, skip_from_py_object)]
 #[derive(Clone)]
-/// Stable laddu-owned result of deterministic minimization.
+/// Stable result of deterministic minimization owned by `laddu`.
 pub struct PyFitResult {
     inner: MinimizationResult,
 }
@@ -208,6 +208,34 @@ impl PyFitArtifact {
         )
         .map(Into::into)
         .map_err(to_py_err)
+    }
+    #[pyo3(signature = (likelihood, term_name, *, generated_mc, luminosity))]
+    /// Bind the stored fit values and evaluate the fitted generated-MC cross section.
+    fn cross_section(
+        &self,
+        likelihood: &PyLikelihood,
+        term_name: &str,
+        generated_mc: &PyDataset,
+        luminosity: &PyLuminosity,
+    ) -> PyResult<PyCrossSection> {
+        let bound = self.inner.bind(&likelihood.inner).map_err(to_py_err)?;
+        let ensemble = self
+            .inner
+            .ensemble()
+            .map(|ensemble| ensemble.to_ensemble_for(&likelihood.inner))
+            .transpose()
+            .map_err(to_py_err)?;
+        likelihood
+            .inner
+            .cross_section(
+                term_name,
+                generated_mc.inner.clone(),
+                luminosity.inner.clone(),
+                bound.values().to_vec(),
+                ensemble,
+            )
+            .map(|inner| PyCrossSection { inner })
+            .map_err(to_py_err)
     }
     #[getter]
     fn artifact_kind(&self) -> &str {
