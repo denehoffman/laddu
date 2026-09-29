@@ -359,7 +359,7 @@ mod test {
     use std::f64::consts::PI;
 
     use approx::assert_relative_eq;
-    use laddu_compile::CompiledModel;
+    use laddu_compile::{CompileOptions, CompiledModel};
     use laddu_expr::{parameters::Parameter, vector};
     use laddu_runtime::CpuBackend;
     use num::complex::Complex64;
@@ -375,7 +375,9 @@ mod test {
     const LOOSE_EPS: f64 = 1.0e-8;
 
     fn evaluate(expr: Expr) -> Complex64 {
-        let model = CompiledModel::from_expr(&expr).unwrap();
+        let model =
+            CompiledModel::from_expr_with_options(&expr, &CompileOptions::without_optimizations())
+                .unwrap();
         let params = model.params().default_values();
         CpuBackend.prepare(&model).evaluate(&params).unwrap()
     }

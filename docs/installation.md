@@ -31,7 +31,7 @@ All ranks execute the same script. Dataset traversal, reductions, likelihood val
 
 ## Development checkout
 
-Install Rust, `uv`, and `just`, then use the repository recipes directly:
+Install Rust 1.96 or newer, `uv`, and `just`, then use the repository recipes directly:
 
 ```bash
 git clone https://github.com/denehoffman/laddu.git
@@ -45,6 +45,9 @@ shell provides the toolchain and native MPI, Vulkan, and GPU dependencies, but
 the recipes do not depend on Nix.
 
 `just python-dev-debug` shortens edit/build cycles. Use a release build before benchmarking.
+
+Run `just test-python` to exercise both pytest and unittest-style Python tests, and
+`just docs-build` to check every documentation page with Sphinx warnings treated as errors.
 
 ```{tip}
 Record `laddu.backend()`, `laddu.capabilities()`, `repr(execution)`, package versions, and random seeds with every analysis result.

@@ -26,8 +26,8 @@ thiserror.workspace = true
 arrow.workspace = true
 parquet.workspace = true
 oxyroot.workspace = true
-log = "0.4.32"
-glob = "0.3.3"
+log = "0.4.34"
+glob = "0.3.4"
 num.workspace = true
 
 laddu-physics.workspace = true

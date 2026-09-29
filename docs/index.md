@@ -67,4 +67,6 @@ tutorials/index
 reference/api
 benchmarks/projection-performance
 wgpu-testing
+development/cas
+development/releasing
 ```

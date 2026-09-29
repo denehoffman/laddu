@@ -32,7 +32,7 @@ from yamloom.workflows.maturin import (
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-MSRV = '1.95.0'
+MSRV = '1.96.0'
 MINIMUM_PYTHON = '3.11'
 PYTHON_MANIFESTS = {
     'laddu': 'python/laddu/Cargo.toml',
@@ -161,9 +161,7 @@ python_release_workflow = Workflow(
                 ),
                 script('uv run --no-sync --project python/laddu ruff check . --exclude=.yamloom.py'),
                 script('uv run --no-sync --project python/laddu ty check python docs crates/laddu/examples'),
-                script(
-                    'uv run --no-sync --project python/laddu python -m unittest discover -s python/tests -p "test_*.py"'
-                ),
+                script('uv run --no-sync --project python/laddu python -m pytest python/tests'),
                 script('uv pip install --python python/laddu/.venv/bin/python -r docs/requirements.txt'),
                 script(
                     'uv run --no-sync --project python/laddu '
@@ -185,9 +183,7 @@ python_release_workflow = Workflow(
                     'maturin develop --manifest-path Cargo.toml '
                     '--release --generate-stubs'
                 ),
-                script(
-                    'uv run --no-sync --project python/laddu python -m unittest discover -s python/tests -p "test_*.py"'
-                ),
+                script('uv run --no-sync --project python/laddu python -m pytest python/tests'),
             ],
         ),
         **release_build_jobs,
@@ -210,7 +206,11 @@ python_release_workflow = Workflow(
                 SetupMPI(),
                 SetupRust(),
                 InstallRustTool(tool=['cargo-workspaces']),
-                script(f'cargo workspaces publish --from-git --token {context.secrets.CARGO_REGISTRY_TOKEN} --yes'),
+                script(
+                    'cargo workspaces publish --publish-as-is --locked '
+                    '--no-git-commit --no-git-tag --no-git-push '
+                    f'--token {context.secrets.CARGO_REGISTRY_TOKEN} --yes'
+                ),
             ],
         ),
     },

@@ -437,7 +437,7 @@ impl JitCompiler {
                     &function_helpers,
                 )?,
             }
-            builder.finalize();
+            builder.finalize(self.module.isa().frontend_config());
         }
         self.module
             .define_function(function_id, &mut context)
@@ -777,7 +777,7 @@ where
     builder.switch_to_block(body_block);
     let output_row = builder.ins().isub(row, start);
     body(builder, row, output_row, output, failed)?;
-    let next = builder.ins().iadd_imm(row, 1);
+    let next = builder.ins().iadd_imm_s(row, 1);
     builder.ins().jump(loop_header, &[BlockArg::from(next)]);
     builder.switch_to_block(done);
     let success_status = builder
@@ -861,7 +861,7 @@ fn emit_kernel(
             let result = root.elements.first().ok_or("kernel root is empty")?;
             let byte_offset = builder
                 .ins()
-                .imul_imm(output_row, size_of::<Complex64>() as i64);
+                .imul_imm_s(output_row, size_of::<Complex64>() as i64);
             let output_ptr = builder.ins().iadd(output, byte_offset);
             let result_re = precision.promote_to_f64(builder, result.re);
             let result_im = precision.promote_to_f64(builder, result.im);
@@ -942,7 +942,7 @@ fn emit_gradient_kernel(
 
             let row_offset = builder
                 .ins()
-                .imul_imm(output_row, (ir.outputs().len() * size_of::<f64>()) as i64);
+                .imul_imm_s(output_row, (ir.outputs().len() * size_of::<f64>()) as i64);
             let output_ptr = builder.ins().iadd(output, row_offset);
             for (index, output) in ir.outputs().iter().enumerate() {
                 let derivative =
@@ -1238,11 +1238,11 @@ fn load_complex_descriptor_element(
         descriptors,
         descriptor_offset,
     );
-    let row_offset = builder.ins().imul_imm(row, width as i64);
-    let element_offset = builder.ins().iadd_imm(row_offset, index as i64);
+    let row_offset = builder.ins().imul_imm_s(row, width as i64);
+    let element_offset = builder.ins().iadd_imm_s(row_offset, index as i64);
     let byte_offset = builder
         .ins()
-        .imul_imm(element_offset, size_of::<Complex64>() as i64);
+        .imul_imm_s(element_offset, size_of::<Complex64>() as i64);
     let pointer = builder.ins().iadd(base, byte_offset);
     let re = builder
         .ins()
@@ -1281,8 +1281,8 @@ fn load_descriptor(
     } else {
         size_of::<Complex64>()
     };
-    let row_width = builder.ins().imul_imm(row, width as i64);
-    let row_bytes = builder.ins().imul_imm(row_width, element_size as i64);
+    let row_width = builder.ins().imul_imm_s(row, width as i64);
+    let row_bytes = builder.ins().imul_imm_s(row_width, element_size as i64);
     let row_ptr = builder.ins().iadd(base, row_bytes);
     let mut out = Vec::with_capacity(width);
     for index in 0..width {
@@ -1384,8 +1384,11 @@ fn emit_unary(
                 .ins()
                 .call(helper, &[code, power, input.re, input.im, out]);
             ComplexValue {
-                re: builder.ins().stack_load(precision.real_type(), slot, 0),
+                re: builder
+                    .ins()
+                    .stack_load(pointer_type, precision.real_type(), slot, 0),
                 im: builder.ins().stack_load(
+                    pointer_type,
                     precision.real_type(),
                     slot,
                     precision.imaginary_offset(),
@@ -1438,8 +1441,11 @@ fn emit_binary(
                 .ins()
                 .call(helper, &[code, lhs.re, lhs.im, rhs.re, rhs.im, out]);
             ComplexValue {
-                re: builder.ins().stack_load(precision.real_type(), slot, 0),
+                re: builder
+                    .ins()
+                    .stack_load(pointer_type, precision.real_type(), slot, 0),
                 im: builder.ins().stack_load(
+                    pointer_type,
                     precision.real_type(),
                     slot,
                     precision.imaginary_offset(),
@@ -1483,17 +1489,25 @@ fn emit_solve(
         let offset = index * complex_size;
         builder
             .ins()
-            .stack_store(value.re, matrix_slot, offset as i32);
-        builder
-            .ins()
-            .stack_store(value.im, matrix_slot, offset as i32 + imag_offset);
+            .stack_store(pointer_type, value.re, matrix_slot, offset as i32);
+        builder.ins().stack_store(
+            pointer_type,
+            value.im,
+            matrix_slot,
+            offset as i32 + imag_offset,
+        );
     }
     for (index, value) in rhs.iter().enumerate() {
         let offset = index * complex_size;
-        builder.ins().stack_store(value.re, rhs_slot, offset as i32);
         builder
             .ins()
-            .stack_store(value.im, rhs_slot, offset as i32 + imag_offset);
+            .stack_store(pointer_type, value.re, rhs_slot, offset as i32);
+        builder.ins().stack_store(
+            pointer_type,
+            value.im,
+            rhs_slot,
+            offset as i32 + imag_offset,
+        );
     }
     let dimension = builder.ins().iconst(pointer_type, rhs.len() as i64);
     let matrix_ptr = builder.ins().stack_addr(pointer_type, matrix_slot, 0);
@@ -1503,7 +1517,7 @@ fn emit_solve(
         .ins()
         .call(helper, &[dimension, matrix_ptr, rhs_ptr, out_ptr]);
     let status = builder.inst_results(call)[0];
-    let failed_status = builder.ins().icmp_imm(IntCC::NotEqual, status, 0);
+    let failed_status = builder.ins().icmp_imm_s(IntCC::NotEqual, status, 0);
     let success = builder.create_block();
     builder.ins().brif(failed_status, failed, &[], success, &[]);
     builder.switch_to_block(success);
@@ -1511,10 +1525,14 @@ fn emit_solve(
     for index in 0..rhs.len() {
         let offset = index * complex_size;
         out.push(ComplexValue {
-            re: builder
-                .ins()
-                .stack_load(precision.real_type(), out_slot, offset as i32),
+            re: builder.ins().stack_load(
+                pointer_type,
+                precision.real_type(),
+                out_slot,
+                offset as i32,
+            ),
             im: builder.ins().stack_load(
+                pointer_type,
                 precision.real_type(),
                 out_slot,
                 offset as i32 + imag_offset,

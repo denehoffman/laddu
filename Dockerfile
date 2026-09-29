@@ -1,6 +1,6 @@
 FROM ubuntu:24.04
 
-ARG RUST_VERSION=1.95.0
+ARG RUST_VERSION=1.96.0
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PATH="/root/.cargo/bin:/root/.local/bin:${PATH}"

@@ -40,13 +40,13 @@ check-python-types: python-dev-debug
 
 # Run the Python binding smoke and concurrency tests.
 test-python: python-dev-debug
-    uv run --no-sync --project "{{python_project}}" python -m unittest discover -s python/tests -p "test_*.py"
+    uv run --no-sync --project "{{python_project}}" python -m pytest python/tests
 
 # Build and test under free-threaded CPython 3.14 without re-enabling the GIL.
 test-python-free-threaded:
     env -u VIRTUAL_ENV -u PYO3_PYTHON -u PYTHONPATH -u _PYTHON_HOST_PLATFORM -u _PYTHON_SYSCONFIGDATA_NAME UV_PROJECT_ENVIRONMENT="{{python_free_threaded_venv}}" UV_PYTHON=3.14t uv sync --frozen --inexact --no-install-project --project "{{python_project}}"
     cd "{{python_project}}" && env -u PYO3_PYTHON -u PYTHONPATH -u _PYTHON_HOST_PLATFORM -u _PYTHON_SYSCONFIGDATA_NAME VIRTUAL_ENV="{{python_free_threaded_venv}}" UV_PYTHON="{{python_free_threaded_venv}}/bin/python" "{{python_free_threaded_venv}}/bin/maturin" develop --manifest-path Cargo.toml --release --generate-stubs
-    env -u VIRTUAL_ENV -u PYO3_PYTHON -u PYTHONPATH -u _PYTHON_HOST_PLATFORM -u _PYTHON_SYSCONFIGDATA_NAME UV_PROJECT_ENVIRONMENT="{{python_free_threaded_venv}}" UV_PYTHON="{{python_free_threaded_venv}}/bin/python" uv run --no-sync --project "{{python_project}}" python -m unittest discover -s python/tests -p "test_*.py"
+    env -u VIRTUAL_ENV -u PYO3_PYTHON -u PYTHONPATH -u _PYTHON_HOST_PLATFORM -u _PYTHON_SYSCONFIGDATA_NAME UV_PROJECT_ENVIRONMENT="{{python_free_threaded_venv}}" UV_PYTHON="{{python_free_threaded_venv}}/bin/python" uv run --no-sync --project "{{python_project}}" python -m pytest python/tests
 
 # Install/update the standalone local extension.
 python-local: sync-python
