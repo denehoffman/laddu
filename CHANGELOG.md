@@ -1,5 +1,51 @@
 # Changelog
 
+## [0.24.0](https://github.com/denehoffman/laddu/compare/v0.23.0...v0.24.0) (2026-09-29)
+
+
+### ⚠ BREAKING CHANGES
+
+* Minimum supported Rust version is now 1.96.0.
+* **cas:** rebuild optimizer and support tensor scalar arithmetic
+* **cross-section:** make fitted intensity the sole API
+* **python:** expose cross-section and fit artifact workflows
+* **fit:** add versioned fit artifacts and model binding
+* **cross-section:** add typed yields and uncertainty budgets
+
+### Features
+
+* Add bounded joint histograms ([f94afbd](https://github.com/denehoffman/laddu/commit/f94afbdbfd6920ed35cf337197db27e4b6b98637))
+* Add cross-section diagnostics and central yield projections ([a977300](https://github.com/denehoffman/laddu/commit/a9773001956087fe11deab1cc1fa3f165c01e1f6))
+* Add model-only component yield projections ([7f6caa4](https://github.com/denehoffman/laddu/commit/7f6caa479c5df1c4ce8c31964aebfbdc36def609))
+* **analysis:** Add dataset histograms and scalar yields ([4f71fbd](https://github.com/denehoffman/laddu/commit/4f71fbdee96487ac4ee995bba129a70e659f0d8f))
+* **analysis:** Add weighted diagnostics and expressive edges ([b5ec9d8](https://github.com/denehoffman/laddu/commit/b5ec9d8c6e27fd9ba15ebd8deec73c56d208f9fd))
+* **analysis:** Batch scalar yield totals ([3c0969b](https://github.com/denehoffman/laddu/commit/3c0969bdcf2b1ad539455a29a79050825692995a))
+* **analysis:** Share bootstrap total preparation ([8b6cac8](https://github.com/denehoffman/laddu/commit/8b6cac84ed6553fda07a6511b34671d4509fa22d))
+* **cas:** Rebuild optimizer and support tensor scalar arithmetic ([fd93daa](https://github.com/denehoffman/laddu/commit/fd93daabd445abcc2e85e345b91caa1be0b5fa77))
+* **cross-section:** Add typed yields and uncertainty budgets ([8d0dbe6](https://github.com/denehoffman/laddu/commit/8d0dbe6fe0ec208eb37a3ed53289501dde5f05b5))
+* **cross-section:** Bound integral preparation retention ([99b91c4](https://github.com/denehoffman/laddu/commit/99b91c496ef7290f6e808efd9b252c79ad60d1da))
+* **cross-section:** Make fitted intensity the sole API ([9fd4e13](https://github.com/denehoffman/laddu/commit/9fd4e13beb0c8886f66ad341183d039221c54193))
+* **fit:** Add versioned fit artifacts and model binding ([648fb3e](https://github.com/denehoffman/laddu/commit/648fb3e16064eaeb9e94854745c6c832307efa9c))
+* **likelihood:** Add reference-corrected yields ([f500f71](https://github.com/denehoffman/laddu/commit/f500f7132edc4d68192be28b940a369b50370421))
+* **likelihood:** Preserve paired ensemble projections and arithmetic ([e402978](https://github.com/denehoffman/laddu/commit/e4029785f90d83518a0cd4e600b47da8bd86cf53))
+* **python:** Add complex parameter shorthand ([cb70a9c](https://github.com/denehoffman/laddu/commit/cb70a9c75be07aef0fc1144c165334a2710a17a8))
+* **python:** Expose cross-section and fit artifact workflows ([a77b223](https://github.com/denehoffman/laddu/commit/a77b2234d3dc8fbe1b08a3ce7325879c29110cc7))
+* Unify histogram arithmetic and binning ([ba9289a](https://github.com/denehoffman/laddu/commit/ba9289ab1d60b60a2a6b3c7bf120770f1e5dd205))
+
+
+### Bug Fixes
+
+* **cross-section:** Aggregate combined integral limits ([3578b24](https://github.com/denehoffman/laddu/commit/3578b24150b379e563e83f0320474590d9347d1e))
+* **cross-section:** Evict retained integrals on budget pressure ([94da018](https://github.com/denehoffman/laddu/commit/94da018f6b3471a380a357aebb6024b610044c6c))
+* **docs:** Exclude gitignored local sources ([efbb0d3](https://github.com/denehoffman/laddu/commit/efbb0d386b390a48b518663ba290aafbe2a3a78a))
+* **expr:** Document matrix conjugation panic invariant ([a758db8](https://github.com/denehoffman/laddu/commit/a758db84c281c6989f8014c0a823785cade0e823))
+* Support tensor conjugation and Python 3.11 docs ([3967e13](https://github.com/denehoffman/laddu/commit/3967e1323b7a45f2b3da335855e0f09adc61ddce))
+
+
+### Miscellaneous Chores
+
+* Prepare release checks and update dependencies ([9ca0da5](https://github.com/denehoffman/laddu/commit/9ca0da513e9e334bb8e9b58af40bbcb0b452e7a1))
+
 ## [0.23.0](https://github.com/denehoffman/laddu/compare/v0.22.0...v0.23.0) (2026-08-29)
 
 
