@@ -269,6 +269,34 @@ fn forward_gradients_cover_matrix_vector_and_dot_operations() {
         );
     }
 }
+
+#[test]
+fn tensor_scalar_arithmetic_gradients_match_finite_differences() {
+    let scale = laddu_expr::Expr::from(parameter!("scale", initial: 1.7));
+    let offset = laddu_expr::Expr::from(parameter!("offset", initial: -0.3));
+    let matrix = matmul(
+        laddu_expr::matrix([[1.0, 0.2], [0.4, 1.2]]),
+        laddu_expr::matrix([[scale.clone(), 0.5.into()], [0.8.into(), offset.clone()]]),
+    );
+    let transformed_matrix = &matrix * &scale + &offset;
+    let normalized_matrix = &transformed_matrix / &scale;
+    let vector = matvec(matrix, laddu_expr::vector([1.0, 2.0]));
+    let transformed_vector = (&scale - &vector) / &scale;
+    let expression = normalized_matrix.matrix_element(1, 0)
+        + transformed_matrix.matrix_element(0, 1)
+        + transformed_vector.component(0);
+    let model = CompiledModel::from_expr(&expression).unwrap();
+    let params = Arc::new(model.params().clone()).default_values();
+    let plan = CpuBackend.prepare(&model);
+    let result = plan.evaluate_with_gradient(&params).unwrap();
+    for (index, derivative) in result.gradient().iter().enumerate() {
+        let expected = finite_difference(&plan, &params, index);
+        assert!(
+            (derivative - expected).norm() < 1.0e-7,
+            "{derivative} != {expected}"
+        );
+    }
+}
 #[test]
 fn solve_gradients_match_finite_differences_for_matrix_and_rhs_parameters() {
     let a = laddu_expr::Expr::from(parameter!("a", initial: 2.0));

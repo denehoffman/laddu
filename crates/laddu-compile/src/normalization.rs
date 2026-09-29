@@ -1,3 +1,5 @@
+use std::hash::{Hash, Hasher};
+
 use laddu_expr::{
     BinaryOp, ExprGraph, ExprGraphRebuilder, ExprId, ExprMetadata, ExprNode, ExprSourceKind,
     UnaryOp, ValueKind,
@@ -9,7 +11,7 @@ use crate::{CompileError, CompileResult, CompiledModel, GraphFacts, graph_utils:
 const DEFAULT_EXPANSION_BUDGET: usize = 4_096;
 
 /// Compiler-selected family of accepted-normalization implementation.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
 pub enum NormalizationStrategy {
     /// Coherent groups represented by packed Hermitian statistics.
     Hermitian,
@@ -100,6 +102,22 @@ pub struct NormalizationPlan {
 }
 
 impl NormalizationPlan {
+    pub(crate) fn hash_structure<H: Hasher>(&self, state: &mut H) {
+        self.graph.root().hash(state);
+        self.graph.nodes().len().hash(state);
+        for node in self.graph.nodes() {
+            node.structural_key().hash(state);
+        }
+        self.terms.len().hash(state);
+        for term in &self.terms {
+            term.coefficient.hash(state);
+            term.basis.hash(state);
+        }
+        self.residual.hash(state);
+        self.diagnostics.strategy.hash(state);
+        self.proven_nonnegative.hash(state);
+    }
+
     pub(crate) fn analyze_disabled(graph: &ExprGraph) -> Self {
         Self::general(
             graph,
@@ -518,6 +536,11 @@ impl<'a> NormalizationAnalyzer<'a> {
                 Ok(result)
             }
             ExprNode::NaryMul { factors } => {
+                if let [lhs, rhs] = factors.as_slice()
+                    && let Some((scale, amplitude)) = self.scaled_coherent_parts(*lhs, *rhs)
+                {
+                    return self.decompose_scaled_coherent(scale, amplitude);
+                }
                 let mut result = vec![AnalyzedTerm {
                     coefficient: self.one,
                     basis: self.one,
@@ -557,6 +580,9 @@ impl<'a> NormalizationAnalyzer<'a> {
                 Ok(terms)
             }
             BinaryOp::Mul => {
+                if let Some((scale, amplitude)) = self.scaled_coherent_parts(lhs, rhs) {
+                    return self.decompose_scaled_coherent(scale, amplitude);
+                }
                 let left = self.decompose(lhs)?;
                 let right = self.decompose(rhs)?;
                 self.multiply_terms(&left, &right)
@@ -610,26 +636,8 @@ impl<'a> NormalizationAnalyzer<'a> {
                 Ok(terms)
             }
             UnaryOp::NormSqr => {
-                self.coherent_groups += 1;
                 let terms = self.decompose(input)?;
-                let packed_len = self.budget.packed_triangle_count(terms.len())?;
-                let two = self.constant(Complex64::new(2.0, 0.0));
-                let mut packed = Vec::with_capacity(packed_len);
-                for (row, left) in terms.iter().enumerate() {
-                    for (column, right) in terms.iter().enumerate().skip(row) {
-                        let right_coefficient = self.unary(UnaryOp::Conj, right.coefficient);
-                        let right_basis = self.unary(UnaryOp::Conj, right.basis);
-                        let mut coefficient = self.product(&[left.coefficient, right_coefficient]);
-                        if column != row {
-                            coefficient = self.product(&[two, coefficient]);
-                        }
-                        packed.push(AnalyzedTerm {
-                            coefficient,
-                            basis: self.product(&[left.basis, right_basis]),
-                        });
-                    }
-                }
-                Ok(packed)
+                self.pack_norm_sqr(&terms)
             }
             UnaryOp::PowI(power) if power >= 0 => {
                 let base = self.decompose(input)?;
@@ -650,6 +658,78 @@ impl<'a> NormalizationAnalyzer<'a> {
             | UnaryOp::Log
             | UnaryOp::PowI(_) => Err(self.unsupported(id, "nonlinear unary operation")),
         }
+    }
+
+    /// Recognize a real, event-independent square without taking a square root.
+    fn coherent_scale_root(&self, id: ExprId) -> Option<ExprId> {
+        let root = match self.graph.node(id)? {
+            ExprNode::Unary {
+                op: UnaryOp::PowI(2),
+                input,
+            } => *input,
+            ExprNode::Binary {
+                op: BinaryOp::Mul,
+                lhs,
+                rhs,
+            } if lhs == rhs => *lhs,
+            ExprNode::NaryMul { factors } if factors.len() == 2 && factors[0] == factors[1] => {
+                factors[0]
+            }
+            _ => return None,
+        };
+        let facts = self.facts.get(root)?;
+        (facts.value_kind == ValueKind::Real && !facts.dependency.depends_on_event).then_some(root)
+    }
+
+    fn scaled_coherent_parts(&self, lhs: ExprId, rhs: ExprId) -> Option<(ExprId, ExprId)> {
+        for (scale, norm) in [(lhs, rhs), (rhs, lhs)] {
+            if let Some(root) = self.coherent_scale_root(scale)
+                && let Some(ExprNode::Unary {
+                    op: UnaryOp::NormSqr,
+                    input,
+                }) = self.graph.node(norm)
+            {
+                return Some((root, *input));
+            }
+        }
+        None
+    }
+
+    fn decompose_scaled_coherent(
+        &mut self,
+        scale: ExprId,
+        amplitude: ExprId,
+    ) -> Result<Vec<AnalyzedTerm>, NormalizationFallbackReason> {
+        let mut terms = self.decompose(amplitude)?;
+        for term in &mut terms {
+            term.coefficient = self.product(&[DecompositionNode::Source(scale), term.coefficient]);
+        }
+        self.pack_norm_sqr(&terms)
+    }
+
+    fn pack_norm_sqr(
+        &mut self,
+        terms: &[AnalyzedTerm],
+    ) -> Result<Vec<AnalyzedTerm>, NormalizationFallbackReason> {
+        self.coherent_groups += 1;
+        let packed_len = self.budget.packed_triangle_count(terms.len())?;
+        let two = self.constant(Complex64::new(2.0, 0.0));
+        let mut packed = Vec::with_capacity(packed_len);
+        for (row, left) in terms.iter().enumerate() {
+            for (column, right) in terms.iter().enumerate().skip(row) {
+                let right_coefficient = self.unary(UnaryOp::Conj, right.coefficient);
+                let right_basis = self.unary(UnaryOp::Conj, right.basis);
+                let mut coefficient = self.product(&[left.coefficient, right_coefficient]);
+                if column != row {
+                    coefficient = self.product(&[two, coefficient]);
+                }
+                packed.push(AnalyzedTerm {
+                    coefficient,
+                    basis: self.product(&[left.basis, right_basis]),
+                });
+            }
+        }
+        Ok(packed)
     }
 
     fn decompose_projection(
@@ -862,6 +942,22 @@ mod tests {
             );
             assert!(!diagnostics.has_residual());
             assert!(diagnostics.basis_count() >= 1);
+        }
+    }
+
+    #[test]
+    fn scaled_coherent_intensity_remains_hermitian() {
+        let scale = Expr::from(parameter!("scale"));
+        let wave = complex(event_scalar("x"), event_scalar("y"))
+            + Expr::from(parameter!("mix")) * complex(event_scalar("y"), 0.5);
+        for intensity in [
+            scale.clone().powi(2) * wave.clone().norm_sqr(),
+            (scale.clone() * scale) * wave.norm_sqr(),
+        ] {
+            let diagnostics = diagnostics(&intensity);
+            assert_eq!(diagnostics.strategy(), NormalizationStrategy::Hermitian);
+            assert!(!diagnostics.has_residual());
+            assert_eq!(diagnostics.basis_count(), 3);
         }
     }
 

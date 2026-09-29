@@ -4,8 +4,8 @@ use std::sync::Arc;
 
 use laddu_expr::{
     BinaryOp, Expr, ExprDependencyKind, ExprGraph, ExprGraphRebuilder, ExprId, ExprMetadata,
-    ExprNode, ExprNodeSemantics, ExprSourceKind, NumberClass, P4Component, ParamError, UnaryOp,
-    ValueKind, complex, dot, event_scalar, matrix_from_flat, parameter,
+    ExprNode, ExprNodeSemantics, ExprShape, ExprSourceKind, NumberClass, P4Component, ParamError,
+    UnaryOp, ValueKind, complex, dot, event_scalar, matrix_from_flat, parameter,
     parameters::{ParamLayout, Parameter},
     vector,
 };
@@ -13,6 +13,64 @@ use num::complex::Complex64;
 
 fn id(index: usize) -> ExprId {
     ExprId::from_index(index)
+}
+
+#[test]
+fn tensor_scalar_syntax_is_elementwise_and_preserves_shape() {
+    let scalar = Expr::from(parameter!("scale"));
+    let vector = vector([1.0, 2.0]);
+    let matrix = matrix_from_flat(2, 2, [1.0, 2.0, 3.0, 4.0]).unwrap();
+
+    for expression in [
+        &vector + &scalar,
+        &scalar + &vector,
+        &vector - &scalar,
+        &scalar - &vector,
+        &vector * &scalar,
+        &scalar * &vector,
+        &vector / &scalar,
+    ] {
+        assert_eq!(expression.shape().unwrap(), ExprShape::Vector { len: 2 });
+        let graph = expression.to_graph();
+        assert!(
+            matches!(graph.node(graph.root()), Some(ExprNode::Vector { elements }) if elements.len() == 2)
+        );
+        assert_eq!(
+            Expr::from_graph(graph).unwrap().shape().unwrap(),
+            ExprShape::Vector { len: 2 }
+        );
+    }
+    for expression in [
+        &matrix + &scalar,
+        &scalar + &matrix,
+        &matrix - &scalar,
+        &scalar - &matrix,
+        &matrix * &scalar,
+        &scalar * &matrix,
+        &matrix / &scalar,
+    ] {
+        assert_eq!(
+            expression.shape().unwrap(),
+            ExprShape::Matrix { rows: 2, cols: 2 }
+        );
+        assert!(matches!(
+            expression.to_graph().node(expression.to_graph().root()),
+            Some(ExprNode::Matrix {
+                rows: 2,
+                cols: 2,
+                ..
+            })
+        ));
+    }
+    assert!((&scalar / &vector).shape().is_err());
+    assert!((&scalar / &matrix).shape().is_err());
+
+    let tagged = (&matrix * &scalar).tagged("scaled matrix");
+    let graph = tagged.to_graph();
+    assert_eq!(
+        graph.metadata(graph.root()).unwrap().tags()[0].as_ref(),
+        "scaled matrix"
+    );
 }
 
 #[test]

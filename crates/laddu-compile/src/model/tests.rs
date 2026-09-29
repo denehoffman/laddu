@@ -1,50 +1,10 @@
 use laddu_expr::{
-    BinaryOp, Expr, ExprId, ExprMetadata, UnaryOp, complex, dot, event_scalar, matmul, matrix,
-    matvec, parameter, parameters::Parameter, polar_complex, vector,
+    BinaryOp, Expr, UnaryOp, complex, dot, event_scalar, matmul, matrix, matvec, parameter,
+    parameters::Parameter, polar_complex, vector,
 };
 use num::complex::Complex64;
 
 use super::*;
-
-#[derive(Copy, Clone, Debug)]
-struct WrapRootInExp;
-
-impl OptimizationPass for WrapRootInExp {
-    fn name(&self) -> &'static str {
-        "wrap-root-in-exp"
-    }
-
-    fn run(&self, graph: ExprGraph) -> CompileResult<ExprGraph> {
-        let mut nodes = graph.nodes().to_vec();
-        let mut metadata = graph
-            .nodes()
-            .iter()
-            .enumerate()
-            .map(|(index, _)| {
-                graph
-                    .metadata(ExprId::from_index(index))
-                    .expect("graph metadata length is validated")
-                    .clone()
-            })
-            .collect::<Vec<_>>();
-        let root = ExprId::from_index(nodes.len());
-        nodes.push(ExprNode::Unary {
-            op: UnaryOp::Exp,
-            input: graph.root(),
-        });
-        metadata.push(ExprMetadata::new(laddu_expr::ExprSourceKind::Unary));
-        Ok(ExprGraph::from_parts(root, nodes, metadata)?)
-    }
-}
-
-fn count_binary_op(compiled: &CompiledModel, op: BinaryOp) -> usize {
-    compiled
-        .graph()
-        .nodes()
-        .iter()
-        .filter(|node| matches!(node, ExprNode::Binary { op: node_op, .. } if *node_op == op))
-        .count()
-}
 
 fn count_nary_add(compiled: &CompiledModel) -> usize {
     compiled

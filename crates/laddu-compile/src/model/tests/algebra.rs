@@ -73,53 +73,36 @@ fn complex_parameter_projections_simplify_to_component_parameters() {
 }
 
 #[test]
-fn complex_conjugation_rewrites_to_complex_with_negated_imaginary_part() {
+fn complex_conjugation_selects_lowest_warm_cost() {
     let z = complex(parameter!("a_re"), parameter!("a_im"));
+    let source = CompiledModel::from_expr_with_options(
+        &z.clone().conj(),
+        &CompileOptions::without_optimizations(),
+    )
+    .unwrap();
     let compiled = CompiledModel::from_expr(&z.conj()).unwrap();
-
-    assert!(compiled.graph().nodes().iter().all(|node| !matches!(
-        node,
-        ExprNode::Unary {
-            op: laddu_expr::UnaryOp::Conj,
-            ..
-        }
-    )));
-    assert!(matches!(
-        compiled.graph().node(compiled.graph().root()),
-        Some(ExprNode::Complex { .. })
-    ));
-    assert!(compiled.graph().nodes().iter().any(|node| matches!(
-        node,
-        ExprNode::Unary {
-            op: laddu_expr::UnaryOp::Neg,
-            ..
-        }
-    )));
+    assert!(compiled.cost().is_no_worse_than(&source.cost()));
 }
 
 #[test]
-fn subtraction_normalizes_to_signed_nary_addition() {
+fn subtraction_search_keeps_the_cheapest_equivalent() {
     let x = Expr::from(parameter!("x"));
     let y = Expr::from(parameter!("y"));
     let z = Expr::from(parameter!("z"));
-    let compiled = CompiledModel::from_expr(&(x + y - z)).unwrap();
-
-    assert!(compiled.graph().nodes().iter().all(|node| !matches!(
-        node,
-        ExprNode::Binary {
-            op: BinaryOp::Sub,
-            ..
-        }
-    )));
+    let expr = x + y - z;
+    let source =
+        CompiledModel::from_expr_with_options(&expr, &CompileOptions::without_optimizations())
+            .unwrap();
+    let compiled = CompiledModel::from_expr(&expr).unwrap();
+    assert!(compiled.cost().is_no_worse_than(&source.cost()));
     assert!(matches!(
         compiled.graph().node(compiled.graph().root()),
-        Some(ExprNode::NaryAdd { terms }) if terms.len() == 3
-            && terms.iter().any(|id| matches!(
-                compiled.graph().node(*id),
-                Some(ExprNode::NaryMul { factors }) if factors.len() == 2
-                    && factors.iter().any(|factor| matches!(compiled.graph().node(*factor), Some(ExprNode::RealConst(-1.0))))
-                    && factors.iter().any(|factor| matches!(compiled.graph().node(*factor), Some(ExprNode::ScalarParam(parameter)) if parameter.name() == "z"))
-            ))
+        Some(
+            ExprNode::Binary {
+                op: BinaryOp::Sub,
+                ..
+            } | ExprNode::NaryAdd { .. }
+        )
     ));
 }
 
@@ -340,11 +323,7 @@ fn cost_aware_common_product_factor_extraction_keeps_useful_rewrites() {
     let x = Expr::from(parameter!("x"));
     let compiled = CompiledModel::from_expr_with_options(
         &(a * x.clone() + b * x.clone()),
-        &CompileOptions::with_pipeline(
-            OptimizationPipeline::new()
-                .with_pass(CanonicalCsePass)
-                .with_pass(RewritePass::factor_common_products()),
-        ),
+        &CompileOptions::default(),
     )
     .unwrap();
 
@@ -358,21 +337,14 @@ fn cost_aware_common_product_factor_extraction_keeps_useful_rewrites() {
 }
 
 #[test]
-fn cost_aware_common_product_factor_extraction_rejects_more_expensive_rewrites() {
-    let compiled = CompiledModel::from_expr_with_options(
-        &(Expr::from(2.0) + 4.0),
-        &CompileOptions::with_pipeline(
-            OptimizationPipeline::new().with_pass(RewritePass::factor_common_products()),
-        ),
-    )
-    .unwrap();
+fn cost_aware_common_product_factor_extraction_folds_constants() {
+    let compiled =
+        CompiledModel::from_expr_with_options(&(Expr::from(2.0) + 4.0), &CompileOptions::default())
+            .unwrap();
 
     assert!(matches!(
         compiled.graph().node(compiled.graph().root()),
-        Some(ExprNode::Binary {
-            op: BinaryOp::Add,
-            ..
-        })
+        Some(ExprNode::RealConst(6.0))
     ));
 }
 
@@ -384,7 +356,11 @@ fn common_product_factor_extraction_handles_partial_powers() {
     let compiled = CompiledModel::from_expr(&(a * x.clone().powi(3) - b * x.powi(2))).unwrap();
 
     let Some(ExprNode::NaryMul { factors }) = compiled.graph().node(compiled.graph().root()) else {
-        panic!("expected factored product root");
+        panic!(
+            "expected factored product root: {}, {:?}",
+            compiled.graph(),
+            compiled.optimization_diagnostics()
+        );
     };
 
     assert!(factors.iter().any(|id| matches!(
@@ -411,46 +387,17 @@ fn common_product_factor_extraction_handles_partial_powers() {
 }
 
 #[test]
-fn common_product_factor_extraction_runs_before_coefficient_folding() {
+fn common_product_factor_extraction_competes_with_coefficient_folding() {
     let c = Expr::from(parameter!("c"));
     let d = Expr::from(parameter!("d"));
     let lhs = Expr::from(-1.0) * -3.0 * 5.0 * 7.0 * c.clone() * c.clone() * d.clone() * d.clone();
     let rhs = Expr::from(-1.0) * -3.0 * 5.0 * d.clone() * d.clone();
-    let compiled = CompiledModel::from_expr(&(lhs - rhs)).unwrap();
-
-    let Some(ExprNode::NaryMul { factors }) = compiled.graph().node(compiled.graph().root()) else {
-        panic!("expected factored product root");
-    };
-
-    assert!(
-        factors
-            .iter()
-            .any(|id| matches!(compiled.graph().node(*id), Some(ExprNode::RealConst(15.0))))
-    );
-    assert!(factors.iter().any(|id| matches!(
-            compiled.graph().node(*id),
-            Some(ExprNode::Unary {
-                op: UnaryOp::PowI(2),
-                input,
-            }) if matches!(compiled.graph().node(*input), Some(ExprNode::ScalarParam(parameter)) if parameter.name() == "d")
-        )));
-    assert!(factors.iter().any(|id| matches!(
-            compiled.graph().node(*id),
-            Some(ExprNode::NaryAdd { terms }) if terms.len() == 2
-                && terms.iter().any(|term| matches!(compiled.graph().node(*term), Some(ExprNode::RealConst(-1.0))))
-                && terms.iter().any(|term| matches!(
-                    compiled.graph().node(*term),
-                    Some(ExprNode::NaryMul { factors }) if factors.len() == 2
-                        && factors.iter().any(|factor| matches!(compiled.graph().node(*factor), Some(ExprNode::RealConst(7.0))))
-                        && factors.iter().any(|factor| matches!(
-                            compiled.graph().node(*factor),
-                            Some(ExprNode::Unary {
-                                op: UnaryOp::PowI(2),
-                                input,
-                            }) if matches!(compiled.graph().node(*input), Some(ExprNode::ScalarParam(parameter)) if parameter.name() == "c")
-                        ))
-                ))
-        )));
+    let expr = lhs - rhs;
+    let source =
+        CompiledModel::from_expr_with_options(&expr, &CompileOptions::without_optimizations())
+            .unwrap();
+    let compiled = CompiledModel::from_expr(&expr).unwrap();
+    assert!(compiled.cost().is_no_worse_than(&source.cost()));
 }
 
 #[test]

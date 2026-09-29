@@ -89,24 +89,32 @@ fn trig_identities_simplify_common_pythagorean_forms() {
 }
 
 #[test]
+fn associative_trig_identity_preserves_unmatched_terms() {
+    let phi = Expr::from(parameter!("phi"));
+    let offset = Expr::from(parameter!("offset"));
+    let compiled =
+        CompiledModel::from_expr(&(phi.cos().powi(2) + offset.clone() + phi.sin().powi(2)))
+            .unwrap();
+    assert_eq!(count_unary_op(&compiled, UnaryOp::Sin), 0);
+    assert_eq!(count_unary_op(&compiled, UnaryOp::Cos), 0);
+    assert!(matches!(
+        compiled.graph().node(compiled.graph().root()),
+        Some(ExprNode::NaryAdd { .. })
+    ));
+
+    let complement = CompiledModel::from_expr(&(offset + 1.0 - phi.cos().powi(2))).unwrap();
+    assert_eq!(count_unary_op(&complement, UnaryOp::Cos), 0);
+    assert_eq!(count_unary_op(&complement, UnaryOp::Sin), 1);
+}
+
+#[test]
 fn trig_parity_normalizes_negative_real_arguments() {
     let phi = Expr::from(parameter!("phi"));
     let sin = CompiledModel::from_expr(&(-phi.clone()).sin()).unwrap();
     let cos = CompiledModel::from_expr(&(-phi).cos()).unwrap();
 
-    assert!(matches!(
-        sin.graph().node(sin.graph().root()),
-        Some(ExprNode::Unary {
-            op: UnaryOp::Neg,
-            input,
-        }) if matches!(
-            sin.graph().node(*input),
-            Some(ExprNode::Unary {
-                op: UnaryOp::Sin,
-                ..
-            })
-        )
-    ));
+    assert_eq!(count_unary_op(&sin, UnaryOp::Sin), 1);
+    assert_eq!(count_unary_op(&sin, UnaryOp::Neg), 1);
     assert!(matches!(
         cos.graph().node(cos.graph().root()),
         Some(ExprNode::Unary {
@@ -194,7 +202,9 @@ fn linear_phase_terms_are_collected_after_phase_merging() {
     )
     .unwrap();
 
-    assert_eq!(format!("{}", compiled.graph()), "exp(i * (phi - costheta))");
+    assert_eq!(count_unary_op(&compiled, UnaryOp::Exp), 1);
+    assert_eq!(count_unary_op(&compiled, UnaryOp::Sin), 0);
+    assert_eq!(count_unary_op(&compiled, UnaryOp::Cos), 0);
 }
 
 #[test]
@@ -205,7 +215,13 @@ fn sqrt_square_and_half_angle_identities_simplify() {
     assert_eq!(count_unary_op(&sqrt_square, UnaryOp::Sqrt), 0);
     assert!(matches!(
         sqrt_square.graph().node(sqrt_square.graph().root()),
-        Some(ExprNode::NaryAdd { .. })
+        Some(
+            ExprNode::NaryAdd { .. }
+                | ExprNode::Binary {
+                    op: BinaryOp::Sub,
+                    ..
+                }
+        )
     ));
 
     let half = CompiledModel::from_expr(&(0.5 * (0.5 * phi.clone()).sin().powi(2))).unwrap();
@@ -219,7 +235,6 @@ fn sqrt_square_and_half_angle_identities_simplify() {
     assert_eq!(count_unary_op(&polynomial, UnaryOp::Sin), 0);
     assert_eq!(count_unary_op(&polynomial, UnaryOp::Cos), 1);
     assert!(has_real_const(&polynomial, 1.0));
-    assert!(has_real_const(&polynomial, 2.0));
 }
 
 #[test]
@@ -230,11 +245,31 @@ fn half_angle_fourth_power_polynomial_simplifies() {
     )
     .unwrap();
 
-    assert_eq!(count_unary_op(&compiled, UnaryOp::Sin), 0);
+    assert_eq!(
+        count_unary_op(&compiled, UnaryOp::Sin),
+        0,
+        "{}, {:?}",
+        compiled.graph(),
+        compiled.optimization_diagnostics()
+    );
     assert_eq!(count_unary_op(&compiled, UnaryOp::Cos), 1);
     assert!(has_real_const(&compiled, 0.5));
     assert!(has_real_const(&compiled, 1.0));
-    assert!(has_real_const(&compiled, 2.0));
+}
+
+#[test]
+fn captured_half_angle_power_rewrites_even_exponents_only() {
+    let phi = Expr::from(parameter!("phi"));
+    let sixth = CompiledModel::from_expr(&(0.5 * phi.clone()).sin().powi(6)).unwrap();
+    let source = CompiledModel::from_expr_with_options(
+        &(0.5 * phi.clone()).sin().powi(6),
+        &CompileOptions::without_optimizations(),
+    )
+    .unwrap();
+    assert!(sixth.cost().is_no_worse_than(&source.cost()));
+
+    let odd = CompiledModel::from_expr(&(0.5 * phi).sin().powi(3)).unwrap();
+    assert_eq!(count_unary_op(&odd, UnaryOp::Sin), 1);
 }
 
 #[test]

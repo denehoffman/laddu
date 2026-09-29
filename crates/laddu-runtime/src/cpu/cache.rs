@@ -7,11 +7,12 @@ use laddu_data::{
     data::{CacheStorage, Dataset, EventBatch},
     io::ReadPlan,
 };
-use laddu_expr::{ExprId, ValueKind};
+use laddu_expr::{ExprId, ExprNode, P4Component, ValueKind};
 use nalgebra::{DMatrix, DVector};
 use num::complex::Complex64;
 
-use super::layout::{FlatRows, matrix_at_optional};
+use super::evaluation::EventColumn;
+use super::layout::{FlatRows, eval_binary, eval_unary, matrix_at_optional};
 use super::{CpuPlan, DynamicLu, PreparedDatasetStats, RuntimeError, RuntimeResult, Value};
 use crate::MemoryLease;
 
@@ -315,6 +316,11 @@ impl CpuPlan {
             &self.solve_row_keys,
             batch.len(),
         )?;
+        if self.scalar_cache_supported() {
+            self.cache_scalar_batch(batch, &event_columns, &mut cache)?;
+            cache.set_weights((0..batch.len()).map(|row| batch.weights_at(row)).collect());
+            return Ok(cache);
+        }
         for row in 0..batch.len() {
             let values = self.evaluate_cache_values_for_row(batch, row, &event_columns)?;
             for (slot, entry) in self.cache_plan.entries().iter().enumerate() {
@@ -353,6 +359,88 @@ impl CpuPlan {
         }
         cache.set_weights((0..batch.len()).map(|row| batch.weights_at(row)).collect());
         Ok(cache)
+    }
+
+    fn scalar_cache_supported(&self) -> bool {
+        self.factor_matrices.is_empty()
+            && self.solve_row_matrices.is_empty()
+            && self
+                .cache_plan
+                .entries()
+                .iter()
+                .all(|entry| matches!(entry.value_kind(), ValueKind::Real | ValueKind::Complex))
+            && self.cache_materialization_nodes.iter().all(|id| {
+                matches!(
+                    self.graph.node(*id),
+                    Some(
+                        ExprNode::RealConst(_)
+                            | ExprNode::ComplexConst(_)
+                            | ExprNode::EventScalar(_)
+                            | ExprNode::EventP4Component { .. }
+                            | ExprNode::Unary { .. }
+                            | ExprNode::Binary { .. }
+                            | ExprNode::NaryAdd { .. }
+                            | ExprNode::NaryMul { .. }
+                            | ExprNode::Complex { .. }
+                    )
+                )
+            })
+    }
+
+    fn cache_scalar_batch(
+        &self,
+        batch: &EventBatch,
+        event_columns: &[Option<EventColumn>],
+        cache: &mut CpuBatchCache,
+    ) -> RuntimeResult<()> {
+        let mut values = vec![Complex64::ZERO; self.graph.nodes().len()];
+        for row in 0..batch.len() {
+            for id in &self.cache_materialization_nodes {
+                let index = id.index();
+                values[index] = match &self.graph.nodes()[index] {
+                    ExprNode::RealConst(value) => Complex64::from(*value),
+                    ExprNode::ComplexConst(value) => *value,
+                    ExprNode::EventScalar(name) => {
+                        let Some(EventColumn::Scalar(col)) = event_columns[index] else {
+                            return Err(RuntimeError::MissingEventColumn(name.to_string()));
+                        };
+                        Complex64::from(batch.scalar_at(col, row))
+                    }
+                    ExprNode::EventP4Component { name, component } => {
+                        let Some(EventColumn::P4Component { col, .. }) = event_columns[index]
+                        else {
+                            return Err(RuntimeError::MissingEventColumn(name.to_string()));
+                        };
+                        let p4 = batch.p4_at(col, row);
+                        Complex64::from(match component {
+                            P4Component::Px => p4.px,
+                            P4Component::Py => p4.py,
+                            P4Component::Pz => p4.pz,
+                            P4Component::E => p4.e,
+                        })
+                    }
+                    ExprNode::Unary { op, input } => eval_unary(*op, values[input.index()]),
+                    ExprNode::Binary { op, lhs, rhs } => {
+                        eval_binary(*op, values[lhs.index()], values[rhs.index()])
+                    }
+                    ExprNode::NaryAdd { terms } => {
+                        terms.iter().map(|term| values[term.index()]).sum()
+                    }
+                    ExprNode::NaryMul { factors } => factors
+                        .iter()
+                        .map(|factor| values[factor.index()])
+                        .product(),
+                    ExprNode::Complex { re, im } => {
+                        Complex64::new(values[re.index()].re, values[im.index()].re)
+                    }
+                    _ => unreachable!("scalar cache support was checked"),
+                };
+            }
+            for (slot, entry) in self.cache_plan.entries().iter().enumerate() {
+                cache.push(slot, Value::Scalar(values[entry.node().index()]))?;
+            }
+        }
+        Ok(())
     }
 }
 

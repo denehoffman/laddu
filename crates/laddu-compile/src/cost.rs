@@ -262,14 +262,12 @@ mod tests {
     use laddu_expr::{BinaryOp, Expr, UnaryOp, event_scalar, parameter};
     use num::complex::Complex64;
 
-    use crate::{
-        CanonicalCsePass, CompileOptions, CompiledModel, OptimizationPipeline, RewritePass,
-    };
+    use crate::{CompileOptions, CompiledModel};
 
     use super::*;
 
-    fn compile_cost(expr: &Expr, pipeline: OptimizationPipeline) -> OptimizationCost {
-        CompiledModel::from_expr_with_options(expr, &CompileOptions::with_pipeline(pipeline))
+    fn compile_cost(expr: &Expr, options: &CompileOptions) -> OptimizationCost {
+        CompiledModel::from_expr_with_options(expr, options)
             .unwrap()
             .cost()
     }
@@ -368,26 +366,8 @@ mod tests {
     fn optimization_cost_compares_pipeline_effectiveness() {
         let phi = Expr::from(parameter!("phi"));
         let euler = phi.cos() + Complex64::I * phi.sin();
-        let without_exponential = compile_cost(
-            &euler,
-            OptimizationPipeline::new()
-                .with_pass(RewritePass::simplify())
-                .with_pass(CanonicalCsePass)
-                .with_pass(RewritePass::normalize_add_mul())
-                .with_pass(CanonicalCsePass)
-                .with_max_iterations(4),
-        );
-        let with_exponential = compile_cost(
-            &euler,
-            OptimizationPipeline::new()
-                .with_pass(RewritePass::simplify())
-                .with_pass(CanonicalCsePass)
-                .with_pass(RewritePass::normalize_add_mul())
-                .with_pass(CanonicalCsePass)
-                .with_pass(RewritePass::exponential())
-                .with_pass(RewritePass::simplify())
-                .with_max_iterations(4),
-        );
+        let without_exponential = compile_cost(&euler, &CompileOptions::without_optimizations());
+        let with_exponential = compile_cost(&euler, &CompileOptions::default());
 
         assert!(with_exponential.weighted_ops() < without_exponential.weighted_ops());
         assert_eq!(with_exponential.transcendental_ops(), 1);

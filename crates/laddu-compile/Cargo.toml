@@ -16,7 +16,10 @@ rustdoc-args = ["--html-in-header", "docs-header.html"]
 workspace = true
 
 [dependencies]
+egg.workspace = true
+good_lp.workspace = true
 laddu-expr.workspace = true
+laddu-cas-macros.workspace = true
 laddu-kernel.workspace = true
 thiserror.workspace = true
 num.workspace = true

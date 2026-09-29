@@ -65,7 +65,7 @@ pub struct DatasetDiagnostics {
     term: String,
     role: DatasetRole,
     stats: laddu_runtime::PreparedDatasetStats,
-    quadratic_normalization: bool,
+    precomputed_normalization: bool,
     normalization: Option<PreparedNormalizationDiagnostics>,
     source_traversals: u64,
 }
@@ -87,10 +87,15 @@ impl DatasetDiagnostics {
     }
 
     /// Returns whether accepted normalization uses compiler-native sufficient statistics.
+    pub fn uses_precomputed_normalization(&self) -> bool {
+        self.precomputed_normalization
+    }
+
+    /// Returns whether accepted normalization uses compiler-native statistics.
     ///
-    /// The historical method name is retained for compatibility.
+    /// This older name also returns `true` for linear and hybrid strategies.
     pub fn uses_quadratic_normalization(&self) -> bool {
-        self.quadratic_normalization
+        self.uses_precomputed_normalization()
     }
 
     /// Returns compiler-native normalization preparation diagnostics.
@@ -1328,7 +1333,7 @@ impl LikelihoodTerm for NllTerm {
             term: self.name.as_str().to_owned(),
             role: DatasetRole::Observed,
             stats: *prepared.data.stats(),
-            quadratic_normalization: false,
+            precomputed_normalization: false,
             normalization: None,
             source_traversals: self.data_source.source_traversals(),
         });
@@ -1338,7 +1343,7 @@ impl LikelihoodTerm for NllTerm {
                     term: self.name.as_str().to_owned(),
                     role: DatasetRole::AcceptedMc,
                     stats: *normalization.stats(),
-                    quadratic_normalization: true,
+                    precomputed_normalization: true,
                     normalization: Some(normalization.diagnostics()),
                     source_traversals: self.accepted_mc_source.source_traversals(),
                 });
@@ -1348,7 +1353,7 @@ impl LikelihoodTerm for NllTerm {
                     term: self.name.as_str().to_owned(),
                     role: DatasetRole::AcceptedMc,
                     stats: *accepted_mc.stats(),
-                    quadratic_normalization: false,
+                    precomputed_normalization: false,
                     normalization: Some(PreparedNormalizationDiagnostics::general(
                         self.model.normalization_diagnostics().clone(),
                     )),
@@ -3621,7 +3626,7 @@ mod tests {
                     baseline.source_traversals()
                 );
                 let term = replica.terms()[0].as_intensity().unwrap();
-                if baseline.uses_quadratic_normalization() {
+                if baseline.uses_precomputed_normalization() {
                     assert!(term.accepted_mc().is_err());
                 } else {
                     assert_eq!(term.accepted_mc().unwrap().stats(), baseline.stats());
@@ -3673,7 +3678,7 @@ mod tests {
                 .diagnostics()
                 .datasets()
                 .iter()
-                .any(DatasetDiagnostics::uses_quadratic_normalization)
+                .any(DatasetDiagnostics::uses_precomputed_normalization)
         );
     }
 
@@ -3725,6 +3730,102 @@ mod tests {
     }
 
     #[test]
+    fn scaled_coherent_normalization_auto_uses_statistics() {
+        let scale = Expr::from(parameter!("scale", initial: 0.7));
+        let wave = complex(event_scalar("x"), 0.5)
+            + Expr::from(parameter!("mix", initial: -0.2))
+                * complex(event_scalar("x").powi(2), -0.25)
+            + complex(
+                Expr::from(parameter!("third_re", initial: 0.3)),
+                Expr::from(parameter!("third_im", initial: -0.4)),
+            ) * complex(event_scalar("x").powi(3), 0.1);
+        let model = CompiledModel::from_expr(&(scale.powi(2) * wave.norm_sqr())).unwrap();
+        assert_eq!(
+            model.normalization_diagnostics().strategy(),
+            laddu_compile::NormalizationStrategy::Hermitian
+        );
+        let sample = weighted_dataset(&[(0.5, 1.0), (1.5, 2.0), (2.5, 0.75)]);
+        let likelihood = single_term_likelihood("scaled", &model, &sample, &sample);
+        let diagnostics = likelihood.diagnostics();
+        let accepted = diagnostics
+            .datasets()
+            .iter()
+            .find(|dataset| dataset.role() == DatasetRole::AcceptedMc)
+            .unwrap();
+        assert!(accepted.uses_precomputed_normalization(), "{accepted:?}");
+        assert_eq!(
+            accepted.normalization().unwrap().strategy(),
+            laddu_compile::NormalizationStrategy::Hermitian
+        );
+        let term = likelihood.terms()[0].as_intensity().unwrap();
+        let general_dataset = term
+            .plan()
+            .unwrap()
+            .prepare_dataset(likelihood.execution(), &term.accepted_mc_source)
+            .unwrap();
+        for scale in [-0.8, 0.0, 0.7] {
+            let mut free = likelihood.default_params();
+            let scale_id = likelihood.params().id("scale").unwrap();
+            let scale_free_id = likelihood.params().free_id(scale_id).unwrap().unwrap();
+            free[scale_free_id.index()] = scale;
+            let global = term.global_values(&free).unwrap();
+            let local = term.local_values(&global).unwrap();
+            let optimized = term
+                .normalization_with_gradient(&local, likelihood.execution())
+                .unwrap();
+            let general = term
+                .plan()
+                .unwrap()
+                .reduce_with_gradient(
+                    likelihood.execution(),
+                    &local,
+                    &general_dataset,
+                    ReductionPlan::weighted_real(),
+                )
+                .unwrap()
+                .into_parts();
+            assert_relative_eq!(optimized.0, general.0, epsilon = 1.0e-11);
+            for (optimized, general) in optimized.1.iter().zip(general.1) {
+                assert_relative_eq!(optimized, &general, epsilon = 1.0e-10);
+            }
+        }
+    }
+
+    #[test]
+    fn auto_prefers_repeated_evaluation_for_many_hermitian_statistics() {
+        let x = event_scalar("x");
+        let amplitude = (0..18)
+            .map(|index| {
+                Expr::from(parameter!(format!("wave_{index}"), initial: 0.1))
+                    * complex(x.clone().powi(index + 1), 0.25)
+            })
+            .reduce(|sum, term| sum + term)
+            .unwrap();
+        let model = CompiledModel::from_expr(&amplitude.norm_sqr()).unwrap();
+        assert_eq!(
+            model.normalization_diagnostics().strategy(),
+            laddu_compile::NormalizationStrategy::Hermitian
+        );
+        let basis_work: usize = model
+            .normalization_plan()
+            .basis_models()
+            .unwrap()
+            .iter()
+            .map(|basis| basis.graph().nodes().len())
+            .sum();
+        assert!(basis_work > model.graph().nodes().len() * 16);
+        let sample = weighted_dataset(&[(0.5, 1.0), (1.5, 1.0)]);
+        let likelihood = single_term_likelihood("many-waves", &model, &sample, &sample);
+        let diagnostics = likelihood.diagnostics();
+        let accepted = diagnostics
+            .datasets()
+            .iter()
+            .find(|dataset| dataset.role() == DatasetRole::AcceptedMc)
+            .unwrap();
+        assert!(accepted.uses_precomputed_normalization(), "{accepted:?}");
+    }
+
+    #[test]
     fn normalization_mode_general_forces_event_reduction() {
         let scale = parameter!("scale", initial: 0.7);
         let model = CompiledModel::from_expr(&(scale * event_scalar("x")).powi(2)).unwrap();
@@ -3742,7 +3843,7 @@ mod tests {
             .iter()
             .find(|dataset| dataset.role() == DatasetRole::AcceptedMc)
             .unwrap();
-        assert!(!accepted.uses_quadratic_normalization());
+        assert!(!accepted.uses_precomputed_normalization());
         assert_eq!(
             accepted.normalization().unwrap().strategy(),
             laddu_compile::NormalizationStrategy::General

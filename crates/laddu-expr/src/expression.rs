@@ -981,6 +981,10 @@ impl ExprMetadata {
 }
 
 /// Shareable symbolic expression represented internally as a directed acyclic graph.
+///
+/// Adding, subtracting, or multiplying a vector or matrix by a scalar acts
+/// elementwise in either operand order. Dividing a vector or matrix by a
+/// scalar is also elementwise; scalar divided by a tensor is unsupported.
 #[derive(Clone, Debug)]
 pub struct Expr {
     node: Arc<DagNode>,
@@ -1011,6 +1015,12 @@ enum DagNodeKind {
         op: BinaryOp,
         lhs: Expr,
         rhs: Expr,
+    },
+    TensorScalar {
+        op: BinaryOp,
+        tensor: Expr,
+        scalar: Expr,
+        scalar_on_left: bool,
     },
     Complex {
         re: Expr,
@@ -1061,6 +1071,7 @@ impl DagNodeKind {
             | Self::EventP4Component { .. } => 0,
             Self::Unary { .. } | Self::Component { .. } | Self::MatrixElement { .. } => 1,
             Self::Binary { .. }
+            | Self::TensorScalar { .. }
             | Self::Complex { .. }
             | Self::MatMul { .. }
             | Self::MatVec { .. }
@@ -1078,6 +1089,7 @@ impl DagNodeKind {
             Self::Binary { lhs, rhs, .. } | Self::MatMul { lhs, rhs } | Self::Dot { lhs, rhs } => {
                 [lhs, rhs][index]
             }
+            Self::TensorScalar { tensor, scalar, .. } => [tensor, scalar][index],
             Self::Complex { re, im } => [re, im][index],
             Self::MatVec { matrix, vector } => [matrix, vector][index],
             Self::Solve { matrix, rhs } => [matrix, rhs][index],
@@ -1108,6 +1120,17 @@ impl DagNodeKind {
                 op: *op,
                 lhs: map(lhs),
                 rhs: map(rhs),
+            },
+            Self::TensorScalar {
+                op,
+                tensor,
+                scalar,
+                scalar_on_left,
+            } => Self::TensorScalar {
+                op: *op,
+                tensor: map(tensor),
+                scalar: map(scalar),
+                scalar_on_left: *scalar_on_left,
             },
             Self::Complex { re, im } => Self::Complex {
                 re: map(re),
@@ -1330,7 +1353,71 @@ impl Expr {
 
     /// Serializes the shareable expression DAG into a topologically ordered graph.
     pub fn to_graph(&self) -> ExprGraph {
-        GraphBuilder::new().build(self)
+        if !self.contains_tensor_scalar() {
+            return GraphBuilder::new().build(self);
+        }
+        let (root, mut nodes) = self.lower_tensor_scalars();
+        let graph = GraphBuilder::new().build(&root);
+        drop(root);
+        // Parents are released before children so a deep scalar subtree is
+        // not recursively destroyed when one tensor operation is lowered.
+        while let Some(node) = nodes.pop() {
+            drop(node);
+        }
+        graph
+    }
+
+    fn contains_tensor_scalar(&self) -> bool {
+        let mut seen = HashSet::new();
+        let mut stack = vec![self];
+        while let Some(expr) = stack.pop() {
+            if !seen.insert(Arc::as_ptr(&expr.node) as usize) {
+                continue;
+            }
+            if matches!(expr.node.kind, DagNodeKind::TensorScalar { .. }) {
+                return true;
+            }
+            for index in 0..expr.node.kind.child_count() {
+                stack.push(expr.node.kind.child_at(index));
+            }
+        }
+        false
+    }
+
+    fn lower_tensor_scalars(&self) -> (Self, Vec<Self>) {
+        let mut lowered = HashMap::<usize, Expr>::new();
+        let mut order = Vec::new();
+        let mut stack = vec![(self.clone(), false)];
+        while let Some((expr, visited)) = stack.pop() {
+            let key = Arc::as_ptr(&expr.node) as usize;
+            if lowered.contains_key(&key) {
+                continue;
+            }
+            if visited {
+                let kind = expr
+                    .node
+                    .kind
+                    .map_children(|child| lowered[&(Arc::as_ptr(&child.node) as usize)].clone());
+                let result = match kind {
+                    DagNodeKind::TensorScalar {
+                        op,
+                        tensor,
+                        scalar,
+                        scalar_on_left,
+                    } => lower_tensor_scalar(op, tensor, scalar, scalar_on_left),
+                    other => Expr::new(other),
+                }
+                .with_metadata(|metadata| *metadata = expr.node.metadata.clone());
+                order.push(result.clone());
+                lowered.insert(key, result);
+            } else {
+                stack.push((expr.clone(), true));
+                for index in (0..expr.node.kind.child_count()).rev() {
+                    stack.push((expr.node.kind.child_at(index).clone(), false));
+                }
+            }
+        }
+        (lowered[&(Arc::as_ptr(&self.node) as usize)].clone(), order)
     }
 
     /// Rebuilds a shareable expression DAG from its serialized graph form.
@@ -1493,6 +1580,27 @@ impl DagNodeKind {
                 lhs.expect_shape("binary operation", ExprShape::Scalar)?;
                 rhs.expect_shape("binary operation", ExprShape::Scalar)?;
                 Ok(ExprShape::Scalar)
+            }
+            Self::TensorScalar {
+                op,
+                tensor,
+                scalar,
+                scalar_on_left,
+            } => {
+                scalar.expect_shape("tensor-scalar operation", ExprShape::Scalar)?;
+                if *scalar_on_left && *op == BinaryOp::Div {
+                    return Err(ExprShapeError::new(
+                        "tensor-scalar operation",
+                        "scalar division by a tensor is unsupported",
+                    ));
+                }
+                match tensor.shape()? {
+                    shape @ (ExprShape::Vector { .. } | ExprShape::Matrix { .. }) => Ok(shape),
+                    ExprShape::Scalar => Err(ExprShapeError::new(
+                        "tensor-scalar operation",
+                        "expected a vector or matrix operand",
+                    )),
+                }
             }
             Self::Complex { re, im } => {
                 re.expect_shape("complex constructor", ExprShape::Scalar)?;
@@ -1662,6 +1770,18 @@ impl DagNodeKind {
 }
 
 impl Expr {
+    fn is_tensor_syntax(&self) -> bool {
+        matches!(
+            self.node.kind,
+            DagNodeKind::Vector { .. }
+                | DagNodeKind::Matrix { .. }
+                | DagNodeKind::MatMul { .. }
+                | DagNodeKind::MatVec { .. }
+                | DagNodeKind::Solve { .. }
+                | DagNodeKind::TensorScalar { .. }
+        )
+    }
+
     fn expect_shape(
         &self,
         operation: &'static str,
@@ -2022,11 +2142,76 @@ fn unary(op: UnaryOp, expr: impl Into<Expr>) -> Expr {
 }
 
 fn binary(op: BinaryOp, lhs: impl Into<Expr>, rhs: impl Into<Expr>) -> Expr {
-    Expr::new(DagNodeKind::Binary {
-        op,
-        lhs: lhs.into(),
-        rhs: rhs.into(),
-    })
+    let lhs = lhs.into();
+    let rhs = rhs.into();
+    match (lhs.is_tensor_syntax(), rhs.is_tensor_syntax()) {
+        (true, false) if op != BinaryOp::Atan2 => Expr::new(DagNodeKind::TensorScalar {
+            op,
+            tensor: lhs,
+            scalar: rhs,
+            scalar_on_left: false,
+        }),
+        (false, true) if matches!(op, BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul) => {
+            Expr::new(DagNodeKind::TensorScalar {
+                op,
+                tensor: rhs,
+                scalar: lhs,
+                scalar_on_left: true,
+            })
+        }
+        _ => Expr::new(DagNodeKind::Binary { op, lhs, rhs }),
+    }
+}
+
+fn lower_tensor_scalar(op: BinaryOp, tensor: Expr, scalar: Expr, scalar_on_left: bool) -> Expr {
+    let element = |value: Expr| {
+        if scalar_on_left {
+            binary(op, scalar.clone(), value)
+        } else {
+            binary(op, value, scalar.clone())
+        }
+    };
+    let shape = match &tensor.node.kind {
+        DagNodeKind::Vector { elements } => ExprShape::Vector {
+            len: elements.len(),
+        },
+        DagNodeKind::Matrix { rows, cols, .. } => ExprShape::Matrix {
+            rows: *rows,
+            cols: *cols,
+        },
+        _ => tensor.shape().expect("tensor-scalar shape was validated"),
+    };
+    match shape {
+        ExprShape::Vector { len } => {
+            let elements = (0..len).map(|index| {
+                let value = match &tensor.node.kind {
+                    DagNodeKind::Vector { elements } => elements[index].clone(),
+                    _ => tensor.component(index),
+                };
+                element(value)
+            });
+            vector(elements)
+        }
+        ExprShape::Matrix { rows, cols } => {
+            let elements = (0..rows).flat_map(|row| {
+                (0..cols).map({
+                    let element = &element;
+                    let tensor = &tensor;
+                    move |col| {
+                        let value = match &tensor.node.kind {
+                            DagNodeKind::Matrix { elements, .. } => {
+                                elements[row * cols + col].clone()
+                            }
+                            _ => tensor.matrix_element(row, col),
+                        };
+                        element(value)
+                    }
+                })
+            });
+            matrix_from_flat(rows, cols, elements).expect("tensor-scalar matrix shape is valid")
+        }
+        ExprShape::Scalar => unreachable!("tensor-scalar input is a tensor"),
+    }
 }
 
 /// Topologically ordered, serializable representation of an [`Expr`] DAG.
@@ -2460,6 +2645,9 @@ impl GraphBuilder {
                 let rhs = self.id(rhs);
                 ExprNode::Binary { op: *op, lhs, rhs }
             }
+            DagNodeKind::TensorScalar { .. } => {
+                unreachable!("tensor-scalar nodes are lowered before graph construction")
+            }
             DagNodeKind::Complex { re, im } => {
                 let re = self.id(re);
                 let im = self.id(im);
@@ -2522,7 +2710,7 @@ fn source_kind(kind: &DagNodeKind) -> ExprSourceKind {
         DagNodeKind::ScalarParam(_) => ExprSourceKind::Param,
         DagNodeKind::EventScalar(_) | DagNodeKind::EventP4Component { .. } => ExprSourceKind::Event,
         DagNodeKind::Unary { .. } => ExprSourceKind::Unary,
-        DagNodeKind::Binary { .. } => ExprSourceKind::Binary,
+        DagNodeKind::Binary { .. } | DagNodeKind::TensorScalar { .. } => ExprSourceKind::Binary,
         DagNodeKind::Complex { .. } => ExprSourceKind::Complex,
         DagNodeKind::Vector { .. } | DagNodeKind::Component { .. } | DagNodeKind::Dot { .. } => {
             ExprSourceKind::Vector
@@ -2903,6 +3091,21 @@ mod tests {
         // this test targets traversal behavior rather than destructor policy.
         std::mem::forget(expression);
         std::mem::forget(projected);
+    }
+
+    #[test]
+    fn tensor_scalar_lowering_handles_a_deep_scalar_element() {
+        let mut scalar = event_scalar("x");
+        for _ in 0..10_000 {
+            scalar = scalar.sin();
+        }
+        let expression = vector([scalar.clone()]) * 2.0;
+        let graph = expression.to_graph();
+        assert!(
+            matches!(graph.node(graph.root()), Some(ExprNode::Vector { elements }) if elements.len() == 1)
+        );
+        std::mem::forget(scalar);
+        std::mem::forget(expression);
     }
 
     #[test]
