@@ -1290,6 +1290,9 @@ impl Expr {
     }
 
     /// Returns the complex conjugate, applied elementwise to vectors and matrices.
+    ///
+    /// # Panics
+    /// Panics if an internally validated matrix cannot be rebuilt with its cached dimensions.
     pub fn conj(&self) -> Self {
         match self.shape() {
             Ok(ExprShape::Vector { len }) => {
