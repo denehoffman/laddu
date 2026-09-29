@@ -421,4 +421,4 @@ jobs:
         uses: taiki-e/install-action@v2
         with:
           tool: cargo-workspaces
-      - run: cargo workspaces publish --publish-as-is --locked --no-git-commit --no-git-tag --no-git-push --token ${{ secrets.CARGO_REGISTRY_TOKEN }} --yes
+      - run: cargo workspaces publish --from-git --token ${{ secrets.CARGO_REGISTRY_TOKEN }} --yes

@@ -206,11 +206,7 @@ python_release_workflow = Workflow(
                 SetupMPI(),
                 SetupRust(),
                 InstallRustTool(tool=['cargo-workspaces']),
-                script(
-                    'cargo workspaces publish --publish-as-is --locked '
-                    '--no-git-commit --no-git-tag --no-git-push '
-                    f'--token {context.secrets.CARGO_REGISTRY_TOKEN} --yes'
-                ),
+                script(f'cargo workspaces publish --from-git --token {context.secrets.CARGO_REGISTRY_TOKEN} --yes'),
             ],
         ),
     },
