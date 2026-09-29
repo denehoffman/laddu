@@ -228,15 +228,14 @@ def build_model(channel: ld.Channel, efficiency: ld.Expr | None = None) -> ld.Mo
         l=2,
     )
 
-    magnitude = ld.parameter('f2_magnitude', initial=0.35, bounds=(0.0, 2.0), scale=0.5)
-    phase = ld.parameter(
-        'f2_phase',
-        initial=0.0,
-        bounds=(-math.pi, math.pi),
-        periodic=True,
-        scale=1.0,
+    f2_coupling = ld.cparameter(
+        'f2',
+        coordinates='polar',
+        initial=(0.35, 0.0),
+        bounds=((0.0, 2.0), (-math.pi, math.pi)),
+        periodic=(False, True),
+        scale=(0.5, 1.0),
     )
-    f2_coupling = ld.polar_complex(magnitude, phase)
 
     photon_spin = channel.particle('gamma').spin
     target_spin = channel.particle('target').spin
@@ -364,10 +363,10 @@ def plot_closure(
     parameter_draws = np.asarray(ensemble.draws, dtype=float)
     parameter_columns = {name: parameter_draws[:, index] for index, name in enumerate(ensemble.parameter_names)}
     bootstrap_errors = {
-        'f2_magnitude': float(np.std(parameter_columns['f2_magnitude'], ddof=1)),
-        'f2_phase': float(
+        'f2 magnitude': float(np.std(parameter_columns['f2 magnitude'], ddof=1)),
+        'f2 phase': float(
             np.std(
-                [wrapped_phase_residual(value, fitted['f2_phase']) for value in parameter_columns['f2_phase']],
+                [wrapped_phase_residual(value, fitted['f2 phase']) for value in parameter_columns['f2 phase']],
                 ddof=1,
             )
         ),
@@ -514,8 +513,8 @@ def main() -> None:  # noqa: PLR0915
     model = build_model(channel)
     generator = ld.Generator(channel)
     truth = {
-        'f2_magnitude': F2_MAGNITUDE_TRUTH,
-        'f2_phase': F2_PHASE_TRUTH,
+        'f2 magnitude': F2_MAGNITUDE_TRUTH,
+        'f2 phase': F2_PHASE_TRUTH,
     }
 
     started = time.perf_counter()
@@ -565,8 +564,8 @@ def main() -> None:  # noqa: PLR0915
 
     names = fit.parameter_names or likelihood.parameter_names
     fitted = dict(zip(names, np.asarray(fit.values, dtype=float), strict=True))
-    magnitude = fitted['f2_magnitude']
-    phase = fitted['f2_phase']
+    magnitude = fitted['f2 magnitude']
+    phase = fitted['f2 phase']
 
     started = time.perf_counter()
     plot_path = args.output / 'closure.png'
@@ -597,13 +596,13 @@ def main() -> None:  # noqa: PLR0915
     )
     print('parameter       truth        fitted    bootstrap error      residual')
     print(
-        f'f2_magnitude  {F2_MAGNITUDE_TRUTH:>10.6f}  {magnitude:>12.6f}'
-        f'  {bootstrap_errors["f2_magnitude"]:>17.6f}'
+        f'f2 magnitude  {F2_MAGNITUDE_TRUTH:>10.6f}  {magnitude:>12.6f}'
+        f'  {bootstrap_errors["f2 magnitude"]:>17.6f}'
         f'  {magnitude - F2_MAGNITUDE_TRUTH:>12.6f}'
     )
     print(
-        f'f2_phase      {F2_PHASE_TRUTH:>10.6f}  {phase:>12.6f}'
-        f'  {bootstrap_errors["f2_phase"]:>17.6f}'
+        f'f2 phase      {F2_PHASE_TRUTH:>10.6f}  {phase:>12.6f}'
+        f'  {bootstrap_errors["f2 phase"]:>17.6f}'
         f'  {wrapped_phase_residual(phase, F2_PHASE_TRUTH):>12.6f}'
     )
     print(f'\n{fit}')

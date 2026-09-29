@@ -43,19 +43,15 @@ for observed, normalization in zip(data_bins, accepted_bins, strict=True):
         continue
 
     prefix = f"bin_{observed.index:02d}"
-    magnitude = ld.parameter(
-        f"{prefix}_d_magnitude",
-        initial=0.2,
-        bounds=(0.0, 5.0),
-    )
-    phase = ld.parameter(
-        f"{prefix}_d_phase",
-        initial=0.0,
-        bounds=(-3.141592653589793, 3.141592653589793),
-        periodic=True,
+    coupling = ld.cparameter(
+        f"{prefix}_d",
+        coordinates="polar",
+        initial=(0.2, 0.0),
+        bounds=((0.0, 5.0), (-3.141592653589793, 3.141592653589793)),
+        periodic=(False, True),
     )
 
-    amplitude = s_wave + ld.polar_complex(magnitude, phase) * d_wave
+    amplitude = s_wave + coupling * d_wave
     bin_model = ld.Model(amplitude.norm_sqr())
     terms.append(
         ld.NLL(
