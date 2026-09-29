@@ -97,6 +97,34 @@ class ModelEvaluationTests(unittest.TestCase):
         assert isinstance(value, complex)
         np.testing.assert_allclose(value, -4.0 + 12.0j, rtol=0, atol=1e-12)
 
+    def test_vector_conjugation_in_polarized_intensity(self) -> None:
+        amplitudes = ld.vector([1.0 + 2.0j, 3.0 - 1.0j])
+        polarization = 0.4
+        angle = 0.2
+        rho = 0.5 * ld.matrix(
+            [
+                [1.0, -polarization * ld.cis(-2.0 * angle)],
+                [-polarization * ld.cis(2.0 * angle), 1.0],
+            ]
+        )
+        model = ld.Model(amplitudes.conj() @ (rho @ amplitudes))
+        expected_rho = 0.5 * np.array(
+            [
+                [1.0, -polarization * np.exp(-2.0j * angle)],
+                [-polarization * np.exp(2.0j * angle), 1.0],
+            ]
+        )
+        expected = np.vdot(np.array([1.0 + 2.0j, 3.0 - 1.0j]), expected_rho @ np.array([1.0 + 2.0j, 3.0 - 1.0j]))
+        np.testing.assert_allclose(model.evaluate(), expected, rtol=0, atol=1e-12)
+
+    def test_matrix_conjugation_is_elementwise(self) -> None:
+        matrix = ld.matrix([[1.0 + 2.0j, 3.0 - 4.0j], [1.0j, 2.0]])
+        selected_row = ld.vector([1.0, 0.0])
+        column = ld.vector([1.0, 1.0])
+        model = ld.Model(selected_row @ (matrix.conj() @ column))
+
+        np.testing.assert_allclose(model.evaluate(), 4.0 + 2.0j, rtol=0, atol=1e-12)
+
     def test_parameter_only_complex_gradient(self) -> None:
         z = ld.complex(ld.parameter('x', initial=2.0), ld.parameter('y', initial=3.0))
         model = ld.Model(z * z + 1.0)

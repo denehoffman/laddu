@@ -79,7 +79,7 @@ Penalties can be composed with either intensity likelihood:
 regularized = ld.Likelihood(
     [
         shape_term,
-        ld.RidgePenalty(["second_magnitude"], lambda_=0.1),
+        ld.RidgePenalty(["second magnitude"], lambda_=0.1),
     ]
 )
 ```

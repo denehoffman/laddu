@@ -48,18 +48,13 @@ line_b = ld.relativistic_breit_wigner(
 Each channel gets its own complex production coupling:
 
 ```python
-coupling_a = ld.complex(
-    ld.parameter("channel_a_re", fixed=1.0),
-    ld.parameter("channel_a_im", fixed=0.0),
-)
-coupling_b = ld.polar_complex(
-    ld.parameter("channel_b_magnitude", initial=0.5, bounds=(0.0, None)),
-    ld.parameter(
-        "channel_b_phase",
-        initial=0.0,
-        bounds=(-3.141592653589793, 3.141592653589793),
-        periodic=True,
-    ),
+coupling_a = ld.cparameter("channel_a", fixed=1.0 + 0.0j)
+coupling_b = ld.cparameter(
+    "channel_b",
+    coordinates="polar",
+    initial=(0.5, 0.0),
+    bounds=((0.0, None), (-3.141592653589793, 3.141592653589793)),
+    periodic=(False, True),
 )
 
 model_a = ld.Model((coupling_a * line_a).norm_sqr())

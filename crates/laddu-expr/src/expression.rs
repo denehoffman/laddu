@@ -1289,9 +1289,21 @@ impl Expr {
         unary(UnaryOp::Imag, self)
     }
 
-    /// Returns an expression for the complex conjugate.
+    /// Returns the complex conjugate, applied elementwise to vectors and matrices.
     pub fn conj(&self) -> Self {
-        unary(UnaryOp::Conj, self)
+        match self.shape() {
+            Ok(ExprShape::Vector { len }) => {
+                vector((0..len).map(|index| self.component(index).conj()))
+            }
+            Ok(ExprShape::Matrix { rows, cols }) => matrix_from_flat(
+                rows,
+                cols,
+                (0..rows)
+                    .flat_map(|row| (0..cols).map(move |col| self.matrix_element(row, col).conj())),
+            )
+            .expect("conjugating a valid matrix preserves its dimensions"),
+            _ => unary(UnaryOp::Conj, self),
+        }
     }
 
     /// Returns an expression for the squared complex norm.

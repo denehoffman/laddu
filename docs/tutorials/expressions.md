@@ -226,25 +226,25 @@ line_shape = ld.relativistic_breit_wigner(
     l=0,
 )
 
-second_magnitude = ld.parameter(
-    "second_magnitude", initial=0.3, bounds=(0.0, 3.0)
-)
-second_phase = ld.parameter(
-    "second_phase",
-    initial=0.0,
-    bounds=(-3.141592653589793, 3.141592653589793),
-    periodic=True,
+second_coupling = ld.cparameter(
+    "second",
+    coordinates="polar",
+    initial=(0.3, 0.0),
+    bounds=((0.0, 3.0), (-3.141592653589793, 3.141592653589793)),
+    periodic=(False, True),
 )
 
 reference_wave = line_shape.tagged("reference")
-second_wave = (
-    ld.polar_complex(second_magnitude, second_phase) * angular
-).tagged("second")
+second_wave = (second_coupling * angular).tagged("second")
 
 amplitude = reference_wave + second_wave
 intensity = amplitude.norm_sqr()
 model = ld.Model(intensity)
 ```
+
+`cparameter` builds a complex coupling from two real fit parameters. Its
+default polar suffixes name them `second magnitude` and `second phase`; the
+phase is periodic while the magnitude is not.
 
 Amplitudes leading to the same observed quantum state add coherently before
 `norm_sqr`. Orthogonal unobserved states contribute separate intensities that

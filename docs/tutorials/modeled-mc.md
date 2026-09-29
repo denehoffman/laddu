@@ -13,8 +13,8 @@ Choose a parameter point by name:
 truth = {
     "mass_0": 1.50,
     "width_0": 0.12,
-    "second_magnitude": 0.7,
-    "second_phase": 0.9,
+    "second magnitude": 0.7,
+    "second phase": 0.9,
 }
 
 weighted_model_mc, report = generator.weighted(

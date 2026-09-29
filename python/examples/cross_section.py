@@ -364,7 +364,7 @@ def main() -> None:  # noqa: PLR0915
     mass = channel.mass('X')
     model = build_model(channel)
     generator = ld.Generator(channel)
-    truth = {'f2_magnitude': F2_MAGNITUDE_TRUTH, 'f2_phase': F2_PHASE_TRUTH}
+    truth = {'f2 magnitude': F2_MAGNITUDE_TRUTH, 'f2 phase': F2_PHASE_TRUTH}
     generated_samples: list[ld.Dataset] = []
     accepted_samples: list[ld.Dataset] = []
     data_samples: list[ld.Dataset] = []
