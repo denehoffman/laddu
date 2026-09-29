@@ -262,6 +262,7 @@ pub fn laddu_likelihood::DatasetDiagnostics::role(&self) -> laddu_likelihood::Da
 pub fn laddu_likelihood::DatasetDiagnostics::source_traversals(&self) -> u64
 pub fn laddu_likelihood::DatasetDiagnostics::stats(&self) -> &laddu_runtime::cpu::PreparedDatasetStats
 pub fn laddu_likelihood::DatasetDiagnostics::term(&self) -> &str
+pub fn laddu_likelihood::DatasetDiagnostics::uses_precomputed_normalization(&self) -> bool
 pub fn laddu_likelihood::DatasetDiagnostics::uses_quadratic_normalization(&self) -> bool
 impl core::clone::Clone for laddu_likelihood::DatasetDiagnostics
 pub fn laddu_likelihood::DatasetDiagnostics::clone(&self) -> laddu_likelihood::DatasetDiagnostics
