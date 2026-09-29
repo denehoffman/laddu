@@ -20,6 +20,23 @@ fn vector_and_matrix_extraction_alias_selected_scalar() {
 }
 
 #[test]
+fn tensor_scalar_addition_then_subtraction_cancels_per_element() {
+    let x = event_scalar("x");
+    let scale = Expr::from(parameter!("scale"));
+    let vector = vector([x.clone(), 2.0.into()]);
+    let matrix = matrix([[x, 3.0.into()]]);
+    for expression in [
+        ((&vector + &scale) - &scale).component(0),
+        ((&matrix + &scale) - &scale).matrix_element(0, 0),
+    ] {
+        let compiled = CompiledModel::from_expr(&expression).unwrap();
+        assert!(
+            matches!(compiled.graph().node(compiled.graph().root()), Some(ExprNode::EventScalar(name)) if name.as_ref() == "x")
+        );
+    }
+}
+
+#[test]
 fn matrix_vector_identities_and_zeroes_simplify() {
     let x = event_scalar("x");
     let y = event_scalar("y");
@@ -182,4 +199,44 @@ fn matrix_multiplication_identity_and_zero_simplify() {
             .iter()
             .all(|id| matches!(zero_product.graph().node(*id), Some(ExprNode::RealConst(0.0))))
     ));
+}
+
+#[test]
+fn equation_rules_handle_right_identity_and_zero_dot() {
+    let value = matrix([[event_scalar("a"), 2.0.into()], [3.0.into(), 4.0.into()]]);
+    let identity = matrix([[1.0, 0.0], [0.0, 1.0]]);
+    let product = CompiledModel::from_expr(&matmul(value, identity)).unwrap();
+    assert!(matches!(
+        product.graph().node(product.graph().root()),
+        Some(ExprNode::Matrix {
+            rows: 2,
+            cols: 2,
+            ..
+        })
+    ));
+
+    let zero = vector([0.0, 0.0]);
+    let other = vector([event_scalar("x"), event_scalar("y")]);
+    let dot_product = CompiledModel::from_expr(&dot(other, zero)).unwrap();
+    assert!(matches!(
+        dot_product.graph().node(dot_product.graph().root()),
+        Some(ExprNode::RealConst(0.0))
+    ));
+}
+
+#[test]
+fn indexed_formula_distributes_diagonal_scalar_over_matrix_element() {
+    let scale = Expr::from(parameter!("scale"));
+    let value = matrix([
+        [event_scalar("a"), event_scalar("b")],
+        [event_scalar("c"), event_scalar("d")],
+    ]);
+    let diagonal = matrix([[scale.clone(), 0.0.into()], [0.0.into(), scale]]);
+    let selected = CompiledModel::from_expr(&matmul(diagonal, value).matrix_element(0, 1)).unwrap();
+    assert!(
+        matches!(selected.graph().node(selected.graph().root()), Some(ExprNode::NaryMul { factors })
+        if factors.len() == 2
+            && factors.iter().any(|id| matches!(selected.graph().node(*id), Some(ExprNode::ScalarParam(parameter)) if parameter.name() == "scale"))
+            && factors.iter().any(|id| matches!(selected.graph().node(*id), Some(ExprNode::EventScalar(name)) if name.as_ref() == "b")))
+    );
 }

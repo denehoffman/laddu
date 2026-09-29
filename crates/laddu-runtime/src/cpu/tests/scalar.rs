@@ -12,6 +12,39 @@ fn evaluates_scalar_expression_with_parameters() {
 
     assert_eq!(evaluate(&expr), Complex64::from(53.0));
 }
+
+#[test]
+fn tensor_scalar_arithmetic_evaluates_elementwise() {
+    let scalar = laddu_expr::Expr::from(parameter!("scale", initial: 2.0));
+    let values = vector([3.0, 5.0]);
+    for (expression, expected) in [
+        ((&values + &scalar).component(0), 5.0),
+        ((&scalar + &values).component(0), 5.0),
+        ((&values - &scalar).component(0), 1.0),
+        ((&scalar - &values).component(0), -1.0),
+        ((&values * &scalar).component(0), 6.0),
+        ((&scalar * &values).component(0), 6.0),
+        ((&values / &scalar).component(0), 1.5),
+    ] {
+        assert_eq!(evaluate(&expression), Complex64::from(expected));
+    }
+
+    let product = matmul(
+        matrix([[1.0, 0.0], [0.0, 1.0]]),
+        matrix([[3.0, 5.0], [7.0, 9.0]]),
+    );
+    for (expression, expected) in [
+        ((&product + &scalar).matrix_element(1, 0), 9.0),
+        ((&scalar + &product).matrix_element(1, 0), 9.0),
+        ((&product - &scalar).matrix_element(1, 0), 5.0),
+        ((&scalar - &product).matrix_element(1, 0), -5.0),
+        ((&product * &scalar).matrix_element(1, 0), 14.0),
+        ((&scalar * &product).matrix_element(1, 0), 14.0),
+        ((&product / &scalar).matrix_element(1, 0), 3.5),
+    ] {
+        assert_eq!(evaluate(&expression), Complex64::from(expected));
+    }
+}
 #[test]
 fn evaluates_event_scalars() {
     let expr = laddu_expr::event_scalar("x") * 2.0;
@@ -24,6 +57,33 @@ fn evaluates_event_scalars() {
         plan.evaluate_with_event(&params, &event).unwrap(),
         Complex64::from(6.0)
     );
+}
+
+#[test]
+fn scalar_cache_matches_direct_evaluation_across_real_and_complex_domains() {
+    let x = event_scalar("x");
+    let expression = complex(
+        x.clone().sin() + (x.clone() + 0.5).cos(),
+        (x.clone() + 0.25).sqrt().real() + (x.clone() + 2.0).log().real(),
+    ) * (x.clone().powi(3) + 1.0);
+    let model = CompiledModel::from_expr(&expression).unwrap();
+    let plan = CpuBackend.prepare_with_execution_mode(&model, CpuExecutionMode::Interpreter);
+    let params = model.params().default_values();
+    let schema = Arc::new(Schema::new(std::iter::empty::<&str>(), ["x"], true).unwrap());
+    let rows = [-1.0, -0.25, 0.0, 0.5, 2.0];
+    let batch = EventBatch::from_events(
+        schema,
+        rows.into_iter()
+            .map(|value| OwnedEvent::weighted(vec![], vec![value], 1.0)),
+    )
+    .unwrap();
+    let cached = plan.evaluate_batch(&params, &batch).unwrap();
+    for (index, value) in rows.into_iter().enumerate() {
+        let direct = plan
+            .evaluate_with_event(&params, &HashMap::from([("x".to_owned(), value)]))
+            .unwrap();
+        assert!((cached[index] - direct).norm() < 1.0e-12);
+    }
 }
 #[test]
 fn scalar_kernel_ir_preserves_typed_dependency_classes() {

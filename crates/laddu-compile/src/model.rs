@@ -15,32 +15,26 @@ use serde::{Deserialize, Serialize};
 use crate::facts::NumberClass;
 use crate::{
     NormalizationDiagnostics, NormalizationPlan,
+    cas::{Cas, OptimizationBudget, OptimizationDiagnostics},
     cost::OptimizationCost,
     facts::{DependencyFacts, EvaluationClass, GraphFacts, NodeFacts},
     graph_utils::mark_reachable,
-    optimize::*,
 };
 
 /// Options controlling graph optimization and event-cache planning.
-#[derive(Debug)]
+#[derive(Copy, Clone, Debug)]
 pub struct CompileOptions {
-    pipeline: OptimizationPipeline,
     cache_policy: CachePolicy,
-    normalization_analysis: NormalizationAnalysisMode,
-}
-
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-enum NormalizationAnalysisMode {
-    BeforeExecutionLowering,
-    ExecutionGraph,
+    optimize: bool,
+    optimization_budget: OptimizationBudget,
 }
 
 impl Default for CompileOptions {
     fn default() -> Self {
         Self {
-            pipeline: OptimizationPipeline::normalization_target_lowering_passes(),
             cache_policy: CachePolicy::default(),
-            normalization_analysis: NormalizationAnalysisMode::BeforeExecutionLowering,
+            optimize: true,
+            optimization_budget: OptimizationBudget::default(),
         }
     }
 }
@@ -51,32 +45,13 @@ impl CompileOptions {
         Self::default()
     }
 
-    /// Creates options with an empty optimization pipeline.
+    /// Creates options that retain the input graph after fixed parameters are baked.
     pub fn without_optimizations() -> Self {
         Self {
-            pipeline: OptimizationPipeline::new(),
             cache_policy: CachePolicy::default(),
-            normalization_analysis: NormalizationAnalysisMode::ExecutionGraph,
+            optimize: false,
+            optimization_budget: OptimizationBudget::default(),
         }
-    }
-
-    /// Creates options using a custom optimization pipeline.
-    pub fn with_pipeline(pipeline: OptimizationPipeline) -> Self {
-        Self {
-            pipeline,
-            cache_policy: CachePolicy::default(),
-            normalization_analysis: NormalizationAnalysisMode::ExecutionGraph,
-        }
-    }
-
-    /// Returns the optimization pipeline.
-    pub fn pipeline(&self) -> &OptimizationPipeline {
-        &self.pipeline
-    }
-
-    /// Returns the optimization pipeline for mutation.
-    pub fn pipeline_mut(&mut self) -> &mut OptimizationPipeline {
-        &mut self.pipeline
     }
 
     /// Returns the event-cache policy.
@@ -94,70 +69,33 @@ impl CompileOptions {
         self.set_cache_policy(cache_policy);
         self
     }
-}
 
-struct CompileRecipe<'a> {
-    normalization: NormalizationRecipe,
-    execution_pipeline: &'a OptimizationPipeline,
-    cache_policy: CachePolicy,
-}
-
-enum NormalizationRecipe {
-    AnalyzeBeforeExecution(OptimizationPipeline),
-    AnalyzeExecutionGraph,
-    Disabled,
-}
-
-impl<'a> CompileRecipe<'a> {
-    fn from_options(options: &'a CompileOptions) -> Self {
-        let normalization = match options.normalization_analysis {
-            NormalizationAnalysisMode::BeforeExecutionLowering => {
-                NormalizationRecipe::AnalyzeBeforeExecution(
-                    OptimizationPipeline::normalization_analysis_passes(),
-                )
-            }
-            NormalizationAnalysisMode::ExecutionGraph => NormalizationRecipe::AnalyzeExecutionGraph,
-        };
-        Self {
-            normalization,
-            execution_pipeline: &options.pipeline,
-            cache_policy: options.cache_policy,
-        }
-    }
-
-    fn normalization_submodel(execution_pipeline: &'a OptimizationPipeline) -> Self {
-        Self {
-            normalization: NormalizationRecipe::Disabled,
-            execution_pipeline,
-            cache_policy: CachePolicy::EventDependent,
-        }
+    /// Sets the one-time CAS exploration budget.
+    pub fn with_optimization_budget(mut self, budget: crate::OptimizationBudget) -> Self {
+        self.optimization_budget = budget;
+        self
     }
 }
 
-struct Compiler<'a> {
+struct Compiler {
     source_graph: ExprGraph,
     params: ParamLayout,
-    recipe: CompileRecipe<'a>,
+    options: CompileOptions,
+    analyze_normalization: bool,
 }
 
-struct PreparedNormalization {
-    execution_input: ExprGraph,
-    plan: PreparedNormalizationPlan,
-}
-
-enum PreparedNormalizationPlan {
-    Ready(NormalizationPlan),
-    AnalyzeExecutionGraph,
-    Disabled,
-}
-
-impl<'a> Compiler<'a> {
-    fn new(source_graph: ExprGraph, recipe: CompileRecipe<'a>) -> CompileResult<Self> {
+impl Compiler {
+    fn new(
+        source_graph: ExprGraph,
+        options: &CompileOptions,
+        analyze_normalization: bool,
+    ) -> CompileResult<Self> {
         let params = collect_params(&source_graph)?;
         Ok(Self {
             source_graph,
             params,
-            recipe,
+            options: *options,
+            analyze_normalization,
         })
     }
 
@@ -165,22 +103,41 @@ impl<'a> Compiler<'a> {
         let Self {
             source_graph,
             params,
-            recipe,
+            options,
+            analyze_normalization,
         } = self;
         let parameter_baked = Self::bake_parameters(&source_graph);
-        let prepared = Self::prepare_normalization(parameter_baked, recipe.normalization)?;
-        let execution_graph =
-            Self::lower_execution(prepared.execution_input, recipe.execution_pipeline)?;
+        if options.optimize {
+            let search = Cas::import(parameter_baked, options.optimization_budget).search();
+            let (normalization_graph, normalization_extraction) = search.extract_normalization()?;
+            let (execution_graph, execution_extraction) = search.extract_execution()?;
+            let optimization_diagnostics =
+                Some(search.diagnostics(&execution_extraction, &normalization_extraction));
+            let normalization_facts = GraphFacts::analyze(&normalization_graph);
+            let normalization_plan = if analyze_normalization {
+                NormalizationPlan::analyze(&normalization_graph, &normalization_facts)
+            } else {
+                NormalizationPlan::analyze_disabled(&normalization_graph)
+            };
+            let facts = GraphFacts::analyze(&execution_graph);
+            let cache_plan = CachePlan::new(&execution_graph, &facts, options.cache_policy);
+            return Ok(CompiledModel {
+                source_graph,
+                graph: execution_graph,
+                params,
+                facts,
+                cache_plan,
+                normalization_plan,
+                optimization_diagnostics,
+            });
+        }
+        let execution_graph = parameter_baked;
         let facts = GraphFacts::analyze(&execution_graph);
-        let cache_plan = CachePlan::new(&execution_graph, &facts, recipe.cache_policy);
-        let normalization_plan = match prepared.plan {
-            PreparedNormalizationPlan::Ready(plan) => plan,
-            PreparedNormalizationPlan::AnalyzeExecutionGraph => {
-                NormalizationPlan::analyze(&execution_graph, &facts)
-            }
-            PreparedNormalizationPlan::Disabled => {
-                NormalizationPlan::analyze_disabled(&execution_graph)
-            }
+        let cache_plan = CachePlan::new(&execution_graph, &facts, options.cache_policy);
+        let normalization_plan = if analyze_normalization {
+            NormalizationPlan::analyze(&execution_graph, &facts)
+        } else {
+            NormalizationPlan::analyze_disabled(&execution_graph)
         };
         Ok(CompiledModel {
             source_graph,
@@ -189,43 +146,12 @@ impl<'a> Compiler<'a> {
             facts,
             cache_plan,
             normalization_plan,
+            optimization_diagnostics: None,
         })
     }
 
     fn bake_parameters(source: &ExprGraph) -> ExprGraph {
         bake_fixed_parameters(source)
-    }
-
-    fn prepare_normalization(
-        parameter_baked: ExprGraph,
-        recipe: NormalizationRecipe,
-    ) -> CompileResult<PreparedNormalization> {
-        match recipe {
-            NormalizationRecipe::AnalyzeBeforeExecution(pipeline) => {
-                let normalization_input = pipeline.run(parameter_baked)?;
-                let facts = GraphFacts::analyze(&normalization_input);
-                let plan = NormalizationPlan::analyze(&normalization_input, &facts);
-                Ok(PreparedNormalization {
-                    execution_input: normalization_input,
-                    plan: PreparedNormalizationPlan::Ready(plan),
-                })
-            }
-            NormalizationRecipe::AnalyzeExecutionGraph => Ok(PreparedNormalization {
-                execution_input: parameter_baked,
-                plan: PreparedNormalizationPlan::AnalyzeExecutionGraph,
-            }),
-            NormalizationRecipe::Disabled => Ok(PreparedNormalization {
-                execution_input: parameter_baked,
-                plan: PreparedNormalizationPlan::Disabled,
-            }),
-        }
-    }
-
-    fn lower_execution(
-        execution_input: ExprGraph,
-        pipeline: &OptimizationPipeline,
-    ) -> CompileResult<ExprGraph> {
-        pipeline.run(execution_input)
     }
 }
 
@@ -471,6 +397,7 @@ pub struct CompiledModel {
     facts: GraphFacts,
     cache_plan: CachePlan,
     normalization_plan: NormalizationPlan,
+    optimization_diagnostics: Option<OptimizationDiagnostics>,
 }
 
 /// A set of compiled expression outputs that shares compilation work for
@@ -569,7 +496,8 @@ impl<'de> Deserialize<'de> for CompiledModel {
 impl CompiledModel {
     /// Returns a process-local structural digest for execution-scoped caches.
     ///
-    /// The digest is bit-exact and excludes expression metadata, but its hash
+    /// The digest includes execution and normalization structure and excludes
+    /// expression metadata. Its hash
     /// algorithm and values are not a stable persisted format.
     ///
     /// This is a workspace-internal backend contract used by `laddu-runtime`.
@@ -587,6 +515,7 @@ impl CompiledModel {
         for parameter in self.params.specs() {
             ParameterStructuralKey::from(parameter).hash(&mut hasher);
         }
+        self.normalization_plan.hash_structure(&mut hasher);
         hasher.finish()
     }
 
@@ -595,7 +524,7 @@ impl CompiledModel {
     /// # Errors
     ///
     /// Returns [`CompileError`](crate::CompileError) when the projected graph
-    /// has conflicting parameter definitions or an optimization pass fails.
+    /// has conflicting parameter definitions or CAS extraction fails.
     pub fn project_tags<'a>(&self, tags: impl IntoIterator<Item = &'a str>) -> CompileResult<Self> {
         Self::from_graph(self.source_graph.project_tags(tags))
     }
@@ -614,7 +543,7 @@ impl CompiledModel {
     /// # Errors
     ///
     /// Returns [`CompileError`](crate::CompileError) when parameter collection
-    /// or an optimization pass fails.
+    /// or CAS extraction fails.
     pub fn from_expr(expr: &Expr) -> CompileResult<Self> {
         Self::from_expr_with_options(expr, &CompileOptions::default())
     }
@@ -624,7 +553,7 @@ impl CompiledModel {
     /// # Errors
     ///
     /// Returns [`CompileError`](crate::CompileError) when parameter collection
-    /// or an optimization pass fails.
+    /// or CAS extraction fails.
     pub fn from_expr_with_options(expr: &Expr, options: &CompileOptions) -> CompileResult<Self> {
         Self::from_graph_with_options(expr.to_graph(), options)
     }
@@ -634,7 +563,7 @@ impl CompiledModel {
     /// # Errors
     ///
     /// Returns [`CompileError`](crate::CompileError) when parameter collection
-    /// or an optimization pass fails.
+    /// or CAS extraction fails.
     pub fn from_graph(graph: ExprGraph) -> CompileResult<Self> {
         Self::from_graph_with_options(graph, &CompileOptions::default())
     }
@@ -644,26 +573,26 @@ impl CompiledModel {
     /// # Errors
     ///
     /// Returns [`CompileError`](crate::CompileError) when parameter collection
-    /// or an optimization pass fails.
+    /// or CAS extraction fails.
     pub fn from_graph_with_options(
         graph: ExprGraph,
         options: &CompileOptions,
     ) -> CompileResult<Self> {
-        Compiler::new(graph, CompileRecipe::from_options(options))?.compile()
+        Compiler::new(graph, options, true)?.compile()
     }
 
     pub(crate) fn from_graph_without_normalization(graph: ExprGraph) -> CompileResult<Self> {
-        let execution_pipeline = OptimizationPipeline::new().with_pass(CanonicalCsePass);
-        Compiler::new(
-            graph,
-            CompileRecipe::normalization_submodel(&execution_pipeline),
-        )?
-        .compile()
+        Compiler::new(graph, &CompileOptions::default(), false)?.compile()
     }
 
     /// Returns the optimized graph.
     pub fn graph(&self) -> &ExprGraph {
         &self.graph
+    }
+
+    /// Returns bounded-search diagnostics for an optimized compilation.
+    pub fn optimization_diagnostics(&self) -> Option<&OptimizationDiagnostics> {
+        self.optimization_diagnostics.as_ref()
     }
 
     /// Returns the proven polynomial degree in free parameters, or `None` for a

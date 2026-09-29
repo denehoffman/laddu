@@ -1,5 +1,6 @@
 //! Analysis, optimization, cache planning, and kernel lowering for expression graphs.
 
+mod cas;
 /// Static operation-cost analysis.
 pub mod cost;
 mod error;
@@ -9,10 +10,9 @@ pub mod facts;
 mod graph_utils;
 mod model;
 mod normalization;
-/// Extensible expression-graph optimization passes and rewrite rules.
-pub mod optimize;
 mod reduction;
 
+pub use cas::{OptimizationBudget, OptimizationDiagnostics};
 pub use cost::{LifecycleCost, OptimizationCost};
 pub use error::{CompileError, CompileResult};
 pub use executable::{CacheInput, ExecutablePlan, SolveComponentPlan, SolveRowMatrixPlan};
@@ -23,11 +23,5 @@ pub use model::{
 };
 pub use normalization::{
     NormalizationDiagnostics, NormalizationFallbackReason, NormalizationPlan, NormalizationStrategy,
-};
-pub use optimize::{
-    AlgebraicIdentityRule, CanonicalCsePass, ComplexFactRule, ConjugationRule,
-    ConstantFoldScalarRule, CostGatePass, ExponentialRule, FactorCommonProductRule,
-    MatrixVectorRule, NormSqrExpansionRule, OptimizationPass, OptimizationPassOutcome,
-    OptimizationPipeline, Rewrite, RewriteContext, RewritePass, RewriteRule,
 };
 pub use reduction::{ReductionError, ReductionOutput, ReductionPlan, ReductionTransform};

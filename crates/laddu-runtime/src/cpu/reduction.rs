@@ -528,16 +528,28 @@ impl CpuPlan {
         self.check_batch_cache(batch.cache())?;
         let invariant = self.scalar_invariant_values(params)?;
         let mut workspace = ScalarEventWorkspace::default();
+        let mut output = Vec::with_capacity(SCALAR_BLOCK_SIZE);
+        #[cfg(feature = "jit")]
+        let jit_cache = self
+            .scalar_jit_kernel()
+            .map(|_| JitScalarKernel::prepare_cache(batch.cache()));
         let mut sum = AccurateF64::zero();
-        for row in 0..batch.len() {
-            let value = self.evaluate_cache_row_prepared(
+        for start in (0..batch.len()).step_by(SCALAR_BLOCK_SIZE) {
+            let end = (start + SCALAR_BLOCK_SIZE).min(batch.len());
+            self.evaluate_cache_block_prepared(
                 params,
                 batch.cache(),
-                row,
+                start,
+                end,
                 invariant.as_ref(),
                 &mut workspace,
+                &mut output,
+                #[cfg(feature = "jit")]
+                jit_cache.as_ref(),
             )?;
-            sum.push(batch.weights()[row] * f(value)?);
+            for (lane, value) in output.iter().copied().enumerate() {
+                sum.push(batch.weights()[start + lane] * f(value)?);
+            }
         }
         Ok(sum.finish())
     }

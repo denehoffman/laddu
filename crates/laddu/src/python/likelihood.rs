@@ -82,6 +82,11 @@ impl PyDatasetDiagnostics {
     }
 
     #[getter]
+    fn uses_precomputed_normalization(&self) -> bool {
+        self.inner.uses_precomputed_normalization()
+    }
+
+    #[getter]
     fn uses_quadratic_normalization(&self) -> bool {
         self.inner.uses_quadratic_normalization()
     }

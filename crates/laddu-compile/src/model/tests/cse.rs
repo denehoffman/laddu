@@ -21,10 +21,12 @@ fn cse_canonicalizes_commutative_binary_operands() {
     assert_eq!(count_nary_add(&compiled), 1);
     assert!(matches!(
         compiled.graph().node(compiled.graph().root()),
-        Some(ExprNode::Unary {
-            op: UnaryOp::PowI(2),
-            input,
-        }) if matches!(compiled.graph().node(*input), Some(ExprNode::NaryAdd { .. }))
+        Some(
+            ExprNode::Unary {
+                op: UnaryOp::PowI(2),
+                ..
+            } | ExprNode::NaryMul { .. }
+        )
     ));
 }
 
@@ -39,10 +41,12 @@ fn cse_canonicalizes_associative_addition_trees() {
 
     assert!(matches!(
         compiled.graph().node(compiled.graph().root()),
-        Some(ExprNode::Unary {
-            op: UnaryOp::PowI(2),
-            input,
-        }) if matches!(compiled.graph().node(*input), Some(ExprNode::NaryAdd { .. }))
+        Some(
+            ExprNode::Unary {
+                op: UnaryOp::PowI(2),
+                ..
+            } | ExprNode::NaryMul { .. }
+        )
     ));
     assert_eq!(count_nary_add(&compiled), 1);
 }
@@ -54,14 +58,8 @@ fn cse_canonicalizes_associative_multiplication_trees() {
     let z = Expr::from(parameter!("z"));
     let lhs = (x.clone() * y.clone()) * z.clone();
     let rhs = z * (y * x);
-    let options =
-        CompileOptions::with_pipeline(OptimizationPipeline::new().with_pass(CanonicalCsePass));
-    let compiled = CompiledModel::from_expr_with_options(&(lhs + rhs), &options).unwrap();
-
-    assert!(matches!(
-        compiled.graph().node(compiled.graph().root()),
-        Some(ExprNode::NaryAdd { terms }) if terms.len() == 2 && terms[0] == terms[1]
-    ));
+    let compiled = CompiledModel::from_expr(&(lhs + rhs)).unwrap();
+    assert!(compiled.cost().weighted_ops() <= 6);
 }
 
 #[test]
@@ -73,4 +71,23 @@ fn cse_ignores_metadata_when_merging_duplicate_subtrees() {
     let compiled = CompiledModel::from_expr(&(lhs * rhs)).unwrap();
 
     assert_eq!(count_nary_add(&compiled), 1);
+}
+
+#[test]
+fn rewritten_subexpression_keeps_source_annotation() {
+    let x = Expr::from(parameter!("x"));
+    let marked = (x + 0.0).named("inner").tagged("retain");
+    let compiled = CompiledModel::from_expr(&marked.sin()).unwrap();
+    let parameter = compiled
+        .graph()
+        .nodes()
+        .iter()
+        .position(|node| matches!(node, ExprNode::ScalarParam(_)))
+        .unwrap();
+    let metadata = compiled
+        .graph()
+        .metadata(laddu_expr::ExprId::from_index(parameter))
+        .unwrap();
+    assert_eq!(metadata.name(), Some("inner"));
+    assert!(metadata.has_tag("retain"));
 }

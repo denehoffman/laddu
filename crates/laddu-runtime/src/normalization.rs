@@ -18,8 +18,6 @@ use crate::{
     PreparedDatasetStats, PreparedModel, RuntimeError, RuntimeResult,
 };
 
-const AUTO_BREAK_EVEN_EVALUATIONS: usize = 16;
-
 /// Runtime diagnostics for one compiler-native accepted normalization.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PreparedNormalizationDiagnostics {
@@ -222,17 +220,6 @@ impl PreparedNormalization {
             .normalization_plan()
             .basis_models()
             .map_err(|error| RuntimeError::Data(error.to_string()))?;
-        let basis_work = basis_models
-            .iter()
-            .map(|basis| basis.graph().nodes().len())
-            .sum::<usize>();
-        let general_work = model.graph().nodes().len().max(1);
-        if execution.normalization_mode() == NormalizationMode::Auto
-            && basis_work > general_work.saturating_mul(AUTO_BREAK_EVEN_EVALUATIONS)
-        {
-            return Ok(None);
-        }
-
         let statistic_bytes = if execution.precision() == crate::Precision::F32 {
             std::mem::size_of::<Complex32>()
         } else {
@@ -549,5 +536,46 @@ fn verify_close(
         Err(RuntimeError::Data(format!(
             "{label} verification failed: compiler-native={actual}, general={expected}, tolerance={tolerance}"
         )))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use laddu_data::{
+        data::{EventBatch, OwnedEvent},
+        schema::Schema,
+    };
+    use laddu_expr::{complex, event_scalar, parameter};
+
+    use super::*;
+    use crate::{ExecutionOptions, MemoryBudget, MemoryPlan};
+
+    #[test]
+    fn auto_falls_back_when_statistics_exceed_host_budget() {
+        let amplitude = complex(event_scalar("x"), 0.5)
+            + parameter!("mix", initial: 0.3) * complex(event_scalar("x").powi(2), 0.25);
+        let model = CompiledModel::from_expr(&amplitude.norm_sqr()).unwrap();
+        assert_eq!(
+            model.normalization_diagnostics().strategy(),
+            NormalizationStrategy::Hermitian
+        );
+        let schema = Arc::new(Schema::new(std::iter::empty::<&str>(), ["x"], true).unwrap());
+        let batch = EventBatch::from_events(schema, [OwnedEvent::weighted(vec![], vec![0.5], 1.0)])
+            .unwrap();
+        let dataset = Dataset::from_batches(vec![batch]).unwrap();
+        let execution = Execution::local(ExecutionOptions {
+            normalization: NormalizationMode::Auto,
+            memory: MemoryPlan::host_device(MemoryBudget::Bytes(1), MemoryBudget::Auto),
+            ..ExecutionOptions::default()
+        })
+        .unwrap();
+        let plan = PreparedModel::prepare(&model, &execution).unwrap();
+        assert!(
+            PreparedNormalization::prepare(&model, &plan, &dataset, &execution)
+                .unwrap()
+                .is_none()
+        );
     }
 }

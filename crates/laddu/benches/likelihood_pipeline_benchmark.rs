@@ -106,13 +106,24 @@ fn likelihood(
     coefficients: usize,
     normalization: NormalizationMode,
 ) -> Likelihood {
+    likelihood_with_options(
+        source,
+        coefficients,
+        ExecutionOptions {
+            normalization,
+            ..ExecutionOptions::default()
+        },
+    )
+}
+
+fn likelihood_with_options(
+    source: CountingSource,
+    coefficients: usize,
+    options: ExecutionOptions,
+) -> Likelihood {
     let dataset = Dataset::new(source).fastest();
     let model = model(coefficients);
-    let execution = Execution::local(ExecutionOptions {
-        normalization,
-        ..ExecutionOptions::default()
-    })
-    .unwrap();
+    let execution = Execution::local(options).unwrap();
     Likelihood::with_execution(
         [NllTerm::new("synthetic", &model, &dataset, &dataset).unwrap()],
         &execution,
@@ -178,6 +189,31 @@ fn pipeline_benchmark(criterion: &mut Criterion) {
         }
     }
     scaling.finish();
+
+    let mut serial = criterion.benchmark_group("serial f64 likelihood evaluation");
+    for (name, jit) in [
+        ("jit", JitPolicy::Enabled),
+        ("interpreter", JitPolicy::Disabled),
+    ] {
+        let likelihood = likelihood_with_options(
+            source(10_000, 1, true),
+            4,
+            ExecutionOptions {
+                device: Device::Cpu(CpuOptions {
+                    threads: ThreadPolicy::Serial,
+                    jit,
+                }),
+                precision: Precision::F64,
+                normalization: NormalizationMode::Auto,
+                ..ExecutionOptions::default()
+            },
+        );
+        let parameters = likelihood.default_params();
+        serial.bench_function(name, |bencher| {
+            bencher.iter(|| likelihood.nll(black_box(&parameters)).unwrap())
+        });
+    }
+    serial.finish();
 }
 
 criterion_group!(benches, pipeline_benchmark);
