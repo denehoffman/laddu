@@ -986,7 +986,7 @@ impl_op_ex!(-|a: &Vec4| -> Vec4 { Vec4::new(-&a.e, -&a.px, -&a.py, -&a.pz) });
 mod tests {
     use approx::{assert_abs_diff_eq, assert_relative_eq};
     use fastrand::Rng;
-    use laddu_compile::CompiledModel;
+    use laddu_compile::{CompileOptions, CompiledModel};
     use laddu_runtime::CpuBackend;
     use nalgebra::{Vector3, Vector4};
     use num::complex::Complex64;
@@ -994,7 +994,11 @@ mod tests {
     use super::*;
 
     fn evaluate(expr: laddu_expr::Expr) -> Complex64 {
-        let model = CompiledModel::from_expr(&expr).unwrap();
+        // The fixtures check vector algebra against direct numerical formulae,
+        // independent of the compiler's separately tested optimization passes.
+        let model =
+            CompiledModel::from_expr_with_options(&expr, &CompileOptions::without_optimizations())
+                .unwrap();
         let params = model.params().default_values();
         CpuBackend.prepare(&model).evaluate(&params).unwrap()
     }

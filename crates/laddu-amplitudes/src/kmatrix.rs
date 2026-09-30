@@ -409,7 +409,7 @@ fn pole_products(s: &Expr, pole_masses: &Expr, poles: usize) -> (Expr, Vec<Expr>
 #[cfg(test)]
 mod tests {
     use approx::assert_relative_eq;
-    use laddu_compile::CompiledModel;
+    use laddu_compile::{CompileOptions, CompiledModel};
     use laddu_expr::{BinaryOp, ExprNode, complex, matrix, parameters::Parameter};
     use laddu_runtime::CpuBackend;
     use nalgebra::{Matrix2, Vector2};
@@ -418,7 +418,9 @@ mod tests {
     use super::*;
 
     fn evaluate(expr: Expr) -> Complex64 {
-        let model = CompiledModel::from_expr(&expr).unwrap();
+        let model =
+            CompiledModel::from_expr_with_options(&expr, &CompileOptions::without_optimizations())
+                .unwrap();
         let params = model.params().default_values();
         CpuBackend.prepare(&model).evaluate(&params).unwrap()
     }
@@ -439,7 +441,11 @@ mod tests {
         let step = 1.0e-6;
         for row in 0..2 {
             for col in 0..2 {
-                let model = CompiledModel::from_expr(&barriers.matrix_element(row, col)).unwrap();
+                let model = CompiledModel::from_expr_with_options(
+                    &barriers.matrix_element(row, col),
+                    &CompileOptions::without_optimizations(),
+                )
+                .unwrap();
                 let result = CpuBackend
                     .prepare(&model)
                     .evaluate_with_gradient(&model.params().default_values())
