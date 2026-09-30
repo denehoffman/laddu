@@ -3,10 +3,14 @@
 # ruff: noqa: S101
 
 import unittest
+from typing import TYPE_CHECKING
 
 import laddu as ld
 import numpy as np
 import pytest
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 
 def dataset(values: list[float], weights: list[float]) -> ld.Dataset:
@@ -62,7 +66,7 @@ class ProjectionSetTests(unittest.TestCase):
         with pytest.raises(ld.LadduError, match='at least one projection'):
             section.project({})
         with pytest.raises(TypeError):
-            section.project({'invalid': 1.0})
+            section.project({'invalid': 1.0})  # ty: ignore[invalid-argument-type]
         assert (
             result.components['signal'].central[1] + result.components['background'].central[1]
             != result.total.central[1]
@@ -112,8 +116,11 @@ class ProjectionSetTests(unittest.TestCase):
             )
             for period, luminosity in luminosities.items()
         ]
-        components = {'a': ['a'], 'a_alias': ['a', 'a'], 'coherent': ['b', 'a']}
-        axes = {'fine': ld.Axis(x, edges=[0.0, 0.5, 1.0]), 'wide': ld.Axis(x, edges=[0.0, 1.0])}
+        components: dict[str, Sequence[str]] = {'a': ['a'], 'a_alias': ['a', 'a'], 'coherent': ['b', 'a']}
+        axes: dict[str, ld.Axis | Sequence[ld.Axis]] = {
+            'fine': ld.Axis(x, edges=[0.0, 0.5, 1.0]),
+            'wide': ld.Axis(x, edges=[0.0, 1.0]),
+        }
         combined = ld.CrossSection.combine(sections)
         actual = combined.project(axes, components=components)
         assert list(actual) == list(axes)
