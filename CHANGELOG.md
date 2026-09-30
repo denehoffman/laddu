@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.24.1](https://github.com/denehoffman/laddu/compare/v0.24.0...v0.24.1) (2026-09-30)
+
+
+### Bug Fixes
+
+* **fit:** Use fixed-size chunks to decode artifact payloads ([dbeb8da](https://github.com/denehoffman/laddu/commit/dbeb8dae1747311a1403870da8addd6d0a67c3ad))
+* **projections:** Reuse component preparation across streamed bootstrap draws ([1392db2](https://github.com/denehoffman/laddu/commit/1392db22a9da4bc5a663d6dbcaf5efa5448ac74d))
+
 ## [0.24.0](https://github.com/denehoffman/laddu/compare/v0.23.0...v0.24.0) (2026-09-29)
 
 
