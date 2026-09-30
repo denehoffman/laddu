@@ -286,7 +286,7 @@ impl CpuPlan {
             .collect())
     }
 
-    fn evaluate_prepared_batch(
+    pub(crate) fn evaluate_prepared_batch(
         &self,
         execution: &Execution,
         params: &ParamValues,

@@ -4,8 +4,7 @@ use std::collections::{HashMap, HashSet};
 
 use laddu_data::data::Dataset;
 use laddu_expr::ExprNodeStructuralKey;
-use laddu_runtime::{DatasetExprExt, Execution, FinalUpperEdge, checked_bin_count};
-use rayon::prelude::*;
+use laddu_runtime::{Execution, FinalUpperEdge, checked_bin_count};
 
 use crate::{
     Axis, BinnedEstimate, BinnedEstimateUnit, ErrorBudget, ErrorComponent, LikelihoodError,
@@ -532,42 +531,22 @@ impl Yield {
             return Err(invalid("at least one projection is required"));
         }
         let mut names = HashSet::new();
-        for projection in projections {
-            if !names.insert(projection.name()) {
+        for request in projections {
+            if !names.insert(request.name()) {
                 return Err(invalid(format!(
                     "duplicate projection name: {}",
-                    projection.name()
+                    request.name()
                 )));
             }
-            if !valid_bin_volumes(projection.axes()) {
+            if !valid_bin_volumes(request.axes()) {
                 return Err(invalid(format!(
                     "projection `{}` has invalid bin volume",
-                    projection.name()
+                    request.name()
                 )));
             }
         }
         let execution = self.likelihood().execution();
-        let mut seen_expressions = HashSet::new();
-        let mut expressions = Vec::new();
-        for projection in projections {
-            for axis in projection.axes() {
-                let graph = axis.expression.to_graph();
-                let key = (
-                    graph.root().index(),
-                    graph
-                        .nodes()
-                        .iter()
-                        .map(|node| node.structural_key())
-                        .collect::<Vec<_>>(),
-                );
-                if seen_expressions.insert(key) {
-                    expressions.push(axis.expression.clone());
-                }
-            }
-        }
-        self.observed_data()
-            .validate_real_expressions(&expressions, execution)?;
-        let component_aliases = components
+        let aliases = components
             .iter()
             .map(|(name, tags)| {
                 if name.trim().is_empty()
@@ -576,433 +555,340 @@ impl Yield {
                 {
                     return Err(invalid(format!("invalid component name or tags: `{name}`")));
                 }
-                Ok((name.clone(), CanonicalTags::new(tags)))
+                let tags = CanonicalTags::new(tags);
+                for tag in tags.as_slice() {
+                    if !self
+                        .likelihood()
+                        .intensity_model_has_tag(self.term_name(), tag)?
+                    {
+                        return Err(invalid(format!(
+                            "component `{name}` has unknown model tag `{tag}`"
+                        )));
+                    }
+                }
+                Ok((name.clone(), tags))
             })
             .collect::<LikelihoodResult<HashMap<_, _>>>()?;
-        for (name, tags) in &component_aliases {
-            for tag in tags.as_slice() {
-                if !self
-                    .likelihood()
-                    .intensity_model_has_tag(self.term_name(), tag)?
-                {
+        let (unique, indexes) = deduplicate_projections(projections);
+        let coordinates = ProjectionCoordinates::prepare(&unique, execution)?;
+        let mut plans = unique
+            .iter()
+            .map(|request| PreparedProjection::new(request))
+            .collect::<LikelihoodResult<Vec<_>>>()?;
+        let (_, accepted) = self.likelihood().intensity_datasets(self.term_name())?;
+        let generated = self.generated_mc();
+        let ensemble = self.ensemble();
+        let shared_mc = !execution.is_distributed()
+            && ensemble.is_none_or(|ensemble| {
+                ensemble.replicas().iter().all(|replica| {
+                    let other = replica.execution();
+                    replica
+                        .intensity_datasets(self.term_name())
+                        .is_ok_and(|(_, mc)| mc.identity() == accepted.identity())
+                        && other.requested_device() == execution.requested_device()
+                        && other.precision() == execution.precision()
+                        && other.jit_policy() == execution.jit_policy()
+                        && other.autodiff_mode() == execution.autodiff_mode()
+                        && other.normalization_mode() == execution.normalization_mode()
+                        && other.thread_policy() == execution.thread_policy()
+                        && other.partitioning() == execution.partitioning()
+                        && !other.is_distributed()
+                })
+            });
+        let draws = if shared_mc {
+            ensemble.map_or(0, |ensemble| ensemble.draws().len())
+        } else {
+            0
+        };
+        let parameters = std::iter::once(self.parameters())
+            .chain(
+                ensemble
+                    .into_iter()
+                    .filter(|_| shared_mc)
+                    .flat_map(|ensemble| ensemble.draws().iter().map(Vec::as_slice)),
+            )
+            .collect::<Vec<_>>();
+        let bins = plans
+            .iter()
+            .try_fold(0usize, |sum, plan| sum.checked_add(plan.volumes.len()))
+            .ok_or_else(|| invalid("projection workspace size overflow"))?;
+        let output_bins = projections
+            .iter()
+            .try_fold(0usize, |sum, request| {
+                let count = checked_bin_count(
+                    &request
+                        .axes()
+                        .iter()
+                        .map(|axis| axis.binning.clone())
+                        .collect::<Vec<_>>(),
+                )?;
+                sum.checked_add(count)
+            })
+            .ok_or_else(|| invalid("projection workspace size overflow"))?;
+        // Only bins and parameter vectors survive a source batch. Include final
+        // alias copies and the temporary unique results during materialization.
+        let retained_draws = ensemble.map_or(0, |ensemble| ensemble.draws().len());
+        let per_bin = aliases
+            .len()
+            .checked_mul(2)
+            .and_then(|n| n.checked_add(3))
+            .and_then(|n| n.checked_mul(retained_draws + 1))
+            .and_then(|n| n.checked_mul(8))
+            .and_then(|n| n.checked_add(256 + aliases.len() * 96))
+            .ok_or_else(|| invalid("projection workspace size overflow"))?;
+        let workspace = bins
+            .checked_add(output_bins)
+            .and_then(|bins| bins.checked_mul(per_bin))
+            .and_then(|bytes| {
+                bytes.checked_add(
+                    parameters
+                        .len()
+                        .checked_mul(aliases.len() + 1)?
+                        .checked_mul(self.likelihood().params().len())?
+                        .checked_mul(16)?,
+                )
+            })
+            .ok_or_else(|| invalid("projection workspace size overflow"))?;
+        let _workspace = execution
+            .host_memory()
+            .reserve(
+                u64::try_from(workspace)
+                    .map_err(|_| invalid("projection workspace size overflow"))?,
+            )
+            .map_err(laddu_runtime::RuntimeError::from)?;
+        let selections = aliases.values().cloned().collect::<HashSet<_>>();
+        let mut models = std::iter::once(None)
+            .chain(selections.into_iter().map(Some))
+            .map(|tags| {
+                let evaluator = self.likelihood().intensity_evaluator(
+                    self.term_name(),
+                    tags.as_ref().map(CanonicalTags::as_slice),
+                )?;
+                let local = evaluator.parameters(&parameters)?;
+                Ok(ProjectionModel {
+                    tags,
+                    evaluator,
+                    parameters: local,
+                    accepted: ModelBins::new(&plans, parameters.len()),
+                    generated: ModelBins::new(&plans, parameters.len()),
+                })
+            })
+            .collect::<LikelihoodResult<Vec<_>>>()?;
+        coordinates.visit(
+            self.observed_data(),
+            execution,
+            (0, 0),
+            |batch, assignments| {
+                let weights = (0..batch.len())
+                    .map(|row| batch.weights_at(row))
+                    .collect::<Vec<_>>();
+                for (plan, bins) in plans.iter_mut().zip(assignments) {
+                    plan.data_bins.record(bins, &weights);
+                }
+                Ok(())
+            },
+        )?;
+        let selected_draws = if draws == 0 {
+            vec![Vec::new(); plans.len()]
+        } else {
+            let mut selected = plans
+                .iter()
+                .map(|_| Vec::with_capacity(draws))
+                .collect::<Vec<_>>();
+            let ensemble = ensemble.expect("draws require an ensemble");
+            for draw in 0..draws {
+                if ensemble.replicas().is_empty() {
+                    for (plan, selected) in plans.iter().zip(&mut selected) {
+                        selected.push(plan.data_bins.weights.clone());
+                    }
+                    continue;
+                }
+                let (data, _) = ensemble.replicas()[draw].intensity_datasets(self.term_name())?;
+                let mut sums = plans
+                    .iter()
+                    .map(|plan| vec![0.0; plan.volumes.len()])
+                    .collect::<Vec<_>>();
+                coordinates.visit(data, execution, (0, 0), |batch, assignments| {
+                    let weights = (0..batch.len())
+                        .map(|row| batch.weights_at(row))
+                        .collect::<Vec<_>>();
+                    for (bins, sums) in assignments.iter().zip(&mut sums) {
+                        for (row, index) in bins.indices.iter().enumerate() {
+                            if let Some(index) = index {
+                                sums[*index] += weights[row];
+                            }
+                        }
+                    }
+                    Ok(())
+                })?;
+                for (selected, sums) in selected.iter_mut().zip(sums) {
+                    selected.push(sums);
+                }
+            }
+            selected
+        };
+        let model_memory = models.iter().fold((0, 0), |(fixed, event), model| {
+            let zero = model.evaluator.plan.batch_memory_estimate(0);
+            (
+                fixed.max(zero),
+                event.max(
+                    model
+                        .evaluator
+                        .plan
+                        .batch_memory_estimate(1)
+                        .saturating_sub(zero),
+                ),
+            )
+        });
+        for (generated_space, source) in [(false, accepted), (true, generated)] {
+            coordinates.visit(source, execution, model_memory, |batch, assignments| {
+                let weights = (0..batch.len())
+                    .map(|row| batch.weights_at(row))
+                    .collect::<Vec<_>>();
+                for (plan, bins) in plans.iter_mut().zip(assignments) {
+                    let summary = if generated_space {
+                        &mut plan.generated_bins
+                    } else {
+                        &mut plan.accepted_bins
+                    };
+                    summary.record(bins, &weights);
+                }
+                for model in &mut models {
+                    let bins = if generated_space {
+                        &mut model.generated
+                    } else {
+                        &mut model.accepted
+                    };
+                    model.evaluator.plan.visit_batch_many(
+                        execution,
+                        &model.parameters,
+                        batch,
+                        |parameter, values| {
+                            let real = values.iter().map(|value| value.re).collect::<Vec<_>>();
+                            for (index, assignment) in assignments.iter().enumerate() {
+                                assignment.accumulate_weighted_block(
+                                    0,
+                                    &weights,
+                                    &real,
+                                    &mut bins.values[index][parameter],
+                                );
+                                if parameter == 0 {
+                                    assignment.accumulate_weighted_block_squared(
+                                        0,
+                                        &weights,
+                                        &real,
+                                        &mut bins.variances[index],
+                                    );
+                                }
+                            }
+                            Ok(())
+                        },
+                    )?;
+                }
+                Ok(())
+            })?;
+        }
+        for model in &models[1..] {
+            for values in model
+                .accepted
+                .values
+                .iter()
+                .chain(&model.generated.values)
+                .flatten()
+            {
+                if values.iter().any(|value| !value.is_finite()) {
                     return Err(invalid(format!(
-                        "component `{name}` has unknown model tag `{tag}`"
+                        "component {:?} has non-finite fitted yield",
+                        model.tags
                     )));
                 }
             }
         }
-        let integrals = self
-            .likelihood()
-            .intensity_integrals(self.term_name(), self.generated_mc())?;
-        let mut component_integrals = HashMap::new();
-        for tags in component_aliases.values() {
-            if !component_integrals.contains_key(tags) {
-                let selected = self
-                    .likelihood()
-                    .intensity_integrals_with_tags(
-                        self.term_name(),
-                        self.generated_mc(),
-                        tags.as_slice().iter().map(String::as_str),
-                    )
-                    .map_err(|error| {
-                        invalid(format!("component {:?}: {error}", tags.as_slice()))
-                    })?;
-                component_integrals.insert(tags.clone(), selected);
-            }
-        }
-        let data = self.observed_data();
-        let accepted = integrals.accepted_mc_source();
-        let generated = integrals.generated_mc_source();
-        let data_source_id = data.identity();
-        let accepted_source_id = accepted.identity();
-        let generated_source_id = generated.identity();
-        let (unique, indexes) = deduplicate_projections(projections);
-        let sample_events = [data, accepted, generated]
-            .iter()
-            .map(|sample| {
-                usize::try_from(sample.stats()?.events())
-                    .map_err(|_| invalid("projection event count exceeds addressable memory"))
-            })
-            .collect::<LikelihoodResult<Vec<_>>>()?;
-        let event_total = sample_events
-            .iter()
-            .try_fold(0usize, |sum, count| sum.checked_add(*count))
-            .ok_or_else(|| invalid("projection workspace size overflow"))?;
-        let bins_total = unique
-            .iter()
-            .try_fold(0usize, |sum, projection| {
-                let bins = checked_bin_count(
-                    &projection
-                        .axes()
-                        .iter()
-                        .map(|axis| axis.binning.clone())
-                        .collect::<Vec<_>>(),
-                )?;
-                sum.checked_add(bins)
-            })
-            .ok_or_else(|| invalid("projection workspace size overflow"))?;
-        let output_bins = projections
-            .iter()
-            .try_fold(0usize, |sum, projection| {
-                let bins = checked_bin_count(
-                    &projection
-                        .axes()
-                        .iter()
-                        .map(|axis| axis.binning.clone())
-                        .collect::<Vec<_>>(),
-                )?;
-                sum.checked_add(bins)
-            })
-            .ok_or_else(|| invalid("projection workspace size overflow"))?;
-        let largest_sample = sample_events.iter().copied().max().unwrap_or(0);
-        let distinct_axes = expressions.len();
-        let workspace_bytes = event_total
-            .checked_mul(unique.len())
-            .and_then(|count| count.checked_mul(std::mem::size_of::<Option<usize>>() + 1))
-            .and_then(|bytes| {
-                bytes.checked_add(event_total.checked_mul(std::mem::size_of::<f64>())?)
-            })
-            .and_then(|bytes| {
-                bytes.checked_add(bins_total.checked_mul(5 * std::mem::size_of::<f64>())?)
-            })
-            .and_then(|bytes| {
-                bytes.checked_add(output_bins.checked_mul(10 * std::mem::size_of::<f64>())?)
-            })
-            .and_then(|bytes| {
-                bytes.checked_add(
-                    bins_total
-                        .checked_mul(component_integrals.len())?
-                        .checked_mul(4 * std::mem::size_of::<f64>())?,
-                )
-            })
-            .and_then(|bytes| {
-                bytes.checked_add(
-                    output_bins
-                        .checked_mul(component_aliases.len())?
-                        .checked_mul(
-                            4 * std::mem::size_of::<f64>()
-                                + std::mem::size_of::<YieldBinValidity>(),
-                        )?,
-                )
-            })
-            .and_then(|bytes| {
-                bytes.checked_add(
-                    distinct_axes
-                        .checked_mul(largest_sample.min(8192))?
-                        .checked_mul(32)?,
-                )
-            })
-            .ok_or_else(|| invalid("projection workspace size overflow"))?;
-        let workspace_bytes = u64::try_from(workspace_bytes)
-            .map_err(|_| invalid("projection workspace size overflow"))?;
-        let _workspace_lease =
-            execution
-                .host_memory()
-                .reserve(workspace_bytes)
-                .map_err(|error| {
-                    LikelihoodError::Runtime(laddu_runtime::RuntimeError::Memory(error))
-                })?;
-        let data_weights = dataset_weights(data)?;
-        let accepted_weights = dataset_weights(accepted)?;
-        let generated_weights = dataset_weights(generated)?;
-        let data_assignments = evaluate_bin_assignments_many(data, &unique, execution)?;
-        let accepted_assignments = evaluate_bin_assignments_many(accepted, &unique, execution)?;
-        let generated_assignments = evaluate_bin_assignments_many(generated, &unique, execution)?;
-        let plans = unique
-            .iter()
-            .zip(data_assignments)
-            .zip(accepted_assignments)
-            .zip(generated_assignments)
-            .map(
-                |(((projection, data_bins), accepted_bins), generated_bins)| {
-                    Ok(PreparedProjection {
-                        name: projection.name().to_owned(),
-                        axes: projection
-                            .axes()
-                            .iter()
-                            .map(|axis| axis.edges().to_vec())
-                            .collect(),
-                        shape: projection.axes().iter().map(Axis::bins).collect(),
-                        volumes: bin_volumes(projection.axes()),
-                        data_bins,
-                        accepted_bins,
-                        generated_bins,
-                    })
-                },
-            )
-            .collect::<LikelihoodResult<Vec<_>>>()?;
-        let mut accepted_sums = plans
-            .iter()
-            .map(|plan| vec![0.0; plan.accepted_bins.count])
-            .collect::<Vec<_>>();
-        let mut generated_sums = plans
-            .iter()
-            .map(|plan| vec![0.0; plan.generated_bins.count])
-            .collect::<Vec<_>>();
-        let mut accepted_variances = accepted_sums.clone();
-        let mut generated_variances = generated_sums.clone();
-        let mut component_sums = component_integrals
-            .keys()
-            .map(|tags| {
-                let accepted = plans
-                    .iter()
-                    .map(|plan| vec![0.0; plan.accepted_bins.count])
-                    .collect::<Vec<_>>();
-                let generated = plans
-                    .iter()
-                    .map(|plan| vec![0.0; plan.generated_bins.count])
-                    .collect::<Vec<_>>();
-                (tags.clone(), (accepted, generated))
-            })
-            .collect::<HashMap<_, _>>();
-        let mut component_variances = component_sums.clone();
-        if component_integrals.is_empty() {
-            let parameters = [self.parameters()];
-            let contexts = ["central yield projection".to_owned()];
-            integrals.visit_accepted_raw_prepared_intensities_many(
-                &parameters,
-                &contexts,
-                |offset, _, values| {
-                    for ((plan, sums), variances) in plans
-                        .iter()
-                        .zip(&mut accepted_sums)
-                        .zip(&mut accepted_variances)
-                    {
-                        plan.accepted_bins.accumulate_weighted_block(
-                            offset,
-                            &accepted_weights,
-                            values,
-                            sums,
-                        );
-                        plan.accepted_bins.accumulate_weighted_block_squared(
-                            offset,
-                            &accepted_weights,
-                            values,
-                            variances,
-                        );
-                    }
-                },
-            )?;
-            integrals.visit_generated_prepared_intensities_many(
-                &parameters,
-                &contexts,
-                |offset, _, values| {
-                    for ((plan, sums), variances) in plans
-                        .iter()
-                        .zip(&mut generated_sums)
-                        .zip(&mut generated_variances)
-                    {
-                        plan.generated_bins.accumulate_weighted_block(
-                            offset,
-                            &generated_weights,
-                            values,
-                            sums,
-                        );
-                        plan.generated_bins.accumulate_weighted_block_squared(
-                            offset,
-                            &generated_weights,
-                            values,
-                            variances,
-                        );
-                    }
-                },
-            )?;
-        } else {
-            let selections = component_integrals.iter().collect::<Vec<_>>();
-            let models = selections
-                .iter()
-                .map(|(_, model)| *model)
-                .collect::<Vec<_>>();
-            let labels = std::iter::once("full model".to_owned())
-                .chain(selections.iter().map(|(tags, _)| {
-                    let aliases = component_aliases
-                        .iter()
-                        .filter_map(|(name, selection)| {
-                            (selection == *tags).then_some(name.as_str())
-                        })
-                        .collect::<Vec<_>>();
-                    format!("component {aliases:?} {:?}", tags.as_slice())
-                }))
-                .collect::<Vec<_>>();
-            let projection_names = projections.iter().map(Projection::name).collect::<Vec<_>>();
-            integrals
-                .visit_shared_source_intensities(
-                    &models,
-                    &labels,
-                    self.parameters(),
-                    false,
-                    |index, offset, values| {
-                        if index == 0 {
-                            for ((plan, sums), variances) in plans
-                                .iter()
-                                .zip(&mut accepted_sums)
-                                .zip(&mut accepted_variances)
-                            {
-                                plan.accepted_bins.accumulate_weighted_block(
-                                    offset,
-                                    &accepted_weights,
-                                    values,
-                                    sums,
-                                );
-                                plan.accepted_bins.accumulate_weighted_block_squared(
-                                    offset,
-                                    &accepted_weights,
-                                    values,
-                                    variances,
-                                );
-                            }
-                        } else {
-                            let sums = &mut component_sums
-                                .get_mut(selections[index - 1].0)
-                                .expect("prepared component")
-                                .0;
-                            let variances = &mut component_variances
-                                .get_mut(selections[index - 1].0)
-                                .expect("prepared component")
-                                .0;
-                            for ((plan, bins), variance) in plans.iter().zip(sums).zip(variances) {
-                                plan.accepted_bins.accumulate_weighted_block(
-                                    offset,
-                                    &accepted_weights,
-                                    values,
-                                    bins,
-                                );
-                                plan.accepted_bins.accumulate_weighted_block_squared(
-                                    offset,
-                                    &accepted_weights,
-                                    values,
-                                    variance,
-                                );
-                            }
-                        }
-                    },
-                )
-                .map_err(|error| {
-                    invalid(format!(
-                        "projections {projection_names:?}, accepted MC: {error}"
-                    ))
-                })?;
-            integrals
-                .visit_shared_source_intensities(
-                    &models,
-                    &labels,
-                    self.parameters(),
-                    true,
-                    |index, offset, values| {
-                        if index == 0 {
-                            for ((plan, sums), variances) in plans
-                                .iter()
-                                .zip(&mut generated_sums)
-                                .zip(&mut generated_variances)
-                            {
-                                plan.generated_bins.accumulate_weighted_block(
-                                    offset,
-                                    &generated_weights,
-                                    values,
-                                    sums,
-                                );
-                                plan.generated_bins.accumulate_weighted_block_squared(
-                                    offset,
-                                    &generated_weights,
-                                    values,
-                                    variances,
-                                );
-                            }
-                        } else {
-                            let sums = &mut component_sums
-                                .get_mut(selections[index - 1].0)
-                                .expect("prepared component")
-                                .1;
-                            let variances = &mut component_variances
-                                .get_mut(selections[index - 1].0)
-                                .expect("prepared component")
-                                .1;
-                            for ((plan, bins), variance) in plans.iter().zip(sums).zip(variances) {
-                                plan.generated_bins.accumulate_weighted_block(
-                                    offset,
-                                    &generated_weights,
-                                    values,
-                                    bins,
-                                );
-                                plan.generated_bins.accumulate_weighted_block_squared(
-                                    offset,
-                                    &generated_weights,
-                                    values,
-                                    variance,
-                                );
-                            }
-                        }
-                    },
-                )
-                .map_err(|error| {
-                    invalid(format!(
-                        "projections {projection_names:?}, generated MC: {error}"
-                    ))
-                })?;
-            for (tags, (accepted, generated)) in &component_sums {
-                for (index, plan) in plans.iter().enumerate() {
-                    if accepted[index]
-                        .iter()
-                        .chain(&generated[index])
-                        .any(|value| !value.is_finite())
-                    {
-                        return Err(invalid(format!(
-                            "projection `{}` component {:?} has non-finite fitted yield",
-                            plan.name,
-                            tags.as_slice()
-                        )));
-                    }
-                }
-            }
-        }
-        let mut unique_results = plans
+        let source_id = ensemble
+            .filter(|_| draws > 0)
+            .map(crate::Ensemble::source_id);
+        let absolute = self.has_absolute_rate();
+        let mut results = plans
             .iter()
             .enumerate()
-            .map(|(plan_index, plan)| {
-                let mut selected = plan.data_bins.accumulate_products(&data_weights, None);
-                let accepted_raw = &accepted_sums[plan_index];
-                let generated_raw = &generated_sums[plan_index];
-                let accepted_counts = plan.accepted_bins.support_counts();
-                let generated_counts = plan.generated_bins.support_counts();
-                let generated_exposure = plan
-                    .generated_bins
-                    .accumulate_products(&generated_weights, None);
-                let mut validity = Vec::with_capacity(selected.len());
-                for bin in 0..selected.len() {
-                    let d = selected[bin];
-                    let a = accepted_raw[bin];
-                    let g = generated_raw[bin];
-                    let status = if !d.is_finite() {
-                        YieldBinValidity::NonFiniteEvaluation
-                    } else {
-                        fitted_bin_validity(
-                            a,
-                            g,
-                            accepted_counts[bin],
-                            generated_counts[bin],
-                            generated_exposure[bin],
+            .map(|(index, plan)| {
+                let full = &models[0];
+                let a = &full.accepted.values[index][0];
+                let g = &full.generated.values[index][0];
+                let validity = (0..plan.volumes.len())
+                    .map(|bin| {
+                        if !plan.data_bins.weights[bin].is_finite() {
+                            YieldBinValidity::NonFiniteEvaluation
+                        } else {
+                            fitted_bin_validity(
+                                a[bin],
+                                g[bin],
+                                plan.accepted_bins.support[bin],
+                                plan.generated_bins.support[bin],
+                                plan.generated_bins.weights[bin],
+                            )
+                        }
+                    })
+                    .collect();
+                let components = aliases
+                    .iter()
+                    .map(|(name, tags)| {
+                        let model = models
+                            .iter()
+                            .find(|model| model.tags.as_ref() == Some(tags))
+                            .expect("prepared component");
+                        let a = &model.accepted.values[index][0];
+                        let g = &model.generated.values[index][0];
+                        (
+                            name.clone(),
+                            ComponentYieldProjection {
+                                tags: tags.as_slice().to_vec(),
+                                axes: plan.axes.clone(),
+                                shape: plan.shape.clone(),
+                                bin_volumes: plan.volumes.clone(),
+                                accepted_source_id: accepted.identity(),
+                                generated_source_id: generated.identity(),
+                                accepted: absolute_rate_bins(a, absolute),
+                                accepted_fill_variance: model.accepted.variances[index].clone(),
+                                generated: absolute_rate_bins(g, absolute),
+                                generated_fill_variance: model.generated.variances[index].clone(),
+                                validity: (0..a.len())
+                                    .map(|bin| {
+                                        fitted_bin_validity(
+                                            a[bin],
+                                            g[bin],
+                                            plan.accepted_bins.support[bin],
+                                            plan.generated_bins.support[bin],
+                                            plan.generated_bins.weights[bin],
+                                        )
+                                    })
+                                    .collect(),
+                                accepted_draws: model.accepted.values[index][1..]
+                                    .iter()
+                                    .map(|values| absolute_rate_bins(values, absolute))
+                                    .collect(),
+                                generated_draws: model.generated.values[index][1..]
+                                    .iter()
+                                    .map(|values| absolute_rate_bins(values, absolute))
+                                    .collect(),
+                                source_id,
+                            },
                         )
-                    };
-                    validity.push(status);
-                    if !d.is_finite() {
-                        selected[bin] = f64::NAN;
-                    }
-                }
+                    })
+                    .collect();
                 YieldProjection {
                     axes: plan.axes.clone(),
                     shape: plan.shape.clone(),
                     bin_volumes: plan.volumes.clone(),
-                    data_source_id,
-                    accepted_source_id,
-                    generated_source_id,
-                    selected,
-                    selected_fill_variance: plan
-                        .data_bins
-                        .accumulate_products_squared(&data_weights),
-                    accepted: absolute_rate_bins(accepted_raw, self.has_absolute_rate()),
-                    accepted_fill_variance: accepted_variances[plan_index].clone(),
-                    generated: absolute_rate_bins(generated_raw, self.has_absolute_rate()),
-                    generated_fill_variance: generated_variances[plan_index].clone(),
+                    data_source_id: self.observed_data().identity(),
+                    accepted_source_id: accepted.identity(),
+                    generated_source_id: generated.identity(),
+                    selected: finite_observed_bins(&plan.data_bins.weights),
+                    selected_fill_variance: plan.data_bins.squared_weights.clone(),
+                    accepted: absolute_rate_bins(a, absolute),
+                    accepted_fill_variance: full.accepted.variances[index].clone(),
+                    generated: absolute_rate_bins(g, absolute),
+                    generated_fill_variance: full.generated.variances[index].clone(),
                     validity,
                     diagnostics: YieldProjectionDiagnostics {
                         selected_nonfinite: plan.data_bins.nonfinite_count,
@@ -1012,89 +898,60 @@ impl Yield {
                         generated_nonfinite: plan.generated_bins.nonfinite_count,
                         generated_out_of_range: plan.generated_bins.out_of_range_count,
                     },
-                    has_absolute_rate: self.has_absolute_rate(),
-                    source_id: None,
-                    has_replica_datasets: false,
-                    selected_draws: Vec::new(),
-                    accepted_draws: Vec::new(),
-                    generated_draws: Vec::new(),
-                    components: component_aliases
+                    has_absolute_rate: absolute,
+                    components,
+                    source_id,
+                    has_replica_datasets: source_id.is_some()
+                        && ensemble.is_some_and(|ensemble| !ensemble.replicas().is_empty()),
+                    selected_draws: selected_draws[index]
                         .iter()
-                        .map(|(name, tags)| {
-                            let (accepted_sums, generated_sums) = &component_sums[tags];
-                            let accepted = &accepted_sums[plan_index];
-                            let generated = &generated_sums[plan_index];
-                            let validity = (0..accepted.len())
-                                .map(|bin| {
-                                    fitted_bin_validity(
-                                        accepted[bin],
-                                        generated[bin],
-                                        accepted_counts[bin],
-                                        generated_counts[bin],
-                                        generated_exposure[bin],
-                                    )
-                                })
-                                .collect();
-                            let accepted = absolute_rate_bins(accepted, self.has_absolute_rate());
-                            let generated = absolute_rate_bins(generated, self.has_absolute_rate());
-                            let (accepted_variance, generated_variance) =
-                                &component_variances[tags];
-                            (
-                                name.clone(),
-                                ComponentYieldProjection {
-                                    tags: tags.as_slice().to_vec(),
-                                    axes: plan.axes.clone(),
-                                    shape: plan.shape.clone(),
-                                    bin_volumes: plan.volumes.clone(),
-                                    accepted_source_id,
-                                    generated_source_id,
-                                    accepted,
-                                    accepted_fill_variance: accepted_variance[plan_index].clone(),
-                                    generated,
-                                    generated_fill_variance: generated_variance[plan_index].clone(),
-                                    validity,
-                                    accepted_draws: Vec::new(),
-                                    generated_draws: Vec::new(),
-                                    source_id: None,
-                                },
-                            )
-                        })
+                        .map(|values| finite_observed_bins(values))
+                        .collect(),
+                    accepted_draws: full.accepted.values[index][1..]
+                        .iter()
+                        .map(|values| absolute_rate_bins(values, absolute))
+                        .collect(),
+                    generated_draws: full.generated.values[index][1..]
+                        .iter()
+                        .map(|values| absolute_rate_bins(values, absolute))
                         .collect(),
                 }
             })
             .collect::<Vec<_>>();
-        if let Some(ensemble) = self.ensemble() {
-            let draw_requests = unique
+        // Preserve the established behavior for replicas with different MC or
+        // execution settings; they cannot use the central prepared batch plan.
+        if !shared_mc && let Some(ensemble) = ensemble {
+            let requests = unique
                 .iter()
                 .map(|request| (*request).clone())
                 .collect::<Vec<_>>();
-            for (draw_index, parameters) in ensemble.draws().iter().enumerate() {
+            for (draw, parameters) in ensemble.draws().iter().enumerate() {
                 let likelihood = ensemble
                     .replicas()
-                    .get(draw_index)
+                    .get(draw)
                     .cloned()
                     .unwrap_or_else(|| self.likelihood().clone());
-                let draw_context = Yield::with_ensemble(
+                let context = Yield::with_ensemble(
                     likelihood,
                     self.term_name(),
-                    self.generated_mc().clone(),
+                    generated.clone(),
                     parameters.clone(),
                     None,
                 )?;
-                let draw_results =
-                    draw_context.projection_set_with_components(&draw_requests, components)?;
-                for (result, (_, draw)) in unique_results.iter_mut().zip(draw_results.entries) {
+                let projected = context.projection_set_with_components(&requests, components)?;
+                for (result, (_, draw)) in results.iter_mut().zip(projected.entries) {
                     result.source_id = Some(ensemble.source_id());
                     result.has_replica_datasets = !ensemble.replicas().is_empty();
                     result.selected_draws.push(draw.selected);
                     result.accepted_draws.push(draw.accepted);
                     result.generated_draws.push(draw.generated);
-                    for (name, draw_component) in draw.components {
-                        let component = result.components.get_mut(&name).ok_or_else(|| {
-                            invalid(format!("missing component `{name}` in paired draw"))
-                        })?;
-                        component.accepted_draws.push(draw_component.accepted);
-                        component.generated_draws.push(draw_component.generated);
+                    for (name, draw) in draw.components {
+                        let component = result
+                            .components
+                            .get_mut(&name)
+                            .expect("prepared component");
+                        component.accepted_draws.push(draw.accepted);
+                        component.generated_draws.push(draw.generated);
                         component.source_id = Some(ensemble.source_id());
                     }
                 }
@@ -1104,7 +961,7 @@ impl Yield {
             entries: projections
                 .iter()
                 .zip(indexes)
-                .map(|(request, index)| (request.name().to_owned(), unique_results[index].clone()))
+                .map(|(request, index)| (request.name().to_owned(), results[index].clone()))
                 .collect(),
         })
     }
@@ -1133,14 +990,270 @@ struct BinAssignments {
     out_of_range_count: usize,
 }
 
+struct BinSummary {
+    support: Vec<usize>,
+    weights: Vec<f64>,
+    squared_weights: Vec<f64>,
+    nonfinite_count: usize,
+    out_of_range_count: usize,
+}
+
+impl BinSummary {
+    fn new(bins: usize) -> Self {
+        Self {
+            support: vec![0; bins],
+            weights: vec![0.0; bins],
+            squared_weights: vec![0.0; bins],
+            nonfinite_count: 0,
+            out_of_range_count: 0,
+        }
+    }
+    fn record(&mut self, bins: &BinAssignments, weights: &[f64]) {
+        self.nonfinite_count += bins.nonfinite_count;
+        self.out_of_range_count += bins.out_of_range_count;
+        for (index, weight) in bins.indices.iter().zip(weights) {
+            if let Some(index) = index {
+                self.support[*index] += 1;
+                self.weights[*index] += weight;
+                self.squared_weights[*index] += weight * weight;
+            }
+        }
+    }
+}
+
 struct PreparedProjection {
-    name: String,
     axes: Vec<Vec<f64>>,
     shape: Vec<usize>,
     volumes: Vec<f64>,
-    data_bins: BinAssignments,
-    accepted_bins: BinAssignments,
-    generated_bins: BinAssignments,
+    data_bins: BinSummary,
+    accepted_bins: BinSummary,
+    generated_bins: BinSummary,
+}
+
+impl PreparedProjection {
+    fn new(request: &Projection) -> LikelihoodResult<Self> {
+        let shape = request.axes().iter().map(Axis::bins).collect::<Vec<_>>();
+        let count = shape
+            .iter()
+            .try_fold(1usize, |count, bins| count.checked_mul(*bins))
+            .ok_or_else(|| invalid("projection axis shape exceeds addressable bin count"))?;
+        Ok(Self {
+            axes: request
+                .axes()
+                .iter()
+                .map(|axis| axis.edges().to_vec())
+                .collect(),
+            shape,
+            volumes: bin_volumes(request.axes()),
+            data_bins: BinSummary::new(count),
+            accepted_bins: BinSummary::new(count),
+            generated_bins: BinSummary::new(count),
+        })
+    }
+}
+
+struct ModelBins {
+    values: Vec<Vec<Vec<f64>>>,
+    variances: Vec<Vec<f64>>,
+}
+
+impl ModelBins {
+    fn new(plans: &[PreparedProjection], parameters: usize) -> Self {
+        Self {
+            values: plans
+                .iter()
+                .map(|plan| vec![vec![0.0; plan.volumes.len()]; parameters])
+                .collect(),
+            variances: plans
+                .iter()
+                .map(|plan| vec![0.0; plan.volumes.len()])
+                .collect(),
+        }
+    }
+}
+
+struct ProjectionModel {
+    tags: Option<CanonicalTags>,
+    evaluator: crate::likelihood::IntensityEvaluator,
+    parameters: Vec<laddu_expr::parameters::ParamValues>,
+    accepted: ModelBins,
+    generated: ModelBins,
+}
+
+struct ProjectionCoordinates<'a> {
+    query: laddu_runtime::PreparedQuery,
+    projections: &'a [&'a Projection],
+    axes: Vec<Vec<usize>>,
+}
+
+impl<'a> ProjectionCoordinates<'a> {
+    fn prepare(projections: &'a [&'a Projection], execution: &Execution) -> LikelihoodResult<Self> {
+        let mut indexes = HashMap::new();
+        let mut expressions = Vec::new();
+        let axes = projections
+            .iter()
+            .map(|projection| {
+                projection
+                    .axes()
+                    .iter()
+                    .map(|axis| {
+                        let graph = axis.expression.to_graph();
+                        let key = (
+                            graph.root().index(),
+                            graph
+                                .nodes()
+                                .iter()
+                                .map(|node| node.structural_key())
+                                .collect::<Vec<_>>(),
+                        );
+                        *indexes.entry(key).or_insert_with(|| {
+                            let index = expressions.len();
+                            expressions.push(axis.expression.clone());
+                            index
+                        })
+                    })
+                    .collect()
+            })
+            .collect();
+        Ok(Self {
+            query: laddu_runtime::PreparedQuery::prepare(expressions, execution, true)?,
+            projections,
+            axes,
+        })
+    }
+
+    fn visit(
+        &self,
+        source: &Dataset,
+        execution: &Execution,
+        model_memory: (usize, usize),
+        mut consume: impl FnMut(
+            &laddu_data::data::EventBatch,
+            &[BinAssignments],
+        ) -> LikelihoodResult<()>,
+    ) -> LikelihoodResult<()> {
+        let schema = source
+            .schema()
+            .map_err(|error| invalid(error.to_string()))?;
+        let source_memory = laddu_data::BatchLayout::from_schema(&schema)
+            .schema_footprint(laddu_data::schema::Precision::F64)
+            .map_err(|error| invalid(error.to_string()))?;
+        let query_fixed = self.query.batch_memory_estimate(0);
+        let query_event = self
+            .query
+            .batch_memory_estimate(1)
+            .saturating_sub(query_fixed);
+        let fixed = source_memory
+            .fixed_bytes
+            .checked_mul(2)
+            .and_then(|bytes| bytes.checked_add(query_fixed as u64))
+            .and_then(|bytes| bytes.checked_add(model_memory.0 as u64))
+            .ok_or_else(|| invalid("projection batch workspace size overflow"))?;
+        let event = source_memory
+            .bytes_per_event
+            .checked_mul(2)
+            .and_then(|bytes| bytes.checked_add(query_event as u64))
+            .and_then(|bytes| bytes.checked_add(model_memory.1 as u64))
+            .and_then(|bytes| {
+                bytes.checked_add(
+                    (self.projections.len() as u64)
+                        .checked_mul((std::mem::size_of::<Option<usize>>() + 1) as u64)?,
+                )
+            })
+            .and_then(|bytes| bytes.checked_add(16))
+            .ok_or_else(|| invalid("projection batch workspace size overflow"))?;
+        let available = execution.host_memory().remaining();
+        let maximum = source.read_plan().chunk_size.unwrap_or(8192).min(8192);
+        let fit = available
+            .saturating_sub(fixed)
+            .checked_div(event)
+            .unwrap_or(maximum as u64);
+        let chunk = maximum.min(usize::try_from(fit).unwrap_or(usize::MAX));
+        let bytes = fixed
+            .checked_add(
+                event
+                    .checked_mul(chunk.max(1) as u64)
+                    .ok_or_else(|| invalid("projection batch workspace size overflow"))?,
+            )
+            .ok_or_else(|| invalid("projection batch workspace size overflow"))?;
+        let _batch_workspace = execution
+            .host_memory()
+            .reserve(bytes)
+            .map_err(laddu_runtime::RuntimeError::from)?;
+        let mut read_plan = source.read_plan();
+        read_plan.chunk_size = Some(chunk.max(1));
+        let mut events = 0;
+        for batch in source
+            .stream_with_plan(read_plan)
+            .map_err(|error| invalid(error.to_string()))?
+        {
+            let batch = batch.map_err(|error| invalid(error.to_string()))?;
+            let values = self.query.evaluate_batch(&batch)?;
+            let assignments = self
+                .projections
+                .iter()
+                .zip(&self.axes)
+                .map(|(projection, axes)| {
+                    let count = checked_bin_count(
+                        &projection
+                            .axes()
+                            .iter()
+                            .map(|axis| axis.binning.clone())
+                            .collect::<Vec<_>>(),
+                    )
+                    .expect("validated bin count");
+                    let mut indices = Vec::with_capacity(batch.len());
+                    let mut nonfinite_count = 0;
+                    let mut out_of_range_count = 0;
+                    for (row, _) in values[0].iter().enumerate() {
+                        let mut index = Some(0usize);
+                        let mut nonfinite = false;
+                        for (axis, &column) in projection.axes().iter().zip(axes) {
+                            let value = values[column][row].re;
+                            if !value.is_finite() {
+                                nonfinite = true;
+                                index = None;
+                            } else if let Some(current) = index {
+                                index = axis
+                                    .binning
+                                    .index(value, FinalUpperEdge::Exclusive)
+                                    .and_then(|bin| {
+                                        current.checked_mul(axis.bins())?.checked_add(bin)
+                                    });
+                            }
+                        }
+                        if nonfinite {
+                            nonfinite_count += 1;
+                        } else if index.is_none() {
+                            out_of_range_count += 1;
+                        }
+                        indices.push(index);
+                    }
+                    BinAssignments {
+                        indices,
+                        count,
+                        nonfinite_count,
+                        out_of_range_count,
+                    }
+                })
+                .collect::<Vec<_>>();
+            consume(&batch, &assignments)?;
+            events += batch.len();
+        }
+        if u64::try_from(events).ok() != Some(source.stats()?.events()) {
+            return Err(invalid(
+                "projection coordinate count does not match dataset events",
+            ));
+        }
+        Ok(())
+    }
+}
+
+fn finite_observed_bins(values: &[f64]) -> Vec<f64> {
+    values
+        .iter()
+        .map(|value| if value.is_finite() { *value } else { f64::NAN })
+        .collect()
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -1199,14 +1312,6 @@ fn deduplicate_projections(projections: &[Projection]) -> (Vec<&Projection>, Vec
 }
 
 impl BinAssignments {
-    fn support_counts(&self) -> Vec<usize> {
-        let mut counts = vec![0; self.count];
-        for index in self.indices.iter().flatten() {
-            counts[*index] += 1;
-        }
-        counts
-    }
-
     fn accumulate_weighted_block(
         &self,
         offset: usize,
@@ -1217,62 +1322,11 @@ impl BinAssignments {
         debug_assert!(offset + intensities.len() <= self.indices.len());
         debug_assert_eq!(self.indices.len(), weights.len());
         debug_assert_eq!(self.count, bins.len());
-        let worker_count = rayon::current_num_threads().min(intensities.len());
-        if rayon::current_thread_index().is_none() || worker_count < 2 {
-            for (row, &intensity) in intensities.iter().enumerate() {
-                let event = offset + row;
-                if let Some(index) = self.indices[event] {
-                    bins[index] += weights[event] * intensity;
-                }
-            }
-            return;
-        }
-        let chunk_size = intensities.len().div_ceil(worker_count);
-        let chunk_count = intensities.len().div_ceil(chunk_size);
-        let partials = (0..chunk_count)
-            .into_par_iter()
-            .map(|chunk_index| {
-                let start = chunk_index * chunk_size;
-                let end = (start + chunk_size).min(intensities.len());
-                let mut partial = vec![0.0; self.count];
-                for (row, &intensity) in intensities[start..end].iter().enumerate() {
-                    let event = offset + start + row;
-                    if let Some(index) = self.indices[event] {
-                        partial[index] += weights[event] * intensity;
-                    }
-                }
-                partial
-            })
-            .collect::<Vec<_>>();
-        for partial in partials {
-            for (bin, value) in bins.iter_mut().zip(partial) {
-                *bin += value;
+        for (row, &intensity) in intensities.iter().enumerate() {
+            if let Some(index) = self.indices[offset + row] {
+                bins[index] += weights[offset + row] * intensity;
             }
         }
-    }
-
-    fn accumulate_products(&self, weights: &[f64], intensities: Option<&[f64]>) -> Vec<f64> {
-        debug_assert_eq!(self.indices.len(), weights.len());
-        debug_assert!(intensities.is_none_or(|values| values.len() == weights.len()));
-        let mut bins = vec![0.0; self.count];
-        for (event, (&index, &weight)) in self.indices.iter().zip(weights).enumerate() {
-            if let Some(index) = index {
-                let intensity = intensities.map_or(1.0, |values| values[event]);
-                bins[index] += weight * intensity;
-            }
-        }
-        bins
-    }
-
-    fn accumulate_products_squared(&self, weights: &[f64]) -> Vec<f64> {
-        debug_assert_eq!(self.indices.len(), weights.len());
-        let mut bins = vec![0.0; self.count];
-        for (&index, &weight) in self.indices.iter().zip(weights) {
-            if let Some(index) = index {
-                bins[index] += weight * weight;
-            }
-        }
-        bins
     }
 
     fn accumulate_weighted_block_squared(
@@ -1290,132 +1344,6 @@ impl BinAssignments {
             }
         }
     }
-}
-
-fn evaluate_bin_assignments_many(
-    dataset: &Dataset,
-    projections: &[&Projection],
-    execution: &Execution,
-) -> LikelihoodResult<Vec<BinAssignments>> {
-    #[derive(Copy, Clone, PartialEq, Eq)]
-    enum CoordinateStatus {
-        InRange,
-        OutOfRange,
-        Nonfinite,
-    }
-    let events = usize::try_from(dataset.stats()?.events())
-        .map_err(|_| invalid("projection event count exceeds addressable memory"))?;
-    let mut expression_indexes = HashMap::new();
-    let mut expressions = Vec::new();
-    let axes_by_projection = projections
-        .iter()
-        .map(|projection| {
-            projection
-                .axes()
-                .iter()
-                .map(|axis| {
-                    let graph = axis.expression.to_graph();
-                    let key = (
-                        graph.root().index(),
-                        graph
-                            .nodes()
-                            .iter()
-                            .map(|node| node.structural_key())
-                            .collect::<Vec<_>>(),
-                    );
-                    *expression_indexes.entry(key).or_insert_with(|| {
-                        let index = expressions.len();
-                        expressions.push(axis.expression.clone());
-                        index
-                    })
-                })
-                .collect::<Vec<_>>()
-        })
-        .collect::<Vec<_>>();
-    let mut indices = projections
-        .iter()
-        .map(|_| vec![Some(0usize); events])
-        .collect::<Vec<_>>();
-    let mut statuses = projections
-        .iter()
-        .map(|_| vec![CoordinateStatus::InRange; events])
-        .collect::<Vec<_>>();
-    let mut visited = 0;
-    dataset.visit_real_chunks(&expressions, execution, 8192, |offset, coordinates| {
-        let chunk_len = coordinates.first().map_or(0, Vec::len);
-        if coordinates.len() != expressions.len()
-            || coordinates.iter().any(|values| {
-                values.len() != chunk_len
-                    || offset
-                        .checked_add(values.len())
-                        .is_none_or(|end| end > events)
-            })
-        {
-            return Err(laddu_runtime::RuntimeError::InvalidShape {
-                index: 0,
-                message: "projection coordinates do not match the dataset shape".into(),
-            });
-        }
-        visited = offset + chunk_len;
-        for (projection_index, projection) in projections.iter().enumerate() {
-            let assignments = &mut indices[projection_index];
-            let status = &mut statuses[projection_index];
-            for (axis, &coordinate_index) in projection
-                .axes()
-                .iter()
-                .zip(&axes_by_projection[projection_index])
-            {
-                for (row, &value) in coordinates[coordinate_index].iter().enumerate() {
-                    let event = offset + row;
-                    if !value.is_finite() {
-                        status[event] = CoordinateStatus::Nonfinite;
-                        assignments[event] = None;
-                    } else if status[event] == CoordinateStatus::InRange {
-                        if let Some(bin) = axis.binning.index(value, FinalUpperEdge::Exclusive) {
-                            assignments[event] = assignments[event]
-                                .and_then(|index| index.checked_mul(axis.bins())?.checked_add(bin));
-                        } else {
-                            status[event] = CoordinateStatus::OutOfRange;
-                            assignments[event] = None;
-                        }
-                    }
-                }
-            }
-        }
-        Ok(())
-    })?;
-    if visited != events {
-        return Err(invalid(
-            "projection coordinate count does not match dataset events",
-        ));
-    }
-    projections
-        .iter()
-        .zip(indices)
-        .zip(statuses)
-        .map(|((projection, indices), status)| {
-            let count = checked_bin_count(
-                &projection
-                    .axes()
-                    .iter()
-                    .map(|axis| axis.binning.clone())
-                    .collect::<Vec<_>>(),
-            )
-            .ok_or_else(|| invalid("projection axis shape exceeds addressable bin count"))?;
-            Ok(BinAssignments {
-                indices,
-                count,
-                nonfinite_count: status
-                    .iter()
-                    .filter(|&&value| value == CoordinateStatus::Nonfinite)
-                    .count(),
-                out_of_range_count: status
-                    .iter()
-                    .filter(|&&value| value == CoordinateStatus::OutOfRange)
-                    .count(),
-            })
-        })
-        .collect()
 }
 
 pub(crate) fn dataset_weights(dataset: &Dataset) -> LikelihoodResult<Vec<f64>> {
@@ -1462,4 +1390,317 @@ fn valid_bin_volumes(axes: &[Axis]) -> bool {
                     .then_some((min_volume, max_volume))
             })
             .is_some()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use approx::assert_relative_eq;
+    use laddu_compile::CompiledModel;
+    use laddu_data::{
+        data::{EventBatch, OwnedEvent},
+        schema::Schema,
+    };
+    use laddu_expr::{Expr, event_scalar, parameter};
+
+    use super::*;
+    use crate::likelihood::TAGGED_PROJECTION_PREPARATIONS;
+    use crate::{Ensemble, ExtendedNllTerm, Likelihood};
+
+    fn dataset(values: &[(f64, f64)]) -> Dataset {
+        let schema = Arc::new(Schema::new(std::iter::empty::<&str>(), ["x"], true).unwrap());
+        let batch = EventBatch::from_events(
+            schema,
+            values
+                .iter()
+                .map(|(x, weight)| OwnedEvent::weighted(vec![], vec![*x], *weight)),
+        )
+        .unwrap();
+        Dataset::from_batches(vec![batch]).unwrap()
+    }
+
+    #[test]
+    fn streaming_tagged_projections_fit_without_event_count_workspace() {
+        use laddu_runtime::{ExecutionOptions, MemoryBudget, MemoryPlan};
+
+        let model = CompiledModel::from_expr(
+            &((Expr::from(parameter!("a", initial: 1.0)) * event_scalar("x")).tagged("a")
+                + Expr::from(parameter!("b", initial: 1.0)).tagged("b"))
+            .norm_sqr(),
+        )
+        .unwrap();
+        let data = dataset(&[(0.25, 2.0), (0.75, -0.2)]).streaming();
+        let accepted = dataset(&[(0.25, 1.0), (0.75, 1.0)]).streaming();
+        let generated = dataset(&vec![(0.25, 1.0); 32_768])
+            .streaming()
+            .chunked(64)
+            .unwrap();
+        let execution = Execution::local(ExecutionOptions {
+            memory: MemoryPlan::host(MemoryBudget::Bytes(256 * 1024)),
+            ..ExecutionOptions::default()
+        })
+        .unwrap();
+        let likelihood = Arc::new(
+            Likelihood::with_execution(
+                [ExtendedNllTerm::new("signal", &model, &data, &accepted).unwrap()],
+                &execution,
+            )
+            .unwrap(),
+        );
+        let ensemble = Ensemble::new(
+            vec!["a".into(), "b".into()],
+            vec![vec![1.0, 1.0], vec![2.0, 1.0]],
+        )
+        .unwrap();
+        let yields = Yield::with_ensemble(
+            likelihood.clone(),
+            "signal",
+            generated.clone(),
+            likelihood.default_params(),
+            Some(ensemble),
+        )
+        .unwrap();
+        let requests = [
+            Projection::new(
+                "fine",
+                vec![Axis::new(event_scalar("x"), vec![0.0, 0.5, 1.0]).unwrap()],
+            )
+            .unwrap(),
+            Projection::new(
+                "wide",
+                vec![Axis::new(event_scalar("x"), vec![0.0, 1.0]).unwrap()],
+            )
+            .unwrap(),
+        ];
+        let components = HashMap::from([
+            ("a".into(), vec!["a".into()]),
+            ("alias".into(), vec!["a".into(), "a".into()]),
+            ("coherent".into(), vec!["a".into(), "b".into()]),
+        ]);
+        let before = execution.host_memory().report().reserved_bytes;
+        let traversals = generated.source_traversals();
+        TAGGED_PROJECTION_PREPARATIONS.with(|count| count.set(0));
+        let result = yields
+            .projection_set_with_components(&requests, &components)
+            .unwrap();
+        assert_eq!(TAGGED_PROJECTION_PREPARATIONS.with(|count| count.get()), 2);
+        assert_eq!(generated.source_traversals() - traversals, 1);
+        let fine = result.get("fine").unwrap();
+        assert_eq!(fine.selected(), &[2.0, -0.2]);
+        assert_eq!(fine.generated(), &[32_768.0 * 1.25_f64.powi(2), 0.0]);
+        assert_eq!(
+            fine.generated_draws()[1],
+            vec![32_768.0 * 1.5_f64.powi(2), 0.0]
+        );
+        assert_eq!(
+            fine.components()["a"].generated_draws(),
+            fine.components()["alias"].generated_draws()
+        );
+        assert_eq!(execution.host_memory().report().reserved_bytes, before);
+        assert!(execution.host_memory().report().high_water_bytes <= 256 * 1024);
+    }
+
+    #[test]
+    fn tagged_bootstrap_projections_prepare_once_and_preserve_paired_bins() {
+        let a = (Expr::from(parameter!("a", initial: 1.0)) * event_scalar("x")).tagged("a");
+        let b = Expr::from(parameter!("b", initial: 1.0)).tagged("b");
+        let model = CompiledModel::from_expr(&(a + b).norm_sqr()).unwrap();
+        let data = dataset(&[(0.25, 2.0), (0.75, -0.2), (0.25, 1.0), (0.75, 3.0)]);
+        let accepted = dataset(&[(0.25, 1.0), (0.75, 1.0)]);
+        let generated = dataset(&[(0.25, 1.0), (0.75, 1.0), (0.25, 2.0), (0.75, 1.0)]);
+        let likelihood = Arc::new(
+            Likelihood::new([ExtendedNllTerm::new("signal", &model, &data, &accepted).unwrap()])
+                .unwrap(),
+        );
+        let components = HashMap::from([
+            ("a".into(), vec!["a".into()]),
+            ("a_alias".into(), vec!["a".into(), "a".into()]),
+            ("b".into(), vec!["b".into()]),
+            ("coherent".into(), vec!["b".into(), "a".into()]),
+        ]);
+        let axis = Axis::new(event_scalar("x"), vec![0.0, 0.5, 1.0]).unwrap();
+        for samples in [1, 20, 200] {
+            let ensemble = Ensemble::bootstrap_fit(&likelihood, samples, 42, |_, index| {
+                Ok::<_, std::convert::Infallible>(vec![0.75 + index as f64 * 0.005, 1.0])
+            })
+            .unwrap();
+            let yields = Yield::with_ensemble(
+                likelihood.clone(),
+                "signal",
+                generated.clone(),
+                likelihood.default_params(),
+                Some(ensemble.clone()),
+            )
+            .unwrap();
+            TAGGED_PROJECTION_PREPARATIONS.with(|count| count.set(0));
+            let projected = yields
+                .projection_with_components(std::slice::from_ref(&axis), &components)
+                .unwrap();
+            assert_eq!(
+                TAGGED_PROJECTION_PREPARATIONS.with(|count| count.get()),
+                3,
+                "preparation must depend on unique components, not {samples} draws"
+            );
+            assert_eq!(
+                projected.components()["a"].accepted_draws(),
+                projected.components()["a_alias"].accepted_draws()
+            );
+            for (index, parameters) in ensemble.draws().iter().enumerate() {
+                let (replica_data, _) = ensemble.replicas()[index]
+                    .intensity_datasets("signal")
+                    .unwrap();
+                let weights = dataset_weights(replica_data).unwrap();
+                assert_relative_eq!(
+                    projected.selected_draws()[index][0],
+                    weights[0] + weights[2]
+                );
+                assert_relative_eq!(
+                    projected.selected_draws()[index][1],
+                    weights[1] + weights[3]
+                );
+                for (bin, x) in [0.25_f64, 0.75].into_iter().enumerate() {
+                    let total = (parameters[0] * x + parameters[1]).powi(2);
+                    let selected = (parameters[0] * x).powi(2);
+                    let exposure = if bin == 0 { 3.0 } else { 2.0 };
+                    assert_relative_eq!(projected.accepted_draws()[index][bin], total);
+                    assert_relative_eq!(projected.generated_draws()[index][bin], exposure * total);
+                    assert_relative_eq!(
+                        projected.components()["a"].accepted_draws()[index][bin],
+                        selected
+                    );
+                    assert_relative_eq!(
+                        projected.components()["b"].generated_draws()[index][bin],
+                        exposure * parameters[1].powi(2)
+                    );
+                    assert_relative_eq!(
+                        projected.components()["coherent"].generated_draws()[index][bin],
+                        exposure * total
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn tagged_draws_match_independent_projections_for_arbitrary_replica_sources() {
+        let a = (Expr::from(parameter!("a", initial: 1.0)) * event_scalar("x")).tagged("a");
+        let b = Expr::from(parameter!("b", initial: 1.0)).tagged("b");
+        let model = CompiledModel::from_expr(&(a + b).norm_sqr()).unwrap();
+        let data = dataset(&[(0.25, 2.0), (0.75, -0.2), (0.75, 3.0)]);
+        let accepted = dataset(&[(0.25, 1.0), (0.75, 2.0)]);
+        let generated = dataset(&[(0.25, 3.0), (0.75, 4.0)]);
+        let likelihood = Arc::new(
+            Likelihood::new([ExtendedNllTerm::new("signal", &model, &data, &accepted).unwrap()])
+                .unwrap(),
+        );
+        let components = HashMap::from([
+            ("a".into(), vec!["a".into()]),
+            ("coherent".into(), vec!["a".into(), "b".into()]),
+        ]);
+        let requests = [
+            Projection::new(
+                "fine",
+                vec![Axis::new(event_scalar("x"), vec![0.0, 0.5, 1.0]).unwrap()],
+            )
+            .unwrap(),
+            Projection::new(
+                "wide",
+                vec![Axis::new(event_scalar("x"), vec![0.0, 1.0]).unwrap()],
+            )
+            .unwrap(),
+        ];
+        for changed_mc in [false, true] {
+            let replicas = [
+                dataset(&[(0.75, -0.5), (0.25, 4.0)]),
+                dataset(&[(0.75, 3.0), (0.25, -0.25), (0.25, 2.0), (0.75, 1.0)]),
+            ]
+            .into_iter()
+            .enumerate()
+            .map(|(index, data)| {
+                let mc = if changed_mc {
+                    dataset(&[(0.75, 3.0 + index as f64), (0.25, 0.5)])
+                } else {
+                    accepted.clone()
+                };
+                Arc::new(
+                    Likelihood::new([ExtendedNllTerm::new("signal", &model, &data, &mc).unwrap()])
+                        .unwrap(),
+                )
+            })
+            .collect::<Vec<_>>();
+            let ensemble = Ensemble::with_replicas(
+                vec!["a".into(), "b".into()],
+                vec![vec![0.7, 1.2], vec![1.4, 0.5]],
+                replicas,
+            )
+            .unwrap();
+            let yields = Yield::with_ensemble(
+                likelihood.clone(),
+                "signal",
+                generated.clone(),
+                likelihood.default_params(),
+                Some(ensemble.clone()),
+            )
+            .unwrap();
+            TAGGED_PROJECTION_PREPARATIONS.with(|count| count.set(0));
+            let actual = yields
+                .projection_set_with_components(&requests, &components)
+                .unwrap();
+            if !changed_mc {
+                assert_eq!(TAGGED_PROJECTION_PREPARATIONS.with(|count| count.get()), 2);
+            }
+            for (draw, parameters) in ensemble.draws().iter().enumerate() {
+                let reference = Yield::with_ensemble(
+                    ensemble.replicas()[draw].clone(),
+                    "signal",
+                    generated.clone(),
+                    parameters.clone(),
+                    None,
+                )
+                .unwrap()
+                .projection_set_with_components(&requests, &components)
+                .unwrap();
+                for (name, expected) in reference.iter() {
+                    let result = actual.get(name).unwrap();
+                    assert_eq!(result.source_id, Some(ensemble.source_id()));
+                    assert!(result.has_replica_datasets);
+                    for (got, want) in result.selected_draws()[draw]
+                        .iter()
+                        .zip(expected.selected())
+                    {
+                        assert_relative_eq!(got, want, epsilon = 1e-12);
+                    }
+                    for (got, want) in result.accepted_draws()[draw]
+                        .iter()
+                        .zip(expected.accepted())
+                    {
+                        assert_relative_eq!(got, want, epsilon = 1e-12);
+                    }
+                    for (got, want) in result.generated_draws()[draw]
+                        .iter()
+                        .zip(expected.generated())
+                    {
+                        assert_relative_eq!(got, want, epsilon = 1e-12);
+                    }
+                    for (label, expected) in expected.components() {
+                        let component = &result.components()[label];
+                        assert_eq!(component.source_id, Some(ensemble.source_id()));
+                        for (got, want) in component.accepted_draws()[draw]
+                            .iter()
+                            .zip(expected.accepted_estimate().values())
+                        {
+                            assert_relative_eq!(got, want, epsilon = 1e-12);
+                        }
+                        for (got, want) in component.generated_draws()[draw]
+                            .iter()
+                            .zip(expected.generated_estimate().values())
+                        {
+                            assert_relative_eq!(got, want, epsilon = 1e-12);
+                        }
+                    }
+                }
+            }
+        }
+    }
 }

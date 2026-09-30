@@ -342,12 +342,12 @@ impl DatasetExprExt for Dataset {
                 "real expression validation needs at least one expression",
             ));
         }
-        QueryExprSet::prepare(expressions.to_vec(), execution, true)?;
+        PreparedQuery::prepare(expressions.to_vec(), execution, true)?;
         Ok(())
     }
 
     fn evaluate_expr(&self, expr: &Expr, execution: &Execution) -> RuntimeResult<Vec<Complex64>> {
-        let query = QueryExprSet::prepare(vec![expr.clone()], execution, false)?;
+        let query = PreparedQuery::prepare(vec![expr.clone()], execution, false)?;
         let mut output = Vec::new();
         for batch in self.batches().map_err(data_error)? {
             output.extend(
@@ -360,7 +360,7 @@ impl DatasetExprExt for Dataset {
     }
 
     fn evaluate_real(&self, expr: &Expr, execution: &Execution) -> RuntimeResult<Vec<f64>> {
-        let query = QueryExprSet::prepare(vec![expr.clone()], execution, true)?;
+        let query = PreparedQuery::prepare(vec![expr.clone()], execution, true)?;
         let mut output = Vec::new();
         for batch in self.batches().map_err(data_error)? {
             output.extend(
@@ -385,7 +385,7 @@ impl DatasetExprExt for Dataset {
                 "real chunk evaluation needs expressions and positive chunk size",
             ));
         }
-        let query = QueryExprSet::prepare(expressions.to_vec(), execution, true)?;
+        let query = PreparedQuery::prepare(expressions.to_vec(), execution, true)?;
         let mut offset = 0;
         for batch in self.batches().map_err(data_error)? {
             let batch = batch.map_err(data_error)?;
@@ -413,7 +413,7 @@ impl DatasetExprExt for Dataset {
     ) -> RuntimeResult<Histogram> {
         let mut expressions = vec![expr.clone()];
         expressions.extend(weight.cloned());
-        let query = QueryExprSet::prepare(expressions, execution, true)?;
+        let query = PreparedQuery::prepare(expressions, execution, true)?;
         let mut histogram = Histogram::empty_with_edges(bins.edges_slice().to_vec())
             .map_err(|error| query_error(error.to_string()))?;
 
@@ -456,7 +456,7 @@ impl DatasetExprExt for Dataset {
             JointHistogram::empty(edge_vectors).map_err(|error| query_error(error.to_string()))?;
         let mut expressions = axes.to_vec();
         expressions.extend(weight.cloned());
-        let query = QueryExprSet::prepare(expressions, execution, true)?;
+        let query = PreparedQuery::prepare(expressions, execution, true)?;
         let mut coordinates = vec![0.0; axes.len()];
         for batch in self.batches().map_err(data_error)? {
             let batch = batch.map_err(data_error)?;
@@ -495,7 +495,7 @@ impl DatasetExprExt for Dataset {
         bins: BinSpec,
         execution: &Execution,
     ) -> RuntimeResult<Vec<DatasetBin>> {
-        let query = QueryExprSet::prepare(vec![expr.clone()], execution, true)?;
+        let query = PreparedQuery::prepare(vec![expr.clone()], execution, true)?;
         let schema = self.schema().map_err(data_error)?;
         let mut partitions = vec![Vec::new(); bins.bin_count()];
         for batch in self.batches().map_err(data_error)? {
@@ -539,7 +539,9 @@ struct QueryExpr {
     outputs: Vec<laddu_expr::ExprId>,
 }
 
-struct QueryExprSet {
+/// Scalar expressions compiled and prepared once for repeated batch evaluation.
+/// This object retains no event data and owns no cross-request compilation cache.
+pub struct PreparedQuery {
     shared: QueryExprStorage,
     outputs: usize,
 }
@@ -549,8 +551,13 @@ enum QueryExprStorage {
     Separate(Vec<QueryExpr>),
 }
 
-impl QueryExprSet {
-    fn prepare(
+impl PreparedQuery {
+    /// Compile scalar outputs in caller order for the selected backend.
+    /// Set `require_real` to reject complex outputs. Free parameters are rejected.
+    ///
+    /// # Errors
+    /// Returns an error for invalid expressions or backend preparation failure.
+    pub fn prepare(
         expressions: Vec<Expr>,
         execution: &Execution,
         require_real: bool,
@@ -609,7 +616,25 @@ impl QueryExprSet {
         })
     }
 
-    fn evaluate_batch(&self, batch: &EventBatch) -> RuntimeResult<Vec<Vec<Complex64>>> {
+    /// Estimate peak host workspace for one batch, including output columns.
+    #[doc(hidden)]
+    pub fn batch_memory_estimate(&self, events: usize) -> usize {
+        let model = match &self.shared {
+            QueryExprStorage::Shared(query) => query.model.batch_memory_estimate(events),
+            QueryExprStorage::Separate(queries) => queries
+                .iter()
+                .map(|query| query.model.batch_memory_estimate(events))
+                .max()
+                .unwrap_or(0),
+        };
+        model.saturating_add(events.saturating_mul(self.outputs).saturating_mul(32))
+    }
+
+    /// Evaluate every output on a batch without retaining event values.
+    ///
+    /// # Errors
+    /// Returns an error for incompatible event columns or failed evaluation.
+    pub fn evaluate_batch(&self, batch: &EventBatch) -> RuntimeResult<Vec<Vec<Complex64>>> {
         let values = match &self.shared {
             QueryExprStorage::Shared(query) => {
                 query
@@ -666,7 +691,7 @@ impl QueryExpr {
 }
 
 struct CompiledPredicate {
-    expressions: QueryExprSet,
+    expressions: PreparedQuery,
     program: PredicateProgram,
 }
 
@@ -692,7 +717,7 @@ impl CompiledPredicate {
         let mut expressions = Vec::new();
         let program = Self::compile_program(predicate, &mut expressions);
         Ok(Self {
-            expressions: QueryExprSet::prepare(expressions, execution, true)?,
+            expressions: PreparedQuery::prepare(expressions, execution, true)?,
             program,
         })
     }
@@ -1418,7 +1443,7 @@ mod tests {
         let source = dataset();
         let batch = source.batches().unwrap().next().unwrap().unwrap();
         let x = event_scalar("x");
-        let query = QueryExprSet::prepare(
+        let query = PreparedQuery::prepare(
             vec![x.clone() + 1.0, x.clone() * 2.0, x],
             &Execution::default(),
             false,

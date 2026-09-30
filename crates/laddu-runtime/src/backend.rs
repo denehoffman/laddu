@@ -63,6 +63,57 @@ impl PreparedModel {
         }
     }
 
+    /// Estimate peak host workspace when visiting one batch across parameter sets.
+    #[doc(hidden)]
+    pub fn batch_memory_estimate(&self, events: usize) -> usize {
+        let cache = match self {
+            Self::Cpu(plan) => plan.cache_memory_estimate(events),
+            #[cfg(feature = "wgpu")]
+            Self::Wgpu(_) => 0,
+        };
+        // Evaluation can hold parallel block outputs and their flattened result.
+        cache.saturating_add(events.saturating_mul(64))
+    }
+
+    /// Visit parameter sets while a single batch's event cache is active.
+    /// The caller reserves batch workspace using `batch_memory_estimate`.
+    ///
+    /// # Errors
+    /// Returns an error for incompatible parameters/events or evaluation failure.
+    #[doc(hidden)]
+    pub fn visit_batch_many<F>(
+        &self,
+        execution: &Execution,
+        parameters: &[ParamValues],
+        batch: &EventBatch,
+        mut consume: F,
+    ) -> RuntimeResult<()>
+    where
+        F: FnMut(usize, &[Complex64]) -> RuntimeResult<()> + Send,
+    {
+        match self {
+            Self::Cpu(plan) => {
+                let cached = crate::CpuCachedBatch::from_cache(plan.cache_event_batch(batch)?);
+                execution.install(|| {
+                    for (index, parameters) in parameters.iter().enumerate() {
+                        let values =
+                            plan.evaluate_prepared_batch(execution, parameters, &cached, true)?;
+                        consume(index, &values)?;
+                    }
+                    Ok(())
+                })
+            }
+            #[cfg(feature = "wgpu")]
+            Self::Wgpu(_) => {
+                for (index, parameters) in parameters.iter().enumerate() {
+                    let values = self.evaluate_batch(parameters, batch)?;
+                    consume(index, &values)?;
+                }
+                Ok(())
+            }
+        }
+    }
+
     /// Evaluates the model for every event in a batch.
     ///
     /// # Errors

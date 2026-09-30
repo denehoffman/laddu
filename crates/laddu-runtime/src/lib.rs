@@ -28,7 +28,9 @@ pub use laddu_physics::binning::{
 };
 pub use laddu_physics::joint_histogram::{JointHistogram, JointHistogramDiagnostics};
 pub use normalization::{PreparedNormalization, PreparedNormalizationDiagnostics};
-pub use query::{BinSpec, Comparison, DatasetBin, DatasetExprExt, IntervalClosure, Predicate};
+pub use query::{
+    BinSpec, Comparison, DatasetBin, DatasetExprExt, IntervalClosure, Predicate, PreparedQuery,
+};
 
 use laddu_compile::CompiledModel;
 use laddu_expr::ExprNode;

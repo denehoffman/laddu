@@ -20,6 +20,11 @@ use laddu_runtime::{
     PreparedNormalizationDiagnostics, RuntimeError,
 };
 
+#[cfg(test)]
+thread_local! {
+    pub(crate) static TAGGED_PROJECTION_PREPARATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 fn rename_json_strings(value: &mut serde_json::Value, mapping: &HashMap<String, String>) {
     match value {
         serde_json::Value::String(text) => {
@@ -784,6 +789,38 @@ impl Likelihood {
         term.intensity_integrals(generated_mc, &self.execution, has_absolute_rate)
     }
 
+    pub(crate) fn intensity_evaluator(
+        &self,
+        term_name: &str,
+        tags: Option<&[String]>,
+    ) -> LikelihoodResult<IntensityEvaluator> {
+        let term = self
+            .terms
+            .iter()
+            .find(|term| term.name() == term_name)
+            .ok_or_else(|| LikelihoodError::MissingTerm(term_name.to_owned()))?;
+        let term = term
+            .as_intensity()
+            .ok_or_else(|| LikelihoodError::NotIntensityTerm(term_name.to_owned()))?;
+        let (plan, projection) = if let Some(tags) = tags {
+            #[cfg(test)]
+            TAGGED_PROJECTION_PREPARATIONS.with(|count| count.set(count.get() + 1));
+            let model = term
+                .model
+                .project_tags(tags.iter().map(String::as_str))
+                .map_err(|error| RuntimeError::InvalidShape {
+                    index: 0,
+                    message: error.to_string(),
+                })?;
+            let projection =
+                ParamProjection::new(Arc::clone(&self.params), model.params(), term_name)?;
+            (PreparedModel::prepare(&model, &self.execution)?, projection)
+        } else {
+            (term.plan()?.clone(), term.resolved_projection()?.clone())
+        };
+        Ok(IntensityEvaluator { plan, projection })
+    }
+
     pub(crate) fn intensity_data_weight_sum(&self, term_name: &str) -> LikelihoodResult<f64> {
         let Some(term) = self.terms.iter().find(|term| term.name() == term_name) else {
             return Err(LikelihoodError::MissingTerm(term_name.to_owned()));
@@ -982,6 +1019,8 @@ impl NllTerm {
         tags: impl IntoIterator<Item = &'a str>,
         execution: &Execution,
     ) -> LikelihoodResult<LikelihoodProjection> {
+        #[cfg(test)]
+        TAGGED_PROJECTION_PREPARATIONS.with(|count| count.set(count.get() + 1));
         let projected_model =
             self.model
                 .project_tags(tags)
@@ -1986,6 +2025,23 @@ enum PenaltyKind {
     Lasso,
 }
 
+pub(crate) struct IntensityEvaluator {
+    pub(crate) plan: PreparedModel,
+    projection: ParamProjection,
+}
+
+impl IntensityEvaluator {
+    pub(crate) fn parameters(&self, draws: &[&[f64]]) -> LikelihoodResult<Vec<ParamValues>> {
+        draws
+            .iter()
+            .map(|draw| {
+                let global = self.projection.global_layout.values(draw)?;
+                self.projection.project(&global)
+            })
+            .collect()
+    }
+}
+
 /// Prepared accepted and generated Monte Carlo integrals for an intensity model.
 #[derive(Clone)]
 pub struct IntensityIntegrals {
@@ -2268,77 +2324,6 @@ impl IntensityIntegrals {
             None,
             consume,
         )?;
-        Ok(())
-    }
-
-    /// Evaluate the full selection and compatible tagged selections while each
-    /// source batch is active. The callback receives model index zero for the
-    /// full selection, followed by selections in caller order.
-    pub(crate) fn visit_shared_source_intensities<F>(
-        &self,
-        selections: &[&IntensityIntegrals],
-        labels: &[String],
-        free: &[f64],
-        generated: bool,
-        mut consume: F,
-    ) -> LikelihoodResult<()>
-    where
-        F: FnMut(usize, usize, &[f64]),
-    {
-        if labels.len() != selections.len() + 1 {
-            return Err(LikelihoodError::InvalidCrossSection(
-                "model selection labels do not match selections".to_owned(),
-            ));
-        }
-        let source = if generated {
-            &self.generated_mc_source
-        } else {
-            &self.accepted_mc_source
-        };
-        let local = std::iter::once(self)
-            .chain(selections.iter().copied())
-            .map(|selection| {
-                let selected_source = if generated {
-                    &selection.generated_mc_source
-                } else {
-                    &selection.accepted_mc_source
-                };
-                if selected_source.identity() != source.identity() {
-                    return Err(LikelihoodError::InvalidCrossSection(
-                        "component source does not match the full projection".to_owned(),
-                    ));
-                }
-                let global = selection.projection.global_layout.values(free)?;
-                selection.projection.project(&global)
-            })
-            .collect::<LikelihoodResult<Vec<_>>>()?;
-        let mut offset = 0;
-        for batch in source
-            .batches()
-            .map_err(|error| LikelihoodError::Runtime(RuntimeError::Data(error.to_string())))?
-        {
-            let batch = batch
-                .map_err(|error| LikelihoodError::Runtime(RuntimeError::Data(error.to_string())))?;
-            for (index, (selection, parameters)) in std::iter::once(self)
-                .chain(selections.iter().copied())
-                .zip(&local)
-                .enumerate()
-            {
-                let values =
-                    selection
-                        .plan
-                        .evaluate_batch(parameters, &batch)
-                        .map_err(|error| {
-                            LikelihoodError::InvalidCrossSection(format!(
-                                "model selection `{}`: {error}",
-                                labels[index]
-                            ))
-                        })?;
-                let real = values.iter().map(|value| value.re).collect::<Vec<_>>();
-                consume(index, offset, &real);
-            }
-            offset += batch.len();
-        }
         Ok(())
     }
 
