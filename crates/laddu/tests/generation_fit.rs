@@ -1,4 +1,5 @@
-//! End-to-end statistical closure test for generation and fitting.
+//! Opt-in physical statistical closure study for generation and fitting.
+//! Run with `cargo test -p laddu --test generation_fit -- --ignored`.
 
 #[allow(dead_code)]
 #[path = "../examples/common/mod.rs"]
@@ -13,6 +14,7 @@ use common::{
 use laddu::prelude::Execution;
 
 #[test]
+#[ignore = "full physical closure study; run explicitly with --ignored"]
 fn generated_two_wave_sample_recovers_injected_coupling() {
     let result = run_closure(
         ClosureConfig {

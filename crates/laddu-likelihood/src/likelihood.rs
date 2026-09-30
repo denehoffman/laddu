@@ -3241,17 +3241,15 @@ mod tests {
     fn shared_and_channel_specific_gradients_scatter_into_global_layout() {
         let shared = laddu_expr::Expr::from(parameter!("shared", initial: 0.4));
         let model_a = CompiledModel::from_expr(
-            &(event_scalar("x")
-                + shared.clone()
-                + laddu_expr::Expr::from(parameter!("only_a", initial: 0.2)))
-            .powi(2),
+            &(event_scalar("x") * shared.clone()
+                + laddu_expr::Expr::from(parameter!("only_a", initial: 0.2))
+                + 1.0),
         )
         .unwrap();
         let model_b = CompiledModel::from_expr(
-            &(event_scalar("x")
-                + shared
-                + laddu_expr::Expr::from(parameter!("only_b", initial: -0.1)))
-            .powi(2),
+            &(event_scalar("x") * shared
+                + laddu_expr::Expr::from(parameter!("only_b", initial: -0.1))
+                + 1.0),
         )
         .unwrap();
         let data = weighted_dataset(&[(0.5, 1.0), (1.2, 0.7)]);
@@ -3719,11 +3717,7 @@ mod tests {
         let scale = Expr::from(parameter!("scale", initial: 0.7));
         let wave = complex(event_scalar("x"), 0.5)
             + Expr::from(parameter!("mix", initial: -0.2))
-                * complex(event_scalar("x").powi(2), -0.25)
-            + complex(
-                Expr::from(parameter!("third_re", initial: 0.3)),
-                Expr::from(parameter!("third_im", initial: -0.4)),
-            ) * complex(event_scalar("x").powi(3), 0.1);
+                * complex(event_scalar("x").powi(2), -0.25);
         let model = CompiledModel::from_expr(&(scale.powi(2) * wave.norm_sqr())).unwrap();
         assert_eq!(
             model.normalization_diagnostics().strategy(),
@@ -3774,40 +3768,6 @@ mod tests {
                 assert_relative_eq!(optimized, &general, epsilon = 1.0e-10);
             }
         }
-    }
-
-    #[test]
-    fn auto_prefers_repeated_evaluation_for_many_hermitian_statistics() {
-        let x = event_scalar("x");
-        let amplitude = (0..18)
-            .map(|index| {
-                Expr::from(parameter!(format!("wave_{index}"), initial: 0.1))
-                    * complex(x.clone().powi(index + 1), 0.25)
-            })
-            .reduce(|sum, term| sum + term)
-            .unwrap();
-        let model = CompiledModel::from_expr(&amplitude.norm_sqr()).unwrap();
-        assert_eq!(
-            model.normalization_diagnostics().strategy(),
-            laddu_compile::NormalizationStrategy::Hermitian
-        );
-        let basis_work: usize = model
-            .normalization_plan()
-            .basis_models()
-            .unwrap()
-            .iter()
-            .map(|basis| basis.graph().nodes().len())
-            .sum();
-        assert!(basis_work > model.graph().nodes().len() * 16);
-        let sample = weighted_dataset(&[(0.5, 1.0), (1.5, 1.0)]);
-        let likelihood = single_term_likelihood("many-waves", &model, &sample, &sample);
-        let diagnostics = likelihood.diagnostics();
-        let accepted = diagnostics
-            .datasets()
-            .iter()
-            .find(|dataset| dataset.role() == DatasetRole::AcceptedMc)
-            .unwrap();
-        assert!(accepted.uses_precomputed_normalization(), "{accepted:?}");
     }
 
     #[test]

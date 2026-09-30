@@ -74,7 +74,7 @@ pub fn relativistic_breit_wigner_custom(
 #[cfg(test)]
 mod tests {
     use approx::assert_relative_eq;
-    use laddu_compile::CompiledModel;
+    use laddu_compile::{CompileOptions, CompiledModel};
     use laddu_expr::parameters::Parameter;
     use laddu_physics::{
         l,
@@ -88,7 +88,9 @@ mod tests {
     const LOOSE_EPS: f64 = 1.0e-8;
 
     fn evaluate(expr: Expr) -> Complex64 {
-        let model = CompiledModel::from_expr(&expr).unwrap();
+        let model =
+            CompiledModel::from_expr_with_options(&expr, &CompileOptions::without_optimizations())
+                .unwrap();
         let params = model.params().default_values();
         CpuBackend.prepare(&model).evaluate(&params).unwrap()
     }
@@ -153,7 +155,11 @@ mod tests {
         let q_r = Parameter::free("q_r").with_initial(q_r_value);
         let expression =
             relativistic_breit_wigner_custom(1.7, 1.2, 0.13, 0.4, 0.5, l!(1), true, q_r).unwrap();
-        let model = CompiledModel::from_expr(&expression).unwrap();
+        let model = CompiledModel::from_expr_with_options(
+            &expression,
+            &CompileOptions::without_optimizations(),
+        )
+        .unwrap();
         let params = model.params().default_values();
         let result = CpuBackend
             .prepare(&model)

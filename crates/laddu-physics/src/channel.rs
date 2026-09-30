@@ -689,14 +689,18 @@ impl Channel {
 #[cfg(test)]
 mod tests {
     use approx::assert_relative_eq;
-    use laddu_compile::CompiledModel;
+    use laddu_compile::{CompileOptions, CompiledModel};
     use laddu_runtime::CpuBackend;
 
     use super::*;
     use crate::vectors::{RealVec3, RealVec4};
 
     fn eval(expr: Expr) -> f64 {
-        let model = CompiledModel::from_expr(&expr).unwrap();
+        // Compare channel formulae directly; optimizer behavior is tested in
+        // laddu-compile and would dominate these small numerical fixtures.
+        let model =
+            CompiledModel::from_expr_with_options(&expr, &CompileOptions::without_optimizations())
+                .unwrap();
         let params = model.params().default_values();
         CpuBackend.prepare(&model).evaluate(&params).unwrap().re
     }

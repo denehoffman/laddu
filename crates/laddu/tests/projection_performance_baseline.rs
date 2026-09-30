@@ -37,36 +37,23 @@ fn representative_projection_fixture_exercises_the_public_differential_contract(
 }
 
 #[test]
-fn resident_and_streaming_fixtures_preserve_projection_results() {
+fn resident_and_streaming_fixtures_preserve_single_and_combined_results() {
     let resident = ProjectionFixture::new(96, 2, Storage::Resident, ThreadPolicy::Serial)
-        .expect("resident fixture should build")
-        .evaluate_differentials(ProjectionTarget::Combined, 4)
-        .expect("resident projections should evaluate");
+        .expect("resident fixture should build");
     let streaming = ProjectionFixture::new(96, 2, Storage::Streaming, ThreadPolicy::Serial)
-        .expect("streaming fixture should build")
-        .evaluate_differentials(ProjectionTarget::Combined, 4)
-        .expect("streaming projections should evaluate");
+        .expect("streaming fixture should build");
 
-    assert_eq!(resident.len(), streaming.len());
-    for (resident, streaming) in resident.iter().zip(&streaming) {
-        assert_projection_equal(resident, streaming);
-    }
-}
-
-#[test]
-fn single_member_differentials_preserve_resident_and_streaming_results() {
-    let resident = ProjectionFixture::new(96, 2, Storage::Resident, ThreadPolicy::Serial)
-        .expect("resident fixture should build")
-        .evaluate_differentials(ProjectionTarget::Single, 4)
-        .expect("resident projections should evaluate");
-    let streaming = ProjectionFixture::new(96, 2, Storage::Streaming, ThreadPolicy::Serial)
-        .expect("streaming fixture should build")
-        .evaluate_differentials(ProjectionTarget::Single, 4)
-        .expect("streaming projections should evaluate");
-
-    assert_eq!(resident.len(), streaming.len());
-    for (resident, streaming) in resident.iter().zip(&streaming) {
-        assert_projection_equal(resident, streaming);
+    for target in [ProjectionTarget::Single, ProjectionTarget::Combined] {
+        let resident = resident
+            .evaluate_differentials(target, 4)
+            .expect("resident projections should evaluate");
+        let streaming = streaming
+            .evaluate_differentials(target, 4)
+            .expect("streaming projections should evaluate");
+        assert_eq!(resident.len(), streaming.len());
+        for (resident, streaming) in resident.iter().zip(&streaming) {
+            assert_projection_equal(resident, streaming);
+        }
     }
 }
 
