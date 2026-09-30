@@ -100,6 +100,23 @@ coherent_subset = projection_a1.components["S+P"]
 
 Each bin integrates the **generated** fitted intensity and divides by its bin volume and luminosity. Selected tags are evaluated coherently, so interference is included within each selection. Single-wave contributions need not add to the full coherent total. An empty generated bin has value zero; `member_validity` reports its missing MC support separately.
 
+Pass an `Axis` or a sequence of axes for one projection. Pass a dictionary to
+evaluate independent named projections together and receive a dictionary:
+
+```python
+spectra = section_a1.project(
+    {"mass": mass_axis},  # Add other named axis groups to this mapping.
+    components={"S": ["S"], "P": ["P"]},
+)
+mass_spectrum = spectra["mass"]
+```
+
+Each period prepares its unique components and coordinate expressions once per
+request. Event batches are then evaluated across parameter draws and all requested
+axes. Streaming projections retain batch workspace and binned results, without
+retaining whole-dataset weights, coordinates, or intensity arrays. Paired observed
+replicas keep their own event weights and draw order.
+
 ## Combine runs of the same reaction
 
 The two A terms describe the same reaction in different runs. Evaluate the

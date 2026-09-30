@@ -581,6 +581,10 @@ pub fn laddu_runtime::PreparedNormalizationDiagnostics::eq(&self, &laddu_runtime
 impl core::fmt::Debug for laddu_runtime::PreparedNormalizationDiagnostics
 pub fn laddu_runtime::PreparedNormalizationDiagnostics::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::StructuralPartialEq for laddu_runtime::PreparedNormalizationDiagnostics
+pub struct laddu_runtime::PreparedQuery
+impl laddu_runtime::PreparedQuery
+pub fn laddu_runtime::PreparedQuery::evaluate_batch(&self, &laddu_data::data::event::EventBatch) -> laddu_runtime::RuntimeResult<alloc::vec::Vec<alloc::vec::Vec<num_complex::Complex64>>>
+pub fn laddu_runtime::PreparedQuery::prepare(alloc::vec::Vec<laddu_expr::expression::Expr>, &laddu_runtime::Execution, bool) -> laddu_runtime::RuntimeResult<Self>
 pub struct laddu_runtime::ReductionEvaluation
 impl laddu_runtime::ReductionEvaluation
 pub fn laddu_runtime::ReductionEvaluation::gradient(&self) -> &[f64]

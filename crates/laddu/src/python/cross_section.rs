@@ -188,20 +188,37 @@ impl PyCrossSection {
         self.inner.rate_closure().map(Into::into)
     }
 
-    #[pyo3(signature = (axes, *, components=None))]
-    fn project(
+    /// Project one axis group, or a mapping of names to axis groups.
+    /// A mapping shares preparation and returns a dictionary; other inputs
+    /// return one CrossSectionProjection.
+    #[pyo3(signature = (axes: "Axis | Sequence[Axis] | dict[str, Axis | Sequence[Axis]]", *, components=None))]
+    fn project<'py>(
         &self,
-        axes: Vec<PyRef<'_, PyAxis>>,
+        py: Python<'py>,
+        axes: &Bound<'_, PyAny>,
         components: Option<HashMap<String, Vec<String>>>,
-    ) -> PyResult<PyCrossSectionProjection> {
-        let axes = axes
-            .into_iter()
-            .map(|axis| axis.inner.clone())
-            .collect::<Vec<_>>();
-        self.inner
-            .project(&axes, &components.unwrap_or_default())
-            .map(|inner| PyCrossSectionProjection { inner })
-            .map_err(to_py_err)
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let named = axes.hasattr("items")?;
+        let requests = if named {
+            extract_projections(py, axes)?
+        } else {
+            vec![Projection::new("cross_section", extract_axes(py, axes)?).map_err(to_py_err)?]
+        };
+        let results = self
+            .inner
+            .project_many(&requests, &components.unwrap_or_default())
+            .map_err(to_py_err)?;
+        if !named {
+            let (_, inner) = results.into_iter().next().expect("one projection request");
+            return Ok(Py::new(py, PyCrossSectionProjection { inner })?
+                .into_bound(py)
+                .into_any());
+        }
+        let output = PyDict::new(py);
+        for (name, inner) in results {
+            output.set_item(name, Py::new(py, PyCrossSectionProjection { inner })?)?;
+        }
+        Ok(output.into_any())
     }
 }
 
