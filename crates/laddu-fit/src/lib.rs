@@ -1000,15 +1000,13 @@ fn encode_f64(values: impl IntoIterator<Item = f64>) -> Vec<u8> {
     values.into_iter().flat_map(f64::to_le_bytes).collect()
 }
 fn decode_f64(bytes: &[u8], role: &str) -> FitResult<Vec<f64>> {
-    if !bytes.len().is_multiple_of(8) {
+    let (chunks, remainder) = bytes.as_chunks::<8>();
+    if !remainder.is_empty() {
         return Err(FitError::Artifact(format!(
             "payload `{role}` has invalid byte length"
         )));
     }
-    Ok(bytes
-        .chunks_exact(8)
-        .map(|chunk| f64::from_le_bytes(chunk.try_into().expect("eight-byte chunk")))
-        .collect())
+    Ok(chunks.iter().copied().map(f64::from_le_bytes).collect())
 }
 
 impl FitArtifact {
