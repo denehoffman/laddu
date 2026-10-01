@@ -2033,6 +2033,385 @@ pub type laddu::python::histogram::PyJointHistogramDiagnostics::Output = pyo3::i
 pub type laddu::python::histogram::PyJointHistogramDiagnostics::Target = laddu::python::histogram::PyJointHistogramDiagnostics
 pub const laddu::python::histogram::PyJointHistogramDiagnostics::OUTPUT_TYPE: pyo3::inspect::PyStaticExpr
 pub fn laddu::python::histogram::PyJointHistogramDiagnostics::into_pyobject(self, pyo3::marker::Python<'py>) -> core::result::Result<<Self as pyo3::conversion::IntoPyObject<'_>>::Output, <Self as pyo3::conversion::IntoPyObject<'_>>::Error>
+pub mod laddu::python::io
+pub mod laddu::python::io::io
+pub struct laddu::python::io::PyBatchIterator
+impl core::ops::drop::Drop for laddu::python::io::PyBatchIterator
+pub fn laddu::python::io::PyBatchIterator::drop(&mut self)
+impl pyo3::impl_::pyclass::PyClassImpl for laddu::python::io::PyBatchIterator
+pub type laddu::python::io::PyBatchIterator::BaseNativeType = pyo3::types::any::PyAny
+pub type laddu::python::io::PyBatchIterator::BaseType = pyo3::types::any::PyAny
+pub type laddu::python::io::PyBatchIterator::Dict = pyo3::impl_::pyclass::PyClassDummySlot
+pub type laddu::python::io::PyBatchIterator::Inventory = Pyo3MethodsInventoryForPyBatchIterator
+pub type laddu::python::io::PyBatchIterator::Layout = <<laddu::python::io::PyBatchIterator as pyo3::impl_::pyclass::PyClassImpl>::BaseNativeType as pyo3::impl_::pyclass::PyClassBaseType>::Layout
+pub type laddu::python::io::PyBatchIterator::PyClassMutability = <<pyo3::types::any::PyAny as pyo3::impl_::pyclass::PyClassBaseType>::PyClassMutability as pyo3::pycell::impl_::PyClassMutability>::MutableChild
+pub type laddu::python::io::PyBatchIterator::ThreadChecker = pyo3::impl_::pyclass::NoopThreadChecker
+pub type laddu::python::io::PyBatchIterator::WeakRef = pyo3::impl_::pyclass::PyClassDummySlot
+pub const laddu::python::io::PyBatchIterator::DOC: &'static core::ffi::c_str::CStr
+pub const laddu::python::io::PyBatchIterator::IS_BASETYPE: bool
+pub const laddu::python::io::PyBatchIterator::IS_IMMUTABLE_TYPE: bool
+pub const laddu::python::io::PyBatchIterator::IS_MAPPING: bool
+pub const laddu::python::io::PyBatchIterator::IS_SEQUENCE: bool
+pub const laddu::python::io::PyBatchIterator::IS_SUBCLASS: bool
+pub const laddu::python::io::PyBatchIterator::MODULE: core::option::Option<&str>
+pub const laddu::python::io::PyBatchIterator::RAW_DOC: &'static core::ffi::c_str::CStr
+pub fn laddu::python::io::PyBatchIterator::items_iter() -> pyo3::impl_::pyclass::PyClassItemsIter
+pub fn laddu::python::io::PyBatchIterator::lazy_type_object() -> &'static pyo3::impl_::pyclass::lazy_type_object::LazyTypeObject<Self>
+impl pyo3::pyclass::PyClass for laddu::python::io::PyBatchIterator
+pub type laddu::python::io::PyBatchIterator::Frozen = pyo3::pyclass::boolean_struct::False
+pub const laddu::python::io::PyBatchIterator::NAME: &str
+impl pyo3::type_object::PyTypeInfo for laddu::python::io::PyBatchIterator
+pub const laddu::python::io::PyBatchIterator::MODULE: core::option::Option<&str>
+pub const laddu::python::io::PyBatchIterator::NAME: &str
+pub const laddu::python::io::PyBatchIterator::TYPE_HINT: pyo3::inspect::PyStaticExpr
+pub fn laddu::python::io::PyBatchIterator::type_object_raw(pyo3::marker::Python<'_>) -> *mut pyo3_ffi::cpython::object::PyTypeObject
+impl pyo3::types::DerefToPyAny for laddu::python::io::PyBatchIterator
+impl<'py> pyo3::conversion::IntoPyObject<'py> for laddu::python::io::PyBatchIterator
+pub type laddu::python::io::PyBatchIterator::Error = pyo3::err::PyErr
+pub type laddu::python::io::PyBatchIterator::Output = pyo3::instance::Bound<'py, <laddu::python::io::PyBatchIterator as pyo3::conversion::IntoPyObject<'py>>::Target>
+pub type laddu::python::io::PyBatchIterator::Target = laddu::python::io::PyBatchIterator
+pub const laddu::python::io::PyBatchIterator::OUTPUT_TYPE: pyo3::inspect::PyStaticExpr
+pub fn laddu::python::io::PyBatchIterator::into_pyobject(self, pyo3::marker::Python<'py>) -> core::result::Result<<Self as pyo3::conversion::IntoPyObject<'_>>::Output, <Self as pyo3::conversion::IntoPyObject<'_>>::Error>
+pub struct laddu::python::io::PyEventBatch
+impl core::clone::Clone for laddu::python::io::PyEventBatch
+pub fn laddu::python::io::PyEventBatch::clone(&self) -> laddu::python::io::PyEventBatch
+impl pyo3::impl_::pyclass::PyClassImpl for laddu::python::io::PyEventBatch
+pub type laddu::python::io::PyEventBatch::BaseNativeType = pyo3::types::any::PyAny
+pub type laddu::python::io::PyEventBatch::BaseType = pyo3::types::any::PyAny
+pub type laddu::python::io::PyEventBatch::Dict = pyo3::impl_::pyclass::PyClassDummySlot
+pub type laddu::python::io::PyEventBatch::Inventory = Pyo3MethodsInventoryForPyEventBatch
+pub type laddu::python::io::PyEventBatch::Layout = <<laddu::python::io::PyEventBatch as pyo3::impl_::pyclass::PyClassImpl>::BaseNativeType as pyo3::impl_::pyclass::PyClassBaseType>::Layout
+pub type laddu::python::io::PyEventBatch::PyClassMutability = <<pyo3::types::any::PyAny as pyo3::impl_::pyclass::PyClassBaseType>::PyClassMutability as pyo3::pycell::impl_::PyClassMutability>::ImmutableChild
+pub type laddu::python::io::PyEventBatch::ThreadChecker = pyo3::impl_::pyclass::NoopThreadChecker
+pub type laddu::python::io::PyEventBatch::WeakRef = pyo3::impl_::pyclass::PyClassDummySlot
+pub const laddu::python::io::PyEventBatch::DOC: &'static core::ffi::c_str::CStr
+pub const laddu::python::io::PyEventBatch::IS_BASETYPE: bool
+pub const laddu::python::io::PyEventBatch::IS_IMMUTABLE_TYPE: bool
+pub const laddu::python::io::PyEventBatch::IS_MAPPING: bool
+pub const laddu::python::io::PyEventBatch::IS_SEQUENCE: bool
+pub const laddu::python::io::PyEventBatch::IS_SUBCLASS: bool
+pub const laddu::python::io::PyEventBatch::MODULE: core::option::Option<&str>
+pub const laddu::python::io::PyEventBatch::RAW_DOC: &'static core::ffi::c_str::CStr
+pub fn laddu::python::io::PyEventBatch::items_iter() -> pyo3::impl_::pyclass::PyClassItemsIter
+pub fn laddu::python::io::PyEventBatch::lazy_type_object() -> &'static pyo3::impl_::pyclass::lazy_type_object::LazyTypeObject<Self>
+impl pyo3::impl_::pyclass::doc::PyClassNewTextSignature for laddu::python::io::PyEventBatch
+pub const laddu::python::io::PyEventBatch::TEXT_SIGNATURE: &'static str
+impl pyo3::pyclass::PyClass for laddu::python::io::PyEventBatch
+pub type laddu::python::io::PyEventBatch::Frozen = pyo3::pyclass::boolean_struct::True
+pub const laddu::python::io::PyEventBatch::NAME: &str
+impl pyo3::type_object::PyTypeInfo for laddu::python::io::PyEventBatch
+pub const laddu::python::io::PyEventBatch::MODULE: core::option::Option<&str>
+pub const laddu::python::io::PyEventBatch::NAME: &str
+pub const laddu::python::io::PyEventBatch::TYPE_HINT: pyo3::inspect::PyStaticExpr
+pub fn laddu::python::io::PyEventBatch::type_object_raw(pyo3::marker::Python<'_>) -> *mut pyo3_ffi::cpython::object::PyTypeObject
+impl pyo3::types::DerefToPyAny for laddu::python::io::PyEventBatch
+impl<'py> pyo3::conversion::IntoPyObject<'py> for laddu::python::io::PyEventBatch
+pub type laddu::python::io::PyEventBatch::Error = pyo3::err::PyErr
+pub type laddu::python::io::PyEventBatch::Output = pyo3::instance::Bound<'py, <laddu::python::io::PyEventBatch as pyo3::conversion::IntoPyObject<'py>>::Target>
+pub type laddu::python::io::PyEventBatch::Target = laddu::python::io::PyEventBatch
+pub const laddu::python::io::PyEventBatch::OUTPUT_TYPE: pyo3::inspect::PyStaticExpr
+pub fn laddu::python::io::PyEventBatch::into_pyobject(self, pyo3::marker::Python<'py>) -> core::result::Result<<Self as pyo3::conversion::IntoPyObject<'_>>::Output, <Self as pyo3::conversion::IntoPyObject<'_>>::Error>
+pub struct laddu::python::io::PyFormatSink
+impl pyo3::impl_::pyclass::PyClassImpl for laddu::python::io::PyFormatSink
+pub type laddu::python::io::PyFormatSink::BaseNativeType = pyo3::types::any::PyAny
+pub type laddu::python::io::PyFormatSink::BaseType = pyo3::types::any::PyAny
+pub type laddu::python::io::PyFormatSink::Dict = pyo3::impl_::pyclass::PyClassDummySlot
+pub type laddu::python::io::PyFormatSink::Inventory = Pyo3MethodsInventoryForPyFormatSink
+pub type laddu::python::io::PyFormatSink::Layout = <<laddu::python::io::PyFormatSink as pyo3::impl_::pyclass::PyClassImpl>::BaseNativeType as pyo3::impl_::pyclass::PyClassBaseType>::Layout
+pub type laddu::python::io::PyFormatSink::PyClassMutability = <<pyo3::types::any::PyAny as pyo3::impl_::pyclass::PyClassBaseType>::PyClassMutability as pyo3::pycell::impl_::PyClassMutability>::ImmutableChild
+pub type laddu::python::io::PyFormatSink::ThreadChecker = pyo3::impl_::pyclass::NoopThreadChecker
+pub type laddu::python::io::PyFormatSink::WeakRef = pyo3::impl_::pyclass::PyClassDummySlot
+pub const laddu::python::io::PyFormatSink::DOC: &'static core::ffi::c_str::CStr
+pub const laddu::python::io::PyFormatSink::IS_BASETYPE: bool
+pub const laddu::python::io::PyFormatSink::IS_IMMUTABLE_TYPE: bool
+pub const laddu::python::io::PyFormatSink::IS_MAPPING: bool
+pub const laddu::python::io::PyFormatSink::IS_SEQUENCE: bool
+pub const laddu::python::io::PyFormatSink::IS_SUBCLASS: bool
+pub const laddu::python::io::PyFormatSink::MODULE: core::option::Option<&str>
+pub const laddu::python::io::PyFormatSink::RAW_DOC: &'static core::ffi::c_str::CStr
+pub fn laddu::python::io::PyFormatSink::items_iter() -> pyo3::impl_::pyclass::PyClassItemsIter
+pub fn laddu::python::io::PyFormatSink::lazy_type_object() -> &'static pyo3::impl_::pyclass::lazy_type_object::LazyTypeObject<Self>
+impl pyo3::pyclass::PyClass for laddu::python::io::PyFormatSink
+pub type laddu::python::io::PyFormatSink::Frozen = pyo3::pyclass::boolean_struct::True
+pub const laddu::python::io::PyFormatSink::NAME: &str
+impl pyo3::type_object::PyTypeInfo for laddu::python::io::PyFormatSink
+pub const laddu::python::io::PyFormatSink::MODULE: core::option::Option<&str>
+pub const laddu::python::io::PyFormatSink::NAME: &str
+pub const laddu::python::io::PyFormatSink::TYPE_HINT: pyo3::inspect::PyStaticExpr
+pub fn laddu::python::io::PyFormatSink::type_object_raw(pyo3::marker::Python<'_>) -> *mut pyo3_ffi::cpython::object::PyTypeObject
+impl pyo3::types::DerefToPyAny for laddu::python::io::PyFormatSink
+impl<'py> pyo3::conversion::IntoPyObject<'py> for laddu::python::io::PyFormatSink
+pub type laddu::python::io::PyFormatSink::Error = pyo3::err::PyErr
+pub type laddu::python::io::PyFormatSink::Output = pyo3::instance::Bound<'py, <laddu::python::io::PyFormatSink as pyo3::conversion::IntoPyObject<'py>>::Target>
+pub type laddu::python::io::PyFormatSink::Target = laddu::python::io::PyFormatSink
+pub const laddu::python::io::PyFormatSink::OUTPUT_TYPE: pyo3::inspect::PyStaticExpr
+pub fn laddu::python::io::PyFormatSink::into_pyobject(self, pyo3::marker::Python<'py>) -> core::result::Result<<Self as pyo3::conversion::IntoPyObject<'_>>::Output, <Self as pyo3::conversion::IntoPyObject<'_>>::Error>
+pub struct laddu::python::io::PyFormatSource
+impl pyo3::impl_::pyclass::PyClassImpl for laddu::python::io::PyFormatSource
+pub type laddu::python::io::PyFormatSource::BaseNativeType = pyo3::types::any::PyAny
+pub type laddu::python::io::PyFormatSource::BaseType = pyo3::types::any::PyAny
+pub type laddu::python::io::PyFormatSource::Dict = pyo3::impl_::pyclass::PyClassDummySlot
+pub type laddu::python::io::PyFormatSource::Inventory = Pyo3MethodsInventoryForPyFormatSource
+pub type laddu::python::io::PyFormatSource::Layout = <<laddu::python::io::PyFormatSource as pyo3::impl_::pyclass::PyClassImpl>::BaseNativeType as pyo3::impl_::pyclass::PyClassBaseType>::Layout
+pub type laddu::python::io::PyFormatSource::PyClassMutability = <<pyo3::types::any::PyAny as pyo3::impl_::pyclass::PyClassBaseType>::PyClassMutability as pyo3::pycell::impl_::PyClassMutability>::ImmutableChild
+pub type laddu::python::io::PyFormatSource::ThreadChecker = pyo3::impl_::pyclass::NoopThreadChecker
+pub type laddu::python::io::PyFormatSource::WeakRef = pyo3::impl_::pyclass::PyClassDummySlot
+pub const laddu::python::io::PyFormatSource::DOC: &'static core::ffi::c_str::CStr
+pub const laddu::python::io::PyFormatSource::IS_BASETYPE: bool
+pub const laddu::python::io::PyFormatSource::IS_IMMUTABLE_TYPE: bool
+pub const laddu::python::io::PyFormatSource::IS_MAPPING: bool
+pub const laddu::python::io::PyFormatSource::IS_SEQUENCE: bool
+pub const laddu::python::io::PyFormatSource::IS_SUBCLASS: bool
+pub const laddu::python::io::PyFormatSource::MODULE: core::option::Option<&str>
+pub const laddu::python::io::PyFormatSource::RAW_DOC: &'static core::ffi::c_str::CStr
+pub fn laddu::python::io::PyFormatSource::items_iter() -> pyo3::impl_::pyclass::PyClassItemsIter
+pub fn laddu::python::io::PyFormatSource::lazy_type_object() -> &'static pyo3::impl_::pyclass::lazy_type_object::LazyTypeObject<Self>
+impl pyo3::pyclass::PyClass for laddu::python::io::PyFormatSource
+pub type laddu::python::io::PyFormatSource::Frozen = pyo3::pyclass::boolean_struct::True
+pub const laddu::python::io::PyFormatSource::NAME: &str
+impl pyo3::type_object::PyTypeInfo for laddu::python::io::PyFormatSource
+pub const laddu::python::io::PyFormatSource::MODULE: core::option::Option<&str>
+pub const laddu::python::io::PyFormatSource::NAME: &str
+pub const laddu::python::io::PyFormatSource::TYPE_HINT: pyo3::inspect::PyStaticExpr
+pub fn laddu::python::io::PyFormatSource::type_object_raw(pyo3::marker::Python<'_>) -> *mut pyo3_ffi::cpython::object::PyTypeObject
+impl pyo3::types::DerefToPyAny for laddu::python::io::PyFormatSource
+impl<'py> pyo3::conversion::IntoPyObject<'py> for laddu::python::io::PyFormatSource
+pub type laddu::python::io::PyFormatSource::Error = pyo3::err::PyErr
+pub type laddu::python::io::PyFormatSource::Output = pyo3::instance::Bound<'py, <laddu::python::io::PyFormatSource as pyo3::conversion::IntoPyObject<'py>>::Target>
+pub type laddu::python::io::PyFormatSource::Target = laddu::python::io::PyFormatSource
+pub const laddu::python::io::PyFormatSource::OUTPUT_TYPE: pyo3::inspect::PyStaticExpr
+pub fn laddu::python::io::PyFormatSource::into_pyobject(self, pyo3::marker::Python<'py>) -> core::result::Result<<Self as pyo3::conversion::IntoPyObject<'_>>::Output, <Self as pyo3::conversion::IntoPyObject<'_>>::Error>
+pub struct laddu::python::io::PyFormatSpec
+impl core::clone::Clone for laddu::python::io::PyFormatSpec
+pub fn laddu::python::io::PyFormatSpec::clone(&self) -> laddu::python::io::PyFormatSpec
+impl pyo3::impl_::pyclass::PyClassImpl for laddu::python::io::PyFormatSpec
+pub type laddu::python::io::PyFormatSpec::BaseNativeType = pyo3::types::any::PyAny
+pub type laddu::python::io::PyFormatSpec::BaseType = pyo3::types::any::PyAny
+pub type laddu::python::io::PyFormatSpec::Dict = pyo3::impl_::pyclass::PyClassDummySlot
+pub type laddu::python::io::PyFormatSpec::Inventory = Pyo3MethodsInventoryForPyFormatSpec
+pub type laddu::python::io::PyFormatSpec::Layout = <<laddu::python::io::PyFormatSpec as pyo3::impl_::pyclass::PyClassImpl>::BaseNativeType as pyo3::impl_::pyclass::PyClassBaseType>::Layout
+pub type laddu::python::io::PyFormatSpec::PyClassMutability = <<pyo3::types::any::PyAny as pyo3::impl_::pyclass::PyClassBaseType>::PyClassMutability as pyo3::pycell::impl_::PyClassMutability>::ImmutableChild
+pub type laddu::python::io::PyFormatSpec::ThreadChecker = pyo3::impl_::pyclass::NoopThreadChecker
+pub type laddu::python::io::PyFormatSpec::WeakRef = pyo3::impl_::pyclass::PyClassDummySlot
+pub const laddu::python::io::PyFormatSpec::DOC: &'static core::ffi::c_str::CStr
+pub const laddu::python::io::PyFormatSpec::IS_BASETYPE: bool
+pub const laddu::python::io::PyFormatSpec::IS_IMMUTABLE_TYPE: bool
+pub const laddu::python::io::PyFormatSpec::IS_MAPPING: bool
+pub const laddu::python::io::PyFormatSpec::IS_SEQUENCE: bool
+pub const laddu::python::io::PyFormatSpec::IS_SUBCLASS: bool
+pub const laddu::python::io::PyFormatSpec::MODULE: core::option::Option<&str>
+pub const laddu::python::io::PyFormatSpec::RAW_DOC: &'static core::ffi::c_str::CStr
+pub fn laddu::python::io::PyFormatSpec::items_iter() -> pyo3::impl_::pyclass::PyClassItemsIter
+pub fn laddu::python::io::PyFormatSpec::lazy_type_object() -> &'static pyo3::impl_::pyclass::lazy_type_object::LazyTypeObject<Self>
+impl pyo3::impl_::pyclass::doc::PyClassNewTextSignature for laddu::python::io::PyFormatSpec
+pub const laddu::python::io::PyFormatSpec::TEXT_SIGNATURE: &'static str
+impl pyo3::pyclass::PyClass for laddu::python::io::PyFormatSpec
+pub type laddu::python::io::PyFormatSpec::Frozen = pyo3::pyclass::boolean_struct::True
+pub const laddu::python::io::PyFormatSpec::NAME: &str
+impl pyo3::type_object::PyTypeInfo for laddu::python::io::PyFormatSpec
+pub const laddu::python::io::PyFormatSpec::MODULE: core::option::Option<&str>
+pub const laddu::python::io::PyFormatSpec::NAME: &str
+pub const laddu::python::io::PyFormatSpec::TYPE_HINT: pyo3::inspect::PyStaticExpr
+pub fn laddu::python::io::PyFormatSpec::type_object_raw(pyo3::marker::Python<'_>) -> *mut pyo3_ffi::cpython::object::PyTypeObject
+impl pyo3::types::DerefToPyAny for laddu::python::io::PyFormatSpec
+impl<'py> pyo3::conversion::IntoPyObject<'py> for laddu::python::io::PyFormatSpec
+pub type laddu::python::io::PyFormatSpec::Error = pyo3::err::PyErr
+pub type laddu::python::io::PyFormatSpec::Output = pyo3::instance::Bound<'py, <laddu::python::io::PyFormatSpec as pyo3::conversion::IntoPyObject<'py>>::Target>
+pub type laddu::python::io::PyFormatSpec::Target = laddu::python::io::PyFormatSpec
+pub const laddu::python::io::PyFormatSpec::OUTPUT_TYPE: pyo3::inspect::PyStaticExpr
+pub fn laddu::python::io::PyFormatSpec::into_pyobject(self, pyo3::marker::Python<'py>) -> core::result::Result<<Self as pyo3::conversion::IntoPyObject<'_>>::Output, <Self as pyo3::conversion::IntoPyObject<'_>>::Error>
+pub struct laddu::python::io::PyReadPlan
+impl core::clone::Clone for laddu::python::io::PyReadPlan
+pub fn laddu::python::io::PyReadPlan::clone(&self) -> laddu::python::io::PyReadPlan
+impl core::convert::From<laddu_data::io::ReadPlan> for laddu::python::io::PyReadPlan
+pub fn laddu::python::io::PyReadPlan::from(laddu_data::io::ReadPlan) -> Self
+impl pyo3::impl_::pyclass::PyClassImpl for laddu::python::io::PyReadPlan
+pub type laddu::python::io::PyReadPlan::BaseNativeType = pyo3::types::any::PyAny
+pub type laddu::python::io::PyReadPlan::BaseType = pyo3::types::any::PyAny
+pub type laddu::python::io::PyReadPlan::Dict = pyo3::impl_::pyclass::PyClassDummySlot
+pub type laddu::python::io::PyReadPlan::Inventory = Pyo3MethodsInventoryForPyReadPlan
+pub type laddu::python::io::PyReadPlan::Layout = <<laddu::python::io::PyReadPlan as pyo3::impl_::pyclass::PyClassImpl>::BaseNativeType as pyo3::impl_::pyclass::PyClassBaseType>::Layout
+pub type laddu::python::io::PyReadPlan::PyClassMutability = <<pyo3::types::any::PyAny as pyo3::impl_::pyclass::PyClassBaseType>::PyClassMutability as pyo3::pycell::impl_::PyClassMutability>::ImmutableChild
+pub type laddu::python::io::PyReadPlan::ThreadChecker = pyo3::impl_::pyclass::NoopThreadChecker
+pub type laddu::python::io::PyReadPlan::WeakRef = pyo3::impl_::pyclass::PyClassDummySlot
+pub const laddu::python::io::PyReadPlan::DOC: &'static core::ffi::c_str::CStr
+pub const laddu::python::io::PyReadPlan::IS_BASETYPE: bool
+pub const laddu::python::io::PyReadPlan::IS_IMMUTABLE_TYPE: bool
+pub const laddu::python::io::PyReadPlan::IS_MAPPING: bool
+pub const laddu::python::io::PyReadPlan::IS_SEQUENCE: bool
+pub const laddu::python::io::PyReadPlan::IS_SUBCLASS: bool
+pub const laddu::python::io::PyReadPlan::MODULE: core::option::Option<&str>
+pub const laddu::python::io::PyReadPlan::RAW_DOC: &'static core::ffi::c_str::CStr
+pub fn laddu::python::io::PyReadPlan::items_iter() -> pyo3::impl_::pyclass::PyClassItemsIter
+pub fn laddu::python::io::PyReadPlan::lazy_type_object() -> &'static pyo3::impl_::pyclass::lazy_type_object::LazyTypeObject<Self>
+impl pyo3::pyclass::PyClass for laddu::python::io::PyReadPlan
+pub type laddu::python::io::PyReadPlan::Frozen = pyo3::pyclass::boolean_struct::True
+pub const laddu::python::io::PyReadPlan::NAME: &str
+impl pyo3::type_object::PyTypeInfo for laddu::python::io::PyReadPlan
+pub const laddu::python::io::PyReadPlan::MODULE: core::option::Option<&str>
+pub const laddu::python::io::PyReadPlan::NAME: &str
+pub const laddu::python::io::PyReadPlan::TYPE_HINT: pyo3::inspect::PyStaticExpr
+pub fn laddu::python::io::PyReadPlan::type_object_raw(pyo3::marker::Python<'_>) -> *mut pyo3_ffi::cpython::object::PyTypeObject
+impl pyo3::types::DerefToPyAny for laddu::python::io::PyReadPlan
+impl<'py> pyo3::conversion::IntoPyObject<'py> for laddu::python::io::PyReadPlan
+pub type laddu::python::io::PyReadPlan::Error = pyo3::err::PyErr
+pub type laddu::python::io::PyReadPlan::Output = pyo3::instance::Bound<'py, <laddu::python::io::PyReadPlan as pyo3::conversion::IntoPyObject<'py>>::Target>
+pub type laddu::python::io::PyReadPlan::Target = laddu::python::io::PyReadPlan
+pub const laddu::python::io::PyReadPlan::OUTPUT_TYPE: pyo3::inspect::PyStaticExpr
+pub fn laddu::python::io::PyReadPlan::into_pyobject(self, pyo3::marker::Python<'py>) -> core::result::Result<<Self as pyo3::conversion::IntoPyObject<'_>>::Output, <Self as pyo3::conversion::IntoPyObject<'_>>::Error>
+pub struct laddu::python::io::PySchema
+impl core::clone::Clone for laddu::python::io::PySchema
+pub fn laddu::python::io::PySchema::clone(&self) -> laddu::python::io::PySchema
+impl pyo3::impl_::pyclass::PyClassImpl for laddu::python::io::PySchema
+pub type laddu::python::io::PySchema::BaseNativeType = pyo3::types::any::PyAny
+pub type laddu::python::io::PySchema::BaseType = pyo3::types::any::PyAny
+pub type laddu::python::io::PySchema::Dict = pyo3::impl_::pyclass::PyClassDummySlot
+pub type laddu::python::io::PySchema::Inventory = Pyo3MethodsInventoryForPySchema
+pub type laddu::python::io::PySchema::Layout = <<laddu::python::io::PySchema as pyo3::impl_::pyclass::PyClassImpl>::BaseNativeType as pyo3::impl_::pyclass::PyClassBaseType>::Layout
+pub type laddu::python::io::PySchema::PyClassMutability = <<pyo3::types::any::PyAny as pyo3::impl_::pyclass::PyClassBaseType>::PyClassMutability as pyo3::pycell::impl_::PyClassMutability>::ImmutableChild
+pub type laddu::python::io::PySchema::ThreadChecker = pyo3::impl_::pyclass::NoopThreadChecker
+pub type laddu::python::io::PySchema::WeakRef = pyo3::impl_::pyclass::PyClassDummySlot
+pub const laddu::python::io::PySchema::DOC: &'static core::ffi::c_str::CStr
+pub const laddu::python::io::PySchema::IS_BASETYPE: bool
+pub const laddu::python::io::PySchema::IS_IMMUTABLE_TYPE: bool
+pub const laddu::python::io::PySchema::IS_MAPPING: bool
+pub const laddu::python::io::PySchema::IS_SEQUENCE: bool
+pub const laddu::python::io::PySchema::IS_SUBCLASS: bool
+pub const laddu::python::io::PySchema::MODULE: core::option::Option<&str>
+pub const laddu::python::io::PySchema::RAW_DOC: &'static core::ffi::c_str::CStr
+pub fn laddu::python::io::PySchema::items_iter() -> pyo3::impl_::pyclass::PyClassItemsIter
+pub fn laddu::python::io::PySchema::lazy_type_object() -> &'static pyo3::impl_::pyclass::lazy_type_object::LazyTypeObject<Self>
+impl pyo3::impl_::pyclass::PyClass__eq__SlotFragment<laddu::python::io::PySchema> for pyo3::impl_::pyclass::PyClassImplCollector<laddu::python::io::PySchema>
+pub unsafe fn pyo3::impl_::pyclass::PyClassImplCollector<laddu::python::io::PySchema>::__eq__(self, pyo3::marker::Python<'_>, *mut pyo3_ffi::object::PyObject, *mut pyo3_ffi::object::PyObject) -> pyo3::err::PyResult<*mut pyo3_ffi::object::PyObject>
+impl pyo3::impl_::pyclass::doc::PyClassNewTextSignature for laddu::python::io::PySchema
+pub const laddu::python::io::PySchema::TEXT_SIGNATURE: &'static str
+impl pyo3::pyclass::PyClass for laddu::python::io::PySchema
+pub type laddu::python::io::PySchema::Frozen = pyo3::pyclass::boolean_struct::True
+pub const laddu::python::io::PySchema::NAME: &str
+impl pyo3::type_object::PyTypeInfo for laddu::python::io::PySchema
+pub const laddu::python::io::PySchema::MODULE: core::option::Option<&str>
+pub const laddu::python::io::PySchema::NAME: &str
+pub const laddu::python::io::PySchema::TYPE_HINT: pyo3::inspect::PyStaticExpr
+pub fn laddu::python::io::PySchema::type_object_raw(pyo3::marker::Python<'_>) -> *mut pyo3_ffi::cpython::object::PyTypeObject
+impl pyo3::types::DerefToPyAny for laddu::python::io::PySchema
+impl<'py> pyo3::conversion::IntoPyObject<'py> for laddu::python::io::PySchema
+pub type laddu::python::io::PySchema::Error = pyo3::err::PyErr
+pub type laddu::python::io::PySchema::Output = pyo3::instance::Bound<'py, <laddu::python::io::PySchema as pyo3::conversion::IntoPyObject<'py>>::Target>
+pub type laddu::python::io::PySchema::Target = laddu::python::io::PySchema
+pub const laddu::python::io::PySchema::OUTPUT_TYPE: pyo3::inspect::PyStaticExpr
+pub fn laddu::python::io::PySchema::into_pyobject(self, pyo3::marker::Python<'py>) -> core::result::Result<<Self as pyo3::conversion::IntoPyObject<'_>>::Output, <Self as pyo3::conversion::IntoPyObject<'_>>::Error>
+pub struct laddu::python::io::PySourceInfo
+impl core::clone::Clone for laddu::python::io::PySourceInfo
+pub fn laddu::python::io::PySourceInfo::clone(&self) -> laddu::python::io::PySourceInfo
+impl pyo3::impl_::pyclass::PyClassImpl for laddu::python::io::PySourceInfo
+pub type laddu::python::io::PySourceInfo::BaseNativeType = pyo3::types::any::PyAny
+pub type laddu::python::io::PySourceInfo::BaseType = pyo3::types::any::PyAny
+pub type laddu::python::io::PySourceInfo::Dict = pyo3::impl_::pyclass::PyClassDummySlot
+pub type laddu::python::io::PySourceInfo::Inventory = Pyo3MethodsInventoryForPySourceInfo
+pub type laddu::python::io::PySourceInfo::Layout = <<laddu::python::io::PySourceInfo as pyo3::impl_::pyclass::PyClassImpl>::BaseNativeType as pyo3::impl_::pyclass::PyClassBaseType>::Layout
+pub type laddu::python::io::PySourceInfo::PyClassMutability = <<pyo3::types::any::PyAny as pyo3::impl_::pyclass::PyClassBaseType>::PyClassMutability as pyo3::pycell::impl_::PyClassMutability>::ImmutableChild
+pub type laddu::python::io::PySourceInfo::ThreadChecker = pyo3::impl_::pyclass::NoopThreadChecker
+pub type laddu::python::io::PySourceInfo::WeakRef = pyo3::impl_::pyclass::PyClassDummySlot
+pub const laddu::python::io::PySourceInfo::DOC: &'static core::ffi::c_str::CStr
+pub const laddu::python::io::PySourceInfo::IS_BASETYPE: bool
+pub const laddu::python::io::PySourceInfo::IS_IMMUTABLE_TYPE: bool
+pub const laddu::python::io::PySourceInfo::IS_MAPPING: bool
+pub const laddu::python::io::PySourceInfo::IS_SEQUENCE: bool
+pub const laddu::python::io::PySourceInfo::IS_SUBCLASS: bool
+pub const laddu::python::io::PySourceInfo::MODULE: core::option::Option<&str>
+pub const laddu::python::io::PySourceInfo::RAW_DOC: &'static core::ffi::c_str::CStr
+pub fn laddu::python::io::PySourceInfo::items_iter() -> pyo3::impl_::pyclass::PyClassItemsIter
+pub fn laddu::python::io::PySourceInfo::lazy_type_object() -> &'static pyo3::impl_::pyclass::lazy_type_object::LazyTypeObject<Self>
+impl pyo3::impl_::pyclass::doc::PyClassNewTextSignature for laddu::python::io::PySourceInfo
+pub const laddu::python::io::PySourceInfo::TEXT_SIGNATURE: &'static str
+impl pyo3::pyclass::PyClass for laddu::python::io::PySourceInfo
+pub type laddu::python::io::PySourceInfo::Frozen = pyo3::pyclass::boolean_struct::True
+pub const laddu::python::io::PySourceInfo::NAME: &str
+impl pyo3::type_object::PyTypeInfo for laddu::python::io::PySourceInfo
+pub const laddu::python::io::PySourceInfo::MODULE: core::option::Option<&str>
+pub const laddu::python::io::PySourceInfo::NAME: &str
+pub const laddu::python::io::PySourceInfo::TYPE_HINT: pyo3::inspect::PyStaticExpr
+pub fn laddu::python::io::PySourceInfo::type_object_raw(pyo3::marker::Python<'_>) -> *mut pyo3_ffi::cpython::object::PyTypeObject
+impl pyo3::types::DerefToPyAny for laddu::python::io::PySourceInfo
+impl<'py> pyo3::conversion::IntoPyObject<'py> for laddu::python::io::PySourceInfo
+pub type laddu::python::io::PySourceInfo::Error = pyo3::err::PyErr
+pub type laddu::python::io::PySourceInfo::Output = pyo3::instance::Bound<'py, <laddu::python::io::PySourceInfo as pyo3::conversion::IntoPyObject<'py>>::Target>
+pub type laddu::python::io::PySourceInfo::Target = laddu::python::io::PySourceInfo
+pub const laddu::python::io::PySourceInfo::OUTPUT_TYPE: pyo3::inspect::PyStaticExpr
+pub fn laddu::python::io::PySourceInfo::into_pyobject(self, pyo3::marker::Python<'py>) -> core::result::Result<<Self as pyo3::conversion::IntoPyObject<'_>>::Output, <Self as pyo3::conversion::IntoPyObject<'_>>::Error>
+pub struct laddu::python::io::PyWritePlan
+impl core::clone::Clone for laddu::python::io::PyWritePlan
+pub fn laddu::python::io::PyWritePlan::clone(&self) -> laddu::python::io::PyWritePlan
+impl pyo3::impl_::pyclass::PyClassImpl for laddu::python::io::PyWritePlan
+pub type laddu::python::io::PyWritePlan::BaseNativeType = pyo3::types::any::PyAny
+pub type laddu::python::io::PyWritePlan::BaseType = pyo3::types::any::PyAny
+pub type laddu::python::io::PyWritePlan::Dict = pyo3::impl_::pyclass::PyClassDummySlot
+pub type laddu::python::io::PyWritePlan::Inventory = Pyo3MethodsInventoryForPyWritePlan
+pub type laddu::python::io::PyWritePlan::Layout = <<laddu::python::io::PyWritePlan as pyo3::impl_::pyclass::PyClassImpl>::BaseNativeType as pyo3::impl_::pyclass::PyClassBaseType>::Layout
+pub type laddu::python::io::PyWritePlan::PyClassMutability = <<pyo3::types::any::PyAny as pyo3::impl_::pyclass::PyClassBaseType>::PyClassMutability as pyo3::pycell::impl_::PyClassMutability>::ImmutableChild
+pub type laddu::python::io::PyWritePlan::ThreadChecker = pyo3::impl_::pyclass::NoopThreadChecker
+pub type laddu::python::io::PyWritePlan::WeakRef = pyo3::impl_::pyclass::PyClassDummySlot
+pub const laddu::python::io::PyWritePlan::DOC: &'static core::ffi::c_str::CStr
+pub const laddu::python::io::PyWritePlan::IS_BASETYPE: bool
+pub const laddu::python::io::PyWritePlan::IS_IMMUTABLE_TYPE: bool
+pub const laddu::python::io::PyWritePlan::IS_MAPPING: bool
+pub const laddu::python::io::PyWritePlan::IS_SEQUENCE: bool
+pub const laddu::python::io::PyWritePlan::IS_SUBCLASS: bool
+pub const laddu::python::io::PyWritePlan::MODULE: core::option::Option<&str>
+pub const laddu::python::io::PyWritePlan::RAW_DOC: &'static core::ffi::c_str::CStr
+pub fn laddu::python::io::PyWritePlan::items_iter() -> pyo3::impl_::pyclass::PyClassItemsIter
+pub fn laddu::python::io::PyWritePlan::lazy_type_object() -> &'static pyo3::impl_::pyclass::lazy_type_object::LazyTypeObject<Self>
+impl pyo3::pyclass::PyClass for laddu::python::io::PyWritePlan
+pub type laddu::python::io::PyWritePlan::Frozen = pyo3::pyclass::boolean_struct::True
+pub const laddu::python::io::PyWritePlan::NAME: &str
+impl pyo3::type_object::PyTypeInfo for laddu::python::io::PyWritePlan
+pub const laddu::python::io::PyWritePlan::MODULE: core::option::Option<&str>
+pub const laddu::python::io::PyWritePlan::NAME: &str
+pub const laddu::python::io::PyWritePlan::TYPE_HINT: pyo3::inspect::PyStaticExpr
+pub fn laddu::python::io::PyWritePlan::type_object_raw(pyo3::marker::Python<'_>) -> *mut pyo3_ffi::cpython::object::PyTypeObject
+impl pyo3::types::DerefToPyAny for laddu::python::io::PyWritePlan
+impl<'py> pyo3::conversion::IntoPyObject<'py> for laddu::python::io::PyWritePlan
+pub type laddu::python::io::PyWritePlan::Error = pyo3::err::PyErr
+pub type laddu::python::io::PyWritePlan::Output = pyo3::instance::Bound<'py, <laddu::python::io::PyWritePlan as pyo3::conversion::IntoPyObject<'py>>::Target>
+pub type laddu::python::io::PyWritePlan::Target = laddu::python::io::PyWritePlan
+pub const laddu::python::io::PyWritePlan::OUTPUT_TYPE: pyo3::inspect::PyStaticExpr
+pub fn laddu::python::io::PyWritePlan::into_pyobject(self, pyo3::marker::Python<'py>) -> core::result::Result<<Self as pyo3::conversion::IntoPyObject<'_>>::Output, <Self as pyo3::conversion::IntoPyObject<'_>>::Error>
+pub struct laddu::python::io::PyWriteResult
+impl pyo3::impl_::pyclass::PyClassImpl for laddu::python::io::PyWriteResult
+pub type laddu::python::io::PyWriteResult::BaseNativeType = pyo3::types::any::PyAny
+pub type laddu::python::io::PyWriteResult::BaseType = pyo3::types::any::PyAny
+pub type laddu::python::io::PyWriteResult::Dict = pyo3::impl_::pyclass::PyClassDummySlot
+pub type laddu::python::io::PyWriteResult::Inventory = Pyo3MethodsInventoryForPyWriteResult
+pub type laddu::python::io::PyWriteResult::Layout = <<laddu::python::io::PyWriteResult as pyo3::impl_::pyclass::PyClassImpl>::BaseNativeType as pyo3::impl_::pyclass::PyClassBaseType>::Layout
+pub type laddu::python::io::PyWriteResult::PyClassMutability = <<pyo3::types::any::PyAny as pyo3::impl_::pyclass::PyClassBaseType>::PyClassMutability as pyo3::pycell::impl_::PyClassMutability>::ImmutableChild
+pub type laddu::python::io::PyWriteResult::ThreadChecker = pyo3::impl_::pyclass::NoopThreadChecker
+pub type laddu::python::io::PyWriteResult::WeakRef = pyo3::impl_::pyclass::PyClassDummySlot
+pub const laddu::python::io::PyWriteResult::DOC: &'static core::ffi::c_str::CStr
+pub const laddu::python::io::PyWriteResult::IS_BASETYPE: bool
+pub const laddu::python::io::PyWriteResult::IS_IMMUTABLE_TYPE: bool
+pub const laddu::python::io::PyWriteResult::IS_MAPPING: bool
+pub const laddu::python::io::PyWriteResult::IS_SEQUENCE: bool
+pub const laddu::python::io::PyWriteResult::IS_SUBCLASS: bool
+pub const laddu::python::io::PyWriteResult::MODULE: core::option::Option<&str>
+pub const laddu::python::io::PyWriteResult::RAW_DOC: &'static core::ffi::c_str::CStr
+pub fn laddu::python::io::PyWriteResult::items_iter() -> pyo3::impl_::pyclass::PyClassItemsIter
+pub fn laddu::python::io::PyWriteResult::lazy_type_object() -> &'static pyo3::impl_::pyclass::lazy_type_object::LazyTypeObject<Self>
+impl pyo3::pyclass::PyClass for laddu::python::io::PyWriteResult
+pub type laddu::python::io::PyWriteResult::Frozen = pyo3::pyclass::boolean_struct::True
+pub const laddu::python::io::PyWriteResult::NAME: &str
+impl pyo3::type_object::PyTypeInfo for laddu::python::io::PyWriteResult
+pub const laddu::python::io::PyWriteResult::MODULE: core::option::Option<&str>
+pub const laddu::python::io::PyWriteResult::NAME: &str
+pub const laddu::python::io::PyWriteResult::TYPE_HINT: pyo3::inspect::PyStaticExpr
+pub fn laddu::python::io::PyWriteResult::type_object_raw(pyo3::marker::Python<'_>) -> *mut pyo3_ffi::cpython::object::PyTypeObject
+impl pyo3::types::DerefToPyAny for laddu::python::io::PyWriteResult
+impl<'py> pyo3::conversion::IntoPyObject<'py> for laddu::python::io::PyWriteResult
+pub type laddu::python::io::PyWriteResult::Error = pyo3::err::PyErr
+pub type laddu::python::io::PyWriteResult::Output = pyo3::instance::Bound<'py, <laddu::python::io::PyWriteResult as pyo3::conversion::IntoPyObject<'py>>::Target>
+pub type laddu::python::io::PyWriteResult::Target = laddu::python::io::PyWriteResult
+pub const laddu::python::io::PyWriteResult::OUTPUT_TYPE: pyo3::inspect::PyStaticExpr
+pub fn laddu::python::io::PyWriteResult::into_pyobject(self, pyo3::marker::Python<'py>) -> core::result::Result<<Self as pyo3::conversion::IntoPyObject<'_>>::Output, <Self as pyo3::conversion::IntoPyObject<'_>>::Error>
+pub fn laddu::python::io::convert(pyo3::marker::Python<'_>, pyo3::instance::Py<pyo3::types::any::PyAny>, std::path::PathBuf, &laddu::python::io::PyFormatSpec, &laddu::python::io::PyFormatSpec, core::option::Option<pyo3::instance::Py<pyo3::types::any::PyAny>>, core::option::Option<pyo3::instance::Py<pyo3::types::any::PyAny>>, &str, core::option::Option<usize>, core::option::Option<MemoryInput>, core::option::Option<&laddu::python::runtime::PyExecution>) -> pyo3::err::PyResult<laddu::python::io::PyWriteResult>
 pub mod laddu::python::likelihood
 pub mod laddu::python::likelihood::likelihood
 pub struct laddu::python::likelihood::PyDatasetDiagnostics

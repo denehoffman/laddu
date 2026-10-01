@@ -130,6 +130,8 @@ pub mod fit;
 pub mod generation;
 /// Python histogram container and filling operations.
 pub mod histogram;
+/// Python format specifications and universal event-batch streaming.
+pub mod io;
 #[cfg(feature = "likelihood")]
 /// Python likelihood terms, objectives, and projections.
 pub mod likelihood;
@@ -202,6 +204,8 @@ macro_rules! laddu_python_module {
             };
             #[pymodule_export]
             use $crate::python::error::LadduError;
+            #[pymodule_export]
+            use $crate::python::io::io;
             #[pymodule_export]
             use $crate::python::fit::{PyAnalysisSnapshot as AnalysisSnapshot, PyBoundFitState as BoundFitState, PyFitArtifact as FitArtifact, PyFitEnsembleArtifact as FitEnsembleArtifact, PyFitResult as FitResult};
             #[pymodule_export]

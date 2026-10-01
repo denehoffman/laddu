@@ -25,4 +25,7 @@ pub enum LadduDataError {
     /// An event sink failed.
     #[error("Sink Error: {0}")]
     Sink(String),
+    /// A downstream source or sink failed with an owned, inspectable cause.
+    #[error("External I/O Error: {0}")]
+    External(#[source] std::sync::Arc<dyn std::error::Error + Send + Sync>),
 }

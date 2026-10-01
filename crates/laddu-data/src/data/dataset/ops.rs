@@ -22,7 +22,7 @@ where
     F: FnMut(Event<'_>) -> LadduDataResult<()>,
 {
     'rows: for row in 0..batch.len() {
-        let event_id = base + row as u64;
+        let event_id = batch.row_ids().map_or(base + row as u64, |ids| ids[row]);
         let mut weight = batch.weights_at(row);
 
         for op in ops {

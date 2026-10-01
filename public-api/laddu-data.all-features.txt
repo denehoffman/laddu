@@ -166,10 +166,12 @@ pub fn laddu_data::data::event::EventBatch::is_empty(&self) -> bool
 pub fn laddu_data::data::event::EventBatch::iter(&self) -> impl core::iter::traits::iterator::Iterator<Item = laddu_data::data::event::BatchEvent<'_>>
 pub fn laddu_data::data::event::EventBatch::len(&self) -> usize
 pub fn laddu_data::data::event::EventBatch::new(alloc::sync::Arc<laddu_data::schema::Schema>, alloc::vec::Vec<alloc::sync::Arc<[laddu_physics::vectors::RealVec4]>>, alloc::vec::Vec<alloc::sync::Arc<[f64]>>, core::option::Option<alloc::sync::Arc<[f64]>>) -> laddu_data::LadduDataResult<Self>
+pub fn laddu_data::data::event::EventBatch::new_with_len(alloc::sync::Arc<laddu_data::schema::Schema>, alloc::vec::Vec<alloc::sync::Arc<[laddu_physics::vectors::RealVec4]>>, alloc::vec::Vec<alloc::sync::Arc<[f64]>>, core::option::Option<alloc::sync::Arc<[f64]>>, usize) -> laddu_data::LadduDataResult<Self>
 pub fn laddu_data::data::event::EventBatch::p4_at(&self, usize, usize) -> laddu_physics::vectors::RealVec4
 pub fn laddu_data::data::event::EventBatch::p4_column_bound(&self, &laddu_data::schema::P4Binding) -> laddu_data::LadduDataResult<&[laddu_physics::vectors::RealVec4]>
 pub fn laddu_data::data::event::EventBatch::resident_bytes(&self) -> usize
 pub fn laddu_data::data::event::EventBatch::reweight<F>(&self, F) -> Self where F: core::ops::function::Fn(usize, f64) -> f64
+pub fn laddu_data::data::event::EventBatch::row_ids(&self) -> core::option::Option<&[u64]>
 pub fn laddu_data::data::event::EventBatch::scalar_at(&self, usize, usize) -> f64
 pub fn laddu_data::data::event::EventBatch::scalar_column(&self, usize) -> &[f64]
 pub fn laddu_data::data::event::EventBatch::scalar_column_bound(&self, &laddu_data::schema::ScalarBinding) -> laddu_data::LadduDataResult<&[f64]>
@@ -181,6 +183,7 @@ pub fn laddu_data::data::event::EventBatch::vec4_column(&self, usize) -> &[laddu
 pub fn laddu_data::data::event::EventBatch::vec4_column_named(&self, &str) -> core::option::Option<&[laddu_physics::vectors::RealVec4]>
 pub fn laddu_data::data::event::EventBatch::weights_at(&self, usize) -> f64
 pub fn laddu_data::data::event::EventBatch::weights_column(&self) -> core::option::Option<&[f64]>
+pub fn laddu_data::data::event::EventBatch::with_row_ids(self, alloc::sync::Arc<[u64]>) -> laddu_data::LadduDataResult<Self>
 impl core::clone::Clone for laddu_data::data::event::EventBatch
 pub fn laddu_data::data::event::EventBatch::clone(&self) -> laddu_data::data::event::EventBatch
 impl core::fmt::Debug for laddu_data::data::event::EventBatch
@@ -334,10 +337,12 @@ pub fn laddu_data::data::event::EventBatch::is_empty(&self) -> bool
 pub fn laddu_data::data::event::EventBatch::iter(&self) -> impl core::iter::traits::iterator::Iterator<Item = laddu_data::data::event::BatchEvent<'_>>
 pub fn laddu_data::data::event::EventBatch::len(&self) -> usize
 pub fn laddu_data::data::event::EventBatch::new(alloc::sync::Arc<laddu_data::schema::Schema>, alloc::vec::Vec<alloc::sync::Arc<[laddu_physics::vectors::RealVec4]>>, alloc::vec::Vec<alloc::sync::Arc<[f64]>>, core::option::Option<alloc::sync::Arc<[f64]>>) -> laddu_data::LadduDataResult<Self>
+pub fn laddu_data::data::event::EventBatch::new_with_len(alloc::sync::Arc<laddu_data::schema::Schema>, alloc::vec::Vec<alloc::sync::Arc<[laddu_physics::vectors::RealVec4]>>, alloc::vec::Vec<alloc::sync::Arc<[f64]>>, core::option::Option<alloc::sync::Arc<[f64]>>, usize) -> laddu_data::LadduDataResult<Self>
 pub fn laddu_data::data::event::EventBatch::p4_at(&self, usize, usize) -> laddu_physics::vectors::RealVec4
 pub fn laddu_data::data::event::EventBatch::p4_column_bound(&self, &laddu_data::schema::P4Binding) -> laddu_data::LadduDataResult<&[laddu_physics::vectors::RealVec4]>
 pub fn laddu_data::data::event::EventBatch::resident_bytes(&self) -> usize
 pub fn laddu_data::data::event::EventBatch::reweight<F>(&self, F) -> Self where F: core::ops::function::Fn(usize, f64) -> f64
+pub fn laddu_data::data::event::EventBatch::row_ids(&self) -> core::option::Option<&[u64]>
 pub fn laddu_data::data::event::EventBatch::scalar_at(&self, usize, usize) -> f64
 pub fn laddu_data::data::event::EventBatch::scalar_column(&self, usize) -> &[f64]
 pub fn laddu_data::data::event::EventBatch::scalar_column_bound(&self, &laddu_data::schema::ScalarBinding) -> laddu_data::LadduDataResult<&[f64]>
@@ -349,6 +354,7 @@ pub fn laddu_data::data::event::EventBatch::vec4_column(&self, usize) -> &[laddu
 pub fn laddu_data::data::event::EventBatch::vec4_column_named(&self, &str) -> core::option::Option<&[laddu_physics::vectors::RealVec4]>
 pub fn laddu_data::data::event::EventBatch::weights_at(&self, usize) -> f64
 pub fn laddu_data::data::event::EventBatch::weights_column(&self) -> core::option::Option<&[f64]>
+pub fn laddu_data::data::event::EventBatch::with_row_ids(self, alloc::sync::Arc<[u64]>) -> laddu_data::LadduDataResult<Self>
 impl core::clone::Clone for laddu_data::data::event::EventBatch
 pub fn laddu_data::data::event::EventBatch::clone(&self) -> laddu_data::data::event::EventBatch
 impl core::fmt::Debug for laddu_data::data::event::EventBatch
@@ -988,6 +994,7 @@ pub fn laddu_data::schema::SchemaWriteOptions::default() -> laddu_data::schema::
 impl core::fmt::Debug for laddu_data::schema::SchemaWriteOptions
 pub fn laddu_data::schema::SchemaWriteOptions::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub enum laddu_data::LadduDataError
+pub laddu_data::LadduDataError::External(alloc::sync::Arc<(dyn core::error::Error + core::marker::Send + core::marker::Sync)>)
 pub laddu_data::LadduDataError::InvalidArgument(&'static str)
 pub laddu_data::LadduDataError::MissingColumn(laddu_data::Name)
 pub laddu_data::LadduDataError::Schema(alloc::string::String)
@@ -997,6 +1004,7 @@ pub laddu_data::LadduDataError::Unsupported(&'static str)
 impl core::clone::Clone for laddu_data::LadduDataError
 pub fn laddu_data::LadduDataError::clone(&self) -> laddu_data::LadduDataError
 impl core::error::Error for laddu_data::LadduDataError
+pub fn laddu_data::LadduDataError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
 impl core::fmt::Debug for laddu_data::LadduDataError
 pub fn laddu_data::LadduDataError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::fmt::Display for laddu_data::LadduDataError
