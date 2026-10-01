@@ -6,7 +6,7 @@ fn cse_merges_duplicate_subtrees() {
     let y = Expr::from(parameter!("y"));
     let sum = x + y;
     let model = sum.clone() * sum;
-    let compiled = CompiledModel::from_expr(&model).unwrap();
+    let compiled = CompiledModel::from_expr_with_options(&model, &exact_options()).unwrap();
 
     assert_eq!(count_nary_add(&compiled), 1);
 }

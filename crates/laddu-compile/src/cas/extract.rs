@@ -21,38 +21,52 @@ pub(crate) struct ExtractionDiagnostics {
     pub reason: Option<&'static str>,
 }
 
-pub(super) fn extract(cas: &Cas, root: Id) -> CompileResult<(ExprGraph, ExtractionDiagnostics)> {
-    extract_with(cas, root, false)
+pub(super) fn extract(
+    cas: &Cas,
+    root: Id,
+    solver_seconds: f64,
+) -> CompileResult<(ExprGraph, ExtractionDiagnostics)> {
+    extract_with(cas, root, false, solver_seconds)
 }
 
 pub(super) fn extract_normalization(
     cas: &Cas,
     root: Id,
+    solver_seconds: f64,
 ) -> CompileResult<(ExprGraph, ExtractionDiagnostics)> {
-    extract_with(cas, root, true)
+    extract_with(cas, root, true, solver_seconds)
 }
 
 fn extract_with(
     cas: &Cas,
     root: Id,
     normalization: bool,
+    solver_seconds: f64,
 ) -> CompileResult<(ExprGraph, ExtractionDiagnostics)> {
-    let reachable = reachable_classes(cas, root);
-    let (selected, mut exact, mut reason) = if reachable.len() <= EXACT_NODE_LIMIT {
-        match mip(cas, root, &reachable, normalization) {
-            Some(expr) => (expr, true, None),
-            None => (
-                greedy(cas, root, normalization),
-                false,
-                Some("solver limit"),
-            ),
-        }
-    } else {
+    let (selected, mut exact, mut reason) = if solver_seconds <= 0.0 {
         (
             greedy(cas, root, normalization),
             false,
-            Some("exact extraction size limit"),
+            Some("exact solver disabled"),
         )
+    } else {
+        let reachable = reachable_classes(cas, root);
+        if reachable.len() <= EXACT_NODE_LIMIT {
+            match mip(cas, root, &reachable, normalization, solver_seconds) {
+                Some(expr) => (expr, true, None),
+                None => (
+                    greedy(cas, root, normalization),
+                    false,
+                    Some("solver limit"),
+                ),
+            }
+        } else {
+            (
+                greedy(cas, root, normalization),
+                false,
+                Some("exact extraction size limit"),
+            )
+        }
     };
     let extracted = lower(cas, &selected)?;
     let chosen = if normalization {
@@ -112,8 +126,14 @@ struct ClassVars {
     choices: Vec<good_lp::Variable>,
 }
 
-fn mip(cas: &Cas, root: Id, classes: &[Id], normalization: bool) -> Option<RecExpr<Term>> {
-    if !cas.budget.solver_seconds.is_finite() || cas.budget.solver_seconds <= 0.0 {
+fn mip(
+    cas: &Cas,
+    root: Id,
+    classes: &[Id],
+    normalization: bool,
+    solver_seconds: f64,
+) -> Option<RecExpr<Term>> {
+    if !solver_seconds.is_finite() || solver_seconds <= 0.0 {
         return None;
     }
     let started = Instant::now();
@@ -121,7 +141,7 @@ fn mip(cas: &Cas, root: Id, classes: &[Id], normalization: bool) -> Option<RecEx
     let mut locked = Vec::new();
     let mut selected = None;
     for stage in 0..stages {
-        let remaining = cas.budget.solver_seconds - started.elapsed().as_secs_f64();
+        let remaining = solver_seconds - started.elapsed().as_secs_f64();
         if remaining <= 0.0 {
             return None;
         }

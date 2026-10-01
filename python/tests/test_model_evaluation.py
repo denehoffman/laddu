@@ -8,6 +8,32 @@ import numpy as np
 
 
 class ModelEvaluationTests(unittest.TestCase):
+    def test_exact_extraction_is_opt_in_at_each_compile_point(self) -> None:
+        expression = ld.parameter('x').tagged('term') + 0.0
+        greedy = ld.Model(expression)
+        assert greedy.optimization_diagnostics['execution_exact'] is False
+        assert greedy.optimization_diagnostics['execution_fallback'] == 'exact solver disabled'
+        assert greedy.optimization_diagnostics['normalization_exact'] is False
+
+        exact = ld.Model(expression, exact_solver_seconds=1.0)
+        assert exact.optimization_diagnostics['execution_exact'] is True
+        assert exact.optimization_diagnostics['normalization_exact'] is True
+        assert exact.projection(['term']).optimization_diagnostics['execution_exact'] is False
+        assert exact.projection(['term'], exact_solver_seconds=1.0).optimization_diagnostics['execution_exact'] is True
+        assert exact.with_parameters({}).optimization_diagnostics['execution_exact'] is False
+        assert exact.with_parameters({}, exact_solver_seconds=1.0).optimization_diagnostics['execution_exact'] is True
+        assert ld.Model.from_json(exact.to_json()).optimization_diagnostics['execution_exact'] is False
+        assert (
+            ld.Model.from_json(exact.to_json(), exact_solver_seconds=1.0).optimization_diagnostics['execution_exact']
+            is True
+        )
+
+    def test_exact_solver_timeout_must_be_finite_and_nonnegative(self) -> None:
+        expression = ld.parameter('x')
+        for timeout in (-1.0, float('inf'), float('nan')):
+            with self.subTest(timeout=timeout), self.assertRaisesRegex(ValueError, 'exact_solver_seconds'):
+                ld.Model(expression, exact_solver_seconds=timeout)
+
     def test_cartesian_complex_parameter_shorthand(self) -> None:
         beta = ld.cparameter('beta', initial=1.0 + 2.0j)
         model = ld.Model(beta)
