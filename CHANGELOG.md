@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.25.0](https://github.com/denehoffman/laddu/compare/v0.24.1...v0.25.0) (2026-10-01)
+
+
+### ⚠ BREAKING CHANGES
+
+* **compiler:** Model compilation now uses greedy extraction unless an exact solver timeout is explicitly configured.
+
+### Features
+
+* **compiler:** Default to greedy extraction ([4f75200](https://github.com/denehoffman/laddu/commit/4f75200c7d6365526be0b1ea96833729de05ee20))
+
 ## [0.24.1](https://github.com/denehoffman/laddu/compare/v0.24.0...v0.24.1) (2026-09-30)
 
 
