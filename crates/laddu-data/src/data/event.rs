@@ -238,6 +238,7 @@ pub struct EventBatch {
     schema: Arc<Schema>,
     len: usize,
     parts: BatchParts,
+    row_ids: Option<Arc<[u64]>>,
 }
 
 impl fmt::Debug for EventBatch {
@@ -269,9 +270,33 @@ impl EventBatch {
         BatchAssembler::from_columns(schema, p4s, scalars, weights)
     }
 
+    /// Constructs a batch with an explicit event count, including column-free events.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the columns do not match the schema or event count.
+    pub fn new_with_len(
+        schema: Arc<Schema>,
+        p4s: Vec<Arc<[RealVec4]>>,
+        scalars: Vec<Arc<[f64]>>,
+        weights: Option<Arc<[f64]>>,
+        len: usize,
+    ) -> LadduDataResult<Self> {
+        Self::from_parts_with_len(
+            schema,
+            BatchParts::from_columns(p4s, scalars, Weights::from_option(weights)),
+            len,
+        )
+    }
+
     fn from_parts(schema: Arc<Schema>, parts: BatchParts) -> LadduDataResult<Self> {
         let len = parts.validate(&schema, None)?;
-        Ok(Self { schema, len, parts })
+        Ok(Self {
+            schema,
+            len,
+            parts,
+            row_ids: None,
+        })
     }
 
     fn from_parts_with_len(
@@ -280,7 +305,12 @@ impl EventBatch {
         expected_len: usize,
     ) -> LadduDataResult<Self> {
         let len = parts.validate(&schema, Some(expected_len))?;
-        Ok(Self { schema, len, parts })
+        Ok(Self {
+            schema,
+            len,
+            parts,
+            row_ids: None,
+        })
     }
 
     /// Collects owned row events into a columnar batch.
@@ -308,6 +338,25 @@ impl EventBatch {
         self.len
     }
 
+    /// Returns optional stable global source-row identities for distributed transforms.
+    pub fn row_ids(&self) -> Option<&[u64]> {
+        self.row_ids.as_deref()
+    }
+
+    /// Attaches stable source-row identities without changing the logical schema.
+    ///
+    /// # Errors
+    /// Returns an error when the identity count differs from the event count.
+    pub fn with_row_ids(mut self, ids: Arc<[u64]>) -> LadduDataResult<Self> {
+        if ids.len() != self.len {
+            return Err(LadduDataError::Schema(
+                "row identity count does not match event count".into(),
+            ));
+        }
+        self.row_ids = Some(ids);
+        Ok(self)
+    }
+
     /// Returns the logical payload bytes per event represented by this batch.
     pub fn bytes_per_event(&self) -> usize {
         BatchLayout::from_batch(self)
@@ -317,7 +366,7 @@ impl EventBatch {
             .unwrap_or(usize::MAX)
     }
 
-    /// Returns the retained column payload size in bytes.
+    /// Returns the retained column and row-identity payload size in bytes.
     ///
     /// Shared schema metadata, allocation headers, and other owners of shared
     /// columns are not included.
@@ -327,6 +376,13 @@ impl EventBatch {
             .and_then(|footprint| footprint.checked_peak_bytes(self.len))
             .ok()
             .and_then(|bytes| usize::try_from(bytes).ok())
+            .and_then(|bytes| {
+                let identities = self
+                    .row_ids
+                    .as_ref()
+                    .map_or(0, |ids| std::mem::size_of_val(ids.as_ref()));
+                bytes.checked_add(identities)
+            })
             .unwrap_or(usize::MAX)
     }
 
@@ -429,12 +485,17 @@ impl EventBatch {
     ///
     /// Panics when a selected row is outside the batch.
     pub fn select(&self, rows: &[usize]) -> Self {
-        Self::from_parts_with_len(
+        let mut selected = Self::from_parts_with_len(
             Arc::clone(&self.schema),
             self.parts.select(rows),
             rows.len(),
         )
-        .expect("select preserves EventBatch invariants")
+        .expect("select preserves EventBatch invariants");
+        selected.row_ids = self
+            .row_ids
+            .as_ref()
+            .map(|ids| rows.iter().map(|&i| ids[i]).collect());
+        selected
     }
 
     /// Copies rows satisfying `keep` into a new batch.
@@ -457,8 +518,14 @@ impl EventBatch {
     where
         F: Fn(usize, f64) -> f64,
     {
-        Self::from_parts(Arc::clone(&self.schema), self.parts.reweight(self.len, f))
-            .expect("reweight preserves EventBatch invariants")
+        let mut reweighted = Self::from_parts_with_len(
+            Arc::clone(&self.schema),
+            self.parts.reweight(self.len, f),
+            self.len,
+        )
+        .expect("reweight preserves EventBatch invariants");
+        reweighted.row_ids = self.row_ids.clone();
+        reweighted
     }
 
     /// Copies the half-open row range `start..end` into a new batch.
@@ -474,12 +541,14 @@ impl EventBatch {
             return self.clone();
         }
 
-        Self::from_parts_with_len(
+        let mut sliced = Self::from_parts_with_len(
             Arc::clone(&self.schema),
             self.parts.slice(start, end),
             end - start,
         )
-        .expect("slice preserves EventBatch invariants")
+        .expect("slice preserves EventBatch invariants");
+        sliced.row_ids = self.row_ids.as_ref().map(|ids| Arc::from(&ids[start..end]));
+        sliced
     }
 
     /// Concatenates schema-compatible batches.
@@ -510,7 +579,16 @@ impl EventBatch {
             .map(|batch| (&batch.parts, batch.len))
             .collect::<Vec<_>>();
         let len = batches.iter().map(|batch| batch.len).sum();
-        Self::from_parts_with_len(schema, BatchParts::concat(&parts), len)
+        let mut combined = Self::from_parts_with_len(schema, BatchParts::concat(&parts), len)?;
+        if batches.iter().all(|b| b.row_ids.is_some()) {
+            combined.row_ids = Some(
+                batches
+                    .iter()
+                    .flat_map(|b| b.row_ids.iter().flat_map(|ids| ids.iter().copied()))
+                    .collect(),
+            );
+        }
+        Ok(combined)
     }
 }
 
@@ -888,6 +966,24 @@ impl EventBatchBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn column_free_batches_preserve_counts_and_global_identities() -> LadduDataResult<()> {
+        let schema = Arc::new(Schema::new(
+            Vec::<String>::new(),
+            Vec::<String>::new(),
+            false,
+        )?);
+        let batch = EventBatch::new_with_len(schema, vec![], vec![], None, 3)?
+            .with_row_ids(Arc::from([2, 5, 8]))?;
+        assert_eq!(batch.resident_bytes(), 3 * std::mem::size_of::<u64>());
+        assert_eq!(batch.reweight(|_, w| w).len(), 3);
+        assert_eq!(batch.select(&[2, 0]).row_ids(), Some([8, 2].as_slice()));
+        let rebuilt = EventBatch::concat(&[batch.slice(0, 1), batch.slice(1, 3)])?;
+        assert_eq!(rebuilt.row_ids(), Some([2, 5, 8].as_slice()));
+        assert!(batch.clone().with_row_ids(Arc::from([1])).is_err());
+        Ok(())
+    }
 
     fn v(x: f64) -> RealVec4 {
         RealVec4 {

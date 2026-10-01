@@ -69,9 +69,10 @@ if laddu_spec is None or laddu_spec.origin is None:
 autoapi_type = 'python'
 autoapi_dirs = [str(Path(laddu_spec.origin).parent)]
 # ganesh currently emits a few signatures that are valid for type checkers but
-# not accepted by AutoAPI's parser. Parse laddu's public root stub here and let
+# not accepted by AutoAPI's parser. Parse laddu's public root and I/O stubs here and let
 # native autodoc cover the optimizer submodule below.
-autoapi_file_patterns = ['__init__.pyi']
+# The wildcard also gives AutoAPI a distinct match key for the second pattern.
+autoapi_file_patterns = ['__init__.pyi', '*io.pyi']
 autoapi_root = 'reference/generated'
 autoapi_keep_files = False
 autoapi_add_toctree_entry = False

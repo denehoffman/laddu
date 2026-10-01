@@ -4,9 +4,8 @@ use laddu_data::{
     LadduDataError, LadduDataResult,
     data::{Dataset, DatasetStats, EventBatch, MemoryPolicy},
     io::{
-        EventBatchIter, EventSource, ReadPlan, SourceCapabilities,
-        parquet::{ParquetSink, ParquetSource},
-        root::{RootSink, RootSource},
+        EventBatchIter, EventSource, ReadPlan, SourceCapabilities, parquet::ParquetSource,
+        root::RootSource,
     },
     schema::Schema,
 };
@@ -33,7 +32,7 @@ fn path_string(path: &Bound<'_, PyAny>) -> PyResult<String> {
     Ok(path.to_string_lossy().into_owned())
 }
 
-fn configure(
+pub(super) fn configure(
     dataset: Dataset,
     memory: Option<&Bound<'_, PyAny>>,
     cache: &str,
@@ -323,7 +322,7 @@ fn scalar_array(values: &Bound<'_, PyAny>, name: &str) -> PyResult<Arc<[f64]>> {
     )))
 }
 
-fn event_batch_from_arrays(
+pub(super) fn event_batch_from_arrays(
     p4s: &Bound<'_, PyDict>,
     scalars: &Bound<'_, PyDict>,
     weights: Option<&Bound<'_, PyAny>>,
@@ -443,11 +442,27 @@ impl Iterator for PythonBatchIter {
     }
 }
 
-fn python_source_error(context: &str, error: impl std::fmt::Display) -> LadduDataError {
-    LadduDataError::Source(format!("Python {context}: {error}"))
+fn python_source_error(context: &str, error: PyErr) -> LadduDataError {
+    super::io::callback_error(format!("Python {context}"), error)
 }
 
-fn event_batch_from_mapping(value: &Bound<'_, PyAny>, schema: &Schema) -> PyResult<EventBatch> {
+impl Drop for PythonBatchIter {
+    fn drop(&mut self) {
+        Python::attach(|py| {
+            if let Ok(close) = self.iterator.bind(py).getattr("close") {
+                let _ = close.call0();
+            }
+        });
+    }
+}
+
+pub(super) fn event_batch_from_mapping(
+    value: &Bound<'_, PyAny>,
+    schema: &Schema,
+) -> PyResult<EventBatch> {
+    if let Ok(batch) = value.extract::<PyRef<'_, super::io::PyEventBatch>>() {
+        return reorder_batch(&batch.inner, schema);
+    }
     let mapping = value.cast::<PyDict>().map_err(|_| {
         PyTypeError::new_err("each batch must be a dict with 'p4s' and 'scalars' mappings")
     })?;
@@ -467,14 +482,48 @@ fn event_batch_from_mapping(value: &Bound<'_, PyAny>, schema: &Schema) -> PyResu
     let weights = weights.as_ref().filter(|weights| !weights.is_none());
     let batch = event_batch_from_arrays(p4s, scalars, weights)?;
 
-    if batch.schema().as_ref() != schema {
+    reorder_batch(&batch, schema)
+}
+
+fn reorder_batch(batch: &EventBatch, schema: &Schema) -> PyResult<EventBatch> {
+    if batch.schema().n_p4s() != schema.n_p4s()
+        || batch.schema().n_scalars() != schema.n_scalars()
+        || batch.weights_column().is_some() != schema.has_weight()
+        || schema
+            .p4s()
+            .iter()
+            .any(|name| batch.schema().p4_index(name).is_none())
+        || schema
+            .scalars()
+            .iter()
+            .any(|name| batch.schema().scalar_index(name).is_none())
+    {
         return Err(PyValueError::new_err(format!(
             "batch schema {:?} does not match declared schema {schema:?}",
             batch.schema()
         )));
     }
 
-    Ok(batch)
+    let reordered = EventBatch::new_with_len(
+        Arc::new(schema.clone()),
+        schema
+            .p4s()
+            .iter()
+            .map(|name| Arc::from(batch.vec4_column_named(name).expect("validated column")))
+            .collect(),
+        schema
+            .scalars()
+            .iter()
+            .map(|name| Arc::from(batch.scalar_column_named(name).expect("validated column")))
+            .collect(),
+        batch.weights_column().map(Arc::from),
+        batch.len(),
+    )
+    .map_err(to_py_err)?;
+    match batch.row_ids() {
+        Some(ids) => reordered.with_row_ids(Arc::from(ids)).map_err(to_py_err),
+        None => Ok(reordered),
+    }
 }
 
 #[pyclass(name = "Dataset", module = "laddu", frozen, skip_from_py_object)]
@@ -563,11 +612,16 @@ impl PyDataset {
     /// Raises
     /// ------
     /// TypeError
-    ///     If ``source`` is not a :class:`ParquetSource` or
-    ///     :class:`RootSource`.
+    ///     If ``source`` is not a :class:`ParquetSource`, :class:`RootSource`,
+    ///     or :class:`laddu.io.FormatSource`.
     #[new]
-    #[pyo3(signature = (source: "ParquetSource | RootSource"))]
+    #[pyo3(signature = (source: "ParquetSource | RootSource | io.FormatSource"))]
     fn new(source: &Bound<'_, PyAny>) -> PyResult<Self> {
+        if let Ok(source) = source.extract::<PyRef<'_, super::io::PyFormatSource>>() {
+            return Ok(Self {
+                inner: source.dataset.clone(),
+            });
+        }
         if let Ok(source) = source.extract::<PyRef<'_, PyParquetSource>>() {
             return Ok(Self {
                 inner: source.inner.clone(),
@@ -579,7 +633,7 @@ impl PyDataset {
             });
         }
         Err(pyo3::exceptions::PyTypeError::new_err(
-            "Dataset source must be a ParquetSource or RootSource",
+            "Dataset source must be a ParquetSource, RootSource, or FormatSource",
         ))
     }
 
@@ -625,9 +679,9 @@ impl PyDataset {
 
     #[staticmethod]
     #[pyo3(signature = (
-        batch_factory: "Callable[..., Iterable[dict[str, object]]]",
+        batch_factory: "Callable[..., Iterable[io.EventBatch | dict[str, object]]]",
         *,
-        schema: "dict[str, object]",
+        schema: "io.Schema | dict[str, object]",
         length=None,
         memory: "MemoryBudget | int | str | None" = None,
         cache="fastest"
@@ -636,16 +690,16 @@ impl PyDataset {
     ///
     /// The factory is called for every source traversal with keyword arguments
     /// ``chunk_size``, ``rank``, and ``nranks``. It must return a fresh iterable
-    /// of dictionaries containing ``p4s`` and ``scalars`` mappings and an
-    /// optional ``weights`` array.
+    /// of :class:`laddu.io.EventBatch` objects or dictionaries containing
+    /// ``p4s`` and ``scalars`` mappings and an optional ``weights`` array.
     ///
     /// Parameters
     /// ----------
     /// batch_factory : callable
-    ///     Callable returning a fresh iterable of batch dictionaries.
-    /// schema : dict
-    ///     Mapping with ``p4s`` and ``scalars`` name sequences and an optional
-    ///     boolean ``weights`` entry.
+    ///     Callable returning a fresh iterable of batches.
+    /// schema : laddu.io.Schema or dict
+    ///     Canonical schema or mapping with ``p4s`` and ``scalars`` name
+    ///     sequences and an optional boolean ``weights`` entry.
     /// length : int, optional
     ///     Exact number of events, when cheaply known.
     /// memory : MemoryBudget, int, or str, optional
@@ -666,7 +720,7 @@ impl PyDataset {
     ///     If the schema or cache mode is invalid.
     fn from_batches(
         batch_factory: Py<PyAny>,
-        schema: &Bound<'_, PyDict>,
+        schema: &Bound<'_, PyAny>,
         length: Option<u64>,
         memory: Option<&Bound<'_, PyAny>>,
         cache: &str,
@@ -674,20 +728,25 @@ impl PyDataset {
         if !batch_factory.bind(schema.py()).is_callable() {
             return Err(PyTypeError::new_err("batch_factory must be callable"));
         }
-        let p4s = schema
-            .get_item("p4s")?
-            .ok_or_else(|| PyValueError::new_err("schema is missing 'p4s'"))?
-            .extract::<Vec<String>>()?;
-        let scalars = schema
-            .get_item("scalars")?
-            .ok_or_else(|| PyValueError::new_err("schema is missing 'scalars'"))?
-            .extract::<Vec<String>>()?;
-        let has_weight = schema
-            .get_item("weights")?
-            .map(|value| value.extract::<bool>())
-            .transpose()?
-            .unwrap_or(false);
-        let schema = Arc::new(Schema::new(p4s, scalars, has_weight).map_err(to_py_err)?);
+        let schema = if let Ok(schema) = schema.extract::<PyRef<'_, super::io::PySchema>>() {
+            Arc::clone(&schema.inner)
+        } else {
+            let schema = schema.cast::<PyDict>()?;
+            let p4s = schema
+                .get_item("p4s")?
+                .ok_or_else(|| PyValueError::new_err("schema is missing 'p4s'"))?
+                .extract::<Vec<String>>()?;
+            let scalars = schema
+                .get_item("scalars")?
+                .ok_or_else(|| PyValueError::new_err("schema is missing 'scalars'"))?
+                .extract::<Vec<String>>()?;
+            let has_weight = schema
+                .get_item("weights")?
+                .map(|value| value.extract::<bool>())
+                .transpose()?
+                .unwrap_or(false);
+            Arc::new(Schema::new(p4s, scalars, has_weight).map_err(to_py_err)?)
+        };
         let source = PythonBatchSource {
             schema,
             batch_factory,
@@ -951,7 +1010,9 @@ impl PyDataset {
     ///     If reading or transforming the dataset fails.
     fn stats(&self, py: Python<'_>) -> PyResult<PyDatasetStats> {
         let dataset = self.inner.clone();
-        let stats = py.detach(move || dataset.stats()).map_err(to_py_err)?;
+        let stats = py
+            .detach(move || dataset.stats())
+            .map_err(|error| super::io::data_error(py, error))?;
         Ok(stats.into())
     }
 
@@ -971,7 +1032,7 @@ impl PyDataset {
                     Ok(weights)
                 })
             })
-            .map_err(to_py_err)?;
+            .map_err(|error| super::io::data_error(py, error))?;
         Ok(PyArray1::from_vec(py, weights))
     }
 
@@ -979,7 +1040,7 @@ impl PyDataset {
         let dataset = self.inner.clone();
         let events = py
             .detach(move || dataset.stats().map(|stats| stats.events()))
-            .map_err(to_py_err)?;
+            .map_err(|error| super::io::data_error(py, error))?;
         usize::try_from(events).map_err(|_| {
             pyo3::exceptions::PyOverflowError::new_err("dataset length does not fit in usize")
         })
@@ -1117,29 +1178,65 @@ impl PyDataset {
     ///     If ``sink`` has an unsupported type.
     /// LadduError
     ///     If reading or writing fails.
-    #[pyo3(signature = (sink: "ParquetSink | RootSink"))]
-    fn write_to(&self, py: Python<'_>, sink: &Bound<'_, PyAny>) -> PyResult<()> {
-        let dataset = self.inner.clone();
+    #[pyo3(signature = (sink: "ParquetSink | RootSink | io.FormatSink", *, output=None, chunk_size=None, execution=None))]
+    fn write_to(
+        &self,
+        py: Python<'_>,
+        sink: &Bound<'_, PyAny>,
+        output: Option<&str>,
+        chunk_size: Option<usize>,
+        execution: Option<&PyExecution>,
+    ) -> PyResult<super::io::PyWriteResult> {
+        if let Ok(sink) = sink.extract::<PyRef<'_, super::io::PyFormatSink>>() {
+            return sink.write_with_overrides(py, self, output, chunk_size, execution);
+        }
         if let Ok(sink) = sink.extract::<PyRef<'_, PyParquetSink>>() {
-            let mut sink = ParquetSink::builder(sink.path.clone())
-                .precision(precision(&sink.precision))
-                .build();
-            return py
-                .detach(move || dataset.write_to(&mut sink))
-                .map_err(to_py_err);
+            return super::io::builtin_write(
+                py,
+                self,
+                sink.path.clone(),
+                precision(&sink.precision),
+                None,
+                output.unwrap_or("auto"),
+                chunk_size,
+                execution,
+            );
         }
         if let Ok(sink) = sink.extract::<PyRef<'_, PyRootSink>>() {
-            let mut sink = RootSink::builder(sink.path.clone())
-                .tree(sink.tree.as_str())
-                .precision(precision(&sink.precision))
-                .build();
-            return py
-                .detach(move || dataset.write_to(&mut sink))
-                .map_err(to_py_err);
+            return super::io::builtin_write(
+                py,
+                self,
+                sink.path.clone(),
+                precision(&sink.precision),
+                Some(sink.tree.clone()),
+                output.unwrap_or("auto"),
+                chunk_size,
+                execution,
+            );
         }
         Err(pyo3::exceptions::PyTypeError::new_err(
-            "Dataset sink must be a ParquetSink or RootSink",
+            "Dataset sink must be a ParquetSink, RootSink, or FormatSink",
         ))
+    }
+
+    #[getter]
+    /// Logical export schema. Exported batches always carry effective weights.
+    fn schema(&self, py: Python<'_>) -> PyResult<super::io::PySchema> {
+        Ok(super::io::PySchema {
+            inner: super::io::export_schema(&self.inner)
+                .map_err(|e| super::io::data_error(py, e))?,
+        })
+    }
+
+    #[pyo3(signature = (*, chunk_size=None, execution=None))]
+    /// Stream transformed events in closeable batches, with explicit effective weights.
+    fn batches(
+        &self,
+        py: Python<'_>,
+        chunk_size: Option<usize>,
+        execution: Option<&PyExecution>,
+    ) -> PyResult<super::io::PyBatchIterator> {
+        super::io::dataset_batches(py, &self.inner, chunk_size, execution)
     }
 }
 
