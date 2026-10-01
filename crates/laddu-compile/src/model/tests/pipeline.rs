@@ -7,11 +7,11 @@ fn search_selects_cheaper_equivalent() {
     let compiled = CompiledModel::from_expr(&expr).unwrap();
     assert!(matches!(compiled.graph().node(compiled.graph().root()),
         Some(ExprNode::ScalarParam(parameter)) if parameter.name() == "x"));
-    assert!(
-        compiled
-            .optimization_diagnostics()
-            .unwrap()
-            .execution_exact()
+    let diagnostics = compiled.optimization_diagnostics().unwrap();
+    assert!(!diagnostics.execution_exact());
+    assert_eq!(
+        diagnostics.execution_fallback(),
+        Some("exact solver disabled")
     );
 }
 
@@ -109,7 +109,10 @@ fn solver_budget_uses_deterministic_fallback() {
     assert_eq!(first.graph().nodes(), second.graph().nodes());
     let diagnostics = first.optimization_diagnostics().unwrap();
     assert!(!diagnostics.execution_exact());
-    assert_eq!(diagnostics.execution_fallback(), Some("solver limit"));
+    assert_eq!(
+        diagnostics.execution_fallback(),
+        Some("exact solver disabled")
+    );
 }
 
 #[test]
@@ -117,8 +120,8 @@ fn exact_extraction_is_deterministic() {
     let x = Expr::from(parameter!("x"));
     let y = Expr::from(parameter!("y"));
     let expr = (x.clone() + y.clone()) * (y + x);
-    let first = CompiledModel::from_expr(&expr).unwrap();
-    let second = CompiledModel::from_expr(&expr).unwrap();
+    let first = CompiledModel::from_expr_with_options(&expr, &exact_options()).unwrap();
+    let second = CompiledModel::from_expr_with_options(&expr, &exact_options()).unwrap();
     assert!(first.optimization_diagnostics().unwrap().execution_exact());
     assert_eq!(first.graph().nodes(), second.graph().nodes());
 }

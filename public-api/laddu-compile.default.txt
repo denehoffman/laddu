@@ -329,6 +329,7 @@ pub fn laddu_compile::CompiledModel::optimization_diagnostics(&self) -> core::op
 pub fn laddu_compile::CompiledModel::parameter_polynomial_degree(&self) -> core::option::Option<usize>
 pub fn laddu_compile::CompiledModel::params(&self) -> &laddu_expr::parameters::ParamLayout
 pub fn laddu_compile::CompiledModel::project_tags<'a>(&self, impl core::iter::traits::collect::IntoIterator<Item = &'a str>) -> laddu_compile::CompileResult<Self>
+pub fn laddu_compile::CompiledModel::project_tags_with_options<'a>(&self, impl core::iter::traits::collect::IntoIterator<Item = &'a str>, &laddu_compile::CompileOptions) -> laddu_compile::CompileResult<Self>
 pub fn laddu_compile::CompiledModel::with_parameters<N, I>(&self, I) -> laddu_compile::CompileResult<Self> where N: core::convert::AsRef<str>, I: core::iter::traits::collect::IntoIterator<Item = (N, laddu_expr::parameters::ParameterUpdate)>
 pub fn laddu_compile::CompiledModel::with_parameters_with_options<N, I>(&self, I, &laddu_compile::CompileOptions) -> laddu_compile::CompileResult<Self> where N: core::convert::AsRef<str>, I: core::iter::traits::collect::IntoIterator<Item = (N, laddu_expr::parameters::ParameterUpdate)>
 impl core::clone::Clone for laddu_compile::CompiledModel

@@ -32,6 +32,13 @@ fn normalization_submodel_disables_analysis() {
         )
     ));
     assert_eq!(compiled.cache_plan().len(), 1);
+    assert_eq!(
+        compiled
+            .optimization_diagnostics()
+            .unwrap()
+            .normalization_fallback(),
+        Some("normalization analysis disabled")
+    );
 }
 
 #[test]

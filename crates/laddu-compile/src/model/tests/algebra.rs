@@ -353,7 +353,11 @@ fn common_product_factor_extraction_handles_partial_powers() {
     let x = Expr::from(parameter!("x"));
     let a = Expr::from(parameter!("a"));
     let b = Expr::from(parameter!("b"));
-    let compiled = CompiledModel::from_expr(&(a * x.clone().powi(3) - b * x.powi(2))).unwrap();
+    let compiled = CompiledModel::from_expr_with_options(
+        &(a * x.clone().powi(3) - b * x.powi(2)),
+        &exact_options(),
+    )
+    .unwrap();
 
     let Some(ExprNode::NaryMul { factors }) = compiled.graph().node(compiled.graph().root()) else {
         panic!(

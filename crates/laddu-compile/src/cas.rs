@@ -320,7 +320,8 @@ pub struct OptimizationBudget {
     pub memory_bytes: usize,
     /// Maximum wall time allowed for equality search.
     pub search_seconds: f64,
-    /// Maximum time allowed for exact DAG extraction.
+    /// Total solver time allowed across execution and normalization extraction.
+    /// Zero selects greedy extraction without invoking the exact solver.
     pub solver_seconds: f64,
 }
 
@@ -331,7 +332,7 @@ impl Default for OptimizationBudget {
             nodes: 10_000,
             memory_bytes: 64 * 1024 * 1024,
             search_seconds: 30.0,
-            solver_seconds: 5.0,
+            solver_seconds: 0.0,
         }
     }
 }
@@ -524,13 +525,21 @@ impl Cas {
     }
 
     pub(crate) fn extract_execution(&self) -> CompileResult<(ExprGraph, ExtractionDiagnostics)> {
-        extract::extract(self, self.root)
+        self.extract_execution_with_solver_seconds(self.budget.solver_seconds)
     }
 
-    pub(crate) fn extract_normalization(
+    pub(crate) fn extract_execution_with_solver_seconds(
         &self,
+        solver_seconds: f64,
     ) -> CompileResult<(ExprGraph, ExtractionDiagnostics)> {
-        extract::extract_normalization(self, self.root)
+        extract::extract(self, self.root, solver_seconds)
+    }
+
+    pub(crate) fn extract_normalization_with_solver_seconds(
+        &self,
+        solver_seconds: f64,
+    ) -> CompileResult<(ExprGraph, ExtractionDiagnostics)> {
+        extract::extract_normalization(self, self.root, solver_seconds)
     }
 }
 
@@ -544,7 +553,7 @@ mod tests {
     fn equation_search_extracts_scalar_identity() {
         let source = (Expr::from(parameter!("x")) + 0.0).to_graph();
         let cas = Cas::import(source, OptimizationBudget::default()).search();
-        let (graph, diagnostics) = cas.extract_execution().unwrap();
+        let (graph, diagnostics) = cas.extract_execution_with_solver_seconds(1.0).unwrap();
         assert!(diagnostics.exact);
         assert!(matches!(graph.nodes(), [ExprNode::ScalarParam(_)]));
     }

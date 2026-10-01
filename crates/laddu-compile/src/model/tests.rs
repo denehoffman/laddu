@@ -6,6 +6,13 @@ use num::complex::Complex64;
 
 use super::*;
 
+fn exact_options() -> CompileOptions {
+    CompileOptions::default().with_optimization_budget(crate::OptimizationBudget {
+        solver_seconds: 5.0,
+        ..Default::default()
+    })
+}
+
 fn count_nary_add(compiled: &CompiledModel) -> usize {
     compiled
         .graph()

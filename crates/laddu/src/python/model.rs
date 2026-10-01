@@ -1,12 +1,12 @@
 use std::{collections::BTreeMap, path::PathBuf};
 
-use laddu_compile::CompiledModel;
-use laddu_expr::{ExprNode, parameters::ParamState};
+use laddu_compile::{CompileOptions, CompiledModel, OptimizationBudget};
+use laddu_expr::{ExprGraph, ExprNode, parameters::ParamState};
 use laddu_runtime::{Device, PreparedModel};
 use numpy::{PyArray1, PyArray2};
 use pyo3::{
     IntoPyObjectExt,
-    exceptions::PyTypeError,
+    exceptions::{PyRuntimeError, PyTypeError, PyValueError},
     prelude::*,
     types::{PyAny, PyDict},
 };
@@ -76,6 +76,20 @@ pub struct PyModel {
     pub(crate) inner: CompiledModel,
 }
 
+fn compile_options(exact_solver_seconds: f64) -> PyResult<CompileOptions> {
+    if !exact_solver_seconds.is_finite() || exact_solver_seconds < 0.0 {
+        return Err(PyValueError::new_err(
+            "exact_solver_seconds must be finite and nonnegative",
+        ));
+    }
+    Ok(
+        CompileOptions::default().with_optimization_budget(OptimizationBudget {
+            solver_seconds: exact_solver_seconds,
+            ..OptimizationBudget::default()
+        }),
+    )
+}
+
 impl PyModel {
     fn validate_without_dataset(&self, device: &Device) -> PyResult<()> {
         if matches!(device, Device::Gpu(_)) {
@@ -109,10 +123,54 @@ impl PyModel {
     /// LadduError
     ///     If expression shapes, metadata, or parameter definitions are invalid.
     #[new]
-    fn new(expr: &PyExpr) -> PyResult<Self> {
+    #[pyo3(signature = (expr, *, exact_solver_seconds=0.0))]
+    fn new(expr: &PyExpr, exact_solver_seconds: f64) -> PyResult<Self> {
         Ok(Self {
-            inner: CompiledModel::from_expr(&expr.inner).map_err(to_py_err)?,
+            inner: CompiledModel::from_expr_with_options(
+                &expr.inner,
+                &compile_options(exact_solver_seconds)?,
+            )
+            .map_err(to_py_err)?,
         })
+    }
+
+    /// Serialize the source expression graph to JSON.
+    fn to_json(&self) -> PyResult<String> {
+        super::to_json(&self.inner)
+    }
+
+    /// Compile a serialized model source graph.
+    #[staticmethod]
+    #[pyo3(signature = (json, *, exact_solver_seconds=0.0))]
+    fn from_json(json: &str, exact_solver_seconds: f64) -> PyResult<Self> {
+        let graph: ExprGraph = super::from_json(json)?;
+        Ok(Self {
+            inner: CompiledModel::from_graph_with_options(
+                graph,
+                &compile_options(exact_solver_seconds)?,
+            )
+            .map_err(to_py_err)?,
+        })
+    }
+
+    #[getter]
+    /// dict[str, object]: Equality-search and extraction outcomes.
+    fn optimization_diagnostics<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        let diagnostics = self.inner.optimization_diagnostics().ok_or_else(|| {
+            PyRuntimeError::new_err("optimization diagnostics are unavailable for this model")
+        })?;
+        let output = PyDict::new(py);
+        output.set_item("rounds", diagnostics.rounds())?;
+        output.set_item("explored_nodes", diagnostics.explored_nodes())?;
+        output.set_item("stop_reason", diagnostics.stop_reason())?;
+        output.set_item("execution_exact", diagnostics.execution_exact())?;
+        output.set_item("execution_fallback", diagnostics.execution_fallback())?;
+        output.set_item("normalization_exact", diagnostics.normalization_exact())?;
+        output.set_item(
+            "normalization_fallback",
+            diagnostics.normalization_fallback(),
+        )?;
+        Ok(output)
     }
 
     fn __repr__(&self) -> String {
@@ -315,11 +373,15 @@ impl PyModel {
     /// ------
     /// LadduError
     ///     If the projected expression cannot be compiled.
-    fn projection(&self, tags: Vec<String>) -> PyResult<Self> {
+    #[pyo3(signature = (tags, *, exact_solver_seconds=0.0))]
+    fn projection(&self, tags: Vec<String>, exact_solver_seconds: f64) -> PyResult<Self> {
         Ok(Self {
             inner: self
                 .inner
-                .project_tags(tags.iter().map(String::as_str))
+                .project_tags_with_options(
+                    tags.iter().map(String::as_str),
+                    &compile_options(exact_solver_seconds)?,
+                )
                 .map_err(to_py_err)?,
         })
     }
@@ -348,8 +410,12 @@ impl PyModel {
     ///     If names are not strings or values are not ParameterUpdate objects.
     /// LadduError
     ///     If a name is unknown, a resulting definition is invalid, or compilation fails.
-    #[pyo3(signature = (updates: "dict[str, ParameterUpdate]"))]
-    fn with_parameters(&self, updates: &Bound<'_, PyDict>) -> PyResult<Self> {
+    #[pyo3(signature = (updates: "dict[str, ParameterUpdate]", *, exact_solver_seconds=0.0))]
+    fn with_parameters(
+        &self,
+        updates: &Bound<'_, PyDict>,
+        exact_solver_seconds: f64,
+    ) -> PyResult<Self> {
         let updates = updates
             .iter()
             .map(|(name, update)| {
@@ -363,7 +429,10 @@ impl PyModel {
             })
             .collect::<PyResult<Vec<_>>>()?;
         Ok(Self {
-            inner: self.inner.with_parameters(updates).map_err(to_py_err)?,
+            inner: self
+                .inner
+                .with_parameters_with_options(updates, &compile_options(exact_solver_seconds)?)
+                .map_err(to_py_err)?,
         })
     }
 
@@ -653,8 +722,6 @@ impl PyModel {
     }
 }
 
-impl_json_methods!(PyModel);
-
 #[cfg(test)]
 mod tests {
     use laddu_expr::event_scalar;
@@ -665,7 +732,7 @@ mod tests {
     #[test]
     fn visualization_methods_render_the_optimized_model_graph() {
         let expression = PyExpr::from(event_scalar("mass") + 1.0);
-        let model = PyModel::new(&expression).unwrap();
+        let model = PyModel::new(&expression, 0.0).unwrap();
 
         assert!(model.equation(None, None).unwrap().contains("mass"));
         assert!(model.latex(None, None).unwrap().contains("mass"));
@@ -695,7 +762,7 @@ mod tests {
     fn dataset_free_validation_rejects_gpu_without_initializing_hardware() {
         Python::initialize();
         let expression: laddu_expr::Expr = laddu_expr::parameter!("x").into();
-        let model = PyModel::new(&PyExpr::from(expression)).unwrap();
+        let model = PyModel::new(&PyExpr::from(expression), 0.0).unwrap();
         let error = model
             .validate_without_dataset(&Device::Gpu(GpuOptions::default()))
             .unwrap_err();

@@ -1,6 +1,7 @@
 use std::{
     hash::{Hash, Hasher},
     mem::size_of,
+    time::Instant,
 };
 
 use crate::CompileResult;
@@ -15,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use crate::facts::NumberClass;
 use crate::{
     NormalizationDiagnostics, NormalizationPlan,
-    cas::{Cas, OptimizationBudget, OptimizationDiagnostics},
+    cas::{Cas, ExtractionDiagnostics, OptimizationBudget, OptimizationDiagnostics},
     cost::OptimizationCost,
     facts::{DependencyFacts, EvaluationClass, GraphFacts, NodeFacts},
     graph_utils::mark_reachable,
@@ -109,16 +110,30 @@ impl Compiler {
         let parameter_baked = Self::bake_parameters(&source_graph);
         if options.optimize {
             let search = Cas::import(parameter_baked, options.optimization_budget).search();
-            let (normalization_graph, normalization_extraction) = search.extract_normalization()?;
+            let solver_started = Instant::now();
             let (execution_graph, execution_extraction) = search.extract_execution()?;
+            let (normalization_plan, normalization_extraction) = if analyze_normalization {
+                let remaining = (options.optimization_budget.solver_seconds
+                    - solver_started.elapsed().as_secs_f64())
+                .max(0.0);
+                let (normalization_graph, extraction) =
+                    search.extract_normalization_with_solver_seconds(remaining)?;
+                let normalization_facts = GraphFacts::analyze(&normalization_graph);
+                (
+                    NormalizationPlan::analyze(&normalization_graph, &normalization_facts),
+                    extraction,
+                )
+            } else {
+                (
+                    NormalizationPlan::analyze_disabled(&execution_graph),
+                    ExtractionDiagnostics {
+                        exact: false,
+                        reason: Some("normalization analysis disabled"),
+                    },
+                )
+            };
             let optimization_diagnostics =
                 Some(search.diagnostics(&execution_extraction, &normalization_extraction));
-            let normalization_facts = GraphFacts::analyze(&normalization_graph);
-            let normalization_plan = if analyze_normalization {
-                NormalizationPlan::analyze(&normalization_graph, &normalization_facts)
-            } else {
-                NormalizationPlan::analyze_disabled(&normalization_graph)
-            };
             let facts = GraphFacts::analyze(&execution_graph);
             let cache_plan = CachePlan::new(&execution_graph, &facts, options.cache_policy);
             return Ok(CompiledModel {
@@ -526,7 +541,20 @@ impl CompiledModel {
     /// Returns [`CompileError`](crate::CompileError) when the projected graph
     /// has conflicting parameter definitions or CAS extraction fails.
     pub fn project_tags<'a>(&self, tags: impl IntoIterator<Item = &'a str>) -> CompileResult<Self> {
-        Self::from_graph(self.source_graph.project_tags(tags))
+        self.project_tags_with_options(tags, &CompileOptions::default())
+    }
+
+    /// Projects selected tags and recompiles with explicit options.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CompileError`] when the projected graph cannot be compiled.
+    pub fn project_tags_with_options<'a>(
+        &self,
+        tags: impl IntoIterator<Item = &'a str>,
+        options: &CompileOptions,
+    ) -> CompileResult<Self> {
+        Self::from_graph_with_options(self.source_graph.project_tags(tags), options)
     }
 
     /// Whether the source expression declares the given selection tag.

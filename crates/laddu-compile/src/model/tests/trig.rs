@@ -211,7 +211,11 @@ fn linear_phase_terms_are_collected_after_phase_merging() {
 fn sqrt_square_and_half_angle_identities_simplify() {
     let costheta = Expr::from(parameter!("costheta"));
     let phi = Expr::from(parameter!("phi"));
-    let sqrt_square = CompiledModel::from_expr(&((1.0 - costheta.powi(2)).sqrt().powi(2))).unwrap();
+    let sqrt_square = CompiledModel::from_expr_with_options(
+        &((1.0 - costheta.powi(2)).sqrt().powi(2)),
+        &exact_options(),
+    )
+    .unwrap();
     assert_eq!(count_unary_op(&sqrt_square, UnaryOp::Sqrt), 0);
     assert!(matches!(
         sqrt_square.graph().node(sqrt_square.graph().root()),
@@ -224,12 +228,17 @@ fn sqrt_square_and_half_angle_identities_simplify() {
         )
     ));
 
-    let half = CompiledModel::from_expr(&(0.5 * (0.5 * phi.clone()).sin().powi(2))).unwrap();
+    let half = CompiledModel::from_expr_with_options(
+        &(0.5 * (0.5 * phi.clone()).sin().powi(2)),
+        &exact_options(),
+    )
+    .unwrap();
     assert_eq!(count_unary_op(&half, UnaryOp::Sin), 0);
     assert!(has_real_const(&half, 0.25));
 
-    let polynomial = CompiledModel::from_expr(
+    let polynomial = CompiledModel::from_expr_with_options(
         &(3.0 * (0.5 * phi.clone()).cos().powi(2) - (0.5 * phi).sin().powi(2)),
+        &exact_options(),
     )
     .unwrap();
     assert_eq!(count_unary_op(&polynomial, UnaryOp::Sin), 0);
@@ -240,8 +249,9 @@ fn sqrt_square_and_half_angle_identities_simplify() {
 #[test]
 fn half_angle_fourth_power_polynomial_simplifies() {
     let phi = Expr::from(parameter!("phi"));
-    let compiled = CompiledModel::from_expr(
+    let compiled = CompiledModel::from_expr_with_options(
         &(0.75 * (1.0 - phi.clone().cos()) * (1.0 + phi.clone().cos()) - (0.5 * phi).sin().powi(4)),
+        &exact_options(),
     )
     .unwrap();
 
