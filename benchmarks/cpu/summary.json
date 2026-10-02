@@ -1,0 +1,584 @@
+{
+  "schema_version": 1,
+  "machine": {
+    "platform": "Linux-6.18.54-x86_64-with-glibc2.42",
+    "hostname": "andromeda",
+    "cpu": "AMD Ryzen 7 3700X 8-Core Processor",
+    "cpu_count": 16
+  },
+  "build": {
+    "profile": "release",
+    "features": "fit",
+    "rustc": "rustc 1.99.0-nightly (77cf889bc 2026-07-12)"
+  },
+  "cases": [
+    {
+      "config": {
+        "bins": 16,
+        "data_events": 2000,
+        "evaluations": 10,
+        "fit_steps": 30,
+        "mc_events": 20000,
+        "periods": 1,
+        "repeat": 0,
+        "replicas": 8,
+        "seed": 20261002,
+        "shards_per_period": 4,
+        "size": "small",
+        "threads": 4,
+        "waves": 5,
+        "workflow": "likelihood-5"
+      },
+      "statuses": [
+        "ok",
+        "ok",
+        "ok"
+      ],
+      "median_total_seconds": 0.914004237,
+      "max_peak_rss_bytes": 14209024,
+      "median_stages_seconds": {
+        "bounded_fit": 0.011827482,
+        "fixed_gradient": 0.002165473,
+        "fixed_nll": 0.001011317,
+        "fixtures": 0.005438876,
+        "likelihood_preparation": 0.892194189
+      },
+      "fixed_configuration_exact": false,
+      "repeat_roundoff_acceptable": true,
+      "max_repeat_absolute_spread": 5.684341886080802e-14
+    },
+    {
+      "config": {
+        "bins": 16,
+        "data_events": 2000,
+        "evaluations": 10,
+        "fit_steps": 30,
+        "mc_events": 20000,
+        "periods": 1,
+        "repeat": 0,
+        "replicas": 8,
+        "seed": 20261002,
+        "shards_per_period": 4,
+        "size": "small",
+        "threads": 1,
+        "waves": 5,
+        "workflow": "likelihood-5"
+      },
+      "statuses": [
+        "ok",
+        "ok",
+        "ok"
+      ],
+      "median_total_seconds": 0.944939088,
+      "max_peak_rss_bytes": 14450688,
+      "median_stages_seconds": {
+        "bounded_fit": 0.038881776,
+        "fixed_gradient": 0.007468672,
+        "fixed_nll": 0.002871501,
+        "fixtures": 0.005637422,
+        "likelihood_preparation": 0.887671497
+      },
+      "fixed_configuration_exact": true,
+      "repeat_roundoff_acceptable": true,
+      "max_repeat_absolute_spread": 0.0
+    },
+    {
+      "config": {
+        "bins": 16,
+        "data_events": 2000,
+        "evaluations": 10,
+        "fit_steps": 30,
+        "mc_events": 20000,
+        "periods": 1,
+        "repeat": 0,
+        "replicas": 8,
+        "seed": 20261002,
+        "shards_per_period": 4,
+        "size": "small",
+        "threads": 4,
+        "waves": 12,
+        "workflow": "likelihood-12"
+      },
+      "statuses": [
+        "ok",
+        "ok",
+        "ok"
+      ],
+      "median_total_seconds": 2.453816939,
+      "max_peak_rss_bytes": 26624000,
+      "median_stages_seconds": {
+        "bounded_fit": 0.041862894,
+        "fixed_gradient": 0.00491899,
+        "fixed_nll": 0.001912173,
+        "fixtures": 0.691677201,
+        "likelihood_preparation": 1.709875651
+      },
+      "fixed_configuration_exact": false,
+      "repeat_roundoff_acceptable": true,
+      "max_repeat_absolute_spread": 1.8189894035458565e-12
+    },
+    {
+      "config": {
+        "bins": 16,
+        "data_events": 2000,
+        "evaluations": 10,
+        "fit_steps": 30,
+        "mc_events": 20000,
+        "periods": 1,
+        "repeat": 0,
+        "replicas": 8,
+        "seed": 20261002,
+        "shards_per_period": 4,
+        "size": "small",
+        "threads": 1,
+        "waves": 12,
+        "workflow": "likelihood-12"
+      },
+      "statuses": [
+        "ok",
+        "ok",
+        "ok"
+      ],
+      "median_total_seconds": 2.53108581,
+      "max_peak_rss_bytes": 26435584,
+      "median_stages_seconds": {
+        "bounded_fit": 0.077835306,
+        "fixed_gradient": 0.009663801,
+        "fixed_nll": 0.003571076,
+        "fixtures": 0.69907573,
+        "likelihood_preparation": 1.719591496
+      },
+      "fixed_configuration_exact": true,
+      "repeat_roundoff_acceptable": true,
+      "max_repeat_absolute_spread": 0.0
+    },
+    {
+      "config": {
+        "bins": 16,
+        "data_events": 2000,
+        "evaluations": 10,
+        "fit_steps": 30,
+        "mc_events": 20000,
+        "periods": 1,
+        "repeat": 0,
+        "replicas": 8,
+        "seed": 20261002,
+        "shards_per_period": 4,
+        "size": "small",
+        "threads": 4,
+        "waves": 12,
+        "workflow": "bootstrap"
+      },
+      "statuses": [
+        "ok",
+        "ok",
+        "ok"
+      ],
+      "median_total_seconds": 3.991890007,
+      "max_peak_rss_bytes": 28917760,
+      "median_stages_seconds": {
+        "bootstrap_fits": 0.30269781,
+        "bounded_fit": 0.040297486,
+        "component_projections": 1.115381857,
+        "cross_section_total": 0.11653913,
+        "fixed_gradient": 0.004895777,
+        "fixed_nll": 0.001927913,
+        "fixtures": 0.696309133,
+        "likelihood_preparation": 1.700092363
+      },
+      "fixed_configuration_exact": false,
+      "repeat_roundoff_acceptable": true,
+      "max_repeat_absolute_spread": 1.8189894035458565e-12
+    },
+    {
+      "config": {
+        "bins": 16,
+        "data_events": 2000,
+        "evaluations": 10,
+        "fit_steps": 30,
+        "mc_events": 20000,
+        "periods": 1,
+        "repeat": 0,
+        "replicas": 8,
+        "seed": 20261002,
+        "shards_per_period": 4,
+        "size": "small",
+        "threads": 1,
+        "waves": 12,
+        "workflow": "bootstrap"
+      },
+      "statuses": [
+        "ok",
+        "ok",
+        "ok"
+      ],
+      "median_total_seconds": 4.68884866,
+      "max_peak_rss_bytes": 28590080,
+      "median_stages_seconds": {
+        "bootstrap_fits": 0.689760393,
+        "bounded_fit": 0.102134852,
+        "component_projections": 1.330100432,
+        "cross_section_total": 0.141401216,
+        "fixed_gradient": 0.017919013,
+        "fixed_nll": 0.006022923,
+        "fixtures": 0.689901066,
+        "likelihood_preparation": 1.70976896
+      },
+      "fixed_configuration_exact": true,
+      "repeat_roundoff_acceptable": true,
+      "max_repeat_absolute_spread": 0.0
+    },
+    {
+      "config": {
+        "bins": 16,
+        "data_events": 2000,
+        "evaluations": 10,
+        "fit_steps": 30,
+        "mc_events": 20000,
+        "periods": 4,
+        "repeat": 0,
+        "replicas": 8,
+        "seed": 20261002,
+        "shards_per_period": 4,
+        "size": "small",
+        "threads": 4,
+        "waves": 12,
+        "workflow": "parquet"
+      },
+      "statuses": [
+        "ok",
+        "ok",
+        "ok"
+      ],
+      "median_total_seconds": 0.072077539,
+      "max_peak_rss_bytes": 14405632,
+      "median_stages_seconds": {
+        "mass_binning": 0.01411778,
+        "parquet_generation": 0.02354406,
+        "parquet_loading": 0.006541134,
+        "parquet_metadata": 0.000425255
+      },
+      "fixed_configuration_exact": true,
+      "repeat_roundoff_acceptable": true,
+      "max_repeat_absolute_spread": 0.0
+    },
+    {
+      "config": {
+        "bins": 16,
+        "data_events": 2000,
+        "evaluations": 10,
+        "fit_steps": 30,
+        "mc_events": 20000,
+        "periods": 4,
+        "repeat": 0,
+        "replicas": 8,
+        "seed": 20261002,
+        "shards_per_period": 4,
+        "size": "small",
+        "threads": 1,
+        "waves": 12,
+        "workflow": "parquet"
+      },
+      "statuses": [
+        "ok",
+        "ok",
+        "ok"
+      ],
+      "median_total_seconds": 0.067240304,
+      "max_peak_rss_bytes": 14200832,
+      "median_stages_seconds": {
+        "mass_binning": 0.014040834,
+        "parquet_generation": 0.019481292,
+        "parquet_loading": 0.006267085,
+        "parquet_metadata": 0.000425957
+      },
+      "fixed_configuration_exact": true,
+      "repeat_roundoff_acceptable": true,
+      "max_repeat_absolute_spread": 0.0
+    },
+    {
+      "config": {
+        "bins": 16,
+        "data_events": 20000,
+        "evaluations": 10,
+        "fit_steps": 30,
+        "mc_events": 200000,
+        "periods": 1,
+        "repeat": 0,
+        "replicas": 8,
+        "seed": 20261002,
+        "shards_per_period": 4,
+        "size": "reference",
+        "threads": 4,
+        "waves": 5,
+        "workflow": "likelihood-5"
+      },
+      "statuses": [
+        "ok",
+        "ok",
+        "ok"
+      ],
+      "median_total_seconds": 1.777113959,
+      "max_peak_rss_bytes": 33431552,
+      "median_stages_seconds": {
+        "bounded_fit": 0.085903797,
+        "fixed_gradient": 0.019035418,
+        "fixed_nll": 0.006846813,
+        "fixtures": 0.011444976,
+        "likelihood_preparation": 1.648547588
+      },
+      "fixed_configuration_exact": false,
+      "repeat_roundoff_acceptable": true,
+      "max_repeat_absolute_spread": 1.8189894035458565e-12
+    },
+    {
+      "config": {
+        "bins": 16,
+        "data_events": 20000,
+        "evaluations": 10,
+        "fit_steps": 30,
+        "mc_events": 200000,
+        "periods": 1,
+        "repeat": 0,
+        "replicas": 8,
+        "seed": 20261002,
+        "shards_per_period": 4,
+        "size": "reference",
+        "threads": 1,
+        "waves": 5,
+        "workflow": "likelihood-5"
+      },
+      "statuses": [
+        "ok",
+        "ok",
+        "ok"
+      ],
+      "median_total_seconds": 1.919424974,
+      "max_peak_rss_bytes": 34304000,
+      "median_stages_seconds": {
+        "bounded_fit": 0.199602833,
+        "fixed_gradient": 0.051393647,
+        "fixed_nll": 0.022869862,
+        "fixtures": 0.011622352,
+        "likelihood_preparation": 1.626026933
+      },
+      "fixed_configuration_exact": true,
+      "repeat_roundoff_acceptable": true,
+      "max_repeat_absolute_spread": 0.0
+    },
+    {
+      "config": {
+        "bins": 16,
+        "data_events": 20000,
+        "evaluations": 10,
+        "fit_steps": 30,
+        "mc_events": 200000,
+        "periods": 1,
+        "repeat": 0,
+        "replicas": 8,
+        "seed": 20261002,
+        "shards_per_period": 4,
+        "size": "reference",
+        "threads": 4,
+        "waves": 12,
+        "workflow": "likelihood-12"
+      },
+      "statuses": [
+        "ok",
+        "ok",
+        "ok"
+      ],
+      "median_total_seconds": 7.138419365,
+      "max_peak_rss_bytes": 37953536,
+      "median_stages_seconds": {
+        "bounded_fit": 0.217514898,
+        "fixed_gradient": 0.041064295,
+        "fixed_nll": 0.01447193,
+        "fixtures": 0.702106355,
+        "likelihood_preparation": 6.166529109
+      },
+      "fixed_configuration_exact": false,
+      "repeat_roundoff_acceptable": true,
+      "max_repeat_absolute_spread": 6.505213034913027e-19
+    },
+    {
+      "config": {
+        "bins": 16,
+        "data_events": 20000,
+        "evaluations": 10,
+        "fit_steps": 30,
+        "mc_events": 200000,
+        "periods": 1,
+        "repeat": 0,
+        "replicas": 8,
+        "seed": 20261002,
+        "shards_per_period": 4,
+        "size": "reference",
+        "threads": 1,
+        "waves": 12,
+        "workflow": "likelihood-12"
+      },
+      "statuses": [
+        "ok",
+        "ok",
+        "ok"
+      ],
+      "median_total_seconds": 7.769146371,
+      "max_peak_rss_bytes": 37892096,
+      "median_stages_seconds": {
+        "bounded_fit": 0.771476088,
+        "fixed_gradient": 0.096478704,
+        "fixed_nll": 0.051814098,
+        "fixtures": 0.702863263,
+        "likelihood_preparation": 6.148389201
+      },
+      "fixed_configuration_exact": true,
+      "repeat_roundoff_acceptable": true,
+      "max_repeat_absolute_spread": 0.0
+    },
+    {
+      "config": {
+        "bins": 16,
+        "data_events": 20000,
+        "evaluations": 10,
+        "fit_steps": 30,
+        "mc_events": 200000,
+        "periods": 1,
+        "repeat": 0,
+        "replicas": 8,
+        "seed": 20261002,
+        "shards_per_period": 4,
+        "size": "reference",
+        "threads": 4,
+        "waves": 12,
+        "workflow": "bootstrap"
+      },
+      "statuses": [
+        "ok",
+        "ok",
+        "ok"
+      ],
+      "median_total_seconds": 14.20014795,
+      "max_peak_rss_bytes": 161587200,
+      "median_stages_seconds": {
+        "bootstrap_fits": 2.152622277,
+        "bounded_fit": 0.215878838,
+        "component_projections": 3.971155862,
+        "cross_section_total": 0.916674319,
+        "fixed_gradient": 0.048033852,
+        "fixed_nll": 0.01609879,
+        "fixtures": 0.711806054,
+        "likelihood_preparation": 6.105604873
+      },
+      "fixed_configuration_exact": false,
+      "repeat_roundoff_acceptable": true,
+      "max_repeat_absolute_spread": 6.821210263296962e-13
+    },
+    {
+      "config": {
+        "bins": 16,
+        "data_events": 20000,
+        "evaluations": 10,
+        "fit_steps": 30,
+        "mc_events": 200000,
+        "periods": 1,
+        "repeat": 0,
+        "replicas": 8,
+        "seed": 20261002,
+        "shards_per_period": 4,
+        "size": "reference",
+        "threads": 1,
+        "waves": 12,
+        "workflow": "bootstrap"
+      },
+      "statuses": [
+        "ok",
+        "ok",
+        "ok"
+      ],
+      "median_total_seconds": 22.367514512,
+      "max_peak_rss_bytes": 160952320,
+      "median_stages_seconds": {
+        "bootstrap_fits": 6.588580828,
+        "bounded_fit": 0.779129546,
+        "component_projections": 6.796028818,
+        "cross_section_total": 1.2349025519999999,
+        "fixed_gradient": 0.095394367,
+        "fixed_nll": 0.052213028,
+        "fixtures": 0.704114426,
+        "likelihood_preparation": 6.102062539
+      },
+      "fixed_configuration_exact": true,
+      "repeat_roundoff_acceptable": true,
+      "max_repeat_absolute_spread": 0.0
+    },
+    {
+      "config": {
+        "bins": 16,
+        "data_events": 20000,
+        "evaluations": 10,
+        "fit_steps": 30,
+        "mc_events": 200000,
+        "periods": 4,
+        "repeat": 0,
+        "replicas": 8,
+        "seed": 20261002,
+        "shards_per_period": 4,
+        "size": "reference",
+        "threads": 4,
+        "waves": 12,
+        "workflow": "parquet"
+      },
+      "statuses": [
+        "ok",
+        "ok",
+        "ok"
+      ],
+      "median_total_seconds": 0.344659138,
+      "max_peak_rss_bytes": 64741376,
+      "median_stages_seconds": {
+        "mass_binning": 0.123959197,
+        "parquet_generation": 0.14571476,
+        "parquet_loading": 0.039940582,
+        "parquet_metadata": 0.000460853
+      },
+      "fixed_configuration_exact": true,
+      "repeat_roundoff_acceptable": true,
+      "max_repeat_absolute_spread": 0.0
+    },
+    {
+      "config": {
+        "bins": 16,
+        "data_events": 20000,
+        "evaluations": 10,
+        "fit_steps": 30,
+        "mc_events": 200000,
+        "periods": 4,
+        "repeat": 0,
+        "replicas": 8,
+        "seed": 20261002,
+        "shards_per_period": 4,
+        "size": "reference",
+        "threads": 1,
+        "waves": 12,
+        "workflow": "parquet"
+      },
+      "statuses": [
+        "ok",
+        "ok",
+        "ok"
+      ],
+      "median_total_seconds": 0.37272328,
+      "max_peak_rss_bytes": 65155072,
+      "median_stages_seconds": {
+        "mass_binning": 0.124328977,
+        "parquet_generation": 0.170620831,
+        "parquet_loading": 0.040447944,
+        "parquet_metadata": 0.000455223
+      },
+      "fixed_configuration_exact": true,
+      "repeat_roundoff_acceptable": true,
+      "max_repeat_absolute_spread": 0.0
+    }
+  ]
+}
