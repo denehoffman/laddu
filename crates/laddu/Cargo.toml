@@ -121,6 +121,10 @@ required-features = ["generation", "fit"]
 name = "projection_profile"
 required-features = ["likelihood"]
 
+[[example]]
+name = "cpu_workflow"
+required-features = ["fit"]
+
 [[test]]
 name = "generation_fit"
 required-features = ["generation", "fit"]

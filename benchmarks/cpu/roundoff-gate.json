@@ -1,0 +1,944 @@
+{
+  "schema_version": 1,
+  "comparison_policy": "baseline-roundoff",
+  "max_repeat_roundoff": 1e-12,
+  "scientific_equivalence": true,
+  "cases": [
+    {
+      "config": {
+        "bins": 16,
+        "data_events": 2000,
+        "evaluations": 10,
+        "fit_steps": 30,
+        "mc_events": 20000,
+        "periods": 1,
+        "repeat": 0,
+        "replicas": 8,
+        "seed": 20261002,
+        "shards_per_period": 4,
+        "size": "small",
+        "threads": 4,
+        "waves": 5,
+        "workflow": "likelihood-5"
+      },
+      "failures": [],
+      "performance": {
+        "bounded_fit": {
+          "before": 0.011827482,
+          "after": 0.011827482,
+          "ratio": 1.0
+        },
+        "fixed_gradient": {
+          "before": 0.002165473,
+          "after": 0.002165473,
+          "ratio": 1.0
+        },
+        "fixed_nll": {
+          "before": 0.001011317,
+          "after": 0.001011317,
+          "ratio": 1.0
+        },
+        "fixtures": {
+          "before": 0.005438876,
+          "after": 0.005438876,
+          "ratio": 1.0
+        },
+        "likelihood_preparation": {
+          "before": 0.892194189,
+          "after": 0.892194189,
+          "ratio": 1.0
+        },
+        "peak_rss_bytes": {
+          "before": 14176256,
+          "after": 14176256,
+          "ratio": 1.0
+        },
+        "total_seconds": {
+          "before": 0.914004237,
+          "after": 0.914004237,
+          "ratio": 1.0
+        }
+      }
+    },
+    {
+      "config": {
+        "bins": 16,
+        "data_events": 2000,
+        "evaluations": 10,
+        "fit_steps": 30,
+        "mc_events": 20000,
+        "periods": 1,
+        "repeat": 0,
+        "replicas": 8,
+        "seed": 20261002,
+        "shards_per_period": 4,
+        "size": "small",
+        "threads": 1,
+        "waves": 5,
+        "workflow": "likelihood-5"
+      },
+      "failures": [],
+      "performance": {
+        "bounded_fit": {
+          "before": 0.038881776,
+          "after": 0.038881776,
+          "ratio": 1.0
+        },
+        "fixed_gradient": {
+          "before": 0.007468672,
+          "after": 0.007468672,
+          "ratio": 1.0
+        },
+        "fixed_nll": {
+          "before": 0.002871501,
+          "after": 0.002871501,
+          "ratio": 1.0
+        },
+        "fixtures": {
+          "before": 0.005637422,
+          "after": 0.005637422,
+          "ratio": 1.0
+        },
+        "likelihood_preparation": {
+          "before": 0.887671497,
+          "after": 0.887671497,
+          "ratio": 1.0
+        },
+        "peak_rss_bytes": {
+          "before": 14430208,
+          "after": 14430208,
+          "ratio": 1.0
+        },
+        "total_seconds": {
+          "before": 0.944939088,
+          "after": 0.944939088,
+          "ratio": 1.0
+        }
+      }
+    },
+    {
+      "config": {
+        "bins": 16,
+        "data_events": 2000,
+        "evaluations": 10,
+        "fit_steps": 30,
+        "mc_events": 20000,
+        "periods": 1,
+        "repeat": 0,
+        "replicas": 8,
+        "seed": 20261002,
+        "shards_per_period": 4,
+        "size": "small",
+        "threads": 4,
+        "waves": 12,
+        "workflow": "likelihood-12"
+      },
+      "failures": [],
+      "performance": {
+        "bounded_fit": {
+          "before": 0.041862894,
+          "after": 0.041862894,
+          "ratio": 1.0
+        },
+        "fixed_gradient": {
+          "before": 0.00491899,
+          "after": 0.00491899,
+          "ratio": 1.0
+        },
+        "fixed_nll": {
+          "before": 0.001912173,
+          "after": 0.001912173,
+          "ratio": 1.0
+        },
+        "fixtures": {
+          "before": 0.691677201,
+          "after": 0.691677201,
+          "ratio": 1.0
+        },
+        "likelihood_preparation": {
+          "before": 1.709875651,
+          "after": 1.709875651,
+          "ratio": 1.0
+        },
+        "peak_rss_bytes": {
+          "before": 26464256,
+          "after": 26464256,
+          "ratio": 1.0
+        },
+        "total_seconds": {
+          "before": 2.453816939,
+          "after": 2.453816939,
+          "ratio": 1.0
+        }
+      }
+    },
+    {
+      "config": {
+        "bins": 16,
+        "data_events": 2000,
+        "evaluations": 10,
+        "fit_steps": 30,
+        "mc_events": 20000,
+        "periods": 1,
+        "repeat": 0,
+        "replicas": 8,
+        "seed": 20261002,
+        "shards_per_period": 4,
+        "size": "small",
+        "threads": 1,
+        "waves": 12,
+        "workflow": "likelihood-12"
+      },
+      "failures": [],
+      "performance": {
+        "bounded_fit": {
+          "before": 0.077835306,
+          "after": 0.077835306,
+          "ratio": 1.0
+        },
+        "fixed_gradient": {
+          "before": 0.009663801,
+          "after": 0.009663801,
+          "ratio": 1.0
+        },
+        "fixed_nll": {
+          "before": 0.003571076,
+          "after": 0.003571076,
+          "ratio": 1.0
+        },
+        "fixtures": {
+          "before": 0.69907573,
+          "after": 0.69907573,
+          "ratio": 1.0
+        },
+        "likelihood_preparation": {
+          "before": 1.719591496,
+          "after": 1.719591496,
+          "ratio": 1.0
+        },
+        "peak_rss_bytes": {
+          "before": 26025984,
+          "after": 26025984,
+          "ratio": 1.0
+        },
+        "total_seconds": {
+          "before": 2.53108581,
+          "after": 2.53108581,
+          "ratio": 1.0
+        }
+      }
+    },
+    {
+      "config": {
+        "bins": 16,
+        "data_events": 2000,
+        "evaluations": 10,
+        "fit_steps": 30,
+        "mc_events": 20000,
+        "periods": 1,
+        "repeat": 0,
+        "replicas": 8,
+        "seed": 20261002,
+        "shards_per_period": 4,
+        "size": "small",
+        "threads": 4,
+        "waves": 12,
+        "workflow": "bootstrap"
+      },
+      "failures": [],
+      "performance": {
+        "bootstrap_fits": {
+          "before": 0.30269781,
+          "after": 0.30269781,
+          "ratio": 1.0
+        },
+        "bounded_fit": {
+          "before": 0.040297486,
+          "after": 0.040297486,
+          "ratio": 1.0
+        },
+        "component_projections": {
+          "before": 1.115381857,
+          "after": 1.115381857,
+          "ratio": 1.0
+        },
+        "cross_section_total": {
+          "before": 0.11653913,
+          "after": 0.11653913,
+          "ratio": 1.0
+        },
+        "fixed_gradient": {
+          "before": 0.004895777,
+          "after": 0.004895777,
+          "ratio": 1.0
+        },
+        "fixed_nll": {
+          "before": 0.001927913,
+          "after": 0.001927913,
+          "ratio": 1.0
+        },
+        "fixtures": {
+          "before": 0.696309133,
+          "after": 0.696309133,
+          "ratio": 1.0
+        },
+        "likelihood_preparation": {
+          "before": 1.700092363,
+          "after": 1.700092363,
+          "ratio": 1.0
+        },
+        "peak_rss_bytes": {
+          "before": 28872704,
+          "after": 28872704,
+          "ratio": 1.0
+        },
+        "total_seconds": {
+          "before": 3.991890007,
+          "after": 3.991890007,
+          "ratio": 1.0
+        }
+      }
+    },
+    {
+      "config": {
+        "bins": 16,
+        "data_events": 2000,
+        "evaluations": 10,
+        "fit_steps": 30,
+        "mc_events": 20000,
+        "periods": 1,
+        "repeat": 0,
+        "replicas": 8,
+        "seed": 20261002,
+        "shards_per_period": 4,
+        "size": "small",
+        "threads": 1,
+        "waves": 12,
+        "workflow": "bootstrap"
+      },
+      "failures": [],
+      "performance": {
+        "bootstrap_fits": {
+          "before": 0.689760393,
+          "after": 0.689760393,
+          "ratio": 1.0
+        },
+        "bounded_fit": {
+          "before": 0.102134852,
+          "after": 0.102134852,
+          "ratio": 1.0
+        },
+        "component_projections": {
+          "before": 1.330100432,
+          "after": 1.330100432,
+          "ratio": 1.0
+        },
+        "cross_section_total": {
+          "before": 0.141401216,
+          "after": 0.141401216,
+          "ratio": 1.0
+        },
+        "fixed_gradient": {
+          "before": 0.017919013,
+          "after": 0.017919013,
+          "ratio": 1.0
+        },
+        "fixed_nll": {
+          "before": 0.006022923,
+          "after": 0.006022923,
+          "ratio": 1.0
+        },
+        "fixtures": {
+          "before": 0.689901066,
+          "after": 0.689901066,
+          "ratio": 1.0
+        },
+        "likelihood_preparation": {
+          "before": 1.70976896,
+          "after": 1.70976896,
+          "ratio": 1.0
+        },
+        "peak_rss_bytes": {
+          "before": 28356608,
+          "after": 28356608,
+          "ratio": 1.0
+        },
+        "total_seconds": {
+          "before": 4.68884866,
+          "after": 4.68884866,
+          "ratio": 1.0
+        }
+      }
+    },
+    {
+      "config": {
+        "bins": 16,
+        "data_events": 2000,
+        "evaluations": 10,
+        "fit_steps": 30,
+        "mc_events": 20000,
+        "periods": 4,
+        "repeat": 0,
+        "replicas": 8,
+        "seed": 20261002,
+        "shards_per_period": 4,
+        "size": "small",
+        "threads": 4,
+        "waves": 12,
+        "workflow": "parquet"
+      },
+      "failures": [],
+      "performance": {
+        "mass_binning": {
+          "before": 0.01411778,
+          "after": 0.01411778,
+          "ratio": 1.0
+        },
+        "parquet_generation": {
+          "before": 0.02354406,
+          "after": 0.02354406,
+          "ratio": 1.0
+        },
+        "parquet_loading": {
+          "before": 0.006541134,
+          "after": 0.006541134,
+          "ratio": 1.0
+        },
+        "parquet_metadata": {
+          "before": 0.000425255,
+          "after": 0.000425255,
+          "ratio": 1.0
+        },
+        "peak_rss_bytes": {
+          "before": 14405632,
+          "after": 14405632,
+          "ratio": 1.0
+        },
+        "total_seconds": {
+          "before": 0.072077539,
+          "after": 0.072077539,
+          "ratio": 1.0
+        }
+      }
+    },
+    {
+      "config": {
+        "bins": 16,
+        "data_events": 2000,
+        "evaluations": 10,
+        "fit_steps": 30,
+        "mc_events": 20000,
+        "periods": 4,
+        "repeat": 0,
+        "replicas": 8,
+        "seed": 20261002,
+        "shards_per_period": 4,
+        "size": "small",
+        "threads": 1,
+        "waves": 12,
+        "workflow": "parquet"
+      },
+      "failures": [],
+      "performance": {
+        "mass_binning": {
+          "before": 0.014040834,
+          "after": 0.014040834,
+          "ratio": 1.0
+        },
+        "parquet_generation": {
+          "before": 0.019481292,
+          "after": 0.019481292,
+          "ratio": 1.0
+        },
+        "parquet_loading": {
+          "before": 0.006267085,
+          "after": 0.006267085,
+          "ratio": 1.0
+        },
+        "parquet_metadata": {
+          "before": 0.000425957,
+          "after": 0.000425957,
+          "ratio": 1.0
+        },
+        "peak_rss_bytes": {
+          "before": 14168064,
+          "after": 14168064,
+          "ratio": 1.0
+        },
+        "total_seconds": {
+          "before": 0.067240304,
+          "after": 0.067240304,
+          "ratio": 1.0
+        }
+      }
+    },
+    {
+      "config": {
+        "bins": 16,
+        "data_events": 20000,
+        "evaluations": 10,
+        "fit_steps": 30,
+        "mc_events": 200000,
+        "periods": 1,
+        "repeat": 0,
+        "replicas": 8,
+        "seed": 20261002,
+        "shards_per_period": 4,
+        "size": "reference",
+        "threads": 4,
+        "waves": 5,
+        "workflow": "likelihood-5"
+      },
+      "failures": [],
+      "performance": {
+        "bounded_fit": {
+          "before": 0.085903797,
+          "after": 0.085903797,
+          "ratio": 1.0
+        },
+        "fixed_gradient": {
+          "before": 0.019035418,
+          "after": 0.019035418,
+          "ratio": 1.0
+        },
+        "fixed_nll": {
+          "before": 0.006846813,
+          "after": 0.006846813,
+          "ratio": 1.0
+        },
+        "fixtures": {
+          "before": 0.011444976,
+          "after": 0.011444976,
+          "ratio": 1.0
+        },
+        "likelihood_preparation": {
+          "before": 1.648547588,
+          "after": 1.648547588,
+          "ratio": 1.0
+        },
+        "peak_rss_bytes": {
+          "before": 33001472,
+          "after": 33001472,
+          "ratio": 1.0
+        },
+        "total_seconds": {
+          "before": 1.777113959,
+          "after": 1.777113959,
+          "ratio": 1.0
+        }
+      }
+    },
+    {
+      "config": {
+        "bins": 16,
+        "data_events": 20000,
+        "evaluations": 10,
+        "fit_steps": 30,
+        "mc_events": 200000,
+        "periods": 1,
+        "repeat": 0,
+        "replicas": 8,
+        "seed": 20261002,
+        "shards_per_period": 4,
+        "size": "reference",
+        "threads": 1,
+        "waves": 5,
+        "workflow": "likelihood-5"
+      },
+      "failures": [],
+      "performance": {
+        "bounded_fit": {
+          "before": 0.199602833,
+          "after": 0.199602833,
+          "ratio": 1.0
+        },
+        "fixed_gradient": {
+          "before": 0.051393647,
+          "after": 0.051393647,
+          "ratio": 1.0
+        },
+        "fixed_nll": {
+          "before": 0.022869862,
+          "after": 0.022869862,
+          "ratio": 1.0
+        },
+        "fixtures": {
+          "before": 0.011622352,
+          "after": 0.011622352,
+          "ratio": 1.0
+        },
+        "likelihood_preparation": {
+          "before": 1.626026933,
+          "after": 1.626026933,
+          "ratio": 1.0
+        },
+        "peak_rss_bytes": {
+          "before": 34234368,
+          "after": 34234368,
+          "ratio": 1.0
+        },
+        "total_seconds": {
+          "before": 1.919424974,
+          "after": 1.919424974,
+          "ratio": 1.0
+        }
+      }
+    },
+    {
+      "config": {
+        "bins": 16,
+        "data_events": 20000,
+        "evaluations": 10,
+        "fit_steps": 30,
+        "mc_events": 200000,
+        "periods": 1,
+        "repeat": 0,
+        "replicas": 8,
+        "seed": 20261002,
+        "shards_per_period": 4,
+        "size": "reference",
+        "threads": 4,
+        "waves": 12,
+        "workflow": "likelihood-12"
+      },
+      "failures": [],
+      "performance": {
+        "bounded_fit": {
+          "before": 0.217514898,
+          "after": 0.217514898,
+          "ratio": 1.0
+        },
+        "fixed_gradient": {
+          "before": 0.041064295,
+          "after": 0.041064295,
+          "ratio": 1.0
+        },
+        "fixed_nll": {
+          "before": 0.01447193,
+          "after": 0.01447193,
+          "ratio": 1.0
+        },
+        "fixtures": {
+          "before": 0.702106355,
+          "after": 0.702106355,
+          "ratio": 1.0
+        },
+        "likelihood_preparation": {
+          "before": 6.166529109,
+          "after": 6.166529109,
+          "ratio": 1.0
+        },
+        "peak_rss_bytes": {
+          "before": 37900288,
+          "after": 37900288,
+          "ratio": 1.0
+        },
+        "total_seconds": {
+          "before": 7.138419365,
+          "after": 7.138419365,
+          "ratio": 1.0
+        }
+      }
+    },
+    {
+      "config": {
+        "bins": 16,
+        "data_events": 20000,
+        "evaluations": 10,
+        "fit_steps": 30,
+        "mc_events": 200000,
+        "periods": 1,
+        "repeat": 0,
+        "replicas": 8,
+        "seed": 20261002,
+        "shards_per_period": 4,
+        "size": "reference",
+        "threads": 1,
+        "waves": 12,
+        "workflow": "likelihood-12"
+      },
+      "failures": [],
+      "performance": {
+        "bounded_fit": {
+          "before": 0.771476088,
+          "after": 0.771476088,
+          "ratio": 1.0
+        },
+        "fixed_gradient": {
+          "before": 0.096478704,
+          "after": 0.096478704,
+          "ratio": 1.0
+        },
+        "fixed_nll": {
+          "before": 0.051814098,
+          "after": 0.051814098,
+          "ratio": 1.0
+        },
+        "fixtures": {
+          "before": 0.702863263,
+          "after": 0.702863263,
+          "ratio": 1.0
+        },
+        "likelihood_preparation": {
+          "before": 6.148389201,
+          "after": 6.148389201,
+          "ratio": 1.0
+        },
+        "peak_rss_bytes": {
+          "before": 37797888,
+          "after": 37797888,
+          "ratio": 1.0
+        },
+        "total_seconds": {
+          "before": 7.769146371,
+          "after": 7.769146371,
+          "ratio": 1.0
+        }
+      }
+    },
+    {
+      "config": {
+        "bins": 16,
+        "data_events": 20000,
+        "evaluations": 10,
+        "fit_steps": 30,
+        "mc_events": 200000,
+        "periods": 1,
+        "repeat": 0,
+        "replicas": 8,
+        "seed": 20261002,
+        "shards_per_period": 4,
+        "size": "reference",
+        "threads": 4,
+        "waves": 12,
+        "workflow": "bootstrap"
+      },
+      "failures": [],
+      "performance": {
+        "bootstrap_fits": {
+          "before": 2.152622277,
+          "after": 2.152622277,
+          "ratio": 1.0
+        },
+        "bounded_fit": {
+          "before": 0.215878838,
+          "after": 0.215878838,
+          "ratio": 1.0
+        },
+        "component_projections": {
+          "before": 3.971155862,
+          "after": 3.971155862,
+          "ratio": 1.0
+        },
+        "cross_section_total": {
+          "before": 0.916674319,
+          "after": 0.916674319,
+          "ratio": 1.0
+        },
+        "fixed_gradient": {
+          "before": 0.048033852,
+          "after": 0.048033852,
+          "ratio": 1.0
+        },
+        "fixed_nll": {
+          "before": 0.01609879,
+          "after": 0.01609879,
+          "ratio": 1.0
+        },
+        "fixtures": {
+          "before": 0.711806054,
+          "after": 0.711806054,
+          "ratio": 1.0
+        },
+        "likelihood_preparation": {
+          "before": 6.105604873,
+          "after": 6.105604873,
+          "ratio": 1.0
+        },
+        "peak_rss_bytes": {
+          "before": 161296384,
+          "after": 161296384,
+          "ratio": 1.0
+        },
+        "total_seconds": {
+          "before": 14.20014795,
+          "after": 14.20014795,
+          "ratio": 1.0
+        }
+      }
+    },
+    {
+      "config": {
+        "bins": 16,
+        "data_events": 20000,
+        "evaluations": 10,
+        "fit_steps": 30,
+        "mc_events": 200000,
+        "periods": 1,
+        "repeat": 0,
+        "replicas": 8,
+        "seed": 20261002,
+        "shards_per_period": 4,
+        "size": "reference",
+        "threads": 1,
+        "waves": 12,
+        "workflow": "bootstrap"
+      },
+      "failures": [],
+      "performance": {
+        "bootstrap_fits": {
+          "before": 6.588580828,
+          "after": 6.588580828,
+          "ratio": 1.0
+        },
+        "bounded_fit": {
+          "before": 0.779129546,
+          "after": 0.779129546,
+          "ratio": 1.0
+        },
+        "component_projections": {
+          "before": 6.796028818,
+          "after": 6.796028818,
+          "ratio": 1.0
+        },
+        "cross_section_total": {
+          "before": 1.2349025519999999,
+          "after": 1.2349025519999999,
+          "ratio": 1.0
+        },
+        "fixed_gradient": {
+          "before": 0.095394367,
+          "after": 0.095394367,
+          "ratio": 1.0
+        },
+        "fixed_nll": {
+          "before": 0.052213028,
+          "after": 0.052213028,
+          "ratio": 1.0
+        },
+        "fixtures": {
+          "before": 0.704114426,
+          "after": 0.704114426,
+          "ratio": 1.0
+        },
+        "likelihood_preparation": {
+          "before": 6.102062539,
+          "after": 6.102062539,
+          "ratio": 1.0
+        },
+        "peak_rss_bytes": {
+          "before": 160661504,
+          "after": 160661504,
+          "ratio": 1.0
+        },
+        "total_seconds": {
+          "before": 22.367514512,
+          "after": 22.367514512,
+          "ratio": 1.0
+        }
+      }
+    },
+    {
+      "config": {
+        "bins": 16,
+        "data_events": 20000,
+        "evaluations": 10,
+        "fit_steps": 30,
+        "mc_events": 200000,
+        "periods": 4,
+        "repeat": 0,
+        "replicas": 8,
+        "seed": 20261002,
+        "shards_per_period": 4,
+        "size": "reference",
+        "threads": 4,
+        "waves": 12,
+        "workflow": "parquet"
+      },
+      "failures": [],
+      "performance": {
+        "mass_binning": {
+          "before": 0.123959197,
+          "after": 0.123959197,
+          "ratio": 1.0
+        },
+        "parquet_generation": {
+          "before": 0.14571476,
+          "after": 0.14571476,
+          "ratio": 1.0
+        },
+        "parquet_loading": {
+          "before": 0.039940582,
+          "after": 0.039940582,
+          "ratio": 1.0
+        },
+        "parquet_metadata": {
+          "before": 0.000460853,
+          "after": 0.000460853,
+          "ratio": 1.0
+        },
+        "peak_rss_bytes": {
+          "before": 64339968,
+          "after": 64339968,
+          "ratio": 1.0
+        },
+        "total_seconds": {
+          "before": 0.344659138,
+          "after": 0.344659138,
+          "ratio": 1.0
+        }
+      }
+    },
+    {
+      "config": {
+        "bins": 16,
+        "data_events": 20000,
+        "evaluations": 10,
+        "fit_steps": 30,
+        "mc_events": 200000,
+        "periods": 4,
+        "repeat": 0,
+        "replicas": 8,
+        "seed": 20261002,
+        "shards_per_period": 4,
+        "size": "reference",
+        "threads": 1,
+        "waves": 12,
+        "workflow": "parquet"
+      },
+      "failures": [],
+      "performance": {
+        "mass_binning": {
+          "before": 0.124328977,
+          "after": 0.124328977,
+          "ratio": 1.0
+        },
+        "parquet_generation": {
+          "before": 0.170620831,
+          "after": 0.170620831,
+          "ratio": 1.0
+        },
+        "parquet_loading": {
+          "before": 0.040447944,
+          "after": 0.040447944,
+          "ratio": 1.0
+        },
+        "parquet_metadata": {
+          "before": 0.000455223,
+          "after": 0.000455223,
+          "ratio": 1.0
+        },
+        "peak_rss_bytes": {
+          "before": 64970752,
+          "after": 64970752,
+          "ratio": 1.0
+        },
+        "total_seconds": {
+          "before": 0.37272328,
+          "after": 0.37272328,
+          "ratio": 1.0
+        }
+      }
+    }
+  ]
+}
