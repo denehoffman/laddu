@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use laddu_compile::NormalizationStrategy;
 use laddu_likelihood::{
@@ -7,13 +7,13 @@ use laddu_likelihood::{
 };
 use numpy::PyArray1;
 use pyo3::{
-    exceptions::PyTypeError,
+    exceptions::{PyTypeError, PyValueError},
     prelude::*,
     types::{PyAny, PyDict, PyList},
 };
 
 use super::{
-    cross_section::{PyCrossSection, PyEnsemble, PyLuminosity, PyYield},
+    cross_section::{PyCrossSection, PyEnsemble, PyLuminosity, PyYield, extract_projections},
     data::PyDataset,
     error::to_py_err,
     float_vec,
@@ -739,17 +739,42 @@ impl PyLikelihood {
         Ok(inner.into())
     }
 
-    #[pyo3(signature = (term_name, generated_mc, luminosity, parameters, *, ensemble=None))]
+    #[pyo3(signature = (term_name, generated_mc, luminosity, parameters, *, ensemble=None, projections: "dict[str, Axis | Sequence[Axis]] | None"=None, components=None))]
     /// Fitted generated-MC intensity divided by luminosity. Requires an extended term.
+    /// Supplying named projections shares their evaluation with the scalar total;
+    /// matching `CrossSection.project` requests reuse those retained outputs.
+    #[allow(clippy::too_many_arguments)]
     fn cross_section(
         &self,
+        py: Python<'_>,
         term_name: &str,
         generated_mc: &PyDataset,
         luminosity: &PyLuminosity,
         parameters: &Bound<'_, PyAny>,
         ensemble: Option<&PyEnsemble>,
+        projections: Option<&Bound<'_, PyAny>>,
+        components: Option<HashMap<String, Vec<String>>>,
     ) -> PyResult<PyCrossSection> {
         let parameters = free_values(&self.inner, parameters)?;
+        if let Some(projections) = projections {
+            let requests = extract_projections(py, projections)?;
+            return self
+                .inner
+                .cross_section_with_projections(
+                    term_name,
+                    generated_mc.inner.clone(),
+                    luminosity.inner.clone(),
+                    parameters,
+                    ensemble.map(|value| value.inner.clone()),
+                    &requests,
+                    &components.unwrap_or_default(),
+                )
+                .map(|inner| PyCrossSection { inner })
+                .map_err(to_py_err);
+        }
+        if components.is_some_and(|value| !value.is_empty()) {
+            return Err(PyValueError::new_err("components require projections"));
+        }
         self.inner
             .cross_section(
                 term_name,

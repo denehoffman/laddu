@@ -1088,7 +1088,7 @@ fn extract_axes(py: Python<'_>, axes: &Bound<'_, PyAny>) -> PyResult<Vec<Axis>> 
         .collect())
 }
 
-fn extract_projections(
+pub(super) fn extract_projections(
     py: Python<'_>,
     projections: &Bound<'_, PyAny>,
 ) -> PyResult<Vec<Projection>> {

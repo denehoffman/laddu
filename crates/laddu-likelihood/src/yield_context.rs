@@ -147,7 +147,9 @@ pub struct Yield {
     parameters: Vec<f64>,
     ensemble: Option<Ensemble>,
     has_absolute_rate: bool,
-    scalars: YieldScalars,
+    // Projection construction initializes these from the shared MC passes before
+    // returning the context. Public constructors always return initialized scalars.
+    scalars: Option<YieldScalars>,
 }
 
 #[derive(Clone, Debug)]
@@ -191,7 +193,7 @@ impl Yield {
     ) -> LikelihoodResult<Self> {
         likelihood.params().validate_free_values(&parameters)?;
         let term_name = term_name.into();
-        let model_digest = likelihood.intensity_model_digest(&term_name)?;
+        validate_ensemble(&likelihood, &term_name, ensemble.as_ref())?;
         let (observed_data, accepted_mc) = likelihood.intensity_datasets(&term_name)?;
         let observed_data = observed_data.clone();
         let accepted_mc = accepted_mc.clone();
@@ -199,40 +201,7 @@ impl Yield {
         let has_absolute_rate = integrals.has_absolute_rate();
         let mut replica_integrals = Vec::new();
         if let Some(ensemble) = &ensemble {
-            let names = likelihood
-                .params()
-                .free_params()
-                .iter()
-                .map(|id| likelihood.params().name(*id).map(str::to_owned))
-                .collect::<Result<Vec<_>, _>>()?;
-            if names != ensemble.parameter_names() {
-                return Err(LikelihoodError::InvalidCrossSection(
-                    "ensemble parameter names do not match the likelihood".to_owned(),
-                ));
-            }
-            for parameters in ensemble.draws() {
-                likelihood.params().validate_free_values(parameters)?;
-            }
             for replica in ensemble.replicas() {
-                if replica.intensity_model_digest(&term_name)? != model_digest {
-                    return Err(LikelihoodError::InvalidCrossSection(
-                        "ensemble replica model does not match the likelihood".to_owned(),
-                    ));
-                }
-                let replica_names = replica
-                    .params()
-                    .free_params()
-                    .iter()
-                    .map(|id| replica.params().name(*id).map(str::to_owned))
-                    .collect::<Result<Vec<_>, _>>()?;
-                if replica_names != names {
-                    return Err(LikelihoodError::InvalidCrossSection(
-                        "ensemble replica parameter names do not match the likelihood".to_owned(),
-                    ));
-                }
-                for parameters in ensemble.draws() {
-                    replica.params().validate_free_values(parameters)?;
-                }
                 let replica_integral = if ensemble.replicas_share_event_rows() {
                     let data_weight_sum = replica.intensity_data_weight_sum(&term_name)?;
                     integrals.with_data_weight_sum(data_weight_sum)
@@ -322,13 +291,110 @@ impl Yield {
             parameters,
             ensemble,
             has_absolute_rate,
-            scalars,
+            scalars: Some(scalars),
         })
     }
 
     /// Returns the source likelihood.
     pub fn likelihood(&self) -> &Arc<Likelihood> {
         &self.likelihood
+    }
+
+    fn scalars(&self) -> &YieldScalars {
+        self.scalars
+            .as_ref()
+            .expect("public yield contexts have scalar estimates")
+    }
+
+    pub(crate) fn with_projections(
+        likelihood: Arc<Likelihood>,
+        term_name: String,
+        generated_mc: Dataset,
+        parameters: Vec<f64>,
+        ensemble: Option<Ensemble>,
+        projections: &[crate::Projection],
+        components: &std::collections::HashMap<String, Vec<String>>,
+    ) -> LikelihoodResult<(Self, crate::YieldProjectionSet)> {
+        likelihood.params().validate_free_values(&parameters)?;
+        validate_ensemble(&likelihood, &term_name, ensemble.as_ref())?;
+        let has_absolute_rate = likelihood.intensity_has_absolute_rate(&term_name)?;
+        if !has_absolute_rate {
+            return Err(LikelihoodError::AbsoluteRateUnavailable(
+                "cross sections require an extended intensity likelihood".to_owned(),
+            ));
+        }
+        // Distributed reductions retain the established scalar path.
+        if likelihood.execution().is_distributed() {
+            let context =
+                Self::with_ensemble(likelihood, term_name, generated_mc, parameters, ensemble)?;
+            let projected = context.projection_set_with_components(projections, components)?;
+            return Ok((context, projected));
+        }
+        let (data, accepted) = likelihood.intensity_datasets(&term_name)?;
+        let mut context = Self {
+            observed_data: data.clone(),
+            accepted_mc: accepted.clone(),
+            likelihood,
+            term_name,
+            generated_mc,
+            parameters,
+            ensemble,
+            has_absolute_rate,
+            scalars: None,
+        };
+        let (total, projected) = context.projection_set_with_totals(projections, components)?;
+        let scalar_values = std::iter::once((&context.likelihood, context.parameters.as_slice()))
+            .chain(context.ensemble.iter().flat_map(|ensemble| {
+                ensemble.draws().iter().enumerate().map(|(index, values)| {
+                    (
+                        ensemble
+                            .replicas()
+                            .get(index)
+                            .unwrap_or(&context.likelihood),
+                        values.as_slice(),
+                    )
+                })
+            }))
+            .map(|(likelihood, values)| {
+                let selected = finite(
+                    "selected yield",
+                    likelihood.intensity_data_weight_sum(&context.term_name)?,
+                )?;
+                let accepted = positive_accepted(
+                    likelihood.intensity_accepted_integral(&context.term_name, values)?,
+                    likelihood
+                        .intensity_datasets(&context.term_name)?
+                        .1
+                        .stats()?
+                        .events()
+                        > 0,
+                )?;
+                Ok((selected, accepted))
+            })
+            .collect::<LikelihoodResult<Vec<_>>>()?;
+        let (selected_values, accepted_values): (Vec<_>, Vec<_>) =
+            scalar_values.into_iter().unzip();
+        let selected_variance = context.observed_data.stats()?.sum_squared_weights();
+        let source_id = context.ensemble.as_ref().map(Ensemble::source_id);
+        let has_generated_support = context.generated_mc.stats()?.events() > 0;
+        positive_generated(total.generated()[0], has_generated_support)?;
+        for values in total.generated_draws() {
+            positive_generated(values[0], has_generated_support)?;
+        }
+        let (selected, accepted, generated) = total.scalar_estimates(
+            source_id,
+            &selected_values,
+            selected_variance,
+            &accepted_values,
+        )?;
+        context.scalars = Some(YieldScalars {
+            selected,
+            rate: RateScalars::Absolute {
+                accepted: Box::new(accepted),
+                generated: Box::new(generated),
+            },
+        });
+        Ok((context, projected))
     }
 
     /// Returns the selected intensity-term name.
@@ -368,7 +434,7 @@ impl Yield {
 
     /// Returns the effective observed selected yield, D.
     pub fn selected_yield(&self) -> &Estimate {
-        &self.scalars.selected
+        &self.scalars().selected
     }
 
     /// Returns the accepted fitted yield, A.
@@ -377,7 +443,7 @@ impl Yield {
     /// Returns an error when absolute rate is unavailable, accepted support is
     /// non-positive, or a paired draw cannot be evaluated.
     pub fn accepted_fitted_yield(&self) -> LikelihoodResult<Estimate> {
-        match &self.scalars.rate {
+        match &self.scalars().rate {
             RateScalars::Absolute { accepted, .. } => Ok((**accepted).clone()),
             RateScalars::ShapeOnly => Err(LikelihoodError::AbsoluteRateUnavailable(format!(
                 "{} (accepted fitted yield)",
@@ -392,7 +458,7 @@ impl Yield {
     /// Returns an error when absolute rate is unavailable, generated support is
     /// non-positive, or a paired draw cannot be evaluated.
     pub fn generated_fitted_yield(&self) -> LikelihoodResult<Estimate> {
-        match &self.scalars.rate {
+        match &self.scalars().rate {
             RateScalars::Absolute { generated, .. } => Ok((**generated).clone()),
             RateScalars::ShapeOnly => Err(LikelihoodError::AbsoluteRateUnavailable(format!(
                 "{} (generated fitted yield)",
@@ -403,8 +469,8 @@ impl Yield {
 
     /// Compare the accepted fitted yield with the observed yield.
     pub fn rate_closure(&self) -> RateClosure {
-        let observed_selected = self.scalars.selected.clone();
-        let (accepted_fitted, generated_fitted) = match &self.scalars.rate {
+        let observed_selected = self.scalars().selected.clone();
+        let (accepted_fitted, generated_fitted) = match &self.scalars().rate {
             RateScalars::ShapeOnly => {
                 return RateClosure {
                     observed_selected,
@@ -453,6 +519,58 @@ impl Yield {
             reason,
         }
     }
+}
+
+fn validate_ensemble(
+    likelihood: &Likelihood,
+    term_name: &str,
+    ensemble: Option<&Ensemble>,
+) -> LikelihoodResult<()> {
+    let model_digest = likelihood.intensity_model_digest(term_name)?;
+    let has_absolute_rate = likelihood.intensity_has_absolute_rate(term_name)?;
+    if let Some(ensemble) = ensemble {
+        let names = likelihood
+            .params()
+            .free_params()
+            .iter()
+            .map(|id| likelihood.params().name(*id).map(str::to_owned))
+            .collect::<Result<Vec<_>, _>>()?;
+        if names != ensemble.parameter_names() {
+            return Err(LikelihoodError::InvalidCrossSection(
+                "ensemble parameter names do not match the likelihood".to_owned(),
+            ));
+        }
+        for values in ensemble.draws() {
+            likelihood.params().validate_free_values(values)?;
+        }
+        for replica in ensemble.replicas() {
+            if replica.intensity_model_digest(term_name)? != model_digest {
+                return Err(LikelihoodError::InvalidCrossSection(
+                    "ensemble replica model does not match the likelihood".to_owned(),
+                ));
+            }
+            let replica_names = replica
+                .params()
+                .free_params()
+                .iter()
+                .map(|id| replica.params().name(*id).map(str::to_owned))
+                .collect::<Result<Vec<_>, _>>()?;
+            if replica_names != names {
+                return Err(LikelihoodError::InvalidCrossSection(
+                    "ensemble replica parameter names do not match the likelihood".to_owned(),
+                ));
+            }
+            for values in ensemble.draws() {
+                replica.params().validate_free_values(values)?;
+            }
+            if replica.intensity_has_absolute_rate(term_name)? != has_absolute_rate {
+                return Err(LikelihoodError::InvalidCrossSection(
+                    "ensemble replica rate semantics do not match the likelihood".to_owned(),
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 fn evaluate_estimate(

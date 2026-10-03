@@ -24,6 +24,9 @@ SIZES = {'quick': (128, 512), 'small': (2_000, 20_000), 'reference': (20_000, 20
 WORKFLOWS = ('likelihood-5', 'likelihood-12', 'bootstrap', 'parquet')
 # Calibration must not turn materially unstable repeats into a broad allowance.
 MAX_REPEAT_ROUNDOFF = 1e-12
+# The unchanged-worker control reached 548 ULPs. This maintainer-approved
+# floor allows bounded parallel roundoff without using candidate deltas.
+MIN_ROUNDOFF_ULPS = 1024
 
 
 def invalid(message):
@@ -84,7 +87,7 @@ def calibrate(runs):
             'spread': max(row[field] for row in flattened) - min(row[field] for row in flattened),
             'absolute_tolerance': max(
                 4 * (max(row[field] for row in flattened) - min(row[field] for row in flattened)),
-                32 * math.ulp(max(abs(row[field]) for row in flattened)),
+                MIN_ROUNDOFF_ULPS * math.ulp(max(abs(row[field]) for row in flattened)),
             ),
         }
         for field in flattened[0]
@@ -219,6 +222,7 @@ def compare(before, after):
     return {
         'schema_version': 1,
         'comparison_policy': 'baseline-roundoff',
+        'min_roundoff_ulps': MIN_ROUNDOFF_ULPS,
         'max_repeat_roundoff': MAX_REPEAT_ROUNDOFF,
         'scientific_equivalence': equivalent,
         'cases': cases,

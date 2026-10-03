@@ -302,20 +302,6 @@ fn likelihood_workflow(config: &Config, recorder: &mut Recorder) -> Result<(Scie
         .iter()
         .map(|replica| diagnostics(replica))
         .collect::<Vec<_>>();
-    let section = recorder.measure("cross_section_total", || {
-        Ok(likelihood.cross_section(
-            "sample",
-            generated.ok_or("bootstrap requires generated MC")?,
-            Luminosity::new(10.0, AreaUnit::Nanobarn)?,
-            parameters,
-            Some(ensemble),
-        )?)
-    })?;
-    science.insert(
-        "cross_section".into(),
-        json!({"value": section.total().value(),
-        "draws": section.total().draws(), "bootstrap_std": section.total().std()?}),
-    );
     let projections = [
         Projection::new(
             "mass",
@@ -335,6 +321,33 @@ fn likelihood_workflow(config: &Config, recorder: &mut Recorder) -> Result<(Scie
     let components = (0..config.waves)
         .map(|wave| (format!("wave_{wave}"), vec![format!("wave_{wave}")]))
         .collect::<HashMap<_, _>>();
+    // Optional differential check: both APIs receive these exact fitted inputs.
+    // Verification runs are separate from performance measurements because they
+    // execute and retain both paths in one process.
+    let separate_inputs = std::env::var_os("LADDU_CPU_VERIFY_SHARED").map(|_| {
+        (
+            generated.clone().expect("bootstrap generated MC"),
+            parameters.clone(),
+            ensemble.clone(),
+        )
+    });
+    // Construction evaluates totals and the requested projections together.
+    let section = recorder.measure("cross_section_total", || {
+        Ok(likelihood.cross_section_with_projections(
+            "sample",
+            generated.ok_or("bootstrap requires generated MC")?,
+            Luminosity::new(10.0, AreaUnit::Nanobarn)?,
+            parameters,
+            Some(ensemble),
+            &projections,
+            &components,
+        )?)
+    })?;
+    science.insert(
+        "cross_section".into(),
+        json!({"value": section.total().value(),
+        "draws": section.total().draws(), "bootstrap_std": section.total().std()?}),
+    );
     let projected = recorder.measure("component_projections", || {
         Ok(section.project_many(&projections, &components)?)
     })?;
@@ -344,10 +357,35 @@ fn likelihood_workflow(config: &Config, recorder: &mut Recorder) -> Result<(Scie
             science.insert(format!("projection_{name}_{component}"), binned(estimate)?);
         }
     }
+    let separate_science = if let Some((generated, parameters, ensemble)) = separate_inputs {
+        let separate = likelihood.cross_section(
+            "sample",
+            generated,
+            Luminosity::new(10.0, AreaUnit::Nanobarn)?,
+            parameters,
+            Some(ensemble),
+        )?;
+        let mut reference = science.clone();
+        reference.insert(
+            "cross_section".into(),
+            json!({"value": separate.total().value(), "draws": separate.total().draws(),
+                "bootstrap_std": separate.total().std()?}),
+        );
+        for (name, projection) in separate.project_many(&projections, &components)? {
+            reference.insert(format!("projection_{name}"), binned(projection.total())?);
+            for (component, estimate) in projection.components() {
+                reference.insert(format!("projection_{name}_{component}"), binned(estimate)?);
+            }
+        }
+        Some(reference)
+    } else {
+        None
+    };
     Ok((
         science,
         json!({"likelihood": diagnostics(&likelihood), "replica_diagnostics": replica_diagnostics,
-        "pairing": pairing, "component_count": components.len(), "projection_axes": ["mass", "cos_theta"]}),
+        "pairing": pairing, "component_count": components.len(), "projection_axes": ["mass", "cos_theta"],
+        "separate_science": separate_science}),
     ))
 }
 

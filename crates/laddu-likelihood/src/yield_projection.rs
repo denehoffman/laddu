@@ -2,7 +2,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use laddu_data::data::Dataset;
+use laddu_data::data::{Dataset, accurate::AccurateF64};
 use laddu_expr::ExprNodeStructuralKey;
 use laddu_runtime::{Execution, FinalUpperEdge, checked_bin_count};
 
@@ -303,6 +303,44 @@ impl ComponentYieldProjection {
 }
 
 impl YieldProjection {
+    pub(crate) fn scalar_estimates(
+        &self,
+        source_id: Option<u64>,
+        selected_values: &[f64],
+        selected_variance: f64,
+        accepted_values: &[f64],
+    ) -> LikelihoodResult<(crate::Estimate, crate::Estimate, crate::Estimate)> {
+        let estimate =
+            |central, draws, component, variance, identity| -> LikelihoodResult<crate::Estimate> {
+                Ok(crate::Estimate::with_source_id(central, draws, source_id)?
+                    .with_fill_variance(component, variance, identity)
+                    .with_paired_bootstrap(self.has_replica_datasets))
+            };
+        Ok((
+            estimate(
+                selected_values[0],
+                selected_values[1..].to_vec(),
+                ErrorComponent::DataFill,
+                selected_variance,
+                self.data_source_id,
+            )?,
+            estimate(
+                accepted_values[0],
+                accepted_values[1..].to_vec(),
+                ErrorComponent::AcceptedMcFill,
+                self.accepted_fill_variance[0],
+                self.accepted_source_id,
+            )?,
+            estimate(
+                self.generated[0],
+                self.generated_draws.iter().map(|draw| draw[0]).collect(),
+                ErrorComponent::GeneratedMcFill,
+                self.generated_fill_variance[0],
+                self.generated_source_id,
+            )?,
+        ))
+    }
+
     pub(crate) fn bin_volumes(&self) -> &[f64] {
         &self.bin_volumes
     }
@@ -527,6 +565,39 @@ impl Yield {
         projections: &[Projection],
         components: &HashMap<String, Vec<String>>,
     ) -> LikelihoodResult<YieldProjectionSet> {
+        self.projection_set_impl(projections, components, false)
+    }
+
+    pub(crate) fn projection_set_with_totals(
+        &self,
+        projections: &[Projection],
+        components: &HashMap<String, Vec<String>>,
+    ) -> LikelihoodResult<(YieldProjection, YieldProjectionSet)> {
+        if projections.is_empty() {
+            return Err(invalid("at least one projection is required"));
+        }
+        let mut name = "__laddu_scalar_total".to_owned();
+        while projections.iter().any(|request| request.name() == name) {
+            name.push('_');
+        }
+        let mut requests = projections.to_vec();
+        // A constant coordinate includes every event, independently of the
+        // requested axes' range, and has unit bin volume.
+        requests.push(Projection::new(
+            name,
+            vec![Axis::new(0.0.into(), vec![-0.5, 0.5])?],
+        )?);
+        let mut result = self.projection_set_impl(&requests, components, true)?;
+        let (_, total) = result.entries.pop().expect("appended scalar projection");
+        Ok((total, result))
+    }
+
+    fn projection_set_impl(
+        &self,
+        projections: &[Projection],
+        components: &HashMap<String, Vec<String>>,
+        scalar_totals: bool,
+    ) -> LikelihoodResult<YieldProjectionSet> {
         if projections.is_empty() {
             return Err(invalid("at least one projection is required"));
         }
@@ -569,7 +640,17 @@ impl Yield {
                 Ok((name.clone(), tags))
             })
             .collect::<LikelihoodResult<HashMap<_, _>>>()?;
-        let (unique, indexes) = deduplicate_projections(projections);
+        let (unique, indexes) = if scalar_totals {
+            // The private total uses compensated scalar accumulation. Keep it
+            // separate even when a public axis has identical coordinates/bins.
+            let (mut unique, mut indexes) =
+                deduplicate_projections(&projections[..projections.len() - 1]);
+            indexes.push(unique.len());
+            unique.push(projections.last().expect("scalar projection"));
+            (unique, indexes)
+        } else {
+            deduplicate_projections(projections)
+        };
         let coordinates = ProjectionCoordinates::prepare(&unique, execution)?;
         let mut plans = unique
             .iter()
@@ -608,6 +689,9 @@ impl Yield {
                     .flat_map(|ensemble| ensemble.draws().iter().map(Vec::as_slice)),
             )
             .collect::<Vec<_>>();
+        let scalar_index = scalar_totals.then(|| *indexes.last().expect("scalar projection"));
+        let mut scalar_generated =
+            scalar_totals.then(|| vec![AccurateF64::zero(); parameters.len()]);
         let bins = plans
             .iter()
             .try_fold(0usize, |sum, plan| sum.checked_add(plan.volumes.len()))
@@ -646,6 +730,14 @@ impl Yield {
                         .checked_mul(aliases.len() + 1)?
                         .checked_mul(self.likelihood().params().len())?
                         .checked_mul(16)?,
+                )
+            })
+            .and_then(|bytes| {
+                bytes.checked_add(
+                    scalar_generated
+                        .as_ref()
+                        .map_or(0, Vec::len)
+                        .checked_mul(std::mem::size_of::<AccurateF64>())?,
                 )
             })
             .ok_or_else(|| invalid("projection workspace size overflow"))?;
@@ -759,34 +851,89 @@ impl Yield {
                     } else {
                         &mut model.accepted
                     };
-                    model.evaluator.plan.visit_batch_many(
-                        execution,
-                        &model.parameters,
-                        batch,
-                        |parameter, values| {
-                            let real = values.iter().map(|value| value.re).collect::<Vec<_>>();
-                            for (index, assignment) in assignments.iter().enumerate() {
-                                assignment.accumulate_weighted_block(
-                                    0,
-                                    &weights,
-                                    &real,
-                                    &mut bins.values[index][parameter],
-                                );
-                                if parameter == 0 {
-                                    assignment.accumulate_weighted_block_squared(
+                    model
+                        .evaluator
+                        .plan
+                        .visit_batch_many(
+                            execution,
+                            &model.parameters,
+                            batch,
+                            |parameter, values| {
+                                if scalar_totals
+                                    && generated_space
+                                    && model.tags.is_none()
+                                    && let Some(value) = values
+                                        .iter()
+                                        .find(|value| value.re <= 0.0 || value.re.is_nan())
+                                {
+                                    return Err(
+                                        laddu_compile::ReductionPlan::weighted_positive_real()
+                                            .apply(*value)
+                                            .expect_err("non-positive generated intensity")
+                                            .into(),
+                                    );
+                                }
+                                let real = values.iter().map(|value| value.re).collect::<Vec<_>>();
+                                if generated_space
+                                    && model.tags.is_none()
+                                    && let Some(sums) = &mut scalar_generated
+                                {
+                                    for (weight, value) in weights.iter().zip(&real) {
+                                        sums[parameter].push(weight * value);
+                                    }
+                                }
+                                for (index, assignment) in assignments.iter().enumerate() {
+                                    if scalar_index == Some(index) {
+                                        // Scalar generated values use the compensated
+                                        // accumulator above; accepted values and selected
+                                        // weights come from their established reductions.
+                                        // Only central full-model fill variance is needed.
+                                        if model.tags.is_none() && parameter == 0 {
+                                            assignment.accumulate_weighted_block_squared(
+                                                0,
+                                                &weights,
+                                                &real,
+                                                &mut bins.variances[index],
+                                            );
+                                        }
+                                        continue;
+                                    }
+                                    assignment.accumulate_weighted_block(
                                         0,
                                         &weights,
                                         &real,
-                                        &mut bins.variances[index],
+                                        &mut bins.values[index][parameter],
                                     );
+                                    if parameter == 0 {
+                                        assignment.accumulate_weighted_block_squared(
+                                            0,
+                                            &weights,
+                                            &real,
+                                            &mut bins.variances[index],
+                                        );
+                                    }
                                 }
-                            }
-                            Ok(())
-                        },
-                    )?;
+                                Ok(())
+                            },
+                        )
+                        .map_err(|error| {
+                            crate::likelihood::map_reduction_error(
+                                if generated_space {
+                                    "generated MC"
+                                } else {
+                                    "accepted MC"
+                                },
+                                error,
+                            )
+                        })?;
                 }
                 Ok(())
             })?;
+        }
+        if let (Some(index), Some(sums)) = (scalar_index, scalar_generated) {
+            for (values, sum) in models[0].generated.values[index].iter_mut().zip(sums) {
+                values[0] = sum.finish();
+            }
         }
         for model in &models[1..] {
             for values in model
@@ -939,7 +1086,12 @@ impl Yield {
                     None,
                 )?;
                 let projected = context.projection_set_with_components(&requests, components)?;
-                for (result, (_, draw)) in results.iter_mut().zip(projected.entries) {
+                for (index, (result, (_, mut draw))) in
+                    results.iter_mut().zip(projected.entries).enumerate()
+                {
+                    if scalar_index == Some(index) {
+                        draw.generated[0] = context.generated_fitted_yield()?.value();
+                    }
                     result.source_id = Some(ensemble.source_id());
                     result.has_replica_datasets = !ensemble.replicas().is_empty();
                     result.selected_draws.push(draw.selected);
@@ -1257,7 +1409,7 @@ fn finite_observed_bins(values: &[f64]) -> Vec<f64> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-struct ProjectionKey(Vec<AxisKey>);
+pub(crate) struct ProjectionKey(Vec<AxisKey>);
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 struct AxisKey {
@@ -1267,7 +1419,7 @@ struct AxisKey {
 }
 
 impl ProjectionKey {
-    fn new(axes: &[Axis]) -> Self {
+    pub(crate) fn new(axes: &[Axis]) -> Self {
         Self(
             axes.iter()
                 .map(|axis| {

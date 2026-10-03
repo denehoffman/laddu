@@ -5,6 +5,7 @@ use std::{collections::HashMap, sync::Arc};
 use laddu_data::data::Dataset;
 
 use crate::measurement::{pool_fitted_binned, pool_fitted_scalar, validate_factor};
+use crate::yield_projection::ProjectionKey;
 use crate::{
     AreaUnit, Axis, BinnedEstimate, Ensemble, Estimate, Likelihood, LikelihoodError,
     LikelihoodResult, Luminosity, Projection, RateClosure, Yield, YieldBinValidity,
@@ -64,6 +65,26 @@ pub struct CrossSection {
     data: Option<Estimate>,
     unit: AreaUnit,
     total_effective_exposure: f64,
+    prepared_projections: Option<Arc<PreparedProjections>>,
+}
+
+#[derive(Clone)]
+struct PreparedProjections {
+    requests: Vec<(String, ProjectionKey)>,
+    components: HashMap<String, Vec<String>>,
+    results: Vec<(String, CrossSectionProjection)>,
+}
+
+fn projection_keys(projections: &[Projection]) -> Vec<(String, ProjectionKey)> {
+    projections
+        .iter()
+        .map(|request| {
+            (
+                request.name().to_owned(),
+                ProjectionKey::new(request.axes()),
+            )
+        })
+        .collect()
 }
 
 impl std::fmt::Debug for CrossSection {
@@ -92,6 +113,10 @@ impl CrossSection {
     ) -> LikelihoodResult<Self> {
         let yields =
             Yield::with_ensemble(likelihood, term_name, generated_mc, parameters, ensemble)?;
+        Self::from_yields(yields, luminosity)
+    }
+
+    fn from_yields(yields: Yield, luminosity: Luminosity) -> LikelihoodResult<Self> {
         if !yields.has_absolute_rate() {
             return Err(LikelihoodError::AbsoluteRateUnavailable(
                 "cross sections require an extended intensity likelihood".to_owned(),
@@ -112,7 +137,55 @@ impl CrossSection {
             data: Some(data),
             unit: luminosity.unit(),
             total_effective_exposure: luminosity.value(),
+            prepared_projections: None,
         })
+    }
+
+    /// Construct totals and a fixed set of projections using shared MC passes.
+    ///
+    /// The requested projection outputs are retained for matching `project_many`
+    /// calls and shared by clones. Other requests are evaluated normally without
+    /// extending the retained set. Integral and event buffers are not retained.
+    ///
+    /// # Errors
+    /// Returns an error for invalid rate, parameters, ensemble, or projections.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_with_projections(
+        likelihood: Arc<Likelihood>,
+        term_name: impl Into<String>,
+        generated_mc: Dataset,
+        luminosity: Luminosity,
+        parameters: Vec<f64>,
+        ensemble: Option<Ensemble>,
+        projections: &[Projection],
+        components: &HashMap<String, Vec<String>>,
+    ) -> LikelihoodResult<Self> {
+        let (yields, projected) = Yield::with_projections(
+            likelihood,
+            term_name.into(),
+            generated_mc,
+            parameters,
+            ensemble,
+            projections,
+            components,
+        )?;
+        let results = projected
+            .into_entries()
+            .into_iter()
+            .map(|(name, value)| {
+                Ok((
+                    name,
+                    CrossSectionProjection::from_yield_projection(value, &luminosity)?,
+                ))
+            })
+            .collect::<LikelihoodResult<Vec<_>>>()?;
+        let mut section = Self::from_yields(yields, luminosity)?;
+        section.prepared_projections = Some(Arc::new(PreparedProjections {
+            requests: projection_keys(projections),
+            components: components.clone(),
+            results,
+        }));
+        Ok(section)
     }
 
     /// Fitted generated-space intensity divided by integrated luminosity.
@@ -185,6 +258,12 @@ impl CrossSection {
     ) -> LikelihoodResult<Vec<(String, CrossSectionProjection)>> {
         if projections.is_empty() {
             return Err(invalid("at least one projection is required"));
+        }
+        if let Some(prepared) = &self.prepared_projections
+            && prepared.components == *components
+            && prepared.requests == projection_keys(projections)
+        {
+            return Ok(prepared.results.clone());
         }
         match self.source.as_ref() {
             Source::Single { yields, luminosity } => yields
@@ -313,6 +392,7 @@ impl CrossSection {
             data: None,
             unit,
             total_effective_exposure,
+            prepared_projections: None,
         })
     }
 }
@@ -439,6 +519,36 @@ impl CrossSectionProjection {
 }
 
 impl Likelihood {
+    /// Construct a fitted cross section with shared total/projection evaluation.
+    ///
+    /// Requested outputs are retained as a fixed set; matching subsequent
+    /// `project_many` calls reuse them. See [`CrossSection::new_with_projections`].
+    ///
+    /// # Errors
+    /// Returns an error for invalid rate, parameters, ensemble, or projections.
+    #[allow(clippy::too_many_arguments)]
+    pub fn cross_section_with_projections(
+        self: &Arc<Self>,
+        term_name: impl Into<String>,
+        generated_mc: Dataset,
+        luminosity: Luminosity,
+        parameters: Vec<f64>,
+        ensemble: Option<Ensemble>,
+        projections: &[Projection],
+        components: &HashMap<String, Vec<String>>,
+    ) -> LikelihoodResult<CrossSection> {
+        CrossSection::new_with_projections(
+            Arc::clone(self),
+            term_name,
+            generated_mc,
+            luminosity,
+            parameters,
+            ensemble,
+            projections,
+            components,
+        )
+    }
+
     /// Prepare the sole cross-section pathway for an absolute-rate term.
     ///
     /// # Errors
@@ -465,6 +575,7 @@ impl Likelihood {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ErrorBudget;
     use approx::assert_relative_eq;
     use laddu_compile::CompiledModel;
     use laddu_data::{
@@ -483,6 +594,358 @@ mod tests {
         )
         .unwrap();
         Dataset::from_batches(vec![batch]).unwrap()
+    }
+
+    #[test]
+    fn prepared_projections_preserve_paired_totals_outside_requested_axes() {
+        let model = CompiledModel::from_expr(
+            &Expr::from(parameter!("scale", initial: 1.0))
+                .tagged("signal")
+                .norm_sqr(),
+        )
+        .unwrap();
+        let data = dataset(&[(0.0, 1.0), (2.0, 2.0)]);
+        let accepted = dataset(&[(0.0, 1.0), (2.0, 2.0)]);
+        let generated = dataset(&[(0.0, 1.0), (2.0, 2.0), (4.0, 3.0)]);
+        let likelihood = Arc::new(
+            Likelihood::new([
+                crate::ExtendedNllTerm::new("signal", &model, &data, &accepted).unwrap(),
+            ])
+            .unwrap(),
+        );
+        let ensemble = Ensemble::bootstrap_fit(&likelihood, 2, 13, |_replica, index| {
+            Ok::<_, std::convert::Infallible>(vec![1.0 + index as f64])
+        })
+        .unwrap();
+        let requests = [Projection::new(
+            "narrow",
+            vec![Axis::new(event_scalar("x"), vec![-0.5, 0.5]).unwrap()],
+        )
+        .unwrap()];
+        let components = HashMap::from([("signal".to_owned(), vec!["signal".to_owned()])]);
+        let luminosity = Luminosity::new(2.0, AreaUnit::Nanobarn).unwrap();
+        let separate = likelihood
+            .cross_section(
+                "signal",
+                generated.clone(),
+                luminosity.clone(),
+                vec![1.0],
+                Some(ensemble.clone()),
+            )
+            .unwrap();
+        let prepared = likelihood
+            .cross_section_with_projections(
+                "signal",
+                generated,
+                luminosity,
+                vec![1.0],
+                Some(ensemble),
+                &requests,
+                &components,
+            )
+            .unwrap();
+        assert_eq!(prepared.total().value(), 3.0);
+        assert_eq!(prepared.total().draws(), &[3.0, 12.0]);
+        assert_eq!(prepared.total().source_id(), separate.total().source_id());
+        assert_eq!(
+            prepared.data_yield().unwrap().draws(),
+            separate.data_yield().unwrap().draws()
+        );
+        assert_eq!(prepared.rate_closure(), separate.rate_closure());
+        assert_relative_eq!(
+            prepared
+                .total()
+                .error_with_budget(ErrorBudget::default())
+                .unwrap()
+                .error(),
+            separate
+                .total()
+                .error_with_budget(ErrorBudget::default())
+                .unwrap()
+                .error()
+        );
+        let expected = separate.project_many(&requests, &components).unwrap();
+        let actual = prepared.project_many(&requests, &components).unwrap();
+        assert_eq!(actual[0].1.total().values(), expected[0].1.total().values());
+        assert_eq!(actual[0].1.total().draws(), expected[0].1.total().draws());
+        assert_eq!(
+            actual[0].1.components()["signal"].values(),
+            expected[0].1.components()["signal"].values()
+        );
+        let factor = Estimate::central(0.5).unwrap();
+        let a = CrossSection::combine_with_covariance(
+            &[
+                (prepared.clone(), Estimate::central(1.0).unwrap()),
+                (prepared, factor.clone()),
+            ],
+            vec![vec![0.01, 0.002], vec![0.002, 0.01]],
+        )
+        .unwrap();
+        let b = CrossSection::combine_with_covariance(
+            &[
+                (separate.clone(), Estimate::central(1.0).unwrap()),
+                (separate, factor),
+            ],
+            vec![vec![0.01, 0.002], vec![0.002, 0.01]],
+        )
+        .unwrap();
+        assert_eq!(a.total_effective_exposure(), 3.0);
+        assert_eq!(a.total().draws(), b.total().draws());
+        assert_relative_eq!(
+            a.total()
+                .error_with_budget(ErrorBudget::default())
+                .unwrap()
+                .error(),
+            b.total()
+                .error_with_budget(ErrorBudget::default())
+                .unwrap()
+                .error()
+        );
+        let a = a.project_many(&requests, &components).unwrap();
+        let b = b.project_many(&requests, &components).unwrap();
+        assert_eq!(a[0].1.total().draws(), b[0].1.total().draws());
+        assert_eq!(
+            a[0].1.components()["signal"].draws(),
+            b[0].1.components()["signal"].draws()
+        );
+    }
+
+    #[test]
+    fn prepared_totals_preserve_arbitrary_replica_rows_and_errors() {
+        let model = CompiledModel::from_expr(
+            &(Expr::from(parameter!("scale", initial: 1.0)) * (event_scalar("x") + 1.0)),
+        )
+        .unwrap();
+        let data = dataset(&[(0.0, 1.0)]);
+        let central = Arc::new(
+            Likelihood::new([crate::ExtendedNllTerm::new("signal", &model, &data, &data).unwrap()])
+                .unwrap(),
+        );
+        let replica_data = dataset(&[(2.0, 3.0)]);
+        let replica = Arc::new(
+            Likelihood::new([crate::ExtendedNllTerm::new(
+                "signal",
+                &model,
+                &replica_data,
+                &replica_data,
+            )
+            .unwrap()])
+            .unwrap(),
+        );
+        let ensemble =
+            Ensemble::with_replicas(vec!["scale".into()], vec![vec![2.0]], vec![replica]).unwrap();
+        let requests = [Projection::new(
+            "x",
+            vec![Axis::new(event_scalar("x"), vec![-0.5, 0.5]).unwrap()],
+        )
+        .unwrap()];
+        let luminosity = Luminosity::new(2.0, AreaUnit::Nanobarn).unwrap();
+        let generated = dataset(&[(0.0, 1.0), (2.0, 2.0)]);
+        let prepared = central
+            .cross_section_with_projections(
+                "signal",
+                generated.clone(),
+                luminosity.clone(),
+                vec![1.0],
+                Some(ensemble.clone()),
+                &requests,
+                &HashMap::new(),
+            )
+            .unwrap();
+        let separate = central
+            .cross_section(
+                "signal",
+                generated,
+                luminosity.clone(),
+                vec![1.0],
+                Some(ensemble),
+            )
+            .unwrap();
+        assert_eq!(prepared.total().value(), 3.5);
+        assert_eq!(prepared.total().draws(), &[7.0]);
+        assert_eq!(prepared.accepted_integral().unwrap().draws(), &[18.0]);
+        assert_eq!(prepared.data_yield().unwrap().draws(), &[3.0]);
+        assert_eq!(prepared.rate_closure(), separate.rate_closure());
+        let a = prepared.project_many(&requests, &HashMap::new()).unwrap();
+        let b = separate.project_many(&requests, &HashMap::new()).unwrap();
+        assert_eq!(a[0].1.total().draws(), b[0].1.total().draws());
+        for (generated, expected) in [
+            (dataset(&[]), "missing"),
+            (dataset(&[(0.0, 0.0)]), "zero"),
+            (dataset(&[(-2.0, 1.0)]), "intensity"),
+        ] {
+            let error = central
+                .cross_section_with_projections(
+                    "signal",
+                    generated,
+                    luminosity.clone(),
+                    vec![1.0],
+                    None,
+                    &requests,
+                    &HashMap::new(),
+                )
+                .unwrap_err();
+            assert!(
+                match expected {
+                    "missing" => matches!(error, LikelihoodError::MissingGeneratedSupport),
+                    "zero" => matches!(error, LikelihoodError::ZeroGeneratedIntegral),
+                    _ => matches!(
+                        error,
+                        LikelihoodError::NonPositiveIntensity {
+                            dataset: "generated MC",
+                            ..
+                        }
+                    ),
+                },
+                "{expected}: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn prepared_totals_preserve_compensated_signed_weights() {
+        let model = CompiledModel::from_expr(&Expr::from(1.0).tagged("signal")).unwrap();
+        let data = dataset(&[(0.0, 1e16), (0.0, 1.0), (0.0, 1.0), (0.0, -1e16)]);
+        let accepted = dataset(&[(0.0, 1.0)]);
+        let likelihood = Arc::new(
+            Likelihood::new([
+                crate::ExtendedNllTerm::new("signal", &model, &data, &accepted).unwrap(),
+            ])
+            .unwrap(),
+        );
+        let replica_data = dataset(&[
+            (0.0, 1e16),
+            (0.0, 1.0),
+            (0.0, 1.0),
+            (0.0, 1.0),
+            (0.0, 1.0),
+            (0.0, -1e16),
+        ]);
+        let replica = Arc::new(
+            Likelihood::new([crate::ExtendedNllTerm::new(
+                "signal",
+                &model,
+                &replica_data,
+                &accepted,
+            )
+            .unwrap()])
+            .unwrap(),
+        );
+        let ensemble = Ensemble::with_replicas(vec![], vec![vec![]], vec![replica]).unwrap();
+        let requests = [Projection::new(
+            "constant",
+            vec![Axis::new(0.0.into(), vec![-0.5, 0.5]).unwrap()],
+        )
+        .unwrap()];
+        let components = HashMap::from([("signal".to_owned(), vec!["signal".to_owned()])]);
+        let luminosity = Luminosity::new(1.0, AreaUnit::Nanobarn).unwrap();
+        let generated = dataset(&[(0.0, 1e16), (0.0, 1.0), (0.0, -1e16), (0.0, 1.0)]);
+        let prepared = likelihood
+            .cross_section_with_projections(
+                "signal",
+                generated.clone(),
+                luminosity.clone(),
+                vec![],
+                Some(ensemble.clone()),
+                &requests,
+                &components,
+            )
+            .unwrap();
+        let separate = likelihood
+            .cross_section("signal", generated, luminosity, vec![], Some(ensemble))
+            .unwrap();
+        assert_eq!(
+            prepared.data_yield().unwrap().value(),
+            separate.data_yield().unwrap().value()
+        );
+        assert_eq!(
+            prepared.data_yield().unwrap().draws(),
+            separate.data_yield().unwrap().draws()
+        );
+        assert_eq!(prepared.rate_closure(), separate.rate_closure());
+        assert_eq!(prepared.total().value(), 2.0);
+        assert_eq!(prepared.total().draws(), separate.total().draws());
+        let actual = prepared.project_many(&requests, &components).unwrap();
+        let expected = separate.project_many(&requests, &components).unwrap();
+        assert_eq!(actual[0].1.total().values(), expected[0].1.total().values());
+        assert_eq!(actual[0].1.total().draws(), expected[0].1.total().draws());
+        assert_eq!(
+            actual[0].1.components()["signal"].values(),
+            expected[0].1.components()["signal"].values()
+        );
+    }
+
+    #[test]
+    fn prepared_scalar_fill_budgets_match_for_native_and_general_normalization() {
+        use laddu_runtime::{Execution, ExecutionOptions, NormalizationMode};
+        let model = CompiledModel::from_expr(
+            &(Expr::from(parameter!("scale", initial: 1.0)) * event_scalar("x")).norm_sqr(),
+        )
+        .unwrap();
+        let data = dataset(&[(1.0, 1.0), (2.0, 2.0)]);
+        let generated = dataset(&[(1.0, 3.0), (3.0, 2.0)]);
+        let requests = [Projection::new(
+            "x",
+            vec![Axis::new(event_scalar("x"), vec![0.0, 2.0]).unwrap()],
+        )
+        .unwrap()];
+        let budget = ErrorBudget {
+            data_fill: true,
+            accepted_mc_fill: true,
+            generated_mc_fill: true,
+            ensemble: false,
+            luminosity: true,
+            ..ErrorBudget::default()
+        };
+        for normalization in [NormalizationMode::Auto, NormalizationMode::General] {
+            let execution = Execution::local(ExecutionOptions {
+                normalization,
+                ..ExecutionOptions::default()
+            })
+            .unwrap();
+            let likelihood = Arc::new(
+                Likelihood::with_execution(
+                    [crate::ExtendedNllTerm::new("signal", &model, &data, &data).unwrap()],
+                    &execution,
+                )
+                .unwrap(),
+            );
+            let luminosity = Luminosity::new(2.0, AreaUnit::Nanobarn)
+                .unwrap()
+                .with_relative_uncertainty(0.1, 77)
+                .unwrap();
+            let prepared = likelihood
+                .cross_section_with_projections(
+                    "signal",
+                    generated.clone(),
+                    luminosity.clone(),
+                    vec![1.0],
+                    None,
+                    &requests,
+                    &HashMap::new(),
+                )
+                .unwrap();
+            let separate = likelihood
+                .cross_section("signal", generated.clone(), luminosity, vec![1.0], None)
+                .unwrap();
+            assert_eq!(prepared.total().value(), 10.5);
+            for (estimate, variance) in [
+                (prepared.data_yield().unwrap(), 5.0),
+                (prepared.accepted_integral().unwrap(), 65.0),
+                (prepared.generated_integral().unwrap(), 333.0),
+                (prepared.total(), 84.3525),
+            ] {
+                assert_relative_eq!(
+                    estimate.error_with_budget(budget).unwrap().error().powi(2),
+                    variance,
+                    epsilon = 1e-12
+                );
+            }
+            assert_relative_eq!(
+                prepared.total().error_with_budget(budget).unwrap().error(),
+                separate.total().error_with_budget(budget).unwrap().error()
+            );
+        }
     }
 
     #[test]
