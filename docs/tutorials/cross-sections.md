@@ -117,6 +117,31 @@ axes. Streaming projections retain batch workspace and binned results, without
 retaining whole-dataset weights, coordinates, or intensity arrays. Paired observed
 replicas keep their own event weights and draw order.
 
+When you need both totals and projections, supply the named requests when
+constructing the cross section:
+
+```python
+axes = {"mass": mass_axis}
+components = {"S": ["S"], "P": ["P"]}
+section_a1 = joint.cross_section(
+    "a_1", generated_a1, luminosity_a1, fit.values,
+    projections=axes, components=components,
+)
+total = section_a1.total
+spectra = section_a1.project(axes, components=components)
+```
+
+The scalar total includes every generated event, even outside the requested
+axes. Its fill variance and paired uncertainty draws are collected during the
+same MC passes as the projections. Accepted scalar yields retain the likelihood's
+normalization strategy. The resulting section retains this fixed set of binned
+outputs; matching projection names, axes, and component selections reuse them.
+Other projection requests are evaluated normally and do not grow the retained
+set. Clones share the retained outputs, and period combinations reuse matching
+outputs from their members. Distributed execution keeps the established scalar
+evaluation path. Rust callers use `Likelihood::cross_section_with_projections`
+or `CrossSection::new_with_projections`.
+
 ## Combine runs of the same reaction
 
 The two A terms describe the same reaction in different runs. Evaluate the

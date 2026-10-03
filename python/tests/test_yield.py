@@ -3,9 +3,13 @@
 # ruff: noqa: PT009, PT027, S101
 
 import unittest
+from typing import TYPE_CHECKING
 
 import laddu as ld
 import numpy as np
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 
 def dataset(values: list[float], weights: list[float]) -> ld.Dataset:
@@ -13,6 +17,41 @@ def dataset(values: list[float], weights: list[float]) -> ld.Dataset:
 
 
 class FittedCrossSectionTests(unittest.TestCase):
+    def test_totals_share_projection_construction_and_combine(self) -> None:
+        model = ld.Model(ld.parameter('scale', initial=1.0).tagged('signal').norm_sqr())
+        data = dataset([0.0, 2.0], [1.0, 2.0])
+        generated = dataset([0.0, 2.0, 4.0], [1.0, 2.0, 3.0])
+        likelihood = ld.Likelihood([ld.ExtendedNLL(model, data=data, accepted_mc=data, name='signal')])
+        ensemble = ld.Ensemble.from_arrays([[1.0], [2.0]], parameter_names=['scale'])
+        axes: dict[str, ld.Axis | Sequence[ld.Axis]] = {'narrow': ld.Axis(ld.scalar('x'), edges=[-0.5, 0.5])}
+        components: dict[str, Sequence[str]] = {'signal': ['signal']}
+        sections = [
+            likelihood.cross_section(
+                'signal',
+                generated,
+                ld.Luminosity(exposure, ld.AreaUnit.NANOBARN),
+                [1.0],
+                ensemble=ensemble,
+                projections=axes,
+                components=components,
+            )
+            for exposure in (2.0, 4.0)
+        ]
+        self.assertAlmostEqual(sections[0].total.central, 3.0)
+        np.testing.assert_allclose(sections[0].total.draws, [3.0, 12.0])
+        self.assertEqual(sections[0].total.source_id, ensemble.source_id)
+        narrow = sections[0].project(axes, components=components)['narrow']
+        np.testing.assert_allclose(narrow.total.central, [0.5])
+        np.testing.assert_allclose(narrow.components['signal'].central, [0.5])
+        combined = ld.CrossSection.combine(sections)
+        self.assertAlmostEqual(combined.total.central, 2.0)
+        np.testing.assert_allclose(combined.total.draws, [2.0, 8.0])
+        pooled = combined.project(axes, components=components)['narrow']
+        np.testing.assert_allclose(pooled.total.central, [1.0 / 3.0])
+        np.testing.assert_allclose(pooled.total.draws, [[1.0 / 3.0], [4.0 / 3.0]])
+        wider = sections[0].project(ld.Axis(ld.scalar('x'), edges=[-0.5, 4.5]))
+        np.testing.assert_allclose(wider.total.central, [0.6])
+
     def test_low_acceptance_reports_fitted_rate_without_data_anchoring(self) -> None:
         model = ld.Model((ld.scalar('x') + 1.0).norm_sqr())
         data = dataset([0.0], [1.0])

@@ -789,6 +789,36 @@ impl Likelihood {
         term.intensity_integrals(generated_mc, &self.execution, has_absolute_rate)
     }
 
+    pub(crate) fn intensity_has_absolute_rate(&self, term_name: &str) -> LikelihoodResult<bool> {
+        let term = self
+            .terms
+            .iter()
+            .find(|term| term.name() == term_name)
+            .ok_or_else(|| LikelihoodError::MissingTerm(term_name.to_owned()))?;
+        if term.as_intensity().is_none() {
+            return Err(LikelihoodError::NotIntensityTerm(term_name.to_owned()));
+        }
+        Ok(term.has_absolute_rate())
+    }
+
+    pub(crate) fn intensity_accepted_integral(
+        &self,
+        term_name: &str,
+        free: &[f64],
+    ) -> LikelihoodResult<f64> {
+        let term = self
+            .terms
+            .iter()
+            .find(|term| term.name() == term_name)
+            .ok_or_else(|| LikelihoodError::MissingTerm(term_name.to_owned()))?;
+        let term = term
+            .as_intensity()
+            .ok_or_else(|| LikelihoodError::NotIntensityTerm(term_name.to_owned()))?;
+        let global = self.params.values(free)?;
+        let local = term.resolved_projection()?.project(&global)?;
+        term.normalization_value(&local, &self.execution)
+    }
+
     pub(crate) fn intensity_evaluator(
         &self,
         term_name: &str,
@@ -2504,7 +2534,7 @@ fn check_params(layout: &ParamLayout, params: &ParamValues) -> LikelihoodResult<
     }
 }
 
-fn map_reduction_error(
+pub(crate) fn map_reduction_error(
     dataset: &'static str,
     error: laddu_runtime::RuntimeError,
 ) -> LikelihoodError {

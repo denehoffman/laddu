@@ -16,6 +16,12 @@ uses a fresh process; cases run sequentially. Run on an otherwise idle machine.
 compiler, revision, working tree, machine, and build settings. Set `--binary` if
 using a different Cargo target directory.
 
+For a manual build used with `--no-build`, match the runner's feature flags:
+
+```sh
+cargo build -p laddu --example cpu_workflow --release --no-default-features --features fit
+```
+
 Inspect the frozen inputs without running anything:
 
 ```sh
@@ -111,7 +117,7 @@ The comparison reports median stage-time, total-time, and RSS ratios. Scientific
 comparison includes every fitted parameter, likelihood, replica draw, cross
 section, projected value, bootstrap uncertainty, bin count, and weight sum.
 For each numeric field the absolute tolerance is the larger of four times its
-observed baseline spread across repeats/thread counts and 32 ULPs at the largest
+observed baseline spread across repeats/thread counts and 1,024 ULPs at the largest
 baseline magnitude. The ULP floor allows small reduction changes when the
 measured spread is zero. Baseline variation must be collected before optimizing;
 candidate outputs never widen tolerances. Same-thread repeats may differ by
@@ -123,6 +129,13 @@ A missing/failed case, changed output
 shape, nonfinite result, or scientific difference beyond the tolerance fails
 comparison. Performance ratios themselves have no pass/fail threshold.
 
+On 2026-10-03 the maintainer approved increasing the ULP floor from 32 to 1,024
+after the unchanged-worker control reached 548 ULPs of variation. The new floor
+allows at most about `2.3e-13` relative error for normal nonzero f64 values. The
+baseline-spread multiplier and `1e-12` repeat-instability guard remain unchanged.
+Comparison reports record the ULP floor; preserve older strict reports when
+rechecking existing observations under the revised policy.
+
 The checked-in result artifacts and `baseline.md` document this checkout's
 baseline, stress run, and memory-stop check. Keep those artifacts unchanged;
 write later measurements under `target/` and present before/after results with
@@ -133,6 +146,20 @@ The raw results retain the original runner hash and observations. The initial
 `roundoff-gate.json` records acceptance under the current scientific-reproducibility
 policy. Reinterpreting existing measurements does not change their timing or
 scientific outputs.
+
+For performance ticket 03, the worker uses shared total/projection construction.
+Its `cross_section_total` stage now includes evaluation of the requested
+projections, while `component_projections` retrieves their retained outputs.
+Compare the **sum of these two stages** with the original worker's separate
+construction and projection stages, as well as total workflow time and peak RSS.
+The frozen model, inputs, fits, scientific outputs, and runner are unchanged.
+
+Set `LADDU_CPU_VERIFY_SHARED=1` for a separate differential correctness run.
+The worker also evaluates the standalone construction/projection APIs using the
+same fitted parameters and paired replica objects and records their scientific
+outputs in `diagnostics.separate_science`. Compare them using the tolerances
+from the original baseline. These verification runs execute both paths and
+must not be used as performance measurements.
 
 Print a compact summary of a JSON or compressed JSON artifact:
 
