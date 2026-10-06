@@ -92,6 +92,33 @@ python3 scripts/cpu_benchmark.py run --sizes reference --stress --repeats 1 --ou
 This uses 200 fitted, paired bootstrap replicas, including the full component
 projection path. It does not replace the routine eight-replica measurements.
 
+For standalone scalar preparation, select `--workflows bootstrap-scalar`.
+It uses the same native fitted bootstrap replicas, but constructs the total
+before evaluating projections. `--workflows bootstrap-arbitrary` exercises the
+same standalone API with independently generated observed and accepted rows per
+replica. Each replica is fitted from the central parameters; its seeds are
+`seed + 1000 + index` for data and `seed + 2000 + index` for accepted MC.
+This arbitrary ensemble has no native bootstrap sharing provenance or bootstrap
+seed. It tests the conservative fallback, rather than representing a resampling
+study. Event counts, weights, model, fit limits and generated MC stay identical.
+`bootstrap-arbitrary-data` keeps the central accepted MC but gives each fitted
+replica independently generated observed rows. Its ensemble also has no native
+sharing provenance: standalone scalar evaluation conservatively prepares each
+replica, while projections may share evaluation using the accepted dataset's
+identity. This mode isolates temporary integral-cache scaling from repeated
+accepted-normalization preparation and component-plan compilation.
+These opt-in modes work with both routine eight-replica and `--stress` runs:
+
+```sh
+python3 scripts/cpu_benchmark.py run --workflows bootstrap-scalar,bootstrap-arbitrary --sizes reference --variation
+python3 scripts/cpu_benchmark.py run --workflows bootstrap-arbitrary --sizes reference --stress --variation
+python3 scripts/cpu_benchmark.py run --workflows bootstrap-arbitrary-data --sizes reference --stress --variation
+```
+
+Stage records include live reservations and their high-water mark; final
+likelihood diagnostics describe retained data caches and normalization statistics.
+Do not sum shared native replica diagnostics as unique allocations.
+
 The RSS watchdog stops a worker above 28,000,000,000 bytes by default, saves
 completed stage records, and marks the case `memory_limit`. Its 10 ms polling
 interval permits overshoot; it is a controlled benchmark stop rather than a

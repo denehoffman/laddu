@@ -22,6 +22,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 SIZES = {'quick': (128, 512), 'small': (2_000, 20_000), 'reference': (20_000, 200_000)}
 WORKFLOWS = ('likelihood-5', 'likelihood-12', 'bootstrap', 'parquet')
+BOOTSTRAP_WORKFLOWS = ('bootstrap', 'bootstrap-scalar', 'bootstrap-arbitrary', 'bootstrap-arbitrary-data')
 # Calibration must not turn materially unstable repeats into a broad allowance.
 MAX_REPEAT_ROUNDOFF = 1e-12
 # The unchanged-worker control reached 548 ULPs. This maintainer-approved
@@ -353,9 +354,10 @@ def run_matrix(args, plan):
 
 def make_plan(args):
     cases = []
+    workflows = args.workflows.split(',') if args.workflows else ('bootstrap',) if args.stress else WORKFLOWS
     for size in args.sizes.split(','):
         data, mc = SIZES[size]
-        for workflow in ('bootstrap',) if args.stress else WORKFLOWS:
+        for workflow in workflows:
             for threads in (4, 1) if args.variation else (4,):
                 cases.extend(
                     {
@@ -388,6 +390,9 @@ def main():
     run.add_argument('--repeats', type=int, default=3)
     run.add_argument('--variation', action='store_true', help='also measure one CPU thread')
     run.add_argument('--stress', action='store_true', help='only the 200-replica bootstrap workflow')
+    run.add_argument(
+        '--workflows', help='comma-separated workflows; scalar/arbitrary bootstrap modes use standalone totals'
+    )
     run.add_argument('--memory-limit-gb', type=float, default=28.0)
     run.add_argument('--output', type=Path, default=ROOT / 'target/cpu-benchmark/results.json')
     run.add_argument('--binary', type=Path, default=ROOT / 'target/release/examples/cpu_workflow')
@@ -416,8 +421,19 @@ def main():
         or not math.isfinite(args.memory_limit_gb)
         or args.memory_limit_gb <= 0
         or any(size not in SIZES for size in args.sizes.split(','))
+        or (
+            args.workflows
+            and any(workflow not in (*WORKFLOWS, *BOOTSTRAP_WORKFLOWS) for workflow in args.workflows.split(','))
+        )
+        or (
+            args.stress
+            and args.workflows
+            and any(workflow not in BOOTSTRAP_WORKFLOWS for workflow in args.workflows.split(','))
+        )
     ):
-        parser.error('use positive repeats/memory limit and sizes from quick,small,reference')
+        parser.error(
+            'use positive repeats/memory limit, valid sizes/workflows, and only bootstrap workflows with --stress'
+        )
     plan = make_plan(args)
     if args.plan:
         print(json.dumps(plan, indent=2))
