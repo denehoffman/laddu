@@ -181,6 +181,11 @@ impl std::fmt::Debug for Yield {
 impl Yield {
     /// Constructs a scalar yield context with optional paired uncertainty draws.
     ///
+    /// Native bootstrap replicas share the central Monte Carlo preparation.
+    /// Other replicas are prepared and evaluated one at a time. These temporary
+    /// integral caches expire before construction returns; the context retains
+    /// scalar estimates and its source likelihoods and datasets.
+    ///
     /// # Errors
     /// Returns an error when parameters, ensemble provenance, or integral
     /// preparation is invalid.
@@ -199,78 +204,63 @@ impl Yield {
         let accepted_mc = accepted_mc.clone();
         let integrals = likelihood.intensity_integrals(&term_name, &generated_mc)?;
         let has_absolute_rate = integrals.has_absolute_rate();
-        let mut replica_integrals = Vec::new();
+        let selected_variance = observed_data.stats()?.sum_squared_weights();
+        let accepted_variance = fitted_fill_variance(&integrals, &parameters, false)?;
+        let generated_variance = fitted_fill_variance(&integrals, &parameters, true)?;
+        let [selected, accepted, generated] = fitted_yield_values(&integrals, &parameters)?;
+        let mut selected_draws = Vec::new();
+        let mut accepted_draws = Vec::new();
+        let mut generated_draws = Vec::new();
         if let Some(ensemble) = &ensemble {
-            for replica in ensemble.replicas() {
-                let replica_integral = if ensemble.replicas_share_event_rows() {
-                    let data_weight_sum = replica.intensity_data_weight_sum(&term_name)?;
-                    integrals.with_data_weight_sum(data_weight_sum)
+            for (index, parameters) in ensemble.draws().iter().enumerate() {
+                let replica_integral = if let Some(replica) = ensemble.replicas().get(index) {
+                    if ensemble.replicas_share_event_rows() {
+                        let data_weight_sum = replica.intensity_data_weight_sum(&term_name)?;
+                        integrals.with_data_weight_sum(data_weight_sum)
+                    } else {
+                        replica.intensity_integrals(&term_name, &generated_mc)?
+                    }
                 } else {
-                    replica.intensity_integrals(&term_name, &generated_mc)?
+                    integrals.clone()
                 };
                 if replica_integral.has_absolute_rate() != has_absolute_rate {
                     return Err(LikelihoodError::InvalidCrossSection(
                         "ensemble replica rate semantics do not match the likelihood".to_owned(),
                     ));
                 }
-                replica_integrals.push(replica_integral);
+                let [selected, accepted, generated] =
+                    fitted_yield_values(&replica_integral, parameters)?;
+                selected_draws.push(selected);
+                accepted_draws.push(accepted);
+                generated_draws.push(generated);
+                // Drop this replica's preparation before constructing the next.
             }
         }
-        let selected_variance = observed_data.stats()?.sum_squared_weights();
-        let accepted_variance = fitted_fill_variance(&integrals, &parameters, false)?;
-        let generated_variance = fitted_fill_variance(&integrals, &parameters, true)?;
+        let source_id = ensemble.as_ref().map(Ensemble::source_id);
         let paired_bootstrap = ensemble
             .as_ref()
             .is_some_and(|value| !value.replicas().is_empty());
-        let selected = evaluate_estimate(
-            &integrals,
-            &parameters,
-            ensemble.as_ref(),
-            &replica_integrals,
-            |integrals, _| finite("selected yield", integrals.data_weight_sum()),
-        )?
-        .with_fill_variance(
-            ErrorComponent::DataFill,
-            selected_variance,
-            observed_data.identity(),
-        )
-        .with_paired_bootstrap(paired_bootstrap);
-        let accepted_integral = evaluate_estimate(
-            &integrals,
-            &parameters,
-            ensemble.as_ref(),
-            &replica_integrals,
-            |integrals, parameters| {
-                positive_accepted(
-                    integrals.accepted_integral(parameters)?,
-                    integrals.accepted_mc_source().stats()?.events() > 0,
-                )
-            },
-        )?
-        .with_fill_variance(
-            ErrorComponent::AcceptedMcFill,
-            accepted_variance,
-            accepted_mc.identity(),
-        )
-        .with_paired_bootstrap(paired_bootstrap);
-        let generated_integral = evaluate_estimate(
-            &integrals,
-            &parameters,
-            ensemble.as_ref(),
-            &replica_integrals,
-            |integrals, parameters| {
-                positive_generated(
-                    integrals.generated_integral(parameters)?,
-                    integrals.generated_mc_source().stats()?.events() > 0,
-                )
-            },
-        )?
-        .with_fill_variance(
-            ErrorComponent::GeneratedMcFill,
-            generated_variance,
-            generated_mc.identity(),
-        )
-        .with_paired_bootstrap(paired_bootstrap);
+        let selected = Estimate::with_source_id(selected, selected_draws, source_id)?
+            .with_fill_variance(
+                ErrorComponent::DataFill,
+                selected_variance,
+                observed_data.identity(),
+            )
+            .with_paired_bootstrap(paired_bootstrap);
+        let accepted_integral = Estimate::with_source_id(accepted, accepted_draws, source_id)?
+            .with_fill_variance(
+                ErrorComponent::AcceptedMcFill,
+                accepted_variance,
+                accepted_mc.identity(),
+            )
+            .with_paired_bootstrap(paired_bootstrap);
+        let generated_integral = Estimate::with_source_id(generated, generated_draws, source_id)?
+            .with_fill_variance(
+                ErrorComponent::GeneratedMcFill,
+                generated_variance,
+                generated_mc.identity(),
+            )
+            .with_paired_bootstrap(paired_bootstrap);
         let scalars = YieldScalars {
             selected,
             rate: if has_absolute_rate {
@@ -573,30 +563,21 @@ fn validate_ensemble(
     Ok(())
 }
 
-fn evaluate_estimate(
+fn fitted_yield_values(
     integrals: &IntensityIntegrals,
     parameters: &[f64],
-    ensemble: Option<&Ensemble>,
-    replica_integrals: &[IntensityIntegrals],
-    function: impl Fn(&IntensityIntegrals, &[f64]) -> LikelihoodResult<f64>,
-) -> LikelihoodResult<Estimate> {
-    let central = function(integrals, parameters)?;
-    let (draws, source_id) = match ensemble {
-        Some(ensemble) => {
-            let draws = ensemble
-                .draws()
-                .iter()
-                .enumerate()
-                .map(|(index, parameters)| {
-                    let integrals = replica_integrals.get(index).unwrap_or(integrals);
-                    function(integrals, parameters)
-                })
-                .collect::<LikelihoodResult<Vec<_>>>()?;
-            (draws, Some(ensemble.source_id()))
-        }
-        None => (Vec::new(), None),
-    };
-    Estimate::with_source_id(central, draws, source_id)
+) -> LikelihoodResult<[f64; 3]> {
+    Ok([
+        finite("selected yield", integrals.data_weight_sum())?,
+        positive_accepted(
+            integrals.accepted_integral(parameters)?,
+            integrals.accepted_mc_source().stats()?.events() > 0,
+        )?,
+        positive_generated(
+            integrals.generated_integral(parameters)?,
+            integrals.generated_mc_source().stats()?.events() > 0,
+        )?,
+    ])
 }
 
 fn finite(quantity: &'static str, value: f64) -> LikelihoodResult<f64> {
@@ -825,6 +806,79 @@ mod tests {
             yield_context.accepted_fitted_yield().unwrap().draws(),
             &[2.0]
         );
+    }
+
+    #[test]
+    fn arbitrary_replica_yields_bound_temporary_preparation_and_release_it() {
+        let peak_growth = |samples| {
+            let execution = Execution::default();
+            let model =
+                CompiledModel::from_expr(&(event_scalar("x") * parameter!("scale", initial: 0.5)))
+                    .unwrap();
+            let make_likelihood = |x, weight| {
+                Arc::new(
+                    Likelihood::with_execution(
+                        [ExtendedNllTerm::new(
+                            "signal",
+                            &model,
+                            &weighted_dataset(&[(2.0, weight)]),
+                            &weighted_dataset(&[(x, 1.0)]),
+                        )
+                        .unwrap()],
+                        &execution,
+                    )
+                    .unwrap(),
+                )
+            };
+            let central = make_likelihood(4.0, 1.0);
+            let central_reserved = execution.memory_pool_reports()[0].reserved_bytes;
+            let replicas = (0..samples)
+                .map(|index| make_likelihood(4.0 + index as f64, 2.0 + index as f64))
+                .collect();
+            let ensemble = Ensemble::with_replicas_and_source_id(
+                vec!["scale".to_owned()],
+                vec![vec![0.5]; samples],
+                replicas,
+                88,
+            )
+            .unwrap();
+            let generated = weighted_dataset(&vec![(6.0, 1.0); 4096]);
+            let before = execution.memory_pool_reports()[0].reserved_bytes;
+            let context = Yield::with_ensemble(
+                central.clone(),
+                "signal",
+                generated,
+                vec![0.5],
+                Some(ensemble),
+            )
+            .unwrap();
+            assert_eq!(
+                context.selected_yield().draws(),
+                &[2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0][..samples]
+            );
+            let accepted = context.accepted_fitted_yield().unwrap();
+            assert_eq!(accepted.source_id(), Some(88));
+            assert_eq!(
+                accepted.draws(),
+                &[2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0, 5.5][..samples]
+            );
+            assert_eq!(
+                context.generated_fitted_yield().unwrap().draws(),
+                &vec![12288.0; samples]
+            );
+            // Construction retains estimates and replica inputs, not integral caches.
+            assert_eq!(execution.memory_pool_reports()[0].reserved_bytes, before);
+            let peak = execution.memory_pool_reports()[0].high_water_bytes - before;
+            drop(context);
+            // The context owned the replica likelihoods; their leases also expire.
+            assert_eq!(
+                execution.memory_pool_reports()[0].reserved_bytes,
+                central_reserved
+            );
+            peak
+        };
+        let one_replica = peak_growth(1);
+        assert!(peak_growth(8) <= 2 * one_replica);
     }
 
     #[test]

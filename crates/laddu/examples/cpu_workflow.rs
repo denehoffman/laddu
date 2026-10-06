@@ -227,12 +227,12 @@ fn binned(estimate: &BinnedEstimate) -> Result<Value> {
 
 fn likelihood_workflow(config: &Config, recorder: &mut Recorder) -> Result<(Science, Value)> {
     let reads = Arc::clone(&recorder.reads);
-    let (model, data, accepted, generated) = recorder.measure("fixtures", || {
+    let (model, data, accepted, generated_mc) = recorder.measure("fixtures", || {
         Ok((
             model(config.waves)?,
             counted(generated(config.data_events, config.seed)?, &reads),
             counted(generated(config.mc_events, config.seed + 1)?, &reads),
-            if config.workflow == "bootstrap" {
+            if config.workflow.starts_with("bootstrap") {
                 Some(counted(
                     generated(config.mc_events, config.seed + 2)?,
                     &reads,
@@ -275,12 +275,46 @@ fn likelihood_workflow(config: &Config, recorder: &mut Recorder) -> Result<(Scie
         ("fit_nll".into(), json!(nll)),
         ("fit_parameters".into(), json!(parameters)),
     ]);
-    if config.workflow != "bootstrap" {
+    if !config.workflow.starts_with("bootstrap") {
         return Ok((science, diagnostics(&likelihood)));
     }
 
     let mut replica_nlls = Vec::new();
     let ensemble = recorder.measure("bootstrap_fits", || {
+        if config.workflow.starts_with("bootstrap-arbitrary") {
+            // Independent rows and MC deliberately have no native sharing provenance.
+            let mut replicas = Vec::with_capacity(config.replicas);
+            let mut draws = Vec::with_capacity(config.replicas);
+            for index in 0..config.replicas {
+                let data = counted(
+                    generated(config.data_events, config.seed + 1000 + index as u64)?,
+                    &reads,
+                );
+                let accepted = if config.workflow == "bootstrap-arbitrary-data" {
+                    accepted.clone()
+                } else {
+                    counted(
+                        generated(config.mc_events, config.seed + 2000 + index as u64)?,
+                        &reads,
+                    )
+                };
+                let replica = Arc::new(Likelihood::with_execution(
+                    [ExtendedNllTerm::new("sample", &model, &data, &accepted)?],
+                    &execution,
+                )?);
+                let (draw, nll) = fit(&replica, &parameters, config.fit_steps)?;
+                replica_nlls.push(nll);
+                draws.push(draw);
+                replicas.push(replica);
+            }
+            let names = likelihood
+                .params()
+                .free_params()
+                .iter()
+                .map(|id| likelihood.params().name(*id).map(str::to_owned))
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            return Ok(Ensemble::with_replicas(names, draws, replicas)?);
+        }
         Ok(Ensemble::bootstrap_fit(
             &likelihood,
             config.replicas,
@@ -326,16 +360,25 @@ fn likelihood_workflow(config: &Config, recorder: &mut Recorder) -> Result<(Scie
     // execute and retain both paths in one process.
     let separate_inputs = std::env::var_os("LADDU_CPU_VERIFY_SHARED").map(|_| {
         (
-            generated.clone().expect("bootstrap generated MC"),
+            generated_mc.clone().expect("bootstrap generated MC"),
             parameters.clone(),
             ensemble.clone(),
         )
     });
-    // Construction evaluates totals and the requested projections together.
+    // The scalar modes exercise the standalone preparation path separately.
     let section = recorder.measure("cross_section_total", || {
+        if config.workflow != "bootstrap" {
+            return Ok(likelihood.cross_section(
+                "sample",
+                generated_mc.ok_or("bootstrap requires generated MC")?,
+                Luminosity::new(10.0, AreaUnit::Nanobarn)?,
+                parameters,
+                Some(ensemble),
+            )?);
+        }
         Ok(likelihood.cross_section_with_projections(
             "sample",
-            generated.ok_or("bootstrap requires generated MC")?,
+            generated_mc.ok_or("bootstrap requires generated MC")?,
             Luminosity::new(10.0, AreaUnit::Nanobarn)?,
             parameters,
             Some(ensemble),
@@ -491,8 +534,16 @@ fn main() -> Result<()> {
         return Err("expected CONFIG.json PARQUET_DIRECTORY".into());
     }
     let config: Config = serde_json::from_slice(&fs::read(&args[0])?)?;
-    if !["likelihood-5", "likelihood-12", "bootstrap", "parquet"]
-        .contains(&config.workflow.as_str())
+    if ![
+        "likelihood-5",
+        "likelihood-12",
+        "bootstrap",
+        "bootstrap-scalar",
+        "bootstrap-arbitrary",
+        "bootstrap-arbitrary-data",
+        "parquet",
+    ]
+    .contains(&config.workflow.as_str())
         || [
             config.data_events,
             config.mc_events,
