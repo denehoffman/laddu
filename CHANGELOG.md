@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.26.0](https://github.com/denehoffman/laddu/compare/v0.25.0...v0.26.0) (2026-10-08)
+
+
+### ⚠ BREAKING CHANGES
+
+* **data:** Rust generation configurations include optional index configuration and implement Clone instead of Copy. ColumnType now includes an Integer variant, requiring updates to exhaustive matches.
+* **io:** Dataset.write_to returns WriteResult and defaults to sharded output under MPI. LadduDataError gains an External variant.
+
+### Features
+
+* **data:** Add exact integer columns and batched expression evaluation ([db49c7c](https://github.com/denehoffman/laddu/commit/db49c7ce3840dd087fdf4e06029bd80485523e34))
+* **io:** Add Python format specs and universal dataset streaming ([9a8d510](https://github.com/denehoffman/laddu/commit/9a8d5103561f5191817dbe203260084d141f7a70))
+
+
+### Bug Fixes
+
+* **ci:** Install mpi4py for Python development checks ([00f4499](https://github.com/denehoffman/laddu/commit/00f44991c3aabbd4b7eb8f7e15968bc80ac08247))
+
+
+### Performance Improvements
+
+* **benchmarks:** Add generated CPU workflow baselines ([30eabf7](https://github.com/denehoffman/laddu/commit/30eabf7883a147fde9d40583941eee5cb40548e7))
+* **likelihood:** Bound temporary replica yield preparation ([daa9987](https://github.com/denehoffman/laddu/commit/daa99871325768f9848d5a6293fa41a44f6c3033))
+* **likelihood:** Share cross-section total and projection evaluation ([22e2969](https://github.com/denehoffman/laddu/commit/22e2969b9b9f99a5e0bf1f68c7a4aaf38bbc4544))
+* **runtime:** Reuse CPU event-block workspaces across tiles ([43bbfa3](https://github.com/denehoffman/laddu/commit/43bbfa36c620bf8eb832f85a85b2d42a8aeaca3d))
+
 ## [0.25.0](https://github.com/denehoffman/laddu/compare/v0.24.1...v0.25.0) (2026-10-01)
 
 
