@@ -15,6 +15,7 @@ mpi = ["laddu-mpi==0.25.0"] # x-release-please-version
 dev = [
   "matplotlib>=3.10",
   "maturin>=1.13,<2",
+  "mpi4py>=4",
   "pytest",
   "ruff",
   "ty",
