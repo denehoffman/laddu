@@ -407,6 +407,7 @@ impl ParquetSinkBuilder {
 
 impl EventSink for ParquetSink {
     fn begin(&mut self, schema: Arc<Schema>, plan: WritePlan) -> LadduDataResult<()> {
+        schema.validate_column_names(&self.options.schema_write.column_names)?;
         match self.state {
             SinkState::Idle => {}
             SinkState::Writing => {

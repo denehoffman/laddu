@@ -36,6 +36,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         memory: MemoryBudget::Bytes(256 * 1024 * 1024),
         seed: SEED,
         diagnostics: true,
+        index: None,
     };
     let unweighted = UnweightedConfig {
         events: EVENTS,
@@ -43,6 +44,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         memory: MemoryBudget::Bytes(256 * 1024 * 1024),
         seed: SEED.wrapping_add(1),
         diagnostics: true,
+        index: None,
         envelope: EnvelopeMode::Pilot {
             proposals: 50_000,
             safety_factor: 2.0,
@@ -51,8 +53,11 @@ fn main() -> Result<(), Box<dyn Error>> {
     };
 
     let mut weighted_parquet = ParquetSink::create(output.join("ksks_weighted.parquet"));
-    let report =
-        generator.generate_weighted_to(weighted, Some(&evaluator), &mut weighted_parquet)?;
+    let report = generator.generate_weighted_to(
+        weighted.clone(),
+        Some(&evaluator),
+        &mut weighted_parquet,
+    )?;
     print_report("weighted Parquet", &report);
 
     let mut weighted_root = RootSink::builder(output.join("ksks_weighted.root"))
@@ -62,8 +67,11 @@ fn main() -> Result<(), Box<dyn Error>> {
     print_report("weighted ROOT", &report);
 
     let mut unweighted_parquet = ParquetSink::create(output.join("ksks_unweighted.parquet"));
-    let report =
-        generator.generate_unweighted_to(unweighted, Some(&evaluator), &mut unweighted_parquet)?;
+    let report = generator.generate_unweighted_to(
+        unweighted.clone(),
+        Some(&evaluator),
+        &mut unweighted_parquet,
+    )?;
     print_report("unweighted Parquet", &report);
 
     let mut unweighted_root = RootSink::builder(output.join("ksks_unweighted.root"))

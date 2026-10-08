@@ -13,7 +13,8 @@ use parquet::{
 
 use crate::{
     LadduDataError, LadduDataResult, Name,
-    data::{BatchAssembler, EventBatch},
+    columns::{Column, ColumnDType},
+    data::EventBatch,
     io::{SliceBatchIter, source_error},
     schema::{
         ColumnInfo, ColumnType, PhysicalColumnRole, PhysicalSchemaPlan, Schema, SchemaColumnNames,
@@ -106,6 +107,15 @@ fn arrow_column_type(data_type: &DataType) -> ColumnType {
     match data_type {
         DataType::Float64 => ColumnType::F64,
         DataType::Float32 => ColumnType::F32,
+        DataType::Int8 => ColumnType::Integer(ColumnDType::I8),
+        DataType::UInt8 => ColumnType::Integer(ColumnDType::U8),
+        DataType::Int16 => ColumnType::Integer(ColumnDType::I16),
+        DataType::UInt16 => ColumnType::Integer(ColumnDType::U16),
+        DataType::Int32 => ColumnType::Integer(ColumnDType::I32),
+        DataType::UInt32 => ColumnType::Integer(ColumnDType::U32),
+        DataType::Int64 => ColumnType::Integer(ColumnDType::I64),
+        DataType::UInt64 => ColumnType::Integer(ColumnDType::U64),
+
         _ => ColumnType::Other,
     }
 }
@@ -122,10 +132,16 @@ pub(super) fn record_batch_to_event_batch(
         .collect();
     let mut scalars: Vec<Option<Vec<f64>>> = (0..schema.n_scalars()).map(|_| None).collect();
     let mut weights = None;
+    let mut columns: Vec<Option<Column>> = vec![None; schema.n_columns()];
 
     for column in plan.columns() {
+        if let PhysicalColumnRole::Column { index, dtype } = column.role() {
+            columns[index] = Some(read_integer_column(&rb, column.name(), dtype)?);
+            continue;
+        }
         let values = read_f64_column(&rb, &arrow_schema, column.name().as_ref(), options)?;
         match column.role() {
+            PhysicalColumnRole::Column { .. } => unreachable!("handled above"),
             PhysicalColumnRole::P4 { index, component } => {
                 p4s[index][component] = Some(values);
             }
@@ -166,11 +182,18 @@ pub(super) fn record_batch_to_event_batch(
         })
         .collect::<LadduDataResult<Vec<_>>>()?;
 
-    BatchAssembler::from_columns(
+    EventBatch::new_with_columns_and_len(
         schema,
         p4_columns,
         scalar_columns.into_iter().map(Into::into).collect(),
+        columns
+            .into_iter()
+            .map(|column| {
+                column.ok_or_else(|| LadduDataError::Source("unbound integer column".into()))
+            })
+            .collect::<LadduDataResult<Vec<_>>>()?,
         weights.map(Into::into),
+        rb.num_rows(),
     )
 }
 
@@ -283,6 +306,97 @@ fn collect_numeric(
         }
     }
     Ok(out)
+}
+
+fn read_integer_column(
+    rb: &RecordBatch,
+    name: &str,
+    dtype: ColumnDType,
+) -> LadduDataResult<Column> {
+    let array = rb
+        .column_by_name(name)
+        .ok_or_else(|| LadduDataError::MissingColumn(Name::from(name)))?;
+    if array.null_count() != 0 {
+        return Err(source_error(
+            "decode Parquet integer column",
+            name,
+            "null integer values are unsupported",
+        ));
+    }
+    match dtype {
+        ColumnDType::I8 => {
+            let values = array
+                .as_any()
+                .downcast_ref::<arrow::array::Int8Array>()
+                .ok_or_else(|| {
+                    source_error("decode Parquet integer column", name, "dtype mismatch")
+                })?;
+            Ok(Column::I8(values.values().iter().copied().collect()))
+        }
+        ColumnDType::U8 => {
+            let values = array
+                .as_any()
+                .downcast_ref::<arrow::array::UInt8Array>()
+                .ok_or_else(|| {
+                    source_error("decode Parquet integer column", name, "dtype mismatch")
+                })?;
+            Ok(Column::U8(values.values().iter().copied().collect()))
+        }
+        ColumnDType::I16 => {
+            let values = array
+                .as_any()
+                .downcast_ref::<arrow::array::Int16Array>()
+                .ok_or_else(|| {
+                    source_error("decode Parquet integer column", name, "dtype mismatch")
+                })?;
+            Ok(Column::I16(values.values().iter().copied().collect()))
+        }
+        ColumnDType::U16 => {
+            let values = array
+                .as_any()
+                .downcast_ref::<arrow::array::UInt16Array>()
+                .ok_or_else(|| {
+                    source_error("decode Parquet integer column", name, "dtype mismatch")
+                })?;
+            Ok(Column::U16(values.values().iter().copied().collect()))
+        }
+        ColumnDType::I32 => {
+            let values = array
+                .as_any()
+                .downcast_ref::<arrow::array::Int32Array>()
+                .ok_or_else(|| {
+                    source_error("decode Parquet integer column", name, "dtype mismatch")
+                })?;
+            Ok(Column::I32(values.values().iter().copied().collect()))
+        }
+        ColumnDType::U32 => {
+            let values = array
+                .as_any()
+                .downcast_ref::<arrow::array::UInt32Array>()
+                .ok_or_else(|| {
+                    source_error("decode Parquet integer column", name, "dtype mismatch")
+                })?;
+            Ok(Column::U32(values.values().iter().copied().collect()))
+        }
+        ColumnDType::I64 => {
+            let values = array
+                .as_any()
+                .downcast_ref::<arrow::array::Int64Array>()
+                .ok_or_else(|| {
+                    source_error("decode Parquet integer column", name, "dtype mismatch")
+                })?;
+            Ok(Column::I64(values.values().iter().copied().collect()))
+        }
+        ColumnDType::U64 => {
+            let values = array
+                .as_any()
+                .downcast_ref::<arrow::array::UInt64Array>()
+                .ok_or_else(|| {
+                    source_error("decode Parquet integer column", name, "dtype mismatch")
+                })?;
+            Ok(Column::U64(values.values().iter().copied().collect()))
+        }
+    }
 }
 
 #[cfg(test)]

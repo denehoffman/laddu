@@ -264,6 +264,20 @@ pub trait DatasetExprExt {
     /// Returns [`RuntimeError`] when compilation, dataset reading, or
     /// evaluation fails, or the expression is not real scalar-valued.
     fn evaluate_real(&self, expr: &Expr, execution: &Execution) -> RuntimeResult<Vec<f64>>;
+    /// Evaluates ordered scalar expressions in one dataset traversal.
+    ///
+    /// Each expression retains the preparation and execution behavior of an
+    /// independent evaluation. Empty input returns no columns without reading.
+    ///
+    /// # Errors
+    /// Returns an error for invalid expressions, failed preparation, source
+    /// reads, or evaluation. `require_real` rejects complex-valued expressions.
+    fn evaluate_exprs(
+        &self,
+        expressions: &[Expr],
+        execution: &Execution,
+        require_real: bool,
+    ) -> RuntimeResult<Vec<Vec<Complex64>>>;
     /// Visits real scalar expression values in bounded event chunks.
     /// The offset is the first event's global row number and expressions retain
     /// their requested order within each callback.
@@ -371,6 +385,29 @@ impl DatasetExprExt for Dataset {
             );
         }
         Ok(output)
+    }
+
+    fn evaluate_exprs(
+        &self,
+        expressions: &[Expr],
+        execution: &Execution,
+        require_real: bool,
+    ) -> RuntimeResult<Vec<Vec<Complex64>>> {
+        if expressions.is_empty() {
+            return Ok(Vec::new());
+        }
+        let queries = expressions
+            .iter()
+            .map(|expr| PreparedQuery::prepare(vec![expr.clone()], execution, require_real))
+            .collect::<RuntimeResult<Vec<_>>>()?;
+        let mut outputs = vec![Vec::new(); expressions.len()];
+        for batch in self.batches().map_err(data_error)? {
+            let batch = batch.map_err(data_error)?;
+            for (output, query) in outputs.iter_mut().zip(&queries) {
+                output.extend(query.evaluate_batch(&batch)?[0].iter().copied());
+            }
+        }
+        Ok(outputs)
     }
 
     fn visit_real_chunks(

@@ -149,6 +149,7 @@ pub fn run_closure(
             memory: MemoryBudget::Bytes(256 * 1024 * 1024),
             seed: config.seed,
             diagnostics: false,
+            index: None,
             envelope: EnvelopeMode::Pilot {
                 proposals: config.pilot_proposals,
                 safety_factor: 2.0,
@@ -166,6 +167,7 @@ pub fn run_closure(
             memory: MemoryBudget::Bytes(256 * 1024 * 1024),
             seed: config.seed.wrapping_add(1),
             diagnostics: false,
+            index: None,
         },
         None,
     )?;

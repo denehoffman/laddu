@@ -40,6 +40,7 @@ macro_rules! hinted_input {
         }
     };
 }
+pub(super) use hinted_input;
 
 const ELLIPSIS_HINT: PyStaticExpr = PyStaticExpr::Constant {
     value: PyStaticConstant::Ellipsis,
@@ -169,10 +170,22 @@ pub struct PySchema {
 #[pymethods]
 impl PySchema {
     #[new]
-    #[pyo3(signature = (*, p4s=Vec::new(), scalars=Vec::new(), weights=false))]
-    fn new(p4s: Vec<String>, scalars: Vec<String>, weights: bool) -> PyResult<Self> {
+    #[pyo3(signature = (*, p4s=Vec::new(), scalars=Vec::new(), weights=false, columns: "dict[str, object] | None" = None))]
+    fn new(
+        p4s: Vec<String>,
+        scalars: Vec<String>,
+        weights: bool,
+        columns: Option<&Bound<'_, PyDict>>,
+    ) -> PyResult<Self> {
+        let declarations = super::data::column_declarations(columns)?;
+        let schema = Schema::new(p4s, scalars, weights)
+            .and_then(|schema| schema.with_columns(declarations))
+            .map_err(to_py_err)?;
+        schema
+            .validate_column_names(&Default::default())
+            .map_err(to_py_err)?;
         Ok(Self {
-            inner: Arc::new(Schema::new(p4s, scalars, weights).map_err(to_py_err)?),
+            inner: Arc::new(schema),
         })
     }
     #[getter]
@@ -184,6 +197,15 @@ impl PySchema {
         PyTuple::new(py, names(&self.inner).1)
     }
     #[getter]
+    /// Ordered exact column declarations using canonical dtype names.
+    fn columns<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        let columns = PyDict::new(py);
+        for (name, dtype) in self.inner.columns() {
+            columns.set_item(name.as_ref(), dtype.name())?;
+        }
+        Ok(columns)
+    }
+    #[getter]
     fn weights(&self) -> bool {
         self.inner.has_weight()
     }
@@ -193,8 +215,9 @@ impl PySchema {
     fn __repr__(&self) -> String {
         let (p4s, scalars) = names(&self.inner);
         format!(
-            "Schema(p4s={p4s:?}, scalars={scalars:?}, weights={})",
-            self.weights()
+            "Schema(p4s={p4s:?}, scalars={scalars:?}, weights={}, columns={:?})",
+            self.weights(),
+            self.inner.columns()
         )
     }
 }
@@ -223,7 +246,11 @@ impl PySourceInfo {
 
 #[pyclass(name = "EventBatch", module = "laddu.io", frozen, skip_from_py_object)]
 #[derive(Clone)]
-/// Owned immutable float64 event columns, exported as read-only NumPy arrays.
+/// Owned immutable float64 physics fields and exact integer row-data columns.
+///
+/// ``columns`` accepts one-dimensional arrays of signed or unsigned 8-, 16-,
+/// 32-, or 64-bit integers. Inputs are copied; exports are independent read-only
+/// NumPy arrays. Integer payload remains outside expression evaluation.
 /// Input arrays may be float32 or float64. Missing weights mean unit weights.
 pub struct PyEventBatch {
     pub(super) inner: EventBatch,
@@ -232,7 +259,7 @@ pub struct PyEventBatch {
 #[pymethods]
 impl PyEventBatch {
     #[new]
-    #[pyo3(signature = (*, p4s=None, scalars=None, weights=None, length=None, row_ids=None))]
+    #[pyo3(signature = (*, p4s=None, scalars=None, weights=None, length=None, row_ids=None, columns: "dict[str, numpy.typing.ArrayLike] | None" = None))]
     fn new(
         py: Python<'_>,
         p4s: Option<ColumnsInput>,
@@ -240,6 +267,7 @@ impl PyEventBatch {
         weights: Option<WeightsInput>,
         length: Option<usize>,
         row_ids: Option<Vec<u64>>,
+        columns: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<Self> {
         let empty_p4s = PyDict::new(py);
         let empty_scalars = PyDict::new(py);
@@ -255,15 +283,19 @@ impl PyEventBatch {
             p4s.unwrap_or(&empty_p4s),
             scalars.unwrap_or(&empty_scalars),
             weights.as_ref().map(|value| value.0.bind(py)),
+            columns,
         )?;
         let inner = if let Some(length) = length {
-            EventBatch::new_with_len(
+            EventBatch::new_with_columns_and_len(
                 Arc::clone(batch.schema()),
                 (0..batch.schema().n_p4s())
                     .map(|i| Arc::from(batch.vec4_column(i)))
                     .collect(),
                 (0..batch.schema().n_scalars())
                     .map(|i| Arc::from(batch.scalar_column(i)))
+                    .collect(),
+                (0..batch.schema().n_columns())
+                    .map(|i| batch.column(i).clone())
                     .collect(),
                 batch.weights_column().map(Arc::from),
                 length,
@@ -321,6 +353,18 @@ impl PyEventBatch {
             let array = PyArray1::from_vec(py, self.inner.scalar_column(i).to_vec());
             array.readwrite().make_nonwriteable();
             columns.set_item(name.as_ref(), array)?;
+        }
+        Ok(PyMappingProxy::new(py, columns.as_mapping()))
+    }
+    #[getter]
+    /// Exact row-data arrays in schema order, copied and initially read-only.
+    fn columns<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyMappingProxy>> {
+        let columns = PyDict::new(py);
+        for (index, (name, _)) in self.inner.schema().columns().iter().enumerate() {
+            columns.set_item(
+                name.as_ref(),
+                super::data::column_array(py, self.inner.column(index)),
+            )?;
         }
         Ok(PyMappingProxy::new(py, columns.as_mapping()))
     }
@@ -542,8 +586,9 @@ impl PyFormatSpec {
         agree(
             &execution,
             &format!(
-                "{:?}|{:?}|{:?}|{}|{}",
+                "{:?}|{:?}|{:?}|{:?}|{}|{}",
                 names(&info.schema.inner),
+                info.schema.inner.columns(),
                 info.schema.weights(),
                 info.length,
                 self.spec.name,
@@ -766,6 +811,18 @@ fn row_key(batch: &EventBatch, row: usize) -> Vec<u64> {
     }
     for col in 0..batch.schema().n_scalars() {
         key.push(batch.scalar_at(col, row).to_bits());
+    }
+    for col in 0..batch.schema().n_columns() {
+        key.push(match batch.column(col).at(row) {
+            laddu_data::columns::ColumnValue::I8(value) => value as u64,
+            laddu_data::columns::ColumnValue::U8(value) => value as u64,
+            laddu_data::columns::ColumnValue::I16(value) => value as u64,
+            laddu_data::columns::ColumnValue::U16(value) => value as u64,
+            laddu_data::columns::ColumnValue::I32(value) => value as u64,
+            laddu_data::columns::ColumnValue::U32(value) => value as u64,
+            laddu_data::columns::ColumnValue::I64(value) => value as u64,
+            laddu_data::columns::ColumnValue::U64(value) => value,
+        });
     }
     key.push(batch.weights_at(row).to_bits());
     key
@@ -1049,17 +1106,22 @@ impl Iterator for NativeBatches {
 pub(super) fn export_schema(dataset: &Dataset) -> LadduDataResult<Arc<Schema>> {
     let schema = dataset.schema()?;
     let (p4s, scalars) = names(&schema);
-    Ok(Arc::new(Schema::new(p4s, scalars, true)?))
+    Ok(Arc::new(
+        Schema::new(p4s, scalars, true)?.with_columns(schema.columns().iter().cloned())?,
+    ))
 }
 
 fn explicit_batch(batch: EventBatch, schema: Arc<Schema>) -> LadduDataResult<EventBatch> {
-    EventBatch::new_with_len(
+    EventBatch::new_with_columns_and_len(
         schema,
         (0..batch.schema().n_p4s())
             .map(|i| Arc::from(batch.vec4_column(i)))
             .collect(),
         (0..batch.schema().n_scalars())
             .map(|i| Arc::from(batch.scalar_column(i)))
+            .collect(),
+        (0..batch.schema().n_columns())
+            .map(|i| batch.column(i).clone())
             .collect(),
         Some((0..batch.len()).map(|i| batch.weights_at(i)).collect()),
         batch.len(),
@@ -1130,8 +1192,18 @@ impl PyBatchIterator {
                 .and_then(|n| n.checked_add(schema.n_scalars()))
                 .and_then(|n| n.checked_add(2))
                 .ok_or_else(|| LadduDataError::Source("export working-set overflow".into()))?;
+            let integer_bytes: usize = schema
+                .columns()
+                .iter()
+                .map(|(_, dtype)| dtype.width())
+                .sum();
             let bytes = fields
                 .checked_mul(8 * 6)
+                .and_then(|n| {
+                    integer_bytes
+                        .checked_mul(6)
+                        .and_then(|extra| n.checked_add(extra))
+                })
                 .ok_or_else(|| LadduDataError::Source("export working-set overflow".into()))?;
             let capacity = (available / bytes as u64).min(65_536) as usize;
             if capacity == 0 {
@@ -1225,6 +1297,9 @@ fn encode_next(iterator: &mut PyBatchIterator) -> Vec<u8> {
             for row in 0..batch.len() {
                 bytes.extend_from_slice(&batch.weights_at(row).to_le_bytes());
             }
+            for i in 0..batch.schema().n_columns() {
+                batch.column(i).append_le_bytes(&mut bytes);
+            }
             bytes
         }
     }
@@ -1233,8 +1308,13 @@ fn encode_next(iterator: &mut PyBatchIterator) -> Vec<u8> {
 #[cfg(feature = "mpi")]
 fn decode_batch(bytes: &[u8], schema: Arc<Schema>) -> LadduDataResult<EventBatch> {
     let invalid = || LadduDataError::Source("invalid distributed batch payload".into());
-    let mut chunks = bytes.as_chunks::<8>().0.iter();
-    let len = u64::from_le_bytes(*chunks.next().ok_or_else(invalid)?);
+    let len = u64::from_le_bytes(
+        bytes
+            .get(..8)
+            .ok_or_else(invalid)?
+            .try_into()
+            .map_err(|_| invalid())?,
+    );
     let len = usize::try_from(len).map_err(|_| invalid())?;
     let fields = schema
         .n_p4s()
@@ -1242,15 +1322,24 @@ fn decode_batch(bytes: &[u8], schema: Arc<Schema>) -> LadduDataResult<EventBatch
         .and_then(|n| n.checked_add(schema.n_scalars()))
         .and_then(|n| n.checked_add(1))
         .ok_or_else(invalid)?;
-    if bytes.len()
-        != len
-            .checked_mul(fields)
-            .and_then(|n| n.checked_add(1))
-            .and_then(|n| n.checked_mul(8))
-            .ok_or_else(invalid)?
-    {
+    let float_end = len
+        .checked_mul(fields)
+        .and_then(|n| n.checked_add(1))
+        .and_then(|n| n.checked_mul(8))
+        .ok_or_else(invalid)?;
+    let integer_width: usize = schema
+        .columns()
+        .iter()
+        .map(|(_, dtype)| dtype.width())
+        .sum();
+    let expected = len
+        .checked_mul(integer_width)
+        .and_then(|n| n.checked_add(float_end))
+        .ok_or_else(invalid)?;
+    if bytes.len() != expected {
         return Err(invalid());
     }
+    let mut chunks = bytes[8..float_end].as_chunks::<8>().0.iter();
     let mut value = || -> f64 { f64::from_le_bytes(*chunks.next().expect("validated payload")) };
     let p4s = (0..schema.n_p4s())
         .map(|_| {
@@ -1263,7 +1352,15 @@ fn decode_batch(bytes: &[u8], schema: Arc<Schema>) -> LadduDataResult<EventBatch
         .map(|_| (0..len).map(|_| value()).collect())
         .collect();
     let weights = (0..len).map(|_| value()).collect();
-    EventBatch::new_with_len(schema, p4s, scalars, Some(weights), len)
+    let mut position = float_end;
+    let mut columns = Vec::with_capacity(schema.n_columns());
+    for (_, dtype) in schema.columns() {
+        let end = position + len * dtype.width();
+        let data = &bytes[position..end];
+        columns.push(laddu_data::columns::Column::from_le_bytes(*dtype, data)?);
+        position = end;
+    }
+    EventBatch::new_with_columns_and_len(schema, p4s, scalars, columns, Some(weights), len)
 }
 
 #[cfg(feature = "mpi")]
@@ -1594,12 +1691,13 @@ fn write_format(
     agree(
         execution,
         &format!(
-            "{:?}|{}|{}|{:?}|{:?}|{}",
+            "{:?}|{}|{}|{:?}|{:?}|{:?}|{}",
             sink.target,
             mode,
             sink.spec.name,
             sink.chunk_size,
             names(&iterator.schema),
+            iterator.schema.columns(),
             partition_name(execution.inner.partitioning())
         ),
     )?;

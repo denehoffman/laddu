@@ -1,8 +1,9 @@
 # Reading, transforming, and writing event data
 
 A {py:class}`laddu.Dataset` is a typed collection of named four-vectors,
-named real scalars, and one statistical weight per event. Names form the event
-schema: later expressions request columns by name rather than by position.
+named real scalars, exact integer row-data columns, and one statistical weight
+per event. Expressions request four-vectors and real scalars by name. Integer
+columns carry identifiers and other payload independently of expressions.
 
 ## Construct data from NumPy arrays
 
@@ -24,13 +25,34 @@ events = ld.Dataset.from_arrays(
             [[1.1, 0.1, 0.0, 0.55], [1.2, -0.1, 0.1, 0.70]],
         ),
     },
-    scalars={"run": np.array([12001, 12001], dtype=np.float32)},
+    scalars={"polarization": np.array([0.4, 0.6], dtype=np.float32)},
+    columns={
+        "run": np.array([12001, 12001], dtype=np.uint32),
+        "event_id": np.array([2**63, 2**63 + 1], dtype=np.uint64),
+    },
     weights=np.array([1.0, 0.8], dtype=np.float32),
 )
 ```
 
 All columns must contain the same number of events. Duplicate names, invalid
 four-vector shapes, and length mismatches fail at construction.
+
+`events.column("run")` and `events.column("event_id")` return exact integer
+values and their original dtypes; `events.column("polarization")` returns the
+stored float64 scalar values. The `columns` input infers dtypes from its arrays;
+the `scalars` input converts numeric values to floating-point storage.
+`column_names()` lists real scalars followed by integer columns in schema order.
+Arrays are copied on construction and exported as independent, initially
+read-only NumPy arrays. Integer names must be distinct from scalar, logical
+four-vector, physical component, and weight names.
+
+All eight signed and unsigned 8-, 16-, 32-, and 64-bit integer dtypes are
+supported. Schema declarations accept canonical names (`"uint64"`), Rust names
+(`"u64"`), NumPy dtype objects, and NumPy integer scalar classes. String `"u8"`
+means **uint8**, while `np.dtype("u8")` means **uint64**, following NumPy's
+byte-count shorthand. Floats, booleans, strings, objects, and nullable integer
+payload are not accepted as new row-data columns. These columns survive views
+and I/O without becoming expression inputs or changing bootstrap row identity.
 
 ```{note}
 `laddu` does not infer units. Use one convention—normally GeV and radians—for
@@ -46,7 +68,25 @@ data = ld.read_parquet("accepted/*.parquet")
 control = ld.read_root("control.root", tree="events")
 ```
 
-Use `p4_names()` and `scalar_names()` to check unfamiliar files. A model-schema
+No dtype declarations are needed for ordinary reads: native readers discover
+supported integer columns from the file metadata and preserve their widths and
+signedness. Inspect `data.schema.columns` to see the discovered dtypes.
+
+Optionally supply a schema to project fields and assert their expected types:
+
+```python
+ids_only = ld.read_parquet(
+    "accepted/*.parquet", schema=ld.Schema(columns={"event_id": "u64"})
+)
+```
+
+This reads only `event_id` and requires it to already be uint64. It never casts
+integer columns, including signed-to-unsigned conversions. Unrelated nullable
+columns are excluded by projection. Selected integer nulls, missing fields,
+and dtype differences across files raise errors.
+Write `precision` controls float fields; integer dtypes and values remain exact.
+
+Use `p4_names()`, `scalar_names()`, and `column_names()` to check unfamiliar files. A model-schema
 mismatch is reported when an expression is prepared, before optimization.
 
 Memory and cache controls are optional operational choices:
@@ -69,13 +109,29 @@ name, while reaction-channel helpers introduced in {doc}`quantum-numbers`
 construct invariant masses and angles from named four-vectors.
 
 ```python
-run = ld.scalar("run")
-run_values = events.evaluate(run, real=True)
+polarization = ld.scalar("polarization")
+polarization_values = events.evaluate(polarization, real=True)
 
-selected = events.select((run >= 12000) & (run < 13000))
+selected = events.select((polarization >= 0.3) & (polarization < 0.7))
 small = selected.subsample(0.1, seed=4)
 replica = selected.bootstrap(seed=5)
 ```
+
+Pass a mapping to evaluate several named expressions in one bounded source
+traversal. Returned arrays follow mapping order and align with the dataset's
+weights and other separately collected columns:
+
+```python
+angles = events.evaluate({"theta": theta, "phi": phi, "P": P, "Phi": Phi})
+```
+
+Each entry must be a scalar expression without free parameters. `real=True`
+requires real-valued expressions and returns `float64` arrays; it rejects complex
+expressions rather than discarding their imaginary parts. The default returns
+`complex128` arrays. Execution precision governs computation, while these output
+dtypes remain unchanged. An empty mapping returns `{}` without reading events.
+Reusable sources must replay the same ordered rows, even if batch boundaries
+change, so arrays collected in separate calls remain aligned.
 
 `bootstrap` multiplies each existing event weight by an independent
 Poisson$(1)$ draw while preserving event coordinates. `subsample` selects a
@@ -105,11 +161,11 @@ diagnostics are distinct from any later yield error budget.
 A bin specification can be uniform or use explicit Python/NumPy edges:
 
 ```python
-uniform = ld.Bin.uniform(20, low=12000.0, high=13000.0)
-explicit = ld.Bin(np.linspace(12000.0, 13000.0, 21, dtype=np.float32))
+uniform = ld.Bin.uniform(20, low=0.0, high=1.0)
+explicit = ld.Bin(np.linspace(0.0, 1.0, 21, dtype=np.float32))
 
-run_bins = selected.bin_by(run, bins=explicit)
-first_bin_data = run_bins[0].dataset
+polarization_bins = selected.bin_by(polarization, bins=explicit)
+first_bin_data = polarization_bins[0].dataset
 ```
 
 The result includes every interval in edge order, including empty bins. Each
@@ -137,7 +193,8 @@ columns through separate expression evaluations:
 with selected.batches(chunk_size=4096) as batches:
     for batch in batches:
         beam = batch.p4s["beam"]       # float64, shape (N, 4): E, px, py, pz
-        run = batch.scalars["run"]     # float64, shape (N,)
+        polarization = batch.scalars["polarization"]  # float64, shape (N,)
+        run = batch.columns["run"]    # uint32, shape (N,)
         weights = batch.weights       # explicit effective weights, shape (N,)
 ```
 
@@ -215,6 +272,16 @@ declared schema. Four-vector and scalar input arrays may be float32 or float64;
 `EventBatch` copies them into immutable float64 storage. Missing weights mean
 unit weights. Use `EventBatch(length=N)` for events with no columns. Name order
 is resolved against `Schema`, independent of mapping insertion order.
+
+For exact payload, declare `Schema(columns={"event_id": "u64"})` and yield
+`EventBatch(columns={"event_id": ids})`, or include a `"columns"` mapping in a
+batch dictionary passed through `Dataset.from_batches`. Exported
+`batch.columns` is a read-only mapping of independent arrays; `schema.columns`
+contains canonical dtype names. Every batch must match the declared names and
+integer dtypes exactly. Writers receive these same declarations and arrays,
+including generated index columns. Readers must replay identical ordered rows
+and contents on repeated reads; batch boundaries may vary. This requirement
+keeps separate column, weight, and expression calls aligned.
 
 `SourceInfo.length` is an optional **global** count, not a rank-local count.
 Metadata callbacks should inspect headers or cheap format metadata rather than

@@ -8,6 +8,7 @@ use arrow::{
 
 use crate::{
     LadduDataResult,
+    columns::{Column, ColumnDType},
     data::EventBatch,
     io::sink_error,
     schema::{
@@ -30,7 +31,11 @@ pub(super) fn arrow_schema_from_event_schema(
     };
 
     for column in plan.columns() {
-        fields.push(Field::new(column.name().as_ref(), data_type.clone(), false));
+        let dtype = match column.role() {
+            PhysicalColumnRole::Column { dtype, .. } => integer_arrow_type(dtype),
+            _ => data_type.clone(),
+        };
+        fields.push(Field::new(column.name().as_ref(), dtype, false));
     }
 
     ArrowSchema::new(fields)
@@ -60,6 +65,9 @@ pub(super) fn event_batch_to_record_batch(
     // binding in one place for both schema creation and encoding.
     for column in plan.columns() {
         match column.role() {
+            PhysicalColumnRole::Column { index, .. } => {
+                columns.push(integer_arrow_array(batch.column(index)))
+            }
             PhysicalColumnRole::P4 { index, component } => {
                 columns.push(array_from_iter(
                     batch
@@ -86,4 +94,45 @@ pub(super) fn event_batch_to_record_batch(
 
     RecordBatch::try_new(arrow_schema, columns)
         .map_err(|error| sink_error("assemble Parquet batch", "record batch", error))
+}
+
+fn integer_arrow_type(dtype: ColumnDType) -> DataType {
+    match dtype {
+        ColumnDType::I8 => DataType::Int8,
+        ColumnDType::U8 => DataType::UInt8,
+        ColumnDType::I16 => DataType::Int16,
+        ColumnDType::U16 => DataType::UInt16,
+        ColumnDType::I32 => DataType::Int32,
+        ColumnDType::U32 => DataType::UInt32,
+        ColumnDType::I64 => DataType::Int64,
+        ColumnDType::U64 => DataType::UInt64,
+    }
+}
+fn integer_arrow_array(column: &Column) -> ArrayRef {
+    match column {
+        Column::I8(values) => Arc::new(arrow::array::Int8Array::from_iter_values(
+            values.iter().copied(),
+        )),
+        Column::U8(values) => Arc::new(arrow::array::UInt8Array::from_iter_values(
+            values.iter().copied(),
+        )),
+        Column::I16(values) => Arc::new(arrow::array::Int16Array::from_iter_values(
+            values.iter().copied(),
+        )),
+        Column::U16(values) => Arc::new(arrow::array::UInt16Array::from_iter_values(
+            values.iter().copied(),
+        )),
+        Column::I32(values) => Arc::new(arrow::array::Int32Array::from_iter_values(
+            values.iter().copied(),
+        )),
+        Column::U32(values) => Arc::new(arrow::array::UInt32Array::from_iter_values(
+            values.iter().copied(),
+        )),
+        Column::I64(values) => Arc::new(arrow::array::Int64Array::from_iter_values(
+            values.iter().copied(),
+        )),
+        Column::U64(values) => Arc::new(arrow::array::UInt64Array::from_iter_values(
+            values.iter().copied(),
+        )),
+    }
 }

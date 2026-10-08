@@ -4,6 +4,9 @@ use std::sync::Arc;
 
 pub use laddu_physics::vectors::RealVec4;
 
+/// Exact non-expression column types and storage.
+pub mod columns;
+
 /// In-memory datasets, event batches, and event views.
 pub mod data;
 mod error;

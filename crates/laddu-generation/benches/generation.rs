@@ -57,6 +57,7 @@ fn benchmarks(c: &mut Criterion) {
                         memory: laddu_runtime::MemoryBudget::Bytes(2 << 20),
                         seed: 17,
                         diagnostics: false,
+                        index: None,
                     },
                     Some(&evaluator),
                 )

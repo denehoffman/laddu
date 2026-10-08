@@ -298,6 +298,10 @@ pub struct SourceCapabilities {
 pub type EventBatchIter = Box<dyn Iterator<Item = LadduDataResult<EventBatch>> + Send>;
 
 /// Thread-safe producer of schema-compatible event batches.
+///
+/// Repeated reads with the same plan must replay identical ordered rows and
+/// contents. Batch boundaries may vary. This guarantees that separately
+/// collected row-data columns, expression results, and weights stay aligned.
 pub trait EventSource: Send + Sync {
     /// Returns the source schema.
     ///

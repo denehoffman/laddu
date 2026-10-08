@@ -104,7 +104,35 @@ seen. If `laddu` cannot establish a finite bound for the configured proposal,
 the call fails instead of using a guessed maximum. This option applies only
 when `model` is omitted; a later model changes the target weights.
 
-## Add generated scalar columns
+## Add generated event indices
+
+Both `weighted` and `unweighted` can attach an exact unsigned output index:
+
+```python
+indexed_mc, report = generator.weighted(
+    1_000, seed=18, index_column="event_id", index_dtype="u64", index_start=10_000
+)
+ids = indexed_mc.column("event_id")  # 10_000, 10_001, ..., 10_999
+```
+
+The default dtype is `uint64` and default start is zero. Other unsigned widths
+and the dtype descriptors described in {doc}`data-io` are accepted. The full
+index range is checked before generation; signed types, negative starts,
+colliding names, and overflow fail. A nonzero start requires a column name.
+Indices follow final output order after rejection and final envelope thinning.
+Changing the start or adding an index leaves RNG, momenta, and weights unchanged.
+Later views retain surviving stored values. Choose offsets yourself when calls
+must have distinct ranges; independent calls may reuse IDs. Rust generation
+configurations expose the same option as `index: Option<GeneratedIndex>`;
+configurations are cloned when reused.
+
+With envelope growth, `laddu` retains accepted events for possible rethinning
+and assigns indices from a counter when it emits the final rows. Sampling and
+final output are planned as separate memory phases: the index column is charged
+when allocated, preserving proposal capacity and seeded sampling groups. Final
+output batches may be smaller to fit the integer payload within the budget.
+
+## Sample generated scalars
 
 Named scalar sources are sampled alongside the event four-momenta. They can
 represent auxiliary quantities such as beam polarization and are available to
