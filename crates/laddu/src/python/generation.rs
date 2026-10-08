@@ -1,6 +1,6 @@
 use laddu_generation::{
-    ChannelGenerator, EnvelopeMode, EnvelopeOverflow, GenerationReport, ModelEvaluator,
-    ProvenEnvelopeReport, UnweightedConfig, WeightedConfig,
+    ChannelGenerator, EnvelopeMode, EnvelopeOverflow, GeneratedIndex, GenerationReport,
+    ModelEvaluator, ProvenEnvelopeReport, UnweightedConfig, WeightedConfig,
 };
 use laddu_physics::{
     generation::{
@@ -551,6 +551,26 @@ fn model_values(
     model.inner.params().values(&values).map_err(to_py_err)
 }
 
+fn default_index_dtype() -> Py<PyAny> {
+    Python::attach(|py| pyo3::types::PyString::new(py, "uint64").into_any().unbind())
+}
+
+fn generation_index(
+    name: Option<String>,
+    dtype: &Bound<'_, PyAny>,
+    start: u64,
+) -> PyResult<Option<GeneratedIndex>> {
+    match name {
+        Some(name) => Ok(Some(GeneratedIndex {
+            name,
+            dtype: super::data::parse_column_dtype(dtype)?,
+            start,
+        })),
+        None if start != 0 => Err(PyValueError::new_err("index_start requires index_column")),
+        None => Ok(None),
+    }
+}
+
 #[pymethods]
 impl PyGenerator {
     /// Compile a channel into an event generator.
@@ -591,7 +611,10 @@ impl PyGenerator {
         execution=None,
         memory: "MemoryBudget | int | str | None" = None,
         seed=0,
-        diagnostics=false
+        diagnostics=false,
+        index_column=None,
+        index_dtype: "object" = default_index_dtype(),
+        index_start=0
     ))]
     #[allow(clippy::too_many_arguments)]
     /// Generate weighted phase-space events.
@@ -612,6 +635,13 @@ impl PyGenerator {
     ///     Random seed.
     /// diagnostics : bool, default=False
     ///     Collect additional generation diagnostics.
+    /// index_column : str, optional
+    ///     Exact integer column containing final output row ordinals.
+    /// index_dtype : str or numpy dtype, default='uint64'
+    ///     Unsigned storage dtype; canonical and Rust names are accepted.
+    /// index_start : int, default=0
+    ///     First output index. The full range is checked before generation.
+    ///     Indices are contiguous after rejection and final thinning.
     ///
     /// Returns
     /// -------
@@ -629,6 +659,9 @@ impl PyGenerator {
         memory: Option<&Bound<'_, PyAny>>,
         seed: u64,
         diagnostics: bool,
+        index_column: Option<String>,
+        index_dtype: Py<PyAny>,
+        index_start: u64,
     ) -> PyResult<(PyDataset, PyGenerationReport)> {
         let execution = execution
             .cloned()
@@ -652,6 +685,7 @@ impl PyGenerator {
                 .unwrap_or(laddu_runtime::MemoryBudget::Auto),
             seed,
             diagnostics,
+            index: generation_index(index_column, index_dtype.bind(py), index_start)?,
         };
         let (dataset, report) = py
             .detach(|| {
@@ -679,7 +713,10 @@ impl PyGenerator {
         pilot_proposals=10_000,
         safety_factor=2.0,
         grow_envelope=false,
-        diagnostics=false
+        diagnostics=false,
+        index_column=None,
+        index_dtype: "object" = default_index_dtype(),
+        index_start=0
     ))]
     #[allow(clippy::too_many_arguments)]
     /// Generate accept-reject unweighted events.
@@ -713,6 +750,13 @@ impl PyGenerator {
     ///     Grow an underestimated envelope instead of raising an error.
     /// diagnostics : bool, default=False
     ///     Collect additional generation diagnostics.
+    /// index_column : str, optional
+    ///     Exact integer column containing final output row ordinals.
+    /// index_dtype : str or numpy dtype, default='uint64'
+    ///     Unsigned storage dtype; canonical and Rust names are accepted.
+    /// index_start : int, default=0
+    ///     First output index. The full range is checked before generation.
+    ///     Indices are contiguous after rejection and final thinning.
     ///
     /// Returns
     /// -------
@@ -742,6 +786,9 @@ impl PyGenerator {
         safety_factor: f64,
         grow_envelope: bool,
         diagnostics: bool,
+        index_column: Option<String>,
+        index_dtype: Py<PyAny>,
+        index_start: u64,
     ) -> PyResult<(PyDataset, PyGenerationReport)> {
         let execution = execution
             .cloned()
@@ -798,6 +845,7 @@ impl PyGenerator {
                 .unwrap_or(laddu_runtime::MemoryBudget::Auto),
             seed,
             diagnostics,
+            index: generation_index(index_column, index_dtype.bind(py), index_start)?,
             envelope,
             envelope_overflow,
         };

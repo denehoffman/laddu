@@ -5,6 +5,7 @@ use laddu_physics::vectors::RealVec4;
 
 use crate::{
     BatchLayout, LadduDataError, LadduDataResult,
+    columns::{Column, ColumnBuffer, ColumnValue},
     schema::{P4Binding, Precision, ScalarBinding, Schema},
 };
 
@@ -12,6 +13,7 @@ use crate::{
 struct BatchParts {
     p4s: Arc<[Arc<[RealVec4]>]>,
     scalars: Arc<[Arc<[f64]>]>,
+    columns: Arc<[Column]>,
     weights: Weights,
 }
 
@@ -75,6 +77,7 @@ impl BatchParts {
         Self {
             p4s: p4s.into(),
             scalars: scalars.into(),
+            columns: Arc::from([]),
             weights,
         }
     }
@@ -92,10 +95,29 @@ impl BatchParts {
             ));
         }
 
-        let len = infer_len(&self.p4s, &self.scalars, self.weights.as_slice())?;
+        if self.columns.len() != schema.n_columns() {
+            return Err(LadduDataError::Schema(
+                "wrong number of typed columns".into(),
+            ));
+        }
+        for (column, (name, dtype)) in self.columns.iter().zip(schema.columns()) {
+            if column.dtype() != *dtype {
+                return Err(LadduDataError::Schema(format!(
+                    "column {name:?} dtype does not match schema"
+                )));
+            }
+        }
+        let len = infer_len(
+            &self.p4s,
+            &self.scalars,
+            &self.columns,
+            self.weights.as_slice(),
+        )?;
         if let Some(expected_len) = expected_len {
-            let has_columns =
-                !self.p4s.is_empty() || !self.scalars.is_empty() || self.weights.is_explicit();
+            let has_columns = !self.p4s.is_empty()
+                || !self.scalars.is_empty()
+                || !self.columns.is_empty()
+                || self.weights.is_explicit();
             if has_columns && len != expected_len {
                 return Err(LadduDataError::Schema("inconsistent batch length".into()));
             }
@@ -120,6 +142,11 @@ impl BatchParts {
             p4s,
             scalars,
             weights: self.weights.select(rows),
+            columns: self
+                .columns
+                .iter()
+                .map(|column| column.select(rows))
+                .collect(),
         }
     }
 
@@ -139,6 +166,11 @@ impl BatchParts {
             p4s,
             scalars,
             weights: self.weights.slice(start, end),
+            columns: self
+                .columns
+                .iter()
+                .map(|column| column.slice(start, end))
+                .collect(),
         }
     }
 
@@ -149,11 +181,12 @@ impl BatchParts {
         Self {
             p4s: Arc::clone(&self.p4s),
             scalars: Arc::clone(&self.scalars),
+            columns: Arc::clone(&self.columns),
             weights: self.weights.reweight(len, f),
         }
     }
 
-    fn concat(batches: &[(&Self, usize)]) -> Self {
+    fn concat(batches: &[(&Self, usize)]) -> LadduDataResult<Self> {
         let len: usize = batches.iter().map(|(_, len)| *len).sum();
         let n_p4s = batches.first().map_or(0, |(batch, _)| batch.p4s.len());
         let n_scalars = batches.first().map_or(0, |(batch, _)| batch.scalars.len());
@@ -188,7 +221,23 @@ impl BatchParts {
             Weights::ImplicitUnit
         };
 
-        Self::from_columns(p4s, scalars, weights)
+        let mut parts = Self::from_columns(p4s, scalars, weights);
+        if let Some((first, _)) = batches.first() {
+            parts.columns = first
+                .columns
+                .iter()
+                .enumerate()
+                .map(|(index, column)| {
+                    let inputs = batches
+                        .iter()
+                        .map(|(batch, _)| &batch.columns[index])
+                        .collect::<Vec<_>>();
+                    Column::concat(column.dtype(), &inputs)
+                })
+                .collect::<LadduDataResult<Vec<_>>>()?
+                .into();
+        }
+        Ok(parts)
     }
 }
 
@@ -249,6 +298,7 @@ impl fmt::Debug for EventBatch {
             .field("len", &self.len)
             .field("p4s", &self.parts.p4s)
             .field("scalars", &self.parts.scalars)
+            .field("columns", &self.parts.columns)
             .field("weights", &self.parts.weights.as_slice())
             .finish()
     }
@@ -268,6 +318,39 @@ impl EventBatch {
         weights: Option<Arc<[f64]>>,
     ) -> LadduDataResult<Self> {
         BatchAssembler::from_columns(schema, p4s, scalars, weights)
+    }
+
+    /// Constructs a batch including exact non-expression columns.
+    ///
+    /// # Errors
+    /// Returns an error for schema, dtype, or column-length mismatches.
+    pub fn new_with_columns(
+        schema: Arc<Schema>,
+        p4s: Vec<Arc<[RealVec4]>>,
+        scalars: Vec<Arc<[f64]>>,
+        columns: Vec<Column>,
+        weights: Option<Arc<[f64]>>,
+    ) -> LadduDataResult<Self> {
+        let mut parts = BatchParts::from_columns(p4s, scalars, Weights::from_option(weights));
+        parts.columns = columns.into();
+        Self::from_parts(schema, parts)
+    }
+
+    /// Constructs a typed batch with an explicit row count.
+    ///
+    /// # Errors
+    /// Returns an error if columns do not match the schema or row count.
+    pub fn new_with_columns_and_len(
+        schema: Arc<Schema>,
+        p4s: Vec<Arc<[RealVec4]>>,
+        scalars: Vec<Arc<[f64]>>,
+        columns: Vec<Column>,
+        weights: Option<Arc<[f64]>>,
+        len: usize,
+    ) -> LadduDataResult<Self> {
+        let mut parts = BatchParts::from_columns(p4s, scalars, Weights::from_option(weights));
+        parts.columns = columns.into();
+        Self::from_parts_with_len(schema, parts, len)
     }
 
     /// Constructs a batch with an explicit event count, including column-free events.
@@ -399,6 +482,21 @@ impl EventBatch {
     /// Returns a scalar column by index.
     pub fn scalar_column(&self, index: usize) -> &[f64] {
         &self.parts.scalars[index]
+    }
+
+    /// Returns an exact row-data column by index.
+    ///
+    /// # Panics
+    /// Panics when the column index is outside the schema.
+    pub fn column(&self, index: usize) -> &Column {
+        &self.parts.columns[index]
+    }
+
+    /// Returns an exact row-data column by name.
+    pub fn column_named(&self, name: &str) -> Option<&Column> {
+        self.schema
+            .column_index(name)
+            .map(|index| self.column(index))
     }
 
     /// Returns the optional explicit weight column.
@@ -579,7 +677,7 @@ impl EventBatch {
             .map(|batch| (&batch.parts, batch.len))
             .collect::<Vec<_>>();
         let len = batches.iter().map(|batch| batch.len).sum();
-        let mut combined = Self::from_parts_with_len(schema, BatchParts::concat(&parts), len)?;
+        let mut combined = Self::from_parts_with_len(schema, BatchParts::concat(&parts)?, len)?;
         if batches.iter().all(|b| b.row_ids.is_some()) {
             combined.row_ids = Some(
                 batches
@@ -595,12 +693,14 @@ impl EventBatch {
 fn infer_len(
     vec4s: &[Arc<[RealVec4]>],
     scalars: &[Arc<[f64]>],
+    columns: &[Column],
     weight: Option<&[f64]>,
 ) -> LadduDataResult<usize> {
     let len = vec4s
         .first()
         .map(|c| c.len())
         .or_else(|| scalars.first().map(|c| c.len()))
+        .or_else(|| columns.first().map(Column::len))
         .or_else(|| weight.map(|w| w.len()))
         .unwrap_or(0);
 
@@ -618,6 +718,12 @@ fn infer_len(
                 "inconsistent scalar column length".into(),
             ));
         }
+    }
+
+    if columns.iter().any(|column| column.len() != len) {
+        return Err(LadduDataError::Schema(
+            "inconsistent typed column length".into(),
+        ));
     }
 
     if let Some(w) = weight
@@ -655,6 +761,13 @@ impl<'a> BatchEvent<'a> {
     /// Returns a scalar value by column index.
     pub fn scalar(&self, col: usize) -> f64 {
         self.batch.scalar_at(col, self.row)
+    }
+
+    /// Returns an exact row-data value by name.
+    pub fn column_named(&self, name: &str) -> Option<ColumnValue> {
+        self.batch
+            .column_named(name)
+            .map(|column| column.at(self.row))
     }
 
     /// Returns the row weight, defaulting to one.
@@ -697,6 +810,13 @@ impl<'a> Event<'a> {
     /// Returns a scalar value by column index.
     pub fn scalar(&self, col: usize) -> f64 {
         self.batch.scalar_at(col, self.row)
+    }
+
+    /// Returns an exact row-data value by name.
+    pub fn column_named(&self, name: &str) -> Option<ColumnValue> {
+        self.batch
+            .column_named(name)
+            .map(|column| column.at(self.row))
     }
 
     /// Returns this view's effective weight.
@@ -753,6 +873,7 @@ pub(crate) struct BatchAssembler {
     schema: Arc<Schema>,
     p4s: Vec<Vec<RealVec4>>,
     scalars: Vec<Vec<f64>>,
+    columns: Vec<ColumnBuffer>,
     weights: WeightAssembler,
     len: usize,
 }
@@ -767,6 +888,11 @@ impl BatchAssembler {
             .collect();
 
         Self {
+            columns: schema
+                .columns()
+                .iter()
+                .map(|(_, dtype)| ColumnBuffer::new(*dtype, capacity))
+                .collect(),
             schema,
             p4s,
             scalars,
@@ -800,6 +926,11 @@ impl BatchAssembler {
     }
 
     fn push_owned(&mut self, event: OwnedEvent) -> LadduDataResult<()> {
+        if self.schema.n_columns() != 0 {
+            return Err(LadduDataError::Unsupported(
+                "owned float events cannot populate typed columns; construct typed columnar batches",
+            ));
+        }
         if event.p4s.len() != self.schema.n_p4s() {
             return Err(LadduDataError::Schema(
                 "wrong number of event vec4 values".into(),
@@ -830,6 +961,11 @@ impl BatchAssembler {
         event: Event<'_>,
         explicit_weight: bool,
     ) -> LadduDataResult<()> {
+        if self.schema.columns() != event.batch.schema().columns() {
+            return Err(LadduDataError::Schema(
+                "typed event columns do not match schema".into(),
+            ));
+        }
         if event.batch.schema().n_p4s() != self.schema.n_p4s() {
             return Err(LadduDataError::Schema(
                 "wrong number of event vec4 values".into(),
@@ -852,16 +988,21 @@ impl BatchAssembler {
             self.scalars[col].push(event.scalar(col));
         }
 
+        for (index, column) in self.columns.iter_mut().enumerate() {
+            column.push(event.batch.column(index).at(event.row))?;
+        }
+
         self.len += 1;
         Ok(())
     }
 
     pub(crate) fn finish(self) -> LadduDataResult<EventBatch> {
-        let parts = BatchParts::from_columns(
+        let mut parts = BatchParts::from_columns(
             self.p4s.into_iter().map(Arc::from).collect(),
             self.scalars.into_iter().map(Arc::from).collect(),
             self.weights.finish(),
         );
+        parts.columns = self.columns.into_iter().map(ColumnBuffer::finish).collect();
         EventBatch::from_parts_with_len(self.schema, parts, self.len)
     }
 }

@@ -223,6 +223,22 @@ impl Dataset {
         self.source.schema()
     }
 
+    /// Materializes an exact column in this view's row order.
+    ///
+    /// # Errors
+    /// Returns an error for an unknown column, source failure, or dtype mismatch.
+    pub fn column(&self, name: &str) -> LadduDataResult<crate::columns::Column> {
+        let schema = self.schema()?;
+        let index = schema
+            .column_index(name)
+            .ok_or_else(|| LadduDataError::MissingColumn(crate::Name::from(name)))?;
+        let mut values = crate::columns::ColumnBuffer::new(schema.columns()[index].1, 0);
+        for batch in self.batches()? {
+            values.extend(batch?.column(index))?;
+        }
+        Ok(values.finish())
+    }
+
     /// Returns source planning capabilities.
     pub fn capabilities(&self) -> SourceCapabilities {
         self.source.capabilities()

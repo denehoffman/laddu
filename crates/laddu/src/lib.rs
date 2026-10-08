@@ -92,6 +92,7 @@ pub mod prelude {
     pub use laddu_compile::{CompileError, CompileOptions, CompileResult, CompiledModel};
     pub use laddu_data::{
         LadduDataError, LadduDataResult,
+        columns::{Column, ColumnDType, ColumnValue},
         data::{
             CacheStorage, Dataset, DatasetStats, EventBatch, EventBatchBuilder, MemoryPolicy,
             OwnedEvent,
@@ -126,11 +127,12 @@ pub mod prelude {
     };
     #[cfg(feature = "generation")]
     pub use laddu_generation::{
-        ChannelGenerator, EnvelopeKind, EnvelopeMode, EnvelopeOverflow, GenerationError,
-        GenerationReport, GenerationResult, InitialMomentum, InitialMomentumResult, MassProposal,
-        ModelEvaluator, NamedMass, NamedMomentum, ProposalResult, ProposalRng,
-        ProvenEnvelopeReport, ScalarProposalResult, ScalarSource, TComponent, TDistribution,
-        TwoBodyScattering, UnweightedConfig, VertexProposal, WeightedConfig,
+        ChannelGenerator, EnvelopeKind, EnvelopeMode, EnvelopeOverflow, GeneratedIndex,
+        GenerationError, GenerationReport, GenerationResult, InitialMomentum,
+        InitialMomentumResult, MassProposal, ModelEvaluator, NamedMass, NamedMomentum,
+        ProposalResult, ProposalRng, ProvenEnvelopeReport, ScalarProposalResult, ScalarSource,
+        TComponent, TDistribution, TwoBodyScattering, UnweightedConfig, VertexProposal,
+        WeightedConfig,
     };
     #[cfg(feature = "likelihood")]
     pub use laddu_likelihood::{

@@ -2,6 +2,7 @@ use std::{path::PathBuf, sync::Arc};
 
 use laddu_data::{
     LadduDataError, LadduDataResult,
+    columns::{Column, ColumnDType},
     data::{Dataset, DatasetStats, EventBatch, MemoryPolicy},
     io::{
         EventBatchIter, EventSource, ReadPlan, SourceCapabilities, parquet::ParquetSource,
@@ -11,12 +12,26 @@ use laddu_data::{
 };
 use laddu_physics::vectors::RealVec4;
 use laddu_runtime::{BinSpec, DatasetExprExt, MemoryBudget};
-use numpy::{PyArray1, PyReadonlyArray1, PyReadonlyArray2, PyUntypedArrayMethods};
+use numpy::{PyArray1, PyArrayMethods, PyReadonlyArray1, PyReadonlyArray2, PyUntypedArrayMethods};
 use pyo3::{
     exceptions::{PyTypeError, PyValueError},
+    inspect::PyStaticExpr,
     prelude::*,
+    type_hint_identifier, type_hint_subscript, type_hint_union,
     types::{PyAny, PyDict, PyIterator},
 };
+
+super::io::hinted_input!(
+    ExpressionInput,
+    type_hint_union!(
+        type_hint_identifier!("laddu", "Expr"),
+        type_hint_subscript!(
+            type_hint_identifier!("collections.abc", "Mapping"),
+            type_hint_identifier!("builtins", "str"),
+            type_hint_identifier!("laddu", "Expr")
+        )
+    )
+);
 
 use super::{
     error::to_py_err,
@@ -94,7 +109,8 @@ impl PyParquetSource {
         memory: "MemoryBudget | int | str | None" = None,
         cache="fastest",
         nulls="error",
-        validate=true
+        validate=true,
+        schema=None
     ))]
     fn new(
         path: &Bound<'_, PyAny>,
@@ -102,8 +118,12 @@ impl PyParquetSource {
         cache: &str,
         nulls: &str,
         validate: bool,
+        schema: Option<&super::io::PySchema>,
     ) -> PyResult<Self> {
         let mut builder = ParquetSource::builder(path_string(path)?).validate_all_files(validate);
+        if let Some(schema) = schema {
+            builder = builder.schema(Arc::clone(&schema.inner));
+        }
         builder = match nulls {
             "error" => builder.error_on_nulls(),
             "nan" => builder.nulls_as_nan(),
@@ -156,7 +176,8 @@ impl PyRootSource {
         tree=None,
         memory: "MemoryBudget | int | str | None" = None,
         cache="fastest",
-        validate=true
+        validate=true,
+        schema=None
     ))]
     fn new(
         path: &Bound<'_, PyAny>,
@@ -164,8 +185,12 @@ impl PyRootSource {
         memory: Option<&Bound<'_, PyAny>>,
         cache: &str,
         validate: bool,
+        schema: Option<&super::io::PySchema>,
     ) -> PyResult<Self> {
         let mut builder = RootSource::builder(path_string(path)?).validate_all_files(validate);
+        if let Some(schema) = schema {
+            builder = builder.schema(Arc::clone(&schema.inner));
+        }
         if let Some(tree) = tree {
             builder = builder.tree(tree);
         }
@@ -322,10 +347,111 @@ fn scalar_array(values: &Bound<'_, PyAny>, name: &str) -> PyResult<Arc<[f64]>> {
     )))
 }
 
+pub(super) fn parse_column_dtype(value: &Bound<'_, PyAny>) -> PyResult<ColumnDType> {
+    if let Ok(name) = value.extract::<String>() {
+        return name
+            .parse()
+            .map_err(|error| PyValueError::new_err(format!("{error}")));
+    }
+    let dtype = value
+        .py()
+        .import("numpy")?
+        .getattr("dtype")?
+        .call1((value,))?;
+    let kind: String = dtype.getattr("kind")?.extract()?;
+    if !matches!(kind.as_str(), "i" | "u") {
+        return Err(PyValueError::new_err(
+            "column dtype must be a supported integer type",
+        ));
+    }
+    let name: String = dtype.getattr("name")?.extract()?;
+    name.parse()
+        .map_err(|error| PyValueError::new_err(format!("{error}")))
+}
+
+pub(super) fn column_declarations(
+    columns: Option<&Bound<'_, PyDict>>,
+) -> PyResult<Vec<(String, ColumnDType)>> {
+    columns
+        .map(|columns| {
+            columns
+                .iter()
+                .map(|(name, dtype)| Ok((name.extract()?, parse_column_dtype(&dtype)?)))
+                .collect()
+        })
+        .unwrap_or_else(|| Ok(Vec::new()))
+}
+
+fn exact_column(values: &Bound<'_, PyAny>, name: &str) -> PyResult<Column> {
+    let array = values
+        .py()
+        .import("numpy")?
+        .getattr("asarray")?
+        .call1((values,))?;
+    if array.getattr("ndim")?.extract::<usize>()? != 1 {
+        return Err(PyValueError::new_err(format!(
+            "column {name:?} must be one-dimensional"
+        )));
+    }
+    let dtype = parse_column_dtype(&array.getattr("dtype")?)?;
+    let array = if array
+        .getattr("dtype")?
+        .getattr("isnative")?
+        .extract::<bool>()?
+    {
+        array
+    } else {
+        array.call_method1("astype", (dtype.name(),))?
+    };
+    macro_rules! extract_column {
+        ($ty:ty, $variant:ident) => {
+            Column::$variant(
+                array
+                    .extract::<PyReadonlyArray1<'_, $ty>>()?
+                    .as_array()
+                    .iter()
+                    .copied()
+                    .collect(),
+            )
+        };
+    }
+    Ok(match dtype {
+        ColumnDType::I8 => extract_column!(i8, I8),
+        ColumnDType::U8 => extract_column!(u8, U8),
+        ColumnDType::I16 => extract_column!(i16, I16),
+        ColumnDType::U16 => extract_column!(u16, U16),
+        ColumnDType::I32 => extract_column!(i32, I32),
+        ColumnDType::U32 => extract_column!(u32, U32),
+        ColumnDType::I64 => extract_column!(i64, I64),
+        ColumnDType::U64 => extract_column!(u64, U64),
+    })
+}
+
+pub(super) fn column_array<'py>(py: Python<'py>, column: &Column) -> Bound<'py, PyAny> {
+    macro_rules! array {
+        ($values:expr) => {{
+            let array = PyArray1::from_vec(py, $values.to_vec());
+            array.readwrite().make_nonwriteable();
+            array.into_any()
+        }};
+    }
+    match column {
+        Column::I8(values) => array!(values),
+        Column::U8(values) => array!(values),
+        Column::I16(values) => array!(values),
+        Column::U16(values) => array!(values),
+        Column::I32(values) => array!(values),
+        Column::U32(values) => array!(values),
+        Column::I64(values) => array!(values),
+        Column::U64(values) => array!(values),
+    }
+}
+
 pub(super) fn event_batch_from_arrays(
     p4s: &Bound<'_, PyDict>,
     scalars: &Bound<'_, PyDict>,
     weights: Option<&Bound<'_, PyAny>>,
+    columns: Option<&Bound<'_, PyDict>>,
 ) -> PyResult<EventBatch> {
     let mut p4_names = Vec::with_capacity(p4s.len());
     let mut p4_columns = Vec::with_capacity(p4s.len());
@@ -360,6 +486,23 @@ pub(super) fn event_batch_from_arrays(
         scalar_columns.push(values);
     }
 
+    let mut declarations = Vec::new();
+    let mut exact_columns = Vec::new();
+    if let Some(columns) = columns {
+        for (name, values) in columns {
+            let name: String = name.extract()?;
+            let column = exact_column(&values, &name)?;
+            if expected_len.is_some_and(|len| len != column.len()) {
+                return Err(PyValueError::new_err(
+                    "all dataset columns must have the same number of events",
+                ));
+            }
+            expected_len = Some(column.len());
+            declarations.push((name, column.dtype()));
+            exact_columns.push(column);
+        }
+    }
+
     let weights = weights
         .map(|weights| {
             let values = scalar_array(weights, "weights")?;
@@ -371,9 +514,20 @@ pub(super) fn event_batch_from_arrays(
             Ok(values)
         })
         .transpose()?;
-    let schema =
-        Arc::new(Schema::new(p4_names, scalar_names, weights.is_some()).map_err(to_py_err)?);
-    EventBatch::new(schema, p4_columns, scalar_columns, weights).map_err(to_py_err)
+    let schema = Schema::new(p4_names, scalar_names, weights.is_some())
+        .and_then(|schema| schema.with_columns(declarations))
+        .map_err(to_py_err)?;
+    schema
+        .validate_column_names(&Default::default())
+        .map_err(to_py_err)?;
+    EventBatch::new_with_columns(
+        Arc::new(schema),
+        p4_columns,
+        scalar_columns,
+        exact_columns,
+        weights,
+    )
+    .map_err(to_py_err)
 }
 
 struct PythonBatchSource {
@@ -479,8 +633,13 @@ pub(super) fn event_batch_from_mapping(
         .cast::<PyDict>()
         .map_err(|_| PyTypeError::new_err("batch 'scalars' must be a dict"))?;
     let weights = mapping.get_item("weights")?;
+    let columns = mapping.get_item("columns")?;
+    let columns = columns
+        .as_ref()
+        .map(|value| value.cast::<PyDict>())
+        .transpose()?;
     let weights = weights.as_ref().filter(|weights| !weights.is_none());
-    let batch = event_batch_from_arrays(p4s, scalars, weights)?;
+    let batch = event_batch_from_arrays(p4s, scalars, weights, columns)?;
 
     reorder_batch(&batch, schema)
 }
@@ -488,6 +647,12 @@ pub(super) fn event_batch_from_mapping(
 fn reorder_batch(batch: &EventBatch, schema: &Schema) -> PyResult<EventBatch> {
     if batch.schema().n_p4s() != schema.n_p4s()
         || batch.schema().n_scalars() != schema.n_scalars()
+        || batch.schema().n_columns() != schema.n_columns()
+        || schema.columns().iter().any(|(name, dtype)| {
+            batch
+                .column_named(name)
+                .is_none_or(|column| column.dtype() != *dtype)
+        })
         || batch.weights_column().is_some() != schema.has_weight()
         || schema
             .p4s()
@@ -504,7 +669,7 @@ fn reorder_batch(batch: &EventBatch, schema: &Schema) -> PyResult<EventBatch> {
         )));
     }
 
-    let reordered = EventBatch::new_with_len(
+    let reordered = EventBatch::new_with_columns_and_len(
         Arc::new(schema.clone()),
         schema
             .p4s()
@@ -515,6 +680,11 @@ fn reorder_batch(batch: &EventBatch, schema: &Schema) -> PyResult<EventBatch> {
             .scalars()
             .iter()
             .map(|name| Arc::from(batch.scalar_column_named(name).expect("validated column")))
+            .collect(),
+        schema
+            .columns()
+            .iter()
+            .map(|(name, _)| batch.column_named(name).expect("validated column").clone())
             .collect(),
         batch.weights_column().map(Arc::from),
         batch.len(),
@@ -642,6 +812,7 @@ impl PyDataset {
         *,
         p4s: "dict[str, numpy.typing.NDArray[numpy.float32 | numpy.float64]]",
         scalars: "dict[str, numpy.typing.NDArray[numpy.float32 | numpy.float64]]",
+        columns: "dict[str, numpy.typing.ArrayLike] | None" = None,
         weights: "Sequence[float] | numpy.typing.NDArray[numpy.float32 | numpy.float64] | None" = None
     ))]
     /// Create an in-memory dataset from NumPy columns.
@@ -653,6 +824,10 @@ impl PyDataset {
     ///     ``(E, px, py, pz)`` order.
     /// scalars : dict[str, numpy.ndarray]
     ///     One-dimensional scalar columns.
+    /// columns : dict[str, array-like], optional
+    ///     Exact integer row-data columns, distinct from expression scalars.
+    ///     Signed and unsigned 8-, 16-, 32-, and 64-bit dtypes are preserved.
+    ///     Inputs are copied; floats, booleans, objects, and nulls are rejected.
     /// weights : numpy.ndarray, optional
     ///     One-dimensional event weights. Unit weights are used by default.
     ///
@@ -670,10 +845,11 @@ impl PyDataset {
     fn from_arrays(
         p4s: &Bound<'_, PyDict>,
         scalars: &Bound<'_, PyDict>,
+        columns: Option<&Bound<'_, PyDict>>,
         weights: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Self> {
         Ok(Self {
-            inner: Dataset::from_batch(event_batch_from_arrays(p4s, scalars, weights)?),
+            inner: Dataset::from_batch(event_batch_from_arrays(p4s, scalars, weights, columns)?),
         })
     }
 
@@ -681,7 +857,7 @@ impl PyDataset {
     #[pyo3(signature = (
         batch_factory: "Callable[..., Iterable[io.EventBatch | dict[str, object]]]",
         *,
-        schema: "io.Schema | dict[str, object]",
+        schema: "Schema | dict[str, object]",
         length=None,
         memory: "MemoryBudget | int | str | None" = None,
         cache="fastest"
@@ -696,10 +872,12 @@ impl PyDataset {
     /// Parameters
     /// ----------
     /// batch_factory : callable
-    ///     Callable returning a fresh iterable of batches.
+    ///     Callable replaying identical ordered rows on every traversal.
+    ///     Batch boundaries may vary; row order and contents must remain stable.
     /// schema : laddu.io.Schema or dict
     ///     Canonical schema or mapping with ``p4s`` and ``scalars`` name
-    ///     sequences and an optional boolean ``weights`` entry.
+    ///     sequences, optional integer ``columns`` dtype mapping, and boolean
+    ///     ``weights`` entry. Integer batch dtypes must match exactly.
     /// length : int, optional
     ///     Exact number of events, when cheaply known.
     /// memory : MemoryBudget, int, or str, optional
@@ -745,7 +923,19 @@ impl PyDataset {
                 .map(|value| value.extract::<bool>())
                 .transpose()?
                 .unwrap_or(false);
-            Arc::new(Schema::new(p4s, scalars, has_weight).map_err(to_py_err)?)
+            let columns = schema.get_item("columns")?;
+            let columns = columns
+                .as_ref()
+                .map(|value| value.cast::<PyDict>())
+                .transpose()?;
+            let schema = Schema::new(p4s, scalars, has_weight)
+                .map_err(to_py_err)?
+                .with_columns(column_declarations(columns)?)
+                .map_err(to_py_err)?;
+            schema
+                .validate_column_names(&laddu_data::schema::SchemaColumnNames::default())
+                .map_err(to_py_err)?;
+            Arc::new(schema)
         };
         let source = PythonBatchSource {
             schema,
@@ -812,27 +1002,84 @@ impl PyDataset {
             .collect())
     }
 
+    /// Return float scalar names followed by exact column names in schema order.
+    ///
+    /// Returns
+    /// -------
+    /// list of str
+    ///     Names accepted by :meth:`column`; four-momenta and weights are excluded.
+    fn column_names(&self) -> PyResult<Vec<String>> {
+        let schema = self.inner.schema().map_err(to_py_err)?;
+        Ok(schema
+            .scalars()
+            .iter()
+            .map(ToString::to_string)
+            .chain(schema.columns().iter().map(|(name, _)| name.to_string()))
+            .collect())
+    }
+
+    /// Materialize a float scalar or exact integer column in this view's row order.
+    ///
+    /// Parameters
+    /// ----------
+    /// name : str
+    ///     A name returned by :meth:`column_names`.
+    ///
+    /// Returns
+    /// -------
+    /// numpy.ndarray
+    ///     An independent, initially read-only one-dimensional array. Integer
+    ///     dtype is preserved; existing float scalar storage returns ``float64``.
+    ///
+    /// Raises
+    /// ------
+    /// LadduError
+    ///     If the name is unknown or the dataset cannot be read.
+    fn column<'py>(&self, py: Python<'py>, name: &str) -> PyResult<Bound<'py, PyAny>> {
+        let schema = self.inner.schema().map_err(to_py_err)?;
+        let dataset = self.inner.clone();
+        if let Some(index) = schema.scalar_index(name) {
+            let values = py
+                .detach(move || {
+                    let mut values = Vec::new();
+                    for batch in dataset.batches()? {
+                        values.extend_from_slice(batch?.scalar_column(index));
+                    }
+                    Ok::<_, LadduDataError>(values)
+                })
+                .map_err(to_py_err)?;
+            let array = PyArray1::from_vec(py, values);
+            array.readwrite().make_nonwriteable();
+            return Ok(array.into_any());
+        }
+        let values = py.detach(move || dataset.column(name)).map_err(to_py_err)?;
+        Ok(column_array(py, &values))
+    }
+
     #[pyo3(signature = (
         expr,
         *,
         execution=None,
         real=false
-    ) -> "Sequence[float]")]
-    /// Evaluate an expression for every event.
+    ) -> "Any")]
+    /// Evaluate one expression or a named mapping for every dataset row.
     ///
     /// Parameters
     /// ----------
-    /// expr : Expr
-    ///     Symbolic expression to evaluate.
+    /// expr : Expr or Mapping[str, Expr]
+    ///     One expression, or named expressions evaluated in one bounded source
+    ///     traversal. Mapping order is preserved; an empty mapping reads no rows.
     /// execution : Execution, optional
     ///     Runtime configuration. Automatic local execution is used by default.
     /// real : bool, default=False
-    ///     Return ``float64`` real components instead of complex values.
+    ///     Require real-valued expressions and return ``float64`` arrays.
+    ///     Complex expressions are rejected, not projected onto real components.
     ///
     /// Returns
     /// -------
-    /// numpy.ndarray
-    ///     One value per event.
+    /// numpy.ndarray or dict of numpy.ndarray
+    ///     One value per row, or an array for each supplied name. Complex outputs
+    ///     use ``complex128`` even when computation uses single precision.
     ///
     /// Raises
     /// ------
@@ -841,16 +1088,50 @@ impl PyDataset {
     fn evaluate<'py>(
         &self,
         py: Python<'py>,
-        expr: &PyExpr,
+        expr: ExpressionInput,
         execution: Option<&PyExecution>,
         real: bool,
     ) -> PyResult<Bound<'py, PyAny>> {
+        let expr = expr.0.bind(py);
         let execution = execution
             .cloned()
             .map(Ok)
             .unwrap_or_else(PyExecution::default_inner)?;
         let dataset = self.inner.clone();
-        let expr = expr.inner.clone();
+        if !expr.is_instance_of::<PyExpr>() {
+            let mapping = py.import("collections.abc")?.getattr("Mapping")?;
+            if !expr.is_instance(&mapping)? {
+                return Err(PyTypeError::new_err(
+                    "expr must be an Expr or a mapping of names to Expr",
+                ));
+            }
+            let mut names = Vec::new();
+            let mut expressions = Vec::new();
+            for item in expr.call_method0("items")?.try_iter()? {
+                let (name, value): (String, Py<PyExpr>) = item?.extract()?;
+                names.push(name);
+                expressions.push(value.borrow(py).inner.clone());
+            }
+            let result = PyDict::new(py);
+            if expressions.is_empty() {
+                return Ok(result.into_any());
+            }
+            let outputs = py
+                .detach(move || dataset.evaluate_exprs(&expressions, &execution.inner, real))
+                .map_err(to_py_err)?;
+            for (name, values) in names.into_iter().zip(outputs) {
+                if real {
+                    result.set_item(
+                        name,
+                        PyArray1::from_vec(py, values.into_iter().map(|value| value.re).collect()),
+                    )?;
+                } else {
+                    result.set_item(name, PyArray1::from_vec(py, values))?;
+                }
+            }
+            return Ok(result.into_any());
+        }
+        let expr = expr.extract::<PyRef<'_, PyExpr>>()?.inner.clone();
         if real {
             let values = py
                 .detach(move || dataset.evaluate_real(&expr, &execution.inner))
@@ -1272,7 +1553,8 @@ pub struct PyBinDataset {
     memory: "MemoryBudget | int | str | None" = None,
     cache="fastest",
     nulls="error",
-    validate=true
+    validate=true,
+    schema=None
 ))]
 /// Read a Parquet dataset.
 ///
@@ -1290,6 +1572,8 @@ pub struct PyBinDataset {
 ///     Null-value policy.
 /// validate : bool, default=True
 ///     Validate every matched file.
+/// schema : Schema, optional
+///     Select only these logical fields before decoding. Integer dtypes must match exactly.
 ///
 /// Returns
 /// -------
@@ -1301,8 +1585,12 @@ pub fn read_parquet(
     cache: &str,
     nulls: &str,
     validate: bool,
+    schema: Option<&super::io::PySchema>,
 ) -> PyResult<PyDataset> {
     let mut builder = ParquetSource::builder(path_string(path)?).validate_all_files(validate);
+    if let Some(schema) = schema {
+        builder = builder.schema(Arc::clone(&schema.inner));
+    }
     builder = match nulls {
         "error" => builder.error_on_nulls(),
         "nan" => builder.nulls_as_nan(),
@@ -1321,7 +1609,8 @@ pub fn read_parquet(
     tree=None,
     memory: "MemoryBudget | int | str | None" = None,
     cache="fastest",
-    validate=true
+    validate=true,
+    schema=None
 ))]
 /// Read a ROOT TTree dataset.
 ///
@@ -1339,6 +1628,8 @@ pub fn read_parquet(
 ///     Dataset cache policy.
 /// validate : bool, default=True
 ///     Validate every matched file.
+/// schema : Schema, optional
+///     Select only these logical fields before decoding. Integer dtypes must match exactly.
 ///
 /// Returns
 /// -------
@@ -1350,8 +1641,12 @@ pub fn read_root(
     memory: Option<&Bound<'_, PyAny>>,
     cache: &str,
     validate: bool,
+    schema: Option<&super::io::PySchema>,
 ) -> PyResult<PyDataset> {
     let mut builder = RootSource::builder(path_string(path)?).validate_all_files(validate);
+    if let Some(schema) = schema {
+        builder = builder.schema(Arc::clone(&schema.inner));
+    }
     if let Some(tree) = tree {
         builder = builder.tree(tree);
     }

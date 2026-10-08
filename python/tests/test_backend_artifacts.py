@@ -3,9 +3,28 @@
 from __future__ import annotations
 
 import importlib.util
+import subprocess
+import sys
 import unittest
+from pathlib import Path
 
-from installed_artifact_contract import check_installed_artifact
+
+def check_installed_artifact(module: str, backend: str, distribution: str) -> None:
+    # Each native adapter registers laddu.io; importing multiple adapters in the
+    # test runner would replace the primary distribution's public module alias.
+    subprocess.run(  # noqa: S603 -- fixed interpreter/script and literal adapter names
+        [
+            sys.executable,
+            str(Path(__file__).with_name('installed_artifact_contract.py')),
+            '--module',
+            module,
+            '--backend',
+            backend,
+            '--distribution',
+            distribution,
+        ],
+        check=True,
+    )
 
 
 class InstalledArtifactContracts(unittest.TestCase):

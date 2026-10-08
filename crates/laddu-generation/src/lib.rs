@@ -9,6 +9,7 @@ use std::{
 use laddu_compile::{CompiledModel, ReductionPlan};
 use laddu_data::{
     BatchLayout,
+    columns::{Column, ColumnDType},
     data::{Dataset, EventBatch},
     io::{EventSink, WritePlan, memory::MemorySink},
     schema::{Precision as DataPrecision, Schema},
@@ -142,8 +143,68 @@ pub enum GenerationError {
     Physics(#[from] LadduPhysicsError),
 }
 
+/// Optional exact identifier assigned by final output row ordinal.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct GeneratedIndex {
+    /// Row-data column name.
+    pub name: String,
+    /// Unsigned integer storage dtype.
+    pub dtype: ColumnDType,
+    /// First stored output index.
+    pub start: u64,
+}
+
+impl GeneratedIndex {
+    fn validate(&self, count: usize) -> GenerationResult<()> {
+        let maximum = match self.dtype {
+            ColumnDType::U8 => u64::from(u8::MAX),
+            ColumnDType::U16 => u64::from(u16::MAX),
+            ColumnDType::U32 => u64::from(u32::MAX),
+            ColumnDType::U64 => u64::MAX,
+            _ => {
+                return Err(GenerationError::InvalidConfiguration(
+                    "generated index dtype must be unsigned".into(),
+                ));
+            }
+        };
+        let last = if count == 0 {
+            self.start
+        } else {
+            self.start
+                .checked_add(u64::try_from(count - 1).map_err(|_| {
+                    GenerationError::InvalidConfiguration("generated index range overflow".into())
+                })?)
+                .ok_or_else(|| {
+                    GenerationError::InvalidConfiguration("generated index range overflow".into())
+                })?
+        };
+        if last > maximum {
+            return Err(GenerationError::InvalidConfiguration(
+                "generated index range exceeds dtype".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    fn column(&self, ordinal: usize, count: usize) -> Column {
+        // The full output range was checked before generation.
+        let start = self.start + ordinal as u64;
+        match self.dtype {
+            ColumnDType::U8 => Column::U8((0..count).map(|i| (start + i as u64) as u8).collect()),
+            ColumnDType::U16 => {
+                Column::U16((0..count).map(|i| (start + i as u64) as u16).collect())
+            }
+            ColumnDType::U32 => {
+                Column::U32((0..count).map(|i| (start + i as u64) as u32).collect())
+            }
+            ColumnDType::U64 => Column::U64((0..count).map(|i| start + i as u64).collect()),
+            _ => unreachable!("validated unsigned index dtype"),
+        }
+    }
+}
+
 /// Configuration for weighted event generation.
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct WeightedConfig {
     /// Number of events to generate.
     pub events: usize,
@@ -153,6 +214,9 @@ pub struct WeightedConfig {
     pub seed: u64,
     /// Whether to include diagnostic weight columns.
     pub diagnostics: bool,
+    /// Optional final output index column.
+    #[serde(default)]
+    pub index: Option<GeneratedIndex>,
 }
 
 impl WeightedConfig {
@@ -163,12 +227,13 @@ impl WeightedConfig {
             memory: MemoryBudget::Auto,
             seed: 0,
             diagnostics: false,
+            index: None,
         }
     }
 }
 
 /// Configuration for rejection-sampled unweighted event generation.
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct UnweightedConfig {
     /// Number of accepted events to generate.
     pub events: usize,
@@ -183,6 +248,9 @@ pub struct UnweightedConfig {
     pub seed: u64,
     /// Whether to include diagnostic weight columns.
     pub diagnostics: bool,
+    /// Optional final output index column.
+    #[serde(default)]
+    pub index: Option<GeneratedIndex>,
     /// Strategy used to establish the rejection-sampling envelope.
     pub envelope: EnvelopeMode,
     /// Policy applied when a proposal exceeds the active envelope.
@@ -198,6 +266,7 @@ impl UnweightedConfig {
             memory: MemoryBudget::Auto,
             seed: 0,
             diagnostics: false,
+            index: None,
             envelope: EnvelopeMode::default(),
             envelope_overflow: EnvelopeOverflow::Error,
         }
@@ -569,6 +638,12 @@ struct GenerationMemoryUse {
     retained_output_events: usize,
 }
 
+struct GenerationMemoryPlan {
+    decision: MemoryDecision,
+    output_chunk_events: usize,
+    lease: MemoryLease,
+}
+
 impl ChannelGenerator {
     fn generation_memory(
         &self,
@@ -577,7 +652,7 @@ impl ChannelGenerator {
         model: Option<&ModelEvaluator>,
         usage: GenerationMemoryUse,
         label: &str,
-    ) -> GenerationResult<(MemoryDecision, MemoryLease)> {
+    ) -> GenerationResult<GenerationMemoryPlan> {
         let generated_layout = BatchLayout::new(
             schema.n_p4s(),
             schema.n_scalars(),
@@ -603,34 +678,51 @@ impl ChannelGenerator {
                     "generation working-set overflow: {error}"
                 )))
             })?;
-        let output = generated_layout
+        let output = BatchLayout::from_schema(schema)
             .schema_footprint(DataPrecision::F64)
             .map_err(|error| {
                 GenerationError::Runtime(laddu_runtime::RuntimeError::Data(format!(
                     "output working-set overflow: {error}"
                 )))
             })?;
-        let bytes_per_event = generated.checked_add(output).map_err(|error| {
+        // Growing envelopes finish sampling before emitting any final rows.
+        // Index columns exist only in that output phase, so they must not reduce
+        // proposal capacity or change the envelope's observation groups.
+        let deferred_columns = usage.resident_events > 0 && schema.n_columns() > 0;
+        let sampling_output = if deferred_columns {
+            generated_layout
+                .schema_footprint(DataPrecision::F64)
+                .map_err(|error| {
+                    GenerationError::Runtime(laddu_runtime::RuntimeError::Data(format!(
+                        "output working-set overflow: {error}"
+                    )))
+                })?
+        } else {
+            output
+        };
+        let bytes_per_event = generated.checked_add(sampling_output).map_err(|error| {
             GenerationError::Runtime(laddu_runtime::RuntimeError::Data(format!(
                 "generation working-set overflow: {error}"
             )))
         })?;
-        let fixed_bytes = generated
-            .checked_peak_bytes(usage.resident_events)
-            .and_then(|resident| {
-                output
-                    .checked_peak_bytes(usage.retained_output_events)
-                    .and_then(|retained| {
-                        resident
-                            .checked_add(retained)
-                            .ok_or(laddu_memory::FootprintOverflow::Addition)
-                    })
-            })
-            .map_err(|error| {
-                GenerationError::Runtime(laddu_runtime::RuntimeError::Data(format!(
-                    "generation working-set overflow: {error}"
-                )))
-            })?;
+        let fixed_bytes = |output: MemoryFootprint| {
+            generated
+                .checked_peak_bytes(usage.resident_events)
+                .and_then(|resident| {
+                    output
+                        .checked_peak_bytes(usage.retained_output_events)
+                        .and_then(|retained| {
+                            resident
+                                .checked_add(retained)
+                                .ok_or(laddu_memory::FootprintOverflow::Addition)
+                        })
+                })
+                .map_err(|error| {
+                    GenerationError::Runtime(laddu_runtime::RuntimeError::Data(format!(
+                        "generation working-set overflow: {error}"
+                    )))
+                })
+        };
         let state = model
             .map(|model| model.execution.memory_state().clone())
             .unwrap_or_else(MemoryState::current);
@@ -648,22 +740,46 @@ impl ChannelGenerator {
             &owned_pool
         };
         let available = pool.remaining().min(operation_cap);
-        let decision = MemoryFitRequest {
+        let mut decision = MemoryFitRequest {
             label: label.into(),
-            footprint: MemoryFootprint::new(fixed_bytes, bytes_per_event.bytes_per_event),
+            footprint: MemoryFootprint::new(
+                fixed_bytes(sampling_output)?,
+                bytes_per_event.bytes_per_event,
+            ),
             available_bytes: available,
             event_limit: usage.event_limit,
             strategy: "memory-derived generation".into(),
         }
         .evaluate()
         .map_err(laddu_runtime::RuntimeError::from)?;
+        let output_chunk_events = if deferred_columns {
+            let output_decision = MemoryFitRequest {
+                label: format!("{label} final output"),
+                footprint: MemoryFootprint::new(fixed_bytes(output)?, output.bytes_per_event),
+                available_bytes: available,
+                event_limit: decision.chunk_events,
+                strategy: "deferred generation output".into(),
+            }
+            .evaluate()
+            .map_err(laddu_runtime::RuntimeError::from)?;
+            decision.estimated_peak_bytes = decision
+                .estimated_peak_bytes
+                .max(output_decision.estimated_peak_bytes);
+            output_decision.chunk_events
+        } else {
+            decision.chunk_events
+        };
         let lease = pool
             .reserve(decision.estimated_peak_bytes)
             .map_err(laddu_runtime::RuntimeError::from)?;
         if let Some(model) = model {
             model.execution.record_memory_decision(decision.clone());
         }
-        Ok((decision, lease))
+        Ok(GenerationMemoryPlan {
+            decision,
+            output_chunk_events,
+            lease,
+        })
     }
 
     /// Validates a channel and constructs its topological generation plan.
@@ -854,7 +970,7 @@ impl ChannelGenerator {
     ///
     /// Returns [`GenerationError`] if the output names do not form a valid schema.
     pub fn weighted_output_schema(&self, diagnostics: bool) -> GenerationResult<Arc<Schema>> {
-        self.output_schema(true, diagnostics)
+        self.output_schema(true, diagnostics, None)
     }
 
     /// Returns the schema produced by unweighted generation.
@@ -863,7 +979,7 @@ impl ChannelGenerator {
     ///
     /// Returns [`GenerationError`] if the output names do not form a valid schema.
     pub fn unweighted_output_schema(&self, diagnostics: bool) -> GenerationResult<Arc<Schema>> {
-        self.output_schema(false, diagnostics)
+        self.output_schema(false, diagnostics, None)
     }
 
     /// Prove an upper envelope for the model-less phase-space proposal weight.
@@ -1144,8 +1260,15 @@ impl ChannelGenerator {
         sink: &mut dyn EventSink,
     ) -> GenerationResult<GenerationReport> {
         validate_common(config.events)?;
-        let schema = self.output_schema(true, config.diagnostics)?;
-        let (decision, _memory) = self.generation_memory(
+        if let Some(index) = &config.index {
+            index.validate(config.events)?;
+        }
+        let schema = self.output_schema(true, config.diagnostics, config.index.as_ref())?;
+        let GenerationMemoryPlan {
+            decision,
+            output_chunk_events,
+            lease: _memory,
+        } = self.generation_memory(
             &schema,
             config.memory,
             model,
@@ -1163,6 +1286,7 @@ impl ChannelGenerator {
         sink.begin(Arc::clone(&schema), WritePlan::default())?;
         let result = (|| -> GenerationResult<GenerationReport> {
             let mut report = report(config.events, config.seed, &decision);
+            let mut output_ordinal = 0;
             let work_batch = decision.chunk_events.max(1);
             for start in (0..config.events).step_by(work_batch) {
                 let count = work_batch.min(config.events - start);
@@ -1171,10 +1295,17 @@ impl ChannelGenerator {
                 update_report(&mut report, &events);
                 report.proposals += events.len();
                 report.produced += events.len();
-                for chunk in events.chunks(decision.chunk_events.max(1)) {
-                    let batch =
-                        self.output_batch(chunk, Arc::clone(&schema), true, config.diagnostics)?;
+                for chunk in events.chunks(output_chunk_events.max(1)) {
+                    let batch = self.output_batch(
+                        chunk,
+                        Arc::clone(&schema),
+                        true,
+                        config.diagnostics,
+                        config.index.as_ref(),
+                        output_ordinal,
+                    )?;
                     sink.write_batch(&batch)?;
+                    output_ordinal += batch.len();
                 }
             }
             sink.finish()?;
@@ -1204,6 +1335,9 @@ impl ChannelGenerator {
         sink: &mut dyn EventSink,
     ) -> GenerationResult<GenerationReport> {
         validate_common(config.events)?;
+        if let Some(index) = &config.index {
+            index.validate(config.events)?;
+        }
         if matches!(config.envelope, EnvelopeMode::ProvenPhaseSpace) && model.is_some() {
             return Err(GenerationError::InvalidConfiguration(
                 "the proven phase-space envelope is valid only when no model is supplied".into(),
@@ -1225,31 +1359,33 @@ impl ChannelGenerator {
             ));
         }
         let mut adaptations = None;
-        let schema = self.output_schema(false, config.diagnostics)?;
+        let schema = self.output_schema(false, config.diagnostics, config.index.as_ref())?;
         let pilot_limit = match config.envelope {
             EnvelopeMode::Pilot { proposals, .. } => proposals,
             EnvelopeMode::Strict { .. } | EnvelopeMode::ProvenPhaseSpace => 0,
         };
-        let (decision, _memory) = self.generation_memory(
+        let usage = GenerationMemoryUse {
+            event_limit: config.events.max(pilot_limit),
+            resident_events: if matches!(config.envelope_overflow, EnvelopeOverflow::Grow { .. }) {
+                config.events
+            } else {
+                0
+            },
+            retained_output_events: if sink.retains_batches() {
+                config.events
+            } else {
+                0
+            },
+        };
+        let GenerationMemoryPlan {
+            decision,
+            output_chunk_events,
+            lease: _memory,
+        } = self.generation_memory(
             &schema,
             config.memory,
             model,
-            GenerationMemoryUse {
-                event_limit: config.events.max(pilot_limit),
-                resident_events: if matches!(
-                    config.envelope_overflow,
-                    EnvelopeOverflow::Grow { .. }
-                ) {
-                    config.events
-                } else {
-                    0
-                },
-                retained_output_events: if sink.retains_batches() {
-                    config.events
-                } else {
-                    0
-                },
-            },
+            usage,
             "unweighted generation",
         )?;
         if pilot_limit > decision.chunk_events {
@@ -1320,6 +1456,7 @@ impl ChannelGenerator {
         sink.begin(Arc::clone(&schema), WritePlan::default())?;
         let result = (|| -> GenerationResult<GenerationReport> {
             let mut report = report(config.events, config.seed, &decision);
+            let mut output_ordinal = 0;
             report.envelope = Some(bound);
             report.envelope_kind = Some(kind);
             report.pilot_proposals = pilot_count;
@@ -1405,14 +1542,17 @@ impl ChannelGenerator {
                 proposal_index += proposal_count;
                 match config.envelope_overflow {
                     EnvelopeOverflow::Error if !accepted.is_empty() => {
-                        for chunk in accepted.chunks(decision.chunk_events.max(1)) {
+                        for chunk in accepted.chunks(output_chunk_events.max(1)) {
                             let batch = self.output_batch(
                                 chunk,
                                 Arc::clone(&schema),
                                 false,
                                 config.diagnostics,
+                                config.index.as_ref(),
+                                output_ordinal,
                             )?;
                             sink.write_batch(&batch)?;
+                            output_ordinal += batch.len();
                         }
                     }
                     EnvelopeOverflow::Grow { .. } => {
@@ -1431,10 +1571,17 @@ impl ChannelGenerator {
                 });
             }
             if matches!(config.envelope_overflow, EnvelopeOverflow::Grow { .. }) {
-                for events in buffered.chunks(decision.chunk_events.max(1)) {
-                    let batch =
-                        self.output_batch(events, Arc::clone(&schema), false, config.diagnostics)?;
+                for events in buffered.chunks(output_chunk_events.max(1)) {
+                    let batch = self.output_batch(
+                        events,
+                        Arc::clone(&schema),
+                        false,
+                        config.diagnostics,
+                        config.index.as_ref(),
+                        output_ordinal,
+                    )?;
                     sink.write_batch(&batch)?;
+                    output_ordinal += batch.len();
                 }
             }
             sink.finish()?;
@@ -1915,7 +2062,12 @@ impl ChannelGenerator {
         Ok(ProposalAdaptations { masses, vertices })
     }
 
-    fn output_schema(&self, weighted: bool, diagnostics: bool) -> GenerationResult<Arc<Schema>> {
+    fn output_schema(
+        &self,
+        weighted: bool,
+        diagnostics: bool,
+        index: Option<&GeneratedIndex>,
+    ) -> GenerationResult<Arc<Schema>> {
         let mut scalars = self
             .scalar_sources
             .iter()
@@ -1928,11 +2080,14 @@ impl ChannelGenerator {
                 "__laddu_target_weight",
             ]);
         }
-        Ok(Arc::new(Schema::new(
+        let schema = Schema::new(
             self.output_names.iter().map(String::as_str),
             scalars,
             weighted,
-        )?))
+        )?
+        .with_columns(index.map(|index| (index.name.as_str(), index.dtype)))?;
+        schema.validate_column_names(&Default::default())?;
+        Ok(Arc::new(schema))
     }
 
     fn output_batch(
@@ -1941,6 +2096,8 @@ impl ChannelGenerator {
         schema: Arc<Schema>,
         weighted: bool,
         diagnostics: bool,
+        index: Option<&GeneratedIndex>,
+        ordinal: usize,
     ) -> GenerationResult<EventBatch> {
         let p4s = self
             .output_indices
@@ -1994,7 +2151,16 @@ impl ChannelGenerator {
                     .collect::<Vec<_>>(),
             )
         });
-        Ok(EventBatch::new(schema, p4s, scalars, weights)?)
+        Ok(EventBatch::new_with_columns(
+            schema,
+            p4s,
+            scalars,
+            index
+                .map(|index| index.column(ordinal, events.len()))
+                .into_iter()
+                .collect(),
+            weights,
+        )?)
     }
 }
 
@@ -2455,7 +2621,7 @@ mod tests {
         first.seed = 57;
         first.memory = MemoryBudget::Bytes(4_096);
         first.envelope = EnvelopeMode::ProvenPhaseSpace;
-        let mut second = first;
+        let mut second = first.clone();
         second.memory = MemoryBudget::Bytes(16_384);
         let one_thread = rayon::ThreadPoolBuilder::new()
             .num_threads(1)
@@ -2531,7 +2697,7 @@ mod tests {
         let mut first = WeightedConfig::new(32);
         first.seed = 9;
         first.memory = MemoryBudget::Bytes(4_096);
-        let mut second = first;
+        let mut second = first.clone();
         second.memory = MemoryBudget::Bytes(16_384);
         let one_thread = rayon::ThreadPoolBuilder::new()
             .num_threads(1)
@@ -2568,7 +2734,7 @@ mod tests {
         first.seed = 91;
         first.memory = MemoryBudget::Bytes(4_096);
         first.envelope = EnvelopeMode::Strict { max_weight: 1.0 };
-        let mut second = first;
+        let mut second = first.clone();
         second.memory = MemoryBudget::Bytes(16_384);
         let one_thread = rayon::ThreadPoolBuilder::new()
             .num_threads(1)

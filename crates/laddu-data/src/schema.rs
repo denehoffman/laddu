@@ -1,19 +1,21 @@
 use std::{
-    collections::{BTreeMap, HashMap, HashSet},
+    collections::{BTreeMap, HashMap},
     sync::Arc,
 };
 
-use crate::{LadduDataError, LadduDataResult, Name};
+use crate::{LadduDataError, LadduDataResult, Name, columns::ColumnDType};
 
 /// Logical names and lookup tables for four-momentum, scalar, and weight columns.
 #[derive(Clone, Debug)]
 pub struct Schema {
     p4s: Vec<Name>,
     scalars: Vec<Name>,
+    columns: Vec<(Name, ColumnDType)>,
     has_weight: bool,
 
     p4_index: Arc<HashMap<Name, usize>>,
     scalar_index: Arc<HashMap<Name, usize>>,
+    column_index: Arc<HashMap<Name, usize>>,
 }
 
 /// A schema-resolved scalar column binding.
@@ -66,6 +68,7 @@ impl PartialEq for Schema {
     fn eq(&self, other: &Self) -> bool {
         self.p4s == other.p4s
             && self.scalars == other.scalars
+            && self.columns == other.columns
             && self.has_weight == other.has_weight
     }
 }
@@ -89,10 +92,79 @@ impl Schema {
         Ok(Self {
             p4s,
             scalars,
+            columns: Vec::new(),
             has_weight,
             p4_index,
             scalar_index,
+            column_index: Arc::new(HashMap::new()),
         })
+    }
+
+    /// Adds exact non-expression column declarations in their supplied order.
+    ///
+    /// # Errors
+    /// Returns an error for empty/duplicate names or logical name collisions.
+    pub fn with_columns(
+        mut self,
+        columns: impl IntoIterator<Item = (impl Into<Name>, ColumnDType)>,
+    ) -> LadduDataResult<Self> {
+        self.columns = columns
+            .into_iter()
+            .map(|(name, dtype)| (name.into(), dtype))
+            .collect();
+        let names: Vec<Name> = self
+            .columns
+            .iter()
+            .map(|(name, _)| Arc::clone(name))
+            .collect();
+        for name in &names {
+            if name.is_empty() || self.p4_index(name).is_some() || self.scalar_index(name).is_some()
+            {
+                return Err(LadduDataError::Schema(format!(
+                    "invalid or conflicting column name: {name}"
+                )));
+            }
+        }
+        self.column_index = Arc::new(make_index(&names, "typed")?);
+        Ok(self)
+    }
+
+    /// Returns exact column declarations in schema order.
+    pub fn columns(&self) -> &[(Name, ColumnDType)] {
+        &self.columns
+    }
+
+    /// Returns the exact column index for a name.
+    pub fn column_index(&self, name: &str) -> Option<usize> {
+        self.column_index.get(name).copied()
+    }
+
+    /// Returns the number of exact row-data columns.
+    pub fn n_columns(&self) -> usize {
+        self.columns.len()
+    }
+
+    /// Validates typed names against the configured physical fields.
+    ///
+    /// # Errors
+    /// Returns an error if a typed name collides with a physical weight or p4 field.
+    pub fn validate_column_names(&self, names: &SchemaColumnNames) -> LadduDataResult<()> {
+        for (name, _) in &self.columns {
+            if name == &names.weight_column
+                || self.p4s.iter().any(|p4| {
+                    names
+                        .p4_suffixes
+                        .physical_p4_names(p4)
+                        .iter()
+                        .any(|physical| physical == name.as_ref())
+                })
+            {
+                return Err(LadduDataError::Schema(format!(
+                    "conflicting physical column name: {name}"
+                )));
+            }
+        }
+        Ok(())
     }
 
     /// Returns the four-momentum column index for `name`.
@@ -274,6 +346,8 @@ impl P4Suffixes {
 /// Physical storage type relevant to schema inference.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ColumnType {
+    /// An exact integer row-data column.
+    Integer(ColumnDType),
     /// 64-bit floating point.
     F64,
     /// 32-bit floating point.
@@ -312,8 +386,13 @@ impl Schema {
         let mut p4_candidates = BTreeMap::<String, [bool; 4]>::new();
         let mut scalar_names = Vec::<Name>::new();
         let mut has_weight = false;
+        let mut typed_columns = Vec::new();
 
         for col in columns {
+            if let ColumnType::Integer(dtype) = col.dtype {
+                typed_columns.push((Name::from(col.name), dtype));
+                continue;
+            }
             if !col.dtype.is_supported_float() {
                 continue;
             }
@@ -353,7 +432,9 @@ impl Schema {
             )));
         }
 
-        Schema::new(p4s, scalar_names, has_weight)
+        let schema = Schema::new(p4s, scalar_names, has_weight)?.with_columns(typed_columns)?;
+        schema.validate_column_names(&options.column_names)?;
+        Ok(schema)
     }
 
     /// Returns all physical columns required to store this schema.
@@ -376,14 +457,29 @@ impl Schema {
         available: impl IntoIterator<Item = ColumnInfo<'a>>,
         options: &SchemaInferenceOptions,
     ) -> LadduDataResult<()> {
-        let available: HashSet<&str> = available
-            .into_iter()
-            .filter(|c| c.dtype.is_supported_float())
-            .map(|c| c.name)
-            .collect();
+        self.validate_column_names(&options.column_names)?;
+        let available: HashMap<&str, ColumnType> =
+            available.into_iter().map(|c| (c.name, c.dtype)).collect();
 
         for required in PhysicalSchemaPlan::for_read(self, &options.column_names).columns() {
-            if !available.contains(required.name().as_ref()) {
+            let dtype = available.get(required.name().as_ref());
+            let matches = match required.role() {
+                PhysicalColumnRole::Column {
+                    dtype: expected, ..
+                } => dtype == Some(&ColumnType::Integer(expected)),
+                _ => dtype.is_some_and(|dtype| dtype.is_supported_float()),
+            };
+            if !matches {
+                if let PhysicalColumnRole::Column {
+                    dtype: expected, ..
+                } = required.role()
+                    && let Some(actual) = dtype
+                {
+                    return Err(LadduDataError::Schema(format!(
+                        "column {} has dtype {actual:?}, expected {expected}",
+                        required.name()
+                    )));
+                }
                 return Err(LadduDataError::MissingColumn(Arc::clone(required.name())));
             }
         }
@@ -430,6 +526,8 @@ pub struct SchemaWriteOptions {
 /// column ordering and binding identical across backends.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum PhysicalColumnRole {
+    /// An exact non-expression column and its storage dtype.
+    Column { index: usize, dtype: ColumnDType },
     /// One component of a logical four-momentum column.
     P4 {
         /// Logical four-momentum column index.
@@ -502,6 +600,16 @@ impl PhysicalSchemaPlan {
             columns.push(PhysicalColumn {
                 name,
                 role: PhysicalColumnRole::Scalar { index },
+            });
+        }
+
+        for (index, (name, dtype)) in schema.columns().iter().enumerate() {
+            columns.push(PhysicalColumn {
+                name: Arc::clone(name),
+                role: PhysicalColumnRole::Column {
+                    index,
+                    dtype: *dtype,
+                },
             });
         }
 

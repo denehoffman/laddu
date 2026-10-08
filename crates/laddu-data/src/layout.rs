@@ -17,6 +17,7 @@ use laddu_memory::{FootprintOverflow, MemoryFootprint};
 pub struct BatchLayout {
     p4s: usize,
     scalars: usize,
+    column_bytes: usize,
     schema_weight: bool,
     explicit_weight: bool,
 }
@@ -27,6 +28,11 @@ impl BatchLayout {
         Self {
             p4s: schema.n_p4s(),
             scalars: schema.n_scalars(),
+            column_bytes: schema
+                .columns()
+                .iter()
+                .map(|(_, dtype)| dtype.width())
+                .sum(),
             schema_weight: schema.has_weight(),
             explicit_weight: schema.has_weight(),
         }
@@ -39,6 +45,11 @@ impl BatchLayout {
         Self {
             p4s: schema.n_p4s(),
             scalars: schema.n_scalars(),
+            column_bytes: schema
+                .columns()
+                .iter()
+                .map(|(_, dtype)| dtype.width())
+                .sum(),
             schema_weight: schema.has_weight(),
             explicit_weight: batch.weights_column().is_some(),
         }
@@ -54,6 +65,7 @@ impl BatchLayout {
         Self {
             p4s,
             scalars,
+            column_bytes: 0,
             schema_weight,
             explicit_weight,
         }
@@ -192,6 +204,14 @@ impl BatchLayout {
         values
             .checked_mul(width)
             .ok_or(FootprintOverflow::Multiplication)
+            .and_then(|bytes| {
+                bytes
+                    .checked_add(
+                        u64::try_from(self.column_bytes)
+                            .map_err(|_| FootprintOverflow::Conversion)?,
+                    )
+                    .ok_or(FootprintOverflow::Addition)
+            })
     }
 }
 

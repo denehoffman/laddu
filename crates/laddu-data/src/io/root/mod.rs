@@ -12,7 +12,8 @@ use oxyroot::{Branch, ReaderTree, RootFile, WriterTree};
 
 use crate::{
     LadduDataError, LadduDataResult, Name,
-    data::{BatchAssembler, EventBatch},
+    columns::{ColumnBuffer, ColumnDType, ColumnValue},
+    data::EventBatch,
     io::{
         DataFragment, EventSink, EventSource, FragmentedSource, OutputMode, OutputPath, ReadPlan,
         SinkState, SourceBuild, SourceBuildOptions, SourceCapabilities, WritePlan, build_source,
@@ -503,6 +504,7 @@ fn read_root_range_and_send_batches(
 struct RootColumnReaders<'a> {
     p4s: Vec<[RootFloatIter<'a>; 4]>,
     scalars: Vec<RootFloatIter<'a>>,
+    columns: Vec<RootIntegerIter<'a>>,
     weights: Option<RootFloatIter<'a>>,
 }
 
@@ -521,8 +523,12 @@ impl<'a> RootColumnReaders<'a> {
         let mut weights = None;
 
         for column in plan.columns() {
+            if matches!(column.role(), PhysicalColumnRole::Column { .. }) {
+                continue;
+            }
             let reader = open_float_reader(tree, column.name().as_ref())?;
             match column.role() {
+                PhysicalColumnRole::Column { .. } => continue,
                 PhysicalColumnRole::P4 { index, component } => {
                     p4s[index][component] = Some(reader);
                 }
@@ -574,9 +580,15 @@ impl<'a> RootColumnReaders<'a> {
             })
             .collect::<LadduDataResult<Vec<_>>>()?;
 
+        let columns = schema
+            .columns()
+            .iter()
+            .map(|(name, dtype)| open_integer_reader(tree, name, *dtype))
+            .collect::<LadduDataResult<Vec<_>>>()?;
         Ok(Self {
             p4s,
             scalars,
+            columns,
             weights,
         })
     }
@@ -593,6 +605,9 @@ impl<'a> RootColumnReaders<'a> {
             scalar.next_f64()?;
         }
 
+        for column in &mut self.columns {
+            column.next_value()?;
+        }
         if let Some(weights) = self.weights.as_mut() {
             weights.next_f64()?;
         }
@@ -635,11 +650,21 @@ impl<'a> RootColumnReaders<'a> {
             None
         };
 
-        BatchAssembler::from_columns(
+        let mut columns = Vec::with_capacity(self.columns.len());
+        for (reader, (_, dtype)) in self.columns.iter_mut().zip(schema.columns()) {
+            let mut buffer = ColumnBuffer::new(*dtype, len);
+            for _ in 0..len {
+                buffer.push(reader.next_value()?)?;
+            }
+            columns.push(buffer.finish());
+        }
+        EventBatch::new_with_columns_and_len(
             schema,
             p4s.into_iter().map(Arc::from).collect(),
             scalars.into_iter().map(Arc::from).collect(),
+            columns,
             weights.map(Arc::from),
+            len,
         )
     }
 }
@@ -690,7 +715,7 @@ fn open_float_reader<'a>(tree: &'a ReaderTree, name: &str) -> LadduDataResult<Ro
                     .map_err(|error| source_error("open ROOT branch", name, error))?,
             ),
         }),
-        ColumnType::Other => Err(source_error(
+        ColumnType::Other | ColumnType::Integer(_) => Err(source_error(
             "decode ROOT branch",
             name,
             format!(
@@ -758,6 +783,15 @@ fn root_column_type(branch: &Branch) -> ColumnType {
     match branch.interpretation().as_str() {
         "f64" => ColumnType::F64,
         "f32" => ColumnType::F32,
+        "i8" => ColumnType::Integer(ColumnDType::I8),
+        "u8" => ColumnType::Integer(ColumnDType::U8),
+        "i16" => ColumnType::Integer(ColumnDType::I16),
+        "u16" => ColumnType::Integer(ColumnDType::U16),
+        "i32" => ColumnType::Integer(ColumnDType::I32),
+        "u32" => ColumnType::Integer(ColumnDType::U32),
+        "i64" => ColumnType::Integer(ColumnDType::I64),
+        "u64" => ColumnType::Integer(ColumnDType::U64),
+
         _ => match branch.item_type_name().as_str() {
             "double" | "Double_t" | "ROOT::Double_t" => ColumnType::F64,
             "float" | "Float_t" | "ROOT::Float_t" => ColumnType::F32,
@@ -821,7 +855,7 @@ pub struct RootSink {
     options: RootWriteOptions,
     resolved_path: Option<PathBuf>,
     event_schema: Option<Arc<Schema>>,
-    senders: Option<RootColumnSenders>,
+    senders: Option<Vec<RootColumnSender>>,
     writer_thread: Option<JoinHandle<LadduDataResult<()>>>,
     state: SinkState,
 }
@@ -938,6 +972,7 @@ impl RootSinkBuilder {
 
 impl EventSink for RootSink {
     fn begin(&mut self, schema: Arc<Schema>, plan: WritePlan) -> LadduDataResult<()> {
+        schema.validate_column_names(&self.options.schema_write.column_names)?;
         match self.state {
             SinkState::Idle => {}
             SinkState::Writing => {
@@ -959,7 +994,8 @@ impl EventSink for RootSink {
             &self.options.schema_write,
         );
 
-        let (senders, receivers) = root_channels(&columns, self.options.schema_write.precision);
+        let (senders, receivers) =
+            root_channels(&columns, &schema, self.options.schema_write.precision);
 
         let writer_path = path.clone();
         let tree_name = self.options.tree_name.clone();
@@ -1011,14 +1047,22 @@ impl EventSink for RootSink {
 
         for row in 0..batch.len() {
             for (index, column) in plan.columns().iter().enumerate() {
+                if let PhysicalColumnRole::Column { index: logical, .. } = column.role() {
+                    if let Err(error) = senders[index].send_integer(batch.column(logical).at(row)) {
+                        self.state = SinkState::Failed;
+                        return Err(sink_error("send ROOT integer column", column.name(), error));
+                    }
+                    continue;
+                }
                 let value = match column.role() {
+                    PhysicalColumnRole::Column { .. } => unreachable!("handled above"),
                     PhysicalColumnRole::P4 { index, component } => {
                         batch.p4_at(index, row).components()[component]
                     }
                     PhysicalColumnRole::Scalar { index } => batch.scalar_at(index, row),
                     PhysicalColumnRole::Weight => batch.weights_at(row),
                 };
-                if let Err(error) = senders.send(index, value) {
+                if let Err(error) = senders[index].send_float(value) {
                     self.state = SinkState::Failed;
                     return Err(sink_error("send ROOT column", column.name(), error));
                 }
@@ -1085,87 +1129,163 @@ impl Drop for RootSink {
     }
 }
 
-enum RootColumnSenders {
-    F64(Vec<Sender<f64>>),
-    F32(Vec<Sender<f32>>),
+enum RootColumnSender {
+    F64(Sender<f64>),
+    F32(Sender<f32>),
+    I8(Sender<i8>),
+    U8(Sender<u8>),
+    I16(Sender<i16>),
+    U16(Sender<u16>),
+    I32(Sender<i32>),
+    U32(Sender<u32>),
+    I64(Sender<i64>),
+    U64(Sender<u64>),
 }
 
-impl RootColumnSenders {
-    fn send(&self, index: usize, value: f64) -> LadduDataResult<()> {
+impl RootColumnSender {
+    fn send_float(&self, value: f64) -> LadduDataResult<()> {
         match self {
-            Self::F64(senders) => senders[index]
+            Self::F64(tx) => tx
                 .send(value)
                 .map_err(|e| LadduDataError::Sink(e.to_string())),
-            Self::F32(senders) => senders[index]
+            Self::F32(tx) => tx
                 .send(value as f32)
                 .map_err(|e| LadduDataError::Sink(e.to_string())),
+            _ => Err(LadduDataError::Sink("float sent to integer column".into())),
+        }
+    }
+    fn send_integer(&self, value: ColumnValue) -> LadduDataResult<()> {
+        match (self, value) {
+            (Self::I8(tx), ColumnValue::I8(value)) => tx
+                .send(value)
+                .map_err(|e| LadduDataError::Sink(e.to_string())),
+            (Self::U8(tx), ColumnValue::U8(value)) => tx
+                .send(value)
+                .map_err(|e| LadduDataError::Sink(e.to_string())),
+            (Self::I16(tx), ColumnValue::I16(value)) => tx
+                .send(value)
+                .map_err(|e| LadduDataError::Sink(e.to_string())),
+            (Self::U16(tx), ColumnValue::U16(value)) => tx
+                .send(value)
+                .map_err(|e| LadduDataError::Sink(e.to_string())),
+            (Self::I32(tx), ColumnValue::I32(value)) => tx
+                .send(value)
+                .map_err(|e| LadduDataError::Sink(e.to_string())),
+            (Self::U32(tx), ColumnValue::U32(value)) => tx
+                .send(value)
+                .map_err(|e| LadduDataError::Sink(e.to_string())),
+            (Self::I64(tx), ColumnValue::I64(value)) => tx
+                .send(value)
+                .map_err(|e| LadduDataError::Sink(e.to_string())),
+            (Self::U64(tx), ColumnValue::U64(value)) => tx
+                .send(value)
+                .map_err(|e| LadduDataError::Sink(e.to_string())),
+            _ => Err(LadduDataError::Sink("integer column dtype mismatch".into())),
         }
     }
 }
 
-enum RootColumnReceivers {
-    F64(Vec<(Name, Receiver<f64>)>),
-    F32(Vec<(Name, Receiver<f32>)>),
+enum RootColumnReceiver {
+    F64(Name, Receiver<f64>),
+    F32(Name, Receiver<f32>),
+    I8(Name, Receiver<i8>),
+    U8(Name, Receiver<u8>),
+    I16(Name, Receiver<i16>),
+    U16(Name, Receiver<u16>),
+    I32(Name, Receiver<i32>),
+    U32(Name, Receiver<u32>),
+    I64(Name, Receiver<i64>),
+    U64(Name, Receiver<u64>),
 }
 
 fn root_channels(
     columns: &[Name],
+    schema: &Schema,
     precision: Precision,
-) -> (RootColumnSenders, RootColumnReceivers) {
-    match precision {
-        Precision::F64 => {
-            let mut senders = Vec::with_capacity(columns.len());
-            let mut receivers = Vec::with_capacity(columns.len());
-
-            for name in columns {
+) -> (Vec<RootColumnSender>, Vec<RootColumnReceiver>) {
+    let mut senders = Vec::with_capacity(columns.len());
+    let mut receivers = Vec::with_capacity(columns.len());
+    for name in columns {
+        match schema.column_index(name).map(|i| schema.columns()[i].1) {
+            Some(ColumnDType::I8) => {
                 let (tx, rx) = mpsc::channel();
-                senders.push(tx);
-                receivers.push((name.clone(), rx));
+                senders.push(RootColumnSender::I8(tx));
+                receivers.push(RootColumnReceiver::I8(name.clone(), rx));
             }
-
-            (
-                RootColumnSenders::F64(senders),
-                RootColumnReceivers::F64(receivers),
-            )
-        }
-        Precision::F32 => {
-            let mut senders = Vec::with_capacity(columns.len());
-            let mut receivers = Vec::with_capacity(columns.len());
-
-            for name in columns {
+            Some(ColumnDType::U8) => {
                 let (tx, rx) = mpsc::channel();
-                senders.push(tx);
-                receivers.push((name.clone(), rx));
+                senders.push(RootColumnSender::U8(tx));
+                receivers.push(RootColumnReceiver::U8(name.clone(), rx));
             }
-
-            (
-                RootColumnSenders::F32(senders),
-                RootColumnReceivers::F32(receivers),
-            )
+            Some(ColumnDType::I16) => {
+                let (tx, rx) = mpsc::channel();
+                senders.push(RootColumnSender::I16(tx));
+                receivers.push(RootColumnReceiver::I16(name.clone(), rx));
+            }
+            Some(ColumnDType::U16) => {
+                let (tx, rx) = mpsc::channel();
+                senders.push(RootColumnSender::U16(tx));
+                receivers.push(RootColumnReceiver::U16(name.clone(), rx));
+            }
+            Some(ColumnDType::I32) => {
+                let (tx, rx) = mpsc::channel();
+                senders.push(RootColumnSender::I32(tx));
+                receivers.push(RootColumnReceiver::I32(name.clone(), rx));
+            }
+            Some(ColumnDType::U32) => {
+                let (tx, rx) = mpsc::channel();
+                senders.push(RootColumnSender::U32(tx));
+                receivers.push(RootColumnReceiver::U32(name.clone(), rx));
+            }
+            Some(ColumnDType::I64) => {
+                let (tx, rx) = mpsc::channel();
+                senders.push(RootColumnSender::I64(tx));
+                receivers.push(RootColumnReceiver::I64(name.clone(), rx));
+            }
+            Some(ColumnDType::U64) => {
+                let (tx, rx) = mpsc::channel();
+                senders.push(RootColumnSender::U64(tx));
+                receivers.push(RootColumnReceiver::U64(name.clone(), rx));
+            }
+            None => match precision {
+                Precision::F64 => {
+                    let (tx, rx) = mpsc::channel();
+                    senders.push(RootColumnSender::F64(tx));
+                    receivers.push(RootColumnReceiver::F64(name.clone(), rx));
+                }
+                Precision::F32 => {
+                    let (tx, rx) = mpsc::channel();
+                    senders.push(RootColumnSender::F32(tx));
+                    receivers.push(RootColumnReceiver::F32(name.clone(), rx));
+                }
+            },
         }
     }
+    (senders, receivers)
 }
 
 fn write_root_tree(
     path: PathBuf,
     tree_name: Name,
-    receivers: RootColumnReceivers,
+    receivers: Vec<RootColumnReceiver>,
 ) -> LadduDataResult<()> {
     let resource = format!("{}::{tree_name}", path.display());
     let mut file = RootFile::create(&path)
         .map_err(|error| sink_error("create ROOT file", path.display(), error))?;
     let mut tree = WriterTree::new(tree_name.as_ref());
 
-    match receivers {
-        RootColumnReceivers::F64(receivers) => {
-            for (name, rx) in receivers {
-                tree.new_branch(name.as_ref(), rx.into_iter());
-            }
-        }
-        RootColumnReceivers::F32(receivers) => {
-            for (name, rx) in receivers {
-                tree.new_branch(name.as_ref(), rx.into_iter());
-            }
+    for receiver in receivers {
+        match receiver {
+            RootColumnReceiver::F64(name, rx) => tree.new_branch(name.as_ref(), rx.into_iter()),
+            RootColumnReceiver::F32(name, rx) => tree.new_branch(name.as_ref(), rx.into_iter()),
+            RootColumnReceiver::I8(name, rx) => tree.new_branch(name.as_ref(), rx.into_iter()),
+            RootColumnReceiver::U8(name, rx) => tree.new_branch(name.as_ref(), rx.into_iter()),
+            RootColumnReceiver::I16(name, rx) => tree.new_branch(name.as_ref(), rx.into_iter()),
+            RootColumnReceiver::U16(name, rx) => tree.new_branch(name.as_ref(), rx.into_iter()),
+            RootColumnReceiver::I32(name, rx) => tree.new_branch(name.as_ref(), rx.into_iter()),
+            RootColumnReceiver::U32(name, rx) => tree.new_branch(name.as_ref(), rx.into_iter()),
+            RootColumnReceiver::I64(name, rx) => tree.new_branch(name.as_ref(), rx.into_iter()),
+            RootColumnReceiver::U64(name, rx) => tree.new_branch(name.as_ref(), rx.into_iter()),
         }
     }
 
@@ -1175,6 +1295,91 @@ fn write_root_tree(
         .map_err(|error| sink_error("close ROOT file", &resource, error))?;
 
     Ok(())
+}
+
+struct RootIntegerIter<'a> {
+    name: Name,
+    iter: Box<dyn Iterator<Item = ColumnValue> + 'a>,
+}
+impl RootIntegerIter<'_> {
+    fn next_value(&mut self) -> LadduDataResult<ColumnValue> {
+        self.iter.next().ok_or_else(|| {
+            source_error(
+                "read ROOT integer branch",
+                &self.name,
+                "ROOT branch ended early",
+            )
+        })
+    }
+}
+fn open_integer_reader<'a>(
+    tree: &'a ReaderTree,
+    name: &str,
+    dtype: ColumnDType,
+) -> LadduDataResult<RootIntegerIter<'a>> {
+    let branch =
+        find_branch(tree, name).ok_or_else(|| LadduDataError::MissingColumn(Name::from(name)))?;
+    if root_column_type(branch) != ColumnType::Integer(dtype) {
+        return Err(source_error(
+            "open ROOT integer branch",
+            name,
+            "dtype mismatch",
+        ));
+    }
+    let iter: Box<dyn Iterator<Item = ColumnValue> + 'a> = match dtype {
+        ColumnDType::I8 => Box::new(
+            branch
+                .as_iter::<i8>()
+                .map_err(|e| source_error("open ROOT integer branch", name, e))?
+                .map(ColumnValue::I8),
+        ),
+        ColumnDType::U8 => Box::new(
+            branch
+                .as_iter::<u8>()
+                .map_err(|e| source_error("open ROOT integer branch", name, e))?
+                .map(ColumnValue::U8),
+        ),
+        ColumnDType::I16 => Box::new(
+            branch
+                .as_iter::<i16>()
+                .map_err(|e| source_error("open ROOT integer branch", name, e))?
+                .map(ColumnValue::I16),
+        ),
+        ColumnDType::U16 => Box::new(
+            branch
+                .as_iter::<u16>()
+                .map_err(|e| source_error("open ROOT integer branch", name, e))?
+                .map(ColumnValue::U16),
+        ),
+        ColumnDType::I32 => Box::new(
+            branch
+                .as_iter::<i32>()
+                .map_err(|e| source_error("open ROOT integer branch", name, e))?
+                .map(ColumnValue::I32),
+        ),
+        ColumnDType::U32 => Box::new(
+            branch
+                .as_iter::<u32>()
+                .map_err(|e| source_error("open ROOT integer branch", name, e))?
+                .map(ColumnValue::U32),
+        ),
+        ColumnDType::I64 => Box::new(
+            branch
+                .as_iter::<i64>()
+                .map_err(|e| source_error("open ROOT integer branch", name, e))?
+                .map(ColumnValue::I64),
+        ),
+        ColumnDType::U64 => Box::new(
+            branch
+                .as_iter::<u64>()
+                .map_err(|e| source_error("open ROOT integer branch", name, e))?
+                .map(ColumnValue::U64),
+        ),
+    };
+    Ok(RootIntegerIter {
+        name: Name::from(name),
+        iter,
+    })
 }
 
 #[cfg(test)]

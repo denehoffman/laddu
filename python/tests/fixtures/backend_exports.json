@@ -1,6 +1,6 @@
 {
   "amplitudes": ["breit_wigner", "f_vector", "k_matrix"],
-  "data": ["Dataset", "DatasetStats", "ParquetSource", "RootSource"],
+  "data": ["Dataset", "DatasetStats", "ParquetSource", "RootSource", "Schema"],
   "expressions": ["Expr", "ParameterSpec", "ParameterUpdate", "complex", "matrix", "parameter", "solve"],
   "fit": ["ganesh"],
   "generation": ["Generator", "MassProposal", "VertexProposal"],

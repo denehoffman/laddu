@@ -7,5 +7,4 @@ pub mod event;
 #[cfg(feature = "parallel")]
 pub use dataset::accurate;
 pub use dataset::{CacheStorage, Dataset, DatasetStats, MemoryPolicy};
-pub(crate) use event::BatchAssembler;
 pub use event::{BatchEvent, Event, EventBatch, EventBatchBuilder, OwnedEvent};
