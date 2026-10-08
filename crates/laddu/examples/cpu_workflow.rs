@@ -42,6 +42,14 @@ struct Config {
     periods: usize,
     shards_per_period: usize,
     bins: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    projection_components: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    projection_count: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    profile_batch: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    verify_blocks: Option<bool>,
 }
 
 #[derive(Default)]
@@ -336,7 +344,7 @@ fn likelihood_workflow(config: &Config, recorder: &mut Recorder) -> Result<(Scie
         .iter()
         .map(|replica| diagnostics(replica))
         .collect::<Vec<_>>();
-    let projections = [
+    let mut projections = vec![
         Projection::new(
             "mass",
             vec![Axis::new(
@@ -352,9 +360,47 @@ fn likelihood_workflow(config: &Config, recorder: &mut Recorder) -> Result<(Scie
             )?],
         )?,
     ];
-    let components = (0..config.waves)
+    if let Some(count) = config.projection_count {
+        if !(1..=4).contains(&count) {
+            return Err("projection_count must be between one and four".into());
+        }
+        projections.push(Projection::new(
+            "mass_fine",
+            vec![Axis::new(
+                event_scalar("mass"),
+                edges(1.0, 2.0, config.bins * 2),
+            )?],
+        )?);
+        projections.push(Projection::new(
+            "mass_cos_theta",
+            vec![
+                Axis::new(event_scalar("mass"), edges(1.0, 2.0, config.bins))?,
+                Axis::new(event_scalar("cos_theta"), edges(-1.0, 1.0, config.bins))?,
+            ],
+        )?);
+        projections.truncate(count);
+    }
+    let component_count = config.projection_components.unwrap_or(config.waves);
+    if component_count > config.waves {
+        return Err("projection_components exceeds wave count".into());
+    }
+    let components = (0..component_count)
         .map(|wave| (format!("wave_{wave}"), vec![format!("wave_{wave}")]))
         .collect::<HashMap<_, _>>();
+    let batch_profile = if config.profile_batch == Some(true) || config.verify_blocks == Some(true)
+    {
+        Some(profile_projection_batch(
+            &model,
+            &accepted,
+            &execution,
+            &parameters,
+            &ensemble,
+            component_count,
+            config.verify_blocks == Some(true),
+        )?)
+    } else {
+        None
+    };
     // Optional differential check: both APIs receive these exact fitted inputs.
     // Verification runs are separate from performance measurements because they
     // execute and retain both paths in one process.
@@ -427,9 +473,106 @@ fn likelihood_workflow(config: &Config, recorder: &mut Recorder) -> Result<(Scie
     Ok((
         science,
         json!({"likelihood": diagnostics(&likelihood), "replica_diagnostics": replica_diagnostics,
-        "pairing": pairing, "component_count": components.len(), "projection_axes": ["mass", "cos_theta"],
+        "pairing": pairing, "component_count": components.len(),
+        "projection_names": projections.iter().map(Projection::name).collect::<Vec<_>>(),
+        "projection_axes": ["mass", "cos_theta"],
+        "batch_profile": batch_profile,
         "separate_science": separate_science}),
     ))
+}
+
+// Isolate the event/parameter kernel from projection construction and binning.
+// This optional diagnostic adds work and is excluded from workflow measurements.
+fn profile_projection_batch(
+    model: &CompiledModel,
+    accepted: &Dataset,
+    execution: &Execution,
+    central: &[f64],
+    ensemble: &Ensemble,
+    components: usize,
+    verify_blocks: bool,
+) -> Result<Value> {
+    let mut read_plan = accepted.read_plan();
+    read_plan.chunk_size = Some(8192);
+    let batch = accepted
+        .stream_with_plan(read_plan)?
+        .next()
+        .ok_or("no batch to profile")??;
+    let parameters = std::iter::once(central)
+        .chain(ensemble.draws().iter().map(Vec::as_slice))
+        .map(|draw| model.params().values(draw))
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    let mut timings = BTreeMap::new();
+    let mut verified_values = 0usize;
+    for index in 0..=components {
+        let name = if index == 0 {
+            "full".into()
+        } else {
+            format!("wave_{}", index - 1)
+        };
+        let selected = if index == 0 {
+            model.clone()
+        } else {
+            model.project_tags([name.as_str()])?
+        };
+        let projection = selected.params().projection_from(model.params())?;
+        let local = parameters
+            .iter()
+            .map(|parameters| projection.project(parameters))
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        let plan = laddu_runtime::PreparedModel::prepare(&selected, execution)?;
+        let _workspace = execution
+            .host_memory()
+            .reserve(plan.batch_memory_estimate(batch.len()) as u64)?;
+        let started = Instant::now();
+        plan.visit_batch_many(execution, &local, &batch, |_, values| {
+            std::hint::black_box(values);
+            Ok(())
+        })?;
+        timings.insert(name, started.elapsed().as_secs_f64());
+        if verify_blocks {
+            // The serial visitor remains an independent, existing evaluation path.
+            let serial = Execution::local(ExecutionOptions {
+                device: Device::Cpu(CpuOptions {
+                    threads: ThreadPolicy::Fixed(1),
+                    jit: JitPolicy::Disabled,
+                }),
+                ..ExecutionOptions::default()
+            })?;
+            let bytes = local
+                .len()
+                .checked_mul(batch.len())
+                .and_then(|n| n.checked_mul(std::mem::size_of::<[f64; 2]>()))
+                .ok_or("verification workspace overflow")?;
+            let _reference_workspace = execution.host_memory().reserve(bytes as u64)?;
+            let mut reference = Vec::new();
+            plan.visit_batch_many(&serial, &local, &batch, |_, values| {
+                reference.push(values.to_vec());
+                Ok(())
+            })?;
+            plan.visit_batch_many(execution, &local, &batch, |parameter, values| {
+                let expected = &reference[parameter];
+                if values.len() != expected.len()
+                    || values.iter().zip(expected).any(|(actual, expected)| {
+                        actual.re.to_bits() != expected.re.to_bits()
+                            || actual.im.to_bits() != expected.im.to_bits()
+                    })
+                {
+                    return Err(laddu_runtime::RuntimeError::Parameter(
+                        "parallel and serial event evaluation differ at identical fitted inputs"
+                            .into(),
+                    ));
+                }
+                verified_values += values.len();
+                Ok(())
+            })?;
+        }
+    }
+    Ok(
+        json!({"batch_events": batch.len(), "parameter_vectors": parameters.len(),
+        "components_seconds": timings, "verified_values": verified_values,
+        "bitwise_equal_at_identical_inputs": verify_blocks.then_some(true)}),
+    )
 }
 
 fn edges(lower: f64, upper: f64, bins: usize) -> Vec<f64> {

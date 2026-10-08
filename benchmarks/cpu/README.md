@@ -193,3 +193,30 @@ Print a compact summary of a JSON or compressed JSON artifact:
 ```sh
 python3 scripts/cpu_benchmark.py summary target/cpu-benchmark/baseline.json.gz
 ```
+
+For projection evaluation, sweep component, paired replica, and projection counts:
+
+```sh
+python3 scripts/cpu_projection_study.py --binary target/release/examples/cpu_workflow --output target/cpu-benchmark/projection-study.json.gz --variation --stress
+```
+
+The twelve-wave study varies component count (0, 1, 6, 12), paired replica count
+(2, 8, and optionally 200), and projection count (1, 2, 4), one dimension at a
+time. Four projections include finer mass bins and a joint mass/angle projection.
+Default `cpu_benchmark.py` cases retain their frozen configuration.
+
+Use `--size small --batch-profile --repeats 1` for a separate diagnostic that
+times cache construction and parameter evaluation on the first accepted batch
+(at most 8,192 events), individually for the full model and each component.
+Component-plan preparation and bin accumulation are outside these timers.
+Projection sets already deduplicate axes and canonical tags and read each source
+once; projection count changes accumulation work, rather than multiplying event
+evaluation. Diagnostic runs add work and must be excluded from workflow and RSS
+comparisons.
+
+Use `--verify-blocks` for a separate correctness diagnostic. At identical fitted
+central parameters and real paired bootstrap draws, it compares parallel block
+outputs with the existing one-thread serial visitor, checking both components
+of each complex value by their bit patterns. It retains reference outputs for
+one component at a time and records the verified count. Exclude these runs from
+performance and memory comparisons.

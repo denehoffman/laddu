@@ -303,35 +303,49 @@ impl CpuPlan {
         let jit_cache = self
             .scalar_jit_kernel()
             .map(|_| JitScalarKernel::prepare_cache(batch.cache()));
-        let evaluate = || {
-            (0..block_count)
-                .into_par_iter()
-                .map(|block| {
-                    let start = block * SCALAR_BLOCK_SIZE;
-                    let end = (start + SCALAR_BLOCK_SIZE).min(batch.len());
-                    let mut workspace = ScalarEventWorkspace::default();
-                    let mut output = Vec::with_capacity(end - start);
-                    self.evaluate_cache_block_prepared(
-                        params,
-                        batch.cache(),
-                        start,
-                        end,
-                        invariant.as_ref(),
-                        &mut workspace,
-                        &mut output,
-                        #[cfg(feature = "jit")]
-                        jit_cache.as_ref(),
-                    )?;
-                    Ok(output)
-                })
-                .collect::<RuntimeResult<Vec<_>>>()
+        let mut output = vec![Complex64::ZERO; batch.len()];
+        let mut evaluate = || -> RuntimeResult<()> {
+            // Balance contiguous event tiles even when the pool size is not a
+            // power of two. Each tile reuses scratch across its event blocks.
+            let tile_len = block_count
+                .div_ceil(rayon::current_num_threads())
+                .saturating_mul(SCALAR_BLOCK_SIZE);
+            output
+                .par_chunks_mut(tile_len)
+                .enumerate()
+                .try_for_each_init(
+                    || {
+                        (
+                            ScalarEventWorkspace::default(),
+                            Vec::with_capacity(SCALAR_BLOCK_SIZE),
+                        )
+                    },
+                    |(workspace, block_output), (tile, target)| {
+                        for (block, target) in target.chunks_mut(SCALAR_BLOCK_SIZE).enumerate() {
+                            let start = tile * tile_len + block * SCALAR_BLOCK_SIZE;
+                            self.evaluate_cache_block_prepared(
+                                params,
+                                batch.cache(),
+                                start,
+                                start + target.len(),
+                                invariant.as_ref(),
+                                workspace,
+                                block_output,
+                                #[cfg(feature = "jit")]
+                                jit_cache.as_ref(),
+                            )?;
+                            target.copy_from_slice(block_output);
+                        }
+                        Ok(())
+                    },
+                )
         };
-        let blocks = if pool_installed {
-            evaluate()?
+        if pool_installed {
+            evaluate()?;
         } else {
-            execution.install(evaluate)?
-        };
-        Ok(blocks.into_iter().flatten().collect())
+            execution.install(evaluate)?;
+        }
+        Ok(output)
     }
 
     pub(crate) fn evaluate_prepared_dataset_many(
