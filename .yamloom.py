@@ -179,7 +179,14 @@ ci_workflow = Workflow(
                 Checkout(),
                 SetupUV(python_version=MINIMUM_PYTHON),
                 script('uvx --from yamloom==0.6.1 yamloom check'),
-                InstallRustTool(tool=['actionlint@1.7.12']),
+                script(
+                    'mkdir -p "$RUNNER_TEMP/actionlint"\n'
+                    'curl -fsSL --retry 3 https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz -o "$RUNNER_TEMP/actionlint.tar.gz"\n'
+                    "printf '%s  %s\\n' '8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8' \"$RUNNER_TEMP/actionlint.tar.gz\" | sha256sum --check\n"
+                    'tar -xzf "$RUNNER_TEMP/actionlint.tar.gz" -C "$RUNNER_TEMP/actionlint" actionlint\n'
+                    'echo "$RUNNER_TEMP/actionlint" >> "$GITHUB_PATH"',
+                    name='Install actionlint',
+                ),
                 script('actionlint'),
                 script('python3 -m unittest discover -s scripts/tests -p "test_ci*.py"'),
             ],
