@@ -105,6 +105,7 @@ impl PyFitResult {
         Ok(output)
     }
     #[getter]
+    /// Final objective in the ``-2 ln L`` convention.
     fn objective(&self) -> f64 {
         self.inner.objective()
     }
@@ -147,6 +148,8 @@ impl PyFitResult {
         Ok(output)
     }
     #[getter]
+    /// Unchanged ganesh result, whose inverse-Hessian covariance is half the
+    /// physical covariance reported by this FitResult for ``-2 ln L``.
     fn raw_ganesh_summary(&self) -> PyMinimizationSummary {
         self.inner.raw_ganesh_summary().clone().into()
     }
@@ -566,7 +569,7 @@ impl LogDensity<f64, NalgebraProvider, (), FitError> for OwnedProblem {
         {
             return Ok(f64::NEG_INFINITY);
         }
-        Ok(-self.objective.value(&external)?)
+        Ok(-0.5 * self.objective.value(&external)?)
     }
 }
 
