@@ -1,20 +1,24 @@
 # Public API compatibility policy
 
-The Rust crates under `crates/` are versioned together. Their default and
-all-feature public APIs are recorded in `public-api/*.default.txt` and
-`public-api/*.all-features.txt`, respectively. Run
-`scripts/public-api.sh --check` before review. When an intentional API change is
-approved, regenerate the snapshots with `scripts/public-api.sh --update` and
-review the textual diff alongside the implementation.
+The Rust crates under `crates/` are versioned together. Review public API changes
+alongside their implementation and tests. Breaking changes use conventional
+commit `!` markers or `BREAKING CHANGE` footers so Release Please proposes the
+appropriate version bump. Checked-in API snapshots are no longer maintained.
 
-Snapshots use `cargo-public-api` 0.52.0 and the pinned Rust toolchain declared
-in `scripts/public-api.sh` so toolchain output changes do not create incidental
-diffs.
+Ordinary development PRs may introduce intentional breaking APIs before the
+workspace version is bumped. Release PRs run `cargo-semver-checks` 0.50.0 with
+`--all-features` against the previous released tag recorded in their base
+branch's release manifest. Publication checks the tag against the preceding
+ancestor release. Neither check uses `main` as the API baseline, since it already
+contains the unreleased changes.
 
-Pull requests also run `cargo-semver-checks --all-features` against their base
-branch. Snapshot diffs make additive and path-level changes visible; the
-semantic check rejects changes that are incompatible with the current workspace
-version.
+The semantic check uses the actual proposed versions. Before 1.0, an increment
+of the minor version permits breaking changes; after 1.0, those changes require
+a major bump. Newly introduced crates have no prior API to compare and are
+reported separately. Compatibility tooling failures and insufficient version
+bumps fail release validation. Python behavior and native distribution contents
+are covered by tests and installed artifact checks. Behavioral and serialized
+format compatibility still require review beyond Rust API analysis.
 
 ## Public enum changes
 
@@ -26,6 +30,7 @@ semantic behavior still requires review.
 - Update expression facts, costs, structural keys, traversal, and remapping.
 - Update scalar and cache lowering, runtime evaluation, and autodiff rules.
 - Update CPU, JIT, and WGPU lowering or explicitly reject unsupported variants.
-- Regenerate public API snapshots and run `cargo-semver-checks`.
+- Cover changed contracts with tests and confirm the proposed release version
+  permits the API change when release validation runs.
 - Treat variant removal or mutation, and additions to exhaustive enums, as a
   compatibility decision that may require a version-policy change.

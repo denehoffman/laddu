@@ -1,6 +1,6 @@
 # Repository setup
 
-Complete these settings after rebasing this work onto the upstream repository.
+Complete the rollout below after merging the generated workflows into `main`.
 
 ## Actions and releases
 
@@ -19,11 +19,86 @@ Complete these settings after rebasing this work onto the upstream repository.
 
 ## Branches and checks
 
-- Protect `main` and `development`.
-- Require the `Build, lint, and test` and `Free-threaded Python` checks before
-  merging.
+- Run the `CI` workflow manually on `main` once and confirm that its full
+  correctness route succeeds. This establishes the checked baseline that
+  metadata-only release PRs can reuse.
+- Protect `main`, require pull requests and up-to-date branches, and require
+  the aggregate check named `CI` from GitHub Actions. Apply the requirement
+  only after that check exists on `main`; remove obsolete required check names.
+- Keep coverage and CodSpeed outside required checks. They run for relevant
+  Rust, dependency, benchmark, and CI-tooling changes on PRs and `main`, but
+  skip metadata-only releases. Measurement and upload failures remain visible
+  without blocking merges or publication.
+- Allow **Rebase and merge** and enable **Automatically delete head branches**.
+  Rebase merging preserves individual conventional commit messages, including
+  `!` and `BREAKING CHANGE` markers used by Release Please. Conflicts still
+  require a local update and another successful CI run.
 - Confirm that the default branch is `main` and that release pull requests
   target `main`.
+
+## Development and release flow
+
+1. Push a development branch and open a PR. Full correctness checks run on the
+   PR, including Rust, standard/free-threaded Python, typing, and documentation.
+   Subsequent PR updates cancel superseded CI runs. Pushes alone do not run the
+   suite; use manual `CI` dispatch when feedback is needed before opening a PR.
+2. Review the changes and choose **Rebase and merge** after `CI` succeeds.
+   GitHub deletes eligible remote head branches automatically. Local cleanup
+   remains local: switch to `main`, pull with `--ff-only`, and fetch with
+   `--prune`. Inspect and delete the old local branch explicitly; after a rebase
+   merge Git may not recognize it as merged, so do not automate forced deletion.
+3. Release Please opens or updates its release PR. The reduced route requires
+   the same-repository release branch, the `autorelease: pending` label or
+   generated release body (present before GitHub attaches labels), and an
+   actual diff containing only release-managed metadata changes. Source,
+   external dependency, workflow, or build-setting changes run full CI as well.
+4. Release PRs check lockstep versions, metadata, and semver against the released
+   tag recorded in the base branch's manifest. Linux packaging checks build and
+   install ordinary/free-threaded wheels and the MPI sdist, exercising the
+   installed artifact contracts. Breaking APIs are allowed when the proposed
+   version bump permits them; ordinary development PRs do not enforce semver.
+   Smoke artifacts use the development profile to avoid full release LTO;
+   optimized release artifacts are built on the tag.
+5. Review and merge the release PR. Release Please creates the release/tag;
+   `python-release.yml` checks tag/version agreement and semver against the
+   preceding ancestor release, builds the full platform matrix, and publishes
+   to PyPI and crates.io independently. It does not repeat the full test suite.
+
+The publication workflow also supports manual dispatch for building inspectable
+artifacts from the selected ref. **Manual dispatch never publishes**, even if
+the selected ref is a tag. To recover a failed publication, rerun the failed jobs
+on the original tag-push run; check registry state before retrying a partially
+completed publisher. Artifact builds must all succeed before either publisher
+starts, but success in one registry is not rolled back if the other fails.
+
+Public API snapshots are no longer maintained. Rust API compatibility is
+enforced at release time by `cargo-semver-checks`; Python behavior remains
+covered by tests and installed artifact checks. This does not detect every
+behavioral or serialized-format compatibility change, which still needs review.
+
+The `WGPU hardware validation` workflow is manual and requires a self-hosted
+runner labeled `wgpu`. Before an accelerator-affecting release, exercise the
+appropriate real-hardware/backend combinations and record the results, as
+required by ADR-0008. Workspace CI already covers hardware-independent WGPU
+tests.
+
+## Editing workflows
+
+Edit `.yamloom.py`, then run `yamloom sync` to update the owned YAML files and
+remove stale workflows. CI uses `yamloom==0.6.1` and `actionlint==1.7.12` to
+validate the generated files, plus standard-library tests under
+`scripts/tests/test_ci.py`. Run these checks locally with:
+
+```sh
+yamloom check
+actionlint
+python3 -m unittest discover -s scripts/tests -p 'test_ci*.py'
+```
+
+The classifier treats unknown files and unsupported metadata changes
+conservatively. The aggregate check fails when an applicable check fails, is
+cancelled, or unexpectedly skips. Keep its dependency list and the tested gate
+policy in sync when adding or renaming CI jobs.
 
 ## Documentation
 
