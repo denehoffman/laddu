@@ -1,0 +1,95 @@
+# yamloom: generated from .yamloom.py
+---
+name: Coverage and benchmarks
+"on":
+  push:
+    branches:
+      - main
+  pull_request: ~
+  workflow_dispatch: ~
+permissions:
+  contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ (github.event_name == 'pull_request') }}
+jobs:
+  changes:
+    name: Classify changes
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    outputs:
+      full: ${{ steps.changes.outputs.full }}
+      release: ${{ steps.changes.outputs.release }}
+      metrics: ${{ steps.changes.outputs.metrics }}
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - run: python3 scripts/ci.py classify
+        id: changes
+  coverage:
+    name: Rust coverage
+    permissions:
+      contents: read
+    needs:
+      - changes
+    if: "needs.changes.outputs.metrics == 'true'"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v6
+      - name: Setup Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: 1.96.0
+          cache-key: coverage
+      - name: Setup MPI
+        uses: mpi4py/setup-mpi@v1
+      - name: Install Rust Tool
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-llvm-cov
+      - run: cargo llvm-cov --locked --workspace --exclude laddu-python --exclude laddu-python-local --exclude laddu-python-mpi --codecov --output-path coverage.json
+      - name: Upload coverage
+        if: ${{ (github.event_name != 'pull_request') }}
+        uses: codecov/codecov-action@v5
+        with:
+          fail_ci_if_error: true
+          files: coverage.json
+          root_dir: ${{ github.workspace }}
+          token: ${{ secrets.CODECOV_TOKEN }}
+  benchmarks:
+    name: CodSpeed benchmarks
+    permissions:
+      contents: read
+    needs:
+      - changes
+    if: "needs.changes.outputs.metrics == 'true'"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v6
+      - name: Setup Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: 1.96.0
+          cache-key: codspeed
+      - name: Install Rust Tool
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-codspeed
+      - run: cargo codspeed build --bench generation --bench jit_benchmark --bench kmatrix_benchmark --bench projection_benchmark --features laddu/jit
+        env:
+          CARGO_BUILD_JOBS: "1"
+      - name: CodSpeed Action
+        if: ${{ (github.event_name != 'pull_request') }}
+        uses: CodSpeedHQ/action@v4
+        with:
+          mode: simulation
+          run: cargo codspeed run
+          token: ${{ secrets.CODSPEED_TOKEN }}
+      - name: Run benchmarks without upload
+        if: ${{ !((github.event_name != 'pull_request')) }}
+        run: cargo codspeed run

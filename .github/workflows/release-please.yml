@@ -5,6 +5,11 @@ name: Release Please
   push:
     branches:
       - main
+permissions:
+  contents: read
+concurrency:
+  group: release-please-main
+  cancel-in-progress: false
 jobs:
   release-please:
     runs-on: ubuntu-latest
