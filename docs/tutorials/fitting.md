@@ -71,6 +71,119 @@ fields such as `values`, `parameter_names`, `objective`, `converged`, and
 `diagnostics`. `covariance` and `standard_errors` are available when the chosen
 optimizer computed them; its full summary remains at `raw_ganesh_summary`.
 
+### Choose algorithms and callbacks
+
+`fit(config=None)` keeps the existing L-BFGS-B default. Pass any of the ganesh
+minimizer configurations through `ld.ganesh` to select another algorithm:
+
+| Configuration | Algorithm |
+| --- | --- |
+| `LBFGSBConfig` | L-BFGS-B with native bounds |
+| `ConjugateGradientConfig` | Nonlinear conjugate gradient |
+| `TrustRegionConfig` | Trust region with a finite-difference Hessian |
+| `AdamConfig` | Adam with full-data gradients |
+| `NelderMeadConfig` | Nelder-Mead simplex |
+| `CMAESConfig` | Covariance matrix adaptation evolution strategy |
+| `DifferentialEvolutionConfig` | Differential evolution |
+| `SimulatedAnnealingConfig` | Simulated annealing |
+| `PSOConfig` | Particle swarm optimization |
+
+Algorithm settings pass through, including custom line searches, simplex
+initialization, population sizes, and error estimation modes. `seed` controls
+randomized minimizers. Results retain the same `FitResult` interface.
+
+Every ganesh Python terminator is accepted with its matching algorithm: Adam's
+EMA criterion, conjugate-gradient and trust-region gradient tolerances, all
+L-BFGS-B and Nelder-Mead criteria, all nine CMA-ES criteria, and simulated
+annealing's temperature criterion. `MaxSteps` works with every algorithm.
+Incompatible callbacks raise `TypeError` before optimization starts.
+
+Supplied terminators are appended in order to ganesh's defaults. To replace
+those defaults, set `default_callbacks=False` and supply a stopping condition:
+
+```python
+fit = likelihood.fit(
+    config=ld.ganesh.ConjugateGradientConfig(
+        line_search=ld.ganesh.HagerZhangLineSearch()
+    ),
+    default_callbacks=False,
+    terminators=[
+        ld.ganesh.ConjugateGradientGTerminator(eps_abs=1e-6),
+        ld.ganesh.MaxSteps(500),
+    ],
+)
+```
+
+`ProgressObserver`, `DebugObserver`, and Python observers are accepted for all
+algorithms. Python observers receive `(step, status)`; Python terminators have
+the same arguments and return `True` to stop. Callback exceptions propagate
+to the caller. `status` is ganesh's immutable `StatusSnapshot`.
+
+By default, `laddu` installs likelihood parameter names, scaling, periodic
+transforms, and bounds in each configuration. For direct control of those
+fields, use `use_parameter_metadata=False`; the supplied ganesh configuration
+then passes through unchanged. Initial vectors still use the likelihood's
+free-parameter order, and objective evaluations still enforce its parameter
+contract. For example:
+
+```python
+fit = likelihood.fit(
+    config=ld.ganesh.LBFGSBConfig(
+        bounds=[(-1.0, 1.0), (-0.5, 0.5)], error_mode="skip"
+    ),
+    use_parameter_metadata=False,
+    terminators=[ld.ganesh.MaxSteps(500)],
+)
+```
+
+`fit_restarts` and `bootstrap_fit` accept the same configurations, observers,
+and callback/metadata controls and forward them to every fit.
+
+### Stochastic Adam and ensemble sampling
+
+`fit_stochastic` keeps Adam as its default and returns a ganesh
+`MinimizationSummary`, as before. It accepts `AdamEMATerminator`, `MaxSteps`,
+Python callbacks, and the same `default_callbacks` and
+`use_parameter_metadata` controls as `fit`:
+
+```python
+stochastic = likelihood.fit_stochastic(
+    config=ld.ganesh.AdamConfig(alpha=0.01),
+    fraction=0.5,
+    seed=123,
+    terminators=[ld.ganesh.MaxSteps(500)],
+)
+```
+
+Value and gradient requests share an event batch at each update. A gradient
+consumes the cached evaluation so a subsequent update can sample a new batch
+even when parameters do not move. Equal seeds reproduce the batch sequence;
+`fraction=1.0` uses full data.
+
+`sample` accepts both `AIESInit`/`AIESConfig` and `ESSInit`/`ESSConfig`. The
+initialization type selects the sampler, and omitting the config selects that
+sampler's defaults. All move, tuning, and chain-storage options pass through.
+Both accept `AutocorrelationTerminator`, `MaxSteps`, Python callbacks,
+observers, and the callback/metadata controls:
+
+```python
+walkers = likelihood.walker_positions(fit.values, 8, seed=123)
+chain = likelihood.sample(
+    ld.ganesh.ESSInit(walkers),
+    config=ld.ganesh.ESSConfig(
+        chain_storage=ld.ganesh.ChainStorage.sampled(2)
+    ),
+    seed=123,
+    terminators=[ld.ganesh.MaxSteps(100)],
+)
+```
+
+Default sampling transforms use linear scaling, preserving the target density.
+When supplying nonlinear transforms through the expert path, account for the
+Jacobian required by the intended density. Rust callers can already use the
+complete ganesh API through `laddu::fit::ganesh` and the `FitProblem` and
+`StochasticFitProblem` adapters, including custom Rust algorithms and callbacks.
+
 To change parameter definitions, make a new model and rebuild the likelihood:
 
 ```python

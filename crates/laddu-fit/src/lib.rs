@@ -1440,10 +1440,12 @@ pub struct FitProblem<'a, O: ?Sized, T = f64, B = ganesh::NalgebraProvider> {
     _numeric: PhantomData<(T, B)>,
 }
 
-/// Adam-oriented adapter that draws a deterministic event batch per point.
+/// Adam-oriented adapter that draws reproducible event batches.
 ///
 /// ganesh asks for the value and gradient separately. This adapter caches the
 /// paired stochastic evaluation so both requests see exactly the same rows.
+/// A gradient consumes the cached pair, allowing a fresh batch even if the
+/// next update leaves the parameter vector unchanged.
 #[derive(Debug)]
 pub struct StochasticFitProblem<'a, O: ?Sized, T = f64, B = ganesh::NalgebraProvider> {
     objective: &'a O,
@@ -1540,25 +1542,29 @@ impl<'a, O: StochasticObjective + ?Sized, T, B> StochasticFitProblem<'a, O, T, B
             .collect()
     }
 
-    fn evaluation(&self, x: &Vector<T, B>) -> FitResult<LikelihoodEvaluation>
+    fn evaluation(&self, x: &Vector<T, B>, consume: bool) -> FitResult<LikelihoodEvaluation>
     where
         T: RealScalar,
         B: LinearAlgebra<T>,
     {
         let external = self.external(x)?;
-        if let Some((_, evaluation)) = self
-            .cache
-            .lock()
-            .as_ref()
-            .filter(|(cached, _)| cached == &external)
-        {
-            return Ok(evaluation.clone());
+        let mut cache = self.cache.lock();
+        if let Some((_, evaluation)) = cache.as_ref().filter(|(cached, _)| cached == &external) {
+            let evaluation = evaluation.clone();
+            if consume {
+                *cache = None;
+            }
+            return Ok(evaluation);
         }
         let seed = self.next_seed.fetch_add(1, Ordering::Relaxed);
         let evaluation =
             self.objective
                 .stochastic_value_gradient(&external, self.fraction, seed)?;
-        *self.cache.lock() = Some((external, evaluation.clone()));
+        *cache = if consume {
+            None
+        } else {
+            Some((external, evaluation.clone()))
+        };
         Ok(evaluation)
     }
 }
@@ -1570,7 +1576,7 @@ where
     B: LinearAlgebra<T>,
 {
     fn evaluate(&self, x: &Vector<T, B>, _args: &()) -> FitResult<T> {
-        Ok(T::literal(self.evaluation(x)?.value()))
+        Ok(T::literal(self.evaluation(x, false)?.value()))
     }
 }
 
@@ -1582,7 +1588,7 @@ where
 {
     fn gradient(&self, x: &Vector<T, B>, _args: &()) -> FitResult<Vector<T, B>> {
         Ok(Vector::from_vec(
-            self.evaluation(x)?
+            self.evaluation(x, true)?
                 .gradient()
                 .iter()
                 .copied()
@@ -1592,7 +1598,7 @@ where
     }
 
     fn evaluate_with_gradient(&self, x: &Vector<T, B>, _args: &()) -> FitResult<(T, Vector<T, B>)> {
-        let evaluation = self.evaluation(x)?;
+        let evaluation = self.evaluation(x, true)?;
         Ok((
             T::literal(evaluation.value()),
             Vector::from_vec(
@@ -2056,6 +2062,8 @@ mod tests {
     struct StochasticQuadratic {
         inner: Quadratic,
         calls: AtomicUsize,
+        seeds: Mutex<Vec<u64>>,
+        noisy: bool,
     }
 
     impl Objective for StochasticQuadratic {
@@ -2077,10 +2085,19 @@ mod tests {
             &self,
             parameters: &[f64],
             _fraction: f64,
-            _seed: u64,
+            seed: u64,
         ) -> LikelihoodResult<LikelihoodEvaluation> {
             self.calls.fetch_add(1, Ordering::Relaxed);
-            self.value_gradient(parameters)
+            self.seeds.lock().push(seed);
+            let center = if self.noisy {
+                if seed.is_multiple_of(2) { 0.25 } else { -0.25 }
+            } else {
+                0.0
+            };
+            Ok(LikelihoodEvaluation::new(
+                parameters.iter().map(|x| (x - center).powi(2)).sum(),
+                parameters.iter().map(|x| 2.0 * (x - center)).collect(),
+            ))
         }
     }
 
@@ -2091,12 +2108,19 @@ mod tests {
                 layout: ParamLayout::new([Parameter::free("x").with_initial(2.0)]).unwrap(),
             },
             calls: AtomicUsize::new(0),
+            seeds: Mutex::new(Vec::new()),
+            noisy: false,
         };
         let problem = StochasticFitProblem::<_, f64>::new(&objective, 0.5, 7).unwrap();
         let initial = problem.vector(&[2.0]);
         assert_eq!(problem.evaluate(&initial, &()).unwrap(), 4.0);
         assert_eq!(problem.gradient(&initial, &()).unwrap().get(0), 4.0);
         assert_eq!(objective.calls.load(Ordering::Relaxed), 1);
+        // An unchanged point must still get a fresh batch on the next update.
+        problem.gradient(&initial, &()).unwrap();
+        assert_eq!(objective.calls.load(Ordering::Relaxed), 2);
+        problem.evaluate_with_gradient(&initial, &()).unwrap();
+        assert_eq!(objective.calls.load(Ordering::Relaxed), 3);
 
         let config = AdamConfig::<f64>::default()
             .with_parameter_names(problem.parameter_names())
@@ -2111,6 +2135,36 @@ mod tests {
             )
             .unwrap();
         assert!(result.fx.is_finite());
+    }
+
+    #[test]
+    fn adam_consumes_reproducible_noisy_gradients() {
+        let run = || {
+            let objective = StochasticQuadratic {
+                inner: Quadratic {
+                    layout: ParamLayout::new([Parameter::free("x").with_initial(2.0)]).unwrap(),
+                },
+                calls: AtomicUsize::new(0),
+                seeds: Mutex::new(Vec::new()),
+                noisy: true,
+            };
+            let problem = StochasticFitProblem::<_, f64>::new(&objective, 0.5, 7).unwrap();
+            let result = Adam::<f64>::default()
+                .process(
+                    &problem,
+                    &(),
+                    problem.vector(&[2.0]),
+                    AdamConfig::default().with_alpha(0.05).unwrap(),
+                    Callbacks::empty().with_terminator(MaxSteps(200)),
+                )
+                .unwrap();
+            let seeds = objective.seeds.lock().clone();
+            assert!(seeds.len() > 200);
+            assert!(seeds.windows(2).all(|pair| pair[1] == pair[0] + 1));
+            assert!(result.x.get(0).abs() < 0.1);
+            (result.x.to_vec(), seeds)
+        };
+        assert_eq!(run(), run());
     }
 
     #[test]

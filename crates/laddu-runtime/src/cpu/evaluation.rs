@@ -1567,8 +1567,8 @@ pub(super) fn evaluate_scalar_cache_block(
                                 OperandRun::InvariantReal(slots) => {
                                     for slot in slots {
                                         let operand = invariant.real[*slot];
-                                        for lane in 0..block_len {
-                                            workspace.real[output_slot][lane] += operand;
+                                        for value in &mut workspace.real[output_slot][..block_len] {
+                                            *value += operand;
                                         }
                                     }
                                 }
@@ -1593,8 +1593,8 @@ pub(super) fn evaluate_scalar_cache_block(
                                 OperandRun::InvariantReal(slots) => {
                                     for slot in slots {
                                         let operand = invariant.real[*slot];
-                                        for lane in 0..block_len {
-                                            workspace.real[output_slot][lane] *= operand;
+                                        for value in &mut workspace.real[output_slot][..block_len] {
+                                            *value *= operand;
                                         }
                                     }
                                 }
@@ -1648,16 +1648,20 @@ pub(super) fn evaluate_scalar_cache_block(
                                 OperandRun::InvariantReal(slots) => {
                                     for slot in slots {
                                         let operand = invariant.real[*slot];
-                                        for lane in 0..block_len {
-                                            workspace.complex[output_slot][lane] += operand;
+                                        for value in
+                                            &mut workspace.complex[output_slot][..block_len]
+                                        {
+                                            *value += operand;
                                         }
                                     }
                                 }
                                 OperandRun::InvariantComplex(slots) => {
                                     for slot in slots {
                                         let operand = invariant.complex[*slot];
-                                        for lane in 0..block_len {
-                                            workspace.complex[output_slot][lane] += operand;
+                                        for value in
+                                            &mut workspace.complex[output_slot][..block_len]
+                                        {
+                                            *value += operand;
                                         }
                                     }
                                 }
@@ -1687,16 +1691,20 @@ pub(super) fn evaluate_scalar_cache_block(
                                 OperandRun::InvariantReal(slots) => {
                                     for slot in slots {
                                         let operand = invariant.real[*slot];
-                                        for lane in 0..block_len {
-                                            workspace.complex[output_slot][lane] *= operand;
+                                        for value in
+                                            &mut workspace.complex[output_slot][..block_len]
+                                        {
+                                            *value *= operand;
                                         }
                                     }
                                 }
                                 OperandRun::InvariantComplex(slots) => {
                                     for slot in slots {
                                         let operand = invariant.complex[*slot];
-                                        for lane in 0..block_len {
-                                            workspace.complex[output_slot][lane] *= operand;
+                                        for value in
+                                            &mut workspace.complex[output_slot][..block_len]
+                                        {
+                                            *value *= operand;
                                         }
                                     }
                                 }

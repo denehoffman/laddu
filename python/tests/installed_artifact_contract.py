@@ -51,6 +51,9 @@ def assert_runtime_surface(module: ModuleType, expected_backend: str) -> None:
 
 def assert_distribution_contents(distribution: str, module: ModuleType) -> None:
     metadata = importlib.metadata.distribution(distribution)
+    if module.__version__ != metadata.version:
+        message = f'{module.__name__} crate version {module.__version__!r} differs from distribution version {metadata.version!r}'
+        raise AssertionError(message)
     files = tuple(metadata.files or ())
     if not files:
         message = f'{distribution} has no installed file inventory'

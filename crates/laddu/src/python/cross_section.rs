@@ -23,7 +23,7 @@ use super::{error::to_py_err, expr::PyExpr, float_matrix, float_tensor3, float_v
     frozen,
     eq,
     eq_int,
-    from_py_object,
+    skip_from_py_object,
     rename_all = "SCREAMING_SNAKE_CASE"
 )]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -42,6 +42,8 @@ pub enum PyAreaUnit {
     /// Femtobarn.
     Femtobarn,
 }
+
+super::copy_from_py_object!(PyAreaUnit);
 
 impl From<PyAreaUnit> for AreaUnit {
     fn from(value: PyAreaUnit) -> Self {

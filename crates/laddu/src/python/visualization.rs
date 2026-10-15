@@ -13,7 +13,7 @@ use pyo3::{
     frozen,
     eq,
     eq_int,
-    from_py_object,
+    skip_from_py_object,
     rename_all = "SCREAMING_SNAKE_CASE"
 )]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -57,6 +57,8 @@ pub enum PyExprNodeKind {
     Solve,
 }
 
+super::copy_from_py_object!(PyExprNodeKind);
+
 impl From<PyExprNodeKind> for ExprNodeKind {
     fn from(value: PyExprNodeKind) -> Self {
         match value {
@@ -88,7 +90,7 @@ impl From<PyExprNodeKind> for ExprNodeKind {
     frozen,
     get_all,
     eq,
-    from_py_object
+    skip_from_py_object
 )]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 /// An RGB color used by expression displays.
@@ -100,6 +102,8 @@ pub struct PyDisplayColor {
     /// Blue channel.
     pub blue: u8,
 }
+
+super::copy_from_py_object!(PyDisplayColor);
 
 #[pymethods]
 impl PyDisplayColor {
@@ -125,7 +129,7 @@ impl From<PyDisplayColor> for DisplayColor {
     frozen,
     get_all,
     eq,
-    from_py_object
+    skip_from_py_object
 )]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 /// Optional text, background, and outline colors for matching nodes.
@@ -137,6 +141,8 @@ pub struct PyNodeStyle {
     /// Graphviz outline color.
     pub border: Option<PyDisplayColor>,
 }
+
+super::copy_from_py_object!(PyNodeStyle);
 
 #[pymethods]
 impl PyNodeStyle {

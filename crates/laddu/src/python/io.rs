@@ -715,10 +715,7 @@ impl PyFormatSpec {
             info,
         };
         let serial: Vec<_> = reader
-            .open(ReadPlan {
-                chunk_size: Some(chunk_size),
-                ..ReadPlan::serial()
-            })
+            .open(serial_read_plan(Some(chunk_size)))
             .map_err(|e| data_error(py, e))?
             .map(|batch| {
                 batch.map(|batch| {
@@ -916,10 +913,7 @@ impl EventSource for FormatSource {
                 Some(match self.info.length {
                     Some(n) => n,
                     None => self
-                        .open(ReadPlan {
-                            chunk_size: plan.chunk_size,
-                            ..ReadPlan::serial()
-                        })?
+                        .open(serial_read_plan(plan.chunk_size))?
                         .try_fold(0_u64, |n, batch| Ok(n + batch?.len() as u64))?,
                 })
             } else {
@@ -937,10 +931,7 @@ impl EventSource for FormatSource {
                 "file_groups requires declared native partitioning",
             ));
         }
-        let serial = ReadPlan {
-            chunk_size: plan.chunk_size,
-            ..ReadPlan::serial()
-        };
+        let serial = serial_read_plan(plan.chunk_size);
         let count = if partition == Partitioning::Contiguous {
             Some(match self.info.length {
                 Some(n) => n,
@@ -1128,12 +1119,15 @@ fn explicit_batch(batch: EventBatch, schema: Arc<Schema>) -> LadduDataResult<Eve
     )
 }
 
+fn serial_read_plan(chunk_size: Option<usize>) -> ReadPlan {
+    let mut plan = ReadPlan::serial();
+    plan.chunk_size = chunk_size;
+    plan
+}
+
 fn read_plan(execution: &PyExecution, chunk_size: Option<usize>) -> ReadPlan {
     #[allow(unused_mut)]
-    let mut plan = ReadPlan {
-        chunk_size,
-        ..ReadPlan::serial()
-    };
+    let mut plan = serial_read_plan(chunk_size);
     #[cfg(feature = "mpi")]
     if execution.inner.is_distributed() {
         plan.distribution = laddu_data::io::Distribution::Mpi {

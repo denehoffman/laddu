@@ -6,5 +6,5 @@
   "generation": ["Generator", "MassProposal", "VertexProposal"],
   "likelihood": ["ExtendedNLL", "Likelihood", "NLL", "RateClosure", "Yield"],
   "physics": ["Channel", "Particle", "Vec3", "Vec4"],
-  "runtime": ["Execution", "MemoryBudget", "MemoryState", "backend", "capabilities"]
+  "runtime": ["__version__", "Execution", "MemoryBudget", "MemoryState", "backend", "capabilities"]
 }

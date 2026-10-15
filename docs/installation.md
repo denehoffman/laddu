@@ -13,6 +13,7 @@ The standard distribution includes local CPU, JIT, and WGPU support. Inspect wha
 ```python
 import laddu as ld
 
+print(ld.__version__)
 print(ld.backend())
 print(ld.capabilities())
 print(ld.gpu.devices())

@@ -1,4 +1,6 @@
 //! Fast, deterministic baselines for repeated differential cross-section projections.
+// WGPU's nested resource types require deeper Send/Sync trait evaluation.
+#![recursion_limit = "256"]
 #![allow(missing_docs, reason = "criterion benchmark items are not public API")]
 
 mod support {

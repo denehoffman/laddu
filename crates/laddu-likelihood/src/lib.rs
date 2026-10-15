@@ -1,5 +1,8 @@
 //! Composable likelihood objectives, penalties, projections, and cross-section utilities.
 
+// WGPU's nested resource types require deeper Send/Sync trait evaluation.
+#![recursion_limit = "256"]
+
 mod error;
 mod fitted_cross_section;
 mod likelihood;

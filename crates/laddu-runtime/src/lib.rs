@@ -1,5 +1,8 @@
 //! Execution backends, dataset queries, and reduction support for compiled `laddu` models.
 
+// WGPU's nested resource types require deeper Send/Sync trait evaluation.
+#![recursion_limit = "256"]
+
 mod backend;
 mod cpu;
 mod error;
