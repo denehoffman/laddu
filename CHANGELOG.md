@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.27.0](https://github.com/denehoffman/laddu/compare/v0.26.0...v0.27.0) (2026-10-15)
+
+
+### ⚠ BREAKING CHANGES
+
+* **likelihood:** likelihood objectives and gradients now use -2 ln L. Custom likelihood terms must use the same convention. Artifacts from the previous convention remain readable but cannot bind to the new likelihood identities.
+
+### Features
+
+* Expose ganesh controls and Python crate version ([1a5ff67](https://github.com/denehoffman/laddu/commit/1a5ff67c8f8b43718a33455e59ec44caa9321f1e))
+* **likelihood:** Use minus-two log-likelihood convention ([f722bf7](https://github.com/denehoffman/laddu/commit/f722bf7c3479f747138a91f63cacc75670669c94))
+
+
+### Bug Fixes
+
+* **ci:** Install actionlint from its verified release ([4721aab](https://github.com/denehoffman/laddu/commit/4721aab8b7ea45049b3a4561955798c7991898bf))
+
 ## [0.26.0](https://github.com/denehoffman/laddu/compare/v0.25.0...v0.26.0) (2026-10-08)
 
 
