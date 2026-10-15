@@ -39,10 +39,13 @@ jobs:
         with:
           python-version: "3.11"
       - run: uvx --from yamloom==0.6.1 yamloom check
-      - name: Install Rust Tool
-        uses: taiki-e/install-action@v2
-        with:
-          tool: actionlint@1.7.12
+      - name: Install actionlint
+        run: |-
+          mkdir -p "$RUNNER_TEMP/actionlint"
+          curl -fsSL --retry 3 https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz -o "$RUNNER_TEMP/actionlint.tar.gz"
+          printf '%s  %s\n' '8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8' "$RUNNER_TEMP/actionlint.tar.gz" | sha256sum --check
+          tar -xzf "$RUNNER_TEMP/actionlint.tar.gz" -C "$RUNNER_TEMP/actionlint" actionlint
+          echo "$RUNNER_TEMP/actionlint" >> "$GITHUB_PATH"
       - run: actionlint
       - run: "python3 -m unittest discover -s scripts/tests -p \"test_ci*.py\""
   rust:
