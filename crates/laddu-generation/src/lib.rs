@@ -1,5 +1,8 @@
 //! Channel-aware Monte Carlo event generation.
 
+// WGPU's nested resource types require deeper Send/Sync trait evaluation.
+#![recursion_limit = "256"]
+
 use std::{
     collections::{HashMap, HashSet},
     mem::size_of,

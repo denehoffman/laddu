@@ -1,4 +1,6 @@
 //! Runs the representative repeated-projection workload under selectable execution policies.
+// WGPU's nested resource types require deeper Send/Sync trait evaluation.
+#![recursion_limit = "256"]
 
 #[path = "../benches/support/projection.rs"]
 mod projection;

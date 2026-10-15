@@ -34,6 +34,7 @@ laddu-wgpu = { workspace = true, optional = true }
 mpi = { workspace = true, optional = true }
 num = { workspace = true, optional = true }
 numpy = { workspace = true, optional = true }
+parking_lot = { workspace = true, optional = true }
 pyo3 = { workspace = true, optional = true, features = [
   "experimental-inspect",
   "multiple-pymethods",
@@ -72,6 +73,7 @@ python = [
   "dep:fastrand",
   "dep:num",
   "dep:numpy",
+  "dep:parking_lot",
   "dep:pyo3",
   "dep:serde",
   "dep:serde_json",

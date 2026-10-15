@@ -1649,6 +1649,7 @@ dependencies = [
  "num",
  "num_cpus",
  "numpy",
+ "parking_lot",
  "pyo3",
  "rayon",
  "serde",

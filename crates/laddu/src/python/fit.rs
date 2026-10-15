@@ -12,14 +12,36 @@ use laddu_fit::{
     ganesh::{
         NalgebraProvider, Vector,
         algorithms::{
-            gradient::{Adam, AdamConfig, GradientStatus, LBFGSB, LBFGSBConfig},
-            gradient_free::{GradientFreeStatus, NelderMead},
-            mcmc::{AIES, AIESConfig, EnsembleStatus},
+            gradient::{
+                Adam, AdamConfig, AdamEMATerminator, ConjugateGradient,
+                ConjugateGradientGTerminator, GradientStatus, LBFGSB, LBFGSBConfig,
+                LBFGSBFTerminator, LBFGSBGTerminator, LBFGSBInfNormGTerminator, TrustRegion,
+                TrustRegionGTerminator,
+            },
+            gradient_free::{
+                CMAES, CMAESConditionCovTerminator, CMAESEqualFunValuesTerminator,
+                CMAESNoEffectAxisTerminator, CMAESNoEffectCoordTerminator, CMAESSigmaTerminator,
+                CMAESStagnationTerminator, CMAESTolFunTerminator, CMAESTolXTerminator,
+                CMAESTolXUpTerminator, DifferentialEvolution, GradientFreeStatus, NelderMead,
+                NelderMeadFTerminator, NelderMeadXTerminator, SimulatedAnnealing,
+                SimulatedAnnealingTerminator,
+            },
+            mcmc::{AIES, AIESConfig, AutocorrelationTerminator, ESS, ESSConfig, EnsembleStatus},
+            particles::PSO,
         },
         core::{Callbacks, DebugObserver, MaxSteps, ProgressObserver},
         python::{
-            PyAIESConfig, PyAIESInit, PyAdamConfig, PyDebugObserver, PyLBFGSBConfig, PyMCMCSummary,
-            PyMaxSteps, PyMinimizationSummary, PyNelderMeadConfig, PyProgressObserver,
+            PyAIESConfig, PyAIESInit, PyAdamConfig, PyAdamEMATerminator,
+            PyAutocorrelationTerminator, PyCMAESConditionCovTerminator, PyCMAESConfig,
+            PyCMAESEqualFunValuesTerminator, PyCMAESNoEffectAxisTerminator,
+            PyCMAESNoEffectCoordTerminator, PyCMAESSigmaTerminator, PyCMAESStagnationTerminator,
+            PyCMAESTolFunTerminator, PyCMAESTolXTerminator, PyCMAESTolXUpTerminator,
+            PyConjugateGradientConfig, PyConjugateGradientGTerminator, PyDebugObserver,
+            PyDifferentialEvolutionConfig, PyESSConfig, PyESSInit, PyLBFGSBConfig,
+            PyLBFGSBFTerminator, PyLBFGSBGTerminator, PyLBFGSBInfNormGTerminator, PyMCMCSummary,
+            PyMaxSteps, PyMinimizationSummary, PyNelderMeadConfig, PyNelderMeadFTerminator,
+            PyNelderMeadXTerminator, PyPSOConfig, PyProgressObserver, PySimulatedAnnealingConfig,
+            PySimulatedAnnealingTerminator, PyTrustRegionConfig, PyTrustRegionGTerminator,
             PyVectorInit, PythonCallbackBundle, process_with_python_callbacks,
         },
         traits::{Algorithm, CostFunction, Gradient, LogDensity, SupportsParameterNames},
@@ -552,31 +574,50 @@ struct OwnedStochasticProblem {
     objective: Arc<Likelihood>,
     fraction: f64,
     next_seed: AtomicU64,
+    cache: parking_lot::Mutex<Option<(Vec<f64>, LikelihoodEvaluation)>>,
 }
 
 impl OwnedStochasticProblem {
-    fn evaluate(&self, x: &Vector) -> Result<LikelihoodEvaluation, FitError> {
+    fn evaluation(&self, x: &Vector, consume: bool) -> Result<LikelihoodEvaluation, FitError> {
         let values = OwnedProblem::external(x);
+        let mut cache = self.cache.lock();
+        if let Some((point, evaluation)) = cache.as_ref()
+            && point == &values
+        {
+            let evaluation = evaluation.clone();
+            if consume {
+                *cache = None;
+            }
+            return Ok(evaluation);
+        }
         let seed = self.next_seed.fetch_add(1, Ordering::Relaxed);
-        Ok(self
+        let evaluation = self
             .objective
-            .stochastic_value_gradient(&values, self.fraction, seed)?)
+            .stochastic_value_gradient(&values, self.fraction, seed)?;
+        *cache = if consume {
+            None
+        } else {
+            Some((values, evaluation.clone()))
+        };
+        Ok(evaluation)
     }
 }
 
 impl CostFunction<f64, NalgebraProvider, (), FitError> for OwnedStochasticProblem {
     fn evaluate(&self, x: &Vector, _: &()) -> Result<f64, FitError> {
-        Ok(self.evaluate(x)?.value())
+        Ok(self.evaluation(x, false)?.value())
     }
 }
 
 impl Gradient<f64, NalgebraProvider, (), FitError> for OwnedStochasticProblem {
     fn gradient(&self, x: &Vector, _: &()) -> Result<Vector, FitError> {
-        Ok(Vector::from_vec(self.evaluate(x)?.gradient().to_vec()))
+        Ok(Vector::from_vec(
+            self.evaluation(x, true)?.gradient().to_vec(),
+        ))
     }
 
     fn evaluate_with_gradient(&self, x: &Vector, _: &()) -> Result<(f64, Vector), FitError> {
-        let evaluation = self.evaluate(x)?;
+        let evaluation = self.evaluation(x, true)?;
         Ok((
             evaluation.value(),
             Vector::from_vec(evaluation.gradient().to_vec()),
@@ -596,6 +637,101 @@ fn initial_vector(likelihood: &Likelihood, initial: Option<&Bound<'_, PyAny>>) -
     Ok(Vector::from_vec(values))
 }
 
+// Convert callbacks against the selected algorithm so incompatible terminators
+// fail before optimization, while Python callbacks retain exception propagation.
+macro_rules! algorithm_callbacks {
+    (@typed $algorithm:ident, $status:ident, $py:expr, $defaults:expr,
+        $terminators:expr, $observers:expr; $($python:ident => $rust:ident),* $(,)?) => {{
+        let callbacks = if $defaults {
+            $algorithm::default_callbacks()
+        } else {
+            Callbacks::empty()
+        };
+        let mut bundle = callback_bundle::<$algorithm, _, $status, _>(
+            $py, callbacks, Vec::new(), $observers
+        )?;
+        for terminator in $terminators {
+            $(
+                if let Ok(value) = terminator.bind($py).extract::<PyRef<'_, $python>>() {
+                    bundle = bundle.with_terminator(
+                        $rust::try_from(value.clone()).map_err(to_py_err)?
+                    );
+                    continue;
+                }
+            )*
+            bundle = common_terminator($py, bundle, terminator)?;
+        }
+        Ok::<_, PyErr>(bundle)
+    }};
+    (Adam, $py:expr, $defaults:expr, $terminators:expr, $observers:expr) => {
+        algorithm_callbacks!(@typed Adam, GradientStatus, $py, $defaults, $terminators, $observers;
+            PyAdamEMATerminator => AdamEMATerminator)
+    };
+    (ConjugateGradient, $py:expr, $defaults:expr, $terminators:expr, $observers:expr) => {
+        algorithm_callbacks!(@typed ConjugateGradient, GradientStatus, $py, $defaults, $terminators, $observers;
+            PyConjugateGradientGTerminator => ConjugateGradientGTerminator)
+    };
+    (LBFGSB, $py:expr, $defaults:expr, $terminators:expr, $observers:expr) => {
+        algorithm_callbacks!(@typed LBFGSB, GradientStatus, $py, $defaults, $terminators, $observers;
+            PyLBFGSBFTerminator => LBFGSBFTerminator, PyLBFGSBGTerminator => LBFGSBGTerminator, PyLBFGSBInfNormGTerminator => LBFGSBInfNormGTerminator)
+    };
+    (TrustRegion, $py:expr, $defaults:expr, $terminators:expr, $observers:expr) => {
+        algorithm_callbacks!(@typed TrustRegion, GradientStatus, $py, $defaults, $terminators, $observers;
+            PyTrustRegionGTerminator => TrustRegionGTerminator)
+    };
+    (NelderMead, $py:expr, $defaults:expr, $terminators:expr, $observers:expr) => {
+        algorithm_callbacks!(@typed NelderMead, GradientFreeStatus, $py, $defaults, $terminators, $observers;
+            PyNelderMeadFTerminator => NelderMeadFTerminator, PyNelderMeadXTerminator => NelderMeadXTerminator)
+    };
+    (CMAES, $py:expr, $defaults:expr, $terminators:expr, $observers:expr) => {
+        algorithm_callbacks!(@typed CMAES, GradientFreeStatus, $py, $defaults, $terminators, $observers;
+            PyCMAESSigmaTerminator => CMAESSigmaTerminator, PyCMAESNoEffectAxisTerminator => CMAESNoEffectAxisTerminator, PyCMAESNoEffectCoordTerminator => CMAESNoEffectCoordTerminator, PyCMAESConditionCovTerminator => CMAESConditionCovTerminator, PyCMAESEqualFunValuesTerminator => CMAESEqualFunValuesTerminator, PyCMAESStagnationTerminator => CMAESStagnationTerminator, PyCMAESTolXUpTerminator => CMAESTolXUpTerminator, PyCMAESTolFunTerminator => CMAESTolFunTerminator, PyCMAESTolXTerminator => CMAESTolXTerminator)
+    };
+    (DifferentialEvolution, $py:expr, $defaults:expr, $terminators:expr, $observers:expr) => {
+        algorithm_callbacks!(@typed DifferentialEvolution, GradientFreeStatus, $py, $defaults, $terminators, $observers;
+            )
+    };
+    (SimulatedAnnealing, $py:expr, $defaults:expr, $terminators:expr, $observers:expr) => {
+        algorithm_callbacks!(@typed SimulatedAnnealing, GradientFreeStatus, $py, $defaults, $terminators, $observers;
+            PySimulatedAnnealingTerminator => SimulatedAnnealingTerminator)
+    };
+    (PSO, $py:expr, $defaults:expr, $terminators:expr, $observers:expr) => {
+        algorithm_callbacks!(@typed PSO, GradientFreeStatus, $py, $defaults, $terminators, $observers;
+            )
+    };
+    (AIES, $py:expr, $defaults:expr, $terminators:expr, $observers:expr) => {
+        algorithm_callbacks!(@typed AIES, EnsembleStatus, $py, $defaults, $terminators, $observers;
+            PyAutocorrelationTerminator => AutocorrelationTerminator)
+    };
+    (ESS, $py:expr, $defaults:expr, $terminators:expr, $observers:expr) => {
+        algorithm_callbacks!(@typed ESS, EnsembleStatus, $py, $defaults, $terminators, $observers;
+            PyAutocorrelationTerminator => AutocorrelationTerminator)
+    };
+}
+
+fn common_terminator<A, P, S, C>(
+    py: Python<'_>,
+    mut bundle: PythonCallbackBundle<A, P, S, (), FitError, C>,
+    terminator: Py<PyAny>,
+) -> PyResult<PythonCallbackBundle<A, P, S, (), FitError, C>>
+where
+    A: Algorithm<P, S, (), FitError, Config = C> + 'static,
+    P: 'static,
+    S: laddu_fit::ganesh::traits::Status + 'static,
+    C: 'static,
+{
+    if let Ok(value) = terminator.bind(py).extract::<PyRef<'_, PyMaxSteps>>() {
+        bundle = bundle.with_terminator(MaxSteps::from(*value));
+    } else if terminator.bind(py).is_callable() {
+        bundle = bundle.with_python_terminator(terminator);
+    } else {
+        return Err(PyTypeError::new_err(
+            "terminators must match the selected ganesh algorithm, be ganesh.MaxSteps, or be Python callables",
+        ));
+    }
+    Ok(bundle)
+}
+
 fn callback_bundle<A, P, S, C>(
     py: Python<'_>,
     callbacks: Callbacks<A, P, S, (), FitError, C>,
@@ -613,15 +749,7 @@ where
 {
     let mut bundle = PythonCallbackBundle::new(callbacks);
     for terminator in terminators {
-        if let Ok(value) = terminator.bind(py).extract::<PyRef<'_, PyMaxSteps>>() {
-            bundle = bundle.with_terminator(MaxSteps::from(*value));
-        } else if terminator.bind(py).is_callable() {
-            bundle = bundle.with_python_terminator(terminator);
-        } else {
-            return Err(PyTypeError::new_err(
-                "terminators must be ganesh.MaxSteps objects or Python callables",
-            ));
-        }
+        bundle = common_terminator(py, bundle, terminator)?;
     }
     for observer in observers {
         if let Ok(value) = observer.bind(py).extract::<PyRef<'_, PyProgressObserver>>() {
@@ -734,23 +862,36 @@ impl PyLikelihood {
         *,
         config: "object | None" = None,
         terminators: "Sequence[object]" = Vec::new(),
-        observers: "Sequence[object]" = Vec::new()
+        observers: "Sequence[object]" = Vec::new(),
+        seed=0,
+        default_callbacks=true,
+        use_parameter_metadata=true
     ))]
-    /// Minimize this likelihood with a deterministic optimizer.
+    /// Minimize this likelihood with any ganesh minimizer.
     ///
     /// Parameters
     /// ----------
     /// initial : sequence, numpy.ndarray, or dict[str, float], optional
     ///     Initial free-parameter values. A mapping may specify only the names
     ///     to override; remaining parameters use their defaults.
-    /// config : ganesh.NelderMeadConfig or ganesh.LBFGSBConfig, optional
-    ///     Optimizer configuration. ``None`` uses the default L-BFGS-B
-    ///     configuration. L-BFGS-B uses analytic gradients and the bounds
-    ///     declared by model parameters.
+    /// config : object, optional
+    ///     Any ganesh minimizer configuration: Adam, ConjugateGradient,
+    ///     LBFGSB, TrustRegion, NelderMead, CMAES, DifferentialEvolution,
+    ///     SimulatedAnnealing, or PSO. ``None`` uses L-BFGS-B with analytic
+    ///     gradients and the bounds declared by model parameters.
     /// terminators : sequence, optional
     ///     ganesh termination callbacks, such as ``ganesh.MaxSteps``.
     /// observers : sequence, optional
     ///     ganesh observers or Python callables invoked during minimization.
+    /// seed : int, default=0
+    ///     Seed for randomized minimizers.
+    /// default_callbacks : bool, default=True
+    ///     Include ganesh's default termination criteria. Set False to use
+    ///     only the supplied callbacks; provide a stopping condition.
+    /// use_parameter_metadata : bool, default=True
+    ///     Install names, transforms, and native bounds from the likelihood.
+    ///     Set False to pass these configuration fields through unchanged.
+    ///     Algorithm settings, including line searches, are always preserved.
     ///
     /// Returns
     /// -------
@@ -764,6 +905,7 @@ impl PyLikelihood {
     ///     If the configuration, initial values, or callbacks are unsupported.
     /// LadduError
     ///     If parameter transformation or likelihood evaluation fails.
+    #[allow(clippy::too_many_arguments)]
     fn fit(
         &self,
         py: Python<'_>,
@@ -771,80 +913,122 @@ impl PyLikelihood {
         config: Option<&Bound<'_, PyAny>>,
         terminators: Vec<Py<PyAny>>,
         observers: Vec<Py<PyAny>>,
+        seed: u64,
+        default_callbacks: bool,
+        use_parameter_metadata: bool,
     ) -> PyResult<PyFitResult> {
         let initial = initial_vector(&self.inner, initial)?;
         let problem = OwnedProblem::new(Arc::clone(&self.inner));
-        if let Some(config) = config
-            && let Ok(config) = config.extract::<PyRef<'_, PyNelderMeadConfig>>()
-        {
-            let metadata = problem.metadata();
-            let config = config
-                .to_rust()
-                .map_err(to_py_err)?
-                .with_parameter_names(metadata.parameter_names())
-                .with_transform(metadata.minimizer_transform().map_err(to_py_err)?);
-            let callbacks = callback_bundle::<NelderMead, _, GradientFreeStatus, _>(
-                py,
-                NelderMead::default_callbacks(),
-                terminators,
-                observers,
-            )?;
-            let summary = process_with_python_callbacks(
-                &mut NelderMead::default(),
-                &problem,
-                &(),
-                initial,
-                config,
-                callbacks,
-                to_py_err,
-            )?;
-            return Ok(PyFitResult::from_summary(
-                summary,
-                &problem.metadata().parameter_names(),
-                self.inner.artifact_fingerprint_v1(),
-                self.inner.artifact_compatibility_is_strong(),
+        let metadata = problem.metadata();
+        macro_rules! run {
+            ($algorithm:ident, $config:expr, $optimizer:expr, $native:ident) => {{
+                let config = $config;
+                let config = if use_parameter_metadata {
+                    run!(@metadata config, $native)
+                } else {
+                    config
+                };
+                let callbacks = algorithm_callbacks!(
+                    $algorithm, py, default_callbacks, terminators, observers
+                )?;
+                let summary = process_with_python_callbacks(
+                    &mut $optimizer, &problem, &(), initial, config, callbacks, to_py_err,
+                )?;
+                return Ok(PyFitResult::from_summary(
+                    summary, &metadata.parameter_names(),
+                    self.inner.artifact_fingerprint_v1(),
+                    self.inner.artifact_compatibility_is_strong(),
+                ));
+            }};
+            (@metadata $config:ident, native) => {
+                $config.with_parameter_names(metadata.parameter_names())
+                    .with_transform(metadata.native_transform().map_err(to_py_err)?)
+                    .map_err(to_py_err)?
+                    .with_bounds(metadata.native_bounds()).map_err(to_py_err)?
+            };
+            (@metadata $config:ident, smooth) => {
+                $config.with_parameter_names(metadata.parameter_names())
+                    .with_transform(metadata.minimizer_transform().map_err(to_py_err)?)
+            };
+        }
+        if let Some(config) = config {
+            if let Ok(config) = config.extract::<PyRef<'_, PyAdamConfig>>() {
+                run!(
+                    Adam,
+                    config.to_rust().map_err(to_py_err)?,
+                    Adam::default(),
+                    smooth
+                );
+            }
+            if let Ok(config) = config.extract::<PyRef<'_, PyConjugateGradientConfig>>() {
+                run!(
+                    ConjugateGradient,
+                    config.to_rust().map_err(to_py_err)?,
+                    ConjugateGradient::default(),
+                    smooth
+                );
+            }
+            if let Ok(config) = config.extract::<PyRef<'_, PyLBFGSBConfig>>() {
+                run!(
+                    LBFGSB,
+                    config.to_rust().map_err(to_py_err)?,
+                    LBFGSB::default(),
+                    native
+                );
+            }
+            if let Ok(config) = config.extract::<PyRef<'_, PyTrustRegionConfig>>() {
+                run!(
+                    TrustRegion,
+                    config.to_rust().map_err(to_py_err)?,
+                    TrustRegion::default(),
+                    smooth
+                );
+            }
+            if let Ok(config) = config.extract::<PyRef<'_, PyNelderMeadConfig>>() {
+                run!(
+                    NelderMead,
+                    config.to_rust().map_err(to_py_err)?,
+                    NelderMead::default(),
+                    smooth
+                );
+            }
+            if let Ok(config) = config.extract::<PyRef<'_, PyCMAESConfig>>() {
+                run!(
+                    CMAES,
+                    config.to_rust().map_err(to_py_err)?,
+                    CMAES::new(Some(seed)),
+                    smooth
+                );
+            }
+            if let Ok(config) = config.extract::<PyRef<'_, PyDifferentialEvolutionConfig>>() {
+                run!(
+                    DifferentialEvolution,
+                    config.to_rust().map_err(to_py_err)?,
+                    DifferentialEvolution::new(Some(seed)),
+                    smooth
+                );
+            }
+            if let Ok(config) = config.extract::<PyRef<'_, PySimulatedAnnealingConfig>>() {
+                run!(
+                    SimulatedAnnealing,
+                    config.to_rust().map_err(to_py_err)?,
+                    SimulatedAnnealing::new(Some(seed)),
+                    smooth
+                );
+            }
+            if let Ok(config) = config.extract::<PyRef<'_, PyPSOConfig>>() {
+                run!(
+                    PSO,
+                    config.to_rust().map_err(to_py_err)?,
+                    PSO::new(Some(seed)),
+                    smooth
+                );
+            }
+            return Err(PyTypeError::new_err(
+                "fit config must be a ganesh minimizer configuration or None",
             ));
         }
-        let config = match config {
-            Some(config) => config
-                .extract::<PyRef<'_, PyLBFGSBConfig>>()
-                .map_err(|_| {
-                    PyTypeError::new_err(
-                        "fit config must be ganesh.NelderMeadConfig, ganesh.LBFGSBConfig, or None",
-                    )
-                })?
-                .to_rust()
-                .map_err(to_py_err)?,
-            None => LBFGSBConfig::default(),
-        };
-        let metadata = problem.metadata();
-        let config = config
-            .with_parameter_names(metadata.parameter_names())
-            .with_transform(metadata.native_transform().map_err(to_py_err)?)
-            .map_err(to_py_err)?
-            .with_bounds(metadata.native_bounds())
-            .map_err(to_py_err)?;
-        let callbacks = callback_bundle::<LBFGSB, _, GradientStatus, _>(
-            py,
-            LBFGSB::default_callbacks(),
-            terminators,
-            observers,
-        )?;
-        let summary = process_with_python_callbacks(
-            &mut LBFGSB::default(),
-            &problem,
-            &(),
-            initial,
-            config,
-            callbacks,
-            to_py_err,
-        )?;
-        Ok(PyFitResult::from_summary(
-            summary,
-            &problem.metadata().parameter_names(),
-            self.inner.artifact_fingerprint_v1(),
-            self.inner.artifact_compatibility_is_strong(),
-        ))
+        run!(LBFGSB, LBFGSBConfig::default(), LBFGSB::default(), native);
     }
 
     #[pyo3(signature = (
@@ -853,13 +1037,19 @@ impl PyLikelihood {
         *,
         config: "object | None" = None,
         seed=0,
-        terminators: "Sequence[object]" = Vec::new()
+        terminators: "Sequence[object]" = Vec::new(),
+        observers: "Sequence[object]" = Vec::new(),
+        default_callbacks=true,
+        use_parameter_metadata=true
     ))]
     /// Run a deterministic ensemble of independent fit restarts.
     ///
     /// The first restart uses ``initial`` when supplied. Remaining starts are
     /// reproducibly sampled from parameter initialization ranges. Fits execute
     /// serially so Python callbacks and per-fit thread pools are not oversubscribed.
+    /// Configurations, observers, and the default_callbacks and
+    /// use_parameter_metadata controls have the same meaning as in ``fit``.
+    #[allow(clippy::too_many_arguments)]
     fn fit_restarts(
         &self,
         py: Python<'_>,
@@ -868,6 +1058,9 @@ impl PyLikelihood {
         config: Option<&Bound<'_, PyAny>>,
         seed: u64,
         terminators: Vec<Py<PyAny>>,
+        observers: Vec<Py<PyAny>>,
+        default_callbacks: bool,
+        use_parameter_metadata: bool,
     ) -> PyResult<Vec<PyFitResult>> {
         if restarts == 0 {
             return Err(pyo3::exceptions::PyValueError::new_err(
@@ -881,13 +1074,31 @@ impl PyLikelihood {
                 .map(|callback| callback.clone_ref(py))
                 .collect();
             let summary = if index == 0 && initial.is_some() {
-                self.fit(py, initial, config, callbacks, Vec::new())?
+                self.fit(
+                    py,
+                    initial,
+                    config,
+                    callbacks,
+                    observers.iter().map(|o| o.clone_ref(py)).collect(),
+                    seed,
+                    default_callbacks,
+                    use_parameter_metadata,
+                )?
             } else {
                 let start = self.inner.sample_initial(
                     seed.wrapping_add((index as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15)),
                 );
                 let start = PyArray1::from_vec(py, start).into_any();
-                self.fit(py, Some(&start), config, callbacks, Vec::new())?
+                self.fit(
+                    py,
+                    Some(&start),
+                    config,
+                    callbacks,
+                    observers.iter().map(|o| o.clone_ref(py)).collect(),
+                    seed,
+                    default_callbacks,
+                    use_parameter_metadata,
+                )?
             };
             summaries.push(summary);
         }
@@ -901,7 +1112,9 @@ impl PyLikelihood {
         fraction=0.1,
         seed=0,
         terminators: "Sequence[object]" = Vec::new(),
-        observers: "Sequence[object]" = Vec::new()
+        observers: "Sequence[object]" = Vec::new(),
+        default_callbacks=true,
+        use_parameter_metadata=true
     ))]
     #[allow(clippy::too_many_arguments)]
     /// Minimize this likelihood with stochastic Adam updates.
@@ -919,7 +1132,15 @@ impl PyLikelihood {
     /// seed : int, default=0
     ///     Seed for reproducible event subsampling.
     /// terminators, observers : sequence, optional
-    ///     ganesh callbacks applied during optimization.
+    ///     ganesh callbacks applied during optimization, including AdamEMATerminator.
+    /// default_callbacks : bool, default=True
+    ///     Include ganesh's default Adam EMA termination criterion.
+    /// use_parameter_metadata : bool, default=True
+    ///     Install likelihood names and transforms. False preserves the config.
+    ///
+    /// Values and gradients at an update use the same event batch. Each
+    /// gradient consumes the cached pair, so an unchanged point can draw a new
+    /// batch on the next update. Equal seeds reproduce the batch sequence.
     ///
     /// Returns
     /// -------
@@ -941,6 +1162,8 @@ impl PyLikelihood {
         seed: u64,
         terminators: Vec<Py<PyAny>>,
         observers: Vec<Py<PyAny>>,
+        default_callbacks: bool,
+        use_parameter_metadata: bool,
     ) -> PyResult<PyMinimizationSummary> {
         if !(fraction > 0.0 && fraction <= 1.0) {
             return Err(pyo3::exceptions::PyValueError::new_err(
@@ -952,20 +1175,21 @@ impl PyLikelihood {
         let config = match config {
             Some(config) => config.to_rust().map_err(to_py_err)?,
             None => AdamConfig::default(),
-        }
-        .with_parameter_names(metadata.parameter_names())
-        .with_transform(metadata.minimizer_transform().map_err(to_py_err)?);
+        };
+        let config = if use_parameter_metadata {
+            config
+                .with_parameter_names(metadata.parameter_names())
+                .with_transform(metadata.minimizer_transform().map_err(to_py_err)?)
+        } else {
+            config
+        };
         let problem = OwnedStochasticProblem {
             objective: Arc::clone(&self.inner),
             fraction,
             next_seed: AtomicU64::new(seed),
+            cache: parking_lot::Mutex::new(None),
         };
-        let callbacks = callback_bundle::<Adam, _, GradientStatus, _>(
-            py,
-            Adam::default_callbacks(),
-            terminators,
-            observers,
-        )?;
+        let callbacks = algorithm_callbacks!(Adam, py, default_callbacks, terminators, observers)?;
         let summary = process_with_python_callbacks(
             &mut Adam::default(),
             &problem,
@@ -984,10 +1208,16 @@ impl PyLikelihood {
         *,
         config: "object | None" = None,
         seed=0,
-        terminators: "Sequence[object]" = Vec::new()
+        terminators: "Sequence[object]" = Vec::new(),
+        observers: "Sequence[object]" = Vec::new(),
+        default_callbacks=true,
+        use_parameter_metadata=true
     ))]
     /// Poisson-bootstrap observed datasets, refit each replica, and retain the
     /// paired likelihood and parameter draws for cross-section propagation.
+    /// Configurations, observers, and the default_callbacks and
+    /// use_parameter_metadata controls are forwarded to each ``fit``.
+    #[allow(clippy::too_many_arguments)]
     fn bootstrap_fit(
         &self,
         py: Python<'_>,
@@ -996,6 +1226,9 @@ impl PyLikelihood {
         config: Option<&Bound<'_, PyAny>>,
         seed: u64,
         terminators: Vec<Py<PyAny>>,
+        observers: Vec<Py<PyAny>>,
+        default_callbacks: bool,
+        use_parameter_metadata: bool,
     ) -> PyResult<PyEnsemble> {
         let inner = Ensemble::bootstrap_fit(&self.inner, samples, seed, |replica, _| {
             let replica_python = PyLikelihood {
@@ -1005,7 +1238,16 @@ impl PyLikelihood {
                 .iter()
                 .map(|callback| callback.clone_ref(py))
                 .collect();
-            let summary = replica_python.fit(py, initial, config, callbacks, Vec::new())?;
+            let summary = replica_python.fit(
+                py,
+                initial,
+                config,
+                callbacks,
+                observers.iter().map(|o| o.clone_ref(py)).collect(),
+                seed,
+                default_callbacks,
+                use_parameter_metadata,
+            )?;
             Ok(summary.inner.values().to_vec())
         })
         .map_err(|error| match error {
@@ -1018,24 +1260,32 @@ impl PyLikelihood {
     #[pyo3(signature = (
         init,
         *,
-        config=None,
+        config: "object | None" = None,
         seed=0,
         terminators: "Sequence[object]" = Vec::new(),
-        observers: "Sequence[object]" = Vec::new()
+        observers: "Sequence[object]" = Vec::new(),
+        default_callbacks=true,
+        use_parameter_metadata=true
     ))]
-    /// Sample the likelihood with the affine-invariant ensemble sampler.
+    /// Sample the likelihood with AIES or the ensemble slice sampler (ESS).
     ///
     /// Parameters
     /// ----------
-    /// init : ganesh.AIESInit
-    ///     Initial walker ensemble.
-    /// config : ganesh.AIESConfig, optional
-    ///     Ensemble sampler configuration. ``None`` uses the default
-    ///     configuration.
+    /// init : ganesh.AIESInit or ganesh.ESSInit
+    ///     Initial walker ensemble; selects the sampler.
+    /// config : ganesh.AIESConfig or ganesh.ESSConfig, optional
+    ///     Matching sampler configuration. ``None`` uses its defaults.
+    ///     Move mixtures, chain storage, and tuning settings pass through.
     /// seed : int, default=0
     ///     Random seed for proposal generation.
     /// terminators, observers : sequence, optional
-    ///     ganesh callbacks applied during sampling.
+    ///     ganesh callbacks, including AutocorrelationTerminator.
+    /// default_callbacks : bool, default=True
+    ///     Include ganesh's default sampler termination criteria.
+    /// use_parameter_metadata : bool, default=True
+    ///     Install likelihood names and linear scaling. False preserves the
+    ///     supplied config, including transforms. Nonlinear transforms need
+    ///     appropriate Jacobian handling to preserve a posterior density.
     ///
     /// Returns
     /// -------
@@ -1046,38 +1296,62 @@ impl PyLikelihood {
     /// ------
     /// LadduError
     ///     If parameter transformation, initialization, or sampling fails.
+    #[allow(clippy::too_many_arguments)]
     fn sample(
         &self,
         py: Python<'_>,
-        init: &PyAIESInit,
-        config: Option<&PyAIESConfig>,
+        init: &Bound<'_, PyAny>,
+        config: Option<&Bound<'_, PyAny>>,
         seed: u64,
         terminators: Vec<Py<PyAny>>,
         observers: Vec<Py<PyAny>>,
+        default_callbacks: bool,
+        use_parameter_metadata: bool,
     ) -> PyResult<PyMCMCSummary> {
         let problem = OwnedProblem::new(Arc::clone(&self.inner));
         let metadata = problem.metadata();
-        let config = match config {
-            Some(config) => config.to_rust().map_err(to_py_err)?,
-            None => AIESConfig::default(),
+        macro_rules! run_sampler {
+            ($algorithm:ident, $pyinit:ident, $pyconfig:ident, $config:ident) => {{
+                let init = init
+                    .extract::<PyRef<'_, $pyinit>>()?
+                    .to_rust()
+                    .map_err(to_py_err)?;
+                let config = match config {
+                    Some(config) => config
+                        .extract::<PyRef<'_, $pyconfig>>()?
+                        .to_rust()
+                        .map_err(to_py_err)?,
+                    None => $config::default(),
+                };
+                let config = if use_parameter_metadata {
+                    config
+                        .with_parameter_names(metadata.parameter_names())
+                        .with_transform(metadata.sampler_transform().map_err(to_py_err)?)
+                } else {
+                    config
+                };
+                let callbacks = algorithm_callbacks!(
+                    $algorithm,
+                    py,
+                    default_callbacks,
+                    terminators,
+                    observers
+                )?;
+                let summary = process_with_python_callbacks(
+                    &mut $algorithm::new(Some(seed)),
+                    &problem,
+                    &(),
+                    init,
+                    config,
+                    callbacks,
+                    to_py_err,
+                )?;
+                return Ok(summary.into());
+            }};
         }
-        .with_parameter_names(metadata.parameter_names())
-        .with_transform(metadata.sampler_transform().map_err(to_py_err)?);
-        let callbacks = callback_bundle::<AIES, _, EnsembleStatus, _>(
-            py,
-            AIES::default_callbacks(),
-            terminators,
-            observers,
-        )?;
-        let summary = process_with_python_callbacks(
-            &mut AIES::new(Some(seed)),
-            &problem,
-            &(),
-            init.to_rust().map_err(to_py_err)?,
-            config,
-            callbacks,
-            to_py_err,
-        )?;
-        Ok(summary.into())
+        if init.extract::<PyRef<'_, PyESSInit>>().is_ok() {
+            run_sampler!(ESS, PyESSInit, PyESSConfig, ESSConfig);
+        }
+        run_sampler!(AIES, PyAIESInit, PyAIESConfig, AIESConfig);
     }
 }
