@@ -38,15 +38,15 @@ value, gradient = likelihood.value_and_gradient(initial)
 
 $$
 \mathcal F(\theta)
-=-\sum_{i\in\mathrm{data}}w_i\log I(\Omega_i;\theta)
-+D\log A(\theta),
+=2\left[-\sum_{i\in\mathrm{data}}w_i\log I(\Omega_i;\theta)
++D\log A(\theta)\right],
 \qquad
 D=\sum_i w_i,
 \qquad
 A(\theta)=\sum_{j\in\mathrm{accepted\ MC}}w_j I(\Omega_j;\theta).
 $$
 
-Its overall intensity scale cancels. `likelihood.parameter_names` defines the
+This is the $-2\ln\mathcal L$ convention. Its overall intensity scale cancels. `likelihood.parameter_names` defines the
 order of `initial` and `gradient`. Check that the initial objective and every
 gradient component are finite before fitting.
 
@@ -69,7 +69,9 @@ projection_weights = projection.weights(fit.values)
 The two tagged waves interfere in this projection. `FitResult` exposes stable
 fields such as `values`, `parameter_names`, `objective`, `converged`, and
 `diagnostics`. `covariance` and `standard_errors` are available when the chosen
-optimizer computed them; its full summary remains at `raw_ganesh_summary`.
+optimizer computed them. They include the factor of two appropriate to the
+$-2\ln\mathcal L$ Hessian; the unchanged ganesh summary at
+`raw_ganesh_summary` contains ganesh's inverse-Hessian covariance.
 
 ### Choose algorithms and callbacks
 

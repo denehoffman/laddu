@@ -3,7 +3,8 @@
 //! [`FitProblem`] implements ganesh's cost, gradient, and log-density traits
 //! for both `f32` and `f64`. The adapter leaves algorithm choice and callbacks
 //! fully exposed while centralizing `laddu` parameter conversion, metadata, and
-//! stochastic batching.
+//! stochastic batching. Sampling interprets the objective as `-2 ln L`,
+//! so the log density is minus one half of the objective.
 
 pub use ganesh;
 
@@ -94,7 +95,11 @@ pub struct MinimizationResult {
 }
 
 impl MinimizationResult {
-    /// Build a stable result from a complete Ganesh summary.
+    /// Build a stable result from a Ganesh summary for a `-2 ln L` objective.
+    ///
+    /// Ganesh reports inverse-Hessian covariance. This facade multiplies it
+    /// by two (and its errors by sqrt(2)) for the likelihood convention, while
+    /// retaining the original dependency-specific summary unchanged.
     pub fn from_ganesh(
         summary: MinimizationSummary<f64, NalgebraProvider>,
         fallback_parameter_names: &[String],
@@ -106,7 +111,14 @@ impl MinimizationResult {
             .filter(|names| names.len() == values.len())
             .unwrap_or_else(|| fallback_parameter_names.to_vec());
         let standard_errors = (summary.std.len() == values.len())
-            .then(|| summary.std.to_vec())
+            .then(|| {
+                summary
+                    .std
+                    .to_vec()
+                    .into_iter()
+                    .map(|value| std::f64::consts::SQRT_2 * value)
+                    .collect::<Vec<_>>()
+            })
             .filter(|errors| errors.iter().all(|value| value.is_finite()));
         let covariance = (standard_errors.is_some()
             && summary.covariance.rows() == values.len()
@@ -115,7 +127,7 @@ impl MinimizationResult {
             (0..values.len())
                 .map(|row| {
                     (0..values.len())
-                        .map(|column| summary.covariance.get(row, column))
+                        .map(|column| 2.0 * summary.covariance.get(row, column))
                         .collect::<Vec<_>>()
                 })
                 .collect::<Vec<_>>()
@@ -1798,7 +1810,7 @@ where
         {
             return Ok(-T::infinity());
         }
-        Ok(-T::literal(self.objective.value(&external)?))
+        Ok(T::literal(-0.5 * self.objective.value(&external)?))
     }
 }
 
@@ -1932,6 +1944,27 @@ mod tests {
                 .evaluate(&f32_problem.vector(&[2.0]), &())
                 .unwrap(),
             4.0
+        );
+    }
+
+    #[test]
+    fn log_density_is_minus_half_the_likelihood_objective() {
+        let objective = Quadratic {
+            layout: ParamLayout::new([Parameter::free("x").with_initial(2.0)]).unwrap(),
+        };
+        let f64_problem = FitProblem::<_, f64>::new(&objective);
+        let f32_problem = FitProblem::<_, f32>::new(&objective);
+        assert_eq!(
+            f64_problem
+                .log_density(&f64_problem.vector(&[2.0]), &())
+                .unwrap(),
+            -2.0
+        );
+        assert_eq!(
+            f32_problem
+                .log_density(&f32_problem.vector(&[2.0]), &())
+                .unwrap(),
+            -2.0
         );
     }
 
@@ -2190,8 +2223,12 @@ mod tests {
         assert_eq!(converged.values(), [1.0]);
         assert_eq!(converged.outcome(), FitOutcome::Converged);
         assert!(converged.converged());
-        assert_eq!(converged.covariance(), Some(&[vec![0.25]][..]));
-        assert_eq!(converged.standard_errors(), Some(&[0.5][..]));
+        assert_eq!(converged.covariance(), Some(&[vec![0.5]][..]));
+        assert_eq!(
+            converged.standard_errors(),
+            Some(&[0.5 * std::f64::consts::SQRT_2][..])
+        );
+        assert_eq!(converged.raw_ganesh_summary().covariance.get(0, 0), 0.25);
         assert_eq!(converged.raw_ganesh_summary().fx, 3.0);
 
         let stopped = MinimizationResult::from_ganesh(

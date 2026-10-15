@@ -216,7 +216,7 @@ impl PyLikelihoodDiagnostics {
 
 #[pyclass(name = "NLL", module = "laddu", frozen, skip_from_py_object)]
 #[derive(Clone)]
-/// An unbinned negative log-likelihood term.
+/// An unbinned likelihood term using ``-2 ln L``.
 ///
 /// Parameters
 /// ----------
@@ -234,7 +234,7 @@ pub struct PyNll {
 
 #[pyclass(name = "ExtendedNLL", module = "laddu", frozen, skip_from_py_object)]
 #[derive(Clone)]
-/// An extended unbinned negative log-likelihood term.
+/// An extended unbinned likelihood term using ``-2 ln L``.
 ///
 /// Unlike :class:`NLL`, this term retains the predicted-yield contribution.
 ///
@@ -277,7 +277,7 @@ impl PyExtendedNll {
 
 #[pyclass(name = "RidgePenalty", module = "laddu", frozen, skip_from_py_object)]
 #[derive(Clone)]
-/// Quadratic regularization over selected parameters.
+/// Quadratic regularization ``2 * lambda_ * sum(parameter**2)`` in objective units.
 ///
 /// Parameters
 /// ----------
@@ -310,7 +310,7 @@ impl PyRidgePenalty {
 
 #[pyclass(name = "LassoPenalty", module = "laddu", frozen, skip_from_py_object)]
 #[derive(Clone)]
-/// Absolute-value regularization over selected parameters.
+/// Absolute-value regularization ``2 * lambda_ * sum(abs(parameter))`` in objective units.
 ///
 /// Parameters
 /// ----------
@@ -653,7 +653,7 @@ impl PyLikelihood {
     }
 
     #[pyo3(signature = (parameters: "Sequence[float] | numpy.typing.NDArray[numpy.float32 | numpy.float64] | dict[str, float]"))]
-    /// Evaluate the total negative log-likelihood.
+    /// Evaluate the total ``-2 ln L`` objective.
     ///
     /// Parameters
     /// ----------
@@ -672,7 +672,7 @@ impl PyLikelihood {
     }
 
     #[pyo3(signature = (parameters: "Sequence[float] | numpy.typing.NDArray[numpy.float32 | numpy.float64] | dict[str, float]"))]
-    /// Evaluate the total negative log-likelihood.
+    /// Evaluate the total ``-2 ln L`` objective.
     ///
     /// This is an alias for :meth:`value`.
     fn nll(&self, py: Python<'_>, parameters: &Bound<'_, PyAny>) -> PyResult<f64> {
@@ -682,7 +682,7 @@ impl PyLikelihood {
     #[pyo3(signature = (
         parameters: "Sequence[float] | numpy.typing.NDArray[numpy.float32 | numpy.float64] | dict[str, float]"
     ) -> "tuple[float, Sequence[float]]")]
-    /// Evaluate the negative log-likelihood and its gradient.
+    /// Evaluate ``-2 ln L`` and its gradient.
     ///
     /// Parameters
     /// ----------
@@ -692,7 +692,7 @@ impl PyLikelihood {
     /// Returns
     /// -------
     /// value : float
-    ///     Total negative log-likelihood.
+    ///     Total ``-2 ln L`` objective, including regularization.
     /// gradient : numpy.ndarray
     ///     Derivatives in :attr:`parameter_names` order.
     fn value_and_gradient<'py>(

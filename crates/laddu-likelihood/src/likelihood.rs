@@ -233,7 +233,10 @@ pub trait StochasticObjective: Objective {
     ) -> LikelihoodResult<LikelihoodEvaluation>;
 }
 
-/// A composable contribution to a negative log likelihood.
+/// A composable contribution to the `-2 ln L` objective.
+///
+/// Custom terms must return values and gradients in this convention. Built-in
+/// regularizers use twice their negative-log weight to preserve relative strength.
 pub trait LikelihoodTerm: Debug + Send + Sync {
     /// Returns the unique term name.
     fn name(&self) -> &str;
@@ -297,7 +300,7 @@ pub trait LikelihoodTerm: Debug + Send + Sync {
         execution: &Execution,
     ) -> LikelihoodResult<()>;
 
-    /// Evaluates this term's negative-log-likelihood contribution.
+    /// Evaluates this term's contribution in `-2 ln L` units.
     ///
     /// # Errors
     ///
@@ -675,7 +678,7 @@ impl Likelihood {
         }
     }
 
-    /// Evaluate the objective from free values in [`Self::params`] order.
+    /// Evaluate the `-2 ln L` objective from free values in [`Self::params`] order.
     ///
     /// # Errors
     ///
@@ -698,7 +701,7 @@ impl Likelihood {
         )
     }
 
-    /// Evaluates the objective and gradient from free or resolved parameter values.
+    /// Evaluates `-2 ln L` and its gradient from free or resolved parameter values.
     ///
     /// # Errors
     ///
@@ -730,7 +733,7 @@ impl Likelihood {
         Ok(LikelihoodEvaluation { value, gradient })
     }
 
-    /// Evaluates an unbiased stochastic objective and gradient.
+    /// Evaluates an unbiased stochastic `-2 ln L` objective and gradient.
     ///
     /// # Errors
     ///
@@ -973,7 +976,7 @@ impl StochasticObjective for Likelihood {
 }
 
 #[derive(Clone)]
-/// A shape-normalized unbinned negative-log-likelihood term.
+/// A shape-normalized unbinned `-2 ln L` term.
 pub struct NllTerm {
     name: LikelihoodName,
     model: CompiledModel,
@@ -1388,7 +1391,7 @@ impl LikelihoodTerm for NllTerm {
         mapping: &HashMap<String, String>,
     ) -> Option<String> {
         Some(format!(
-            "nll-v1:{}:{}",
+            "nll-v2:{}:{}",
             self.name(),
             model_artifact_identity(&self.model, mapping)?
         ))
@@ -1495,7 +1498,7 @@ impl LikelihoodTerm for NllTerm {
                 ReductionPlan::weighted_log_positive_real(),
             )
             .map_err(|error| map_reduction_error("data", error))?;
-        Ok(self.data_weight_sum()? * normalization.ln() - data_log_sum)
+        Ok(2.0 * (self.data_weight_sum()? * normalization.ln() - data_log_sum))
     }
 
     fn nll_with_gradient(
@@ -1523,12 +1526,12 @@ impl LikelihoodTerm for NllTerm {
             .into_iter()
             .zip(data_log_gradient)
             .map(|(normalization_derivative, data_derivative)| {
-                data_weight_sum * normalization_derivative / normalization - data_derivative
+                2.0 * (data_weight_sum * normalization_derivative / normalization - data_derivative)
             })
             .collect::<Vec<_>>();
         self.resolved_projection()?
             .scatter_gradient(&local_gradient, gradient)?;
-        Ok(data_weight_sum * normalization.ln() - data_log_sum)
+        Ok(2.0 * (data_weight_sum * normalization.ln() - data_log_sum))
     }
 
     fn stochastic_nll_with_gradient(
@@ -1550,12 +1553,12 @@ impl LikelihoodTerm for NllTerm {
             .into_iter()
             .zip(data_log_gradient)
             .map(|(normalization_derivative, data_derivative)| {
-                data_weight_sum * normalization_derivative / normalization - data_derivative
+                2.0 * (data_weight_sum * normalization_derivative / normalization - data_derivative)
             })
             .collect::<Vec<_>>();
         self.resolved_projection()?
             .scatter_gradient(&local_gradient, gradient)?;
-        Ok(data_weight_sum * normalization.ln() - data_log_sum)
+        Ok(2.0 * (data_weight_sum * normalization.ln() - data_log_sum))
     }
 
     fn as_intensity(&self) -> Option<&NllTerm> {
@@ -1563,7 +1566,7 @@ impl LikelihoodTerm for NllTerm {
     }
 }
 
-/// An extended unbinned negative-log-likelihood term.
+/// An extended unbinned `-2 ln L` term.
 ///
 /// Unlike [`NllTerm`], the normalization is the expected event yield rather
 /// than a shape-only normalization raised to the observed weighted yield.
@@ -1657,7 +1660,7 @@ impl LikelihoodTerm for ExtendedNllTerm {
     }
 
     fn artifact_identity(&self) -> Option<String> {
-        Some(format!("extended-v1:{}", self.inner.artifact_identity()?))
+        Some(format!("extended-v2:{}", self.inner.artifact_identity()?))
     }
 
     fn artifact_identity_with_parameter_map(
@@ -1665,7 +1668,7 @@ impl LikelihoodTerm for ExtendedNllTerm {
         mapping: &HashMap<String, String>,
     ) -> Option<String> {
         Some(format!(
-            "extended-v1:{}",
+            "extended-v2:{}",
             self.inner.artifact_identity_with_parameter_map(mapping)?
         ))
     }
@@ -1712,7 +1715,7 @@ impl LikelihoodTerm for ExtendedNllTerm {
                 ReductionPlan::weighted_log_positive_real(),
             )
             .map_err(|error| map_reduction_error("data", error))?;
-        Ok(normalization - data_log_sum)
+        Ok(2.0 * (normalization - data_log_sum))
     }
 
     fn nll_with_gradient(
@@ -1741,13 +1744,13 @@ impl LikelihoodTerm for ExtendedNllTerm {
             .into_iter()
             .zip(data_log_gradient)
             .map(|(normalization_derivative, data_derivative)| {
-                normalization_derivative - data_derivative
+                2.0 * (normalization_derivative - data_derivative)
             })
             .collect::<Vec<_>>();
         self.inner
             .resolved_projection()?
             .scatter_gradient(&local_gradient, gradient)?;
-        Ok(normalization - data_log_sum)
+        Ok(2.0 * (normalization - data_log_sum))
     }
 
     fn stochastic_nll_with_gradient(
@@ -1770,13 +1773,13 @@ impl LikelihoodTerm for ExtendedNllTerm {
             .into_iter()
             .zip(data_log_gradient)
             .map(|(normalization_derivative, data_derivative)| {
-                normalization_derivative - data_derivative
+                2.0 * (normalization_derivative - data_derivative)
             })
             .collect::<Vec<_>>();
         self.inner
             .resolved_projection()?
             .scatter_gradient(&local_gradient, gradient)?;
-        Ok(normalization - data_log_sum)
+        Ok(2.0 * (normalization - data_log_sum))
     }
 
     fn as_intensity(&self) -> Option<&NllTerm> {
@@ -1788,7 +1791,7 @@ impl LikelihoodTerm for ExtendedNllTerm {
     }
 }
 
-/// Quadratic regularization over selected parameters.
+/// Quadratic regularization `2 * lambda * sum(parameter^2)` in `-2 ln L` units.
 #[derive(Clone, Debug)]
 pub struct RidgePenalty {
     inner: CpuParameterPenalty,
@@ -1825,7 +1828,7 @@ impl LikelihoodTerm for RidgePenalty {
         &self,
         mapping: &HashMap<String, String>,
     ) -> Option<String> {
-        Some(self.inner.artifact_identity("ridge-v1", mapping))
+        Some(self.inner.artifact_identity("ridge-v2", mapping))
     }
 
     fn bootstrap_clone(&self, _seed: u64) -> LikelihoodResult<Box<dyn LikelihoodTerm>> {
@@ -1858,7 +1861,7 @@ impl LikelihoodTerm for RidgePenalty {
     }
 }
 
-/// Absolute-value regularization over selected parameters.
+/// Absolute-value regularization `2 * lambda * sum(abs(parameter))` in `-2 ln L` units.
 #[derive(Clone, Debug)]
 pub struct LassoPenalty {
     inner: CpuParameterPenalty,
@@ -1895,7 +1898,7 @@ impl LikelihoodTerm for LassoPenalty {
         &self,
         mapping: &HashMap<String, String>,
     ) -> Option<String> {
-        Some(self.inner.artifact_identity("lasso-v1", mapping))
+        Some(self.inner.artifact_identity("lasso-v2", mapping))
     }
 
     fn bootstrap_clone(&self, _seed: u64) -> LikelihoodResult<Box<dyn LikelihoodTerm>> {
@@ -2012,7 +2015,7 @@ impl CpuParameterPenalty {
                 PenaltyKind::Lasso => value.abs(),
             };
         }
-        Ok(self.lambda * sum)
+        Ok(2.0 * self.lambda * sum)
     }
 
     fn nll_with_gradient(
@@ -2042,10 +2045,10 @@ impl CpuParameterPenalty {
             };
             sum += penalty;
             if let Some(free) = global_params.free_id(*id)? {
-                gradient[free.index()] += self.lambda * derivative;
+                gradient[free.index()] += 2.0 * self.lambda * derivative;
             }
         }
-        Ok(self.lambda * sum)
+        Ok(2.0 * self.lambda * sum)
     }
 }
 
@@ -2697,7 +2700,7 @@ mod tests {
         let likelihood = single_term_likelihood("data", &model, &data, &accepted_mc);
         let params = likelihood.default_params();
 
-        let expected = 2.0 * 2.0_f64.ln() - 1.0_f64.ln() - 1.5_f64.ln();
+        let expected = 2.0 * (2.0 * 2.0_f64.ln() - 1.0_f64.ln() - 1.5_f64.ln());
         assert_relative_eq!(likelihood.nll(&params).unwrap(), expected);
     }
 
@@ -2714,7 +2717,7 @@ mod tests {
             .unwrap();
         let params = likelihood.default_params();
         let evaluation = likelihood.nll_with_gradient(&params).unwrap();
-        let expected = 2.0 - 1.0_f64.ln() - 1.5_f64.ln();
+        let expected = 2.0 * (2.0 - 1.0_f64.ln() - 1.5_f64.ln());
 
         assert_relative_eq!(evaluation.value(), expected);
         assert_relative_eq!(
@@ -3011,7 +3014,7 @@ mod tests {
             cpu_execution(Precision::F32, ThreadPolicy::Serial, JitPolicy::Auto),
         );
 
-        let expected = 2.0 * 5.0_f64.ln() - 2.0_f32.ln() as f64 - 3.0_f32.ln() as f64;
+        let expected = 2.0 * (2.0 * 5.0_f64.ln() - 2.0_f32.ln() as f64 - 3.0_f32.ln() as f64);
         assert_eq!(
             likelihood.nll(&likelihood.default_params()).unwrap(),
             expected
@@ -3240,8 +3243,8 @@ mod tests {
         assert_eq!(likelihood.params().specs()[0].name(), "scale");
 
         let params = likelihood.default_params();
-        let term_a = 2.0 * 2.0_f64.ln() - 1.0_f64.ln() - 1.5_f64.ln();
-        let term_b = 2.0 * 9.0_f64.ln() - 2.0 * 2.5_f64.ln();
+        let term_a = 2.0 * (2.0 * 2.0_f64.ln() - 1.0_f64.ln() - 1.5_f64.ln());
+        let term_b = 2.0 * (2.0 * 9.0_f64.ln() - 2.0 * 2.5_f64.ln());
         assert_relative_eq!(likelihood.nll(&params).unwrap(), term_a + term_b);
     }
 
@@ -3263,7 +3266,7 @@ mod tests {
         let mut params = likelihood.default_params();
         params[0] = 1.0;
 
-        let expected_term = 1.0 * 4.0_f64.ln() - 2.0_f64.ln();
+        let expected_term = 2.0 * (4.0_f64.ln() - 2.0_f64.ln());
         assert_relative_eq!(likelihood.nll(&params).unwrap(), 2.0 * expected_term);
     }
 
@@ -3363,11 +3366,11 @@ mod tests {
         .unwrap();
         let params = likelihood.default_params();
 
-        let nll = 2.0 * 2.0_f64.ln() - 1.0_f64.ln() - 1.5_f64.ln();
-        let penalty = 2.0 * 0.5_f64.powi(2) + 3.0 * 0.5_f64.abs();
+        let nll = 2.0 * (2.0 * 2.0_f64.ln() - 1.0_f64.ln() - 1.5_f64.ln());
+        let penalty = 2.0 * (2.0 * 0.5_f64.powi(2) + 3.0 * 0.5_f64.abs());
         let result = likelihood.nll_with_gradient(&params).unwrap();
         assert_relative_eq!(result.value(), nll + penalty);
-        assert_relative_eq!(result.gradient()[0], 5.0);
+        assert_relative_eq!(result.gradient()[0], 10.0);
     }
 
     #[test]
@@ -3457,7 +3460,7 @@ mod tests {
         .unwrap();
         let params = likelihood.default_params();
 
-        let expected = 1.0 * 2.0_f64.ln() - 1.0_f64.ln() + 12.5;
+        let expected = 2.0 * (2.0_f64.ln() - 1.0_f64.ln()) + 12.5;
         assert_relative_eq!(likelihood.nll(&params).unwrap(), expected);
     }
 
