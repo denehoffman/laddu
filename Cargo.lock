@@ -1235,9 +1235,9 @@ dependencies = [
 
 [[package]]
 name = "ganesh"
-version = "0.28.1"
+version = "0.29.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3911ed2dde5afa1f20dcfac70ef6277da76571e6a575ac9fd74ba5540f584cf0"
+checksum = "518f58d4f704a44e923afd32fe9e35a67664f25e4ef847e9fc73cbd1d82df009"
 dependencies = [
  "ctrlc",
  "dyn-clone",

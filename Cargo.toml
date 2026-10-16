@@ -30,7 +30,7 @@ errorfunctions = "0.2.0"
 factorial = "0.4.0"
 fastrand = "2.5.0"
 fastrand-contrib = "0.1.0"
-ganesh = "0.28.1"
+ganesh = "0.29.0"
 good_lp = { version = "1.15.3", default-features = false, features = ["microlp"] }
 indexmap = { version = "2.14.2", features = ["serde"] }
 lazy_static = "1.5.0"
