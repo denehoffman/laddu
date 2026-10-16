@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.28.0](https://github.com/denehoffman/laddu/compare/v0.27.0...v0.28.0) (2026-10-16)
+
+
+### ⚠ BREAKING CHANGES
+
+* **deps:** The re-exported Ganesh LineSearch trait now requires search_from. More-Thuente step expansion and upper-limit acceptance follow the corrected upstream behavior.
+
+### Bug Fixes
+
+* **deps:** Bump ganesh to 0.29.0 ([d72589d](https://github.com/denehoffman/laddu/commit/d72589dd5836b1a02e08c8109de543d1d864f9fe))
+
 ## [0.27.0](https://github.com/denehoffman/laddu/compare/v0.26.0...v0.27.0) (2026-10-15)
 
 
