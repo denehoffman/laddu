@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.28.1](https://github.com/denehoffman/laddu/compare/v0.28.0...v0.28.1) (2026-10-24)
+
+
+### Bug Fixes
+
+* Update ganesh and require full release CI ([cf4ebaf](https://github.com/denehoffman/laddu/commit/cf4ebafe0464b9f61ad25ec8a9fc7d2648da9773))
+
 ## [0.28.0](https://github.com/denehoffman/laddu/compare/v0.27.0...v0.28.0) (2026-10-16)
 
 
