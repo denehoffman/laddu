@@ -71,13 +71,14 @@ class ClassificationTests(unittest.TestCase):
         self.assertFalse(ci.metadata_only({'python/laddu/pyproject.toml': (before, before.replace('1.13', '1.14'))}))
 
     def test_unknown_deleted_added_and_invalid_files_are_conservative(self):
-        for changes in (
+        cases: tuple[dict[str, tuple[str | None, str | None]], ...] = (
             {},
             {'src/lib.rs': ('old', 'new')},
             {'Cargo.toml': ('invalid', 'invalid')},
             {'CHANGELOG.md': (None, 'new')},
             {'CHANGELOG.md': ('old', None)},
-        ):
+        )
+        for changes in cases:
             self.assertFalse(ci.metadata_only(changes))
 
     def test_release_identity_requires_repository_branch_target_and_label(self):
@@ -95,9 +96,9 @@ class ClassificationTests(unittest.TestCase):
             self.assertFalse(ci.release_pr(modified))
 
     @patch.object(ci, 'read_changes')
-    def test_release_changes_choose_full_or_targeted_checks(self, changes):
+    def test_release_changes_always_require_full_correctness(self, changes):
         changes.return_value = {'.release-please-manifest.json': ('{".":"0.26.0"}', '{".":"0.27.0"}')}
-        self.assertEqual(ci.classify(event(), 'pull_request'), {'full': 'false', 'release': 'true', 'metrics': 'false'})
+        self.assertEqual(ci.classify(event(), 'pull_request'), {'full': 'true', 'release': 'true', 'metrics': 'false'})
         changes.return_value['crates/laddu/src/lib.rs'] = ('old', 'new')
         self.assertEqual(ci.classify(event(), 'pull_request'), {'full': 'true', 'release': 'true', 'metrics': 'true'})
         ordinary = event()
@@ -122,11 +123,11 @@ class ClassificationTests(unittest.TestCase):
 
 class GateTests(unittest.TestCase):
     def test_all_supported_routes_pass(self):
-        for full, release in ((True, False), (False, True), (True, True)):
+        for full, release in ((True, False), (True, True)):
             ci.check_gate(needs(full=full, release=release))
 
     def test_failures_cancellations_and_unexpected_skips_cannot_pass(self):
-        for full, release in ((True, False), (False, True), (True, True)):
+        for full, release in ((True, False), (True, True)):
             valid = needs(full=full, release=release)
             for job, item in valid.items():
                 if item['result'] != 'success':
@@ -136,6 +137,10 @@ class GateTests(unittest.TestCase):
                     modified[job]['result'] = result
                     with self.assertRaises(ValueError):
                         ci.check_gate(modified)
+
+    def test_release_only_route_cannot_skip_correctness(self):
+        with self.assertRaises(ValueError):
+            ci.check_gate(needs(full=False, release=True))
 
     def test_missing_outputs_jobs_and_no_route_fail(self):
         modified = needs(full=True, release=False)

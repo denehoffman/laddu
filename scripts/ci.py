@@ -157,7 +157,7 @@ def classify(event: dict, event_name: str) -> dict[str, str]:
     only_metadata = metadata_only(changes)
     is_release = event_name == 'pull_request' and release_pr(event)
     return {
-        'full': str(not (is_release and only_metadata)).lower(),
+        'full': 'true',
         'release': str(is_release).lower(),
         'metrics': str(not only_metadata and metrics_relevant(list(changes))).lower(),
     }
@@ -289,14 +289,14 @@ def check_gate(needs: dict) -> None:
     if outputs.get('full') not in {'true', 'false'} or outputs.get('release') not in {'true', 'false'}:
         msg = 'Missing or invalid classification outputs'
         raise ValueError(msg)
-    if outputs['full'] == outputs['release'] == 'false':
-        msg = 'No validation route selected'
+    if outputs['full'] != 'true':
+        msg = 'Full correctness checks are required for every CI run'
         raise ValueError(msg)
     expected = {
         'workflow-check': True,
-        'rust': outputs['full'] == 'true',
-        'python': outputs['full'] == 'true',
-        'free-threaded': outputs['full'] == 'true',
+        'rust': True,
+        'python': True,
+        'free-threaded': True,
         'release-check': outputs['release'] == 'true',
         'release-smoke': outputs['release'] == 'true',
     }

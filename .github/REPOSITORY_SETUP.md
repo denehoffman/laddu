@@ -20,8 +20,8 @@ Complete the rollout below after merging the generated workflows into `main`.
 ## Branches and checks
 
 - Run the `CI` workflow manually on `main` once and confirm that its full
-  correctness route succeeds. This establishes the checked baseline that
-  metadata-only release PRs can reuse.
+  correctness route succeeds. Every PR, including metadata-only release PRs,
+  runs these checks again against its own source and locked dependencies.
 - Protect `main`, require pull requests and up-to-date branches, and require
   the aggregate check named `CI` from GitHub Actions. Apply the requirement
   only after that check exists on `main`; remove obsolete required check names.
@@ -47,11 +47,11 @@ Complete the rollout below after merging the generated workflows into `main`.
    remains local: switch to `main`, pull with `--ff-only`, and fetch with
    `--prune`. Inspect and delete the old local branch explicitly; after a rebase
    merge Git may not recognize it as merged, so do not automate forced deletion.
-3. Release Please opens or updates its release PR. The reduced route requires
-   the same-repository release branch, the `autorelease: pending` label or
-   generated release body (present before GitHub attaches labels), and an
-   actual diff containing only release-managed metadata changes. Source,
-   external dependency, workflow, or build-setting changes run full CI as well.
+3. Release Please opens or updates its release PR. Full correctness checks run
+   even when the diff contains only release-managed metadata. Additional release
+   checks require the same-repository release branch and the
+   `autorelease: pending` label or generated release body (present before GitHub
+   attaches labels).
 4. Release PRs check lockstep versions, metadata, and semver against the released
    tag recorded in the base branch's manifest. Linux packaging checks build and
    install ordinary/free-threaded wheels and the MPI sdist, exercising the
@@ -98,7 +98,9 @@ python3 -m unittest discover -s scripts/tests -p 'test_ci*.py'
 The classifier treats unknown files and unsupported metadata changes
 conservatively. The aggregate check fails when an applicable check fails, is
 cancelled, or unexpectedly skips. Keep its dependency list and the tested gate
-policy in sync when adding or renaming CI jobs.
+policy in sync when adding or renaming CI jobs. Full Rust and standard/free-threaded
+Python correctness jobs are mandatory on every route; the gate rejects a
+release-only route even if classification accidentally selects one.
 
 ## Documentation
 

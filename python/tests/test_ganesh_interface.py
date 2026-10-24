@@ -149,16 +149,19 @@ def test_custom_line_searches(algorithm, search):
 
 
 def test_explicit_bounds_names_and_transforms_survive_expert_path():
+    target = likelihood()
     config = ld.ganesh.LBFGSBConfig(
         bounds=[(0.4, 0.6)],
         parameter_names=['custom'],
         error_mode='skip',
         transform=ld.ganesh.ScaleTransform([2.0]),
     )
-    fit = likelihood().fit(config=config, use_parameter_metadata=False, terminators=[ld.ganesh.MaxSteps(3)])
+    fit = target.fit(config=config, use_parameter_metadata=False, terminators=[ld.ganesh.MaxSteps(3)])
     assert fit.parameter_names == ['custom']
     assert 0.8 <= fit.values[0] <= 1.2
     assert fit.covariance is None
+    assert fit.objective == pytest.approx(target.value(fit.values))
+    np.testing.assert_array_equal(fit.raw_ganesh_summary.x0, [0.5])
 
 
 @pytest.mark.parametrize('algorithm', ['CMAES', 'DifferentialEvolution', 'SimulatedAnnealing', 'PSO'])
