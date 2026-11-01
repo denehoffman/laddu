@@ -41,7 +41,9 @@ resampling. It leaves central weights and accepted/generated MC unchanged.
 For a custom optimizer policy, `likelihood.bootstrap(seed=...)` returns a
 prepared native replica. Fit it with the ordinary `fit` method and retain the
 exact draw ID and failure status in the application ensemble. This does not
-require writing replica event files. A change in requested count describes a new
+require writing replica event files. Grouped likelihood replicas discard
+zero-weight observations before checking log intensities; the dataset replica
+itself retains its original row layout and explicit zero weights. A change in requested count describes a new
 ensemble; this API does not implement incremental replica reuse.
 
 Grouped draws are a different resampling identity from historical application

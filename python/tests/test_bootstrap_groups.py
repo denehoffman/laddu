@@ -135,3 +135,18 @@ def test_constructor_validation_and_default_row_resampling():
         dataset(groups=None)
     ungrouped = dataset(groups=None, namespace='')
     assert not np.array_equal(ungrouped.bootstrap(seed=7).weights(), dataset().bootstrap(seed=7).weights())
+
+
+def test_zero_group_multiplicity_is_absent_before_log_intensity_validation():
+    data = ld.Dataset.from_arrays(p4s={}, scalars={'x': [0., 1.]},
+                                 columns={'event': np.array([0, 1], dtype=np.uint64)},
+                                 bootstrap_groups=['event'])
+    mc = ld.Dataset.from_arrays(p4s={}, scalars={'x': [1., 2.]})
+    model = ld.Model((ld.parameter('a', initial=1.) * ld.scalar('x')).norm_sqr())
+    target = ld.Likelihood([ld.ExtendedNLL(model, data=data, accepted_mc=mc, name='signal')])
+    np.testing.assert_array_equal(data.bootstrap(seed=2).weights(), [0., 2.])
+    replica = target.bootstrap(seed=2)
+    value, gradient = replica.value_and_gradient([1.])
+    assert value == pytest.approx(10.)
+    np.testing.assert_allclose(gradient, [12.])
+    assert [d.global_events for d in replica.diagnostics().datasets if d.role == 'observed'] == [1]

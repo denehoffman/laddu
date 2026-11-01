@@ -1030,7 +1030,12 @@ impl std::fmt::Debug for NllTerm {
 
 impl NllTerm {
     fn bootstrap_term(&self, seed: u64) -> LikelihoodResult<Self> {
-        let data_source = self.data_source.clone().bootstrap(seed);
+        let mut data_source = self.data_source.clone().bootstrap(seed);
+        if self.data_source.has_bootstrap_groups() {
+            // A zero multiplicity is an absent observation. Remove it before
+            // positive-intensity/log validation, as a physical resample would.
+            data_source = data_source.filter(|event| event.weight() != 0.0);
+        }
         let state = match &self.state {
             NllState::Unresolved => NllState::Unresolved,
             NllState::Prepared(prepared) => {
