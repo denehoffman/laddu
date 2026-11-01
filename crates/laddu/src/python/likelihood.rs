@@ -602,6 +602,17 @@ impl PyLikelihood {
         })
     }
 
+    #[pyo3(signature = (*, seed=0))]
+    /// Return one prepared Poisson-bootstrap likelihood for a custom fit policy.
+    /// Only observed weights change; accepted Monte Carlo remains fixed.
+    /// Configured dataset groups retain their shared seed and namespace across
+    /// term ordering, cuts and models. Ungrouped terms retain legacy row draws.
+    fn bootstrap(&self, seed: u64) -> PyResult<Self> {
+        Ok(Self {
+            inner: Arc::new(self.inner.bootstrap(seed).map_err(to_py_err)?),
+        })
+    }
+
     fn __repr__(&self) -> String {
         format!("Likelihood(parameters={:?})", self.parameter_names())
     }

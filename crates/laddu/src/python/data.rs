@@ -704,6 +704,10 @@ fn reorder_batch(batch: &EventBatch, schema: &Schema) -> PyResult<EventBatch> {
 /// ----------
 /// source : ParquetSource or RootSource
 ///     Lazy source that defines the dataset schema and read plan.
+/// bootstrap_groups : Sequence[str], optional
+///     Exact integer columns whose equal tuples share one Poisson multiplier.
+/// bootstrap_namespace : str, default=''
+///     Separate independent samples; reuse across cuts/models of the same sample.
 ///
 /// Examples
 /// --------
@@ -775,6 +779,22 @@ impl PyDatasetStats {
     }
 }
 
+fn configure_bootstrap(
+    dataset: Dataset,
+    groups: Option<Vec<String>>,
+    namespace: &str,
+) -> PyResult<Dataset> {
+    match groups {
+        Some(columns) => dataset
+            .with_bootstrap_groups(columns, namespace.to_owned())
+            .map_err(to_py_err),
+        None if namespace.is_empty() => Ok(dataset),
+        None => Err(PyValueError::new_err(
+            "bootstrap_namespace requires bootstrap_groups",
+        )),
+    }
+}
+
 #[pymethods]
 impl PyDataset {
     /// Create a dataset from a file source.
@@ -785,21 +805,38 @@ impl PyDataset {
     ///     If ``source`` is not a :class:`ParquetSource`, :class:`RootSource`,
     ///     or :class:`laddu.io.FormatSource`.
     #[new]
-    #[pyo3(signature = (source: "ParquetSource | RootSource | io.FormatSource"))]
-    fn new(source: &Bound<'_, PyAny>) -> PyResult<Self> {
+    #[pyo3(signature = (source: "ParquetSource | RootSource | io.FormatSource", *,
+        bootstrap_groups: "Sequence[str] | None" = None, bootstrap_namespace=""))]
+    fn new(
+        source: &Bound<'_, PyAny>,
+        bootstrap_groups: Option<Vec<String>>,
+        bootstrap_namespace: &str,
+    ) -> PyResult<Self> {
         if let Ok(source) = source.extract::<PyRef<'_, super::io::PyFormatSource>>() {
             return Ok(Self {
-                inner: source.dataset.clone(),
+                inner: configure_bootstrap(
+                    source.dataset.clone(),
+                    bootstrap_groups,
+                    bootstrap_namespace,
+                )?,
             });
         }
         if let Ok(source) = source.extract::<PyRef<'_, PyParquetSource>>() {
             return Ok(Self {
-                inner: source.inner.clone(),
+                inner: configure_bootstrap(
+                    source.inner.clone(),
+                    bootstrap_groups,
+                    bootstrap_namespace,
+                )?,
             });
         }
         if let Ok(source) = source.extract::<PyRef<'_, PyRootSource>>() {
             return Ok(Self {
-                inner: source.inner.clone(),
+                inner: configure_bootstrap(
+                    source.inner.clone(),
+                    bootstrap_groups,
+                    bootstrap_namespace,
+                )?,
             });
         }
         Err(pyo3::exceptions::PyTypeError::new_err(
@@ -813,7 +850,9 @@ impl PyDataset {
         p4s: "dict[str, numpy.typing.NDArray[numpy.float32 | numpy.float64]]",
         scalars: "dict[str, numpy.typing.NDArray[numpy.float32 | numpy.float64]]",
         columns: "dict[str, numpy.typing.ArrayLike] | None" = None,
-        weights: "Sequence[float] | numpy.typing.NDArray[numpy.float32 | numpy.float64] | None" = None
+        weights: "Sequence[float] | numpy.typing.NDArray[numpy.float32 | numpy.float64] | None" = None,
+        bootstrap_groups: "Sequence[str] | None" = None,
+        bootstrap_namespace=""
     ))]
     /// Create an in-memory dataset from NumPy columns.
     ///
@@ -830,6 +869,12 @@ impl PyDataset {
     ///     Inputs are copied; floats, booleans, objects, and nulls are rejected.
     /// weights : numpy.ndarray, optional
     ///     One-dimensional event weights. Unit weights are used by default.
+    /// bootstrap_groups : Sequence[str], optional
+    ///     Exact integer grouping columns for shared Poisson bootstrap draws.
+    ///     Equal keys share a multiplier applied to existing signed weights.
+    /// bootstrap_namespace : str, default=''
+    ///     Sample namespace, independent of row order, cuts and likelihood term order.
+    ///     Requires bootstrap_groups; central weights and MC stay unchanged.
     ///
     /// Returns
     /// -------
@@ -847,9 +892,15 @@ impl PyDataset {
         scalars: &Bound<'_, PyDict>,
         columns: Option<&Bound<'_, PyDict>>,
         weights: Option<&Bound<'_, PyAny>>,
+        bootstrap_groups: Option<Vec<String>>,
+        bootstrap_namespace: &str,
     ) -> PyResult<Self> {
         Ok(Self {
-            inner: Dataset::from_batch(event_batch_from_arrays(p4s, scalars, weights, columns)?),
+            inner: configure_bootstrap(
+                Dataset::from_batch(event_batch_from_arrays(p4s, scalars, weights, columns)?),
+                bootstrap_groups,
+                bootstrap_namespace,
+            )?,
         })
     }
 
@@ -860,7 +911,9 @@ impl PyDataset {
         schema: "Schema | dict[str, object]",
         length=None,
         memory: "MemoryBudget | int | str | None" = None,
-        cache="fastest"
+        cache="fastest",
+        bootstrap_groups: "Sequence[str] | None" = None,
+        bootstrap_namespace=""
     ))]
     /// Create a reusable streaming dataset from a Python batch factory.
     ///
@@ -884,6 +937,12 @@ impl PyDataset {
     ///     Host-memory budget. Defaults to automatic memory planning.
     /// cache : {'fastest', 'resident', 'streaming'}, default='fastest'
     ///     Prefer the fastest fitting strategy or require a cache mode.
+    /// bootstrap_groups : Sequence[str], optional
+    ///     Exact integer grouping columns for shared Poisson bootstrap draws.
+    ///     Equal keys share a multiplier applied to existing signed weights.
+    /// bootstrap_namespace : str, default=''
+    ///     Sample namespace, independent of row order, cuts and likelihood term order.
+    ///     Requires bootstrap_groups; central weights and MC stay unchanged.
     ///
     /// Returns
     /// -------
@@ -902,6 +961,8 @@ impl PyDataset {
         length: Option<u64>,
         memory: Option<&Bound<'_, PyAny>>,
         cache: &str,
+        bootstrap_groups: Option<Vec<String>>,
+        bootstrap_namespace: &str,
     ) -> PyResult<Self> {
         if !batch_factory.bind(schema.py()).is_callable() {
             return Err(PyTypeError::new_err("batch_factory must be callable"));
@@ -943,7 +1004,11 @@ impl PyDataset {
             length,
         };
         Ok(Self {
-            inner: configure(Dataset::new(source), memory, cache)?,
+            inner: configure_bootstrap(
+                configure(Dataset::new(source), memory, cache)?,
+                bootstrap_groups,
+                bootstrap_namespace,
+            )?,
         })
     }
 
@@ -1359,8 +1424,9 @@ impl PyDataset {
     #[pyo3(signature = (*, seed=0))]
     /// Create a Poisson-bootstrap replica of the dataset.
     ///
-    /// Each event weight is multiplied by an independent Poisson(1) draw. The
-    /// transformation is deterministic for a given seed.
+    /// Each row weight is multiplied by a Poisson(1) draw. With configured
+    /// bootstrap groups, equal keys share the draw; otherwise rows are independent.
+    /// The transformation is deterministic for a given seed.
     ///
     /// Parameters
     /// ----------
@@ -1554,7 +1620,9 @@ pub struct PyBinDataset {
     cache="fastest",
     nulls="error",
     validate=true,
-    schema=None
+    schema=None,
+    bootstrap_groups: "Sequence[str] | None" = None,
+    bootstrap_namespace=""
 ))]
 /// Read a Parquet dataset.
 ///
@@ -1574,11 +1642,18 @@ pub struct PyBinDataset {
 ///     Validate every matched file.
 /// schema : Schema, optional
 ///     Select only these logical fields before decoding. Integer dtypes must match exactly.
+/// bootstrap_groups : Sequence[str], optional
+///     Exact integer grouping columns for shared Poisson bootstrap draws.
+///     Equal keys share a multiplier applied to existing signed weights.
+/// bootstrap_namespace : str, default=''
+///     Sample namespace, independent of row order, cuts and likelihood term order.
+///     Requires bootstrap_groups; central weights and MC stay unchanged.
 ///
 /// Returns
 /// -------
 /// Dataset
 ///     Configured dataset.
+#[allow(clippy::too_many_arguments)]
 pub fn read_parquet(
     path: &Bound<'_, PyAny>,
     memory: Option<&Bound<'_, PyAny>>,
@@ -1586,6 +1661,8 @@ pub fn read_parquet(
     nulls: &str,
     validate: bool,
     schema: Option<&super::io::PySchema>,
+    bootstrap_groups: Option<Vec<String>>,
+    bootstrap_namespace: &str,
 ) -> PyResult<PyDataset> {
     let mut builder = ParquetSource::builder(path_string(path)?).validate_all_files(validate);
     if let Some(schema) = schema {
@@ -1598,7 +1675,11 @@ pub fn read_parquet(
     };
     let dataset = Dataset::new(builder.build().map_err(to_py_err)?);
     Ok(PyDataset {
-        inner: configure(dataset, memory, cache)?,
+        inner: configure_bootstrap(
+            configure(dataset, memory, cache)?,
+            bootstrap_groups,
+            bootstrap_namespace,
+        )?,
     })
 }
 
@@ -1610,7 +1691,9 @@ pub fn read_parquet(
     memory: "MemoryBudget | int | str | None" = None,
     cache="fastest",
     validate=true,
-    schema=None
+    schema=None,
+    bootstrap_groups: "Sequence[str] | None" = None,
+    bootstrap_namespace=""
 ))]
 /// Read a ROOT TTree dataset.
 ///
@@ -1630,11 +1713,18 @@ pub fn read_parquet(
 ///     Validate every matched file.
 /// schema : Schema, optional
 ///     Select only these logical fields before decoding. Integer dtypes must match exactly.
+/// bootstrap_groups : Sequence[str], optional
+///     Exact integer grouping columns for shared Poisson bootstrap draws.
+///     Equal keys share a multiplier applied to existing signed weights.
+/// bootstrap_namespace : str, default=''
+///     Sample namespace, independent of row order, cuts and likelihood term order.
+///     Requires bootstrap_groups; central weights and MC stay unchanged.
 ///
 /// Returns
 /// -------
 /// Dataset
 ///     Configured dataset.
+#[allow(clippy::too_many_arguments)]
 pub fn read_root(
     path: &Bound<'_, PyAny>,
     tree: Option<&str>,
@@ -1642,6 +1732,8 @@ pub fn read_root(
     cache: &str,
     validate: bool,
     schema: Option<&super::io::PySchema>,
+    bootstrap_groups: Option<Vec<String>>,
+    bootstrap_namespace: &str,
 ) -> PyResult<PyDataset> {
     let mut builder = RootSource::builder(path_string(path)?).validate_all_files(validate);
     if let Some(schema) = schema {
@@ -1652,7 +1744,11 @@ pub fn read_root(
     }
     let dataset = Dataset::new(builder.build().map_err(to_py_err)?);
     Ok(PyDataset {
-        inner: configure(dataset, memory, cache)?,
+        inner: configure_bootstrap(
+            configure(dataset, memory, cache)?,
+            bootstrap_groups,
+            bootstrap_namespace,
+        )?,
     })
 }
 

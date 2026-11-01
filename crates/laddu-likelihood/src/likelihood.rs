@@ -262,6 +262,13 @@ pub trait LikelihoodTerm: Debug + Send + Sync {
         false
     }
 
+    /// Whether this term provides an explicit bootstrap namespace shared across models.
+    ///
+    /// Grouped terms use the original ensemble seed, independent of term order.
+    fn bootstrap_uses_shared_seed(&self) -> bool {
+        false
+    }
+
     /// Clones this term while applying a deterministic Poisson bootstrap to
     /// its observed dataset.
     ///
@@ -577,9 +584,12 @@ impl Likelihood {
             .iter()
             .enumerate()
             .map(|(index, term)| {
-                term.bootstrap_clone(
-                    seed.wrapping_add((index as u64).wrapping_mul(0x9E3779B97F4A7C15)),
-                )
+                let term_seed = if term.bootstrap_uses_shared_seed() {
+                    seed
+                } else {
+                    seed.wrapping_add((index as u64).wrapping_mul(0x9E3779B97F4A7C15))
+                };
+                term.bootstrap_clone(term_seed)
             })
             .collect::<LikelihoodResult<Vec<_>>>()?;
         if clones_are_prepared {
@@ -1435,6 +1445,10 @@ impl LikelihoodTerm for NllTerm {
         }
     }
 
+    fn bootstrap_uses_shared_seed(&self) -> bool {
+        self.data_source.has_bootstrap_groups()
+    }
+
     fn bootstrap_clone_is_prepared(&self) -> bool {
         matches!(self.state, NllState::Prepared(_))
     }
@@ -1675,6 +1689,10 @@ impl LikelihoodTerm for ExtendedNllTerm {
 
     fn append_diagnostics(&self, diagnostics: &mut Vec<DatasetDiagnostics>) {
         self.inner.append_diagnostics(diagnostics);
+    }
+
+    fn bootstrap_uses_shared_seed(&self) -> bool {
+        self.inner.bootstrap_uses_shared_seed()
     }
 
     fn bootstrap_clone_is_prepared(&self) -> bool {

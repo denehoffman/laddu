@@ -18,7 +18,7 @@ mod execution;
 mod ops;
 
 use execution::{DatasetExecutionPlan, DatasetExecutor, visit_events};
-use ops::DatasetOp;
+use ops::{BootstrapGrouping, DatasetOp};
 #[cfg(test)]
 use ops::{poisson1_from_hash, uniform_hash_01};
 
@@ -90,6 +90,7 @@ pub struct Dataset {
     source: Arc<dyn EventSource>,
     plan: ReadPlan,
     ops: Arc<[DatasetOp]>,
+    bootstrap_grouping: Option<Arc<BootstrapGrouping>>,
     cache_storage: CacheStorage,
     memory_policy: MemoryPolicy,
     memory_budget: MemoryBudget,
@@ -131,6 +132,7 @@ impl Dataset {
             source: Arc::new(source),
             plan: ReadPlan::default(),
             ops: Arc::from([]),
+            bootstrap_grouping: None,
             cache_storage: CacheStorage::Resident,
             memory_policy: MemoryPolicy::Fastest,
             memory_budget: MemoryBudget::Auto,
@@ -147,6 +149,7 @@ impl Dataset {
             source,
             plan: ReadPlan::default(),
             ops: Arc::from([]),
+            bootstrap_grouping: None,
             cache_storage: CacheStorage::Resident,
             memory_policy: MemoryPolicy::Fastest,
             memory_budget: MemoryBudget::Auto,
@@ -169,6 +172,7 @@ impl Dataset {
             source: Arc::new(source),
             plan: self.plan,
             ops: Arc::from([]),
+            bootstrap_grouping: self.bootstrap_grouping.clone(),
             cache_storage: self.cache_storage,
             memory_policy: self.memory_policy,
             memory_budget: self.memory_budget,
@@ -442,9 +446,55 @@ impl Dataset {
         Ok(self.push_op(DatasetOp::Subsample { fraction, seed }))
     }
 
+    /// Selects exact integer columns whose equal tuples share a bootstrap multiplier.
+    ///
+    /// The namespace separates independent samples while keeping group draws stable
+    /// across filters, row order, batch boundaries, models and likelihood term order.
+    /// This configures future bootstraps; it does not reweight the central dataset.
+    /// Existing bootstrap operations retain their original grouping configuration.
+    ///
+    /// # Errors
+    /// Returns an error for an empty/repeated group list or missing integer column.
+    pub fn with_bootstrap_groups(
+        mut self,
+        columns: Vec<String>,
+        namespace: String,
+    ) -> LadduDataResult<Self> {
+        if columns.is_empty()
+            || columns
+                .iter()
+                .enumerate()
+                .any(|(i, name)| columns[..i].contains(name))
+        {
+            return Err(LadduDataError::InvalidArgument(
+                "bootstrap group columns must be nonempty and unique",
+            ));
+        }
+        let schema = self.schema()?;
+        for name in &columns {
+            if schema.column_index(name).is_none() {
+                return Err(LadduDataError::MissingColumn(crate::Name::from(
+                    name.as_str(),
+                )));
+            }
+        }
+        self.bootstrap_grouping = Some(Arc::new(BootstrapGrouping {
+            columns: columns.into(),
+            namespace,
+        }));
+        self.identity = next_dataset_identity();
+        Ok(self)
+    }
+
+    /// Whether bootstraps use explicit group namespaces rather than likelihood term offsets.
+    pub fn has_bootstrap_groups(&self) -> bool {
+        self.bootstrap_grouping.is_some()
+    }
+
     /// Applies deterministic Poisson bootstrap multiplicities to event weights.
     pub fn bootstrap(self, seed: u64) -> Self {
-        self.push_op(DatasetOp::Bootstrap { seed })
+        let grouping = self.bootstrap_grouping.clone();
+        self.push_op(DatasetOp::Bootstrap { seed, grouping })
     }
 
     /// Visits each transformed event.
@@ -754,6 +804,7 @@ impl Dataset {
             source: self.source,
             plan: self.plan,
             ops: ops.into(),
+            bootstrap_grouping: self.bootstrap_grouping,
             cache_storage: self.cache_storage,
             memory_policy: self.memory_policy,
             memory_budget: self.memory_budget,
@@ -1199,5 +1250,117 @@ mod tests {
             dataset.identity(),
             dataset.clone().filter(|_| true).identity()
         );
+    }
+
+    trait TestWeights {
+        fn test_weights(&self) -> LadduDataResult<Vec<f64>>;
+    }
+    impl TestWeights for Dataset {
+        fn test_weights(&self) -> LadduDataResult<Vec<f64>> {
+            let mut weights = Vec::new();
+            self.for_each_event(|event| weights.push(event.weight()))?;
+            Ok(weights)
+        }
+    }
+
+    fn grouped_batch(runs: &[u32], events: &[u64], weights: &[f64]) -> EventBatch {
+        use crate::columns::{Column, ColumnDType};
+        let schema = Arc::new(
+            Schema::new(Vec::<&str>::new(), Vec::<&str>::new(), true)
+                .unwrap()
+                .with_columns([("run", ColumnDType::U32), ("event", ColumnDType::U64)])
+                .unwrap(),
+        );
+        EventBatch::new_with_columns(
+            schema,
+            vec![],
+            vec![],
+            vec![Column::U32(Arc::from(runs)), Column::U64(Arc::from(events))],
+            Some(Arc::from(weights)),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn grouped_bootstrap_pairs_hypotheses_across_batches_filters_and_row_order() {
+        let big = 1_u64 << 54;
+        let first = grouped_batch(&[1, 1, 2], &[big, big, big], &[1.0, -0.25, 1.0]);
+        let second = grouped_batch(&[1, 2, 1], &[big, big + 1, big + 1], &[2.0, 1.0, 1.0]);
+        let source = Dataset::new(MemorySource::from_batches(vec![first, second]).unwrap());
+        let grouped = source
+            .clone()
+            .with_bootstrap_groups(vec!["run".into(), "event".into()], "sample".into())
+            .unwrap();
+        assert_ne!(source.identity(), grouped.identity());
+        assert_eq!(
+            source.stats().unwrap().sum_weights(),
+            grouped.stats().unwrap().sum_weights()
+        );
+        let resampled = grouped.clone().bootstrap(42).test_weights().unwrap();
+        assert_eq!(resampled[0], resampled[1] / -0.25);
+        assert_eq!(resampled[0], resampled[3] / 2.0);
+        let filtered = grouped
+            .filter(|ev| {
+                matches!(
+                    ev.column_named("run"),
+                    Some(crate::columns::ColumnValue::U32(1))
+                )
+            })
+            .bootstrap(42)
+            .test_weights()
+            .unwrap();
+        assert_eq!(
+            filtered,
+            vec![resampled[0], resampled[1], resampled[3], resampled[5]]
+        );
+        let reverse = Dataset::from_batch(grouped_batch(
+            &[1, 2, 1, 2, 1, 1],
+            &[big + 1, big + 1, big, big, big, big],
+            &[1.0, 1.0, 2.0, 1.0, -0.25, 1.0],
+        ))
+        .with_bootstrap_groups(vec!["run".into(), "event".into()], "sample".into())
+        .unwrap()
+        .bootstrap(42)
+        .test_weights()
+        .unwrap();
+        assert_eq!(reverse, resampled.into_iter().rev().collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn grouped_bootstrap_validates_keys_and_separates_namespaces_and_exact_ids() {
+        let events: Vec<_> = (0..1024).map(|i| (1_u64 << 54) + i).collect();
+        let data = Dataset::from_batch(grouped_batch(&vec![1; 1024], &events, &vec![1.0; 1024]));
+        assert!(
+            data.clone()
+                .with_bootstrap_groups(vec![], "".into())
+                .is_err()
+        );
+        assert!(
+            data.clone()
+                .with_bootstrap_groups(vec!["event".into(), "event".into()], "".into())
+                .is_err()
+        );
+        assert!(
+            data.clone()
+                .with_bootstrap_groups(vec!["missing".into()], "".into())
+                .is_err()
+        );
+        let first = data
+            .clone()
+            .with_bootstrap_groups(vec!["event".into()], "first".into())
+            .unwrap()
+            .bootstrap(7)
+            .test_weights()
+            .unwrap();
+        let second = data
+            .with_bootstrap_groups(vec!["event".into()], "second".into())
+            .unwrap()
+            .bootstrap(7)
+            .test_weights()
+            .unwrap();
+        assert_ne!(first, second);
+        assert!(first.windows(2).any(|w| w[0] != w[1]));
+        let mean = first.iter().sum::<f64>() / 1024.0;
+        assert!((mean - 1.0).abs() < 0.15);
     }
 }
