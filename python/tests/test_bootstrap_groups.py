@@ -98,6 +98,20 @@ def test_native_bootstrap_fit_uses_configured_groups():
         assert integral == pytest.approx(expected, rel=1e-7)
 
 
+def test_bootstrap_fit_optionally_returns_convergence_results_in_draw_order():
+    signal, _ = term('signal')
+    likelihood = ld.Likelihood([signal])
+    ensemble, fits = likelihood.bootstrap_fit(
+        3, seed=37, return_fits=True, default_callbacks=False,
+        terminators=[ld.ganesh.MaxSteps(1)],
+    )
+    assert len(fits) == len(ensemble) == 3
+    assert any(not fit.converged for fit in fits)
+    for values, fit in zip(ensemble.draws, fits, strict=True):
+        np.testing.assert_array_equal(values, fit.values)
+        assert fit.parameter_names == ensemble.parameter_names
+
+
 def test_constructor_keywords_work_for_streams_and_file_sources(tmp_path):
     source = dataset()
     expected = source.bootstrap(seed=7).weights()
