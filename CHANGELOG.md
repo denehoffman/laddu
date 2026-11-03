@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.29.0](https://github.com/denehoffman/laddu/compare/v0.28.1...v0.29.0) (2026-11-03)
+
+
+### ⚠ BREAKING CHANGES
+
+* **bootstrap:** the public Rust Python-binding helpers read_parquet and read_root now require bootstrap_groups and bootstrap_namespace arguments.
+
+### Features
+
+* **bootstrap:** Optionally return native replica fit results ([c54e55b](https://github.com/denehoffman/laddu/commit/c54e55b2e806d4cb25d4e11f860fe4ec9fb750b2))
+* **bootstrap:** Support exact integer groups through dataset keywords ([4ff1b07](https://github.com/denehoffman/laddu/commit/4ff1b07302add5afe485f21396d234ea188e40c1))
+
+
+### Bug Fixes
+
+* **bootstrap:** Mark grouped dataset readers as a breaking Rust API change ([5faeb47](https://github.com/denehoffman/laddu/commit/5faeb4701b45167ffebb3ba424cd4396a888ab0e))
+* **bootstrap:** Omit zero-multiplicity groups before likelihood validation ([dcb434c](https://github.com/denehoffman/laddu/commit/dcb434c3a7962df7a08e088d55f7f11daac3b5a8))
+* **docs:** Avoid release optimization in Read the Docs builds ([3af3c36](https://github.com/denehoffman/laddu/commit/3af3c363668ff04c8a439434c9d18d82ddae9eaa))
+
 ## [0.28.1](https://github.com/denehoffman/laddu/compare/v0.28.0...v0.28.1) (2026-10-24)
 
 
