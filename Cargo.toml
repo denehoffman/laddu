@@ -11,7 +11,7 @@ homepage = "https://github.com/denehoffman/laddu"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/denehoffman/laddu"
 rust-version = "1.96.0"
-version = "0.28.1+grouped.2" # x-release-please-version
+version = "0.28.1" # x-release-please-version
 
 [workspace.dependencies]
 accurate = "0.4.1"
