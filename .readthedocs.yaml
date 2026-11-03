@@ -7,7 +7,12 @@ build:
     rust: "1.96"
   jobs:
     post_install:
-      - python -m pip install --force-reinstall --no-deps --config-settings="maturin.build-args=--generate-stubs" ./python/laddu
+      # API documentation needs the extension and stubs, without release optimization or LTO.
+      - >-
+        CARGO_BUILD_JOBS=2 CARGO_PROFILE_DEV_DEBUG=0
+        python -m pip install --verbose --force-reinstall
+        --config-settings="maturin.build-args=--profile dev --generate-stubs --locked"
+        ./python/laddu
 
 sphinx:
   configuration: docs/conf.py
