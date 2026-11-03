@@ -118,7 +118,6 @@ def test_bootstrap_fit_optionally_returns_convergence_results_in_draw_order():
 def test_constructor_keywords_work_for_streams_and_file_sources(tmp_path):
     source = dataset()
     expected = source.bootstrap(seed=7).weights()
-    options = {'bootstrap_groups': ['run', 'event'], 'bootstrap_namespace': 'period'}
 
     def batches(**_kwargs):
         for start in range(0, 80, 13):
@@ -134,7 +133,8 @@ def test_constructor_keywords_work_for_streams_and_file_sources(tmp_path):
         batches,
         schema={'p4s': [], 'scalars': ['x'], 'columns': {'run': 'u32', 'event': 'u64'}, 'weights': True},
         cache='streaming',
-        **options,
+        bootstrap_groups=['run', 'event'],
+        bootstrap_namespace='period',
     )
     np.testing.assert_array_equal(streamed.bootstrap(seed=7).weights(), expected)
     for suffix, sink, reader, file_source in (
@@ -143,8 +143,16 @@ def test_constructor_keywords_work_for_streams_and_file_sources(tmp_path):
     ):
         path = tmp_path / f'events.{suffix}'
         source.write_to(sink(path))
-        np.testing.assert_array_equal(reader(path, **options).bootstrap(seed=7).weights(), expected)
-        np.testing.assert_array_equal(ld.Dataset(file_source(path), **options).bootstrap(seed=7).weights(), expected)
+        np.testing.assert_array_equal(
+            reader(path, bootstrap_groups=['run', 'event'], bootstrap_namespace='period').bootstrap(seed=7).weights(),
+            expected,
+        )
+        np.testing.assert_array_equal(
+            ld.Dataset(file_source(path), bootstrap_groups=['run', 'event'], bootstrap_namespace='period')
+            .bootstrap(seed=7)
+            .weights(),
+            expected,
+        )
 
 
 def test_constructor_validation_and_default_row_resampling():
