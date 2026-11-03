@@ -18,6 +18,19 @@ likelihood = ld.Likelihood([
 ensemble = likelihood.bootstrap_fit(200, initial=central.values, seed=123)
 ```
 
+To retain convergence information as well as the parameter draws, pass
+`return_fits=True`:
+
+```python
+ensemble, fits = likelihood.bootstrap_fit(
+    200, initial=central.values, seed=123, return_fits=True,
+)
+converged = [fit.converged for fit in fits]
+```
+
+The fit summaries follow the ensemble's draw order, including nonconverged
+results. The default return value remains an `Ensemble`.
+
 Equal tuples share one Poisson multiplier, applied to the existing signed
 weight. Integer columns retain their full precision, including uint64 values
 above 2**53. Float expression scalars cannot serve as grouping columns. Use
@@ -43,8 +56,9 @@ prepared native replica. Fit it with the ordinary `fit` method and retain the
 exact draw ID and failure status in the application ensemble. This does not
 require writing replica event files. Grouped likelihood replicas discard
 zero-weight observations before checking log intensities; the dataset replica
-itself retains its original row layout and explicit zero weights. A change in requested count describes a new
-ensemble; this API does not implement incremental replica reuse.
+itself retains its original row layout and explicit zero weights. A change in
+requested count describes a new ensemble; this API does not implement incremental
+replica reuse.
 
 Grouped draws are a different resampling identity from historical application
 hash conventions and independent-row draws. Record the grouping convention,
