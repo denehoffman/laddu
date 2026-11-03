@@ -1214,12 +1214,14 @@ impl PyLikelihood {
         terminators: "Sequence[object]" = Vec::new(),
         observers: "Sequence[object]" = Vec::new(),
         default_callbacks=true,
-        use_parameter_metadata=true
+        use_parameter_metadata=true,
+        return_fits=false
     ))]
     /// Poisson-bootstrap observed datasets, refit each replica, and retain the
     /// paired likelihood and parameter draws for cross-section propagation.
     /// Configurations, observers, and the default_callbacks and
     /// use_parameter_metadata controls are forwarded to each ``fit``.
+    /// With ``return_fits=True``, return ``(ensemble, fit_results)`` in replica order.
     #[allow(clippy::too_many_arguments)]
     fn bootstrap_fit(
         &self,
@@ -1232,7 +1234,9 @@ impl PyLikelihood {
         observers: Vec<Py<PyAny>>,
         default_callbacks: bool,
         use_parameter_metadata: bool,
-    ) -> PyResult<PyEnsemble> {
+        return_fits: bool,
+    ) -> PyResult<Py<PyAny>> {
+        let mut fits = Vec::new();
         let inner = Ensemble::bootstrap_fit(&self.inner, samples, seed, |replica, _| {
             let replica_python = PyLikelihood {
                 inner: Arc::clone(replica),
@@ -1251,13 +1255,22 @@ impl PyLikelihood {
                 default_callbacks,
                 use_parameter_metadata,
             )?;
-            Ok(summary.inner.values().to_vec())
+            let values = summary.inner.values().to_vec();
+            if return_fits {
+                fits.push(summary);
+            }
+            Ok(values)
         })
         .map_err(|error| match error {
             BootstrapFitError::Likelihood(error) => to_py_err(error),
             BootstrapFitError::Fit { source, .. } => source,
         })?;
-        Ok(PyEnsemble { inner })
+        let ensemble = PyEnsemble { inner };
+        if return_fits {
+            Ok((ensemble, fits).into_pyobject(py)?.into_any().unbind())
+        } else {
+            Ok(ensemble.into_pyobject(py)?.into_any().unbind())
+        }
     }
 
     #[pyo3(signature = (
