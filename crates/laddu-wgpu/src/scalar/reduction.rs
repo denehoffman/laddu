@@ -57,6 +57,7 @@ pub(crate) enum ReductionMode {
     Real = 0,
     PositiveReal = 1,
     LogPositiveReal = 2,
+    NonNegativeReal = 3,
 }
 
 impl ReductionMode {
@@ -67,6 +68,7 @@ impl ReductionMode {
         match plan.transform() {
             ReductionTransform::Real => Self::Real,
             ReductionTransform::PositiveReal => Self::PositiveReal,
+            ReductionTransform::NonNegativeReal => Self::NonNegativeReal,
             ReductionTransform::LogPositiveReal => Self::LogPositiveReal,
         }
     }

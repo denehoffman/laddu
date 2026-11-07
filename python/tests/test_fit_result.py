@@ -300,3 +300,64 @@ def test_failed_replica_ids_preserve_gaps(tmp_path: Path) -> None:
     restored_ensemble = restored.ensemble
     assert restored_ensemble is not None
     assert restored_ensemble.draw_ids == [0, 2]
+
+
+def test_partial_bootstrap_retains_all_failed_draw_ids() -> None:
+    target = likelihood()
+    result = target.bootstrap_fit(
+        3,
+        seed=(1 << 64) - 1,
+        partial=True,
+        default_callbacks=False,
+        terminators=[ld.ganesh.MaxSteps(1)],
+    )
+
+    assert isinstance(result, ld.BootstrapFitResult)
+    assert result.ensemble is None
+    assert not result.successes
+    assert [(draw, seed) for draw, seed, _ in result.failures] == [(0, (1 << 64) - 1), (1, 0), (2, 1)]
+    assert all('Maximum number of steps' in str(error) for _, _, error in result.failures)
+
+
+def test_strict_bootstrap_error_identifies_draw_and_preserves_cause() -> None:
+    dataset = ld.Dataset.from_arrays(p4s={}, scalars={'x': [1.0]}, weights=[1.0])
+    model = ld.Model(ld.parameter('a', initial=0.0).norm_sqr() * ld.scalar('x'))
+    target = ld.Likelihood([ld.NLL(model, data=dataset, accepted_mc=dataset, name='signal')])
+
+    seed = 17
+    with pytest.raises(ld.BootstrapFitError, match=f'resample seed {seed}') as exc:
+        target.bootstrap_fit(3, seed=seed)
+    assert exc.value.draw_id == 0
+    assert exc.value.seed == seed
+    assert isinstance(exc.value.__cause__, ld.FitDomainError)
+
+
+def test_sparse_bootstrap_ensemble_round_trips_original_ids(tmp_path: Path) -> None:
+    def dataset(values: list[float]) -> ld.Dataset:
+        return ld.Dataset.from_arrays(p4s={}, scalars={'x': values}, weights=[1.0] * len(values))
+
+    model = ld.Model(ld.scalar('x') + ld.parameter('a', initial=0.0, bounds=(0.0, 3.0)))
+    target = ld.Likelihood([ld.NLL(model, data=dataset([0.0, 1.0, 2.0]), accepted_mc=dataset([1.0, 2.0]), name='signal')])
+    config = ld.ganesh.LBFGSBConfig(error_mode='skip')
+    result = target.bootstrap_fit(12, seed=17, partial=True, config=config)
+    assert result.ensemble is not None
+    assert result.ensemble.draw_ids == [1, 3, 4]
+    assert [draw for draw, _, _ in result.successes] == result.ensemble.draw_ids
+    for draw, seed, fit in result.successes:
+        assert seed == 17 + draw
+        assert target.bootstrap(seed=seed).value(fit.values) == pytest.approx(fit.objective)
+
+    artifact = target.fit(initial=[1.0], config=config).artifact().with_ensemble(result.ensemble)
+    path = tmp_path / 'sparse.laddu'
+    artifact.save(path)
+    saved = ld.FitArtifact.load(path)
+    assert saved.ensemble is not None
+    assert saved.ensemble.to_ensemble().draw_ids == [1, 3, 4]
+
+    artifact.with_failed_replicas([(draw, seed, str(error)) for draw, seed, error in result.failures]).save(
+        path, overwrite=True
+    )
+    saved = ld.FitArtifact.load(path)
+    assert saved.ensemble is not None
+    assert saved.ensemble.draw_ids == [1, 3, 4]
+    assert [draw for draw, _, _ in saved.ensemble.failures] == [0, 2, 5, 6, 7, 8, 9, 10, 11]

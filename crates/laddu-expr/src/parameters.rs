@@ -1125,7 +1125,11 @@ impl ParamLayout {
             .map(|(value, id)| {
                 let parameter = &self.specs[id.index()];
                 parameter.periodic_bounds().map_or(*value, |(min, max)| {
-                    min + (*value - min).rem_euclid(max - min)
+                    if *value >= min && *value < max {
+                        return *value;
+                    }
+                    let wrapped = min + (*value - min).rem_euclid(max - min);
+                    if wrapped >= max { min } else { wrapped }
                 })
             })
             .collect())

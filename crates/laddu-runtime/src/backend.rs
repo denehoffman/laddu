@@ -94,14 +94,22 @@ impl PreparedModel {
         match self {
             Self::Cpu(plan) => {
                 let cached = crate::CpuCachedBatch::from_cache(plan.cache_event_batch(batch)?);
-                execution.install(|| {
+                let mut evaluate = |pool_installed| {
                     for (index, parameters) in parameters.iter().enumerate() {
-                        let values =
-                            plan.evaluate_prepared_batch(execution, parameters, &cached, true)?;
+                        let values = plan.evaluate_prepared_batch(
+                            execution,
+                            parameters,
+                            &cached,
+                            pool_installed,
+                        )?;
                         consume(index, &values)?;
                     }
                     Ok(())
-                })
+                };
+                #[cfg(feature = "mpi")]
+                return evaluate(false);
+                #[cfg(not(feature = "mpi"))]
+                execution.install(|| evaluate(true))
             }
             #[cfg(feature = "wgpu")]
             Self::Wgpu(_) => {
@@ -332,28 +340,43 @@ impl PreparedModel {
     where
         F: FnMut(usize, usize, &[Complex64]) -> RuntimeResult<()> + Send,
     {
-        #[cfg(not(feature = "wgpu"))]
-        let _ = source;
-        #[allow(unreachable_patterns)]
-        match (self, dataset) {
-            (Self::Cpu(plan), PreparedDataset::Cpu(dataset)) => execution.install(|| {
-                plan.visit_prepared_dataset_many(
-                    execution,
-                    parameter_sets,
-                    dataset,
-                    reduction,
-                    true,
-                    consume,
-                )
-            }),
-            #[cfg(feature = "wgpu")]
-            (Self::Wgpu(_), PreparedDataset::Wgpu(_)) => {
-                visit_source_many(self, execution, parameter_sets, source, reduction, consume)
+        #[cfg(feature = "mpi")]
+        {
+            // Keep dataset streaming and MPI collectives on the calling thread.
+            self.visit_prepared_many(
+                execution,
+                parameter_sets,
+                dataset,
+                source,
+                reduction,
+                consume,
+            )
+        }
+        #[cfg(not(feature = "mpi"))]
+        {
+            #[cfg(not(feature = "wgpu"))]
+            let _ = source;
+            #[allow(unreachable_patterns)]
+            match (self, dataset) {
+                (Self::Cpu(plan), PreparedDataset::Cpu(dataset)) => execution.install(|| {
+                    plan.visit_prepared_dataset_many(
+                        execution,
+                        parameter_sets,
+                        dataset,
+                        reduction,
+                        true,
+                        consume,
+                    )
+                }),
+                #[cfg(feature = "wgpu")]
+                (Self::Wgpu(_), PreparedDataset::Wgpu(_)) => {
+                    visit_source_many(self, execution, parameter_sets, source, reduction, consume)
+                }
+                _ => Err(RuntimeError::InvalidShape {
+                    index: 0,
+                    message: "prepared model and dataset use different backends".into(),
+                }),
             }
-            _ => Err(RuntimeError::InvalidShape {
-                index: 0,
-                message: "prepared model and dataset use different backends".into(),
-            }),
         }
     }
 
@@ -479,7 +502,10 @@ fn evaluate_source_many(
                 let batch_values = model.evaluate_batch(parameters, &batch)?;
                 if let (Some(reduction), Some(sums)) = (reduction, sums.as_mut()) {
                     for (row, value) in batch_values.iter().enumerate() {
-                        sums[index].push(batch.weights_at(row) * reduction.apply(*value)?.value());
+                        let weight = batch.weights_at(row);
+                        if !reduction.skips_zero_weight() || weight != 0.0 {
+                            sums[index].push(weight * reduction.apply(*value)?.value());
+                        }
                     }
                 }
                 values.extend(batch_values);
@@ -490,9 +516,7 @@ fn evaluate_source_many(
             sums.map(|sums| sums.into_iter().map(AccurateF64::finish).collect()),
         ))
     })();
-    if !execution.all_succeeded(local.is_ok()) {
-        return local.and(Err(RuntimeError::DistributedPeerFailure));
-    }
+    let local = execution.coordinate_reduction(local);
     let (output, sums) = local?;
     Ok((
         output,
@@ -531,10 +555,10 @@ where
                 })?;
                 if let (Some(reduction), Some(sums)) = (reduction, sums.as_mut()) {
                     for (row, value) in values.iter().enumerate() {
-                        let reduced = reduction.apply(*value).map_err(|error| {
-                            RuntimeError::Parameter(format!("{context} reduction failed: {error}"))
-                        })?;
-                        sums[index].push(batch.weights_at(row) * reduced.value());
+                        let weight = batch.weights_at(row);
+                        if !reduction.skips_zero_weight() || weight != 0.0 {
+                            sums[index].push(weight * reduction.apply(*value)?.value());
+                        }
                     }
                 }
                 consume(offset, index, &values)?;
@@ -547,9 +571,7 @@ where
             .map(AccurateF64::finish)
             .collect::<Vec<_>>())
     })();
-    if !execution.all_succeeded(local.is_ok()) {
-        return local.and(Err(RuntimeError::DistributedPeerFailure));
-    }
+    let local = execution.coordinate_reduction(local);
     Ok(local?
         .into_iter()
         .map(|sum| execution.sum_f64(sum))
@@ -861,7 +883,7 @@ impl WgpuPlan {
         reduction: ReductionPlan,
     ) -> RuntimeResult<f64> {
         let mut total = AccurateF64::zero();
-        dataset.try_for_each_prepared_batch(
+        let local = dataset.try_for_each_prepared_batch(
             execution,
             &self.context,
             &self.kernel,
@@ -874,7 +896,8 @@ impl WgpuPlan {
                 );
                 Ok(())
             },
-        )?;
+        );
+        execution.coordinate_reduction(local)?;
         Ok(execution.sum_f64(total.finish()))
     }
 
@@ -900,13 +923,14 @@ impl WgpuPlan {
             }
             Ok(())
         };
-        dataset.try_for_each_prepared_batch(
+        let local = dataset.try_for_each_prepared_batch(
             execution,
             &self.context,
             &self.kernel,
             &self.preparation_params,
             &mut consume,
-        )?;
+        );
+        execution.coordinate_reduction(local)?;
         let gradient = gradient
             .into_iter()
             .map(|sum| execution.sum_f64(sum.finish()))
@@ -920,7 +944,10 @@ impl WgpuPlan {
 
 #[cfg(feature = "wgpu")]
 fn wgpu_error(error: laddu_wgpu::WgpuError) -> RuntimeError {
-    RuntimeError::Wgpu(error.to_string())
+    match error {
+        laddu_wgpu::WgpuError::NonPositiveEvent(index) => RuntimeError::ReductionEvent(index),
+        error => RuntimeError::Wgpu(error.to_string()),
+    }
 }
 
 #[cfg(test)]

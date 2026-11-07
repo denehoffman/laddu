@@ -579,6 +579,29 @@ impl Execution {
         local.to_vec()
     }
 
+    pub(crate) fn coordinate_reduction<T>(
+        &self,
+        local: crate::RuntimeResult<T>,
+    ) -> crate::RuntimeResult<T> {
+        #[cfg(feature = "mpi")]
+        if let Some(communicator) = &self.communicator {
+            use crate::RuntimeError;
+            let severity = match &local {
+                Ok(_) => 0_u8,
+                Err(error) if error.is_reduction_domain() => 1,
+                Err(_) => 2,
+            };
+            let mut global = 0_u8;
+            communicator.all_reduce_into(&severity, &mut global, SystemOperation::max());
+            return match (global, severity) {
+                (2, 0 | 1) => Err(RuntimeError::DistributedPeerFailure),
+                (1, 0) => Err(RuntimeError::DistributedReductionRejection),
+                _ => local,
+            };
+        }
+        local
+    }
+
     pub(crate) fn all_succeeded(&self, local_success: bool) -> bool {
         self.sum_usize(usize::from(local_success)) == self.nranks()
     }
@@ -636,6 +659,42 @@ fn mpi_local_process_count(world_size: i32) -> u64 {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(feature = "mpi")]
+    #[mpi_test::mpi_test(np = [2])]
+    fn mpi_reduction_rejection_agrees_on_fatal_precedence() {
+        use mpi::traits::Communicator;
+
+        let universe = mpi::initialize().unwrap();
+        let world = universe.world();
+        let execution =
+            super::Execution::distributed(super::ExecutionOptions::default(), &world).unwrap();
+        let domain = || crate::RuntimeError::ReductionEvent(4);
+        let local = if world.rank() == 0 {
+            Err(domain())
+        } else {
+            Ok(())
+        };
+        assert!(
+            execution
+                .coordinate_reduction(local)
+                .unwrap_err()
+                .is_reduction_domain()
+        );
+
+        let local = if world.rank() == 0 {
+            Err(domain())
+        } else {
+            Err::<(), _>(crate::RuntimeError::MissingEventColumn("required".into()))
+        };
+        let error = execution.coordinate_reduction(local).unwrap_err();
+        assert!(!error.is_reduction_domain());
+        if world.rank() == 0 {
+            assert_eq!(error, crate::RuntimeError::DistributedPeerFailure);
+        } else {
+            assert!(matches!(error, crate::RuntimeError::MissingEventColumn(_)));
+        }
+    }
+
     use super::*;
     use crate::RuntimeError;
     use crate::execution::GpuBackend;

@@ -575,3 +575,52 @@ fn gpu_fused_solve_matches_cpu() {
         Err(laddu_wgpu::WgpuError::SingularMatrixEvent(0))
     ));
 }
+
+#[test]
+#[ignore = "requires a WGPU-compatible hardware adapter"]
+fn gpu_reduction_domain_handles_zero_intensity_and_signed_weights() {
+    let model = CompiledModel::from_expr(&(event_scalar("x") + parameter!("offset", initial: 0.0)))
+        .unwrap();
+    let params = model.params().default_values();
+    let context = WgpuBackend::default()
+        .open(&WgpuOptions::default(), WgpuPrecision::F32)
+        .unwrap();
+    let kernel = WgpuScalarKernel::compile(&context, &model).unwrap();
+    let schema = Arc::new(Schema::new(std::iter::empty::<&str>(), ["x"], true).unwrap());
+    let log = ReductionPlan::weighted_log_positive_real();
+    let linear = ReductionPlan::weighted_nonnegative_real();
+    for weight in [0.0, -1.0, 1.0] {
+        let batch = EventBatch::from_events(
+            Arc::clone(&schema),
+            [
+                OwnedEvent::weighted(vec![], vec![0.0], weight),
+                OwnedEvent::weighted(vec![], vec![2.0], -1.0),
+                OwnedEvent::weighted(vec![], vec![3.0], 2.0),
+            ],
+        )
+        .unwrap();
+        let batch = kernel.prepare_batch(&context, &params, &batch).unwrap();
+        assert_eq!(
+            kernel
+                .reduce_prepared_batch(&context, &params, &batch, linear)
+                .unwrap(),
+            4.0
+        );
+        let value = kernel.reduce_prepared_batch(&context, &params, &batch, log);
+        let gradient = kernel.reduce_prepared_batch_with_gradient(&context, &params, &batch, log);
+        if weight == 0.0 {
+            let (combined, gradient) = gradient.unwrap();
+            assert!((value.unwrap() - combined).abs() < F32_PARITY_TOLERANCE);
+            assert!((gradient[0] - 1.0 / 6.0).abs() < F32_PARITY_TOLERANCE);
+        } else {
+            assert!(matches!(
+                value,
+                Err(laddu_wgpu::WgpuError::NonPositiveEvent(0))
+            ));
+            assert!(matches!(
+                gradient,
+                Err(laddu_wgpu::WgpuError::NonPositiveEvent(0))
+            ));
+        }
+    }
+}

@@ -33,6 +33,7 @@ serde.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
+mpi_test.workspace = true
 serde_json.workspace = true
 
 [features]

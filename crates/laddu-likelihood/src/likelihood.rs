@@ -1284,7 +1284,7 @@ impl NllTerm {
                 execution,
                 params,
                 self.accepted_mc()?,
-                ReductionPlan::weighted_positive_real(),
+                ReductionPlan::weighted_nonnegative_real(),
             )
             .map_err(|error| map_reduction_error("accepted MC", error))
     }
@@ -1312,7 +1312,7 @@ impl NllTerm {
                 execution,
                 params,
                 self.accepted_mc()?,
-                ReductionPlan::weighted_positive_real(),
+                ReductionPlan::weighted_nonnegative_real(),
             )
             .map_err(|error| map_reduction_error("accepted MC", error))?
             .into_parts())
@@ -2235,7 +2235,7 @@ impl LikelihoodProjection {
                 &self.execution,
                 &local,
                 dataset,
-                ReductionPlan::weighted_positive_real(),
+                ReductionPlan::weighted_nonnegative_real(),
             )
             .map_err(|error| map_reduction_error(name, error))
     }
@@ -2394,7 +2394,7 @@ impl IntensityIntegrals {
                 &self.execution,
                 params,
                 dataset,
-                ReductionPlan::weighted_positive_real(),
+                ReductionPlan::weighted_nonnegative_real(),
             )
             .map_err(|error| map_reduction_error(name, error))
     }
@@ -2573,7 +2573,7 @@ pub(crate) fn map_reduction_error(
 }
 
 fn positive_integral(dataset: &'static str, value: f64) -> LikelihoodResult<f64> {
-    if value > 0.0 {
+    if value.is_finite() && value > 0.0 {
         Ok(value)
     } else {
         Err(LikelihoodError::NonPositiveIntensity { dataset, value })
@@ -3042,6 +3042,129 @@ mod tests {
             likelihood.nll(&likelihood.default_params()).unwrap(),
             expected
         );
+    }
+
+    #[test]
+    fn likelihood_domain_checks_follow_reduction_weights_and_totals() {
+        let scale = laddu_expr::Expr::from(parameter!("scale", initial: 0.0));
+        let model = CompiledModel::from_expr(&(event_scalar("x") + scale)).unwrap();
+        let data = weighted_dataset(&[(0.0, 0.0), (2.0, -1.0), (3.0, 2.0)]);
+        let accepted = weighted_dataset(&[(0.0, 1.0), (1.0, -1.0), (2.0, 1.0)]);
+        let policies = [
+            JitPolicy::Disabled,
+            #[cfg(feature = "jit")]
+            JitPolicy::Enabled,
+        ];
+        for jit in policies {
+            let execution = cpu_execution(Precision::F64, ThreadPolicy::Serial, jit);
+            let likelihood = single_term_likelihood_with_execution(
+                "domain",
+                &model,
+                &data,
+                &accepted,
+                execution.clone(),
+            );
+            let expected = 2.0 * (2.0_f64.ln() - 2.0 * 3.0_f64.ln());
+            assert_relative_eq!(likelihood.nll(&[0.0]).unwrap(), expected);
+            let result = likelihood.nll_with_gradient(&[0.0]).unwrap();
+            assert_relative_eq!(result.value(), expected);
+            assert_relative_eq!(result.gradient()[0], 5.0 / 3.0);
+
+            for weight in [-1.0, 1.0] {
+                let invalid = weighted_dataset(&[(0.0, weight), (3.0, 2.0)]);
+                let likelihood = single_term_likelihood_with_execution(
+                    "data",
+                    &model,
+                    &invalid,
+                    &accepted,
+                    execution.clone(),
+                );
+                assert!(matches!(
+                    likelihood.nll(&[0.0]),
+                    Err(LikelihoodError::NonPositiveIntensity {
+                        dataset: "data",
+                        ..
+                    })
+                ));
+                assert!(matches!(
+                    likelihood.nll_with_gradient(&[0.0]),
+                    Err(LikelihoodError::NonPositiveIntensity {
+                        dataset: "data",
+                        ..
+                    })
+                ));
+            }
+            for invalid in [
+                weighted_dataset(&[(0.0, 1.0), (2.0, -1.0)]),
+                weighted_dataset(&[(0.0, 1.0), (2.0, 0.0)]),
+                weighted_dataset(&[(-1.0, 1.0), (2.0, 1.0)]),
+            ] {
+                let likelihood = single_term_likelihood_with_execution(
+                    "mc",
+                    &model,
+                    &data,
+                    &invalid,
+                    execution.clone(),
+                );
+                assert!(matches!(
+                    likelihood.nll(&[0.0]),
+                    Err(LikelihoodError::NonPositiveIntensity {
+                        dataset: "accepted MC",
+                        ..
+                    })
+                ));
+                assert!(matches!(
+                    likelihood.nll_with_gradient(&[0.0]),
+                    Err(LikelihoodError::NonPositiveIntensity {
+                        dataset: "accepted MC",
+                        ..
+                    })
+                ));
+            }
+        }
+    }
+
+    #[test]
+    fn partial_bootstrap_preserves_original_draws_and_wrapped_seeds() {
+        use crate::{BootstrapFitError, Ensemble};
+
+        let scale = laddu_expr::Expr::from(parameter!("scale", initial: 0.0));
+        let model = CompiledModel::from_expr(&(event_scalar("x") + scale)).unwrap();
+        let dataset = weighted_dataset(&[(1.0, 1.0), (2.0, 1.0)]);
+        let likelihood = Arc::new(single_term_likelihood(
+            "bootstrap",
+            &model,
+            &dataset,
+            &dataset,
+        ));
+        let fit = |_: &Arc<Likelihood>, index| {
+            if index == 1 {
+                Err("domain")
+            } else {
+                Ok(vec![index as f64])
+            }
+        };
+        let partial =
+            Ensemble::bootstrap_fit_partial(&likelihood, 3, u64::MAX, fit, |_| true).unwrap();
+        let ensemble = partial.ensemble.unwrap();
+        assert_eq!(ensemble.draw_ids(), &[0, 2]);
+        assert_eq!(ensemble.draws(), &[vec![0.0], vec![2.0]]);
+        assert_eq!(ensemble.replicas().len(), 2);
+        assert_eq!(partial.failures[0].index, 1);
+        assert_eq!(partial.failures[0].seed, 0);
+        assert!(matches!(
+            Ensemble::bootstrap_fit(&likelihood, 3, u64::MAX, fit),
+            Err(BootstrapFitError::Fit {
+                index: 1,
+                seed: 0,
+                source: "domain"
+            })
+        ));
+        let all_failed =
+            Ensemble::bootstrap_fit_partial(&likelihood, 3, 0, |_, _| Err("domain"), |_| true)
+                .unwrap();
+        assert!(all_failed.ensemble.is_none());
+        assert_eq!(all_failed.failures.len(), 3);
     }
 
     #[cfg(feature = "mpi")]

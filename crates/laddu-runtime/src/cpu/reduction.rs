@@ -129,12 +129,15 @@ impl ValueReducer {
     ) -> RuntimeResult<()> {
         let value = if execution.is_parallel() && batch.len().div_ceil(SCALAR_BLOCK_SIZE) >= 2 {
             execution.install(|| {
-                plan.par_try_weighted_sum_batch(params, batch, |value| {
-                    plan.apply_reduction(reduction, value)
-                })
+                plan.par_try_weighted_sum_batch(
+                    params,
+                    batch,
+                    reduction.skips_zero_weight(),
+                    |value| plan.apply_reduction(reduction, value),
+                )
             })?
         } else {
-            plan.try_weighted_sum_batch(params, batch, |value| {
+            plan.try_weighted_sum_batch(params, batch, reduction.skips_zero_weight(), |value| {
                 plan.apply_reduction(reduction, value)
             })?
         };
@@ -164,6 +167,7 @@ impl GradientReducer {
         execution: &Execution,
         params: &ParamValues,
         batch: &CpuCachedBatch,
+        skip_zero_weight: bool,
         transform: &F,
     ) -> RuntimeResult<()>
     where
@@ -173,10 +177,20 @@ impl GradientReducer {
         let (value, gradient) =
             if execution.is_parallel() && batch.len().div_ceil(SCALAR_BLOCK_SIZE) >= 2 {
                 execution.install(|| {
-                    plan.par_try_weighted_real_sum_with_gradient_batch(params, batch, &transform)
+                    plan.par_try_weighted_real_sum_with_gradient_batch(
+                        params,
+                        batch,
+                        skip_zero_weight,
+                        &transform,
+                    )
                 })?
             } else {
-                plan.try_weighted_real_sum_with_gradient_batch(params, batch, &mut transform)?
+                plan.try_weighted_real_sum_with_gradient_batch(
+                    params,
+                    batch,
+                    skip_zero_weight,
+                    &mut transform,
+                )?
             };
         self.total.value.push(value);
         for (sum, partial) in self.total.gradient.iter_mut().zip(gradient) {
@@ -259,12 +273,9 @@ impl CpuPlan {
                         })?;
                     if let (Some(reduction), Some(sums)) = (reduction, sums.as_mut()) {
                         for (weight, value) in batch.weights().iter().zip(&values) {
-                            let reduced = reduction.apply(*value).map_err(|error| {
-                                RuntimeError::Parameter(format!(
-                                    "{context} reduction failed: {error}"
-                                ))
-                            })?;
-                            sums[index].push(*weight * reduced.value());
+                            if !reduction.skips_zero_weight() || *weight != 0.0 {
+                                sums[index].push(*weight * reduction.apply(*value)?.value());
+                            }
                         }
                     }
                     consume(offset, index, &values)?;
@@ -277,9 +288,7 @@ impl CpuPlan {
                 .map(AccurateF64::finish)
                 .collect::<Vec<_>>())
         })();
-        if !execution.all_succeeded(local.is_ok()) {
-            return local.and(Err(RuntimeError::DistributedPeerFailure));
-        }
+        let local = execution.coordinate_reduction(local);
         Ok(local?
             .into_iter()
             .map(|sum| execution.sum_f64(sum))
@@ -367,9 +376,7 @@ impl CpuPlan {
     ) -> RuntimeResult<(Vec<Vec<Complex64>>, Vec<f64>)> {
         let local =
             self.evaluate_prepared_dataset_many_local(execution, params, dataset, Some(reduction));
-        if !execution.all_succeeded(local.is_ok()) {
-            return local.and(Err(RuntimeError::DistributedPeerFailure));
-        }
+        let local = execution.coordinate_reduction(local);
         let (output, sums) = local?;
         Ok((
             output,
@@ -404,7 +411,9 @@ impl CpuPlan {
                 let batch_values = self.evaluate_cache(parameters, batch.cache())?;
                 if let (Some(reduction), Some(sums)) = (reduction, sums.as_mut()) {
                     for (weight, value) in batch.weights().iter().zip(&batch_values) {
-                        sums[index].push(*weight * reduction.apply(*value)?.value());
+                        if !reduction.skips_zero_weight() || *weight != 0.0 {
+                            sums[index].push(*weight * reduction.apply(*value)?.value());
+                        }
                     }
                 }
                 values.extend(batch_values);
@@ -437,9 +446,7 @@ impl CpuPlan {
             }
             Ok(reducer.finish())
         })();
-        if !execution.all_succeeded(local.is_ok()) {
-            return local.and(Err(RuntimeError::DistributedPeerFailure));
-        }
+        let local = execution.coordinate_reduction(local);
         Ok(execution.sum_f64(local?))
     }
 
@@ -467,13 +474,18 @@ impl CpuPlan {
                     .map_err(RuntimeError::from)
             };
             while let Some(batch) = stream.next()? {
-                reducer.consume(self, execution, params, batch.cached(), &transform)?;
+                reducer.consume(
+                    self,
+                    execution,
+                    params,
+                    batch.cached(),
+                    reduction.skips_zero_weight(),
+                    &transform,
+                )?;
             }
             Ok(reducer.finish())
         })();
-        if !execution.all_succeeded(local.is_ok()) {
-            return local.and(Err(RuntimeError::DistributedPeerFailure));
-        }
+        let local = execution.coordinate_reduction(local);
         let (value, gradient) = local?;
         let value = execution.sum_f64(value);
         let gradient = execution.sum_slice(&gradient);
@@ -533,6 +545,7 @@ impl CpuPlan {
         &self,
         params: &ParamValues,
         batch: &CpuCachedBatch,
+        skip_zero_weight: bool,
         mut f: F,
     ) -> Result<f64, E>
     where
@@ -562,7 +575,10 @@ impl CpuPlan {
                 jit_cache.as_ref(),
             )?;
             for (lane, value) in output.iter().copied().enumerate() {
-                sum.push(batch.weights()[start + lane] * f(value)?);
+                let weight = batch.weights()[start + lane];
+                if !skip_zero_weight || weight != 0.0 {
+                    sum.push(weight * f(value)?);
+                }
             }
         }
         Ok(sum.finish())
@@ -572,6 +588,7 @@ impl CpuPlan {
         &self,
         params: &ParamValues,
         batch: &CpuCachedBatch,
+        skip_zero_weight: bool,
         f: F,
     ) -> Result<f64, E>
     where
@@ -610,7 +627,10 @@ impl CpuPlan {
                         jit_cache.as_ref(),
                     )?;
                     for (lane, value) in output.iter().copied().enumerate() {
-                        acc.push(batch.weights()[start + lane] * f(value)?);
+                        let weight = batch.weights()[start + lane];
+                        if !skip_zero_weight || weight != 0.0 {
+                            acc.push(weight * f(value)?);
+                        }
                     }
                     Ok::<_, E>((acc, workspace, output))
                 },
@@ -635,6 +655,7 @@ impl CpuPlan {
         &self,
         params: &ParamValues,
         batch: &CpuCachedBatch,
+        skip_zero_weight: bool,
         transform: &mut F,
     ) -> Result<(f64, Vec<f64>), E>
     where
@@ -649,6 +670,7 @@ impl CpuPlan {
             return self.try_weighted_real_sum_with_jit_gradient_batch(
                 params,
                 batch,
+                skip_zero_weight,
                 transform,
                 value_kernel,
                 gradient_kernel,
@@ -665,6 +687,9 @@ impl CpuPlan {
                 let end = (start + SCALAR_BLOCK_SIZE).min(batch.len());
                 let outputs = state.evaluate(batch.cache(), start, end)?;
                 for (lane, row) in outputs.chunks_exact(output_count).enumerate() {
+                    if skip_zero_weight && batch.weights()[start + lane] == 0.0 {
+                        continue;
+                    }
                     let (value, derivative) = transform(row[0])?;
                     total.push(batch.weights()[start + lane], value, derivative, &row[1..]);
                 }
@@ -677,6 +702,9 @@ impl CpuPlan {
             let mut total = RealGradientAccumulator::zero(self.free_parameter_count());
             let mut gradient = Vec::new();
             for row in 0..batch.len() {
+                if skip_zero_weight && batch.weights()[row] == 0.0 {
+                    continue;
+                }
                 let (value, model_gradient) = self.evaluate_f32_gradient_component_prepared(
                     ir,
                     params,
@@ -690,6 +718,9 @@ impl CpuPlan {
         }
         let mut total = RealGradientAccumulator::zero(self.free_parameter_count());
         for row in 0..batch.len() {
+            if skip_zero_weight && batch.weights()[row] == 0.0 {
+                continue;
+            }
             let evaluation =
                 self.evaluate_cache_row_with_gradient_unchecked(params, batch.cache(), row)?;
             let (value, derivative) = transform(evaluation.value())?;
@@ -707,6 +738,7 @@ impl CpuPlan {
         &self,
         params: &ParamValues,
         batch: &CpuCachedBatch,
+        skip_zero_weight: bool,
         transform: &F,
     ) -> Result<(f64, Vec<f64>), E>
     where
@@ -720,6 +752,7 @@ impl CpuPlan {
             return self.par_try_weighted_real_sum_with_jit_gradient_batch(
                 params,
                 batch,
+                skip_zero_weight,
                 transform,
                 value_kernel,
                 gradient_kernel,
@@ -744,6 +777,9 @@ impl CpuPlan {
                         let end = (start + SCALAR_BLOCK_SIZE).min(batch.len());
                         let outputs = state.evaluate(batch.cache(), start, end)?;
                         for (lane, row) in outputs.chunks_exact(output_count).enumerate() {
+                            if skip_zero_weight && batch.weights()[start + lane] == 0.0 {
+                                continue;
+                            }
                             let (value, derivative) = transform(row[0])?;
                             accumulator.push(
                                 batch.weights()[start + lane],
@@ -782,6 +818,9 @@ impl CpuPlan {
                         )
                     },
                     |(mut accumulator, mut gradient), row| {
+                        if skip_zero_weight && batch.weights()[row] == 0.0 {
+                            return Ok::<_, E>((accumulator, gradient));
+                        }
                         let (value, model_gradient) = self
                             .evaluate_f32_gradient_component_prepared(
                                 ir,
@@ -818,6 +857,9 @@ impl CpuPlan {
             .try_fold(
                 || RealGradientAccumulator::zero(self.free_parameter_count()),
                 |mut accumulator, row| {
+                    if skip_zero_weight && batch.weights()[row] == 0.0 {
+                        return Ok::<_, E>(accumulator);
+                    }
                     let evaluation = self.evaluate_cache_row_with_gradient_unchecked(
                         params,
                         batch.cache(),
@@ -848,6 +890,7 @@ impl CpuPlan {
         &self,
         params: &ParamValues,
         batch: &CpuCachedBatch,
+        skip_zero_weight: bool,
         transform: &mut F,
         value_kernel: &JitScalarKernel,
         gradient_kernel: &JitGradientKernel,
@@ -868,12 +911,18 @@ impl CpuPlan {
             derivatives.clear();
             derivatives.reserve(values.len());
             for (lane, value) in values.iter().copied().enumerate() {
+                let weight = batch.weights()[start + lane];
+                if skip_zero_weight && weight == 0.0 {
+                    derivatives.push(None);
+                    continue;
+                }
                 let (value, derivative) = transform(value)?;
-                total.value.push(batch.weights()[start + lane] * value);
-                derivatives.push(batch.weights()[start + lane] * derivative);
+                total.value.push(weight * value);
+                derivatives.push(Some(weight * derivative));
             }
             gradient_kernel.evaluate_prepared(params, &cache, start, end, 0, &mut tangents)?;
             for (lane, factor) in derivatives.iter().enumerate() {
+                let Some(factor) = factor else { continue };
                 for free_index in 0..self.free_parameter_count() {
                     total.gradient[free_index]
                         .push(factor * tangents[lane * self.free_parameter_count() + free_index]);
@@ -888,6 +937,7 @@ impl CpuPlan {
         &self,
         params: &ParamValues,
         batch: &CpuCachedBatch,
+        skip_zero_weight: bool,
         transform: &F,
         value_kernel: &JitScalarKernel,
         gradient_kernel: &JitGradientKernel,
@@ -914,10 +964,14 @@ impl CpuPlan {
                     value_kernel.evaluate_prepared(params, &cache, start, end, &mut values)?;
                     derivatives.clear();
                     for (lane, value) in values.iter().copied().enumerate() {
-                        let (value, derivative) = transform(value)?;
                         let weight = batch.weights()[start + lane];
+                        if skip_zero_weight && weight == 0.0 {
+                            derivatives.push(None);
+                            continue;
+                        }
+                        let (value, derivative) = transform(value)?;
                         accumulator.value.push(weight * value);
-                        derivatives.push(weight * derivative);
+                        derivatives.push(Some(weight * derivative));
                     }
                     gradient_kernel.evaluate_prepared(
                         params,
@@ -928,6 +982,7 @@ impl CpuPlan {
                         &mut tangents,
                     )?;
                     for (lane, factor) in derivatives.iter().enumerate() {
+                        let Some(factor) = factor else { continue };
                         for free_index in 0..self.free_parameter_count() {
                             accumulator.gradient[free_index].push(
                                 factor * tangents[lane * self.free_parameter_count() + free_index],
@@ -967,7 +1022,7 @@ impl CpuPlan {
     {
         let mut sum = AccurateF64::zero();
         for batch in dataset.batches() {
-            sum.push(self.try_weighted_sum_batch(params, batch, &mut f)?);
+            sum.push(self.try_weighted_sum_batch(params, batch, false, &mut f)?);
         }
         Ok(sum.finish())
     }
@@ -998,8 +1053,12 @@ impl CpuPlan {
     {
         let mut total = RealGradientAccumulator::zero(self.free_parameter_count());
         for batch in dataset.batches() {
-            let (value, gradient) =
-                self.try_weighted_real_sum_with_gradient_batch(params, batch, &mut transform)?;
+            let (value, gradient) = self.try_weighted_real_sum_with_gradient_batch(
+                params,
+                batch,
+                false,
+                &mut transform,
+            )?;
             total.value.push(value);
             for (sum, partial) in total.gradient.iter_mut().zip(gradient) {
                 sum.push(partial);
@@ -1061,9 +1120,11 @@ impl CpuPlan {
         let real = value.re as f32;
         match reduction.transform() {
             ReductionTransform::Real => Ok(real as f64),
-            ReductionTransform::PositiveReal if real > 0.0 => Ok(real as f64),
-            ReductionTransform::LogPositiveReal if real > 0.0 => Ok(real.ln() as f64),
-            ReductionTransform::PositiveReal | ReductionTransform::LogPositiveReal => reduction
+            ReductionTransform::PositiveReal if real.is_finite() && real > 0.0 => Ok(real as f64),
+            ReductionTransform::LogPositiveReal if real.is_finite() && real > 0.0 => {
+                Ok(real.ln() as f64)
+            }
+            _ => reduction
                 .apply(Complex64::from(real as f64))
                 .map(|output| output.value())
                 .map_err(RuntimeError::from),
@@ -1083,7 +1144,7 @@ impl CpuPlan {
     {
         let mut total = AccurateF64::zero();
         for batch in dataset.batches() {
-            total.push(self.par_try_weighted_sum_batch(params, batch, &f)?);
+            total.push(self.par_try_weighted_sum_batch(params, batch, false, &f)?);
         }
         Ok(total.finish())
     }
@@ -1114,8 +1175,8 @@ impl CpuPlan {
     {
         let mut total = RealGradientAccumulator::zero(self.free_parameter_count());
         for batch in dataset.batches() {
-            let (value, gradient) =
-                self.par_try_weighted_real_sum_with_gradient_batch(params, batch, &transform)?;
+            let (value, gradient) = self
+                .par_try_weighted_real_sum_with_gradient_batch(params, batch, false, &transform)?;
             total.value.push(value);
             for (sum, partial) in total.gradient.iter_mut().zip(gradient) {
                 sum.push(partial);

@@ -1235,9 +1235,7 @@ dependencies = [
 
 [[package]]
 name = "ganesh"
-version = "0.29.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cf10c4fdbb70d550df5f613bb613ef36caabc14cedee576c72f76f40a04a626c"
+version = "0.30.0"
 dependencies = [
  "ctrlc",
  "dyn-clone",
@@ -1629,7 +1627,7 @@ checksum = "e2db585e1d738fc771bf08a151420d3ed193d9d895a36df7f6f8a9456b911ddc"
 
 [[package]]
 name = "laddu"
-version = "0.29.0"
+version = "0.30.0-rc.2"
 dependencies = [
  "codspeed-criterion-compat",
  "fastrand",
@@ -1659,7 +1657,7 @@ dependencies = [
 
 [[package]]
 name = "laddu-amplitudes"
-version = "0.29.0"
+version = "0.30.0-rc.2"
 dependencies = [
  "approx",
  "laddu-compile",
@@ -1674,7 +1672,7 @@ dependencies = [
 
 [[package]]
 name = "laddu-autodiff"
-version = "0.29.0"
+version = "0.30.0-rc.2"
 dependencies = [
  "laddu-compile",
  "laddu-expr",
@@ -1686,7 +1684,7 @@ dependencies = [
 
 [[package]]
 name = "laddu-cas-macros"
-version = "0.29.0"
+version = "0.30.0-rc.2"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1695,7 +1693,7 @@ dependencies = [
 
 [[package]]
 name = "laddu-compile"
-version = "0.29.0"
+version = "0.30.0-rc.2"
 dependencies = [
  "egg",
  "good_lp",
@@ -1709,7 +1707,7 @@ dependencies = [
 
 [[package]]
 name = "laddu-data"
-version = "0.29.0"
+version = "0.30.0-rc.2"
 dependencies = [
  "accurate",
  "approx",
@@ -1733,7 +1731,7 @@ dependencies = [
 
 [[package]]
 name = "laddu-expr"
-version = "0.29.0"
+version = "0.30.0-rc.2"
 dependencies = [
  "auto_ops",
  "fastrand",
@@ -1747,7 +1745,7 @@ dependencies = [
 
 [[package]]
 name = "laddu-fit"
-version = "0.29.0"
+version = "0.30.0-rc.2"
 dependencies = [
  "ganesh",
  "laddu-expr",
@@ -1761,7 +1759,7 @@ dependencies = [
 
 [[package]]
 name = "laddu-generation"
-version = "0.29.0"
+version = "0.30.0-rc.2"
 dependencies = [
  "codspeed-criterion-compat",
  "laddu-compile",
@@ -1779,7 +1777,7 @@ dependencies = [
 
 [[package]]
 name = "laddu-kernel"
-version = "0.29.0"
+version = "0.30.0-rc.2"
 dependencies = [
  "laddu-expr",
  "num",
@@ -1789,7 +1787,7 @@ dependencies = [
 
 [[package]]
 name = "laddu-likelihood"
-version = "0.29.0"
+version = "0.30.0-rc.2"
 dependencies = [
  "approx",
  "auto_ops",
@@ -1808,7 +1806,7 @@ dependencies = [
 
 [[package]]
 name = "laddu-memory"
-version = "0.29.0"
+version = "0.30.0-rc.2"
 dependencies = [
  "nvml-wrapper",
  "objc2-metal",
@@ -1820,7 +1818,7 @@ dependencies = [
 
 [[package]]
 name = "laddu-physics"
-version = "0.29.0"
+version = "0.30.0-rc.2"
 dependencies = [
  "approx",
  "auto_ops",
@@ -1843,7 +1841,7 @@ dependencies = [
 
 [[package]]
 name = "laddu-python"
-version = "0.29.0"
+version = "0.30.0-rc.2"
 dependencies = [
  "laddu",
  "pyo3",
@@ -1851,7 +1849,7 @@ dependencies = [
 
 [[package]]
 name = "laddu-python-local"
-version = "0.29.0"
+version = "0.30.0-rc.2"
 dependencies = [
  "laddu",
  "pyo3",
@@ -1859,7 +1857,7 @@ dependencies = [
 
 [[package]]
 name = "laddu-python-mpi"
-version = "0.29.0"
+version = "0.30.0-rc.2"
 dependencies = [
  "laddu",
  "pyo3",
@@ -1867,7 +1865,7 @@ dependencies = [
 
 [[package]]
 name = "laddu-runtime"
-version = "0.29.0"
+version = "0.30.0-rc.2"
 dependencies = [
  "cranelift",
  "laddu-autodiff",
@@ -1879,6 +1877,7 @@ dependencies = [
  "laddu-physics",
  "laddu-wgpu",
  "mpi",
+ "mpi_test",
  "nalgebra",
  "num",
  "rayon",
@@ -1889,7 +1888,7 @@ dependencies = [
 
 [[package]]
 name = "laddu-wgpu"
-version = "0.29.0"
+version = "0.30.0-rc.2"
 dependencies = [
  "bytemuck",
  "laddu-autodiff",

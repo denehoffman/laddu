@@ -864,12 +864,12 @@ impl Yield {
                                     && model.tags.is_none()
                                     && let Some(value) = values
                                         .iter()
-                                        .find(|value| value.re <= 0.0 || value.re.is_nan())
+                                        .find(|value| value.re < 0.0 || !value.re.is_finite())
                                 {
                                     return Err(
-                                        laddu_compile::ReductionPlan::weighted_positive_real()
+                                        laddu_compile::ReductionPlan::weighted_nonnegative_real()
                                             .apply(*value)
-                                            .expect_err("non-positive generated intensity")
+                                            .expect_err("invalid generated intensity")
                                             .into(),
                                     );
                                 }

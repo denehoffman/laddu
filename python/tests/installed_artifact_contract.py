@@ -6,6 +6,7 @@ import argparse
 import importlib
 import importlib.metadata
 import json
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -51,7 +52,14 @@ def assert_runtime_surface(module: ModuleType, expected_backend: str) -> None:
 
 def assert_distribution_contents(distribution: str, module: ModuleType) -> None:
     metadata = importlib.metadata.distribution(distribution)
-    if module.__version__ != metadata.version:
+    # Cargo uses SemVer prereleases, while maturin writes PEP 440 metadata.
+    prerelease = {'alpha': 'a', 'beta': 'b', 'rc': 'rc'}
+    version = re.sub(
+        r'-(alpha|beta|rc)\.(\d+)(?=$|\+)',
+        lambda match: prerelease[match[1]] + match[2],
+        module.__version__,
+    )
+    if version != metadata.version:
         message = f'{module.__name__} crate version {module.__version__!r} differs from distribution version {metadata.version!r}'
         raise AssertionError(message)
     files = tuple(metadata.files or ())

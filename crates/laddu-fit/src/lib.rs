@@ -38,9 +38,30 @@ pub enum FitError {
     /// A backend scalar could not be represented as an `f64`.
     #[error("ganesh scalar value cannot be represented as f64")]
     ScalarConversion,
+    /// A fitted parameter is invalid at the exported endpoint.
+    #[error(transparent)]
+    InvalidEndpoint(#[from] laddu_expr::parameters::FreeValueValidationError),
+    /// The objective produced a nonfinite value at the fit endpoint.
+    #[error("nonfinite objective at fit endpoint: {0}")]
+    NonFiniteObjective(f64),
     /// A fit artifact could not be created or bound safely.
     #[error("fit artifact mismatch: {0}")]
     Artifact(String),
+}
+
+impl FitError {
+    /// Whether the error describes an inadmissible evaluation point.
+    pub fn is_objective_domain(&self) -> bool {
+        match self {
+            Self::Likelihood(
+                LikelihoodError::NonPositiveIntensity { .. }
+                | LikelihoodError::NonPositiveAcceptedIntegral(_),
+            )
+            | Self::NonFiniteObjective(_) => true,
+            Self::Likelihood(LikelihoodError::Runtime(error)) => error.is_reduction_domain(),
+            _ => false,
+        }
+    }
 }
 
 /// A result produced by a `laddu` fitting operation.
@@ -95,6 +116,22 @@ pub struct MinimizationResult {
 }
 
 impl MinimizationResult {
+    /// Canonicalize and validate an endpoint against its fitted objective.
+    ///
+    /// # Errors
+    /// Returns an error for an invalid endpoint.
+    pub fn from_objective<O: Objective + ?Sized>(
+        mut summary: MinimizationSummary<f64, NalgebraProvider>,
+        objective: &O,
+        parameter_names: &[String],
+    ) -> FitResult<Self> {
+        let (values, value) = validate_endpoint(objective, &summary.x.to_vec())?;
+        summary.x = Vector::from_vec(values);
+        summary.fx = value;
+        summary.evals.record_f();
+        Ok(Self::from_ganesh(summary, parameter_names))
+    }
+
     /// Build a stable result from a Ganesh summary for a `-2 ln L` objective.
     ///
     /// Ganesh reports inverse-Hessian covariance. This facade multiplies it
@@ -334,7 +371,7 @@ impl FitArtifact {
             source_id: ensemble.source_id(),
             parameter_names: ensemble.parameter_names().to_vec(),
             draws: ensemble.draws().to_vec(),
-            draw_ids: (0..ensemble.len()).map(|index| index as u64).collect(),
+            draw_ids: ensemble.draw_ids().to_vec(),
             bootstrap_seed: ensemble.bootstrap_seed(),
             requires_external_datasets: ensemble.requires_external_replica_datasets(),
             failures: Vec::new(),
@@ -375,10 +412,23 @@ impl FitArtifact {
                 failure.index
             )));
         }
-        ensemble.draw_ids = (0..replica_count)
+        let draw_ids: Vec<_> = (0..replica_count)
             .filter(|index| !indices.contains(index))
             .map(|index| index as u64)
             .collect();
+        if (ensemble.bootstrap_seed.is_some()
+            || ensemble
+                .draw_ids
+                .iter()
+                .copied()
+                .ne(0..ensemble.draws.len() as u64))
+            && ensemble.draw_ids != draw_ids
+        {
+            return Err(FitError::Artifact(
+                "failed replica indices disagree with the saved draw identifiers".into(),
+            ));
+        }
+        ensemble.draw_ids = draw_ids;
         ensemble.failures = failures;
         Ok(self)
     }
@@ -623,6 +673,7 @@ impl FitEnsembleArtifact {
             self.draws.clone(),
             self.source_id,
         )
+        .and_then(|ensemble| ensemble.with_draw_ids(self.draw_ids.clone()))
         .map_err(FitError::from)
     }
     /// Reconstruct deterministic bootstrap replicas against a compatible likelihood.
@@ -656,6 +707,7 @@ impl FitEnsembleArtifact {
             replicas,
             self.source_id,
         )
+        .and_then(|ensemble| ensemble.with_bootstrap_metadata(self.draw_ids.clone(), seed))
         .map_err(FitError::from)
     }
 }
@@ -1354,17 +1406,23 @@ impl FitArtifact {
                 observed_ids.sort_unstable();
                 if failed_ids.len() != metadata.failures.len()
                     || metadata.draw_ids.windows(2).any(|ids| ids[0] >= ids[1])
-                    || observed_ids
-                        .iter()
-                        .enumerate()
-                        .any(|(index, id)| *id != index as u64)
+                    || observed_ids.windows(2).any(|ids| ids[0] == ids[1])
+                    || (!failed_ids.is_empty()
+                        && observed_ids
+                            .iter()
+                            .enumerate()
+                            .any(|(index, id)| *id != index as u64))
                     || observed_ids.len() != replica_count
                 {
                     return Err(FitError::Artifact(
                         "replica identifiers are missing, duplicated, or reordered".to_owned(),
                     ));
                 }
-                let draws = flat.chunks(shape[1]).map(<[f64]>::to_vec).collect();
+                let draws = if shape[1] == 0 {
+                    vec![Vec::new(); shape[0]]
+                } else {
+                    flat.chunks_exact(shape[1]).map(<[f64]>::to_vec).collect()
+                };
                 Some(FitEnsembleArtifact {
                     source_id: metadata.source_id,
                     parameter_names: metadata.parameter_names,
@@ -1450,6 +1508,26 @@ impl BoundFitState {
 pub struct FitProblem<'a, O: ?Sized, T = f64, B = ganesh::NalgebraProvider> {
     objective: &'a O,
     _numeric: PhantomData<(T, B)>,
+}
+
+/// Canonicalize optimizer-produced periodic coordinates and evaluate the objective.
+///
+/// # Errors
+/// Returns an error for malformed coordinates or an invalid objective.
+pub fn validate_endpoint<O: Objective + ?Sized>(
+    objective: &O,
+    free: &[f64],
+) -> FitResult<(Vec<f64>, f64)> {
+    let layout = objective.parameter_layout();
+    let values = layout
+        .wrap_periodic_free_values(free)
+        .map_err(LikelihoodError::from)?;
+    layout.validate_free_values_classified(&values)?;
+    let value = objective.value(&values)?;
+    if !value.is_finite() {
+        return Err(FitError::NonFiniteObjective(value));
+    }
+    Ok((values, value))
 }
 
 /// Adam-oriented adapter that draws reproducible event batches.
@@ -1589,6 +1667,46 @@ where
 {
     fn evaluate(&self, x: &Vector<T, B>, _args: &()) -> FitResult<T> {
         Ok(T::literal(self.evaluation(x, false)?.value()))
+    }
+
+    fn trial_rejection(&self, error: &FitError) -> Option<String> {
+        error.is_objective_domain().then(|| error.to_string())
+    }
+
+    fn trial_value(&self, x: &Vector<T, B>, _: &()) -> Result<ganesh::traits::Trial<T>, FitError> {
+        use ganesh::traits::Trial;
+        let values = self.external(x)?;
+        let mut cache = self.cache.lock();
+        let seed = self.next_seed.load(Ordering::Relaxed);
+        match self
+            .objective
+            .stochastic_value_gradient(&values, self.fraction, seed)
+        {
+            Ok(evaluation) => {
+                let value = T::literal(evaluation.value());
+                if !value.is_finite()
+                    || evaluation
+                        .gradient()
+                        .iter()
+                        .any(|&gradient| !T::literal(gradient).is_finite())
+                {
+                    return Ok(Trial::Rejected(
+                        "nonfinite stochastic trial evaluation".into(),
+                    ));
+                }
+                self.next_seed
+                    .store(seed.wrapping_add(1), Ordering::Relaxed);
+                *cache = Some((values, evaluation));
+                Ok(Trial::Valid(value))
+            }
+            Err(error) => {
+                let error = FitError::from(error);
+                match self.trial_rejection(&error) {
+                    Some(reason) => Ok(Trial::Rejected(reason)),
+                    None => Err(error),
+                }
+            }
+        }
     }
 }
 
@@ -1757,6 +1875,10 @@ where
 {
     fn evaluate(&self, x: &Vector<T, B>, _args: &()) -> FitResult<T> {
         Ok(T::literal(self.objective.value(&self.external(x)?)?))
+    }
+
+    fn trial_rejection(&self, error: &FitError) -> Option<String> {
+        error.is_objective_domain().then(|| error.to_string())
     }
 }
 
@@ -2039,6 +2161,31 @@ mod tests {
             )
             .unwrap();
         assert_eq!(ess.dimension, (4, 5, 1));
+    }
+
+    #[test]
+    fn exported_endpoint_wraps_the_periodic_upper_seam() {
+        use std::f64::consts::PI;
+        let objective = Quadratic {
+            layout: ParamLayout::new([Parameter::free("phase")
+                .with_bounds(-PI, PI)
+                .with_periodic()])
+            .unwrap(),
+        };
+        let summary = MinimizationSummary {
+            x: Vector::from_vec(vec![PI]),
+            ..MinimizationSummary::default()
+        };
+        let result =
+            MinimizationResult::from_objective(summary, &objective, &["phase".to_owned()]).unwrap();
+        assert_eq!(result.values(), &[-PI]);
+        assert_eq!(result.objective(), objective.value(&[-PI]).unwrap());
+        assert!(
+            objective
+                .parameter_layout()
+                .validate_free_values(&[PI])
+                .is_err()
+        );
     }
 
     #[test]

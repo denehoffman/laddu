@@ -59,6 +59,14 @@ impl WgslDialect {
 }
 
 impl crate::scalar::WgpuScalarKernel {
+    fn max_finite(precision: crate::WgpuPrecision) -> &'static str {
+        match precision {
+            crate::WgpuPrecision::F32 => "3.4028234663852886e38",
+            crate::WgpuPrecision::F64 => "1.7976931348623157e308",
+            crate::WgpuPrecision::Auto => unreachable!("kernel precision is resolved"),
+        }
+    }
+
     fn scalar_prelude(precision: crate::WgpuPrecision) -> &'static str {
         match precision {
             crate::WgpuPrecision::F32 => {
@@ -592,10 +600,11 @@ for (var ri{index}=0u; ri{index}<{dimension}u; ri{index}++) {{ let i={dimension}
             .collect::<Vec<_>>()
             .join(", ");
         source.push_str(&format!(
-            "return array<{scalar}, {width}>({outputs});\n}}\n@compute @workgroup_size({workgroup}) fn reduce_gradient(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgroup_id) wid: vec3<u32>) {{\nvar result: array<{scalar}, {width}>;\nvar scale: {scalar}=0.0;\nif (gid.x < arrayLength(&weights)) {{ result=model_gradient(gid.x); let value=result[0]; if (config[0] == 0u) {{ scale=1.0; }} else if (value <= 0.0) {{ atomicMin(&reduction_error[0], gid.x); }} else if (config[0] == 1u) {{ scale=1.0; }} else {{ scale=1.0/value; }} result[0]=select(value, scalar_log(value), config[0] == 2u); scale *= weights[gid.x]; result[0] *= weights[gid.x]; }}\nfor (var component=0u; component<{width}u; component++) {{ if (component == 0u) {{ sums[lid.x]=result[0]; }} else {{ sums[lid.x]=result[component]*scale; }} workgroupBarrier(); var stride=32u; loop {{ if (lid.x < stride) {{ sums[lid.x] += sums[lid.x+stride]; }} workgroupBarrier(); if (stride == 1u) {{ break; }} stride/=2u; }} if (lid.x == 0u) {{ partials[wid.x*{width}u+component]=sums[0]; }} workgroupBarrier(); }}\n}}\n",
+            "return array<{scalar}, {width}>({outputs});\n}}\n@compute @workgroup_size({workgroup}) fn reduce_gradient(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgroup_id) wid: vec3<u32>) {{\nvar result: array<{scalar}, {width}>;\nvar scale: {scalar}=0.0;\nif (gid.x < arrayLength(&weights)) {{\nlet mode = config[0];\nlet weight = weights[gid.x];\nif (mode != 2u || weight != 0.0) {{\nresult = model_gradient(gid.x);\nlet value = result[0];\nif (mode != 0u && (!(abs(value) <= {max_finite}) || value < 0.0 || (mode != 3u && value == 0.0))) {{\natomicMin(&reduction_error[0], gid.x);\nresult[0] = 0.0;\n}} else if (mode == 2u) {{\nscale = weight / value;\nresult[0] = weight * scalar_log(value);\n}} else {{\nscale = weight;\nresult[0] = weight * value;\n}}\n}}\n}}\nfor (var component=0u; component<{width}u; component++) {{ if (component == 0u) {{ sums[lid.x]=result[0]; }} else {{ sums[lid.x]=result[component]*scale; }} workgroupBarrier(); var stride=32u; loop {{ if (lid.x < stride) {{ sums[lid.x] += sums[lid.x+stride]; }} workgroupBarrier(); if (stride == 1u) {{ break; }} stride/=2u; }} if (lid.x == 0u) {{ partials[wid.x*{width}u+component]=sums[0]; }} workgroupBarrier(); }}\n}}\n",
             scalar = WgslDialect::for_precision(precision)
                 .expect("kernel precision is resolved")
                 .scalar_type(),
+            max_finite = Self::max_finite(precision),
             workgroup = WORKGROUP_SIZE
         ));
         Ok(source)
@@ -638,11 +647,12 @@ for (var ri{index}=0u; ri{index}<{dimension}u; ri{index}++) {{ let i={dimension}
         })?);
         let v = |id: KernelValueId| format!("v{}", id.index());
         source.push_str(&format!(
-            "return {};\n}}\n@compute @workgroup_size({workgroup}) fn main(@builtin(global_invocation_id) gid: vec3<u32>) {{\nif (gid.x >= arrayLength(&out)) {{ return; }}\nout[gid.x] = model(gid.x);\n}}\n@compute @workgroup_size({workgroup}) fn reduce(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgroup_id) wid: vec3<u32>) {{\nvar contribution: {scalar} = 0.0;\nif (gid.x < arrayLength(&weights)) {{\nlet value = model(gid.x).x;\nif (config[0] == 0u) {{ contribution = value; }} else if (value <= 0.0) {{ atomicMin(&reduction_error[0], gid.x); }} else if (config[0] == 1u) {{ contribution = value; }} else {{ contribution = scalar_log(value); }}\ncontribution *= weights[gid.x];\n}}\nsums[lid.x] = contribution;\nworkgroupBarrier();\nvar stride = 32u;\nloop {{\nif (lid.x < stride) {{ sums[lid.x] += sums[lid.x + stride]; }}\nworkgroupBarrier();\nif (stride == 1u) {{ break; }}\nstride /= 2u;\n}}\nif (lid.x == 0u) {{ partials[wid.x] = sums[0]; }}\n}}\n",
+            "return {};\n}}\n@compute @workgroup_size({workgroup}) fn main(@builtin(global_invocation_id) gid: vec3<u32>) {{\nif (gid.x >= arrayLength(&out)) {{ return; }}\nout[gid.x] = model(gid.x);\n}}\n@compute @workgroup_size({workgroup}) fn reduce(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgroup_id) wid: vec3<u32>) {{\nvar contribution: {scalar} = 0.0;\nif (gid.x < arrayLength(&weights)) {{\nlet mode = config[0];\nlet weight = weights[gid.x];\nif (mode != 2u || weight != 0.0) {{\nlet value = model(gid.x).x;\nif (mode != 0u && (!(abs(value) <= {max_finite}) || value < 0.0 || (mode != 3u && value == 0.0))) {{\natomicMin(&reduction_error[0], gid.x);\n}} else if (mode == 2u) {{\ncontribution = weight * scalar_log(value);\n}} else {{\ncontribution = weight * value;\n}}\n}}\n}}\nsums[lid.x] = contribution;\nworkgroupBarrier();\nvar stride = 32u;\nloop {{\nif (lid.x < stride) {{ sums[lid.x] += sums[lid.x + stride]; }}\nworkgroupBarrier();\nif (stride == 1u) {{ break; }}\nstride /= 2u;\n}}\nif (lid.x == 0u) {{ partials[wid.x] = sums[0]; }}\n}}\n",
             v(ir.root()),
             scalar = WgslDialect::for_precision(precision)
                 .expect("kernel precision is resolved")
                 .scalar_type(),
+            max_finite = Self::max_finite(precision),
             workgroup = WORKGROUP_SIZE
         ));
         Ok(source)

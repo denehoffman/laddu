@@ -64,12 +64,28 @@ pub enum RuntimeError {
     /// A reduction transform failed.
     #[error(transparent)]
     Reduction(#[from] ReductionError),
+    /// A device reduction found an inadmissible model value at this event.
+    #[error("intensity outside the reduction domain at device event {0}")]
+    ReductionEvent(usize),
+    /// A peer rejected an intensity during a distributed reduction.
+    #[error("an MPI peer rejected an intensity outside the reduction domain")]
+    DistributedReductionRejection,
     /// Another distributed rank failed during evaluation.
     #[error("an MPI peer failed during distributed evaluation")]
     DistributedPeerFailure,
     /// WebGPU preparation or execution failed.
     #[error("WGPU execution failed: {0}")]
     Wgpu(String),
+}
+
+impl RuntimeError {
+    /// Whether this error describes an inadmissible intensity in a reduction.
+    pub fn is_reduction_domain(&self) -> bool {
+        matches!(
+            self,
+            Self::Reduction(_) | Self::ReductionEvent(_) | Self::DistributedReductionRejection
+        )
+    }
 }
 
 /// Error produced while resolving execution options.
