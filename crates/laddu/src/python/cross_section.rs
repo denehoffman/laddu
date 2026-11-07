@@ -325,6 +325,11 @@ impl PyEnsemble {
     }
 
     #[getter]
+    fn draw_ids(&self) -> Vec<u64> {
+        self.inner.draw_ids().to_vec()
+    }
+
+    #[getter]
     fn draws<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<f64>>> {
         Ok(PyArray2::from_vec2(py, self.inner.draws())?)
     }

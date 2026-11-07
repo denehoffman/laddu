@@ -41,6 +41,7 @@ fn invalid(message: impl Into<String>) -> LikelihoodError {
 pub struct Ensemble {
     parameter_names: Vec<String>,
     draws: Vec<Vec<f64>>,
+    draw_ids: Vec<u64>,
     source_id: u64,
     replicas: Vec<Arc<Likelihood>>,
     replicas_share_event_rows: bool,
@@ -54,14 +55,36 @@ pub enum BootstrapFitError<E> {
     #[error(transparent)]
     Likelihood(#[from] LikelihoodError),
     /// The user-supplied fit operation failed for one replica.
-    #[error("bootstrap fit {index} failed: {source}")]
+    #[error("bootstrap fit {index} (resample seed {seed}) failed: {source}")]
     Fit {
         /// Zero-based bootstrap replica index.
         index: usize,
+        /// Wrapped deterministic resample seed.
+        seed: u64,
         /// Fit error returned by the supplied operation.
         #[source]
         source: E,
     },
+}
+
+/// One failed fit retained by a partial bootstrap.
+#[derive(Debug)]
+pub struct BootstrapReplicaFailure<E> {
+    /// Original zero-based draw index.
+    pub index: usize,
+    /// Deterministic resample seed.
+    pub seed: u64,
+    /// Error returned by the fit callback.
+    pub source: E,
+}
+
+/// Successful paired fits and individually recoverable failures.
+#[derive(Debug)]
+pub struct PartialBootstrapFit<E> {
+    /// Paired draws and replicas, absent when every fit failed.
+    pub ensemble: Option<Ensemble>,
+    /// Failures in original draw order.
+    pub failures: Vec<BootstrapReplicaFailure<E>>,
 }
 
 impl std::fmt::Debug for Ensemble {
@@ -108,6 +131,7 @@ impl Ensemble {
         }
         Ok(Self {
             parameter_names,
+            draw_ids: (0..draws.len() as u64).collect(),
             draws,
             source_id,
             replicas: Vec::new(),
@@ -199,8 +223,25 @@ impl Ensemble {
         likelihood: &Arc<Likelihood>,
         samples: usize,
         seed: u64,
-        mut fit: impl FnMut(&Arc<Likelihood>, usize) -> Result<Vec<f64>, E>,
+        fit: impl FnMut(&Arc<Likelihood>, usize) -> Result<Vec<f64>, E>,
     ) -> Result<Self, BootstrapFitError<E>> {
+        Self::bootstrap_fit_partial(likelihood, samples, seed, fit, |_| false)?
+            .ensemble
+            .ok_or_else(|| BootstrapFitError::Likelihood(invalid("bootstrap produced no fits")))
+    }
+
+    /// Fit each replica, retaining failures selected by `recoverable`.
+    ///
+    /// # Errors
+    /// Returns errors from preparation, validation, and any fit failure that
+    /// the caller does not classify as recoverable.
+    pub fn bootstrap_fit_partial<E>(
+        likelihood: &Arc<Likelihood>,
+        samples: usize,
+        seed: u64,
+        mut fit: impl FnMut(&Arc<Likelihood>, usize) -> Result<Vec<f64>, E>,
+        mut recoverable: impl FnMut(&E) -> bool,
+    ) -> Result<PartialBootstrapFit<E>, BootstrapFitError<E>> {
         if samples == 0 {
             return Err(BootstrapFitError::Likelihood(invalid(
                 "bootstrap sample count must be positive",
@@ -215,17 +256,75 @@ impl Ensemble {
             .map_err(LikelihoodError::from)?;
         let mut draws = Vec::with_capacity(samples);
         let mut replicas = Vec::with_capacity(samples);
+        let mut draw_ids = Vec::with_capacity(samples);
+        let mut failures = Vec::new();
         for index in 0..samples {
-            let replica = Arc::new(likelihood.bootstrap(seed.wrapping_add(index as u64))?);
-            let draw =
-                fit(&replica, index).map_err(|source| BootstrapFitError::Fit { index, source })?;
-            draws.push(draw);
-            replicas.push(replica);
+            let replica_seed = seed.wrapping_add(index as u64);
+            let replica = Arc::new(likelihood.bootstrap(replica_seed)?);
+            match fit(&replica, index) {
+                Ok(draw) => {
+                    draws.push(draw);
+                    replicas.push(replica);
+                    draw_ids.push(index as u64);
+                }
+                Err(source) if recoverable(&source) => failures.push(BootstrapReplicaFailure {
+                    index,
+                    seed: replica_seed,
+                    source,
+                }),
+                Err(source) => {
+                    return Err(BootstrapFitError::Fit {
+                        index,
+                        seed: replica_seed,
+                        source,
+                    });
+                }
+            }
         }
-        let mut ensemble = Self::with_replicas(parameter_names, draws, replicas)?;
-        ensemble.replicas_share_event_rows = true;
+        let ensemble = if draws.is_empty() {
+            None
+        } else {
+            Some(
+                Self::with_replicas(parameter_names, draws, replicas)?
+                    .with_bootstrap_metadata(draw_ids, seed)?,
+            )
+        };
+        Ok(PartialBootstrapFit { ensemble, failures })
+    }
+
+    /// Store ordered draw identifiers, such as the original indices of successful fits.
+    ///
+    /// # Errors
+    /// Returns an error when IDs are unordered, duplicated, or differ in count from the draws.
+    pub fn with_draw_ids(mut self, draw_ids: Vec<u64>) -> LikelihoodResult<Self> {
+        if draw_ids.len() != self.draws.len() || draw_ids.windows(2).any(|ids| ids[0] >= ids[1]) {
+            return Err(invalid(
+                "draw identifiers must be strictly increasing and match the draws",
+            ));
+        }
+        self.draw_ids = draw_ids;
+        Ok(self)
+    }
+
+    /// Attach provenance for deterministic bootstrap replicas.
+    ///
+    /// # Errors
+    /// Returns an error when IDs are invalid or the paired likelihoods are absent.
+    pub fn with_bootstrap_metadata(self, draw_ids: Vec<u64>, seed: u64) -> LikelihoodResult<Self> {
+        let mut ensemble = self.with_draw_ids(draw_ids)?;
+        if ensemble.replicas.len() != ensemble.draws.len() {
+            return Err(invalid(
+                "bootstrap metadata requires paired likelihood replicas",
+            ));
+        }
         ensemble.bootstrap_seed = Some(seed);
+        ensemble.replicas_share_event_rows = true;
         Ok(ensemble)
+    }
+
+    /// Ordered draw identifiers paired with the parameter rows.
+    pub fn draw_ids(&self) -> &[u64] {
+        &self.draw_ids
     }
 
     /// Parameter names in draw-column order.

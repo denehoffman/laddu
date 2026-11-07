@@ -60,7 +60,10 @@ use pyo3::{
 use super::{
     cross_section::{PyCrossSection, PyEnsemble, PyLuminosity, PyYield},
     data::PyDataset,
-    error::to_py_err,
+    error::{
+        BootstrapFitError as PyBootstrapFitError, FitDomainError, ReplicaDidNotConverge, to_py_err,
+        to_py_fit_err,
+    },
     likelihood::{PyLikelihood, free_values},
 };
 
@@ -75,13 +78,75 @@ impl PyFitResult {
     fn from_summary(
         summary: laddu_fit::ganesh::core::MinimizationSummary,
         parameter_names: &[String],
-        fingerprint: String,
-        strong_compatibility: bool,
-    ) -> Self {
-        Self {
-            inner: MinimizationResult::from_ganesh(summary, parameter_names)
-                .with_likelihood_fingerprint(fingerprint)
-                .with_strong_compatibility(strong_compatibility),
+        likelihood: &Likelihood,
+    ) -> Result<Self, FitError> {
+        Ok(Self {
+            inner: MinimizationResult::from_objective(summary, likelihood, parameter_names)?
+                .with_likelihood_fingerprint(likelihood.artifact_fingerprint_v1())
+                .with_strong_compatibility(likelihood.artifact_compatibility_is_strong()),
+        })
+    }
+}
+
+#[pyclass(
+    name = "BootstrapFitResult",
+    module = "laddu",
+    frozen,
+    skip_from_py_object
+)]
+/// Partial bootstrap results indexed by original draw ID and resample seed.
+pub struct PyBootstrapFitResult {
+    ensemble: Option<PyEnsemble>,
+    successes: Vec<(usize, u64, PyFitResult)>,
+    failures: Vec<(usize, u64, PyErr)>,
+}
+
+#[pymethods]
+impl PyBootstrapFitResult {
+    /// Paired successful draws, or None when every replica failed.
+    #[getter]
+    fn ensemble(&self) -> Option<PyEnsemble> {
+        self.ensemble.clone()
+    }
+
+    /// Ordered (draw ID, resample seed, fit) records.
+    #[getter]
+    fn successes(&self) -> Vec<(usize, u64, PyFitResult)> {
+        self.successes.clone()
+    }
+
+    /// Ordered (draw ID, resample seed, exception) records.
+    #[getter]
+    fn failures(&self, py: Python<'_>) -> Vec<(usize, u64, Py<PyAny>)> {
+        self.failures
+            .iter()
+            .map(|(index, seed, error)| {
+                (*index, *seed, error.clone_ref(py).into_value(py).into_any())
+            })
+            .collect()
+    }
+}
+
+fn bootstrap_error(py: Python<'_>, error: BootstrapFitError<PyErr>) -> PyErr {
+    match error {
+        BootstrapFitError::Likelihood(error) => to_py_err(error),
+        BootstrapFitError::Fit {
+            index,
+            seed,
+            source,
+        } => {
+            let error = PyBootstrapFitError::new_err(format!(
+                "bootstrap fit {index} (resample seed {seed}) failed: {source}"
+            ));
+            let value = error.value(py);
+            if let Err(error) = value
+                .setattr("draw_id", index)
+                .and_then(|()| value.setattr("seed", seed))
+            {
+                return error;
+            }
+            error.set_cause(py, Some(source));
+            error
         }
     }
 }
@@ -537,6 +602,10 @@ impl CostFunction<f64, NalgebraProvider, (), FitError> for OwnedProblem {
     fn evaluate(&self, x: &Vector, _: &()) -> Result<f64, FitError> {
         Ok(self.objective.value(&Self::external(x))?)
     }
+
+    fn trial_rejection(&self, error: &FitError) -> Option<String> {
+        error.is_objective_domain().then(|| error.to_string())
+    }
 }
 
 impl Gradient<f64, NalgebraProvider, (), FitError> for OwnedProblem {
@@ -610,6 +679,50 @@ impl CostFunction<f64, NalgebraProvider, (), FitError> for OwnedStochasticProble
     fn evaluate(&self, x: &Vector, _: &()) -> Result<f64, FitError> {
         Ok(self.evaluation(x, false)?.value())
     }
+
+    fn trial_rejection(&self, error: &FitError) -> Option<String> {
+        error.is_objective_domain().then(|| error.to_string())
+    }
+
+    fn trial_value(
+        &self,
+        x: &Vector,
+        _: &(),
+    ) -> Result<laddu_fit::ganesh::traits::Trial<f64>, FitError> {
+        use laddu_fit::ganesh::traits::Trial;
+        let values = OwnedProblem::external(x);
+        let mut cache = self.cache.lock();
+        let seed = self.next_seed.load(Ordering::Relaxed);
+        match self
+            .objective
+            .stochastic_value_gradient(&values, self.fraction, seed)
+        {
+            Ok(evaluation) => {
+                let value = evaluation.value();
+                if !value.is_finite()
+                    || evaluation
+                        .gradient()
+                        .iter()
+                        .any(|&gradient| !gradient.is_finite())
+                {
+                    return Ok(Trial::Rejected(
+                        "nonfinite stochastic trial evaluation".into(),
+                    ));
+                }
+                self.next_seed
+                    .store(seed.wrapping_add(1), Ordering::Relaxed);
+                *cache = Some((values, evaluation));
+                Ok(Trial::Valid(value))
+            }
+            Err(error) => {
+                let error = FitError::from(error);
+                match self.trial_rejection(&error) {
+                    Some(reason) => Ok(Trial::Rejected(reason)),
+                    None => Err(error),
+                }
+            }
+        }
+    }
 }
 
 impl Gradient<f64, NalgebraProvider, (), FitError> for OwnedStochasticProblem {
@@ -637,6 +750,10 @@ fn initial_vector(likelihood: &Likelihood, initial: Option<&Bound<'_, PyAny>>) -
             .to_vec(),
         Some(value) => free_values(likelihood, value)?,
     };
+    likelihood
+        .params()
+        .validate_free_values_classified(&values)
+        .map_err(to_py_err)?;
     Ok(Vector::from_vec(values))
 }
 
@@ -935,13 +1052,10 @@ impl PyLikelihood {
                     $algorithm, py, default_callbacks, terminators, observers
                 )?;
                 let summary = process_with_python_callbacks(
-                    &mut $optimizer, &problem, &(), initial, config, callbacks, to_py_err,
+                    &mut $optimizer, &problem, &(), initial, config, callbacks, to_py_fit_err,
                 )?;
-                return Ok(PyFitResult::from_summary(
-                    summary, &metadata.parameter_names(),
-                    self.inner.artifact_fingerprint_v1(),
-                    self.inner.artifact_compatibility_is_strong(),
-                ));
+                return PyFitResult::from_summary(summary, &metadata.parameter_names(), &self.inner)
+                    .map_err(to_py_fit_err);
             }};
             (@metadata $config:ident, native) => {
                 $config.with_parameter_names(metadata.parameter_names())
@@ -1193,15 +1307,19 @@ impl PyLikelihood {
             cache: parking_lot::Mutex::new(None),
         };
         let callbacks = algorithm_callbacks!(Adam, py, default_callbacks, terminators, observers)?;
-        let summary = process_with_python_callbacks(
+        let mut summary = process_with_python_callbacks(
             &mut Adam::default(),
             &problem,
             &(),
             initial,
             config,
             callbacks,
-            to_py_err,
+            to_py_fit_err,
         )?;
+        let (values, _) = laddu_fit::validate_endpoint(&*self.inner, &summary.x.to_vec())
+            .map_err(to_py_fit_err)?;
+        summary.x = Vector::from_vec(values);
+        summary.evals.record_f();
         Ok(summary.into())
     }
 
@@ -1215,13 +1333,16 @@ impl PyLikelihood {
         observers: "Sequence[object]" = Vec::new(),
         default_callbacks=true,
         use_parameter_metadata=true,
-        return_fits=false
+        return_fits=false,
+        partial=false
     ))]
     /// Poisson-bootstrap observed datasets, refit each replica, and retain the
     /// paired likelihood and parameter draws for cross-section propagation.
     /// Configurations, observers, and the default_callbacks and
     /// use_parameter_metadata controls are forwarded to each ``fit``.
     /// With ``return_fits=True``, return ``(ensemble, fit_results)`` in replica order.
+    /// With ``partial=True``, return a BootstrapFitResult with successful and failed
+    /// records. Domain errors and nonconvergence are retained per replica.
     #[allow(clippy::too_many_arguments)]
     fn bootstrap_fit(
         &self,
@@ -1235,9 +1356,10 @@ impl PyLikelihood {
         default_callbacks: bool,
         use_parameter_metadata: bool,
         return_fits: bool,
+        partial: bool,
     ) -> PyResult<Py<PyAny>> {
         let mut fits = Vec::new();
-        let inner = Ensemble::bootstrap_fit(&self.inner, samples, seed, |replica, _| {
+        let fit = |replica: &Arc<Likelihood>, index: usize| {
             let replica_python = PyLikelihood {
                 inner: Arc::clone(replica),
             };
@@ -1255,18 +1377,45 @@ impl PyLikelihood {
                 default_callbacks,
                 use_parameter_metadata,
             )?;
+            if partial && summary.inner.outcome() != FitOutcome::Converged {
+                return Err(ReplicaDidNotConverge::new_err(
+                    summary.inner.terminal_message().to_owned(),
+                ));
+            }
             let values = summary.inner.values().to_vec();
-            if return_fits {
-                fits.push(summary);
+            if partial || return_fits {
+                fits.push((index, seed.wrapping_add(index as u64), summary));
             }
             Ok(values)
-        })
-        .map_err(|error| match error {
-            BootstrapFitError::Likelihood(error) => to_py_err(error),
-            BootstrapFitError::Fit { source, .. } => source,
-        })?;
+        };
+        if partial {
+            let outcome = Ensemble::bootstrap_fit_partial(
+                &self.inner,
+                samples,
+                seed,
+                fit,
+                |error: &PyErr| {
+                    error.is_instance_of::<FitDomainError>(py)
+                        || error.is_instance_of::<ReplicaDidNotConverge>(py)
+                },
+            )
+            .map_err(|error| bootstrap_error(py, error))?;
+            let result = PyBootstrapFitResult {
+                ensemble: outcome.ensemble.map(|inner| PyEnsemble { inner }),
+                successes: fits,
+                failures: outcome
+                    .failures
+                    .into_iter()
+                    .map(|failure| (failure.index, failure.seed, failure.source))
+                    .collect(),
+            };
+            return Ok(result.into_pyobject(py)?.into_any().unbind());
+        }
+        let inner = Ensemble::bootstrap_fit(&self.inner, samples, seed, fit)
+            .map_err(|error| bootstrap_error(py, error))?;
         let ensemble = PyEnsemble { inner };
         if return_fits {
+            let fits: Vec<_> = fits.into_iter().map(|(_, _, fit)| fit).collect();
             Ok((ensemble, fits).into_pyobject(py)?.into_any().unbind())
         } else {
             Ok(ensemble.into_pyobject(py)?.into_any().unbind())

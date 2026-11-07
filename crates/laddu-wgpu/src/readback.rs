@@ -21,12 +21,11 @@ pub(crate) struct GpuStatus {
 impl GpuStatus {
     /// Converts status slots to the public error type in contract order.
     ///
-    /// The positive-reduction failure takes precedence when both slots are
-    /// populated. This is the ordering used by all GPU execution paths.
+    /// A solve failure takes precedence over an inadmissible reduction value.
     pub(crate) fn error(self) -> Option<WgpuError> {
-        self.invalid_event
-            .map(WgpuError::NonPositiveEvent)
-            .or_else(|| self.singular_event.map(WgpuError::SingularMatrixEvent))
+        self.singular_event
+            .map(WgpuError::SingularMatrixEvent)
+            .or_else(|| self.invalid_event.map(WgpuError::NonPositiveEvent))
     }
 }
 
@@ -147,12 +146,12 @@ mod tests {
     }
 
     #[test]
-    fn invalid_status_precedes_singular_status() {
+    fn singular_status_precedes_invalid_status() {
         let status = decode_status(&words(7, Some(11)), 2).unwrap();
         assert_eq!(status.invalid_event, Some(7));
         assert!(matches!(
             status.error(),
-            Some(WgpuError::NonPositiveEvent(7))
+            Some(WgpuError::SingularMatrixEvent(11))
         ));
     }
 

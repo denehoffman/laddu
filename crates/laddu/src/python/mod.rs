@@ -234,11 +234,13 @@ macro_rules! laddu_python_module {
             #[pymodule_export]
             use $crate::python::error::LadduError;
             #[pymodule_export]
+            use $crate::python::error::{BootstrapFitError, FitDomainError};
+            #[pymodule_export]
             use $crate::python::io::io;
             #[pymodule_export]
             use $crate::python::io::PySchema as Schema;
             #[pymodule_export]
-            use $crate::python::fit::{PyAnalysisSnapshot as AnalysisSnapshot, PyBoundFitState as BoundFitState, PyFitArtifact as FitArtifact, PyFitEnsembleArtifact as FitEnsembleArtifact, PyFitResult as FitResult};
+            use $crate::python::fit::{PyAnalysisSnapshot as AnalysisSnapshot, PyBootstrapFitResult as BootstrapFitResult, PyBoundFitState as BoundFitState, PyFitArtifact as FitArtifact, PyFitEnsembleArtifact as FitEnsembleArtifact, PyFitResult as FitResult};
             #[pymodule_export]
             use $crate::python::expr::{
                 PyExpr as Expr, acos, atan2, cis, complex, cparameter, dot, matmul, matrix, matvec,

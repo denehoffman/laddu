@@ -8,6 +8,8 @@ pub enum ReductionTransform {
     Real,
     /// Require a positive real component and use it directly.
     PositiveReal,
+    /// Require a finite nonnegative real component and use it directly.
+    NonNegativeReal,
     /// Require a positive real component and use its natural logarithm.
     LogPositiveReal,
 }
@@ -48,7 +50,7 @@ impl ReductionOutput {
 #[derive(Copy, Clone, Debug, Error, PartialEq)]
 pub enum ReductionError {
     /// A positivity-requiring transform received a non-positive value.
-    #[error("{transform:?} reduction requires a positive real value, got {value}")]
+    #[error("{transform:?} reduction received a value outside its domain, got {value}")]
     NonPositiveValue {
         /// Transform that rejected the value.
         transform: ReductionTransform,
@@ -73,6 +75,16 @@ impl ReductionPlan {
         Self::weighted(ReductionTransform::PositiveReal)
     }
 
+    /// Creates a weighted linear reduction of finite nonnegative intensities.
+    pub const fn weighted_nonnegative_real() -> Self {
+        Self::weighted(ReductionTransform::NonNegativeReal)
+    }
+
+    /// Whether a zero-weight row is outside this reduction's domain checks.
+    pub fn skips_zero_weight(self) -> bool {
+        self.transform == ReductionTransform::LogPositiveReal
+    }
+
     /// Creates a weighted reduction of the log of a positive real component.
     pub const fn weighted_log_positive_real() -> Self {
         Self::weighted(ReductionTransform::LogPositiveReal)
@@ -93,10 +105,14 @@ impl ReductionPlan {
         let real = value.re;
         let (value, derivative) = match self.transform {
             ReductionTransform::Real => (real, 1.0),
-            ReductionTransform::PositiveReal if real > 0.0 => (real, 1.0),
-            ReductionTransform::LogPositiveReal if real > 0.0 => (real.ln(), real.recip()),
-            transform
-            @ (ReductionTransform::PositiveReal | ReductionTransform::LogPositiveReal) => {
+            ReductionTransform::PositiveReal if real.is_finite() && real > 0.0 => (real, 1.0),
+            ReductionTransform::LogPositiveReal if real.is_finite() && real > 0.0 => {
+                (real.ln(), real.recip())
+            }
+            ReductionTransform::NonNegativeReal if real.is_finite() && real >= 0.0 => (real, 1.0),
+            transform @ (ReductionTransform::PositiveReal
+            | ReductionTransform::LogPositiveReal
+            | ReductionTransform::NonNegativeReal) => {
                 return Err(ReductionError::NonPositiveValue {
                     transform,
                     value: real,

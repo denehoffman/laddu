@@ -407,7 +407,7 @@ impl PreparedNormalization {
                     execution,
                     &general_params,
                     &general.dataset,
-                    ReductionPlan::weighted_real(),
+                    ReductionPlan::weighted_nonnegative_real(),
                 )?;
                 verify_close("normalization value", value, expected.value(), execution)?;
                 for (index, (actual, expected)) in
@@ -425,7 +425,7 @@ impl PreparedNormalization {
                     execution,
                     &general_params,
                     &general.dataset,
-                    ReductionPlan::weighted_real(),
+                    ReductionPlan::weighted_nonnegative_real(),
                 )?;
                 verify_close("normalization value", value, expected, execution)?;
             }
