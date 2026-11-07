@@ -1668,46 +1668,6 @@ where
     fn evaluate(&self, x: &Vector<T, B>, _args: &()) -> FitResult<T> {
         Ok(T::literal(self.evaluation(x, false)?.value()))
     }
-
-    fn trial_rejection(&self, error: &FitError) -> Option<String> {
-        error.is_objective_domain().then(|| error.to_string())
-    }
-
-    fn trial_value(&self, x: &Vector<T, B>, _: &()) -> Result<ganesh::traits::Trial<T>, FitError> {
-        use ganesh::traits::Trial;
-        let values = self.external(x)?;
-        let mut cache = self.cache.lock();
-        let seed = self.next_seed.load(Ordering::Relaxed);
-        match self
-            .objective
-            .stochastic_value_gradient(&values, self.fraction, seed)
-        {
-            Ok(evaluation) => {
-                let value = T::literal(evaluation.value());
-                if !value.is_finite()
-                    || evaluation
-                        .gradient()
-                        .iter()
-                        .any(|&gradient| !T::literal(gradient).is_finite())
-                {
-                    return Ok(Trial::Rejected(
-                        "nonfinite stochastic trial evaluation".into(),
-                    ));
-                }
-                self.next_seed
-                    .store(seed.wrapping_add(1), Ordering::Relaxed);
-                *cache = Some((values, evaluation));
-                Ok(Trial::Valid(value))
-            }
-            Err(error) => {
-                let error = FitError::from(error);
-                match self.trial_rejection(&error) {
-                    Some(reason) => Ok(Trial::Rejected(reason)),
-                    None => Err(error),
-                }
-            }
-        }
-    }
 }
 
 impl<O, T, B> Gradient<T, B, (), FitError> for StochasticFitProblem<'_, O, T, B>
@@ -1877,8 +1837,8 @@ where
         Ok(T::literal(self.objective.value(&self.external(x)?)?))
     }
 
-    fn trial_rejection(&self, error: &FitError) -> Option<String> {
-        error.is_objective_domain().then(|| error.to_string())
+    fn is_recoverable_trial_error(&self, error: &FitError) -> bool {
+        error.is_objective_domain()
     }
 }
 

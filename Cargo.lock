@@ -1627,7 +1627,7 @@ checksum = "e2db585e1d738fc771bf08a151420d3ed193d9d895a36df7f6f8a9456b911ddc"
 
 [[package]]
 name = "laddu"
-version = "0.30.0-rc.2"
+version = "0.30.0-rc.3"
 dependencies = [
  "codspeed-criterion-compat",
  "fastrand",
@@ -1657,7 +1657,7 @@ dependencies = [
 
 [[package]]
 name = "laddu-amplitudes"
-version = "0.30.0-rc.2"
+version = "0.30.0-rc.3"
 dependencies = [
  "approx",
  "laddu-compile",
@@ -1672,7 +1672,7 @@ dependencies = [
 
 [[package]]
 name = "laddu-autodiff"
-version = "0.30.0-rc.2"
+version = "0.30.0-rc.3"
 dependencies = [
  "laddu-compile",
  "laddu-expr",
@@ -1684,7 +1684,7 @@ dependencies = [
 
 [[package]]
 name = "laddu-cas-macros"
-version = "0.30.0-rc.2"
+version = "0.30.0-rc.3"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1693,7 +1693,7 @@ dependencies = [
 
 [[package]]
 name = "laddu-compile"
-version = "0.30.0-rc.2"
+version = "0.30.0-rc.3"
 dependencies = [
  "egg",
  "good_lp",
@@ -1707,7 +1707,7 @@ dependencies = [
 
 [[package]]
 name = "laddu-data"
-version = "0.30.0-rc.2"
+version = "0.30.0-rc.3"
 dependencies = [
  "accurate",
  "approx",
@@ -1731,7 +1731,7 @@ dependencies = [
 
 [[package]]
 name = "laddu-expr"
-version = "0.30.0-rc.2"
+version = "0.30.0-rc.3"
 dependencies = [
  "auto_ops",
  "fastrand",
@@ -1745,7 +1745,7 @@ dependencies = [
 
 [[package]]
 name = "laddu-fit"
-version = "0.30.0-rc.2"
+version = "0.30.0-rc.3"
 dependencies = [
  "ganesh",
  "laddu-expr",
@@ -1759,7 +1759,7 @@ dependencies = [
 
 [[package]]
 name = "laddu-generation"
-version = "0.30.0-rc.2"
+version = "0.30.0-rc.3"
 dependencies = [
  "codspeed-criterion-compat",
  "laddu-compile",
@@ -1777,7 +1777,7 @@ dependencies = [
 
 [[package]]
 name = "laddu-kernel"
-version = "0.30.0-rc.2"
+version = "0.30.0-rc.3"
 dependencies = [
  "laddu-expr",
  "num",
@@ -1787,7 +1787,7 @@ dependencies = [
 
 [[package]]
 name = "laddu-likelihood"
-version = "0.30.0-rc.2"
+version = "0.30.0-rc.3"
 dependencies = [
  "approx",
  "auto_ops",
@@ -1806,7 +1806,7 @@ dependencies = [
 
 [[package]]
 name = "laddu-memory"
-version = "0.30.0-rc.2"
+version = "0.30.0-rc.3"
 dependencies = [
  "nvml-wrapper",
  "objc2-metal",
@@ -1818,7 +1818,7 @@ dependencies = [
 
 [[package]]
 name = "laddu-physics"
-version = "0.30.0-rc.2"
+version = "0.30.0-rc.3"
 dependencies = [
  "approx",
  "auto_ops",
@@ -1841,7 +1841,7 @@ dependencies = [
 
 [[package]]
 name = "laddu-python"
-version = "0.30.0-rc.2"
+version = "0.30.0-rc.3"
 dependencies = [
  "laddu",
  "pyo3",
@@ -1849,7 +1849,7 @@ dependencies = [
 
 [[package]]
 name = "laddu-python-local"
-version = "0.30.0-rc.2"
+version = "0.30.0-rc.3"
 dependencies = [
  "laddu",
  "pyo3",
@@ -1857,7 +1857,7 @@ dependencies = [
 
 [[package]]
 name = "laddu-python-mpi"
-version = "0.30.0-rc.2"
+version = "0.30.0-rc.3"
 dependencies = [
  "laddu",
  "pyo3",
@@ -1865,7 +1865,7 @@ dependencies = [
 
 [[package]]
 name = "laddu-runtime"
-version = "0.30.0-rc.2"
+version = "0.30.0-rc.3"
 dependencies = [
  "cranelift",
  "laddu-autodiff",
@@ -1888,7 +1888,7 @@ dependencies = [
 
 [[package]]
 name = "laddu-wgpu"
-version = "0.30.0-rc.2"
+version = "0.30.0-rc.3"
 dependencies = [
  "bytemuck",
  "laddu-autodiff",
