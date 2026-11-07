@@ -603,8 +603,8 @@ impl CostFunction<f64, NalgebraProvider, (), FitError> for OwnedProblem {
         Ok(self.objective.value(&Self::external(x))?)
     }
 
-    fn trial_rejection(&self, error: &FitError) -> Option<String> {
-        error.is_objective_domain().then(|| error.to_string())
+    fn is_recoverable_trial_error(&self, error: &FitError) -> bool {
+        error.is_objective_domain()
     }
 }
 
@@ -678,50 +678,6 @@ impl OwnedStochasticProblem {
 impl CostFunction<f64, NalgebraProvider, (), FitError> for OwnedStochasticProblem {
     fn evaluate(&self, x: &Vector, _: &()) -> Result<f64, FitError> {
         Ok(self.evaluation(x, false)?.value())
-    }
-
-    fn trial_rejection(&self, error: &FitError) -> Option<String> {
-        error.is_objective_domain().then(|| error.to_string())
-    }
-
-    fn trial_value(
-        &self,
-        x: &Vector,
-        _: &(),
-    ) -> Result<laddu_fit::ganesh::traits::Trial<f64>, FitError> {
-        use laddu_fit::ganesh::traits::Trial;
-        let values = OwnedProblem::external(x);
-        let mut cache = self.cache.lock();
-        let seed = self.next_seed.load(Ordering::Relaxed);
-        match self
-            .objective
-            .stochastic_value_gradient(&values, self.fraction, seed)
-        {
-            Ok(evaluation) => {
-                let value = evaluation.value();
-                if !value.is_finite()
-                    || evaluation
-                        .gradient()
-                        .iter()
-                        .any(|&gradient| !gradient.is_finite())
-                {
-                    return Ok(Trial::Rejected(
-                        "nonfinite stochastic trial evaluation".into(),
-                    ));
-                }
-                self.next_seed
-                    .store(seed.wrapping_add(1), Ordering::Relaxed);
-                *cache = Some((values, evaluation));
-                Ok(Trial::Valid(value))
-            }
-            Err(error) => {
-                let error = FitError::from(error);
-                match self.trial_rejection(&error) {
-                    Some(reason) => Ok(Trial::Rejected(reason)),
-                    None => Err(error),
-                }
-            }
-        }
     }
 }
 
