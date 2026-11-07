@@ -361,3 +361,20 @@ def test_sparse_bootstrap_ensemble_round_trips_original_ids(tmp_path: Path) -> N
     assert saved.ensemble is not None
     assert saved.ensemble.draw_ids == [1, 3, 4]
     assert [draw for draw, _, _ in saved.ensemble.failures] == [0, 2, 5, 6, 7, 8, 9, 10, 11]
+
+
+def test_periodic_fit_endpoint_round_trips_to_projection() -> None:
+    phase = ld.parameter('phase', initial=-np.pi, bounds=(-np.pi, np.pi), periodic=True)
+    data = ld.Dataset.from_arrays(p4s={}, scalars={'x': [1.0, 2.0]}, weights=[1.0, 1.0])
+    model = ld.Model(1.0 + (phase.cos() + 1.0) * ld.scalar('x'))
+    target = ld.Likelihood([ld.NLL(model, data=data, accepted_mc=data, name='signal')])
+
+    with pytest.raises(ld.LadduError):
+        target.fit(initial=[np.pi])
+    fit = target.fit(config=ld.ganesh.LBFGSBConfig(error_mode='skip'))
+    assert fit.converged
+    np.testing.assert_array_equal(fit.values, [-np.pi])
+    values = fit.artifact().bind(target).values
+    integrals = target.intensity_integrals('signal', generated_mc=data)
+    assert integrals.accepted_integral(values) == pytest.approx(2.0)
+    assert integrals.generated_integral(values) == pytest.approx(2.0)
