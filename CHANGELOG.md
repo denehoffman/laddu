@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.30.0](https://github.com/denehoffman/laddu/compare/v0.29.0...v0.30.0) (2026-11-08)
+
+
+### ⚠ BREAKING CHANGES
+
+* recover invalid likelihood trials and retain bootstrap outcomes
+
+### Bug Fixes
+
+* Recover invalid likelihood trials and retain bootstrap outcomes ([a92a46c](https://github.com/denehoffman/laddu/commit/a92a46c6449ecbcad022dec2722a906194995df4))
+
 ## [0.29.0](https://github.com/denehoffman/laddu/compare/v0.28.1...v0.29.0) (2026-11-03)
 
 
