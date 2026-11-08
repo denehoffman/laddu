@@ -125,7 +125,28 @@ impl MinimizationResult {
         objective: &O,
         parameter_names: &[String],
     ) -> FitResult<Self> {
-        let (values, value) = validate_endpoint(objective, &summary.x.to_vec())?;
+        let mut values = summary.x.to_vec();
+        // Converting a scaled optimizer endpoint back to physical coordinates
+        // can round a closed bound one ULP outwards.
+        for (value, parameter) in values
+            .iter_mut()
+            .zip(objective.parameter_layout().free_parameters())
+        {
+            if parameter.is_periodic() || !value.is_finite() {
+                continue;
+            }
+            let bounds = parameter.bounds_spec();
+            if let Some(min) = bounds.min
+                && *value == min.next_down()
+            {
+                *value = min;
+            } else if let Some(max) = bounds.max
+                && *value == max.next_up()
+            {
+                *value = max;
+            }
+        }
+        let (values, value) = validate_endpoint(objective, &values)?;
         summary.x = Vector::from_vec(values);
         summary.fx = value;
         summary.evals.record_f();
@@ -2121,6 +2142,54 @@ mod tests {
             )
             .unwrap();
         assert_eq!(ess.dimension, (4, 5, 1));
+    }
+
+    #[test]
+    fn exported_endpoint_corrects_one_ulp_at_scaled_bounds() {
+        let bound = 1e-12_f64;
+        let scale = 0.011757741666378259;
+        let objective = Quadratic {
+            layout: ParamLayout::new([
+                Parameter::free("lower")
+                    .with_initial(0.2)
+                    .with_bounds(bound, None)
+                    .with_scale(scale),
+                Parameter::free("upper")
+                    .with_initial(-0.2)
+                    .with_bounds(None, -bound)
+                    .with_scale(scale),
+            ])
+            .unwrap(),
+        };
+        let problem = FitProblem::<_, f64>::new(&objective);
+        let bounds = problem.native_bounds();
+        let external = problem
+            .native_transform()
+            .unwrap()
+            .to_external(&problem.vector(&[bounds[0].0, bounds[1].1]));
+        assert_eq!(external.to_vec(), [bound.next_down(), (-bound).next_up()]);
+        assert!(validate_endpoint(&objective, &external.to_vec()).is_err());
+
+        let names = problem.parameter_names();
+        let summary = MinimizationSummary {
+            x: external,
+            ..MinimizationSummary::default()
+        };
+        let result = MinimizationResult::from_objective(summary, &objective, &names).unwrap();
+        assert_eq!(result.values(), &[bound, -bound]);
+        assert_eq!(
+            result.objective(),
+            objective.value(&[bound, -bound]).unwrap()
+        );
+
+        let summary = MinimizationSummary {
+            x: problem.vector(&[bound.next_down().next_down(), -bound]),
+            ..MinimizationSummary::default()
+        };
+        assert!(matches!(
+            MinimizationResult::from_objective(summary, &objective, &names),
+            Err(FitError::InvalidEndpoint(_))
+        ));
     }
 
     #[test]
