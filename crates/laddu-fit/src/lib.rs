@@ -20,7 +20,7 @@ use ganesh::traits::{
 };
 use ganesh::{LinearAlgebra, RealScalar, Vector};
 use ganesh::{NalgebraProvider, core::MinimizationSummary};
-use laddu_expr::parameters::ParamLayout;
+use laddu_expr::parameters::{ParamLayout, Parameter};
 use laddu_likelihood::{LikelihoodError, LikelihoodEvaluation, Objective, StochasticObjective};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
@@ -1804,17 +1804,9 @@ impl<'a, O: Objective + ?Sized, T, B> FitProblem<'a, O, T, B> {
             .parameter_layout()
             .free_parameters()
             .map(|parameter| {
-                if parameter.is_periodic() {
-                    (T::literal(f64::NEG_INFINITY), T::infinity())
-                } else {
-                    let scale = parameter.scale().unwrap_or(1.0);
-                    (
-                        T::literal(
-                            parameter.bounds_spec().min.unwrap_or(f64::NEG_INFINITY) / scale,
-                        ),
-                        T::literal(parameter.bounds_spec().max.unwrap_or(f64::INFINITY) / scale),
-                    )
-                }
+                let (lower, upper) = external_box_bounds::<T>(parameter);
+                let multiplier = T::one() / T::literal(parameter.scale().unwrap_or(1.0));
+                (lower * multiplier, upper * multiplier)
             })
             .collect()
     }
@@ -1833,7 +1825,7 @@ impl<'a, O: Objective + ?Sized, T, B> FitProblem<'a, O, T, B> {
         T: RealScalar,
         B: LinearAlgebra<T>,
     {
-        Ok(scale_transform(self.objective.parameter_layout())?
+        Ok(scale_transform(self.objective.parameter_layout(), false)?
             .unwrap_or_else(|| Box::new(IdentityTransform)))
     }
 
@@ -1932,7 +1924,21 @@ where
     })
 }
 
-fn scale_transform<T, B>(layout: &ParamLayout) -> FitResult<Option<Box<dyn Transform<T, B>>>>
+fn external_box_bounds<T: RealScalar>(parameter: &Parameter) -> (T, T) {
+    if parameter.is_periodic() {
+        (T::literal(f64::NEG_INFINITY), T::infinity())
+    } else {
+        (
+            T::literal(parameter.bounds_spec().min.unwrap_or(f64::NEG_INFINITY)),
+            T::literal(parameter.bounds_spec().max.unwrap_or(f64::INFINITY)),
+        )
+    }
+}
+
+fn scale_transform<T, B>(
+    layout: &ParamLayout,
+    preserve_native_bounds: bool,
+) -> FitResult<Option<Box<dyn Transform<T, B>>>>
 where
     T: RealScalar,
     B: LinearAlgebra<T>,
@@ -1945,11 +1951,14 @@ where
         return Ok(None);
     }
     let scales = parameters
-        .into_iter()
+        .iter()
         .map(|parameter| T::literal(parameter.scale().unwrap_or(1.0)));
-    Ok(Some(Box::new(
-        ScaleTransform::<T, B>::from_parameter_scales(scales)?,
-    )))
+    let mut transform = ScaleTransform::<T, B>::from_parameter_scales(scales)?;
+    if preserve_native_bounds {
+        transform =
+            transform.with_external_bounds(parameters.into_iter().map(external_box_bounds::<T>))?;
+    }
+    Ok(Some(Box::new(transform)))
 }
 
 fn minimizer_transform<T, B>(
@@ -1961,7 +1970,7 @@ where
     B: LinearAlgebra<T>,
 {
     let parameters = layout.free_parameters().collect::<Vec<_>>();
-    let mut transform = scale_transform(layout)?;
+    let mut transform = scale_transform(layout, !include_bounds)?;
 
     if parameters.iter().any(|parameter| parameter.is_periodic()) {
         let intervals = parameters.iter().map(|parameter| {
@@ -1978,16 +1987,7 @@ where
                 && (parameter.bounds_spec().min.is_some() || parameter.bounds_spec().max.is_some())
         })
     {
-        let bounds = parameters.iter().map(|parameter| {
-            if parameter.is_periodic() {
-                (T::literal(f64::NEG_INFINITY), T::infinity())
-            } else {
-                (
-                    T::literal(parameter.bounds_spec().min.unwrap_or(f64::NEG_INFINITY)),
-                    T::literal(parameter.bounds_spec().max.unwrap_or(f64::INFINITY)),
-                )
-            }
-        });
+        let bounds = parameters.into_iter().map(external_box_bounds::<T>);
         transform = append_transform(transform, GaneshBounds::<T, B>::new(bounds)?);
     }
     Ok(transform)
@@ -2147,7 +2147,7 @@ mod tests {
     #[test]
     fn exported_endpoint_corrects_one_ulp_at_scaled_bounds() {
         let bound = 1e-12_f64;
-        let scale = 0.011757741666378259;
+        let scale = 0.00197;
         let objective = Quadratic {
             layout: ParamLayout::new([
                 Parameter::free("lower")
@@ -2163,11 +2163,19 @@ mod tests {
         };
         let problem = FitProblem::<_, f64>::new(&objective);
         let bounds = problem.native_bounds();
-        let external = problem
-            .native_transform()
+        let internal = problem.vector(&[bounds[0].0, bounds[1].1]);
+        let external = ScaleTransform::<f64>::from_parameter_scales([scale; 2])
             .unwrap()
-            .to_external(&problem.vector(&[bounds[0].0, bounds[1].1]));
+            .to_external(&internal);
         assert_eq!(external.to_vec(), [bound.next_down(), (-bound).next_up()]);
+        assert_eq!(
+            problem
+                .native_transform()
+                .unwrap()
+                .to_external(&internal)
+                .to_vec(),
+            [bound, -bound],
+        );
         assert!(validate_endpoint(&objective, &external.to_vec()).is_err());
 
         let names = problem.parameter_names();
