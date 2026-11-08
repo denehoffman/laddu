@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.30.1](https://github.com/denehoffman/laddu/compare/v0.30.0...v0.30.1) (2026-11-08)
+
+
+### Bug Fixes
+
+* **fit:** Correct one-ulp roundoff in exported endpoints ([7040e4f](https://github.com/denehoffman/laddu/commit/7040e4f5c416a70a3d3bc62fa59e3b61eadd0b22))
+* **fit:** Preserve native endpoints through scaled coordinates ([ad926b2](https://github.com/denehoffman/laddu/commit/ad926b25ec6f1bfd81f7e00325ada2e288d7b575))
+
 ## [0.30.0](https://github.com/denehoffman/laddu/compare/v0.29.0...v0.30.0) (2026-11-08)
 
 
