@@ -3,6 +3,7 @@
 //! Ported from <https://github.com/0382/WignerSymbol> to Rust by N. D. Hoffman, 2026.
 
 use laddu_expr::{Expr, cis};
+use num::{BigInt, ToPrimitive, Zero, bigint::Sign, rational::Ratio};
 use serde::{Deserialize, Serialize};
 
 use self::utils::{binomial, const_imax, const_umin};
@@ -155,16 +156,24 @@ fn clebsch_gordan_doubled(dj1: u64, dj2: u64, dj3: u64, dm1: i64, dm2: i64, dm3:
     if dm1 + dm2 != dm3 {
         return 0.0;
     }
-    if dm1 == 0 && dm2 == 0 && dm3 == 0 {
-        let j1 = dj1 / 2;
-        let j2 = dj2 / 2;
-        let j3 = dj3 / 2;
-        let j = j1 + j2 + j3;
-        let g = j / 2;
-        return phase(g - j3) as f64 * (binomial(g, j3) * binomial(j3, g - j1)) as f64
-            / ((binomial(j + 1, dj3 + 1) * binomial(dj3, j - dj1)) as f64).sqrt();
-    }
     let j = (dj1 + dj2 + dj3) / 2;
+    if dm1 == 0 && dm2 == 0 && dm3 == 0 {
+        // With all projections zero, an odd spin sum gives zero.
+        if !j.is_multiple_of(2) {
+            return 0.0;
+        }
+        let g = j / 2;
+        if j <= MAX_FIXED_WIDTH_SPIN_SUM {
+            let j1 = dj1 / 2;
+            let j3 = dj3 / 2;
+            return phase(g - j3) as f64 * (binomial(g, j3) * binomial(j3, g - j1)) as f64
+                / ((binomial(j + 1, dj3 + 1) * binomial(dj3, j - dj1)) as f64).sqrt();
+        }
+    }
+    if j > MAX_FIXED_WIDTH_SPIN_SUM {
+        let sign = phase(((dj1 as i64 - dj2 as i64 + dm3) / 2) as u64);
+        return sign as f64 * exact_wigner_3j([dj1, dj2, dj3], [dm1, dm2, -dm3], dj3 + 1);
+    }
     let jm1 = j - dj1;
     let jm2 = j - dj2;
     let jm3 = j - dj3;
@@ -260,6 +269,9 @@ fn wigner_3j_doubled(dj1: u64, dj2: u64, dj3: u64, dm1: i64, dm2: i64, dm3: i64)
         return 0.0;
     }
     let j = (dj1 + dj2 + dj3) / 2;
+    if j > MAX_FIXED_WIDTH_SPIN_SUM {
+        return exact_wigner_3j([dj1, dj2, dj3], [dm1, dm2, dm3], 1);
+    }
     let jm1 = j - dj1;
     let jm2 = j - dj2;
     let jm3 = j - dj3;
@@ -284,6 +296,57 @@ fn wigner_3j_doubled(dj1: u64, dj2: u64, dj3: u64, dm1: i64, dm2: i64, dm3: i64)
         b = -b + (binomial(jm3, z) * binomial(jm2, j1pm1 - z) * binomial(jm1, j2mm2 - z)) as i64;
     }
     a * (phase(dj1 + (dj3 as i64 + dm3) as u64 / 2 + k_max) * b) as f64
+}
+
+// C(n,k) <= 2^n bounds the fixed-width normalization products by
+// (j + 1) * 2^(3*j) here. The sum of the absolute summands is <= 2^j.
+const MAX_FIXED_WIDTH_SPIN_SUM: u64 = 19;
+
+fn exact_wigner_3j(
+    [dj1, dj2, dj3]: [u64; 3],
+    [dm1, dm2, dm3]: [i64; 3],
+    scale_squared: u64,
+) -> f64 {
+    let j = (dj1 + dj2 + dj3) / 2;
+    let [jm1, jm2, jm3] = [j - dj1, j - dj2, j - dj3];
+    let j1mm1 = (dj1 as i64 - dm1) as u64 / 2;
+    let j2mm2 = (dj2 as i64 - dm2) as u64 / 2;
+    let j3mm3 = (dj3 as i64 - dm3) as u64 / 2;
+    let j1pm1 = dj1 - j1mm1;
+    let k_min = j1pm1.saturating_sub(jm2).max(j2mm2.saturating_sub(jm1));
+    let k_max = jm3.min(j1pm1).min(j2mm2);
+    let binomial = |n: u64, k: u64| num::integer::binomial(BigInt::from(n), BigInt::from(k));
+
+    let mut sum = BigInt::zero();
+    for z in k_min..=k_max {
+        sum = binomial(jm3, z) * binomial(jm2, j1pm1 - z) * binomial(jm1, j2mm2 - z) - sum;
+    }
+    if sum.is_zero() {
+        return 0.0;
+    }
+
+    let numerator = sum.pow(2) * binomial(dj1, jm2) * binomial(dj2, jm1) * scale_squared;
+    let denominator = binomial(j, jm3)
+        * binomial(dj1, j1mm1)
+        * binomial(dj2, j2mm2)
+        * binomial(dj3, j3mm3)
+        * (j + 1);
+    // Convert the squared magnitude at a safe scale so it cannot underflow
+    // before taking the square root of a representable coefficient.
+    let shift = denominator.bits().saturating_sub(numerator.bits()) / 2;
+    if shift > 1075 {
+        return 0.0;
+    }
+    let scaled = Ratio::new_raw(numerator << (2 * shift) as usize, denominator)
+        .to_f64()
+        .expect("a positive, scaled squared coefficient is finite");
+    let exponent = -(shift as i32);
+    let normal_exponent = exponent.max(-1022);
+    let sign =
+        phase(dj1 + (dj3 as i64 + dm3) as u64 / 2 + k_max + u64::from(sum.sign() == Sign::Minus));
+    sign as f64
+        * (scaled.sqrt() * 2.0_f64.powi(exponent - normal_exponent))
+        * 2.0_f64.powi(normal_exponent)
 }
 
 /// Precomputed helper for Wigner rotation matrix elements.
@@ -610,6 +673,10 @@ mod tests {
 
     #[test]
     fn known_spin_one_couplings() {
+        // The odd spin sum forbids three zero projections but allows other projections.
+        assert_eq!(clebsch_gordan_doubled(2, 2, 2, 0, 0, 0), 0.0);
+        assert_relative_eq!(clebsch_gordan_doubled(2, 2, 2, 2, -2, 0), FRAC_1_SQRT_2);
+
         // <1,1; 1,0 | 2,1> = 1/sqrt(2)
         assert_relative_eq!(clebsch_gordan_doubled(2, 2, 4, 2, 0, 2), FRAC_1_SQRT_2);
 
@@ -624,6 +691,26 @@ mod tests {
             clebsch_gordan_doubled(2, 2, 0, 0, 0, 0),
             -1.0 / 3.0_f64.sqrt()
         );
+    }
+
+    #[test]
+    fn clebsch_gordan_handles_large_binomial_products() {
+        let cg = clebsch_gordan_doubled(32, 32, 32, 0, 0, 0);
+        // Normalized all-zero 3j value from DLMF 34.3.5.
+        assert_relative_eq!(cg, 0.210_997_848_246_569_72);
+    }
+
+    #[test]
+    fn wigner_3j_handles_large_binomial_products() {
+        let symbol = wigner_3j_doubled(32, 32, 32, 0, 0, 0);
+        assert_relative_eq!(symbol, 0.036_730_010_834_458_905);
+    }
+
+    #[test]
+    fn large_spin_singlet_coupling_exceeds_binomial_table() {
+        let normalization = 69.0_f64.sqrt().recip();
+        assert_relative_eq!(clebsch_gordan_doubled(68, 68, 0, 68, -68, 0), normalization);
+        assert_relative_eq!(wigner_3j_doubled(68, 68, 0, 68, -68, 0), normalization);
     }
 
     #[test]

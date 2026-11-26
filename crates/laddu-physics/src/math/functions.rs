@@ -86,49 +86,36 @@ fn validate_q_r(q_r: &Expr) -> LadduPhysicsResult<()> {
 }
 
 #[inline]
-fn associated_legendre_pos_m(l: usize, m: usize, x: Expr) -> Expr {
-    let mut p: Expr = 1.0.into();
-
-    if l == 0 && m == 0 {
-        return p;
-    }
-
-    let y = (1.0 - x.powi(2)).sqrt();
-
-    for m_p in 0..m {
-        p *= -((2 * m_p + 1) as f64) * &y;
-    }
-
+fn normalized_legendre_pos_m(l: usize, m: usize, x: Expr) -> Expr {
+    // Carry the spherical harmonic normalization through the recurrence.
+    let diagonal = (1..=m).fold((4.0 * PI).sqrt().recip(), |value, order| {
+        let twice_order = 2.0 * order as f64;
+        -value * ((twice_order + 1.0) / twice_order).sqrt()
+    });
+    let mut p_min_2 = if m == 0 {
+        diagonal.into()
+    } else {
+        diagonal * (1.0 - x.powi(2)).sqrt().powi(m as i32)
+    };
     if l == m {
-        return p;
+        return p_min_2;
     }
 
-    let mut p_min_2 = p;
-    let mut p_min_1 = (2 * m + 1) as f64 * &x * &p_min_2;
+    let mut p_min_1 = (2.0 * m as f64 + 3.0).sqrt() * &x * &p_min_2;
+    let order = m as f64;
 
-    if l == m + 1 {
-        return p_min_1;
-    }
-
-    for l_p in (m + 1)..l {
-        let next = ((2 * l_p + 1) as f64 * &x * &p_min_1 - (l_p + m) as f64 * &p_min_2)
-            / (l_p - m + 1) as f64;
+    for degree in (m + 2)..=l {
+        let degree = degree as f64;
+        let previous = degree - 1.0;
+        let a = ((4.0 * degree * degree - 1.0) / ((degree - order) * (degree + order))).sqrt();
+        let b =
+            (((previous - order) * (previous + order)) / (4.0 * previous * previous - 1.0)).sqrt();
+        let next = a * (&x * &p_min_1 - b * &p_min_2);
         p_min_2 = p_min_1;
         p_min_1 = next;
     }
 
     p_min_1
-}
-
-#[inline]
-fn factorial_ratio_l_minus_over_l_plus(l: usize, abs_m: usize) -> f64 {
-    let mut ratio = 1.0;
-
-    for k in (l - abs_m + 1)..=(l + abs_m) {
-        ratio /= k as f64;
-    }
-
-    ratio
 }
 
 /// Construct the complex spherical harmonic $`Y_\ell^m(\theta,\phi)`$.
@@ -164,10 +151,7 @@ pub fn spherical_harmonic(
 fn spherical_harmonic_expr(l: usize, m: isize, costheta: Expr, phi: Expr) -> Expr {
     let abs_m = m.unsigned_abs();
 
-    let mut res = associated_legendre_pos_m(l, abs_m, costheta);
-
-    res *=
-        f64::sqrt((2 * l + 1) as f64 / (4.0 * PI) * factorial_ratio_l_minus_over_l_plus(l, abs_m));
+    let mut res = normalized_legendre_pos_m(l, abs_m, costheta);
 
     if m < 0 && !abs_m.is_multiple_of(2) {
         res = -res;
@@ -424,6 +408,23 @@ mod test {
             ),
             _ => unreachable!("test only covers l <= 2"),
         }
+    }
+
+    #[test]
+    fn spherical_harmonics_remain_normalized_at_high_order() {
+        // Equatorial Y_l^l from DLMF 14.30.3, using the exact central binomial coefficient.
+        for (degree, expected) in [(90, 0.924_878_466_407_883_5), (200, 1.127_941_485_749_501)] {
+            let harmonic = spherical_harmonic(degree, degree, 0.0, 0.0).unwrap();
+            assert_complex_relative_eq(evaluate(harmonic), Complex64::from(expected), EPS);
+        }
+
+        // Independent value from differentiating the exact Legendre polynomial.
+        let harmonic = spherical_harmonic(100, 90, 1.0 / 3.0, 0.0).unwrap();
+        assert_complex_relative_eq(
+            evaluate(harmonic),
+            Complex64::from(-0.157_069_893_477_732_06),
+            EPS,
+        );
     }
 
     #[test]
