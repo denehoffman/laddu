@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.30.2](https://github.com/denehoffman/laddu/compare/v0.30.1...v0.30.2) (2026-11-26)
+
+
+### Bug Fixes
+
+* **physics:** Correct angular momentum evaluations ([5e8c3fb](https://github.com/denehoffman/laddu/commit/5e8c3fb0f4ff26ae7878a8ba546d00cfaf1c7109))
+
 ## [0.30.1](https://github.com/denehoffman/laddu/compare/v0.30.0...v0.30.1) (2026-11-08)
 
 
